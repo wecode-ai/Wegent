@@ -4,6 +4,87 @@ sidebar_position: 12
 
 # 知识库索引保护
 
+## 网页刷新与文档级发布
+
+网页自动更新复用钉钉的 Rust 每日扫描、分页 cursor 和已有文档索引状态机。
+Rust 仅派发 `app.tasks.web_auto_update_tasks.refresh_web_document` 到 Python
+`wegent_online` 队列；手动刷新调用同一个 Python 服务，随后显式派发已有索引任务到该队列。
+不要注册第二个 Python 网页 cron，也不要让 Rust 索引执行器消费网页候选任务。
+
+发布顺序为：抓取候选 → 构建候选索引 → 验证可查询 → 数据库切换发布指针 → 延迟回收。
+这些步骤不是跨数据库和向量存储的原子事务。
+
+| 持久状态           | 位置与用途                                                                               |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| 业务 generation    | 复用 `knowledge_documents.index_generation`，拒绝旧任务                                  |
+| 候选               | `source_config._web_refresh`：源 URL、配置指纹、不可变附件、hash、请求人和用户启用状态   |
+| 已发布版本         | `source_config.published_generation`，独立于正在运行的 generation                        |
+| 已发布 hash / 配置 | `webAutoUpdate.content_hash` / `published_index_fingerprint`；内容与配置都相同才跳过构建 |
+| 可回收版本         | 既有附件 `type_data.web_index_version`：准确版本、原存储资源引用与指纹、可回收时间       |
+
+候选物理引用为 `document_id@generation`，没有发布指针的存量文档继续使用原引用。
+Runtime 从数据库解析发布指针，将文档与版本配对过滤下推到 Elasticsearch、Milvus、Qdrant
+的召回和分块列表条件，再执行 top-k。客户端传入的版本映射不决定可见性。
+正文、chunks、转换附件引用与摘要一起随发布事务切换；旧摘要回调按源附件做条件更新。
+
+Elasticsearch 发布前刷新相关索引并检查 shard 失败；Milvus 以 Strong 读取完整候选，不逐篇 flush collection；
+Qdrant 检查所有副本可见的候选节点。屏障逐批核对全部子节点和父节点，部分写入不能发布。
+Milvus 的版本相关搜索通过既有客户端包装层传递 Strong；无版本搜索沿用原默认。
+父节点读取仅在候选校验和版本相关查询中提高一致性。
+这依据 Milvus 的[一致性契约](https://milvus.io/docs/v2.5.x/tune_consistency.md)；
+[频繁 flush 会产生小 segment 并影响性能](https://milvus.io/api-reference/pymilvus/v2.5.x/ORM/Partition/flush.md)。
+这需要在目标存储部署上完成集成验收，单元测试或嵌入式 Qdrant 不证明集群一致性。
+
+文档锁复用既有索引锁键，使用 owner token 续租与释放；跨抓取、排队和索引通过已有业务状态交接。
+发布事务重新校验 generation、URL、配置资源指纹、请求人权限、KB 存续及自动更新开关，
+并检查用户启用状态没有变化。刷新不自动启用禁用文档；自动扫描跳过禁用文档。
+首次索引成功会转为内容就绪；已有 JSON 的 `web_user_status` 记录显式用户选择，
+使系统默认的 disabled 可在首次成功时启用，而用户主动禁用继续生效。
+候选保存该选择，发布前重查；原生首次索引任务也尊重它。禁用后仍可手动启用。
+
+刷新对有效短正文（包括 PDF、Playwright 分帧及文本提取）启用局部质量策略，
+保留认证／反爬壳、密度、重复、HTTP 状态和 SSRF 检查；不改变其他调用的长度默认值。
+内容未变化时也须在数据库行锁下重查状态，按 generation 条件更新，并在提交前确认租约归属。
+
+抓取阶段通过 Redis 对每个目标域名互斥，并以 Redis 时间保证两次抓取操作启动至少间隔 5 秒。
+HTTP、PDF、浏览器导航、重定向和 iframe 的目标域名也需获得许可；页面内部同域资源属于同一次抓取。
+域名锁在抓取结束释放，不占用到索引完成。Redis 不可用时拒绝本次刷新。
+
+旧版本及未发布附件至少保留 24 小时，覆盖现有十分钟网关调用期限内的旧请求。
+清理复用附件清理入口，按已有 batch 配置（默认 200）连续处理多批，精确到原存储和版本；
+单次复用 `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS`（默认 10000）和既有时间预算，
+时间预算不超过清理间隔；耗尽预算保存 cursor，下次继续。删除失败保留记录重试，
+不回滚已发布内容。当前版本、活跃候选不会被回收；失效候选和暂存草稿到期可回收。
+抓取、派发或索引失败保留已有草稿供重试；草稿过期后清除附件引用，重建索引会明确提示重新抓取，不能悄悄使用旧正文。
+如果原 Retriever 资源被删除或其定义发生变化，清理会保留记录并记录告警，不能猜测新存储位置。
+
+### 启用与回退边界
+
+- 默认全局和每个 KB 均关闭。在 Rust 调度进程与 Python worker 的部署配置中设置
+  `WEB_AUTO_UPDATE_SCHEDULE_ENABLED=true` 后，维护者／创建者可在知识库编辑窗口开启网页定时刷新。
+  未配置 `WEGENT_RS_JOB_ALLOWLIST` 时自动启用网页扫描和已有的超时恢复、附件清理任务。
+  显式 allowlist 必须包含 `app.tasks.web_auto_update_tasks.scan_web_documents`、
+  `app.tasks.knowledge_tasks.scan_stale_index_tasks` 和 `app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans`；缺少依赖会在启动时报告配置错误。
+  Rust 派发和 Python worker 使用同一个 `CELERY_BROKER_URL`（仅支持 Redis 传输，未设置时使用 `REDIS_URL`）；结果订阅连接保持独立。
+- 每日扫描固定为 **04:00 UTC（北京时间 12:00）**，不依赖宿主机时区。
+  扫描复用 `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS`（默认 10000）和
+  `EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS`（默认 2700 秒）；cursor 跨次保留。
+- KB 开关在执行前和发布前重查。全局环境开关是进程部署配置，修改环境文件不会即时通知已有 worker；
+  紧急停用先关闭相关 KB，停用调度并排空／停止旧 worker。关闭自动更新不影响手动刷新。
+- 自动摘要默认关闭，继续尊重手动入口的显式摘要选项。
+- 文档重复任务按既有 `KNOWLEDGE_INDEX_LOCK_MAX_RETRIES` 和
+  `KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS` 有界重试（默认 1 次、15 秒），超限跳过等待后续扫描；
+  同域拥塞在原扫描消息的 24 小时有效期内指数退避并加少量随机间隔，最长约 5 分钟一次，
+  不共用文档重复任务的一次重试预算，也不延长原消息期限。没有新增队列、调度器或配置项。
+- 已有索引的 `trigger_indexing=false` 只准备草稿，后续重新索引消费草稿并发布；
+  未建立索引的网页仍可先更新正文。草稿到期回收后需要重新抓取。
+- Backend、Runtime、Engine 和 shared 协议须一起升级。发布过版本后，**不能只回滚到不识别发布指针的旧 Runtime**；
+  停用任务后保留本版读取能力，或先完成经验证的索引／数据回迁。无新增数据库表或列迁移。
+
+配置 API 为 Rust 所有的 `GET/PUT /api/knowledge-bases/{id}/web-auto-update`，
+请求和响应均为 `{"enabled": boolean}`。无访问权限返回 403，不存在返回 404；
+PUT 要求创建者或 Maintainer，非 JSON 布尔值返回 422。其余已有知识库 API 继续由原路由所有者执行。
+
 ## 背景
 
 知识库文档的 RAG 索引原先主要依赖 Celery 的消息投递与重试机制，没有业务侧的幂等保护。

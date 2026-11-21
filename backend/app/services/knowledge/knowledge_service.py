@@ -490,7 +490,23 @@ class KnowledgeService:
                     KnowledgeDocument.kind_id == knowledge_base_id,
                     KnowledgeDocument.id.in_(document_ids),
                     KnowledgeDocument.is_active.is_(True),
-                    KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+                    or_(
+                        KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+                        and_(
+                            KnowledgeDocument.source_type
+                            == DocumentSourceType.WEB.value,
+                            KnowledgeDocument.status == DocumentStatus.ENABLED,
+                            or_(
+                                KnowledgeDocument.source_config["published_generation"]
+                                .as_integer()
+                                .isnot(None),
+                                KnowledgeDocument.source_config["_web_refresh"][
+                                    "previous_index_status"
+                                ].as_string()
+                                == "success",
+                            ),
+                        ),
+                    ),
                 )
                 .all()
             )
@@ -2086,6 +2102,28 @@ class KnowledgeService:
             raise ValueError("Knowledge base not found for document")
         KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
+        if data.status is not None and doc.source_type == DocumentSourceType.WEB.value:
+            try:
+                doc = KnowledgeService._lock_document_row(db, document_id)
+                if doc is None:
+                    db.rollback()
+                    return None
+                assert_user_content_is_mutable(
+                    getattr(doc, "origin", ContentOrigin.USER.value)
+                )
+                kb = (
+                    db.query(Kind)
+                    .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
+                    .populate_existing()
+                    .first()
+                )
+                if kb is None:
+                    raise ValueError("Knowledge base not found for document")
+                KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+            except Exception:
+                db.rollback()
+                raise
+
         if data.name is not None:
             from app.services.knowledge.external_sync_providers import (
                 is_synchronized_external_document,
@@ -2119,6 +2157,12 @@ class KnowledgeService:
                 # document whose later re-index failed keeps valid content.
                 raise ValueError("Document content is not ready and cannot be enabled")
             doc.status = DocumentStatus(data.status.value)
+            if doc.source_type == DocumentSourceType.WEB.value:
+                # Distinguish an explicit choice from the initial disabled default.
+                doc.source_config = {
+                    **(doc.source_config or {}),
+                    "web_user_status": data.status.value,
+                }
 
         if data.splitter_config is not None:
             doc.splitter_config = data.splitter_config.model_dump(exclude_none=True)

@@ -54,6 +54,7 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
         mysql,
         redis: None,
         celery: crate::celery_broker::CeleryBroker::new(None),
+        celery_publisher: None,
         socketio_rpc: None,
         oidc: Arc::new(crate::oidc_service::OidcService::new(&oidc_config).unwrap()),
         oidc_config,

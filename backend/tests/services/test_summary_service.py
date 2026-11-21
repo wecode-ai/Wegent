@@ -1177,9 +1177,15 @@ class TestTriggerDocumentSummaryDeletionRace:
         original_persist_document_summary = summary_service._persist_document_summary
         persist_calls = 0
 
-        def persist_and_delete(document_id_arg: int, summary_data: dict) -> bool:
+        def persist_and_delete(
+            document_id_arg: int,
+            summary_data: dict,
+            source_attachment_id: int | None = None,
+        ) -> bool:
             nonlocal persist_calls
-            result = original_persist_document_summary(document_id_arg, summary_data)
+            result = original_persist_document_summary(
+                document_id_arg, summary_data, source_attachment_id
+            )
             if persist_calls == 0:
                 (
                     test_db.query(KnowledgeDocument)

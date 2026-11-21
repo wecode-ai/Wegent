@@ -154,6 +154,11 @@ class WebScraperService:
                 extra_args=["--no-sandbox", "--disable-dev-shm-usage"],
             )
             crawler = AsyncWebCrawler(config=browser_config)
+            from app.services.web_scraper.security import install_page_domain_admission
+
+            crawler.crawler_strategy.set_hook(
+                "on_page_context_created", install_page_domain_admission
+            )
             try:
                 await crawler.start()
             except Exception:
@@ -170,13 +175,17 @@ class WebScraperService:
     @trace_async(
         span_name="web_scraper.scrape_url",
         tracer_name="web_scraper",
-        extract_attributes=lambda self, url: {"url": redact_url_for_logging(url)},
+        extract_attributes=lambda self, url, **kwargs: {
+            "url": redact_url_for_logging(url)
+        },
     )
-    async def scrape_url(self, url: str) -> ScrapedContent:
+    async def scrape_url(
+        self, url: str, *, allow_short_content: bool = False
+    ) -> ScrapedContent:
         """Scrape a web page and convert to Markdown."""
         try:
             return await asyncio.wait_for(
-                self._scrape_url_impl(url),
+                self._scrape_url_impl(url, allow_short_content=allow_short_content),
                 timeout=self._resolve_total_timeout(url),
             )
         except asyncio.TimeoutError:
@@ -189,10 +198,14 @@ class WebScraperService:
                 url, ERROR_FETCH_FAILED, f"Failed to scrape page: {str(exc)}"
             )
 
-    async def _scrape_url_impl(self, url: str) -> ScrapedContent:
+    async def _scrape_url_impl(
+        self, url: str, *, allow_short_content: bool = False
+    ) -> ScrapedContent:
         self._guard.validate_initial_url(url)
 
         policy = self._policy_resolver.resolve(url)
+        if allow_short_content:
+            policy = policy.model_copy(update={"allow_short_content": True})
         proxy_plan = self._proxy_resolver.resolve(
             mode=settings.WEBSCRAPER_PROXY_MODE,
             raw_url=settings.WEBSCRAPER_PROXY,

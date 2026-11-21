@@ -23,10 +23,12 @@ import base64
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
 from app.core.config import settings
+from app.core.distributed_lock import DistributedLockUnavailableError
 from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentIndexStatus,
@@ -2551,7 +2553,45 @@ class KnowledgeOrchestrator:
             dispatched_attachment_id = source_attachment_id
             pipeline = conversion_pipeline(normalized_extension, settings)
 
-            if converted_id and not (force_reconvert and pipeline == "multimodal"):
+            if document.source_type == "web" and (
+                (document.source_config or {}).get("published_generation")
+                or ((document.source_config or {}).get("_web_refresh") or {}).get(
+                    "draft"
+                )
+            ):
+                from app.services.knowledge.web_publication import (
+                    prepare_web_reindex_candidate,
+                )
+
+                dispatched_attachment_id = prepare_web_reindex_candidate(
+                    db,
+                    document,
+                    knowledge_base,
+                    generation=generation,
+                    previous_status=enqueue_decision.previous_status,
+                    requested_by=user.id,
+                )
+                async_result = index_document_task.apply_async(
+                    kwargs={
+                        "knowledge_base_id": str(knowledge_base.id),
+                        "attachment_id": dispatched_attachment_id,
+                        "retriever_name": retriever_name,
+                        "retriever_namespace": retriever_namespace,
+                        "embedding_model_name": embedding_model_name,
+                        "embedding_model_namespace": embedding_model_namespace,
+                        "user_id": index_owner_user_id,
+                        "caller_user_id": caller_user_id,
+                        "user_name": user.user_name,
+                        "document_id": document.id,
+                        "index_generation": generation,
+                        "publication_generation": generation,
+                        "splitter_config_dict": splitter_config,
+                        "trigger_summary": trigger_summary,
+                        "trigger": trigger,
+                    },
+                    queue="wegent_online",
+                )
+            elif converted_id and not (force_reconvert and pipeline == "multimodal"):
                 # Already converted — index directly using the converted attachment,
                 # skip re-conversion even if the file type normally requires it.
                 # Exception: a multimodal doc being force-reconverted (e.g. the
@@ -2702,6 +2742,7 @@ class KnowledgeOrchestrator:
         except Exception as exc:
             from app.schemas.knowledge import DocumentProcessingStage
             from app.services.knowledge.processing_errors import build_processing_error
+            from app.services.knowledge.web_publication import WebDraftExpired
 
             mark_document_index_enqueue_failed(
                 db=db,
@@ -2709,12 +2750,18 @@ class KnowledgeOrchestrator:
                 generation=generation,
                 error=build_processing_error(
                     stage=DocumentProcessingStage.DISPATCH,
-                    code="index_dispatch_failed",
+                    code=(
+                        "web_draft_expired"
+                        if isinstance(exc, WebDraftExpired)
+                        else "index_dispatch_failed"
+                    ),
                     message=(
-                        "The indexing task could not be submitted. "
+                        str(exc)
+                        if isinstance(exc, WebDraftExpired)
+                        else "The indexing task could not be submitted. "
                         "Please retry later."
                     ),
-                    retryable=True,
+                    retryable=not isinstance(exc, WebDraftExpired),
                     generation=generation,
                 ),
             )
@@ -3032,6 +3079,8 @@ class KnowledgeOrchestrator:
         if not doc_name.endswith(".md"):
             doc_name = f"{doc_name}.md"
 
+        from app.services.knowledge.web_publication import content_hash
+
         # Create attachment using context_service (handles storage_key and binary storage)
         content_bytes = result.content.encode("utf-8")
         content_size = len(content_bytes)
@@ -3058,6 +3107,7 @@ class KnowledgeOrchestrator:
                 folder_id=folder_id,
                 source_type=DocumentSourceType.WEB,
                 source_config={
+                    "webAutoUpdate": {"content_hash": content_hash(result.content)},
                     "url": result.url,
                     "scraped_at": result.scraped_at.isoformat(),
                     "title": result.title,
@@ -3117,228 +3167,36 @@ class KnowledgeOrchestrator:
         trigger_indexing: bool = True,
         trigger_summary: bool = False,
     ) -> Dict[str, Any]:
-        """
-        Refresh a web document by re-scraping its URL.
-
-        Flow:
-        1. Get the document and its source URL
-        2. Re-scrape the web page
-        3. Update the attachment content using context_service
-        4. Update the document metadata
-        5. Re-trigger RAG indexing via Celery
-
-        Args:
-            db: Database session
-            user: Current user
-            document_id: Document ID to refresh
-            trigger_indexing: Whether to trigger RAG re-indexing
-            trigger_summary: Whether to trigger summary generation
-
-        Returns:
-            Dict with success status and document info
-
-        Raises:
-            ValueError: If document not found, not a web document, or refresh fails
-        """
-        from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
-        from app.models.subtask_context import SubtaskContext
-        from app.schemas.knowledge import DocumentSourceType
-        from app.services.context import context_service
-        from app.services.web_scraper import get_web_scraper_service
-
-        logger.info(f"[Orchestrator] Refreshing web document {document_id}")
-
-        # Get the document and verify it's a web document
-        document = KnowledgeService.get_document(
-            db=db,
-            document_id=document_id,
-            user_id=user.id,
+        """Prepare a web candidate through the same service as scheduled refreshes."""
+        from app.services.knowledge.web_refresh import (
+            WebRefreshBusy,
+            WebRefreshInvalid,
+            refresh_web_document,
+            response,
         )
-
-        if not document:
-            return {
-                "success": False,
-                "document": None,
-                "error_code": "NOT_FOUND",
-                "error_message": "Document not found or access denied",
-            }
-
-        from app.services.knowledge.content_scope import assert_user_content_is_mutable
-
-        assert_user_content_is_mutable(getattr(document, "origin", "user"))
-
-        # Verify manage permission before mutating content
-        from app.models.kind import Kind
-
-        kb = (
-            db.query(Kind)
-            .filter(Kind.id == document.kind_id, Kind.kind == "KnowledgeBase")
-            .first()
-        )
-        if not kb:
-            return {
-                "success": False,
-                "document": None,
-                "error_code": "KB_NOT_FOUND",
-                "error_message": "Knowledge base not found for document",
-            }
-        KnowledgeService._assert_can_manage_document(db, kb, document, user.id)
-
-        if document.source_type != DocumentSourceType.WEB.value:
-            return {
-                "success": False,
-                "document": None,
-                "error_code": "INVALID_TYPE",
-                "error_message": "Only web documents can be refreshed",
-            }
-
-        # Get the source URL from source_config
-        source_config = document.source_config or {}
-        url = source_config.get("url")
-
-        if not url:
-            return {
-                "success": False,
-                "document": None,
-                "error_code": "NO_URL",
-                "error_message": "Document has no source URL",
-            }
-
-        # Re-scrape the web page (async)
-        service = get_web_scraper_service()
-        result = await service.scrape_url(url)
-
-        if not result.success:
-            logger.warning(
-                f"[Orchestrator] Scrape failed for {url}: {result.error_code} - {result.error_message}"
-            )
-            return {
-                "success": False,
-                "document": None,
-                "error_code": result.error_code,
-                "error_message": result.error_message,
-            }
-
-        # Update or create attachment using context_service
-        content_bytes = result.content.encode("utf-8")
-        content_size = len(content_bytes)
-
-        if document.attachment_id:
-            # Try to overwrite existing attachment
-            try:
-                attachment, _ = context_service.overwrite_attachment_internal(
-                    db=db,
-                    context_id=document.attachment_id,
-                    filename=document.name,
-                    reason="web_refresh",
-                    binary_data=content_bytes,
-                )
-                logger.info(
-                    f"[Orchestrator] Updated attachment {attachment.id} for web document"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"[Orchestrator] Failed to overwrite attachment {document.attachment_id}: {e}, "
-                    f"creating new one"
-                )
-                # Create new attachment if overwrite fails
-                attachment, _ = context_service.upload_attachment(
-                    db=db,
-                    user_id=user.id,
-                    filename=document.name,
-                    binary_data=content_bytes,
-                    subtask_id=0,
-                )
-                document.attachment_id = attachment.id
-                logger.info(
-                    f"[Orchestrator] Created new attachment {attachment.id} for web document"
-                )
-        else:
-            # Create new attachment if no attachment_id exists
-            attachment, _ = context_service.upload_attachment(
-                db=db,
-                user_id=user.id,
-                filename=document.name,
-                binary_data=content_bytes,
-                subtask_id=0,
-            )
-            document.attachment_id = attachment.id
-            logger.info(
-                f"[Orchestrator] Created new attachment {attachment.id} for web document"
-            )
-
-        # Update document metadata
-        document.file_size = content_size
-        source_config = dict(document.source_config or {})
-        source_config.update(
-            {
-                "url": result.url,
-                "scraped_at": result.scraped_at.isoformat(),
-                "title": result.title,
-                "description": result.description,
-            }
-        )
-        document.source_config = source_config
-        document.clear_processing_error_payload()
-        # Reset is_active to False, will be set to True after re-indexing
-        document.is_active = False
 
         try:
-            db.commit()
-            db.refresh(document)
-            logger.info(f"[Orchestrator] Updated web document {document.id} metadata")
-
-            from shared.event_reporting.catalogs.knowledge import loaded_scalar, observe
-
-            observe(
-                "knowledge.document.content.updated",
-                lambda: {
-                    "kb_id": loaded_scalar(document, "kind_id"),
-                    "document_id": document_id,
-                    "data": {
-                        "trigger": "web_refresh",
-                        "content_bytes": content_size,
-                        "reindex_requested": trigger_indexing,
-                    },
-                },
+            return await refresh_web_document(
+                db,
+                user,
+                document_id,
+                trigger_indexing=trigger_indexing,
+                trigger_summary=trigger_summary,
             )
-
-            # Trigger RAG re-indexing via Celery if enabled
-            if trigger_indexing:
-                knowledge_base, has_access = KnowledgeService.get_knowledge_base(
-                    db=db,
-                    knowledge_base_id=document.kind_id,
-                    user_id=user.id,
-                )
-                if knowledge_base and has_access:
-                    self._schedule_indexing_celery(
-                        db=db,
-                        knowledge_base=knowledge_base,
-                        document=document,
-                        user=user,
-                        caller_user_id=user.id,
-                        trigger_summary=trigger_summary,
-                        allow_if_success=True,
-                        replace_active=True,
-                        trigger="web_refresh",
-                    )
-
-            return {
-                "success": True,
-                "document": KnowledgeDocumentResponse.model_validate(document),
-                "error_code": None,
-                "error_message": None,
-            }
-
-        except Exception as e:
+        except WebRefreshBusy as exc:
             db.rollback()
-            logger.error(f"[Orchestrator] Failed to refresh web document: {e}")
-            return {
-                "success": False,
-                "document": None,
-                "error_code": "REFRESH_FAILED",
-                "error_message": str(e),
-            }
+            return response(code="REFRESH_BUSY", message=str(exc))
+        except (DistributedLockUnavailableError, RedisError) as exc:
+            db.rollback()
+            return response(code="REFRESH_FAILED", message=str(exc))
+        except ValueError as exc:
+            db.rollback()
+            return response(
+                code=(
+                    exc.code if isinstance(exc, WebRefreshInvalid) else "REFRESH_FAILED"
+                ),
+                message=str(exc),
+            )
 
     @trace_async(span_name="knowledge.retrieve", tracer_name="backend.services")
     async def retrieve_knowledge(

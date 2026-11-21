@@ -84,6 +84,54 @@ class BaseStorageBackend(ABC):
         self.index_strategy = config.get("indexStrategy", {})
         self.ext = config.get("ext", {})
 
+    def prepare_document_publication(
+        self,
+        *,
+        knowledge_id: str,
+        doc_ref: str,
+        chunk_count: int,
+        parent_node_ids: list[str],
+        node_ids: list[str] | None = None,
+        **kwargs,
+    ) -> None:
+        """Verify the complete candidate after the backend's visibility barrier."""
+        if chunk_count < 1:
+            raise ValueError("An empty candidate cannot be published")
+        if node_ids is not None:
+            if len(set(node_ids)) != chunk_count:
+                raise RuntimeError("Candidate node identities are incomplete")
+            for offset in range(0, len(node_ids), 500):
+                expected = node_ids[offset : offset + 500]
+                observed = self.publication_nodes(knowledge_id, expected, **kwargs)
+                if set(observed) != set(expected) or any(
+                    metadata.get("doc_ref") != doc_ref
+                    or metadata.get("knowledge_id") != knowledge_id
+                    for metadata in observed.values()
+                ):
+                    raise RuntimeError("Candidate chunks are not fully queryable")
+        else:
+            document = self.get_document(knowledge_id, doc_ref, **kwargs)
+            chunks = document.get("chunks", [])
+            if len(chunks) != chunk_count or {
+                item.get("chunk_index") for item in chunks
+            } != set(range(chunk_count)):
+                raise RuntimeError("Candidate chunks are not fully queryable")
+        for offset in range(0, len(parent_node_ids), 500):
+            expected = parent_node_ids[offset : offset + 500]
+            parents = self.get_parent_nodes(
+                knowledge_id, expected, **{**kwargs, "versioned_read": True}
+            )
+            if set(parents) != set(expected) or any(
+                value.get("metadata", {}).get("doc_ref") != doc_ref
+                for value in parents.values()
+            ):
+                raise RuntimeError("Candidate parent nodes are not fully queryable")
+
+    def publication_nodes(
+        self, knowledge_id: str, node_ids: list[str], **kwargs
+    ) -> dict[str, dict]:
+        raise NotImplementedError("Storage must provide a candidate visibility barrier")
+
     def extract_chunk_text(self, raw_content: Any) -> str:
         """Extract normalized plain text from raw chunk content.
 

@@ -20,6 +20,16 @@ struct Candidate {
 }
 
 pub async fn scan(state: &AppState, context: &brz_schedule::JobContext) -> Result<Value> {
+    if let Err(error) = super::sync::submit_python(
+        state,
+        "app.tasks.web_auto_update_tasks.cleanup_retired_versions",
+        json!({}),
+        Some(3600),
+    )
+    .await
+    {
+        tracing::warn!(%error, "web version cleanup dispatch failed; retry on next scan");
+    }
     let retention = super::state::seconds("KNOWLEDGE_ATTACHMENT_ORPHAN_RETENTION_HOURS", 24);
     let batch = super::state::seconds("KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_BATCH_SIZE", 200);
     let sql = format!(

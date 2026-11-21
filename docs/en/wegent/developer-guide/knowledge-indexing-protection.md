@@ -4,6 +4,121 @@ sidebar_position: 12
 
 # Knowledge Indexing Protection
 
+## Web refresh and document publication
+
+Web auto update reuses the DingTalk Rust daily scan, paginated cursor and existing
+document index state machine. Rust dispatches
+`app.tasks.web_auto_update_tasks.refresh_web_document` to the Python `wegent_online`
+queue. Manual refresh uses the same Python service, which explicitly dispatches
+the existing indexing task to that queue. Do not add a second Python web cron or
+send web candidates to the Rust index executor.
+
+The sequence is fetch → build a candidate index → verify visibility → switch the
+database publication pointer → collect retired versions later. This is a staged
+protocol, not an atomic transaction across the database and vector store.
+
+| State                 | Existing storage                                                                                                              |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Business generation   | `knowledge_documents.index_generation` fences stale tasks                                                                     |
+| Candidate             | `source_config._web_refresh` records URL, resource fingerprint, immutable attachment, hash, requester and user controls       |
+| Published version     | `source_config.published_generation`, separate from the running generation                                                    |
+| Published hash/config | `webAutoUpdate.content_hash` / `published_index_fingerprint`; skip rebuilding only when both match                            |
+| Cleanup identity      | Attachment `type_data.web_index_version` records the exact version, original storage resource revision and retention deadline |
+
+Physical candidate references are `document_id@generation`. Documents without a
+publication pointer retain their original reference. Runtime resolves pointers
+from the database and pushes paired document/version filters into Elasticsearch,
+Milvus and Qdrant recall and chunk listing before top-k. Caller-supplied version
+maps do not determine visibility. Body attachments, chunks, converted references
+and summaries switch together; summary callbacks condition writes on their source
+attachment.
+
+Before publication, Elasticsearch refreshes the indexes and checks failed shards;
+Milvus verifies the complete candidate with Strong reads without a per-document
+collection flush; Qdrant checks candidate nodes
+across all replicas. Batched validation checks every child and parent node.
+Partial writes cannot publish. Verify these contracts on the target deployment:
+unit tests and embedded Qdrant do not prove distributed cluster consistency.
+Only versioned Milvus searches use Strong, passed through the existing client
+wrapper; unversioned searches retain their original defaults. Parent reads raise
+consistency only for publication checks and versioned queries. See the Milvus
+[consistency contract](https://milvus.io/docs/v2.5.x/tune_consistency.md) and
+[flush performance guidance](https://milvus.io/api-reference/pymilvus/v2.5.x/ORM/Partition/flush.md).
+
+The existing document lock key gains token-owned renewal and release. Existing
+business state hands ownership between fetch, queued and indexing stages. The
+publication transaction rechecks generation, source URL, resource fingerprints,
+requester permissions, KB existence, automatic-update flags and unchanged user
+controls. Refresh never enables a disabled document; automatic scans skip it.
+First indexing marks content ready while respecting the explicit choice recorded
+in the existing JSON as `web_user_status`. System-default disabled documents can
+become enabled on first success; explicitly disabled documents remain disabled
+and can be enabled later. Candidates capture this choice and recheck it before
+publication. The original initial-index task also respects the choice.
+
+Refresh opts into accepting valid short bodies, including PDF, Playwright frames
+and text extraction, through the existing quality checks. Authentication/block
+shells, density, repetition, HTTP status and SSRF checks remain active; other
+callers retain their length defaults. Unchanged-content completion also reloads
+state under a database row lock, updates conditionally on generation, and checks
+lease ownership before committing.
+
+During fetching, Redis serializes each destination domain and enforces at least
+five seconds between crawl starts using Redis time. HTTP, PDF, browser navigation,
+redirect and iframe destinations require admission too; same-domain resources
+within one crawl share its admission. Domain leases end after fetching, before
+indexing. Redis failures reject the refresh.
+
+Retired indexes and unpublished attachments remain for at least 24 hours, covering
+in-flight reads within the existing ten-minute gateway deadline. The existing
+attachment maintenance entry processes consecutive batches (200 by default),
+reusing `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS` (10000) and the existing time budget,
+capped by the cleanup interval. It saves the cursor when its budget expires and addresses
+the exact original version/store, retains failures for retry, and never rolls back
+a successful publication. Published versions and running candidates are protected;
+invalidated candidates and unconsumed drafts become collectible. Failed fetches,
+dispatches and indexing preserve a staged draft for retry. Expiry invalidates its
+attachment reference and explicitly requires another refresh before reindexing.
+If the original
+Retriever resource disappears or changes, cleanup retains its record and logs a
+warning instead of guessing the new storage location.
+
+### Enabling and rollback
+
+- Both deployment and KB switches default to off. Set
+  `WEB_AUTO_UPDATE_SCHEDULE_ENABLED=true` in the Rust scheduler and Python worker
+  deployments, then enable web updates in the KB edit dialog as creator/Maintainer.
+  Without `WEGENT_RS_JOB_ALLOWLIST`, this opt-in also enables the existing stale-recovery and attachment-cleanup jobs.
+  An explicit allowlist must include `app.tasks.web_auto_update_tasks.scan_web_documents`,
+  `app.tasks.knowledge_tasks.scan_stale_index_tasks`, and `app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans`; missing dependencies fail startup with a configuration error.
+  Rust publication and Python workers use the same `CELERY_BROKER_URL` (Redis transport only, falling back to `REDIS_URL`). Result subscriptions remain separate.
+- The fixed daily scan is **04:00 UTC (12:00 Beijing)**, independent of host time
+  zone. It reuses `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS` (10000 by default) and
+  `EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS` (2700), preserving a cursor between runs.
+- KB flags are rechecked before execution and publication. Global environment
+  flags are process configuration: editing an environment file does not notify
+  running workers. For emergency shutdown, disable affected KBs, stop scheduling
+  and drain/stop old workers. Manual refresh remains available.
+- Automatic summary generation defaults to off; explicit manual options remain.
+- Duplicate document tasks use the existing `KNOWLEDGE_INDEX_LOCK_MAX_RETRIES`
+  and `KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS` (one retry after 15 seconds by default),
+  then skip until a subsequent scan. Domain contention instead retries with
+  exponential backoff and jitter, up to about five minutes between attempts,
+  within the original scan message's 24-hour expiry. It does not share the
+  duplicate-task retry budget or extend the deadline. No new queue, scheduler or
+  configuration is introduced.
+- With a published index, `trigger_indexing=false` stages a draft for subsequent
+  reindexing. Never-indexed web documents can still update their body first.
+  An expired draft must be fetched again.
+- Upgrade Backend, Runtime, Engine and shared protocol together. Once versions
+  are published, **do not roll back only Runtime to code that ignores pointers**.
+  Stop updates and retain compatible readers, or perform a validated index/data
+  migration first. No new database table or column migration is required.
+
+Rust owns `GET/PUT /api/knowledge-bases/{id}/web-auto-update`, with
+`{"enabled": boolean}` request/response data. Missing KBs return 404; access denial
+returns 403. PUT requires creator/Maintainer and rejects non-boolean input with 422. Existing KB APIs keep their original route ownership.
+
 ## Background
 
 Document RAG indexing previously relied mostly on Celery delivery and retry behavior, without a business-level idempotency guard.

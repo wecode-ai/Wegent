@@ -1298,6 +1298,8 @@ class KnowledgeDocumentResponse(BaseModel):
         """Expose a validated error without leaking its storage location."""
         source_config = dict(self.source_config or {})
         raw_error = source_config.pop("processing_error", None)
+        # Candidate attachment/metadata are internal until publication.
+        source_config.pop("_web_refresh", None)
         self.source_config = source_config
         if self.index_status != DocumentIndexStatus.FAILED:
             self.processing_error = None

@@ -93,6 +93,22 @@ pub async fn build_with_clients(
         None
     };
     let celery = crate::celery_broker::CeleryBroker::new(celery_subscriber);
+    let celery_publisher = if let Some(url) = config::optional_env_or_dotenv("CELERY_BROKER_URL") {
+        let connection = async {
+            let broker = config::RedisConfig::from_urls(&url, None)?;
+            Ok::<_, anyhow::Error>(super::redis::shared(&broker).await?)
+        }
+        .await;
+        match connection {
+            Ok(client) => Some(client),
+            Err(error) => {
+                tracing::warn!(%error, "failed to connect the Celery task broker");
+                None
+            }
+        }
+    } else {
+        redis.clone()
+    };
     // `executor_version_service` is created once with the application's Redis
     // service: its refresh worker is started here, at process startup, so a
     // device listing only enqueues the refresh a cache miss requires.
@@ -153,6 +169,7 @@ pub async fn build_with_clients(
         redis,
         callback_subscriptions,
         celery,
+        celery_publisher,
         socketio_rpc,
         oidc_config: config,
         oidc,

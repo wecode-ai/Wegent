@@ -139,17 +139,21 @@ class SummaryService:
         self,
         document_id: int,
         summary_data: dict[str, Any],
+        source_attachment_id: int | None = None,
     ) -> bool:
         """Persist document summary if the document still exists."""
-        updated_rows = (
-            self.db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.id == document_id)
-            .update(
-                {
-                    KnowledgeDocument.summary: summary_data,
-                },
-                synchronize_session=False,
+        query = self.db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.id == document_id
+        )
+        if source_attachment_id is not None:
+            query = query.filter(
+                KnowledgeDocument.attachment_id == source_attachment_id
             )
+        updated_rows = query.update(
+            {
+                KnowledgeDocument.summary: summary_data,
+            },
+            synchronize_session=False,
         )
         if updated_rows == 0:
             self.db.rollback()
@@ -416,6 +420,7 @@ class SummaryService:
             model_config.get("model_namespace"),
             model_config.get("model_type"),
         )
+        source_attachment_id = document.attachment_id
         existing_summary = dict(document.summary or {})
 
         try:
@@ -423,7 +428,9 @@ class SummaryService:
             summary_data = existing_summary
             summary_data["status"] = "generating"
             summary_data["updated_at"] = datetime.now().isoformat()
-            if not self._persist_document_summary(document_id, summary_data):
+            if not self._persist_document_summary(
+                document_id, summary_data, source_attachment_id
+            ):
                 from .summary_reporting import report_summary_state
 
                 report_summary_state(
@@ -499,7 +506,9 @@ class SummaryService:
                     f"document_id={document_id}, error={result.error}"
                 )
 
-            if not self._persist_document_summary(document_id, summary_data):
+            if not self._persist_document_summary(
+                document_id, summary_data, source_attachment_id
+            ):
                 from .summary_reporting import report_summary_state
 
                 report_summary_state(
@@ -543,7 +552,9 @@ class SummaryService:
                     "error": str(e),
                     "updated_at": datetime.now().isoformat(),
                 }
-                if self._persist_document_summary(document_id, summary_data):
+                if self._persist_document_summary(
+                    document_id, summary_data, source_attachment_id
+                ):
                     from .summary_reporting import report_summary_state
 
                     report_summary_state(

@@ -1255,3 +1255,7 @@ path = "/api/v1/cloud-projects/:project_id/import-local"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/personal-issues/:issue_id/resources/:kind/:resource_id"
+
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/knowledge-bases/:kb_id/web-auto-update"

@@ -1,4 +1,6 @@
+from io import BytesIO
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -131,6 +133,101 @@ async def test_scrape_url_preserves_public_success_contract(
     assert result.description == "Description"
     assert result.url == "https://example.com/final"
     assert result.content_length == len(result.content)
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "quality_level", "accepted"),
+    [
+        (
+            "营业时间：周一至周五9点至18点，周末及节假日均休息。",
+            200,
+            "structured",
+            True,
+        ),
+        ("请先登录后查看内容", 200, "structured", False),
+        ("Access denied. Please complete captcha.", 200, "structured", False),
+        ("   ", 200, "structured", False),
+        ("营业时间：周一至周五9点至18点。", 500, "structured", False),
+        ("短的未结构化降级内容", 200, "degraded", True),
+        ("Access denied", 200, "degraded", False),
+    ],
+)
+async def test_refresh_short_content_uses_real_quality_and_classification(
+    monkeypatch, body, status, quality_level, accepted
+):
+    service = prepare_service(monkeypatch)
+    external_result = InternalScrapeResult(
+        url="https://example.com/hours",
+        markdown=body,
+        status_code=status,
+        success=status == 200,
+        quality_level=quality_level,
+    )
+    service._crawl4ai_strategy = FakeCrawlStrategy(external_result)
+    service._playwright_strategy = FakePlaywrightStrategy(external_result)
+    result = await service.scrape_url(external_result.url, allow_short_content=True)
+    assert result.success is accepted
+    if accepted:
+        assert result.content == body
+        # Opt-in is per request, not a mutation of the shared site policy.
+        normal = await service.scrape_url(external_result.url)
+        assert not normal.success
+    else:
+        assert result.error_code
+
+
+@pytest.mark.parametrize(
+    "body,accepted", [("Open 9am-6pm.", True), ("Access denied", False), ("", False)]
+)
+async def test_refresh_short_pdf_uses_real_extraction_and_quality(
+    monkeypatch, body, accepted
+):
+    from PyPDF2 import PdfWriter
+    from PyPDF2.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=100)
+    page = writer.pages[0]
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {
+            NameObject("/Font"): DictionaryObject(
+                {NameObject("/F1"): writer._add_object(font)}
+            )
+        }
+    )
+    stream = DecodedStreamObject()
+    stream.set_data(f"BT /F1 12 Tf 10 50 Td ({body}) Tj ET".encode("ascii"))
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    output = BytesIO()
+    writer.write(output)
+    url = "https://example.com/hours.pdf"
+    download = httpx.Response(
+        200,
+        content=output.getvalue(),
+        request=httpx.Request("GET", url),
+        headers={"content-type": "application/pdf"},
+    )
+    service = prepare_service(monkeypatch)
+    monkeypatch.setattr(
+        service._pdf_extractor, "_download_pdf", AsyncMock(return_value=download)
+    )
+
+    result = await service.scrape_url(url, allow_short_content=True)
+
+    assert result.success is accepted
+    if accepted:
+        assert body in result.content
+        assert len(result.content) < 50
+        assert not (await service.scrape_url(url)).success
+    else:
+        assert result.error_code
 
 
 async def test_pdf_extractor_uses_primary_final_url(

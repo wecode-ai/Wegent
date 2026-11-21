@@ -50,3 +50,22 @@ def test_owned_lock_propagates_redis_failure_instead_of_granting_ownership(monke
 
         with pytest.raises(ConnectionError):
             lock.acquire(token="owner-token")
+
+
+@pytest.mark.parametrize("body_fails", [False, True])
+def test_owned_lease_release_transport_error_preserves_body_outcome(
+    monkeypatch, body_fails
+):
+    lease = Mock()
+    lease.acquire.return_value = True
+    lease.release.side_effect = ConnectionError("release unavailable")
+    locks = DistributedLock()
+    monkeypatch.setattr(locks, "owned_lock", lambda *a, **kw: lease)
+    if body_fails:
+        with pytest.raises(ValueError, match="original failure"):
+            with locks.owned_watchdog_context("document"):
+                raise ValueError("original failure")
+    else:
+        with locks.owned_watchdog_context("document") as acquired:
+            assert acquired is lease
+    lease.release.assert_called_once()

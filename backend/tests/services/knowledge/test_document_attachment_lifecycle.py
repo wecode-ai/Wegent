@@ -4,7 +4,10 @@
 
 """Regression contracts for caller-authorized, independent document bodies."""
 
-from unittest.mock import MagicMock
+import asyncio
+from contextlib import contextmanager, nullcontext
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -494,3 +497,561 @@ def test_document_mutation_preserves_source_and_sibling_content(
     assert (
         context_service.get_attachment_binary_data(test_db, sibling_body) == b"original"
     )
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "short_body",
+        "draft",
+        "unindexed",
+        "failed_unindexed",
+        "blank",
+        "dispatch_failure",
+    ],
+)
+def test_web_refresh_keeps_live_body_until_publish(
+    test_db, test_user, kb, bodies, monkeypatch, outcome
+):
+    from app.models.knowledge import DocumentIndexStatus
+    from app.services.knowledge.web_publication import publish_candidate
+    from app.services.knowledge.web_refresh import refresh_web_document
+    from app.services.web_scraper.models import InternalScrapeResult
+    from app.services.web_scraper.scraper_service import WebScraperService
+    from tests.utils.retrieval_resources import embedding_model_kind, retriever_kind
+
+    kb.json = {
+        "spec": {
+            "retrievalConfig": {
+                "retriever_name": "web-store",
+                "embedding_config": {"model_name": "web-embed"},
+            }
+        }
+    }
+    test_db.add_all(
+        [
+            retriever_kind(test_user.id, "web-store"),
+            embedding_model_kind(test_user.id, "web-embed"),
+        ]
+    )
+    source = attachment(test_db, test_user.id, bodies)
+    document = KnowledgeDocument(
+        kind_id=kb.id,
+        attachment_id=source.id,
+        name="web.md",
+        file_extension="md",
+        file_size=8,
+        user_id=test_user.id,
+        is_active=True,
+        status="enabled",
+        index_status=DocumentIndexStatus.SUCCESS,
+        source_type="web",
+        source_config={"url": "https://example.org/short"},
+    )
+    test_db.add(document)
+    if outcome in {"unindexed", "failed_unindexed"}:
+        kb.json = {"spec": {}}
+        document.index_status = DocumentIndexStatus.NOT_INDEXED
+        if outcome == "failed_unindexed":
+            document.index_status = DocumentIndexStatus.FAILED
+            document.is_active = False
+    test_db.commit()
+    lease = MagicMock()
+    lease.owned.return_value = True
+
+    @contextmanager
+    def owned(*args, **kwargs):
+        yield lease
+
+    monkeypatch.setattr(
+        "app.services.knowledge.web_refresh.distributed_lock.owned_watchdog_context",
+        owned,
+    )
+    body = "营业时间：周一至周五9点至18点，周末及节假日均休息。"
+    service = WebScraperService()
+    monkeypatch.setattr(service, "_check_crawl4ai", lambda: True)
+    monkeypatch.setattr(service._guard, "validate_initial_url", lambda url: None)
+    external = InternalScrapeResult(
+        url=document.source_config["url"],
+        markdown="  " if outcome == "blank" else body,
+        status_code=200,
+    )
+    service._crawl4ai_strategy.scrape = AsyncMock(return_value=external)
+    service._playwright_strategy.scrape = AsyncMock(return_value=external)
+
+    async def fetch(url):
+        return await service.scrape_url(url, allow_short_content=True)
+
+    monkeypatch.setattr(
+        "app.services.knowledge.web_refresh.scrape_with_domain_lease", fetch
+    )
+    dispatch = MagicMock(
+        side_effect=(
+            RuntimeError("broker unavailable")
+            if outcome == "dispatch_failure"
+            else None
+        )
+    )
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.index_document_task.apply_async", dispatch
+    )
+    if outcome in {"blank", "dispatch_failure"}:
+        with pytest.raises(ValueError if outcome == "blank" else RuntimeError):
+            asyncio.run(refresh_web_document(test_db, test_user, document.id))
+        test_db.refresh(document)
+        assert document.index_status == DocumentIndexStatus.SUCCESS
+        assert "_web_refresh" not in document.source_config
+    else:
+        result = asyncio.run(
+            refresh_web_document(
+                test_db, test_user, document.id, trigger_indexing=outcome != "draft"
+            )
+        )
+        assert result["success"]
+        if outcome in {"unindexed", "failed_unindexed"}:
+            assert document.attachment_id != source.id
+            assert document.index_status == (
+                DocumentIndexStatus.FAILED
+                if outcome == "failed_unindexed"
+                else DocumentIndexStatus.NOT_INDEXED
+            )
+            assert (
+                context_service.get_attachment_binary_data(
+                    test_db, test_db.get(SubtaskContext, document.attachment_id)
+                ).decode()
+                == body
+            )
+            dispatch.assert_not_called()
+            return
+        assert document.attachment_id == source.id
+        assert (
+            context_service.get_attachment_binary_data(test_db, source) == b"original"
+        )
+        from app.services.knowledge.index_state_machine import (
+            mark_document_index_started,
+            prepare_document_index_enqueue,
+        )
+
+        if outcome == "draft":
+            from app.services.knowledge.web_publication import (
+                prepare_web_reindex_candidate,
+            )
+
+            decision = prepare_document_index_enqueue(
+                test_db, document.id, allow_if_success=True
+            )
+            prepare_web_reindex_candidate(
+                test_db,
+                document,
+                kb,
+                generation=decision.generation,
+                previous_status=decision.previous_status,
+                requested_by=test_user.id,
+            )
+        candidate = document.source_config["_web_refresh"]
+        assert mark_document_index_started(
+            test_db, document.id, document.index_generation
+        ).should_execute
+        assert publish_candidate(
+            test_db,
+            document_id=document.id,
+            generation=document.index_generation,
+            chunks={"items": [{"content": body}]},
+            lease=lease,
+        )
+        assert document.attachment_id == candidate["attachment_id"]
+        assert (
+            context_service.get_attachment_binary_data(
+                test_db, test_db.get(SubtaskContext, document.attachment_id)
+            ).decode()
+            == body
+        )
+        assert (
+            document.source_config["published_generation"] == document.index_generation
+        )
+        # A retired attachment survives a failed cleanup and is removed on retry.
+        from app.services.knowledge.web_version_cleanup import cleanup_retired_versions
+
+        source.type_data = {
+            **source.type_data,
+            "web_index_version": {
+                **source.type_data["web_index_version"],
+                "not_before": (
+                    datetime.now(timezone.utc) - timedelta(days=1)
+                ).isoformat(),
+            },
+        }
+        test_db.commit()
+        gateway = MagicMock()
+        gateway.delete_document_index = AsyncMock(
+            side_effect=RuntimeError("vector store unavailable")
+        )
+        monkeypatch.setattr(
+            "app.services.rag.gateway_factory.get_rag_gateway", lambda: gateway
+        )
+        redis = MagicMock()
+        redis.get.return_value = 0
+        monkeypatch.setattr(
+            "app.services.knowledge.web_refresh.distributed_lock._redis_client", redis
+        )
+        assert cleanup_retired_versions(test_db)["failed"] == 1
+        assert test_db.get(SubtaskContext, source.id) is not None
+        gateway.delete_document_index = AsyncMock(return_value={"status": "success"})
+        assert cleanup_retired_versions(test_db)["cleaned"] == 1
+        assert test_db.get(SubtaskContext, document.attachment_id) is not None
+    test_db.refresh(document)
+    if outcome in {"blank", "dispatch_failure"}:
+        assert document.attachment_id == source.id
+        assert (
+            context_service.get_attachment_binary_data(test_db, source) == b"original"
+        )
+
+
+@pytest.mark.parametrize("stop", ["complete", "scan_budget", "time_budget"])
+def test_web_cleanup_processes_multiple_batches_and_resumes_budgeted_cursor(
+    test_db, test_user, kb, bodies, monkeypatch, stop
+):
+    from app.core.config import settings
+    from app.services.knowledge.web_publication import attach_version_record
+    from app.services.knowledge.web_version_cleanup import (
+        CURSOR_KEY,
+        cleanup_retired_versions,
+    )
+    from app.services.rag.runtime_resolver import RagRuntimeResolver
+    from tests.utils.retrieval_resources import embedding_model_kind, retriever_kind
+
+    kb.json = {
+        "spec": {
+            "retrievalConfig": {
+                "retriever_name": "web-store",
+                "embedding_config": {"model_name": "web-embed"},
+            }
+        }
+    }
+    test_db.add_all(
+        [
+            retriever_kind(test_user.id, "web-store"),
+            embedding_model_kind(test_user.id, "web-embed"),
+        ]
+    )
+    document = KnowledgeDocument(
+        kind_id=kb.id,
+        user_id=test_user.id,
+        name="web.md",
+        source_type="web",
+        file_extension="md",
+        file_size=8,
+        index_status="success",
+        index_generation=1000,
+        is_active=True,
+        status="enabled",
+        source_config={"published_generation": 1000},
+    )
+    test_db.add(document)
+    test_db.commit()
+    spec = (
+        RagRuntimeResolver()
+        .build_delete_runtime_spec(
+            db=test_db,
+            knowledge_base_id=kb.id,
+            document_ref=str(document.id),
+            index_owner_user_id=kb.user_id,
+        )
+        .model_dump(mode="json")
+    )
+    records = []
+    for version in [*range(1, 221), 1000, 1001]:
+        key = f"cleanup-body-{version}"
+        row = SubtaskContext(
+            user_id=test_user.id,
+            subtask_id=0,
+            context_type="attachment",
+            name="web.md",
+            status="ready",
+            extracted_text="body",
+            text_length=4,
+            type_data={
+                "storage_key": key,
+                "storage_backend": "mysql",
+                "file_extension": "md",
+            },
+        )
+        ref = f"{document.id}@{version}"
+        attach_version_record(
+            row,
+            {
+                "document_id": document.id,
+                "doc_ref": ref,
+                "delete_spec": {**spec, "document_ref": ref},
+            },
+        )
+        if version != 1001:
+            row.type_data["web_index_version"]["not_before"] = (
+                datetime.now(timezone.utc) - timedelta(days=1)
+            ).isoformat()
+        records.append(row)
+        bodies[1][key] = b"body"
+    test_db.add_all(records)
+    test_db.flush()
+    document.attachment_id = records[-2].id
+    retired_ids = [row.id for row in records[:220]]
+    current_id, future_id = records[-2].id, records[-1].id
+    test_db.commit()
+
+    lease = MagicMock()
+    lease.owned.return_value = True
+    monkeypatch.setattr(
+        "app.services.knowledge.web_version_cleanup.distributed_lock.owned_watchdog_context",
+        lambda *args, **kwargs: nullcontext(lease),
+    )
+    values = {}
+    redis = MagicMock()
+    redis.get.side_effect = lambda key: values.get(key, 0)
+    redis.set.side_effect = lambda key, value, **kwargs: values.__setitem__(key, value)
+    monkeypatch.setattr(
+        "app.services.knowledge.web_version_cleanup.distributed_lock._redis_client",
+        redis,
+    )
+    gateway = MagicMock()
+    gateway.delete_document_index = AsyncMock(return_value={"status": "success"})
+    monkeypatch.setattr(
+        "app.services.rag.gateway_factory.get_rag_gateway", lambda: gateway
+    )
+    monkeypatch.setattr(
+        settings,
+        "EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS",
+        201 if stop == "scan_budget" else 10000,
+    )
+    monkeypatch.setattr(settings, "KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_BATCH_SIZE", 200)
+    if stop == "time_budget":
+        monkeypatch.setattr(settings, "EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS", 10)
+        monkeypatch.setattr(
+            "app.services.knowledge.web_version_cleanup.monotonic",
+            lambda: 10 if gateway.delete_document_index.await_count >= 201 else 0,
+        )
+    first = cleanup_retired_versions(test_db)
+    if stop != "complete":
+        assert first["cleaned"] == first["scanned"] == 201
+        assert values[CURSOR_KEY] == retired_ids[200]
+        monkeypatch.setattr(
+            "app.services.knowledge.web_version_cleanup.monotonic", lambda: 0
+        )
+        second = cleanup_retired_versions(test_db)
+        assert second["cleaned"] == 19
+        assert second["protected"] == second["deferred"] == 1
+    else:
+        assert first["scanned"] == 222
+        assert first["cleaned"] == 220
+        assert first["protected"] == first["deferred"] == 1
+    assert values[CURSOR_KEY] == 0
+    assert (
+        not test_db.query(SubtaskContext.id)
+        .filter(SubtaskContext.id.in_(retired_ids))
+        .all()
+    )
+    assert test_db.get(SubtaskContext, current_id) is not None
+    assert test_db.get(SubtaskContext, future_id) is not None
+
+
+@pytest.fixture
+def staged_web(test_db, test_user, kb, bodies, monkeypatch):
+    from app.models.knowledge import DocumentIndexStatus
+    from app.services.knowledge import web_refresh
+    from app.services.web_scraper import ScrapedContent
+    from tests.utils.retrieval_resources import embedding_model_kind, retriever_kind
+
+    kb.json = {
+        "spec": {
+            "retrievalConfig": {
+                "retriever_name": "web-store",
+                "embedding_config": {"model_name": "web-embed"},
+            }
+        }
+    }
+    test_db.add_all(
+        [
+            retriever_kind(test_user.id, "web-store"),
+            embedding_model_kind(test_user.id, "web-embed"),
+        ]
+    )
+    source = attachment(test_db, test_user.id, bodies)
+    document = KnowledgeDocument(
+        kind_id=kb.id,
+        attachment_id=source.id,
+        name="web.md",
+        file_extension="md",
+        file_size=8,
+        user_id=test_user.id,
+        is_active=True,
+        status="enabled",
+        index_status=DocumentIndexStatus.SUCCESS,
+        source_type="web",
+        source_config={"url": "https://example.org/hours"},
+    )
+    test_db.add(document)
+    test_db.commit()
+    lease = MagicMock()
+    lease.owned.return_value = True
+    monkeypatch.setattr(
+        web_refresh.distributed_lock,
+        "owned_watchdog_context",
+        lambda *a, **kw: nullcontext(lease),
+    )
+    monkeypatch.setattr(
+        web_refresh,
+        "scrape_with_domain_lease",
+        AsyncMock(
+            return_value=ScrapedContent(
+                url=document.source_config["url"],
+                success=True,
+                content="Updated opening hours",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.index_document_task.apply_async", MagicMock()
+    )
+    assert asyncio.run(
+        web_refresh.refresh_web_document(
+            test_db, test_user, document.id, trigger_indexing=False
+        )
+    )["success"]
+    return document, lease
+
+
+@pytest.mark.parametrize("failure", ["fetch", "dispatch", "index"])
+def test_staged_web_body_remains_retryable_after_failed_work(
+    test_db, test_user, staged_web, monkeypatch, failure
+):
+    from app.services.knowledge import web_refresh
+    from app.services.knowledge.index_state_machine import mark_document_index_failed
+    from app.services.knowledge.web_publication import publish_candidate
+
+    document, lease = staged_web
+    if failure == "fetch":
+        monkeypatch.setattr(
+            web_refresh,
+            "scrape_with_domain_lease",
+            AsyncMock(side_effect=ValueError("fetch failed")),
+        )
+        with pytest.raises(ValueError):
+            asyncio.run(
+                web_refresh.refresh_web_document(test_db, test_user, document.id)
+            )
+    else:
+        if failure == "dispatch":
+            monkeypatch.setattr(
+                "app.tasks.knowledge_tasks.index_document_task.apply_async",
+                MagicMock(side_effect=RuntimeError("broker failed")),
+            )
+            with pytest.raises(RuntimeError):
+                knowledge_orchestrator.reindex_document(test_db, test_user, document.id)
+            monkeypatch.setattr(
+                "app.tasks.knowledge_tasks.index_document_task.apply_async", MagicMock()
+            )
+        else:
+            knowledge_orchestrator.reindex_document(test_db, test_user, document.id)
+            assert mark_document_index_failed(
+                test_db, document.id, document.index_generation
+            )
+    assert document.source_config["_web_refresh"]["draft"]
+    assert knowledge_orchestrator.reindex_document(test_db, test_user, document.id)[
+        "success"
+    ]
+    from app.services.knowledge.index_state_machine import mark_document_index_started
+
+    assert mark_document_index_started(
+        test_db, document.id, document.index_generation
+    ).should_execute
+    assert publish_candidate(
+        test_db,
+        document_id=document.id,
+        generation=document.index_generation,
+        chunks=None,
+        lease=lease,
+    )
+    assert (
+        context_service.get_attachment_binary_data(
+            test_db, test_db.get(SubtaskContext, document.attachment_id)
+        )
+        == b"Updated opening hours"
+    )
+
+
+@pytest.mark.parametrize("rollback_reference", [False, True])
+def test_expired_draft_cleanup_invalidates_reference_and_requires_refetch(
+    test_db, test_user, staged_web, monkeypatch, rollback_reference
+):
+    from app.services.knowledge.web_publication import WebDraftExpired
+    from app.services.knowledge.web_version_cleanup import cleanup_retired_versions
+
+    document, _ = staged_web
+    draft_id = document.source_config["_web_refresh"]["attachment_id"]
+    if rollback_reference:
+        knowledge_orchestrator.reindex_document(test_db, test_user, document.id)
+    draft = test_db.get(SubtaskContext, draft_id)
+    draft.type_data = {
+        **draft.type_data,
+        "web_index_version": {
+            **draft.type_data["web_index_version"],
+            "not_before": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+        },
+    }
+    test_db.commit()
+    redis = MagicMock()
+    redis.get.return_value = 0
+    monkeypatch.setattr(
+        "app.services.knowledge.web_version_cleanup.distributed_lock._redis_client",
+        redis,
+    )
+    gateway = MagicMock()
+    gateway.delete_document_index = AsyncMock(return_value={"status": "success"})
+    monkeypatch.setattr(
+        "app.services.rag.gateway_factory.get_rag_gateway", lambda: gateway
+    )
+    cleanup_retired_versions(test_db)
+    assert test_db.get(SubtaskContext, draft_id) is None
+    test_db.refresh(document)
+    if rollback_reference:
+        from app.services.knowledge.index_state_machine import (
+            mark_document_index_failed,
+        )
+
+        assert mark_document_index_failed(
+            test_db, document.id, document.index_generation
+        )
+    assert document.source_config["_web_refresh"]["expired"]
+    assert document.source_config["_web_refresh"]["attachment_id"] is None
+    for _ in range(2):
+        with pytest.raises(WebDraftExpired, match="refresh the page"):
+            knowledge_orchestrator.reindex_document(test_db, test_user, document.id)
+    assert document.processing_error_payload["code"] == "web_draft_expired"
+
+
+def test_same_body_reindex_preserves_summary_and_attachment_reference(
+    test_db, test_user, staged_web
+):
+    from app.services.knowledge.index_state_machine import mark_document_index_started
+    from app.services.knowledge.web_publication import publish_candidate
+
+    document, lease = staged_web
+    config = dict(document.source_config)
+    config.pop("_web_refresh")
+    config["published_generation"] = 1
+    config["summary_attachment_id"] = 900
+    document.source_config = config
+    document.summary = "Existing summary"
+    test_db.commit()
+    knowledge_orchestrator.reindex_document(test_db, test_user, document.id)
+    assert mark_document_index_started(
+        test_db, document.id, document.index_generation
+    ).should_execute
+    assert publish_candidate(
+        test_db,
+        document_id=document.id,
+        generation=document.index_generation,
+        chunks=None,
+        lease=lease,
+    )
+    assert document.summary == "Existing summary"
+    assert document.source_config["summary_attachment_id"] == 900

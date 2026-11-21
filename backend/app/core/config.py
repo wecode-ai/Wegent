@@ -493,6 +493,7 @@ class Settings(BaseSettings):
     # knowledge base that opted in turns into provider and indexing work. The
     # manual trigger endpoint does not depend on this switch.
     DINGTALK_SYNC_SCHEDULE_ENABLED: bool = False
+    WEB_AUTO_UPDATE_SCHEDULE_ENABLED: bool = False
 
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"

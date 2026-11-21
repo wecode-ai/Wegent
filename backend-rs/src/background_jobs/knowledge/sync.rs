@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Cursor-based external synchronization and source-health probes.
-
 use super::{
     cleanup, import,
     index::enabled,
@@ -28,6 +27,8 @@ pub const DAILY: &str = "app.tasks.external_document_sync_tasks.sync_external_do
 pub const DINGTALK_SCAN: &str = "app.tasks.dingtalk_auto_sync_tasks.scan_dingtalk_copies";
 pub const DINGTALK_REFRESH: &str = "app.tasks.dingtalk_auto_sync_tasks.refresh_dingtalk_copy";
 pub const XIAOXIN: &str = "app.tasks.xiaoxin_knowledge_tasks.sync_xiaoxin_hr_knowledge";
+pub const WEB_SCAN: &str = "app.tasks.web_auto_update_tasks.scan_web_documents";
+pub const WEB_REFRESH: &str = "app.tasks.web_auto_update_tasks.refresh_web_document";
 
 pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState>) -> Result<()> {
     let copy = state.clone();
@@ -108,8 +109,9 @@ pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState>) -> R
         }
     })?;
     registry.max_failures(DINGTALK_REFRESH, 1)?;
+    let xiaoxin_state = state.clone();
     registry.register(XIAOXIN, move |context, _| {
-        let state = state.clone();
+        let state = xiaoxin_state.clone();
         async move {
             if let Some(reason) = xiaoxin_skip() {
                 return Ok(json!({"status":"skipped","reason":reason}));
@@ -126,7 +128,88 @@ pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState>) -> R
         }
     })?;
     registry.max_failures(XIAOXIN, 1)?;
-    registry.cron(XIAOXIN, "0 3 * * *", "Asia/Shanghai")
+    registry.cron(XIAOXIN, "0 3 * * *", "Asia/Shanghai")?;
+    let web_scan_state = state.clone();
+    registry.register(WEB_SCAN, move |context, _| {
+        let state = web_scan_state.clone();
+        async move {
+            if !enabled("WEB_AUTO_UPDATE_SCHEDULE_ENABLED", false) {
+                return Ok(json!({"status":"disabled"}));
+            }
+            let lease = Duration::from_secs(super::state::seconds(
+                "WEB_AUTO_UPDATE_LOCK_TTL_SECONDS",
+                3600,
+            ) as u64);
+            Ok(with_lock_watchdog(
+                &state.background_jobs,
+                &context,
+                "wegent:lock:scan_web_documents",
+                lease,
+                scan_web_documents(&state, &context),
+            )
+            .await?
+            .unwrap_or(json!({"status":"locked"})))
+        }
+    })?;
+    registry.max_failures(WEB_SCAN, 1)?;
+    if enabled("WEB_AUTO_UPDATE_SCHEDULE_ENABLED", false) {
+        registry.cron(WEB_SCAN, "0 4 * * *", "UTC")?;
+    }
+    Ok(())
+}
+
+/// Cursor-based scan of web documents whose knowledge base has auto-update enabled.
+async fn scan_web_documents(state: &Arc<AppState>, context: &JobContext) -> Result<Value> {
+    let redis = state
+        .redis
+        .as_ref()
+        .context("Web scan cursor Redis is unavailable")?;
+    let key = "web-auto-update:scan-cursor";
+    let raw: Option<String> = redis.get(key).await?;
+    let mut cursor = raw
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default()
+        .max(0);
+    let maximum = super::state::seconds("EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS", 10000) as u64;
+    let started = Instant::now();
+    let budget = Duration::from_secs(super::state::seconds(
+        "EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS",
+        2700,
+    ) as u64);
+    let mut dispatched: u64 = 0;
+    let mut scanned: u64 = 0;
+    while scanned < maximum && started.elapsed() < budget {
+        if context.cancellation.is_cancelled() {
+            bail!("Web auto-update scan cancelled");
+        }
+        let rows: Vec<Candidate> = state.mysql.fetch_all(
+            "SELECT d.id, d.index_generation FROM knowledge_documents d              JOIN kinds k ON k.id = d.kind_id              WHERE d.id > ?              AND d.source_type = 'web'              AND d.is_active = true AND d.status = 'enabled'              AND d.index_status NOT IN ('queued','pending_conversion','converting','indexing')              AND k.kind = 'KnowledgeBase'              AND k.is_active = true              AND JSON_EXTRACT(k.json, '$.spec.webAutoUpdateEnabled') = true              ORDER BY d.id LIMIT 100",
+            (cursor,),
+        ).await?;
+        if rows.is_empty() {
+            cursor = 0;
+            break;
+        }
+        for row in rows {
+            if scanned >= maximum
+                || started.elapsed() >= budget
+                || context.cancellation.is_cancelled()
+            {
+                break;
+            }
+            cursor = row.id;
+            scanned += 1;
+            let value = json!({"document_id": row.id, "expected_generation": row.index_generation});
+            match submit_python(state, WEB_REFRESH, value, Some(86400)).await {
+                Ok(()) => dispatched += 1,
+                Err(dispatch_error) => {
+                    tracing::warn!(document_id = row.id, %dispatch_error, "Web auto-update refresh dispatch failed");
+                }
+            }
+        }
+    }
+    store_cursor(redis, key, cursor).await?;
+    Ok(json!({"status":"completed","scanned":scanned,"dispatched":dispatched,"next_cursor":cursor}))
 }
 
 #[derive(FromMysqlRow)]
@@ -562,6 +645,35 @@ pub(super) async fn invalidate_refresh(
         tx.execute("UPDATE knowledge_documents SET source_config=?,is_active=IF(?,is_active,false),updated_at=NOW() WHERE id=? AND index_generation=?",(Json(&config),synchronized,id,generation)).await?;
         Ok(())
     }).await
+}
+
+pub(super) async fn submit_python(
+    state: &AppState,
+    name: &str,
+    value: Value,
+    expires: Option<i64>,
+) -> Result<()> {
+    let redis = state
+        .celery_publisher
+        .as_ref()
+        .context("External document task broker is unavailable")?;
+    let id = super::super::client::random_id()?;
+    state
+        .celery
+        .dispatch(
+            redis,
+            &crate::celery_broker::CeleryTask {
+                task_name: name,
+                queue: "wegent_online",
+                task_id: &id,
+                kwargs: value
+                    .as_object()
+                    .context("External job payload is invalid")?,
+                expires_at: expires.map(|seconds| Utc::now() + chrono::Duration::seconds(seconds)),
+            },
+        )
+        .await?;
+    Ok(())
 }
 
 async fn submit(state: &AppState, name: &str, value: Value, expires: Option<i64>) -> Result<()> {

@@ -471,3 +471,130 @@ async fn import_failures_distinguish_unavailable_from_failed_version(
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn python_refresh_dispatch_uses_the_broker_database() {
+    // RedisService owns process-wide DNS state. Keep the real SDK protocol
+    // fixture separate from tests that construct their own Tokio runtimes.
+    const CHILD: &str = "WEGENT_WEB_BROKER_PROTOCOL_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "background_jobs::knowledge::mysql_tests::python_refresh_dispatch_uses_the_broker_database",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let published = Arc::new(Mutex::new(Vec::new()));
+    let captured = published.clone();
+    let server = tokio::spawn(async move {
+        let mut clients = tokio::task::JoinSet::new();
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let captured = captured.clone();
+            clients.spawn(async move {
+                let mut stream = BufReader::new(socket);
+                let (mut database, mut queued) = (0, None);
+                loop {
+                    let mut line = String::new();
+                    if stream.read_line(&mut line).await.unwrap() == 0 {
+                        break;
+                    }
+                    let count: usize = line.trim().strip_prefix('*').unwrap().parse().unwrap();
+                    let mut args = Vec::new();
+                    for _ in 0..count {
+                        line.clear();
+                        stream.read_line(&mut line).await.unwrap();
+                        let length: usize = line.trim().strip_prefix('$').unwrap().parse().unwrap();
+                        let mut data = vec![0; length + 2];
+                        stream.read_exact(&mut data).await.unwrap();
+                        args.push(String::from_utf8(data[..length].to_vec()).unwrap());
+                    }
+                    let response = match args[0].as_str() {
+                        "SELECT" => {
+                            database = args[1].parse().unwrap();
+                            "+OK\r\n".to_owned()
+                        }
+                        "PING" => "+PONG\r\n".to_owned(),
+                        "SUBSCRIBE" | "UNSUBSCRIBE" => {
+                            "-ERR fixture rejects result subscriptions\r\n".to_owned()
+                        }
+                        "MULTI" => {
+                            queued = Some(0);
+                            "+OK\r\n".to_owned()
+                        }
+                        "EXEC" => {
+                            let count = queued.take().unwrap();
+                            format!("*{count}\r\n{}", ":0\r\n".repeat(count))
+                        }
+                        _ if queued.is_some() => {
+                            *queued.as_mut().unwrap() += 1;
+                            "+QUEUED\r\n".to_owned()
+                        }
+                        "LPUSH" => {
+                            captured.lock().unwrap().push((
+                                database,
+                                args[1].clone(),
+                                args[2].clone(),
+                            ));
+                            ":1\r\n".to_owned()
+                        }
+                        "LLEN" | "SADD" => ":0\r\n".to_owned(),
+                        _ => "+OK\r\n".to_owned(),
+                    };
+                    stream
+                        .get_mut()
+                        .write_all(response.as_bytes())
+                        .await
+                        .unwrap();
+                }
+            });
+        }
+    });
+    let application = brz_redis::RedisService::single(format!("{address}:1"))
+        .await
+        .unwrap();
+    let broker = brz_redis::RedisService::single(format!("{address}:2"))
+        .await
+        .unwrap();
+    let mut state = crate::app_test_support::app(
+        MysqlService::connect_lazy("mysql://test@127.0.0.1:1/test").unwrap(),
+    );
+    let state = Arc::get_mut(&mut state).unwrap();
+    state.redis = Some(application.clone());
+    state.celery_publisher = Some(broker);
+    state.celery = crate::CeleryBroker::new(Some(application));
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        sync::submit_python(
+            state,
+            sync::WEB_REFRESH,
+            json!({"document_id": 42, "expected_generation": 3}),
+            Some(86400),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let messages = published.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].0, 2);
+    assert_eq!(messages[0].1, "wegent_online");
+    let envelope: Value = serde_json::from_str(&messages[0].2).unwrap();
+    assert_eq!(envelope["headers"]["task"], sync::WEB_REFRESH);
+    server.abort();
+}

@@ -4,11 +4,13 @@
 
 """Tests for knowledge indexing state machine helpers."""
 
+import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine, update
+from sqlalchemy import create_engine, event, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -84,6 +86,128 @@ def _create_document(
     test_db.commit()
     test_db.refresh(document)
     return document
+
+
+@pytest.mark.parametrize("completion", ["unchanged", "lease_lost", "replaced"])
+def test_unchanged_refresh_cannot_overwrite_a_replacement(
+    tmp_path, monkeypatch, completion
+):
+    from app.db.base import Base
+    from app.services.knowledge import web_refresh
+    from app.services.knowledge.web_publication import config_fingerprint, content_hash
+    from app.services.web_scraper import ScrapedContent
+    from tests.utils.retrieval_resources import embedding_model_kind, retriever_kind
+
+    # Independent connections ensure a replacement commit survives old rollback.
+    engine = create_engine(f"sqlite:///{tmp_path}/refresh.sqlite")
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine, expire_on_commit=False) as db:
+            user = User(user_name="refresh-owner", password_hash="test", is_active=True)
+            db.add(user)
+            db.commit()
+            kb = _create_knowledge_base(db, user)
+            kb.json = {
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "store",
+                        "embedding_config": {"model_name": "embed"},
+                    }
+                }
+            }
+            db.add_all(
+                [
+                    retriever_kind(user.id, "store"),
+                    embedding_model_kind(user.id, "embed"),
+                ]
+            )
+            document = _create_document(
+                db,
+                user,
+                kb,
+                is_active=True,
+                index_status=DocumentIndexStatus.SUCCESS,
+                index_generation=2,
+            )
+            body = "This is the unchanged published body with sufficient content."
+            document.source_type = "web"
+            document.attachment_id = 11
+            document.source_config = {
+                "url": "https://example.com",
+                "published_generation": 2,
+                "webAutoUpdate": {"content_hash": content_hash(body)},
+            }
+            db.commit()
+            document.source_config = {
+                **document.source_config,
+                "published_index_fingerprint": config_fingerprint(kb, document, db),
+            }
+            db.commit()
+            doc_id = document.id
+            lease = MagicMock()
+            lease.owned.return_value = True
+            monkeypatch.setattr(
+                web_refresh.distributed_lock,
+                "owned_watchdog_context",
+                lambda *a, **kw: nullcontext(lease),
+            )
+            armed = False
+
+            async def fetch(url):
+                nonlocal armed
+                armed = completion != "unchanged"
+                return ScrapedContent(url=url, content=body)
+
+            monkeypatch.setattr(web_refresh, "scrape_with_domain_lease", fetch)
+            dispatch = MagicMock()
+            monkeypatch.setattr(
+                "app.tasks.knowledge_tasks.index_document_task.apply_async", dispatch
+            )
+
+            @event.listens_for(engine, "before_cursor_execute")
+            def lose_lease(conn, cursor, statement, parameters, context, executemany):
+                nonlocal armed
+                if not armed or not statement.startswith("UPDATE knowledge_documents"):
+                    return
+                armed = False
+                lease.owned.return_value = False
+                if completion == "replaced":
+                    with Session(engine) as writer:
+                        current = writer.get(KnowledgeDocument, doc_id)
+                        current.index_generation += 1
+                        current.index_status = DocumentIndexStatus.QUEUED
+                        current.source_config = {
+                            **current.source_config,
+                            "new_owner_marker": True,
+                            "_web_refresh": {"generation": current.index_generation},
+                        }
+                        writer.commit()
+
+            if completion == "unchanged":
+                assert asyncio.run(web_refresh.refresh_web_document(db, user, doc_id))[
+                    "success"
+                ]
+            else:
+                with pytest.raises(ValueError, match="superseded"):
+                    asyncio.run(web_refresh.refresh_web_document(db, user, doc_id))
+            db.expire_all()
+            current = db.get(KnowledgeDocument, doc_id)
+            assert current.source_config["published_generation"] == 2
+            assert current.attachment_id == 11 and current.is_active
+            dispatch.assert_not_called()
+            if completion == "unchanged":
+                assert current.index_status == DocumentIndexStatus.SUCCESS
+                assert "_web_refresh" not in current.source_config
+                assert current.source_config["webAutoUpdate"]["last_checked_at"]
+            else:
+                generation = 4 if completion == "replaced" else 3
+                assert current.index_generation == generation
+                assert current.index_status == DocumentIndexStatus.QUEUED
+                assert current.source_config["_web_refresh"]["generation"] == generation
+                if completion == "replaced":
+                    assert current.source_config["new_owner_marker"] is True
+    finally:
+        engine.dispose()
 
 
 def test_prepare_document_index_enqueue_schedules_new_generation(
@@ -164,8 +288,9 @@ def test_prepare_document_index_enqueue_recovers_stale_queued_generation(
     assert document.index_generation == 4
 
 
+@pytest.mark.parametrize("web_candidate", [False, True])
 def test_prepare_document_index_enqueue_recovers_stale_indexing_generation(
-    test_db: Session, test_user: User
+    test_db: Session, test_user: User, web_candidate: bool
 ):
     knowledge_base = _create_knowledge_base(test_db, test_user)
     document = _create_document(
@@ -175,6 +300,13 @@ def test_prepare_document_index_enqueue_recovers_stale_indexing_generation(
         index_status=DocumentIndexStatus.INDEXING,
         index_generation=6,
     )
+    if web_candidate:
+        document.source_type = "web"
+        document.source_config = {
+            "published_generation": 5,
+            "_web_refresh": {"generation": 6, "previous_index_status": "success"},
+        }
+        test_db.commit()
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {
             KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
@@ -192,10 +324,15 @@ def test_prepare_document_index_enqueue_recovers_stale_indexing_generation(
     test_db.refresh(document)
     assert decision.should_enqueue is True
     assert decision.reason == "scheduled_after_stale_recovery"
-    assert decision.previous_status == DocumentIndexStatus.INDEXING
+    assert decision.previous_status == (
+        DocumentIndexStatus.SUCCESS if web_candidate else DocumentIndexStatus.INDEXING
+    )
     assert decision.generation == 7
     assert document.index_status == DocumentIndexStatus.QUEUED
     assert document.index_generation == 7
+    if web_candidate:
+        assert document.source_config["published_generation"] == 5
+        assert "_web_refresh" not in document.source_config
 
 
 def test_prepare_document_index_enqueue_skips_success_without_override(
@@ -321,6 +458,32 @@ def test_mark_document_index_started_skips_not_indexed_document(
 
     assert decision.should_execute is False
     assert decision.reason == "not_scheduled"
+
+
+def test_web_index_redelivery_cannot_restart_an_inflight_physical_version(
+    test_db: Session, test_user: User
+):
+    kb = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        kb,
+        index_status=DocumentIndexStatus.QUEUED,
+        index_generation=2,
+    )
+    document.source_type = "web"
+    document.source_config = {
+        "published_generation": 1,
+        "_web_refresh": {"generation": 2, "previous_index_status": "success"},
+    }
+    test_db.commit()
+    assert mark_document_index_started(test_db, document.id, 2).should_execute
+    redelivery = mark_document_index_started(test_db, document.id, 2)
+    assert not redelivery.should_execute
+    assert redelivery.reason == "already_in_progress"
+    test_db.refresh(document)
+    assert document.index_status == DocumentIndexStatus.INDEXING
+    assert document.source_config["published_generation"] == 1
 
 
 def test_mark_document_index_started_updates_timestamp_on_success(
@@ -1182,3 +1345,491 @@ def test_scanner_does_not_fail_worker_that_started_after_snapshot(
     test_db.refresh(doc)
     assert doc.index_status == DocumentIndexStatus.INDEXING
     assert doc.index_generation == 1
+
+
+@pytest.mark.parametrize(
+    "invalidate",
+    [
+        "disable",
+        "kb_off",
+        "global_off",
+        "kb_deleted",
+        "requester_inactive",
+        "url",
+        "splitter",
+        "lease",
+        "generation",
+    ],
+)
+def test_web_publication_refuses_invalidated_candidate(
+    test_db, test_user, invalidate, monkeypatch
+):
+    from app.services.knowledge.web_publication import (
+        config_fingerprint,
+        publish_candidate,
+    )
+
+    monkeypatch.setattr(settings, "WEB_AUTO_UPDATE_SCHEDULE_ENABLED", True)
+    kb = _create_knowledge_base(test_db, test_user)
+    kb.json = {"spec": {"webAutoUpdateEnabled": True}}
+    document = _create_document(
+        test_db,
+        test_user,
+        kb,
+        is_active=True,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=3,
+    )
+    document.source_type = "web"
+    document.attachment_id = 11
+    document.chunks = {"items": [{"content": "published body"}]}
+    document.source_config = {"url": "https://example.com", "published_generation": 2}
+    test_db.commit()
+    candidate = {
+        "generation": 3,
+        "attachment_id": 22,
+        "file_size": 2,
+        "previous_index_status": "success",
+        "url": "https://example.com",
+        "automatic": True,
+        "requested_by": test_user.id,
+        "metadata": {},
+        "content_hash": "new-hash",
+        "config_fingerprint": config_fingerprint(kb, document, test_db),
+    }
+    document.source_config = {**document.source_config, "_web_refresh": candidate}
+    if invalidate == "disable":
+        document.is_active, document.status = False, "disabled"
+    elif invalidate == "kb_off":
+        kb.json = {"spec": {"webAutoUpdateEnabled": False}}
+    elif invalidate == "global_off":
+        monkeypatch.setattr(settings, "WEB_AUTO_UPDATE_SCHEDULE_ENABLED", False)
+    elif invalidate == "kb_deleted":
+        kb.is_active = False
+    elif invalidate == "requester_inactive":
+        test_user.is_active = False
+    elif invalidate == "url":
+        document.source_config = {
+            **document.source_config,
+            "url": "https://changed.example",
+        }
+    elif invalidate == "splitter":
+        document.splitter_config = {"chunk_size": 777}
+    elif invalidate == "generation":
+        document.index_generation = 4
+    test_db.commit()
+    lease = MagicMock()
+    lease.owned.return_value = invalidate != "lease"
+
+    assert not publish_candidate(
+        test_db,
+        document_id=document.id,
+        generation=3,
+        chunks={"items": [{"content": "candidate"}]},
+        lease=lease,
+    )
+    test_db.refresh(document)
+    assert document.attachment_id == 11
+    assert document.source_config["published_generation"] == 2
+    assert document.chunks["items"][0]["content"] == "published body"
+    if invalidate == "disable":
+        assert not document.is_active and document.status == "disabled"
+    if invalidate == "lease":
+        # A previous owner must not abandon the candidate now owned elsewhere.
+        assert document.source_config["_web_refresh"] == candidate
+        assert document.index_status == DocumentIndexStatus.INDEXING
+
+
+def test_web_publication_is_idempotent_and_failure_keeps_user_disabled(
+    test_db, test_user, monkeypatch
+):
+    from app.services.knowledge.web_publication import (
+        config_fingerprint,
+        publish_candidate,
+    )
+
+    monkeypatch.setattr(settings, "CHUNK_STORAGE_ENABLED", True)
+    kb = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        kb,
+        is_active=True,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=3,
+    )
+    document.source_type = "web"
+    document.source_config = {
+        "url": "https://example.com",
+        "webAutoUpdate": {"last_error_code": "refresh_failed"},
+    }
+    document.summary = {"content": "old summary"}
+    test_db.commit()
+    document.source_config = {
+        **document.source_config,
+        "_web_refresh": {
+            "generation": 3,
+            "attachment_id": 22,
+            "file_size": 2,
+            "previous_index_status": "success",
+            "url": "https://example.com",
+            "automatic": False,
+            "requested_by": test_user.id,
+            "metadata": {},
+            "content_hash": "new-hash",
+            "config_fingerprint": config_fingerprint(kb, document, test_db),
+        },
+    }
+    test_db.commit()
+    lease = MagicMock()
+    lease.owned.return_value = True
+    assert publish_candidate(
+        test_db,
+        document_id=document.id,
+        generation=3,
+        chunks={"items": [{"content": "好"}]},
+        lease=lease,
+    )
+    assert document.summary is None
+    assert document.attachment_id == 22
+    assert "last_error_code" not in document.source_config["webAutoUpdate"]
+    assert publish_candidate(
+        test_db, document_id=document.id, generation=3, chunks=None, lease=None
+    )
+    assert document.chunks["items"][0]["content"] == "好"
+
+    document.index_generation = 4
+    document.index_status = DocumentIndexStatus.INDEXING
+    document.is_active, document.status = False, "disabled"
+    document.source_config = {
+        **document.source_config,
+        "_web_refresh": {"generation": 4, "previous_index_status": "success"},
+    }
+    test_db.commit()
+    assert mark_document_index_failed(test_db, document.id, 4)
+    assert document.attachment_id == 22
+    assert document.source_config["published_generation"] == 3
+    assert not document.is_active and document.status == "disabled"
+
+
+@pytest.mark.parametrize("previous_status", ["not_indexed", "failed"])
+@pytest.mark.parametrize(
+    "user_choice", [None, "disabled", "enabled", "disable_inflight"]
+)
+def test_first_web_publication_respects_readiness_and_explicit_status(
+    test_db, test_user, previous_status, user_choice
+):
+    from app.models.knowledge import DocumentStatus
+    from app.schemas.knowledge import KnowledgeDocumentUpdate
+    from app.services.knowledge.web_publication import (
+        config_fingerprint,
+        publish_candidate,
+    )
+
+    kb = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db, test_user, kb, index_status=DocumentIndexStatus(previous_status)
+    )
+    document.source_type = "web"
+    document.attachment_id = 11
+    document.source_config = {"url": "https://example.com"}
+    test_db.commit()
+    if user_choice in {"disabled", "enabled"}:
+        KnowledgeService.update_document(
+            test_db,
+            document.id,
+            test_user.id,
+            KnowledgeDocumentUpdate(status=DocumentStatus(user_choice)),
+        )
+    decision = prepare_document_index_enqueue(test_db, document.id)
+    document.source_config = {
+        **document.source_config,
+        "_web_refresh": {
+            "generation": decision.generation,
+            "attachment_id": 22,
+            "file_size": 10,
+            "previous_index_status": previous_status,
+            "url": document.source_config["url"],
+            "automatic": False,
+            "requested_by": test_user.id,
+            "user_state": {"is_active": document.is_active, "status": document.status},
+            "user_status_override": document.source_config.get("web_user_status"),
+            "metadata": {},
+            "content_hash": "new-hash",
+            "config_fingerprint": config_fingerprint(kb, document, test_db),
+        },
+    }
+    test_db.commit()
+    assert mark_document_index_started(
+        test_db, document.id, decision.generation
+    ).should_execute
+    if user_choice == "disable_inflight":
+        # This is a no-op status value change from the system's disabled default.
+        KnowledgeService.update_document(
+            test_db,
+            document.id,
+            test_user.id,
+            KnowledgeDocumentUpdate(status=DocumentStatus.DISABLED),
+        )
+    lease = MagicMock()
+    lease.owned.return_value = True
+    published = publish_candidate(
+        test_db,
+        document_id=document.id,
+        generation=decision.generation,
+        chunks=None,
+        lease=lease,
+    )
+    test_db.refresh(document)
+    if user_choice == "disable_inflight":
+        assert not published
+        assert document.status == "disabled"
+        assert not document.is_active
+        assert document.attachment_id == 11
+        assert document.index_status.value == previous_status
+        assert "published_generation" not in document.source_config
+        return
+    assert published
+    assert document.index_status == DocumentIndexStatus.SUCCESS
+    assert document.is_active
+    assert document.status == ("disabled" if user_choice == "disabled" else "enabled")
+    if user_choice == "disabled":
+        KnowledgeService.update_document(
+            test_db,
+            document.id,
+            test_user.id,
+            KnowledgeDocumentUpdate(status=DocumentStatus.ENABLED),
+        )
+    assert test_db.query(KnowledgeDocument.id).filter(
+        KnowledgeDocument.id == document.id,
+        KnowledgeDocument.is_active.is_(True),
+        KnowledgeDocument.status == "enabled",
+    ).first() == (document.id,)
+
+
+def test_first_unversioned_web_index_also_preserves_explicit_disable(
+    test_db, test_user
+):
+    from app.models.knowledge import DocumentStatus
+    from app.schemas.knowledge import KnowledgeDocumentUpdate
+
+    kb = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        kb,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=1,
+    )
+    document.source_type = "web"
+    test_db.commit()
+    KnowledgeService.update_document(
+        test_db,
+        document.id,
+        test_user.id,
+        KnowledgeDocumentUpdate(status=DocumentStatus.DISABLED),
+    )
+    assert mark_document_index_succeeded(test_db, document.id, 1)
+    test_db.refresh(document)
+    assert document.is_active
+    assert document.status == "disabled"
+
+
+@pytest.mark.parametrize("published", [False, True])
+def test_stale_web_takeover_restores_terminal_status_without_candidate(
+    test_db, test_user, monkeypatch, published
+):
+    emit = MagicMock()
+    monkeypatch.setattr(
+        "shared.event_reporting.catalogs.knowledge.emit_index_event", emit
+    )
+
+    kb = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db, test_user, kb, index_status=DocumentIndexStatus.INDEXING
+    )
+    document.source_type = "web"
+    document.source_config = {"published_generation": 1} if published else {}
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.knowledge.index_state_machine._get_active_index_stale_reason",
+        lambda doc: "stale_indexing",
+    )
+    decision = prepare_document_index_enqueue(
+        test_db, document.id, allow_if_success=True
+    )
+    expected = DocumentIndexStatus.SUCCESS if published else DocumentIndexStatus.FAILED
+    assert decision.previous_status == expected
+    document.source_config = {
+        **document.source_config,
+        "_web_refresh": {
+            "generation": decision.generation,
+            "previous_index_status": decision.previous_status,
+        },
+    }
+    test_db.commit()
+    assert mark_document_index_failed(test_db, document.id, decision.generation)
+    assert document.index_status == expected
+
+    emit.assert_called_once()
+    assert emit.call_args.args[0] == "knowledge.index.generation.terminal"
+    assert emit.call_args.kwargs["status"] == "failure"
+
+
+def test_crawl_cannot_revive_candidate_terminated_by_stale_scanner(
+    test_db, test_user, monkeypatch
+):
+    from app.services.knowledge import web_refresh
+    from app.services.web_scraper import ScrapedContent
+    from tests.utils.retrieval_resources import embedding_model_kind, retriever_kind
+
+    kb = _create_knowledge_base(test_db, test_user)
+    kb.json = {
+        "spec": {
+            "retrievalConfig": {
+                "retriever_name": "store",
+                "embedding_config": {"model_name": "embed"},
+            }
+        }
+    }
+    test_db.add_all(
+        [
+            retriever_kind(test_user.id, "store"),
+            embedding_model_kind(test_user.id, "embed"),
+        ]
+    )
+    document = _create_document(
+        test_db, test_user, kb, is_active=True, index_status=DocumentIndexStatus.SUCCESS
+    )
+    document.source_type = "web"
+    document.source_config = {"url": "https://example.org"}
+    test_db.commit()
+    lease = MagicMock()
+    lease.owned.return_value = True
+    monkeypatch.setattr(
+        web_refresh.distributed_lock,
+        "owned_watchdog_context",
+        lambda *a, **kw: nullcontext(lease),
+    )
+
+    async def fetch(url):
+        assert mark_document_index_failed(
+            test_db, document.id, document.index_generation
+        )
+        return ScrapedContent(url=url, success=True, content="Changed body")
+
+    monkeypatch.setattr(web_refresh, "scrape_with_domain_lease", fetch)
+    dispatch = MagicMock()
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.index_document_task.apply_async", dispatch
+    )
+    with pytest.raises(ValueError, match="superseded"):
+        asyncio.run(web_refresh.refresh_web_document(test_db, test_user, document.id))
+    assert document.index_status == DocumentIndexStatus.SUCCESS
+    assert "_web_refresh" not in document.source_config
+    dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize("publication", ["versioned", "legacy", "none", "disabled"])
+def test_web_selection_uses_the_served_publication_while_refreshing(
+    test_db, test_user, publication
+):
+    from app.services.knowledge.knowledge_service import (
+        KnowledgeDocumentScopeValidationError,
+    )
+
+    kb = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db, test_user, kb, is_active=True, index_status=DocumentIndexStatus.QUEUED
+    )
+    document.source_type = "web"
+    document.source_config = (
+        {"published_generation": 1}
+        if publication != "legacy"
+        else {"_web_refresh": {"previous_index_status": "success"}}
+    )
+    if publication == "none":
+        document.source_config = {}
+    if publication == "disabled":
+        document.status = "disabled"
+    test_db.commit()
+    arguments = {
+        "knowledge_base_id": kb.id,
+        "user_id": test_user.id,
+        "document_ids": [document.id],
+    }
+    if publication in {"none", "disabled"}:
+        with pytest.raises(KnowledgeDocumentScopeValidationError):
+            KnowledgeService.resolve_usable_document_ids(test_db, **arguments)
+    else:
+        assert KnowledgeService.resolve_usable_document_ids(test_db, **arguments) == [
+            document.id
+        ]
+
+
+@pytest.mark.parametrize("reject_after_lock", [False, True])
+def test_rejected_web_status_update_releases_its_transaction(
+    test_db, test_user, monkeypatch, reject_after_lock
+):
+    from app.schemas.knowledge import DocumentStatus, KnowledgeDocumentUpdate
+
+    kb = _create_knowledge_base(test_db, test_user)
+    document = _create_document(test_db, test_user, kb)
+    document.source_type = "web"
+    test_db.commit()
+    original_name = document.name
+    original_lock = KnowledgeService._lock_document_row
+
+    def lock(db, doc_id):
+        current = original_lock(db, doc_id)
+        current.name = "uncommitted lock-holder change"
+        return current
+
+    lock_spy = MagicMock(side_effect=lock)
+    permission = MagicMock(
+        side_effect=(
+            [None, ValueError("denied")] if reject_after_lock else ValueError("denied")
+        )
+    )
+    monkeypatch.setattr(KnowledgeService, "_lock_document_row", lock_spy)
+    monkeypatch.setattr(KnowledgeService, "_assert_can_manage_document", permission)
+    with pytest.raises(ValueError, match="denied"):
+        KnowledgeService.update_document(
+            test_db,
+            document.id,
+            test_user.id,
+            KnowledgeDocumentUpdate(status=DocumentStatus.DISABLED),
+        )
+    if reject_after_lock:
+        assert lock_spy.call_count == 1
+        test_db.refresh(document)
+        assert document.name == original_name
+    else:
+        lock_spy.assert_not_called()
+
+
+@pytest.mark.parametrize("error", ["unavailable", "connection"])
+def test_manual_refresh_maps_unavailable_lease_to_structured_failure(
+    test_db, test_user, monkeypatch, error
+):
+    from redis.exceptions import ConnectionError
+
+    from app.core.distributed_lock import DistributedLockUnavailableError
+    from app.services.knowledge import web_refresh
+    from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+    lease_error = (
+        DistributedLockUnavailableError("lease unavailable")
+        if error == "unavailable"
+        else ConnectionError("disconnected")
+    )
+    monkeypatch.setattr(
+        web_refresh.distributed_lock,
+        "owned_watchdog_context",
+        MagicMock(side_effect=lease_error),
+    )
+    result = asyncio.run(
+        knowledge_orchestrator.refresh_web_document(test_db, test_user, 1)
+    )
+    assert result["success"] is False
+    assert result["error_code"] == "REFRESH_FAILED"

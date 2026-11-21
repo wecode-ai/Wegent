@@ -26,5 +26,8 @@ class KnowledgeDocument(Base):
     is_active = Column(Boolean, nullable=False, default=False)
     status = Column(String(20), nullable=False, default="disabled")
     chunks = Column(JSON, nullable=True)
+    source_config = Column(JSON, nullable=True)
     attachment_id = Column(Integer, nullable=False, default=0)
+    index_generation = Column(Integer, nullable=False, default=0)
+    index_status = Column(String(32), nullable=False, default="not_indexed")
     splitter_config = Column(JSON, nullable=False, default={})

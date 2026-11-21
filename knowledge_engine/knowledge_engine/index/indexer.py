@@ -302,6 +302,15 @@ class DocumentIndexer:
             **kwargs,
         )
 
+        if "@" in chunk_metadata.doc_ref:
+            self.storage_backend.prepare_document_publication(
+                knowledge_id=chunk_metadata.knowledge_id,
+                doc_ref=chunk_metadata.doc_ref,
+                chunk_count=len(nodes),
+                node_ids=[node.node_id for node in nodes],
+                parent_node_ids=[node.node_id for node in (parent_nodes or [])],
+                **kwargs,
+            )
         result.update(
             {
                 "doc_ref": chunk_metadata.doc_ref,

@@ -343,6 +343,7 @@ mod users_me_subscription_invitations;
 use wegent_backend_users::users_runtime_configs;
 mod v1_resources;
 pub use wegent_media::video_result_urls;
+mod web_auto_update_config;
 mod web_scraper;
 mod web_scraper_create_document;
 use wegent_identity::wework_auth_tokens;

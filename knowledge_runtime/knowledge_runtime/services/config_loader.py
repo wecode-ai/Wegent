@@ -48,6 +48,7 @@ class RuntimeConfigLoader:
         user_id: int,
         document_id: int | None = None,
         authorized: RemoteAuthorizedRetrievalResources | None = None,
+        index_generation: int | None = None,
     ) -> IndexConfig:
         """Resolve all configs needed for document indexing."""
         return self._resolve_with_session(
@@ -57,6 +58,11 @@ class RuntimeConfigLoader:
                 user_id=user_id,
                 document_id=document_id,
                 authorized=authorized,
+                **(
+                    {"index_generation": index_generation}
+                    if index_generation is not None
+                    else {}
+                ),
             )
         )
 
@@ -110,6 +116,39 @@ class RuntimeConfigLoader:
                 for knowledge_base_id in knowledge_base_ids
             }
         )
+
+    def resolve_retired_config(self, request) -> AdminResolvedConfig:
+        from knowledge_runtime.services.web_version_cleanup import (
+            resolve_retired_config,
+        )
+
+        return self._resolve_with_session(
+            lambda db: resolve_retired_config(db, self._resolver, request)
+        )
+
+    def published_document_ref(self, knowledge_base_id: int, document_ref: str) -> str:
+        from knowledge_runtime.models.knowledge_document import KnowledgeDocument
+
+        if not document_ref.isdigit():
+            return document_ref
+
+        def resolve(db):
+            document = (
+                db.query(KnowledgeDocument)
+                .filter(
+                    KnowledgeDocument.id == int(document_ref),
+                    KnowledgeDocument.kind_id == knowledge_base_id,
+                )
+                .first()
+            )
+            generation = (
+                (document.source_config or {}).get("published_generation")
+                if document
+                else None
+            )
+            return f"{document_ref}@{generation}" if generation else document_ref
+
+        return self._resolve_with_session(resolve)
 
     def resolve_admin_config(
         self,

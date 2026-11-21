@@ -549,7 +549,8 @@ mod tests {
         assert!(!in_scope("/api/mcp/knowledge-external-other"));
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = load_routes_config(&path).unwrap();
-        assert!(config.routes.iter().all(|rule| !in_scope(&rule.path)));
+        assert!(config.routes.iter().all(|rule| !in_scope(&rule.path)
+            || rule.path == "/api/knowledge-bases/:kb_id/web-auto-update"));
         let table = load(&path).unwrap();
         let registered: BTreeSet<_> =
             brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
@@ -564,6 +565,7 @@ mod tests {
             "/api/knowledge/documents",
             "/api/knowledge/documents/:document_id/content",
             "/api/knowledge-bases/:kb_id/documents/:doc_id/detail",
+            "/api/knowledge-bases/:kb_id/web-auto-update",
             "/api/knowledge-bases/:knowledge_base_id/folders",
             "/api/mcp/knowledge-external/documents/:document_id/file",
             "/api/share/KnowledgeBase/:resource_id/my-permission",
@@ -586,7 +588,13 @@ mod tests {
                 Method::DELETE,
                 Method::OPTIONS,
             ] {
-                assert!(!table.matches(&method, &concrete), "{method} {path}");
+                let selected = path == "/api/knowledge-bases/:kb_id/web-auto-update"
+                    && matches!(method, Method::GET | Method::PUT);
+                assert_eq!(
+                    table.matches(&method, &concrete),
+                    selected,
+                    "{method} {path}"
+                );
             }
         }
         // Existing non-knowledge cutovers keep the same method selection.

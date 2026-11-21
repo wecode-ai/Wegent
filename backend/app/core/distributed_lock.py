@@ -117,6 +117,53 @@ class DistributedLock:
             thread_local=False,
         )
 
+    @contextmanager
+    def owned_watchdog_context(
+        self,
+        lock_name: str,
+        *,
+        expire_seconds: int = 120,
+        extend_interval_seconds: int = 30,
+    ) -> Generator[Lock | None, None, None]:
+        """Renew an owner-token lease and fail closed when Redis is unavailable.
+
+        Callers must also check ``lease.owned()`` before committing a fenced
+        write. Release and renewal can never affect a replacement owner's lock.
+        """
+        lease = self.owned_lock(
+            f"{LOCK_KEY_PREFIX}{lock_name}", expire_seconds=expire_seconds
+        )
+        if not lease.acquire(blocking=False):
+            yield None
+            return
+        stopped = Event()
+
+        def renew() -> None:
+            while not stopped.wait(extend_interval_seconds):
+                try:
+                    lease.extend(expire_seconds, replace_ttl=True)
+                except redis.exceptions.RedisError:
+                    logger.warning("Lost owned lease %s", lock_name, exc_info=True)
+                    return
+
+        watchdog = Thread(target=renew, daemon=True)
+        watchdog.start()
+        try:
+            yield lease
+        finally:
+            stopped.set()
+            watchdog.join(timeout=1)
+            try:
+                lease.release()
+            except redis.exceptions.LockNotOwnedError:
+                logger.warning("Lease %s expired before release", lock_name)
+            except redis.exceptions.RedisError:
+                logger.warning(
+                    "Unable to release lease %s; allowing it to expire",
+                    lock_name,
+                    exc_info=True,
+                )
+
     def acquire(self, lock_name: str, expire_seconds: int = 60) -> bool:
         """
         Acquire a distributed lock.

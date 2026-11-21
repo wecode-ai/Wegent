@@ -203,6 +203,11 @@ class RemoteRagGateway:
             user_id=spec.index_owner_user_id,
             authorized_resources=spec.authorized_resources,
             document_ref=spec.document_ref,
+            extensions=(
+                {"version_attachment_id": spec.version_attachment_id}
+                if spec.version_attachment_id
+                else None
+            ),
         )
         return await self._post_model("/internal/rag/delete-document-index", payload)
 
@@ -284,6 +289,7 @@ def _build_remote_index_request(
             document_id=spec.document_id,
             source_file=source_file,
             file_extension=file_extension,
+            index_generation=spec.index_generation,
             content_ref=build_content_ref_for_attachment(
                 db=db,
                 attachment_id=spec.source.attachment_id,

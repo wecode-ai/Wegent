@@ -4,7 +4,58 @@
 
 """URL safety guard for web scraping."""
 
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
+
+fetch_domain_admission: ContextVar[Callable[[str], Awaitable[None]] | None] = (
+    ContextVar("web_fetch_domain_admission", default=None)
+)
+
+
+async def admit_fetch_domain(url: str) -> None:
+    admission = fetch_domain_admission.get()
+    if admission is not None:
+        await admission(url)
+
+
+async def install_page_domain_admission(page, context=None, **kwargs):
+    """Pause actual Chromium document requests, including every redirect hop."""
+    admission = fetch_domain_admission.get()
+    if admission is not None:
+        session = await page.context.new_cdp_session(page)
+
+        async def admit_request(event):
+            request_id = event["requestId"]
+            url = event["request"]["url"]
+            try:
+                WebScraperUrlGuard().validate_initial_url(url)
+                await admission(url)
+            except Exception:
+                await session.send(
+                    "Fetch.failRequest",
+                    {"requestId": request_id, "errorReason": "BlockedByClient"},
+                )
+                return
+            await session.send("Fetch.continueRequest", {"requestId": request_id})
+
+        session.on("Fetch.requestPaused", admit_request)
+        await session.send("Network.enable")
+        await session.send("Network.setBypassServiceWorker", {"bypass": True})
+        await session.send(
+            "Fetch.enable",
+            {
+                "patterns": [
+                    {
+                        "urlPattern": "*",
+                        "resourceType": "Document",
+                        "requestStage": "Request",
+                    }
+                ]
+            },
+        )
+    return page
+
 
 from app.services.url_metadata import _validate_url_for_ssrf
 from app.services.web_scraper.models import ERROR_INVALID_URL, ERROR_SSRF_BLOCKED

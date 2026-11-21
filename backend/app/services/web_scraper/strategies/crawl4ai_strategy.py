@@ -24,6 +24,7 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    admit_fetch_domain,
     redact_url_for_logging,
 )
 from shared.telemetry.decorators import trace_async
@@ -214,6 +215,7 @@ class Crawl4AIScrapeStrategy:
         ) as client:
             current_url = url
             for _ in range(CRAWL4AI_MAX_REDIRECTS + 1):
+                await admit_fetch_domain(current_url)
                 async with client.stream(
                     "GET",
                     current_url,

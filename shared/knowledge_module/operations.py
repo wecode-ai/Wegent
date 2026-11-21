@@ -46,6 +46,7 @@ class QueryTarget:
     user_id: int | None = None
     document_ids: list[int] | None = None
     query_plan: dict[str, Any] | None = None
+    published_versions: dict[int, int] | None = None
 
 
 async def query_documents(
@@ -67,7 +68,10 @@ async def query_documents(
         if target.document_ids == []:
             continue
         scope = (
-            RetrievalScope(document_ids=target.document_ids)
+            RetrievalScope(
+                document_ids=target.document_ids,
+                published_versions=target.published_versions or {},
+            )
             if target.document_ids is not None
             else None
         )
@@ -101,7 +105,7 @@ def _query_records(
         document_id = None
         if isinstance(reference, str):
             try:
-                document_id = int(reference.removeprefix("doc_"))
+                document_id = int(reference.removeprefix("doc_").split("@", 1)[0])
             except ValueError:
                 pass
         records.append(
