@@ -675,7 +675,8 @@ fn selected_pending_connection_messages(
             ));
         }
     }
-    Ok(messages
+    let mut retry_limit_reached = false;
+    let pending = messages
         .into_iter()
         .filter(|message| {
             selected.as_ref().map_or(true, |ids| {
@@ -689,7 +690,23 @@ fn selected_pending_connection_messages(
                         Some("failed" | "needs_grouping")
                     )))
         })
-        .collect())
+        .filter(|message| {
+            let failures = LocalTaskStore::stand_in_dispatch_failure_count(
+                message,
+                message["dispatchStatus"] == "failed",
+            );
+            let exhausted = failures >= LocalTaskStore::STAND_IN_DISPATCH_FAILURE_LIMIT;
+            retry_limit_reached |= exhausted;
+            !exhausted
+        })
+        .collect::<Vec<_>>();
+    if pending.is_empty() && retry_limit_reached {
+        return Err(AppIpcError::new(
+            "stand_in_dispatch_retry_limit",
+            "This input has reached the stand-in dispatch failure limit",
+        ));
+    }
+    Ok(pending)
 }
 
 fn dingtalk_client_id(work: &str, ids: &[String]) -> String {
@@ -786,6 +803,7 @@ mod tests {
             json!({"recordId":"deferred","dispatchStatus":"pending"}),
             json!({"recordId":"ignored","dispatchStatus":"ignored"}),
             json!({"recordId":"sent","dispatchStatus":"sent"}),
+            json!({"recordId":"exhausted","dispatchStatus":"failed","dispatchFailureCount":3}),
         ];
         let selected = vec!["selected".into(), "sent".into()];
         let pending =
@@ -809,6 +827,12 @@ mod tests {
         );
         let manual = selected_pending_connection_messages(messages.clone(), true, None).unwrap();
         assert_eq!(manual, messages[..2]);
+        assert_eq!(
+            selected_pending_connection_messages(messages, true, Some(&["exhausted".into()]))
+                .unwrap_err()
+                .code,
+            "stand_in_dispatch_retry_limit"
+        );
     }
 
     #[tokio::test]

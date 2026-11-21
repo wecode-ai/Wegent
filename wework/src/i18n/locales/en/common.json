@@ -6213,6 +6213,7 @@
       "connection_cli_request_unavailable": "The source plugin CLI request failed. Try again later; if it keeps failing, reauthorize the connection.",
       "connection_response_invalid": "The connection returned invalid data. Check the source and try again.",
       "stand_in_dispatch_unknown": "The stand-in task’s start result is unknown. Check the task list first.",
+      "stand_in_dispatch_retry_limit": "This input has failed to dispatch three times. Review the failure in the work history.",
       "stand_in_grouping_failed": "Stand-in could not organize the work. Try again.",
       "work_busy": "This work is being processed. Try again later.",
       "failed": "This operation could not be completed. Keep your changes and reload before trying again.",
