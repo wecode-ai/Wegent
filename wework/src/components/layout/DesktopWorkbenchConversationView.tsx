@@ -34,6 +34,7 @@ import {
 } from './requestUserInputOverlay'
 import { TaskDetailScrollArea } from './TaskDetailScrollArea'
 import { SupervisorSuggestionCards } from './TaskSupervisorControl'
+import { TaskIssueShare } from '@/features/todo/TaskIssueShare'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
@@ -129,6 +130,7 @@ export function DesktopWorkbenchConversationView({
     activeHarnessDisplayError,
     submitWorkbenchInput,
     paneMessages,
+    workbenchTitle,
     pendingRequestUserInput,
     paneQueuedMessages,
     paneGuidanceMessages,
@@ -504,15 +506,46 @@ export function DesktopWorkbenchConversationView({
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
                                     contextHeader={
-                                      projectSpaceContext && (
+                                      (projectSpaceContext || currentRuntimeTask) && (
                                         <div
                                           className={cn(
-                                            'flex',
+                                            'flex min-w-0 items-center justify-between gap-1 [container-type:inline-size]',
                                             paneSession.transcriptLoading && 'invisible'
                                           )}
                                           inert={paneSession.transcriptLoading}
                                         >
                                           {projectSpaceContext}
+                                          {currentRuntimeTask &&
+                                            paneVisible &&
+                                            workbenchVisible && (
+                                              <TaskIssueShare
+                                                key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
+                                                title={workbenchTitle ?? ''}
+                                                messages={paneMessages}
+                                                address={{
+                                                  ...currentRuntimeTask,
+                                                  workspacePath:
+                                                    currentRuntimeTask.workspacePath ||
+                                                    runtimeTaskWorkspacePath,
+                                                }}
+                                                readWorkspaceFileChunk={
+                                                  workspaceFileApi.readWorkspaceFileChunk
+                                                }
+                                                readHistoryPage={
+                                                  paneSession.transcriptHasMoreBefore &&
+                                                  services?.runtimeWorkApi
+                                                    ? (request, signal) =>
+                                                        services.runtimeWorkApi!.getRuntimeTranscript(
+                                                          {
+                                                            ...currentRuntimeTask,
+                                                            ...request,
+                                                          },
+                                                          { signal }
+                                                        )
+                                                    : undefined
+                                                }
+                                              />
+                                            )}
                                         </div>
                                       )
                                     }

@@ -34,7 +34,11 @@ export interface CollaborationPlatformAppProps {
   ): void
   onReady?(): void
   renderProject?(context: CollaborationProjectRendererContext): ReactNode
-  renderShell?(shell: { main: ReactNode; sidebar: ReactNode }): ReactNode
+  renderShell?(shell: {
+    main: ReactNode
+    sidebar: ReactNode
+    mobileNavigation?: { open: boolean; setOpen(open: boolean): void }
+  }): ReactNode
   sidebarFooter?: ReactNode
   normalizePastedFiles?(files: File[]): Promise<File[]>
 }

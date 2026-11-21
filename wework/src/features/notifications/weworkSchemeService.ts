@@ -1,6 +1,11 @@
 import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import type { TFunction } from 'i18next'
+import { createHttpClient } from '@/api/http'
+import { resolveMovedPersonalIssue } from '@wegent/collaboration/platform'
+import { createPersonalIssuesApi } from '@/api/personalIssues'
+import { createDeliveryApi } from '@/api/deliveries'
+import { getRuntimeConfig } from '@/config/runtime'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { harnessAppsApi } from '@/api/local/harnessApps'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
@@ -42,6 +47,7 @@ export interface WeworkSchemeInput {
 export function createWeworkSchemeService() {
   let input: WeworkSchemeInput | null = null
   let generation = 0
+  let navigationOrder = 0
   let focusRequest = 0
   const pendingUrls = new Set<string>()
   const openedSchemeIds = new Set<number>()
@@ -63,8 +69,9 @@ export function createWeworkSchemeService() {
   async function open(url: string, deferInRenderer = true): Promise<boolean> {
     if (!input) return false
     const revision = generation
-    const destination = parseWeworkScheme(url)
+    let destination = parseWeworkScheme(url)
     if (!destination) return true
+    const order = ++navigationOrder
     if (destination.kind === 'collaboration-exp') {
       if (!input.experiment.loaded) {
         if (deferInRenderer) pendingUrls.add(url)
@@ -115,10 +122,11 @@ export function createWeworkSchemeService() {
       return true
     }
     if (destination.kind === 'smart-app') {
+      const { smartAppId } = destination
       try {
         const installations = await harnessAppsApi.list()
         if (!input || revision !== generation) return false
-        const installation = installations.find(item => item.smartAppId === destination.smartAppId)
+        const installation = installations.find(item => item.smartAppId === smartAppId)
         if (installation?.state === 'running') {
           openHarnessAppTab(input.tabs, installation)
           return true
@@ -136,11 +144,42 @@ export function createWeworkSchemeService() {
     }
     const cloud = input.connection
     if (
-      destination.kind === 'board' &&
-      destination.projectStore !== 'local' &&
+      (destination.kind === 'personal-issue' ||
+        (destination.kind === 'board' && destination.projectStore !== 'local')) &&
       (!cloud?.isConnected || !cloud.token)
     ) {
       return deferForCloud(url, deferInRenderer, cloud)
+    }
+    if (destination.kind === 'personal-issue' && cloud) {
+      const client = createHttpClient({
+        baseUrl: cloud.apiBaseUrl ?? getRuntimeConfig().apiBaseUrl,
+        getToken: () => cloud.token,
+        redirectOnUnauthorized: false,
+      })
+      const issueId = destination.issueId
+      const movedProjectId = await createPersonalIssuesApi(client)
+        .get(issueId)
+        .then(
+          () => null,
+          reason =>
+            resolveMovedPersonalIssue(reason, () => createDeliveryApi(client).getLoopItem(issueId))
+        )
+      if (
+        !input ||
+        revision !== generation ||
+        cloud.user?.id !== input.connection?.user?.id ||
+        cloud.apiBaseUrl !== input.connection?.apiBaseUrl
+      )
+        return false
+      // A superseded native request is consumed so it cannot replay on the next drain.
+      if (order !== navigationOrder) return true
+      if (movedProjectId) {
+        destination = {
+          kind: 'board',
+          projectId: movedProjectId,
+          itemId: issueId,
+        }
+      }
     }
     const experimentTab =
       destination.kind === 'board' && input.experiment.enabled
@@ -170,7 +209,8 @@ export function createWeworkSchemeService() {
       destination.kind === 'task' ? 'task' : 'board',
       weworkDestinationRoute(
         destination,
-        destination.kind === 'board' && destination.itemId
+        destination.kind === 'personal-issue' ||
+          (destination.kind === 'board' && destination.itemId)
           ? `${Date.now()}-${++focusRequest}`
           : undefined
       )

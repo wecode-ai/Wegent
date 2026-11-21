@@ -64,6 +64,15 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let project = origin["cloudProjectId"].as_str().unwrap_or_default();
         let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
+        if origin["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            return self
+                .current_personal_issue(
+                    user,
+                    issue_id,
+                    origin["assignmentId"].as_str().unwrap_or_default(),
+                )
+                .await;
+        }
         let issue = if origin["projectStore"] == "local" {
             serde_json::to_value(store.get_task(project, issue_id).map_err(settings_error)?)
                 .unwrap()
@@ -133,12 +142,23 @@ impl RuntimeWorkRpcHandler {
         {
             return Err("Issue conversation owner does not match".into());
         }
-        issue_reply_role(&roles, origin).ok_or("Issue stand-in is unavailable")?;
+        let role = issue_reply_role(&roles, origin).ok_or("Issue stand-in is unavailable")?;
         let issue = self
             .read_stand_in_issue(&store, user, origin)
             .await
             .map_err(|error| error.message)?;
-        if origin["projectStore"] != "local" && issue["permissions"]["execute"] != true {
+        if origin["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            let config = super::stand_in_personal_issues::personal_issue_role(role, user)
+                .ok_or("Independent Issues are no longer connected to this assistant")?;
+            if !settings["lifecycle"]["status"].is_null()
+                || !self.stand_in_role_runs_here(&config)
+                || !super::stand_in_personal_issues::personal_assignment_after_enable(
+                    &issue, &config,
+                )
+            {
+                return Err("Independent Issue execution permission is unavailable".into());
+            }
+        } else if origin["projectStore"] != "local" && issue["permissions"]["execute"] != true {
             return Err("Issue execution permission is unavailable".into());
         }
         Ok(())
@@ -406,6 +426,18 @@ impl RuntimeWorkRpcHandler {
         self.local_task_link(task)
             .ok_or_else(|| AppIpcError::new("source_removed", "Conversation no longer exists"))?;
         self.read_stand_in_issue(&store, user, origin).await?;
+        if origin["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            let id = origin["loopItemId"].as_str().unwrap_or_default();
+            return self
+                .send_issue_reply(
+                    &format!("/v1/personal-issues/{id}/assistant-replies"),
+                    json!({
+                        "assignment": self.personal_issue_assignment_address(origin)?,
+                        "message_id":report["messageId"],"body":report["body"],
+                    }),
+                )
+                .await;
+        }
         if origin["projectStore"] == "local" {
             store
                 .publish_stand_in_reply(
@@ -436,8 +468,12 @@ impl RuntimeWorkRpcHandler {
             id_field(origin, "cloudProjectId").unwrap_or_default(),
             id_field(origin, "loopItemId").unwrap_or_default(),
         );
+        self.send_issue_reply(&path, body).await
+    }
+
+    async fn send_issue_reply(&self, path: &str, body: Value) -> Result<(), AppIpcError> {
         let response = self
-            .runtime_request(reqwest::Method::POST, &path, Some(&body))
+            .runtime_request(reqwest::Method::POST, path, Some(&body))
             .await?;
         if !response.status().is_success() {
             let permanent = matches!(response.status().as_u16(), 400 | 403 | 404 | 409 | 422);

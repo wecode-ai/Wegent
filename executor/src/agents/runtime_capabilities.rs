@@ -456,6 +456,10 @@ pub(super) fn managed_mcp_configs(
     request: &ExecutionRequest,
 ) -> Result<BTreeMap<&'static str, crate::task_runtime::mcp::SpaceMcpClientConfig>, String> {
     crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    let independent_issue = request
+        .extra
+        .get("origin")
+        .is_some_and(crate::task_runtime::mcp::is_independent_issue_origin);
     let mut configs = BTreeMap::new();
     for (name, result) in [
         (
@@ -472,7 +476,11 @@ pub(super) fn managed_mcp_configs(
         ),
         (
             crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
-            crate::task_runtime::mcp::space_mcp_client_config(request).map(Some),
+            if independent_issue {
+                Ok(None)
+            } else {
+                crate::task_runtime::mcp::space_mcp_client_config(request).map(Some)
+            },
         ),
     ] {
         match result {

@@ -17,10 +17,9 @@ const ROOT_PATHS: Record<CollaborationPlatformRootView, string> = {
   inbox: '/collaboration/inbox',
   // Stand-in management is provided only by the desktop host.
   'stand-in': '/collaboration',
-  // Personal Issue lists are provided only by the desktop host.
-  'issues-assigned': '/collaboration',
-  'issues-created': '/collaboration',
-  'issues-participating': '/collaboration',
+  'issues-assigned': '/collaboration/assigned',
+  'issues-created': '/collaboration/created',
+  'issues-participating': '/collaboration/participating',
 }
 
 export function collaborationRootViewForPath(
@@ -35,6 +34,9 @@ export function collaborationRootViewForPath(
 
 export function collaborationLocationPath(location: CollaborationPlatformLocation): string {
   if (!location.workspaceId) {
+    if (location.projectId && location.issueId) {
+      return `/collaboration/${encodeURIComponent(location.projectId)}/issues/${encodeURIComponent(location.issueId)}`
+    }
     return ROOT_PATHS[location.rootView ?? 'home']
   }
   const workspaceBase = `/collaboration/workspaces/${encodeURIComponent(location.workspaceId)}`

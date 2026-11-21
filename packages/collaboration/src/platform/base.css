@@ -511,7 +511,8 @@
   color: inherit;
 }
 
-.collaboration-project-create-collaborator-menu .collaboration-project-collaborator-search > input:is(:focus, :focus-visible) {
+.collaboration-project-create-collaborator-menu .collaboration-project-collaborator-search > input:is(:focus, :focus-visible),
+.issue-participant-search > input:is(:focus, :focus-visible) {
   outline: none;
   box-shadow: none;
 }

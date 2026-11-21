@@ -100,7 +100,15 @@ fn active_route_inventory_selects_all_independent_issue_operations() {
     let routes = crate::RouteTable::compile(config).unwrap();
     for (method, path) in [
         (http::Method::GET, "/api/v1/personal-issues"),
+        (http::Method::GET, "/api/v1/me/issue-assignment-count"),
         (http::Method::POST, "/api/v1/personal-issues"),
+        (http::Method::POST, "/api/v1/personal-issues/share"),
+        (http::Method::GET, "/api/v1/personal-issues/shared-from"),
+        (http::Method::GET, "/api/v1/personal-issues/one/source"),
+        (
+            http::Method::GET,
+            "/api/v1/personal-issues/one/attachments/file",
+        ),
         (http::Method::GET, "/api/v1/personal-issues/one"),
         (http::Method::PATCH, "/api/v1/personal-issues/one"),
         (http::Method::DELETE, "/api/v1/personal-issues/one"),

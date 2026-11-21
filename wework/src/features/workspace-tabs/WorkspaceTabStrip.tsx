@@ -1,3 +1,4 @@
+import { useIssueAssignmentCount } from '@/features/todo/useIssueAssignmentCount'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import {
   getAppPreferences,
@@ -110,6 +111,7 @@ function WorkspaceTabButton({
   onContextMenu,
   agentAvailable,
   onUnavailableAgent,
+  issueAssignmentCount,
 }: {
   tab: WorkspaceTab
   active: boolean
@@ -120,6 +122,7 @@ function WorkspaceTabButton({
   onContextMenu: (position: MenuPosition, tabId: string) => void
   agentAvailable: boolean
   onUnavailableAgent: () => void
+  issueAssignmentCount: number | null
 }) {
   const { t } = useTranslation('common')
   const { selectTab, closeTab } = useWorkspaceTabs()
@@ -137,7 +140,12 @@ function WorkspaceTabButton({
       ? t('interactions.tab_title_with_count', '待你处理（{{count}}）', {
           count: pendingCount,
         })
-      : label
+      : issueAssignmentCount !== null
+        ? t('workbench.collaboration_assignment_count', {
+            title: label,
+            count: issueAssignmentCount,
+          })
+        : label
   const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title })
   const unavailable = tab.kind === 'agent' && !agentAvailable
   const tabTitle = unavailable ? t('workbench.app_wegent_requires_cloud', '连接云端后可用') : title
@@ -236,6 +244,16 @@ function WorkspaceTabButton({
               {t('interactions.tab_pending_count', '（{{count}}）', { count: pendingCount })}
             </span>
           ) : null}
+          {issueAssignmentCount !== null && (
+            <span
+              data-testid="workspace-tab-issue-assignment-count"
+              className="shrink-0 whitespace-pre tabular-nums"
+            >
+              {t('interactions.tab_pending_count', '（{{count}}）', {
+                count: issueAssignmentCount,
+              })}
+            </span>
+          )}
         </span>
         {tab.fixed ? (
           <Pin
@@ -276,6 +294,7 @@ export function WorkspaceTabStrip({
 }: WorkspaceTabStripProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
+  const issueAssignmentCount = useIssueAssignmentCount(cloud, availableKinds.includes('board'))
   const appPreferences = useAppPreferencesState()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const collaborationExperience = useAppPreferenceFeatureState('collaborationExperienceEnabled')
@@ -551,6 +570,9 @@ export function WorkspaceTabStrip({
               >
                 <WorkspaceTabButton
                   tab={tab}
+                  issueAssignmentCount={
+                    tab.kind === 'board' && tab.fixed ? issueAssignmentCount : null
+                  }
                   active={tab.id === visibleActiveTabId}
                   draggedTabId={draggedTabId}
                   onDragStartTab={setDraggedTabId}

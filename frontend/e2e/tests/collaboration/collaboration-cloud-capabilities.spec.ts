@@ -357,9 +357,12 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.goto('/collaboration')
       await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
 
+      const management = page.getByTestId('collaboration-management-toggle')
       for (const resource of ['agents', 'teams', 'devices'] as const) {
-        await expect(page.getByTestId(`collaboration-nav-${resource}`)).toBeVisible()
-        await page.getByTestId(`collaboration-nav-${resource}`).click()
+        if ((await management.getAttribute('aria-expanded')) !== 'true') await management.click()
+        const entry = page.getByTestId(`collaboration-primary-${resource}`)
+        await expect(entry).toBeVisible()
+        await entry.click()
         await expect(page).toHaveURL(`/collaboration/${resource}`)
         await expect(page.getByTestId(`collaboration-${resource}-page`)).toBeVisible()
       }

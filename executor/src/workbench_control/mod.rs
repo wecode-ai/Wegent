@@ -94,6 +94,9 @@ pub(crate) fn restricted_origin(origin: Option<&Value>) -> bool {
 }
 
 pub(crate) fn origin_restriction(origin: Option<&Value>) -> Option<&'static str> {
+    if origin.is_some_and(crate::task_runtime::mcp::is_independent_issue_origin) {
+        return Some("projectStore");
+    }
     if matches!(
         origin.and_then(|value| value["type"].as_str()),
         Some("stand_in_identity" | "connection_work" | "dingtalk_work")

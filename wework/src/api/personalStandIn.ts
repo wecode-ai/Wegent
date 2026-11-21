@@ -62,6 +62,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
   collaboration: {
     enabled: boolean
     allProjects: boolean
+    includeIndependentIssues?: boolean
     projects: StandInProjectRef[]
     excludedProjects: StandInProjectRef[]
     tags: string[]
