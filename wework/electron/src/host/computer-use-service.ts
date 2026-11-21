@@ -365,15 +365,18 @@ function logHostWindowDiscovery(result: unknown): void {
     const { windows } = JSON.parse(String(result.structuredJson)) as {
       windows?: Array<{ pid: number; window_id: number; bounds: unknown }>
     }
-    console.info('[computer-use] Host window discovery', {
-      pid: process.pid,
-      windows: windows
-        ?.filter(window => window.pid === process.pid)
-        .map(window => ({
-          windowId: window.window_id,
-          bounds: window.bounds,
-        })),
-    })
+    console.info(
+      '[computer-use] Host window discovery ' +
+        JSON.stringify({
+          pid: process.pid,
+          windows: windows
+            ?.filter(window => window.pid === process.pid)
+            .map(window => ({
+              windowId: window.window_id,
+              bounds: window.bounds,
+            })),
+        })
+    )
   } catch {
     console.warn('[computer-use] Host window discovery geometry unavailable')
   }

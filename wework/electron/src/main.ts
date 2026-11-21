@@ -2557,6 +2557,16 @@ async function configureDesktopRuntime(): Promise<void> {
     process.platform,
     90_000,
     currentTool => {
+      if (currentTool === 'list_windows' && process.env.VITE_WEWORK_E2E === 'true') {
+        console.info(
+          '[computer-use] Host window geometry ' +
+            JSON.stringify({
+              pid: process.pid,
+              bounds: mainWindow?.getBounds(),
+              focused: mainWindow?.isFocused(),
+            })
+        )
+      }
       desktopHostEvents.publish('computerUse.changed', { currentTool })
     }
   )

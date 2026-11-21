@@ -54,7 +54,6 @@ let disconnectDesktopHostEvents: (() => void) | null = null
 const BACKGROUND_HOST_CAPABILITIES = new Set([
   'tray.setState',
   'computerUse.status',
-  'systemDrag.takePending',
   'diagnostics.modelLoading',
 ])
 
