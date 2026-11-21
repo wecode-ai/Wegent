@@ -50,6 +50,7 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
           app_startup_succeeded: true,
           feature_opened: true,
           telemetry_preference_changed: true,
+          plugin_auto_update_succeeded: true,
         },
         event.event
       ),
