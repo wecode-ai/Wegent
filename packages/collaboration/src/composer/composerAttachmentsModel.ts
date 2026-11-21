@@ -399,6 +399,54 @@ export function createComposerAttachmentsModel(
     })
   }
 
+  const replaceImageAttachmentForScope = async (
+    scopeKey: string,
+    attachmentId: number,
+    file: File,
+    comments: NonNullable<Attachment['image_markup_comments']>,
+    signal: AbortSignal
+  ) => {
+    const original = getScopeSnapshot(scopeKey).attachments.find(item => item.id === attachmentId)
+    if (!original || signal.aborted) return null
+
+    const upload = config.uploadAttachment
+    const remove = config.deleteAttachment
+    const uploaded = await upload(file)
+    if (
+      signal.aborted ||
+      uploaded.status === 'failed' ||
+      !getScopeSnapshot(scopeKey).attachments.some(item => item === original)
+    ) {
+      releaseAttachmentPreview(uploaded)
+      if (uploaded.id > 0) await remove(uploaded.id)
+      return null
+    }
+
+    const replacement = {
+      ...uploaded,
+      ui_group_id: original.ui_group_id,
+      ui_group_role: original.ui_group_role,
+      ui_kind: original.ui_kind,
+      image_markup_comments: [...(original.image_markup_comments ?? []), ...comments],
+    }
+    updateScopeState(scopeKey, current => ({
+      ...current,
+      attachments: current.attachments.map(item => (item === original ? replacement : item)),
+    }))
+    releaseAttachmentPreview(original)
+    const sources = attachmentSourcesByScope.get(scopeKey)
+    const source = sources?.get(original.id)
+    if (source) {
+      source.attachment = replacement
+      sources?.delete(original.id)
+      sources?.set(replacement.id, source)
+    }
+    if (original.id > 0 && original.id !== uploaded.id) {
+      void remove(original.id).catch(() => config.onAction?.('failed'))
+    }
+    return replacement
+  }
+
   const removeAttachmentForScope = async (targetScopeKey: string, attachmentId: number) => {
     const scopedState = stateByScope[targetScopeKey] ?? emptyAttachmentState()
     const attachment = scopedState.attachments.find(item => item.id === attachmentId)
@@ -492,6 +540,7 @@ export function createComposerAttachmentsModel(
       addExistingAttachment,
       addExistingSourceAttachment,
       addExistingAttachmentForScope,
+      replaceImageAttachmentForScope,
       removeAttachment,
       removeAttachmentForScope,
       resetAttachments,

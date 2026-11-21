@@ -1,4 +1,5 @@
 export type { CodeCommentContext } from '@wegent/chat-core/code-comment'
+import type { ImageEditActions } from '@/components/chat/image-preview/ImageEditContext'
 
 import type {
   WorkspaceFileChunkResponse,
@@ -69,4 +70,9 @@ export interface WorkspaceAttachmentPreviewSource {
   filename: string
   contentType: string
   loadFile: () => Promise<Blob>
+  image?: {
+    localPath?: string | null
+    draftAttachmentId?: number
+    getEditor?: () => ImageEditActions | null
+  }
 }

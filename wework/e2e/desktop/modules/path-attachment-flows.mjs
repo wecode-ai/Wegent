@@ -205,6 +205,30 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
   await control.command('waitFor', '[data-testid="attachment-image-lightbox"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  for (const tool of ['markup', 'comment', 'background', 'erase', 'resize']) {
+    await control.command('waitFor', `[data-testid="attachment-image-tool-${tool}"]`, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+  await control.command('click', '[data-testid="attachment-image-tool-markup"]')
+  await control.command('waitFor', '[data-testid="attachment-image-markup-shapes"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('select', '[data-testid="attachment-image-markup-shapes"]', {
+    value: 'rectangle',
+  })
+  await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="attachment-image-edit-cancel"]')
+  await control.command('click', '[data-testid="attachment-image-tool-erase"]')
+  await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="attachment-image-edit-cancel"]')
   await control.command('click', '[data-testid="attachment-image-lightbox-close"]')
   await verifyComposerEditorScroll({ composerSelector, control })
   await control.command('hover', imageTileSelector)
@@ -224,6 +248,163 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'pasted-zip-attachment.png')
+  await verifyImageEditSubmissions(control, composerSelector)
+}
+
+async function verifyImageEditSubmissions(control, composerSelector) {
+  const draft = 'Preserve this unsent image-edit draft'
+  control.setScenario('image_preview_resize')
+  await control.command('fill', composerSelector, { value: draft })
+  await control.command('pasteFile', composerSelector, {
+    filename: 'test-image.png',
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  const thumbnail = '[data-testid="attachment-image-preview-button"]'
+  await control.command('waitFor', thumbnail, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-tool-resize"]')
+  await control.command('click', '[data-testid="attachment-image-resize-16:9"]')
+  await control.awaitScenarioRequestCount('image_preview_resize', 1)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'Image resize received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  await control.command('waitFor', thumbnail, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-open-in-panel"]')
+  await control.command('waitFor', '[data-testid="composer-attachment-preview-panel"]', {
+    text: 'test-image.png',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  control.setScenario('image_preview_comment')
+  const panel = '[data-testid="attachment-image-side-viewer"]'
+  const commentTool = `${panel} [data-testid="attachment-image-tool-comment"]`
+  await control.command('waitFor', commentTool, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', commentTool)
+  await control.command('click', `${panel} [data-testid="attachment-image-edit-surface"]`)
+  await control.command('waitFor', `${panel} [data-testid="attachment-image-comment-draft-pin"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', `${panel} [data-testid="attachment-image-comment-input"]`, {
+    value: 'Inspect this area',
+  })
+  await control.command('click', `${panel} [data-testid="attachment-image-comment-save"]`)
+  await control.command('waitFor', `${panel} [data-testid="attachment-image-comment-pin"]`, {
+    text: '1',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    draft,
+    'Saving an image comment must leave the conversation draft untouched'
+  )
+  const commentRequest = control.awaitNextScenarioRequest('image_preview_comment')
+  await control.command('click', `${panel} [data-testid="attachment-image-edit-send"]`)
+  await commentRequest
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'Image comment received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const transcriptText = await control.command('waitFor', '[data-testid="user-message-content"]', {
+    text: 'Inspect this area',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    transcriptText,
+    /[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Inspect this area/,
+    'The user message did not display the saved image comment with its coordinates'
+  )
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  await control.command('waitFor', commentTool, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+  await control.command('waitFor', thumbnail, {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('pasteFile', composerSelector, {
+    filename: 'test-image.png',
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  await control.command('waitFor', thumbnail, { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await verifyComposerMarkupSave(control, composerSelector, draft)
+}
+
+async function verifyComposerMarkupSave(control, composerSelector, draft) {
+  const thumbnail = '[data-testid="attachment-image-preview-button"]'
+  const viewer = '[data-testid="attachment-image-lightbox"]'
+  const markupSave = '[data-testid="attachment-image-edit-save"]'
+  const userMessages = '[data-testid="user-message-content"]'
+  const beforeSave = await control.command('getElementCount', userMessages)
+  control.setScenario('image_preview_markup_save')
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-tool-markup"]')
+  assert.equal(
+    await control.command(
+      'getElementCount',
+      '[data-testid="attachment-image-markup-instructions"]'
+    ),
+    '0'
+  )
+  await control.command('click', '[data-testid="attachment-image-markup-comment"]')
+  await control.command('click', '[data-testid="attachment-image-edit-surface"]')
+  await control.command('fill', '[data-testid="attachment-image-comment-input"]', {
+    value: 'Review the saved mark',
+  })
+  await control.command('click', '[data-testid="attachment-image-comment-save"]')
+  await control.command('waitFor', '[data-testid="attachment-image-comment-pin"]', {
+    text: '1',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  assert.equal(await control.command('getElementCount', userMessages), beforeSave)
+  await control.command('click', markupSave)
+  await control.command('waitFor', viewer, { visible: false, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('waitFor', thumbnail, { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-open-in-panel"]')
+  const panel = '[data-testid="attachment-image-side-viewer"]'
+  const panelMarkupTool = `${panel} [data-testid="attachment-image-tool-markup"]`
+  await control.command('waitFor', panelMarkupTool, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', panelMarkupTool)
+  await control.command('click', `${panel} [data-testid="attachment-image-markup-comment"]`)
+  await control.command('click', `${panel} [data-testid="attachment-image-edit-surface"]`)
+  await control.command('fill', `${panel} [data-testid="attachment-image-comment-input"]`, {
+    value: 'Review the mark saved in Files',
+  })
+  await control.command('click', `${panel} ${markupSave}`)
+  await control.command('waitFor', panelMarkupTool, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+  assert.equal(await control.command('getElementCount', thumbnail), '1')
+  assert.equal(await control.command('getElementCount', userMessages), beforeSave)
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.awaitScenarioRequestCount('image_preview_markup_save', 1)
+  await control.command('waitFor', userMessages, {
+    text: 'Review the saved mark',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'Saved markup received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function verifySystemDragPanelLayout(control) {
@@ -1142,6 +1323,50 @@ async function verifySideChatAttachmentIsolation({
     'Restoring the split view did not restore the two independent composers'
   )
   await captureVerificationScreenshot(control, '07-side-chat-restored-two-composers.png')
+  const editRequest = control.awaitNextScenarioRequest('side_chat_image_preview_resize')
+  control.setScenario('side_chat_image_preview_resize')
+  await control.command('click', `${sideChatSelector} [data-testid="message-image-preview-button"]`)
+  await control.command('click', '[data-testid="attachment-image-tool-resize"]')
+  await control.command('click', '[data-testid="attachment-image-resize-16:9"]')
+  await editRequest
+  await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
+    text: 'Image resize received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('pasteFile', sideComposerSelector, {
+    filename: 'comment-only.png',
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  const draftImage = `${sideChatSelector} [data-testid="attachment-image-preview-button"]`
+  await control.command('waitFor', draftImage, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', draftImage)
+  await control.command('click', '[data-testid="attachment-image-tool-markup"]')
+  await control.command('click', '[data-testid="attachment-image-markup-comment"]')
+  await control.command('click', '[data-testid="attachment-image-edit-surface"]')
+  await control.command('fill', '[data-testid="attachment-image-comment-input"]', {
+    value: 'Inspect this area',
+  })
+  await control.command('click', '[data-testid="attachment-image-edit-save"]')
+  await control.command('waitFor', '[data-testid="attachment-image-lightbox"]', {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getValue', sideComposerSelector), '')
+  control.setScenario('image_preview_comment')
+  const commentRequest = control.awaitNextScenarioRequest('image_preview_comment')
+  await control.command('clickWhenEnabled', sideSendButtonSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await commentRequest
+  await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
+    text: 'Image comment received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
 
   const requests = control.scenarioRequests.get('side_chat_attachment') ?? []

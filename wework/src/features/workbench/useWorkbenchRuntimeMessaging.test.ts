@@ -1,4 +1,8 @@
 import i18n from '@/i18n'
+import { createPaneSubmissionCommands } from '@/components/layout/workbenchPaneSubmissionCommands'
+import { createPaneQueueGoalCommands } from '@/components/layout/workbenchPaneQueueGoalCommands'
+import { sendTemporaryChatMessage } from '@/components/layout/workspace-panels/temporaryChatSend'
+import type { RuntimePaneQueuedMessage } from '@/types/workbench'
 import type { Attachment, DeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
@@ -24,6 +28,106 @@ import {
   useWorkbenchRuntimeMessaging,
 } from './useWorkbenchRuntimeMessaging'
 import { initialWorkbenchState } from './workbenchReducer'
+
+test('queues saved image comments in a temporary chat and restores them as attachment data', async () => {
+  const image: Attachment = {
+    id: 1,
+    filename: 'layout.png',
+    file_size: 3,
+    mime_type: 'image/png',
+    file_extension: '.png',
+    created_at: '',
+    status: 'ready',
+    image_markup_comments: [{ x: 36.7, y: 50.4, text: 'Look here' }],
+  }
+  const enqueue = vi.fn<(message: RuntimePaneQueuedMessage) => void>()
+  const context = {
+    address: { deviceId: 'device', taskId: 'task' },
+    active: true,
+    busy: true,
+    input: '',
+    instanceId: 'temporary',
+    sideChatProjectChat: { attachments: [image], resetAttachments: vi.fn() },
+    captureAttachmentsForScope: () => [image],
+    canSendWithCurrentModel: () => true,
+    sessionCommands: { isCurrent: () => true },
+    setError: vi.fn(),
+    setInput: vi.fn(),
+    setTrialGuide: vi.fn(),
+    conversationQueue: { enqueue },
+  } as unknown as Parameters<typeof sendTemporaryChatMessage>[0]
+  expect(await sendTemporaryChatMessage(context)).toBe(true)
+  const [[message]] = enqueue.mock.calls
+  expect(message.content).toMatch(/36\.7%.*50\.4%.*Look here/)
+
+  const replaceInput = vi.fn()
+  const addExistingAttachment = vi.fn()
+  const pane = {
+    frame: { addExistingAttachment, queuedMessageBusyBlocks: new Map(), queuedMessages: [message] },
+    commands: { replaceInput, setQueuedMessages: vi.fn() },
+  } as unknown as Parameters<typeof createPaneQueueGoalCommands>[0]
+  createPaneQueueGoalCommands(pane).editQueuedMessage(message.id)
+  expect(replaceInput).toHaveBeenCalledExactlyOnceWith('')
+  expect(addExistingAttachment).toHaveBeenCalledExactlyOnceWith(image)
+})
+
+test.each([false, true])(
+  'includes saved coordinates in Goal messages (existing task %s)',
+  async existing => {
+    const objective = 'Inspect the layout'
+    const attachment: Attachment = {
+      id: 1,
+      filename: 'layout.png',
+      file_size: 3,
+      mime_type: 'image/png',
+      file_extension: '.png',
+      created_at: '',
+      status: 'ready',
+      image_markup_comments: [{ x: 36.7, y: 50.4, text: 'Look here' }],
+    }
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({ accepted: true })
+    const sendCurrentInput = vi.fn().mockResolvedValue(true)
+    const context = {
+      frame: {
+        attachmentState: { captureAttachments: () => [attachment] },
+        codeCommentContexts: [],
+        currentRuntimeTask: existing ? { deviceId: 'device', taskId: 'task' } : null,
+        goalDraftActive: true,
+        input: objective,
+        inputScopeKey: 'draft',
+        inputRevision: 0,
+        sharedInputRevision: 0,
+        getInputRevisionForScope: () => 0,
+        lifecycleStore: new RuntimeTaskLifecycleStore('goal-markup-test'),
+        resetAttachments: vi.fn(),
+        sendCurrentInput,
+      },
+      actions: { setPendingGoalState: vi.fn() },
+      commands: {
+        getDraftEditVersion: () => 0,
+        getRuntimeModelFields: () => ({}),
+        readCurrentPaneBusy: () => false,
+        setError: vi.fn(),
+        setGoalDraftActive: vi.fn(),
+        clearCodeCommentsAfterCommit: vi.fn(),
+        appendLocalUserMessage: vi.fn(),
+        sendRuntimeMessage,
+      },
+      live: { mounted: false },
+    } as unknown as Parameters<typeof createPaneSubmissionCommands>[0]
+    expect(await createPaneSubmissionCommands(context).send()).toBe(true)
+    const [message, options] = (existing ? sendRuntimeMessage : sendCurrentInput).mock.calls[0]!
+    expect(existing ? message.content : message).toMatch(/36\.7%.*50\.4%.*Look here/)
+    expect(options.initialGoal.objective).toBe(objective)
+    const [image] = existing ? message.attachments : options.attachments
+    if (existing) {
+      expect(message.imageMarkupDraftText).toBe(objective)
+      expect(image.image_markup_comments).toEqual(attachment.image_markup_comments)
+    } else {
+      expect(image).not.toHaveProperty('image_markup_comments')
+    }
+  }
+)
 
 function messagingFixture(
   modelState: {
@@ -865,6 +969,24 @@ describe('friendlyTitleForTask', () => {
 })
 
 describe('prepareRuntimeAttachmentsForDevice', () => {
+  test('admits a deferred image attachment before reading its source and retains the file for retry', async () => {
+    const { failedPreparationFile, localRuntimeAttachments, prepareAttachmentFile } =
+      await import('@/lib/runtime-attachments')
+    const source = new File(['image'], 'selection-mask.png', { type: 'image/png' })
+    const load = vi.fn().mockResolvedValue(source)
+    const upload = vi.fn().mockRejectedValue(new Error('staging failed'))
+    const pending = prepareAttachmentFile(source.name, source.type, load, upload)
+
+    expect(pending.status).toBe('uploading')
+    await Promise.resolve()
+    expect(load).not.toHaveBeenCalled()
+    expect(upload).not.toHaveBeenCalled()
+    await expect(
+      prepareRuntimeAttachmentsForDevice('local-device', [], [], localRuntimeAttachments([pending]))
+    ).rejects.toThrow('staging failed')
+    expect(failedPreparationFile(pending)).toBe(source)
+  })
+
   test('reports how to recover an unfinished attachment after its in-memory preparation is lost', async () => {
     await expect(
       prepareRuntimeAttachmentsForDevice(

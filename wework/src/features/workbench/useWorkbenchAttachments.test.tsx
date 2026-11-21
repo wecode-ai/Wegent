@@ -15,6 +15,83 @@ const attachment: Attachment = {
   status: 'ready',
 }
 
+test('replaces only the current draft image after a successful markup upload', async () => {
+  const original = { ...attachment, id: 41, mime_type: 'image/jpeg', filename: 'source.jpg' }
+  const edited = { ...attachment, id: 42, mime_type: 'image/png', filename: 'source.png' }
+  const file = new File(['markup'], edited.filename, { type: edited.mime_type })
+  const remove = vi.fn().mockResolvedValue(undefined)
+  let finishUpload!: (result: Attachment) => void
+  const upload = vi.fn(() => new Promise<Attachment>(resolve => (finishUpload = resolve)))
+  const { result } = renderHook(() =>
+    useWorkbenchAttachments({
+      scopeKey: 'draft',
+      uploadAttachment: upload,
+      deleteAttachment: remove,
+    })
+  )
+  act(() => {
+    result.current.addExistingAttachment(original)
+    result.current.addExistingAttachment(attachment)
+    result.current.addExistingAttachmentForScope('other', edited)
+  })
+
+  const comments = [{ x: 50, y: 50, text: 'Inspect this area' }]
+  let saving!: Promise<Attachment | null>
+  act(() => {
+    saving = result.current.replaceImageAttachmentForScope(
+      'draft',
+      original.id,
+      file,
+      comments,
+      new AbortController().signal
+    )
+  })
+  expect(result.current.attachments).toEqual([original, attachment])
+  await act(async () => {
+    finishUpload(edited)
+    expect(await saving).toMatchObject(edited)
+  })
+  expect(result.current.attachments).toEqual([
+    expect.objectContaining({
+      ...edited,
+      image_markup_comments: comments,
+    }),
+    attachment,
+  ])
+  expect(result.current.stateByScope.other.attachments).toEqual([edited])
+  expect(remove).toHaveBeenCalledExactlyOnceWith(original.id)
+})
+
+test('discards a late markup upload when the draft image has been removed', async () => {
+  const original = { ...attachment, id: 41, mime_type: 'image/jpeg', filename: 'source.jpg' }
+  const edited = { ...attachment, id: 42, mime_type: 'image/png', filename: 'source.png' }
+  let finishUpload!: (result: Attachment) => void
+  const upload = vi.fn(() => new Promise<Attachment>(resolve => (finishUpload = resolve)))
+  const remove = vi.fn().mockResolvedValue(undefined)
+  const { result } = renderHook(() =>
+    useWorkbenchAttachments({
+      scopeKey: 'draft',
+      uploadAttachment: upload,
+      deleteAttachment: remove,
+    })
+  )
+  act(() => result.current.addExistingAttachment(original))
+  const saving = result.current.replaceImageAttachmentForScope(
+    'draft',
+    original.id,
+    new File(['markup'], edited.filename, { type: edited.mime_type }),
+    [],
+    new AbortController().signal
+  )
+  await act(async () => {
+    await result.current.removeAttachment(original.id)
+    finishUpload(edited)
+    expect(await saving).toBeNull()
+  })
+  expect(result.current.attachments).toEqual([])
+  expect(remove.mock.calls).toEqual([[original.id], [edited.id]])
+})
+
 test('stages a large native file through the shared composer with only a bounded text preview', async () => {
   const file = new File(['test log content'], 'large.log', { type: 'text/plain' })
   Object.defineProperty(file, 'size', { value: 378989795 })
