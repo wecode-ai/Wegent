@@ -145,22 +145,37 @@ async fn executor_file(
     subtask_id: i64,
     path: &str,
 ) -> Result<Vec<u8>, FastApiError> {
-    let base = super::source::executor_base(state, source).await?;
     let mut query = ArtifactQuery::new(source, task_id, subtask_id);
     query.root_path = Some(source.workspace_root.clone());
     query.path = Some(path.to_owned());
-    let response = state
-        .attachment_http
-        .get(format!(
-            "{}/filesystem/artifact",
-            base.trim_end_matches('/')
-        ))
-        .map_err(|_| unavailable())?
-        .query(&query)
-        .timeout(Duration::from_secs(130))
-        .send()
-        .await
-        .map_err(|_| unavailable())?;
+    let response =
+        super::source::manager_artifact_request(state, source, &query, Duration::from_secs(130))
+            .await
+            .map_err(|_| unavailable())?;
+    bounded_body(response, MAX_FILE_BYTES).await
+}
+
+#[cfg(test)]
+pub(super) async fn executor_file_via_manager(
+    state: &AppState,
+    manager: &str,
+    source: &Source,
+    task_id: i64,
+    subtask_id: i64,
+    path: &str,
+) -> Result<Vec<u8>, FastApiError> {
+    let mut query = ArtifactQuery::new(source, task_id, subtask_id);
+    query.root_path = Some(source.workspace_root.clone());
+    query.path = Some(path.to_owned());
+    let response = super::source::manager_artifact_request_at(
+        state,
+        manager,
+        source,
+        &query,
+        Duration::from_secs(130),
+    )
+    .await
+    .map_err(|_| unavailable())?;
     bounded_body(response, MAX_FILE_BYTES).await
 }
 
@@ -171,6 +186,9 @@ pub(super) async fn bounded_body(
     let code = response.status();
     if matches!(code.as_u16(), 400 | 403 | 404 | 413) {
         return Err(FastApiError::detail(code, "Artifact file is unavailable"));
+    }
+    if matches!(code.as_u16(), 503 | 504) {
+        return Err(unavailable());
     }
     if !code.is_success() {
         return Err(file_error("Artifact file request failed"));

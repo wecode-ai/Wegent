@@ -18,6 +18,7 @@ import json
 import os
 import time
 import uuid
+from io import BytesIO
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -50,6 +51,8 @@ from shared.utils.ip_util import get_host_ip
 logger = setup_logger(__name__)
 
 WORKSPACE_FILE_TIMEOUT_SECONDS = 130.0
+MAX_WORKSPACE_ARTIFACT_FILE_BYTES = 50 * 1024 * 1024
+MAX_WORKSPACE_ARTIFACT_ERROR_PREVIEW_BYTES = 64 * 1024
 
 # Create FastAPI app
 app = FastAPI(
@@ -86,7 +89,11 @@ task_processor = TaskProcessor()
 
 # Health check paths that should skip logging to reduce overhead
 HEALTH_CHECK_PATHS = {"/", "/health"}
-SENSITIVE_BODY_CAPTURE_PATHS = {f"{ROUTE_PREFIX}/callback", "/callback"}
+SENSITIVE_BODY_CAPTURE_PATHS = {
+    f"{ROUTE_PREFIX}/callback",
+    "/callback",
+    f"{ROUTE_PREFIX}/executor/workspace/artifact",
+}
 
 
 @app.middleware("http")
@@ -551,12 +558,32 @@ def _normalize_workspace_entries(payload: Any) -> list[dict[str, Any]]:
 async def _resolve_workspace_runtime_base_url(
     task_id: int,
     executor_name: Optional[str],
+    executor_namespace: Optional[str] = None,
+    *,
+    require_executor_match: bool = False,
 ) -> str:
     from executor_manager.services.sandbox import get_sandbox_manager
 
     sandbox_manager = get_sandbox_manager()
-    sandbox = await sandbox_manager.get_sandbox(str(task_id))
-    if sandbox and sandbox.base_url:
+    if require_executor_match:
+        sandbox = await sandbox_manager.get_sandbox(str(task_id), check_health=False)
+    else:
+        sandbox = await sandbox_manager.get_sandbox(str(task_id))
+    if (
+        sandbox
+        and sandbox.base_url
+        and (
+            not require_executor_match
+            or (
+                getattr(sandbox, "container_name", None) == executor_name
+                and (
+                    not executor_namespace
+                    or getattr(sandbox, "executor_namespace", None)
+                    == executor_namespace
+                )
+            )
+        )
+    ):
         return str(sandbox.base_url).rstrip("/")
 
     if not executor_name:
@@ -571,7 +598,13 @@ async def _resolve_workspace_runtime_base_url(
             status_code=501, detail="Executor address lookup is not supported"
         )
 
-    result = executor.get_container_address(executor_name)
+    try:
+        result = executor.get_container_address(
+            executor_name,
+            executor_namespace=executor_namespace,
+        )
+    except TypeError:
+        result = executor.get_container_address(executor_name)
     status = str(result.get("status", "")).lower()
     base_url = result.get("base_url")
     if status and status != "success":
@@ -583,6 +616,65 @@ async def _resolve_workspace_runtime_base_url(
         raise HTTPException(status_code=404, detail="Executor runtime has no base_url")
 
     return base_url.rstrip("/")
+
+
+def _extract_error_detail(raw_bytes: bytes, limit: int = 200) -> str:
+    raw_text = raw_bytes.decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(raw_text)
+        if isinstance(payload, dict):
+            detail = payload.get("detail")
+            if isinstance(detail, str) and detail.strip():
+                detail = detail[:limit]
+                detail.encode("utf-8")
+                return detail
+    except (ValueError, RecursionError):
+        pass
+    return _to_log_preview(raw_text, limit=limit)
+
+
+async def _read_bounded_artifact_response(
+    response: httpx.Response,
+    max_bytes: Optional[int],
+) -> bytes:
+    if max_bytes is not None:
+        content_length = response.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Artifact exceeds 50 MiB limit",
+                    )
+            except ValueError:
+                pass
+
+    body = BytesIO()
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if max_bytes is not None and total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail="Artifact exceeds 50 MiB limit",
+            )
+        body.write(chunk)
+    return body.getvalue()
+
+
+async def _read_artifact_error_preview(
+    response: httpx.Response,
+    max_bytes: int,
+) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        remaining = max_bytes - total
+        chunks.append(chunk[:remaining])
+        total += min(len(chunk), remaining)
+        if total >= max_bytes:
+            break
+    return b"".join(chunks)
 
 
 @api_router.get("/executor/workspace/tree")
@@ -720,6 +812,123 @@ async def get_executor_workspace_file(
     ):
         raise HTTPException(status_code=404, detail="File not found")
     raise HTTPException(status_code=502, detail="Remote file request failed")
+
+
+@api_router.get("/executor/workspace/artifact")
+async def get_executor_workspace_artifact(
+    task_id: int,
+    executor_name: str,
+    binding_id: str,
+    subtask_id: str,
+    executor_namespace: Optional[str] = None,
+    root_path: Optional[str] = None,
+    path: Optional[str] = None,
+    offset: Optional[int] = None,
+    http_request: Request = None,  # FastAPI injects Request
+):
+    client_ip = (
+        http_request.client.host if http_request and http_request.client else "unknown"
+    )
+    base_url = await _resolve_workspace_runtime_base_url(
+        task_id,
+        executor_name,
+        executor_namespace=executor_namespace,
+        require_executor_match=True,
+    )
+    logger.info(
+        "[workspace_proxy] artifact request task_id=%s executor_name=%s namespace=%s path=%s base_url=%s from %s",
+        task_id,
+        executor_name,
+        executor_namespace,
+        path,
+        base_url,
+        client_ip,
+    )
+
+    params: Dict[str, Any] = {
+        "binding_id": binding_id,
+        "task_id": str(task_id),
+        "subtask_id": subtask_id,
+    }
+    if root_path is not None:
+        params["root_path"] = root_path
+    if path is not None:
+        params["path"] = path
+    if offset is not None:
+        params["offset"] = offset
+
+    artifact_url = f"{base_url}/filesystem/artifact"
+    max_bytes = MAX_WORKSPACE_ARTIFACT_FILE_BYTES if path is not None else None
+
+    try:
+        async with httpx.AsyncClient(timeout=WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
+            async with client.stream("GET", artifact_url, params=params) as response:
+                if response.is_success:
+                    body = await _read_bounded_artifact_response(response, max_bytes)
+                    return Response(
+                        content=body,
+                        media_type=response.headers.get(
+                            "content-type", "application/octet-stream"
+                        ),
+                    )
+                status_code = response.status_code
+                try:
+                    raw_error = await _read_artifact_error_preview(
+                        response, MAX_WORKSPACE_ARTIFACT_ERROR_PREVIEW_BYTES
+                    )
+                except httpx.RequestError as exc:
+                    logger.warning(
+                        "[workspace_proxy] artifact error preview read failed "
+                        "task_id=%s status_code=%s error=%s",
+                        task_id,
+                        status_code,
+                        exc,
+                    )
+                    raw_error = None
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        logger.warning(
+            "[workspace_proxy] artifact timeout task_id=%s executor_name=%s error=%s",
+            task_id,
+            executor_name,
+            exc,
+        )
+        raise HTTPException(
+            status_code=504, detail="Executor artifact request timed out"
+        ) from exc
+    except httpx.RequestError as exc:
+        logger.warning(
+            "[workspace_proxy] artifact request error task_id=%s executor_name=%s error=%s",
+            task_id,
+            executor_name,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503, detail="Executor artifact endpoint is unavailable"
+        ) from exc
+
+    detail = (
+        _extract_error_detail(raw_error)
+        if raw_error is not None
+        else "Artifact request failed"
+    )
+    if status_code in {400, 403, 404, 413}:
+        logger.info(
+            "[workspace_proxy] artifact rejected task_id=%s status_code=%s detail=%s",
+            task_id,
+            status_code,
+            detail,
+        )
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    logger.warning(
+        "[workspace_proxy] artifact failed task_id=%s status_code=%s detail=%s",
+        task_id,
+        status_code,
+        detail,
+    )
+    raise HTTPException(status_code=502, detail="Remote artifact request failed")
 
 
 class CancelTaskRequest(BaseModel):

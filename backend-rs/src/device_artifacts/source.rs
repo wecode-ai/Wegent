@@ -4,7 +4,7 @@
 use super::models::{ArtifactQuery, Source, valid_workspace_root};
 use crate::{http_compat::FastApiError, state::AppState};
 use brz_http_server::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub(super) fn validate_declared_root(
@@ -45,23 +45,8 @@ pub(super) async fn workspace_root(
         }
         serde_json::from_value(result.stdout).map_err(super::internal)?
     } else {
-        let base = executor_base(state, source).await?;
-        let response = state
-            .attachment_http
-            .get(format!("{base}/filesystem/artifact"))
-            .map_err(|_| super::repository::source_unavailable())?
-            .query(&query)
-            .timeout(Duration::from_secs(15))
-            .send()
-            .await
-            .map_err(|_| source_temporarily_unavailable())?;
-        if !response.status().is_success() {
-            return Err(upstream_unavailable(response.status().as_u16()));
-        }
-        response
-            .json()
-            .await
-            .map_err(|_| super::repository::source_unavailable())?
+        let manager = manager_url();
+        return workspace_root_via_manager(state, &manager, source, &query).await;
     };
     if !valid_workspace_root(&workspace.workspace_root) {
         return Err(super::repository::source_unavailable());
@@ -69,46 +54,98 @@ pub(super) async fn workspace_root(
     Ok(workspace.workspace_root)
 }
 
-#[derive(Deserialize)]
-struct Address {
-    status: String,
-    base_url: Option<String>,
-}
-
-pub(super) async fn executor_base(
+pub(super) async fn workspace_root_via_manager(
     state: &AppState,
+    manager: &str,
     source: &Source,
+    query: &ArtifactQuery,
 ) -> Result<String, FastApiError> {
-    let manager = std::env::var("EXECUTOR_MANAGER_URL")
-        .unwrap_or_else(|_| crate::executor_manager::DEFAULT_EXECUTOR_MANAGER_URL.to_owned());
-    let response = state
-        .attachment_http
-        .get(format!(
-            "{}/executor-manager/executor/address",
-            manager.trim_end_matches('/'),
-        ))
-        .map_err(|_| super::repository::source_unavailable())?
-        .query(&[
-            ("executor_name", &source.executor_name),
-            ("executor_namespace", &source.executor_namespace),
-        ])
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-        .map_err(|_| source_temporarily_unavailable())?;
+    let response =
+        manager_artifact_request_at(state, manager, source, query, Duration::from_secs(15)).await?;
     if !response.status().is_success() {
         return Err(upstream_unavailable(response.status().as_u16()));
     }
-    let address: Address = response
+    let workspace: Workspace = response
         .json()
         .await
         .map_err(|_| super::repository::source_unavailable())?;
-    address
-        .base_url
-        .filter(|value| !value.is_empty())
-        .filter(|_| address.status.eq_ignore_ascii_case("success"))
-        .map(|value| value.trim_end_matches('/').to_owned())
-        .ok_or_else(super::repository::source_unavailable)
+    if !valid_workspace_root(&workspace.workspace_root) {
+        return Err(super::repository::source_unavailable());
+    }
+    Ok(workspace.workspace_root)
+}
+
+/// Query sent to executor-manager's artifact proxy: the container query plus
+/// the executor whose runtime owns the workspace.
+#[derive(Serialize)]
+pub(super) struct ManagerArtifactQuery<'a> {
+    binding_id: &'a str,
+    task_id: &'a str,
+    subtask_id: &'a str,
+    executor_name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    executor_namespace: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root_path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset: Option<usize>,
+}
+
+impl<'a> ManagerArtifactQuery<'a> {
+    pub(super) fn new(source: &'a Source, query: &'a ArtifactQuery) -> Self {
+        Self {
+            binding_id: &query.binding_id,
+            task_id: &query.task_id,
+            subtask_id: &query.subtask_id,
+            executor_name: &source.executor_name,
+            executor_namespace: (!source.executor_namespace.is_empty())
+                .then_some(source.executor_namespace.as_str()),
+            root_path: query.root_path.as_deref(),
+            path: query.path.as_deref(),
+            offset: query.offset,
+        }
+    }
+}
+
+fn manager_url() -> String {
+    std::env::var("EXECUTOR_MANAGER_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| crate::executor_manager::DEFAULT_EXECUTOR_MANAGER_URL.to_owned())
+}
+
+/// Read an artifact through executor-manager instead of the container address.
+pub(super) async fn manager_artifact_request(
+    state: &AppState,
+    source: &Source,
+    query: &ArtifactQuery,
+    timeout: Duration,
+) -> Result<brz_http::Response, FastApiError> {
+    let manager = manager_url();
+    manager_artifact_request_at(state, &manager, source, query, timeout).await
+}
+
+pub(super) async fn manager_artifact_request_at(
+    state: &AppState,
+    manager: &str,
+    source: &Source,
+    query: &ArtifactQuery,
+    timeout: Duration,
+) -> Result<brz_http::Response, FastApiError> {
+    state
+        .attachment_http
+        .get(format!(
+            "{}/executor-manager/executor/workspace/artifact",
+            manager.trim_end_matches('/'),
+        ))
+        .map_err(|_| super::repository::source_unavailable())?
+        .query(&ManagerArtifactQuery::new(source, query))
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|_| source_temporarily_unavailable())
 }
 
 fn upstream_unavailable(status: u16) -> FastApiError {
