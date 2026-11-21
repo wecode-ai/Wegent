@@ -162,35 +162,6 @@ fn can_retry_on_route(initial: &OnlineRoute, socket_id: &str, next: &OnlineRoute
         && next.socket_id != socket_id
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reconnect_must_keep_the_initial_runtime_and_change_the_current_socket() {
-        let route = |device: &str, instance: Option<&str>, socket: &str| OnlineRoute {
-            runtime_device_id: device.to_owned(),
-            runtime_instance_id: instance.map(str::to_owned),
-            socket_id: socket.to_owned(),
-            online: Value::Null,
-        };
-        let initial = route("device", Some("runtime"), "first");
-        assert!(can_retry_on_route(
-            &initial,
-            "second",
-            &route("device", Some("runtime"), "third")
-        ));
-        for next in [
-            route("device", Some("runtime"), "second"),
-            route("other-device", Some("runtime"), "third"),
-            route("device", Some("replacement"), "third"),
-            route("device", None, "third"),
-        ] {
-            assert!(!can_retry_on_route(&initial, "second", &next));
-        }
-    }
-}
-
 /// A dispatch failure that keeps the desired snapshot for result recording.
 pub(super) fn snapshot_failure(
     device_id: &str,
@@ -227,5 +198,34 @@ pub(super) fn error_text(error: &crate::socketio_rpc::RpcError) -> &'static str 
         crate::socketio_rpc::RpcError::Timeout => ACKNOWLEDGEMENT_TIMEOUT_TEXT,
         crate::socketio_rpc::RpcError::Closed => "connection closed",
         crate::socketio_rpc::RpcError::Unavailable(_) => "Socket.IO Redis adapter is unavailable",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_must_keep_the_initial_runtime_and_change_the_current_socket() {
+        let route = |device: &str, instance: Option<&str>, socket: &str| OnlineRoute {
+            runtime_device_id: device.to_owned(),
+            runtime_instance_id: instance.map(str::to_owned),
+            socket_id: socket.to_owned(),
+            online: Value::Null,
+        };
+        let initial = route("device", Some("runtime"), "first");
+        assert!(can_retry_on_route(
+            &initial,
+            "second",
+            &route("device", Some("runtime"), "third")
+        ));
+        for next in [
+            route("device", Some("runtime"), "second"),
+            route("other-device", Some("runtime"), "third"),
+            route("device", Some("replacement"), "third"),
+            route("device", None, "third"),
+        ] {
+            assert!(!can_retry_on_route(&initial, "second", &next));
+        }
     }
 }
