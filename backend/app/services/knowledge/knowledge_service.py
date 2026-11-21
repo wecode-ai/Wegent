@@ -363,6 +363,10 @@ class KnowledgeService:
         # Add guidedQuestions if provided
         if data.guided_questions:
             spec_kwargs["guidedQuestions"] = data.guided_questions
+        if data.max_calls_per_conversation is not None:
+            spec_kwargs["maxCallsPerConversation"] = data.max_calls_per_conversation
+        if data.exempt_calls_before_check is not None:
+            spec_kwargs["exemptCallsBeforeCheck"] = data.exempt_calls_before_check
 
         kb_crd = KnowledgeBaseCRD(
             apiVersion="agent.wecode.io/v1",
