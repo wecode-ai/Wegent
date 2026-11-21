@@ -382,18 +382,7 @@ pub async fn deliver(
         let base = wegent_backend_config::env_or_dotenv("FRONTEND_URL")
             .unwrap_or_else(|| "http://localhost:3000".into());
         let links = im_links(notification, &base);
-        if let Err(error) = im::send_im(
-            mysql,
-            redis,
-            user,
-            notification["kind"].as_str().unwrap_or(""),
-            notification["title"].as_str().unwrap_or(""),
-            notification["body"].as_str().unwrap_or(""),
-            &notification["payload"],
-            &links,
-        )
-        .await
-        {
+        if let Err(error) = im::send_im(mysql, redis, user, notification, &links).await {
             tracing::error!(notification_id=%notification["id"],%error,"Wework IM notification delivery failed");
         }
     }

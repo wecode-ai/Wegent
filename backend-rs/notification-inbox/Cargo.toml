@@ -7,7 +7,7 @@ license.workspace = true
 description = "User-scoped Wework notifications and channel preferences"
 
 [dependencies]
-brz-http-server.workspace = true
+brz-http-server = { workspace = true, features = ["macros"] }
 brz-json.workspace = true
 brz-mysql.workspace = true
 chrono = { workspace = true, features = ["clock"] }

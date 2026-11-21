@@ -11,7 +11,7 @@ test-support = []
 
 [dependencies]
 async-trait.workspace = true
-brz-http.workspace = true
+brz-http = { workspace = true, features = ["json"] }
 brz-http-server.workspace = true
 brz-json.workspace = true
 brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }

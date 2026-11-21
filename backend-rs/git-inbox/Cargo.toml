@@ -9,7 +9,7 @@ description = "Signed Git webhook delivery and device-owned inbox subscriptions"
 [dependencies]
 aes-gcm.workspace = true
 base64.workspace = true
-brz-http-server.workspace = true
+brz-http-server = { workspace = true, features = ["macros"] }
 brz-redis.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 getrandom.workspace = true
@@ -23,4 +23,4 @@ wegent-http-compat.workspace = true
 wegent-identity.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

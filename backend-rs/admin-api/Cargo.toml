@@ -7,7 +7,7 @@ license.workspace = true
 description = "Administrator read API for service keys, IM channels, and configuration"
 
 [dependencies]
-brz-http-server.workspace = true
+brz-http-server = { workspace = true, features = ["macros"] }
 brz-json.workspace = true
 brz-mysql.workspace = true
 chrono.workspace = true

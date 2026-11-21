@@ -33,6 +33,6 @@ wegent-task-store = { workspace = true }
 [dev-dependencies]
 async-trait = { workspace = true }
 jsonwebtoken = { workspace = true }
-tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 wegent-backend-test-support = { workspace = true }
 wegent-identity = { workspace = true, features = ["test-support"] }

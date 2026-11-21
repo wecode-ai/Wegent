@@ -20,13 +20,14 @@ pub(super) async fn send_im(
     mysql: &MysqlService,
     redis: Option<&brz_redis::RedisService>,
     user: i64,
-    kind: &str,
-    title: &str,
-    body: &str,
-    payload: &Value,
+    notification: &Value,
     links: &[(String, String)],
 ) -> Result<()> {
     let redis = redis.context("Redis is unavailable")?;
+    let kind = notification["kind"].as_str().unwrap_or("");
+    let title = notification["title"].as_str().unwrap_or("");
+    let body = notification["body"].as_str().unwrap_or("");
+    let payload = &notification["payload"];
     let key = format!("channel:user_private_sessions:{user}");
     let sessions: Vec<String> = redis.zrevrange(key.as_str(), 0, -1).await?;
     for session_key in sessions {

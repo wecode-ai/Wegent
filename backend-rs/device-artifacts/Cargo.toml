@@ -9,7 +9,7 @@ description = "Task-scoped artifact metadata and retrieval from execution enviro
 [dependencies]
 base64.workspace = true
 brz-http = { workspace = true, features = ["json"] }
-brz-http-server.workspace = true
+brz-http-server = { workspace = true, features = ["macros"] }
 brz-mysql.workspace = true
 brz-redis.workspace = true
 chrono = { workspace = true, features = ["clock"] }

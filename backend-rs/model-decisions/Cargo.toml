@@ -9,7 +9,7 @@ description = "Authenticated decision-model catalog and provider execution"
 [dependencies]
 anyhow.workspace = true
 brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
-brz-http-server.workspace = true
+brz-http-server = { workspace = true, features = ["macros"] }
 brz-mysql.workspace = true
 brz-redis.workspace = true
 serde = { workspace = true, features = ["derive"] }

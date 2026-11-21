@@ -10,7 +10,7 @@ description = "Web page metadata and knowledge document scraping"
 anyhow.workspace = true
 brotli = { workspace = true, features = ["std"] }
 brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
-brz-http-server.workspace = true
+brz-http-server = { workspace = true, features = ["macros"] }
 brz-mysql.workspace = true
 brz-redis.workspace = true
 flate2 = { workspace = true, features = ["zlib"] }

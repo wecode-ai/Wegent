@@ -293,17 +293,6 @@ pub fn new_uuid() -> String {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn ids_fit_signed_database_keys_and_are_nonzero() {
-        for _ in 0..32 {
-            assert!((1..=i64::MAX).contains(&id().parse::<i64>().unwrap()));
-        }
-    }
-}
-
 const DATABASE_OFFSET: chrono::Duration = chrono::Duration::hours(8);
 
 /// Encode a UTC instant using the same database-session convention as reads.
@@ -313,4 +302,15 @@ pub fn database_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime
 
 pub fn utc_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
     value - DATABASE_OFFSET
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn ids_fit_signed_database_keys_and_are_nonzero() {
+        for _ in 0..32 {
+            assert!((1..=i64::MAX).contains(&id().parse::<i64>().unwrap()));
+        }
+    }
 }
