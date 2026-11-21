@@ -727,6 +727,13 @@ pub(crate) fn database_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveD
     value + DATABASE_OFFSET
 }
 
+/// Keep in-memory activity updates at the precision of the message table's DATETIME column.
+pub(super) fn activity_database_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
+    use chrono::Timelike as _;
+
+    database_timestamp(value.with_nanosecond(0).expect("whole seconds are valid"))
+}
+
 pub(crate) fn utc_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
     value - DATABASE_OFFSET
 }
