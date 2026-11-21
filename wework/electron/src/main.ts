@@ -2556,8 +2556,8 @@ async function configureDesktopRuntime(): Promise<void> {
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
     process.platform,
     90_000,
-    () => {
-      desktopHostEvents.publish('computerUse.changed', {})
+    currentTool => {
+      desktopHostEvents.publish('computerUse.changed', { currentTool })
     }
   )
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()

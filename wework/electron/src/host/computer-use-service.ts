@@ -42,7 +42,7 @@ export class ComputerUseService {
     private readonly executorHome: string,
     private readonly platform: NodeJS.Platform = process.platform,
     private readonly operationTimeoutMs = 90_000,
-    private readonly onStatusChanged: () => void = () => {}
+    private readonly onStatusChanged: (currentTool: string | null) => void = () => {}
   ) {}
 
   async status(): Promise<ComputerUseStatus> {
@@ -86,7 +86,7 @@ export class ComputerUseService {
 
   private async applyEnabled(enabled: boolean): Promise<ComputerUseStatus> {
     this.enabled = enabled
-    this.onStatusChanged()
+    this.onStatusChanged(this.currentTool)
     if (enabled) await this.start()
     else await this.stopInternal()
     return this.snapshot()
@@ -108,7 +108,7 @@ export class ComputerUseService {
   /** Cancel the action without clearing admission before its driver call settles. */
   async stopCurrentAction(): Promise<ComputerUseStatus> {
     this.currentActionController?.abort(new Error('Computer use action stopped by user'))
-    this.onStatusChanged()
+    this.onStatusChanged(this.currentTool)
     return this.snapshot()
   }
 
@@ -184,7 +184,7 @@ export class ComputerUseService {
     this.server = null
     this.runtimePath = null
     this.currentTool = null
-    this.onStatusChanged()
+    this.onStatusChanged(this.currentTool)
     for (const controller of this.operationControllers) {
       controller.abort(new Error('Computer use service stopped'))
     }
@@ -244,7 +244,7 @@ export class ComputerUseService {
         throw new Error('Another computer use action is already running')
       }
       this.currentTool = body.name
-      this.onStatusChanged()
+      this.onStatusChanged(this.currentTool)
       this.error = null
       const controller = new AbortController()
       actionController = controller
@@ -256,6 +256,11 @@ export class ComputerUseService {
           driver.callTool(body.name as string, JSON.stringify(body.arguments ?? {}), { signal }),
         controller
       )
+      if (
+        body.name === 'list_windows' &&
+        (body.arguments as { pid?: unknown })?.pid === process.pid
+      )
+        logHostWindowDiscovery(result)
       writeResponse(response, 200, { ok: true, data: result })
     } catch (error) {
       const message = errorMessage(error)
@@ -265,7 +270,7 @@ export class ComputerUseService {
       if (actionController && this.currentActionController === actionController) {
         this.currentActionController = null
         this.currentTool = null
-        this.onStatusChanged()
+        this.onStatusChanged(this.currentTool)
       }
     }
   }
@@ -350,6 +355,27 @@ export class ComputerUseService {
 
   private runtimeRecordPath(): string {
     return join(this.executorHome, 'runtime', RUNTIME_FILE)
+  }
+}
+
+/** Window geometry only: never retain titles, screenshots or other applications. */
+function logHostWindowDiscovery(result: unknown): void {
+  if (!result || typeof result !== 'object' || !('structuredJson' in result)) return
+  try {
+    const { windows } = JSON.parse(String(result.structuredJson)) as {
+      windows?: Array<{ pid: number; window_id: number; bounds: unknown }>
+    }
+    console.info('[computer-use] Host window discovery', {
+      pid: process.pid,
+      windows: windows
+        ?.filter(window => window.pid === process.pid)
+        .map(window => ({
+          windowId: window.window_id,
+          bounds: window.bounds,
+        })),
+    })
+  } catch {
+    console.warn('[computer-use] Host window discovery geometry unavailable')
   }
 }
 
