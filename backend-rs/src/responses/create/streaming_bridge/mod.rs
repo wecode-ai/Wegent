@@ -469,7 +469,6 @@ impl Bridge {
                         }
                         CallbackDispatchTarget::Device { route } => {
                             super::seam::enqueue_responses_device(dispatch_app, request, route)
-                                .map_err(|_| FastApiError::internal())
                         }
                     };
                     if result.is_ok() {

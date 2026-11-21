@@ -569,9 +569,10 @@ async fn a_nondispatchable_device_turn_fails_when_no_producer_exists() {
 #[tokio::test]
 async fn a_queue_rejection_is_not_reported_as_settled_dispatch() {
     use super::super::callback_source::test_support::ScriptedSubscriptions;
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Value as MysqlValue};
 
     let fixture =
-        crate::sql_test_support::mysql_rows::MysqlRows::start_results(|_| (Vec::new(), Vec::new()))
+        MysqlRows::start_results(|_| (vec![("id", MysqlValue::I64(TEST_TASK_ID))], Vec::new()))
             .await;
     let mut app = crate::app_test_support::app(fixture.mysql.clone());
     {
@@ -579,6 +580,11 @@ async fn a_queue_rejection_is_not_reported_as_settled_dispatch() {
         state.callback_subscriptions =
             Some(std::sync::Arc::new(ScriptedSubscriptions::new(Vec::new())));
     }
+    assert!(
+        app.completion_app
+            .set(std::sync::Arc::downgrade(&app))
+            .is_ok()
+    );
     let request = ExecutionRequest {
         task_id: TEST_TASK_ID,
         subtask_id: TEST_SUBTASK_ID,
@@ -608,13 +614,15 @@ async fn a_queue_rejection_is_not_reported_as_settled_dispatch() {
     let failure = bridge
         .open_callback()
         .await
-        .err()
-        .expect("the full device queue must reject callback dispatch");
+        .expect_err("the full device queue must reject callback dispatch");
+    assert!(bridge.subscription.is_some());
     assert!(!bridge.callback_dispatch_settled);
+    assert_eq!(failure.message, "Device dispatch queue unavailable");
     drop(permits);
     bridge.fail(failure).await;
     let body = drain(&mut bridge).await;
     assert!(body.contains("response.failed"), "{body}");
+    assert!(body.contains("Device dispatch queue unavailable"), "{body}");
 }
 
 async fn drain_stream(mut body: BodyStream) -> String {

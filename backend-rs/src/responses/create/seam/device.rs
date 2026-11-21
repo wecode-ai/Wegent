@@ -215,14 +215,28 @@ pub(crate) async fn dispatch_responses_device(
     recover_before_dispatch(state, request, Some(device_route)).await?;
     let dispatched = dispatch_device_turn(state, request, None, device_route).await;
     if let Err(error) = &dispatched {
-        crate::internal_callback::process_device_dispatch_failure(
-            state,
-            request.task_id,
-            request.subtask_id,
-            request.message_id,
-            build_failure_message(error),
-        )
-        .await;
+        let message = build_failure_message(error);
+        if state.redis.is_some() {
+            crate::internal_callback::process_device_dispatch_failure(
+                state,
+                request.task_id,
+                request.subtask_id,
+                request.message_id,
+                message,
+            )
+            .await;
+        } else {
+            use crate::responses::dispatch::{ConsumerState, finalize_executor_failure};
+            finalize_executor_failure(
+                &ConsumerState::from_app(state),
+                request.task_id,
+                request.subtask_id,
+                request.user_id,
+                request.message_id,
+                (message, "EXECUTOR_DISPATCH_FAILED"),
+            )
+            .await;
+        }
     }
     dispatched
 }
@@ -250,5 +264,8 @@ pub(crate) fn enqueue_responses_device(
         subtask_id = request.subtask_id,
         "device dispatch queue unavailable"
     );
-    Err(FastApiError::internal())
+    Err(FastApiError::detail(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Device dispatch queue unavailable",
+    ))
 }

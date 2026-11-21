@@ -88,6 +88,7 @@ where
 
 struct ManagedTaskHandle {
     identity: Arc<()>,
+    subtask_id: String,
     builder: ResponsesEventBuilder,
     cancellation: Arc<CancellationState>,
     handle: JoinHandle<()>,
@@ -148,15 +149,24 @@ where
         }
     }
 
-    async fn abort_task(&self, task_id: String, message: &str) -> bool {
-        let Some(state) = self
-            .handles
-            .lock()
-            .expect("managed task lock")
-            .remove(&task_id)
-        else {
-            self.running_tasks.remove(&task_id);
-            if let Some(event) = self.engine.cancel_pending(&task_id, None) {
+    async fn abort_task(&self, task_id: String, subtask_id: Option<&str>, message: &str) -> bool {
+        let state = {
+            let mut handles = self.handles.lock().expect("managed task lock");
+            let matches_turn = handles
+                .get(&task_id)
+                .is_some_and(|state| subtask_id.is_none_or(|id| id == state.subtask_id));
+            let state = if matches_turn {
+                handles.remove(&task_id)
+            } else {
+                None
+            };
+            if state.is_some() || subtask_id.is_none() {
+                self.running_tasks.remove(&task_id);
+            }
+            state
+        };
+        let Some(state) = state else {
+            if let Some(event) = self.engine.cancel_pending(&task_id, subtask_id) {
                 return self.sink.send(event).await.is_ok();
             }
             return false;
@@ -164,8 +174,7 @@ where
         state.cancellation.cancel().await;
         state.handle.abort();
         let _ = state.handle.await;
-        self.engine.cancel_pending(&task_id, None);
-        self.running_tasks.remove(&task_id);
+        self.engine.cancel_pending(&task_id, subtask_id);
         self.sink
             .send(state.builder.response_cancelled(message))
             .await
@@ -181,16 +190,19 @@ where
     fn cancel_task<'a>(
         &'a self,
         task_id: String,
-        _subtask_id: Option<String>,
+        subtask_id: Option<String>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move { self.abort_task(task_id, "Task cancelled").await })
+        Box::pin(async move {
+            self.abort_task(task_id, subtask_id.as_deref(), "Task cancelled")
+                .await
+        })
     }
 
     fn close_task_session<'a>(
         &'a self,
         task_id: String,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move { self.abort_task(task_id, "Task session closed").await })
+        Box::pin(async move { self.abort_task(task_id, None, "Task session closed").await })
     }
 
     fn running_task_ids(&self) -> Vec<String> {
@@ -223,28 +235,30 @@ where
                 };
             }
 
-            running_tasks.add(task_id.clone());
             let identity = Arc::new(());
             let cancellation = Arc::new(CancellationState::new());
             let task_sink = CancellationAwareEventSink {
                 inner: sink,
                 cancellation: Arc::clone(&cancellation),
             };
-            let handle = tokio::spawn(run_managed_task(
-                engine,
-                task_sink,
-                builder.clone(),
-                request,
-                running_tasks.clone(),
-                Arc::clone(&handles),
-                Arc::clone(&identity),
-            ));
             let previous = {
                 let mut guard = handles.lock().expect("managed task lock");
+                running_tasks.add(task_id.clone());
+                let subtask_id = request.subtask_id.clone();
+                let handle = tokio::spawn(run_managed_task(
+                    engine,
+                    task_sink,
+                    builder.clone(),
+                    request,
+                    running_tasks.clone(),
+                    Arc::clone(&handles),
+                    Arc::clone(&identity),
+                ));
                 guard.insert(
                     task_id,
                     ManagedTaskHandle {
                         identity,
+                        subtask_id,
                         builder,
                         cancellation,
                         handle,
@@ -280,7 +294,6 @@ async fn run_managed_task<E, S>(
         .await;
     let executor_session = agent_session::saved_executor_session(&session_request);
     let builder = builder.with_executor_session(executor_session);
-    running_tasks.remove(&task_id);
     {
         let mut guard = handles.lock().expect("managed task lock");
         if guard
@@ -288,6 +301,7 @@ async fn run_managed_task<E, S>(
             .is_some_and(|state| Arc::ptr_eq(&state.identity, &identity))
         {
             guard.remove(&task_id);
+            running_tasks.remove(&task_id);
         }
     }
 
@@ -402,5 +416,43 @@ mod tests {
         assert_eq!(events[0].event_type, "response.created");
         assert_eq!(events[1].event_type, "response.incomplete");
         assert_eq!(events[1].data["response"]["status"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn late_cancellation_cannot_abort_a_newer_turn_of_the_same_task() {
+        let sink = RecordingSink::default();
+        let runner = ManagedLocalTaskRunner::new(
+            DetachedLateEventEngine {
+                release_late_event: Arc::new(Notify::new()),
+            },
+            sink.clone(),
+            LocalRunningTaskTracker::default(),
+        );
+        for subtask_id in ["536", "537"] {
+            let request = ExecutionRequest {
+                task_id: "282".to_owned(),
+                subtask_id: subtask_id.to_owned(),
+                ..ExecutionRequest::default()
+            };
+            assert_eq!(runner.submit(request).await.status, TaskStatus::Running);
+        }
+
+        assert!(
+            !runner
+                .cancel_task("282".to_owned(), Some("536".to_owned()))
+                .await
+        );
+        assert_eq!(runner.running_task_ids(), vec!["282"]);
+        assert!(
+            runner
+                .cancel_task("282".to_owned(), Some("537".to_owned()))
+                .await
+        );
+        assert!(runner.running_task_ids().is_empty());
+        let events = sink.events.lock().expect("event sink lock");
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[2].event_type, "response.incomplete");
+        assert_eq!(events[2].subtask_id, "537");
+        assert_eq!(events[2].data["response"]["status"], "cancelled");
     }
 }
