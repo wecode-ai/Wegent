@@ -109,6 +109,7 @@ function clickAt(
     topLayer: Array.from(document.querySelectorAll(':popover-open, dialog[open]')).map(
       describeHitElement
     ),
+    dialogs: Array.from(document.querySelectorAll('[role="dialog"]')).map(describeHitElement),
   })
   clickable.dispatchEvent(
     new MouseEvent('click', {
@@ -130,6 +131,8 @@ function describeHitElement(element: Element) {
     slot: element.getAttribute('data-slot'),
     role: element.getAttribute('role'),
     pointerEvents: style.pointerEvents,
+    inert: element.closest('[inert]') !== null,
+    ariaHidden: element.closest('[aria-hidden="true"]') !== null,
     zIndex: style.zIndex,
     position: style.position,
     bounds: element.getBoundingClientRect().toJSON(),
