@@ -118,6 +118,7 @@ export interface UseModelSelectionReturn {
   compatibleProvider: CompatibleProvider[] | null
   hasAdvancedModels: boolean
   boundDefaultModel: Model | null
+  displayModelGroup?: string | null
 
   // Actions
   selectModel: (model: Model | null) => void
@@ -721,6 +722,15 @@ export function useModelSelection({
   // -------------------------------------------------------------------------
   // Return
   // -------------------------------------------------------------------------
+  const catalogSelection =
+    selectedModel &&
+    models.find(
+      model =>
+        model.name === selectedModel.name &&
+        model.type === selectedModel.type &&
+        (model.namespace ?? 'default') === (selectedModel.namespace ?? 'default')
+    )
+
   return {
     // State
     selectedModel,
@@ -737,6 +747,12 @@ export function useModelSelection({
     compatibleProvider,
     hasAdvancedModels,
     boundDefaultModel,
+    displayModelGroup:
+      selectedModel?.name === DEFAULT_MODEL_NAME
+        ? getBoundModelDisplayNames().length === 1
+          ? boundDefaultModel?.modelGroup
+          : undefined
+        : (catalogSelection ?? selectedModel)?.modelGroup,
 
     // Actions
     selectModel,

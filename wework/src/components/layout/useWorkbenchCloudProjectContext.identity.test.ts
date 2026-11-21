@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import type { CloudLoopItem } from '@/api/deliveries'
 import {
+  findProjectSpaceContextSourceForTask,
   projectSpaceRef,
   publishProjectSpaceTaskContextChanged,
 } from '@/features/todo/projectSpaceSelection'
@@ -9,6 +10,27 @@ import type { DeliveryApi } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import { cloudRuntimePort, loopItem, project } from './workbenchCloudProjectContextTestFixtures'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
+
+test('resolves an Issue binding that returns after the project selection window', async () => {
+  vi.useFakeTimers()
+  try {
+    const board = project('slow-binding-board')
+    const context = { project: board, loop_item: loopItem(board.id) }
+    const response = Promise.withResolvers<typeof context>()
+    const api = { findCloudContextForTask: () => response.promise }
+    const lookup = findProjectSpaceContextSourceForTask(
+      [api],
+      { deviceId: 'local-device', taskId: 'bound-task' },
+      5_000
+    )
+    const assertion = expect(lookup).resolves.toEqual({ api, context })
+    await vi.advanceTimersByTimeAsync(5_001)
+    response.resolve(context)
+    await assertion
+  } finally {
+    vi.useRealTimers()
+  }
+})
 
 // A discovery refresh must not blank a bound project while its new address is loading.
 test('retains the same owner binding during alias refresh but isolates another device', async () => {

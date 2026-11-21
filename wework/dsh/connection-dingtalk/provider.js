@@ -181,9 +181,13 @@ export function createProvider() {
   }
 }
 
-function nativeMessage(message, source, ownId, limit) {
+function messageSentAt(message) {
   const at = required(message, 'createTime')
-  if (!Number.isFinite(Date.parse(at))) throw invalid('Invalid native message time')
+  if (!Number.isFinite(Date.parse(at))) throw invalid('Invalid DingTalk message send time')
+  return at
+}
+
+function nativeMessage(message, source, ownId, limit) {
   const text = required(message, 'text')
   const budget = Math.min(20000, Math.floor(24000 / limit))
   const conversationId = required(message, 'conversationId')
@@ -192,7 +196,7 @@ function nativeMessage(message, source, ownId, limit) {
   return {
     id: required(message, 'messageId'),
     eventType: 'message.received',
-    at,
+    at: messageSentAt(message),
     text: text.slice(0, budget),
     truncated: text.length > budget,
     senderId: message.senderId ?? null,
@@ -333,7 +337,7 @@ export function normalizeMessages(source, response, ownId, selfConversationId) {
         senderName: message.sender ?? null,
         isOwn: sender === ownId,
         isSelfConversation: direct && manualSelfMessage && sender === ownId,
-        at: required(message, 'createTime'),
+        at: messageSentAt(message),
         conversationId,
         quotedMessageId: message.quotedMessage?.openMessageId ?? null,
         topicId: message.openConvThreadId ?? null,

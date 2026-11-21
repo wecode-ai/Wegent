@@ -221,6 +221,28 @@ describe('useWorkbenchDataRefresh', () => {
     expect(hook.result.current.state.isBootstrapping).toBe(false)
   })
 
+  test('publishes the first inventory while a newer refresh is still pending', async () => {
+    const initial = deferred<RuntimeWorkListResponse>()
+    const refreshed = deferred<RuntimeWorkListResponse>()
+    const hook = setup(
+      vi.fn().mockReturnValueOnce(initial.promise).mockReturnValueOnce(refreshed.promise)
+    )
+    let refresh!: Promise<void>
+    act(() => {
+      refresh = hook.result.current.refreshWorkLists({ refreshDevices: false })
+    })
+    await act(async () => initial.resolve(work))
+    expect(hook.result.current.state.runtimeWork?.totalTasks).toBe(1)
+    expect(hook.result.current.state.runtimeWorkLoad.phase).toBe('refreshing')
+
+    await act(async () => {
+      refreshed.resolve({ projects: [], chats: [], totalTasks: 0 })
+      await refresh
+    })
+    expect(hook.result.current.state.runtimeWork?.totalTasks).toBe(0)
+    expect(hook.result.current.state.runtimeWorkLoad.phase).toBe('ready')
+  })
+
   test.each(['remote', 'app'] as const)(
     'preserves %s devices during a local refresh until cloud inventory removes them',
     async deviceType => {
