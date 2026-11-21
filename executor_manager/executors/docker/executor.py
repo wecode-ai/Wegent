@@ -378,7 +378,6 @@ class DockerExecutor(Executor):
         dispatch_result = self.dispatch_task_to_instance(
             task, executor_name, ready_info
         )
-        self._record_timing(task, taskDispatchedAt=_current_epoch_ms())
 
         # Existing container path keeps the historical callback progress behavior.
         status["progress"] = DEFAULT_PROGRESS_COMPLETE
@@ -474,6 +473,7 @@ class DockerExecutor(Executor):
         if timeout is not None:
             request_kwargs["timeout"] = timeout
 
+        self._record_timing(task, taskDispatchedAt=_current_epoch_ms())
         return self.requests.post(endpoint, json=task, **request_kwargs)
 
     def _create_new_container(
@@ -493,7 +493,6 @@ class DockerExecutor(Executor):
                 self._record_timing(task, instanceReadyAt=_current_epoch_ms())
                 if not prepare_only:
                     self.dispatch_task_to_instance(task, executor_name, ready_info)
-                    self._record_timing(task, taskDispatchedAt=_current_epoch_ms())
             except Exception:
                 # Avoid leaking an idle container when initial dispatch fails.
                 if self._should_keep_failed_validation_container(task):

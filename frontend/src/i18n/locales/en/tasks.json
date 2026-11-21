@@ -273,7 +273,14 @@
     "timeline": {
       "title": "Timeline details",
       "empty": "No spans",
-      "span_meta": "{{kind}} · Turn {{turn}} · {{duration}}"
+      "span_meta": "{{kind}} · Turn {{turn}} · {{duration}}",
+      "leading_gap": "Leading unobserved · {{duration}}",
+      "trailing_gap": "Trailing unobserved · {{duration}}"
+    },
+    "status": {
+      "completed": "Completed",
+      "running": "Running",
+      "failed": "Failed"
     }
   },
   "preview": {

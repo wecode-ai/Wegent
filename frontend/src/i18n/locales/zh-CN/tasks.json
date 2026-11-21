@@ -269,7 +269,14 @@
     "timeline": {
       "title": "时间线详情",
       "empty": "暂无 Span",
-      "span_meta": "{{kind}} · 轮次 {{turn}} · {{duration}}"
+      "span_meta": "{{kind}} · 轮次 {{turn}} · {{duration}}",
+      "leading_gap": "前段未观测 · {{duration}}",
+      "trailing_gap": "后段未观测 · {{duration}}"
+    },
+    "status": {
+      "completed": "已完成",
+      "running": "运行中",
+      "failed": "失败"
     }
   },
   "preview": {

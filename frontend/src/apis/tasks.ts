@@ -260,6 +260,8 @@ export interface TaskTimingResponse {
   task_id: number
   owner_user_id: number
   wall_time_ms?: number | null
+  session_start_at_ms?: number | null
+  session_end_at_ms?: number | null
   triage: TaskTimingCategory[]
   coverage: TaskTimingCategory[]
   top_suspects: TaskTimingTopSuspect[]

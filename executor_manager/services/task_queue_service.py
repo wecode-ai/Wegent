@@ -288,12 +288,12 @@ class TaskQueueService:
             "enqueuedAt": pending.get("enqueued_at"),
             "dequeuedAt": pending.get("dequeued_at"),
         }
-        timing = {
+        boundaries = {
             key: int(value * 1000)
             for key, value in timing.items()
             if isinstance(value, (int, float))
         }
-        if not timing:
+        if not boundaries:
             return task
 
         metadata = task.setdefault("metadata", {})
@@ -303,8 +303,8 @@ class TaskQueueService:
         if not isinstance(existing, dict):
             existing = {}
             metadata["timing"] = existing
-        for key, value in timing.items():
-            existing.setdefault(key, value)
+        for key, value in boundaries.items():
+            existing[key] = value
         return task
 
     def clear_pending(self, task_id: Any, subtask_id: Any = None) -> None:

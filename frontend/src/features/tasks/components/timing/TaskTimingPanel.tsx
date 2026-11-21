@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   BarChart3,
@@ -31,6 +31,13 @@ type FetchState =
 
 type TaskTimingPanelProps = TaskRightPanelComponentProps<{ taskId: number }>
 
+interface TimelineBounds {
+  start: number
+  end: number
+  observedStart?: number
+  observedEnd?: number
+}
+
 let timingPanelRegistered = false
 
 /** Register the panel when its user-triggered entry point is first used. */
@@ -51,18 +58,24 @@ export function openTaskTimingPanel(taskId: number): void {
 export function TaskTimingPanel({ panelProps, onClose }: TaskTimingPanelProps) {
   const { t } = useTranslation('tasks')
   const [state, setState] = useState<FetchState>({ status: 'loading' })
+  const requestScopeRef = useRef(0)
 
   const loadTiming = useCallback(
     async (taskId: number) => {
+      const requestScope = ++requestScopeRef.current
+      const isCurrentRequest = () => requestScopeRef.current === requestScope
+
       setState({ status: 'loading' })
       try {
         const data = await taskApis.getTaskTiming(taskId)
+        if (!isCurrentRequest()) return
         setState(
           data.spans.length === 0 || data.has_spans === false
             ? { status: 'empty' }
             : { status: 'success', data }
         )
       } catch (error) {
+        if (!isCurrentRequest()) return
         setState({
           status: 'error',
           message: error instanceof Error ? error.message : t('timing.errors.load_failed'),
@@ -262,7 +275,7 @@ function TimingContent({ data }: { data: TaskTimingResponse }) {
             )}
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <TimelineDetails spans={data.spans} />
+            <TimelineDetails data={data} />
           </CollapsibleContent>
         </Collapsible>
       </section>
@@ -270,12 +283,55 @@ function TimingContent({ data }: { data: TaskTimingResponse }) {
   )
 }
 
-function TimelineDetails({ spans }: { spans: TaskTimingResponse['spans'] }) {
+function TimelineDetails({ data }: { data: TaskTimingResponse }) {
   const { t } = useTranslation('tasks')
-  const bounds = useTimelineBounds(spans)
+  const { spans } = data
+  const bounds = useTimelineBounds(data)
+  const leadingGap = bounds.observedStart === undefined ? 0 : bounds.observedStart - bounds.start
+  const trailingGap = bounds.observedEnd === undefined ? 0 : bounds.end - bounds.observedEnd
 
   return (
     <div className="mt-2 space-y-3" data-testid="task-timing-timeline-details">
+      <div className="flex items-center gap-2 text-xs text-text-muted">
+        <span className="truncate">{formatTimestamp(bounds.start)}</span>
+        <span className="h-px min-w-4 flex-1 bg-border" />
+        <span className="truncate">{formatTimestamp(bounds.end)}</span>
+      </div>
+      <div
+        className="relative h-3 w-full overflow-hidden rounded-full bg-muted"
+        data-testid="task-timing-session-track"
+        role="presentation"
+      >
+        <span
+          className="absolute inset-y-0 left-0 bg-border"
+          style={{ width: percent(leadingGap, bounds) }}
+          data-testid="task-timing-leading-gap"
+        />
+        <span
+          className="absolute inset-y-0 right-0 bg-border"
+          style={{ width: percent(trailingGap, bounds) }}
+          data-testid="task-timing-trailing-gap"
+        />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {leadingGap > 0 ? (
+          <span
+            className="rounded bg-surface px-2 py-1 text-xs text-text-muted"
+            data-testid="task-timing-leading-gap-label"
+          >
+            {t('timing.timeline.leading_gap', { duration: formatDuration(leadingGap) })}
+          </span>
+        ) : null}
+        {trailingGap > 0 ? (
+          <span
+            className="rounded bg-surface px-2 py-1 text-xs text-text-muted"
+            data-testid="task-timing-trailing-gap-label"
+          >
+            {t('timing.timeline.trailing_gap', { duration: formatDuration(trailingGap) })}
+          </span>
+        ) : null}
+      </div>
+
       {spans.map(span => (
         <article
           key={span.id}
@@ -288,8 +344,11 @@ function TimelineDetails({ spans }: { spans: TaskTimingResponse['spans'] }) {
                 <p className="min-w-0 truncate text-sm font-medium text-text-primary">
                   {span.actor_label || span.kind}
                 </p>
-                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase text-text-muted">
-                  {span.status}
+                <span
+                  className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase text-text-muted"
+                  data-testid="task-timing-span-status"
+                >
+                  {t(`timing.status.${span.status}`, { defaultValue: span.status })}
                 </span>
               </div>
               <p className="mt-0.5 truncate text-xs text-text-muted">
@@ -360,32 +419,45 @@ export function categoryTotal(categories: TaskTimingResponse['triage']): number 
   return categories.reduce((total, category) => total + category.duration_ms, 0)
 }
 
-function useTimelineBounds(spans: TaskTimingResponse['spans']): { start: number; end: number } {
+function useTimelineBounds(data: TaskTimingResponse): TimelineBounds {
   return useMemo(() => {
-    let start = Number.POSITIVE_INFINITY
-    let end = Number.NEGATIVE_INFINITY
+    const sessionStart = validTimestamp(data.session_start_at_ms)
+    const sessionEnd = validTimestamp(data.session_end_at_ms)
+    let observedStart = Number.POSITIVE_INFINITY
+    let observedEnd = Number.NEGATIVE_INFINITY
 
-    for (const span of spans) {
+    for (const span of data.spans) {
       if (span.start_at_ms === null || span.start_at_ms === undefined) continue
       const spanEnd =
         span.end_at_ms ??
         (span.duration_ms === null || span.duration_ms === undefined
           ? span.start_at_ms
           : span.start_at_ms + span.duration_ms)
-      start = Math.min(start, span.start_at_ms)
-      end = Math.max(end, spanEnd)
+      observedStart = Math.min(observedStart, span.start_at_ms)
+      observedEnd = Math.max(observedEnd, spanEnd)
     }
 
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
-      return { start: 0, end: 1 }
+    const hasObservedSpans = Number.isFinite(observedStart) && Number.isFinite(observedEnd)
+    const fallbackStart = hasObservedSpans ? observedStart : 0
+    const fallbackEnd = hasObservedSpans ? observedEnd : 1
+    const start = sessionStart ?? fallbackStart
+    const end = sessionEnd ?? fallbackEnd
+
+    if (end < start) {
+      return { start, end: start, observedStart: undefined, observedEnd: undefined }
     }
-    return { start, end }
-  }, [spans])
+    return {
+      start,
+      end,
+      observedStart: hasObservedSpans ? observedStart : undefined,
+      observedEnd: hasObservedSpans ? observedEnd : undefined,
+    }
+  }, [data])
 }
 
 function barPosition(
   span: TaskTimingResponse['spans'][number],
-  bounds: { start: number; end: number }
+  bounds: TimelineBounds
 ): { left: string; width: string } {
   const start = span.start_at_ms ?? bounds.start
   const fallbackEnd =
@@ -398,6 +470,15 @@ function barPosition(
     left: `${(left / Math.max(scale, 1)) * 100}%`,
     width: `${(width / Math.max(scale, 1)) * 100}%`,
   }
+}
+
+function percent(durationMs: number, bounds: TimelineBounds): string {
+  const scale = Math.max(bounds.end - bounds.start, 1)
+  return `${Math.max(Math.min(durationMs / scale, 1), 0) * 100}%`
+}
+
+function validTimestamp(timestampMs?: number | null): number | undefined {
+  return timestampMs === null || timestampMs === undefined ? undefined : timestampMs
 }
 
 function formatDuration(durationMs: number): string {

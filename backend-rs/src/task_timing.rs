@@ -49,6 +49,8 @@ struct TaskTimingResponse {
     task_id: i64,
     owner_user_id: i64,
     wall_time_ms: Option<i64>,
+    session_start_at_ms: Option<i64>,
+    session_end_at_ms: Option<i64>,
     triage: Vec<TimingCategory>,
     coverage: Vec<TimingCategory>,
     top_suspects: Vec<TopSuspect>,
@@ -125,13 +127,29 @@ struct SessionBoundaries {
 impl SessionBoundaries {
     fn from_task_row(task: &task_repo::TaskRow) -> Self {
         let timestamp = |value: Option<chrono::NaiveDateTime>| {
-            value.map(|value| value.and_utc().timestamp_millis())
+            value
+                .and_then(|value| value.and_local_timezone(chrono::Local).single())
+                .map(|value| value.timestamp_millis())
         };
         Self {
             start_at_ms: timestamp(task.created_at),
-            end_at_ms: timestamp(task.completed_at),
+            end_at_ms: task.completed_at.as_deref().and_then(crd_timestamp_ms),
         }
     }
+}
+
+/// A CRD timestamp is a local ISO string; convert it explicitly so that task
+/// boundaries stay comparable with executor Unix epoch milliseconds.
+fn crd_timestamp_ms(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f")
+                .ok()
+                .and_then(|value| value.and_local_timezone(chrono::Local).single())
+                .map(|value| value.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()))
+        })
+        .map(|value| value.timestamp_millis())
 }
 
 async fn load_accessible_task(
@@ -223,6 +241,8 @@ fn aggregate(
         task_id,
         owner_user_id,
         wall_time_ms,
+        session_start_at_ms: session.start_at_ms,
+        session_end_at_ms: session.end_at_ms,
         triage,
         coverage,
         top_suspects,
@@ -247,16 +267,39 @@ fn wall_time(session: &SessionBoundaries, rows: &[TimingSpanRow]) -> Option<i64>
     Some((last - first).max(0))
 }
 
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+    use chrono::NaiveDateTime;
+
+    #[test]
+    fn crd_completion_timestamps_are_local_iso_strings() {
+        let completed =
+            NaiveDateTime::parse_from_str("2026-11-20T12:00:00.123456", "%Y-%m-%dT%H:%M:%S%.f")
+                .unwrap();
+        let expected = completed
+            .and_local_timezone(chrono::Local)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        assert_eq!(
+            crd_timestamp_ms("2026-11-20T12:00:00.123456"),
+            Some(expected)
+        );
+    }
+}
+
 fn triage_categories(spans: &[SpanView], wall_time_ms: Option<i64>) -> Vec<TimingCategory> {
+    let tool_intervals = intervals_by_kinds(spans, &["tool"]);
+    let subagent_intervals = intervals_by_kinds(spans, &["subagent"]);
+    let child_intervals = merge_intervals(&subagent_intervals, &tool_intervals);
+    let exclusive_subagent_intervals = subtract_intervals(&subagent_intervals, &tool_intervals);
+    let agent_intervals =
+        subtract_intervals(&intervals_by_kinds(spans, &["agent"]), &child_intervals);
     let mut categories = vec![
-        category("tool", union_by_kinds(spans, &["tool"])),
-        category("subagent", union_by_kinds(spans, &["subagent"])),
-        category(
-            "agent",
-            (union_by_kinds(spans, &["agent", "subagent", "tool"])
-                - union_by_kinds(spans, &["subagent", "tool"]))
-            .max(0),
-        ),
+        category("tool", union_ms(&tool_intervals)),
+        category("subagent", union_ms(&exclusive_subagent_intervals)),
+        category("agent", union_ms(&agent_intervals)),
         category("waiting_user", union_by_kinds(spans, &["waiting_user"])),
         category("runtime", union_by_kinds(spans, &["queue", "provision"])),
     ];
@@ -282,12 +325,61 @@ fn category(kind: &'static str, duration_ms: i64) -> TimingCategory {
 }
 
 fn union_by_kinds(spans: &[SpanView], kinds: &[&str]) -> i64 {
-    let selected: Vec<SpanView> = spans
-        .iter()
-        .filter(|span| kinds.contains(&span.kind.as_str()))
-        .cloned()
-        .collect();
-    union_ms(&observable_intervals(&selected))
+    union_ms(&intervals_by_kinds(spans, kinds))
+}
+
+fn intervals_by_kinds(spans: &[SpanView], kinds: &[&str]) -> Vec<(i64, i64)> {
+    observable_intervals(
+        &spans
+            .iter()
+            .filter(|span| kinds.contains(&span.kind.as_str()))
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn merge_intervals(left: &[(i64, i64)], right: &[(i64, i64)]) -> Vec<(i64, i64)> {
+    let mut merged = left.to_vec();
+    merged.extend_from_slice(right);
+    merged.sort();
+    normalized_intervals(&merged)
+}
+
+fn subtract_intervals(source: &[(i64, i64)], exclusions: &[(i64, i64)]) -> Vec<(i64, i64)> {
+    let mut remaining = normalized_intervals(source);
+    for &(exclude_start, exclude_end) in normalized_intervals(exclusions).iter() {
+        let mut next = Vec::with_capacity(remaining.len());
+        for &(start, end) in remaining.iter() {
+            if exclude_end <= start || end <= exclude_start {
+                next.push((start, end));
+                continue;
+            }
+            if start < exclude_start {
+                next.push((start, exclude_start));
+            }
+            if exclude_end < end {
+                next.push((exclude_end, end));
+            }
+        }
+        remaining = next;
+    }
+    remaining
+}
+
+fn normalized_intervals(intervals: &[(i64, i64)]) -> Vec<(i64, i64)> {
+    let mut sorted = intervals.to_vec();
+    sorted.sort();
+    let mut normalized: Vec<(i64, i64)> = Vec::with_capacity(sorted.len());
+    for (start, end) in sorted {
+        if end <= start {
+            continue;
+        }
+        match normalized.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => normalized.push((start, end)),
+        }
+    }
+    normalized
 }
 
 fn observable_intervals(spans: &[SpanView]) -> Vec<(i64, i64)> {
@@ -305,24 +397,10 @@ fn observable_intervals(spans: &[SpanView]) -> Vec<(i64, i64)> {
 }
 
 fn union_ms(intervals: &[(i64, i64)]) -> i64 {
-    let mut normalized = intervals.to_vec();
-    if normalized.is_empty() {
-        return 0;
-    }
-    normalized.sort();
-    let mut total = 0;
-    let (mut current_start, mut current_end) = normalized[0];
-    for (start, end) in normalized.into_iter().skip(1) {
-        if start > current_end {
-            total += current_end - current_start;
-            current_start = start;
-            current_end = end;
-        } else {
-            current_end = current_end.max(end);
-        }
-    }
-    total += current_end - current_start;
-    total
+    normalized_intervals(intervals)
+        .into_iter()
+        .map(|(start, end)| end - start)
+        .sum()
 }
 
 fn top_suspects(spans: &[SpanView]) -> Vec<TopSuspect> {
@@ -489,6 +567,28 @@ mod tests {
                 .duration_ms
         };
         assert_eq!(get("tool"), 10);
+        assert_eq!(get("agent"), 10);
+        assert_eq!(get("gap"), 0);
+    }
+
+    #[test]
+    fn triage_categories_do_not_double_overlap() {
+        let rows = vec![
+            span("agent", 0, 20),
+            span("subagent", 5, 15),
+            span("tool", 6, 10),
+        ];
+        let response = aggregate(1, 7, session(None, None), rows);
+        let get = |kind: &str| {
+            response
+                .triage
+                .iter()
+                .find(|item| item.kind == kind)
+                .unwrap()
+                .duration_ms
+        };
+        assert_eq!(get("tool"), 4);
+        assert_eq!(get("subagent"), 6);
         assert_eq!(get("agent"), 10);
         assert_eq!(get("gap"), 0);
     }

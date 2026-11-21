@@ -24,23 +24,23 @@ const INSERT_SPAN_SQL: &str = "INSERT INTO task_timing_spans \
     status = IF(status IN ('running', 'waiting'), VALUES(status), status), \
     start_at_ms = IF(start_at_ms IS NULL, VALUES(start_at_ms), start_at_ms), \
     end_at_ms = IF(end_at_ms IS NULL, VALUES(end_at_ms), end_at_ms), \
-    duration_ms = IF(duration_ms IS NULL, VALUES(duration_ms), duration_ms), \
+    duration_ms = IF(duration_ms IS NULL, GREATEST(COALESCE(end_at_ms, VALUES(end_at_ms), VALUES(duration_ms)) - start_at_ms, 0), duration_ms), \
     clock = IF(clock = '', VALUES(clock), clock), \
     source = IF(source = '', VALUES(source), source), \
     metadata = IF(JSON_LENGTH(metadata) = 0, VALUES(metadata), metadata)";
 
-const CLOSE_WAITING_USER_SQL: &str = "UPDATE task_timing_spans \\
-    SET status = 'completed', \\
-        end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \\
-        duration_ms = IF(duration_ms IS NULL, ? - start_at_ms, duration_ms) \\
-    WHERE task_id = ? \\
+const CLOSE_WAITING_USER_SQL: &str = "UPDATE task_timing_spans \
+    SET status = 'completed', \
+        end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \
+        duration_ms = IF(duration_ms IS NULL, ? - start_at_ms, duration_ms) \
+    WHERE task_id = ? \
         AND kind = 'waiting_user' AND status = 'waiting'";
 
-const CLOSE_TOOL_SPAN_SQL: &str = "UPDATE task_timing_spans \\
-    SET end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \\
-        duration_ms = IF(duration_ms IS NULL, ? - start_at_ms, duration_ms), \\
-        status = IF(status = 'running', ?, status) \\
-    WHERE task_id = ? AND subtask_id = ? AND span_id = ? \\
+const CLOSE_TOOL_SPAN_SQL: &str = "UPDATE task_timing_spans \
+    SET end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \
+        duration_ms = IF(duration_ms IS NULL, ? - start_at_ms, duration_ms), \
+        status = IF(status = 'running', ?, status) \
+    WHERE task_id = ? AND subtask_id = ? AND span_id = ? \
         AND kind = 'tool' AND end_at_ms IS NULL";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +219,8 @@ fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
         .data
         .get("agent_thread_id")
         .or_else(|| event.data.get("agent_id"))
+        .or_else(|| event.data.get("tool_use_id"))
+        .or_else(|| event.data.get("block_id"))
         .and_then(Value::as_str)
         .unwrap_or_default();
     let occurred_at = event.data.get("occurred_at_ms").and_then(Value::as_i64);
@@ -372,6 +374,8 @@ fn block_event_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
         block
             .get("agent_thread_id")
             .or_else(|| block.get("agent_id"))
+            .or_else(|| block.get("tool_use_id"))
+            .or_else(|| block.get("id"))
             .and_then(Value::as_str)
             .map(|agent_id| subagent_span_id(event, agent_id))
     } else {
@@ -921,5 +925,10 @@ mod tests {
         assert!(INSERT_SPAN_SQL.contains("ON DUPLICATE KEY UPDATE"));
         assert!(INSERT_SPAN_SQL.contains("IF(start_at_ms IS NULL"));
         assert!(INSERT_SPAN_SQL.contains("IF(end_at_ms IS NULL"));
+        assert!(
+            INSERT_SPAN_SQL.contains(
+                "COALESCE(end_at_ms, VALUES(end_at_ms), VALUES(duration_ms)) - start_at_ms"
+            )
+        );
     }
 }

@@ -85,14 +85,11 @@ def verify(engine, url):
         User.__table__.create(engine)
         Kind.__table__.create(engine)
         create_legacy_share_links(engine)
-        # The timing profile intentionally adds a persisted diagnostic table.
-        from shared.models.db.task_timing_span import TaskTimingSpan
-
-        TaskTimingSpan.__table__.create(engine)
         command.stamp(config, "f3a7c9e1b2d4")
         tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
-        assert set(inspect(engine).get_table_names()) == tables
+        tables_after_upgrade = set(inspect(engine).get_table_names())
+        assert tables_after_upgrade == tables | {"task_timing_spans"}
         assert "plugin_local_sync_operations" not in tables
         assert "plugin_sync_outbox" not in tables
         verify_ordering(engine)
@@ -119,7 +116,7 @@ def verify(engine, url):
                 lookup_operation(db, 1, "other-native", "uncertain-operation") is None
             )
             assert db.query(Kind).filter_by(namespace="plugin-local-sync").count() == 0
-        assert set(inspect(engine).get_table_names()) == tables
+        assert set(inspect(engine).get_table_names()) == tables_after_upgrade
     print(
         "MySQL: unchanged schema/head, existing account marker recovery and identity isolation passed"
     )

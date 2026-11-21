@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import {
@@ -28,6 +28,8 @@ const timingResponse: TaskTimingResponse = {
   task_id: 42,
   owner_user_id: 7,
   wall_time_ms: 17_000,
+  session_start_at_ms: 3_000,
+  session_end_at_ms: 21_000,
   triage: [
     { kind: 'agent', duration_ms: 8_000 },
     { kind: 'tool', duration_ms: 4_000 },
@@ -106,6 +108,20 @@ const emptyResponse: TaskTimingResponse = {
   has_spans: false,
 }
 
+const localizedStatusResponse: TaskTimingResponse = {
+  ...timingResponse,
+  spans: [
+    {
+      ...timingResponse.spans[0],
+      status: 'running',
+    },
+    {
+      ...timingResponse.spans[1],
+      status: 'untranslated_status',
+    },
+  ],
+}
+
 function renderPanel() {
   return render(
     <TaskTimingPanel panelProps={{ taskId: 42 }} onClose={jest.fn()} embedded={false} />
@@ -169,6 +185,45 @@ describe('TaskTimingPanel', () => {
     expect(mockGetTaskTiming).toHaveBeenCalledTimes(2)
   })
 
+  it('ignores stale timing responses and rejections after the task scope changes', async () => {
+    let resolveTask42!: (value: TaskTimingResponse) => void
+    let rejectTask42!: (reason: unknown) => void
+    let resolveTask44!: (value: TaskTimingResponse) => void
+    mockGetTaskTiming
+      .mockImplementationOnce(
+        () =>
+          new Promise<TaskTimingResponse>((resolve, reject) => {
+            resolveTask42 = resolve
+            rejectTask42 = reject
+          })
+      )
+      .mockResolvedValueOnce(emptyResponse)
+      .mockImplementationOnce(
+        () => new Promise<TaskTimingResponse>(resolve => (resolveTask44 = resolve))
+      )
+
+    const { rerender } = renderPanel()
+    rerender(<TaskTimingPanel panelProps={{ taskId: 43 }} onClose={jest.fn()} embedded={false} />)
+
+    expect(await screen.findByTestId('task-timing-empty')).toBeInTheDocument()
+    await act(async () => {
+      resolveTask42(timingResponse)
+    })
+    expect(screen.getByTestId('task-timing-empty')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-timing-triage')).not.toBeInTheDocument()
+
+    rerender(<TaskTimingPanel panelProps={{ taskId: 44 }} onClose={jest.fn()} embedded={false} />)
+    expect(await screen.findByTestId('task-timing-loading')).toBeInTheDocument()
+    await act(async () => {
+      rejectTask42(new Error('stale rejection'))
+    })
+    expect(screen.getByTestId('task-timing-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-timing-error')).not.toBeInTheDocument()
+    await act(async () => {
+      resolveTask44(emptyResponse)
+    })
+  })
+
   it('reveals timeline spans with a common wall-clock scale', async () => {
     const user = userEvent.setup()
     mockGetTaskTiming.mockResolvedValue(timingResponse)
@@ -181,11 +236,37 @@ describe('TaskTimingPanel', () => {
     const details = screen.getByTestId('task-timing-timeline-details')
     expect(screen.getAllByTestId('task-timing-span')).toHaveLength(2)
     const bars = screen.getAllByTestId('task-timing-span-bar')
-    expect(bars[0]).toHaveStyle({ left: '0%', width: '100%' })
-    expect(bars[1].style.left).toBe('0%')
-    expect(Number.parseFloat(bars[1].style.width)).toBeCloseTo(100 / 3, 10)
+    expect(Number.parseFloat(bars[0].style.left)).toBeCloseTo((2 / 18) * 100, 10)
+    expect(Number.parseFloat(bars[0].style.width)).toBeCloseTo((12 / 18) * 100, 10)
+    expect(Number.parseFloat(bars[1].style.left)).toBeCloseTo((2 / 18) * 100, 10)
+    expect(Number.parseFloat(bars[1].style.width)).toBeCloseTo((4 / 18) * 100, 10)
+    expect(
+      Number.parseFloat(screen.getByTestId('task-timing-leading-gap').style.width)
+    ).toBeCloseTo((2 / 18) * 100, 10)
+    expect(
+      Number.parseFloat(screen.getByTestId('task-timing-trailing-gap').style.width)
+    ).toBeCloseTo((4 / 18) * 100, 10)
+    expect(screen.getByTestId('task-timing-leading-gap-label')).toHaveTextContent(
+      'timing.timeline.leading_gap:2s'
+    )
+    expect(screen.getByTestId('task-timing-trailing-gap-label')).toHaveTextContent(
+      'timing.timeline.trailing_gap:4s'
+    )
     expect(within(details).getByText('Agent execution')).toBeInTheDocument()
     expect(within(details).getByText('pnpm test')).toBeInTheDocument()
+  })
+
+  it('localizes known span statuses and falls back to the raw status', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue(localizedStatusResponse)
+    renderPanel()
+
+    await screen.findByTestId('task-timing-triage')
+    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
+
+    const statuses = screen.getAllByTestId('task-timing-span-status')
+    expect(statuses[0]).toHaveTextContent('timing.status.running')
+    expect(statuses[1]).toHaveTextContent('untranslated_status')
   })
 
   it('uses semantic theme classes and a responsive layout', async () => {

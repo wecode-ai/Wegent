@@ -277,13 +277,12 @@ async fn run_managed_task<E, S>(
     S: EventSink,
 {
     let task_id = request.task_id.clone();
-    let agent_finished_at = current_epoch_ms();
-    let builder = builder.with_timing_boundary("agentFinishedAt", agent_finished_at);
     let session_request = request.clone();
     let outcome = engine
         .run_with_events(request, sink.clone(), builder.clone())
         .await;
     let executor_session = agent_session::saved_executor_session(&session_request);
+    let builder = builder.with_timing_boundary("agentFinishedAt", current_epoch_ms());
     let builder = builder.with_executor_session(executor_session);
     running_tasks.remove(&task_id);
     {
@@ -374,6 +373,37 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct DelayedEngine {
+        release: Arc<Notify>,
+    }
+
+    impl AgentEngine for DelayedEngine {
+        type RunFuture = std::future::Pending<ExecutionOutcome>;
+
+        fn run(&self, _request: ExecutionRequest) -> Self::RunFuture {
+            std::future::pending()
+        }
+
+        fn run_with_events<T>(
+            &self,
+            _request: ExecutionRequest,
+            _sink: T,
+            _builder: ResponsesEventBuilder,
+        ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
+        where
+            T: EventSink,
+        {
+            let release = Arc::clone(&self.release);
+            Box::pin(async move {
+                release.notified().await;
+                ExecutionOutcome::Completed {
+                    content: "done".to_owned(),
+                }
+            })
+        }
+    }
+
     #[derive(Clone, Default)]
     struct RecordingSink {
         events: Arc<Mutex<Vec<EventEnvelope>>>,
@@ -416,5 +446,33 @@ mod tests {
         assert_eq!(events[0].event_type, "response.created");
         assert_eq!(events[1].event_type, "response.incomplete");
         assert_eq!(events[1].data["response"]["status"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn managed_runner_stamps_agent_finish_after_engine_completes() {
+        let release = Arc::new(Notify::new());
+        let sink = RecordingSink::default();
+        let runner = ManagedLocalTaskRunner::new(
+            DelayedEngine {
+                release: Arc::clone(&release),
+            },
+            sink.clone(),
+            LocalRunningTaskTracker::default(),
+        );
+        let request = ExecutionRequest::default();
+
+        let accepted = runner.submit(request).await;
+        assert_eq!(accepted.status, TaskStatus::Running);
+        tokio::task::yield_now().await;
+        release.notify_one();
+        tokio::task::yield_now().await;
+
+        let events = sink.events.lock().expect("event sink lock");
+        assert_eq!(events.len(), 2);
+        let timing = events[1].data.get("timing").expect("terminal timing");
+        assert!(
+            timing["agentFinishedAt"].as_i64().unwrap()
+                >= timing["agentStartedAt"].as_i64().unwrap()
+        );
     }
 }

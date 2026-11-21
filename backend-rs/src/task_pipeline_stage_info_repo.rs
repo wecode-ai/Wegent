@@ -15,7 +15,7 @@ pub struct TaskRow {
     pub user_id: i64,
     pub json: OpaqueJson,
     pub created_at: Option<chrono::NaiveDateTime>,
-    pub completed_at: Option<chrono::NaiveDateTime>,
+    pub completed_at: Option<String>,
 }
 
 /// `task_store.get_active_task`: the active `Task` row for `task_id`.
@@ -32,6 +32,10 @@ fn decode_task_row(row: &MysqlRow) -> MysqlResult<TaskRow> {
         user_id: row.get_required("user_id")?,
         json: row.get_required::<brz_mysql::Json<OpaqueJson>>("json")?.0,
         created_at: wegent_task_store::projection::task_column(row, "created_at"),
-        completed_at: wegent_task_store::projection::task_column(row, "completed_at"),
+        completed_at: row
+            .get_required::<brz_mysql::Json<OpaqueJson>>("json")
+            .ok()
+            .and_then(|json| json.0.to_value().pointer("/status/completedAt").cloned())
+            .and_then(|value| value.as_str().map(str::to_string)),
     })
 }

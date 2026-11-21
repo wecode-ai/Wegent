@@ -630,7 +630,7 @@ export function MobileChatInputControls({
                       setResourceDrawerOpen(false)
                       openTaskTimingPanel(timingTaskId)
                     }}
-                    disabled={timingTaskId === null || isStreaming}
+                    disabled={timingTaskId === null}
                     className="flex min-h-14 w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-text-primary transition-colors hover:bg-hover active:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Timer className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />

@@ -462,11 +462,13 @@ class TestDockerExecutor:
                 return_value=["docker", "run", "dummy"],
             ),
             patch.object(
-                executor, "_dispatch_initial_task_to_new_container"
-            ) as mock_dispatch,
-            patch.object(
                 executor, "_wait_for_container_ready", return_value=8080
             ) as mock_wait_ready,
+            patch.object(
+                executor.requests,
+                "post",
+                return_value=MagicMock(status_code=200),
+            ) as mock_post,
             patch.object(executor, "register_task_for_heartbeat"),
         ):
             mock_subprocess.run.reset_mock()
@@ -477,8 +479,11 @@ class TestDockerExecutor:
             executor._create_new_container(sample_task, task_info, status)
 
             mock_wait_ready.assert_called_once_with("new-executor")
-            mock_dispatch.assert_called_once_with(sample_task, "new-executor", 8080)
-            timing = sample_task["metadata"]["timing"]
+            dispatched_task = mock_post.call_args.kwargs["json"]
+            assert mock_post.call_args.args[0] == (
+                "http://host.docker.internal:8080/v1/responses"
+            )
+            timing = dispatched_task["metadata"]["timing"]
             for key in (
                 "instanceCreateStartedAt",
                 "instanceCreateFinishedAt",
@@ -569,15 +574,16 @@ class TestDockerExecutor:
         with (
             patch.object(executor, "wait_instance_ready", return_value={"port": 8080}),
             patch.object(
-                executor,
-                "dispatch_task_to_instance",
-                return_value={"status": "success", "error_msg": ""},
-            ),
+                executor.requests,
+                "post",
+                return_value=MagicMock(status_code=200),
+            ) as mock_post,
             patch.object(executor, "register_task_for_heartbeat"),
         ):
             executor._execute_in_existing_container(task, status)
 
-        timing = task["metadata"]["timing"]
+        dispatched_task = mock_post.call_args.kwargs["json"]
+        timing = dispatched_task["metadata"]["timing"]
         assert "instanceReadyAt" in timing
         assert "taskDispatchedAt" in timing
         assert "provisionDurationMs" in timing
