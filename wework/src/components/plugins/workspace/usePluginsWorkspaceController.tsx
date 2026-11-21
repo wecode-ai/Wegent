@@ -471,6 +471,7 @@ export function usePluginsWorkspaceController({
   } = usePluginWorkspaceDeletion({
     publicationRequests,
     pluginApi,
+    accountPluginApi: canInstallForAccount ? accountPluginApi : null,
     catalog,
     t,
     publications,

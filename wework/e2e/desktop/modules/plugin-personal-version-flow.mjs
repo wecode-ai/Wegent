@@ -7,6 +7,7 @@ import {
   accountPlugin,
   inventory,
   materializedPlugin,
+  pathExists,
   pluginApi,
   testId,
   until,
@@ -84,10 +85,11 @@ async function importPersonalSource(
   name = slug,
   displayName = updatedDisplayName
 ) {
+  const archivePath = await createPackage(root, version, name, displayName)
   const preview = JSON.parse(
     await control.command('previewPluginImport', 'body', {
       value: JSON.stringify({
-        archivePath: await createPackage(root, version, name, displayName),
+        archivePath,
         marketplacePath: join(root, 'wework-personal'),
       }),
     })
@@ -108,6 +110,7 @@ async function importPersonalSource(
   )
   assert.equal(imported.version, version)
   assert.equal(imported.displayName, displayName)
+  return archivePath
 }
 
 async function verifyUninstallDuringImport(cloud, control, name) {
@@ -300,9 +303,15 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
           await control.command('clickWhenEnabled', testId('plugin-operation-notice-dismiss'))
           await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
           await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-delete-"]')
-          await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
           const notice = `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
           await control.command('waitFor', notice)
+          assert.equal(
+            Number(
+              await control.command('getElementCount', testId('delete-personal-plugin-dialog'))
+            ),
+            0,
+            'The delete preview opened while the author account installation was still blocked'
+          )
           assert.match(
             await control.command('getText', notice),
             /正在检查安装状态|installation state is being checked/i
@@ -325,6 +334,77 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
       }
     }
   }
+}
+
+async function verifyStalePersonalDeletePreview({ cloud, control, request, root }) {
+  const name = 'author-delete-preview-e2e'
+  const fixtureRoot = join(root, name)
+  await mkdir(fixtureRoot, { recursive: true })
+  const archivePath = await importPersonalSource(
+    control,
+    fixtureRoot,
+    currentVersion,
+    false,
+    name,
+    name
+  )
+  const { marketplace } = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
+  const manifest = join(marketplace.path, 'plugins', name, '.codex-plugin', 'plugin.json')
+  const original = await readFile(manifest)
+
+  await control.command('navigate', 'body', { value: '/plugins' })
+  await control.command('waitFor', testId('plugins-search-input'))
+  await control.command('click', testId('plugins-distribution-tab-personal'))
+  await refreshPluginInventory(control)
+  await control.command('fill', testId('plugins-search-input'), { value: name })
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
+  )
+  await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
+  await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-delete-"]')
+  const dialog = testId('delete-personal-plugin-dialog')
+  await control.command('waitFor', dialog)
+  assert.match(await control.command('getText', dialog), /本地插件源码|local source/i)
+
+  const published = await uploadVersionFixture({
+    request,
+    backendUrl: cloud.backendUrl,
+    packageBytes: await readFile(archivePath),
+    version: currentVersion,
+    pluginSlug: name,
+    targets: [],
+  })
+  assert.equal(
+    (await request(`/plugins/submissions/${published.submissionId}/complete`, 'POST')).submission
+      .status,
+    'approved'
+  )
+  await pluginApi(cloud, `/plugins/marketplace/${published.pluginId}/install`, 'POST')
+  assert.ok(await accountPlugin(cloud, name), 'The fixture must have an account installation')
+
+  await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('delete-personal-plugin-dialog') &&
+      /将删除云端插件|Delete the cloud plugin/i.test(snapshot.text),
+    'The local-only delete confirmation did not refresh to the current cloud impact'
+  )
+  assert.deepEqual(await readFile(manifest), original, 'The old confirmation deleted the source')
+  assert.ok(await accountPlugin(cloud, name), 'The old confirmation removed the account install')
+
+  await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+  await until(
+    () => accountPlugin(cloud, name),
+    installed => !installed,
+    'The updated confirmation did not remove the account installation'
+  )
+  await until(
+    () => pathExists(manifest),
+    exists => !exists,
+    'The updated confirmation did not delete the local source'
+  )
 }
 
 export async function verifyPersonalPluginVersionSubmission({
@@ -393,6 +473,7 @@ export async function verifyPersonalPluginVersionSubmission({
     auth_source: 'password',
   })
   await verifyAuthorCloudInstall({ cloud: cloudEnvironment, control, request, recipient, root })
+  await verifyStalePersonalDeletePreview({ cloud: cloudEnvironment, control, request, root })
   const packageBytes = await readFile(
     await createPackage(root, currentVersion, initialManifestName, initialDisplayName)
   )

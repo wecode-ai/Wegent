@@ -655,17 +655,42 @@ test('a confirmed upload still installs for the account when the detail is close
   expect(api.installMarketplacePluginForAccount).toHaveBeenCalledExactlyOnceWith(17, 42)
 })
 
-test('blocks deletion of the personal source until a confirmed upload installs for the account', async () => {
-  const upload = Promise.withResolvers<{ pluginId: number; releaseId: number }>()
-  const { api, catalog, publishPrivate } = renderAuthorDetail({
-    publishPrivate: vi.fn(() => upload.promise),
+test('deleting a separate personal row leaves the cloud plugin and its publication alone', async () => {
+  const disk = item({
+    id: 'personal-disk:demo-tool',
+    name: 'demo-tool',
+    visibility: 'personal',
+    manifest: { marketplaceId: 'wework-personal', marketplacePath: '/personal' },
   })
+  const cloud = { ...release, name: 'Demo Tool' }
+  expect(mergeMarketplaceCatalog([cloud], [disk], []).map(row => row.id)).toEqual([
+    cloud.id,
+    disk.id,
+  ])
   const deletePersonalPlugin = vi.fn().mockResolvedValue(undefined)
+  const deleteMarketplacePlugin = vi.fn()
+  const withdrawPublicationRequest = vi.fn()
+  const getMarketplacePluginDeleteImpact = vi.fn().mockResolvedValue({ pluginId: cloud.id })
   const deletionInput = {
-    catalog,
-    publicationRequests: [],
+    catalog: { captureScope: () => () => true, showNotice: vi.fn() },
+    publicationRequests: [
+      {
+        id: 21,
+        pluginId: cloud.id,
+        pluginSlug: disk.name,
+        status: 'awaiting_admin',
+        currentRevision: 1,
+        actionEligibility: { canWithdraw: true },
+      },
+    ],
+    accountPluginApi: { listMarketplacePlugins: async () => ({ items: [cloud] }) },
+    pluginApi: {
+      deleteMarketplacePlugin,
+      getMarketplacePluginDeleteImpact,
+      withdrawPublicationRequest,
+    },
     localPluginApi: { deletePersonalPlugin },
-    marketplaceCacheKeyValue: 'personal-delete',
+    marketplaceCacheKeyValue: 'separate-personal-delete',
     setSelectedPluginId: vi.fn(),
     setSelectedMarketplacePluginId: vi.fn(),
     refreshLocalMarketplace: vi.fn(),
@@ -674,34 +699,104 @@ test('blocks deletion of the personal source until a confirmed upload installs f
     const { t } = useTranslation('common')
     return usePluginWorkspaceDeletion({ ...deletionInput, t })
   })
-  const deleteSource = async () => {
-    await act(() =>
-      result.current.requestDeletePersonalPlugin({
-        pluginName: localSource.raw.spec.source.pluginKey,
-        displayName: localSource.name,
-        marketplacePath: '/personal',
-      })
-    )
-    await act(() => result.current.confirmDeletePersonalPlugin())
-  }
+  await act(() =>
+    result.current.requestDeletePersonalPlugin({
+      pluginName: disk.name,
+      displayName: disk.displayName,
+      marketplacePath: '/personal',
+      cloudPluginId: null,
+    })
+  )
+  expect.soft(result.current.pendingPersonalPluginDelete?.publication).toBeNull()
+  await act(() => result.current.confirmDeletePersonalPlugin())
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Install' }))
-  fireEvent.click(await screen.findByTestId('personal-plugin-install-private-confirm'))
-  try {
-    await waitFor(() => expect(publishPrivate).toHaveBeenCalledTimes(1))
-    await deleteSource()
-    expect(deletePersonalPlugin).not.toHaveBeenCalled()
-    expect(result.current.pendingPersonalPluginDelete).toBeNull()
-    expect(catalog.showNotice).toHaveBeenLastCalledWith(
-      expect.objectContaining({ id: 'personal-plugin-mutation-in-progress', kind: 'error' })
-    )
-  } finally {
-    await act(async () => upload.resolve({ pluginId: 17, releaseId: 42 }))
-  }
-  expect(api.installMarketplacePluginForAccount).toHaveBeenCalledExactlyOnceWith(17, 42)
-  await deleteSource()
-  expect(deletePersonalPlugin).toHaveBeenCalledExactlyOnceWith('my-plugin', '/personal')
+  expect.soft(getMarketplacePluginDeleteImpact).not.toHaveBeenCalled()
+  expect(deleteMarketplacePlugin).not.toHaveBeenCalled()
+  expect(withdrawPublicationRequest).not.toHaveBeenCalled()
+  expect(deletePersonalPlugin).toHaveBeenCalledExactlyOnceWith(disk.name, '/personal')
 })
+
+test.each(['before', 'during', 'after'] as const)(
+  'rejects stale personal deletion requested %s the first upload',
+  async when => {
+    const upload = Promise.withResolvers<{ pluginId: number; releaseId: number }>()
+    const { api, catalog, publishPrivate } = renderAuthorDetail({
+      publishPrivate: vi.fn(() => upload.promise),
+    })
+    const deletePersonalPlugin = vi.fn().mockResolvedValue(undefined)
+    const deleteMarketplacePlugin = vi.fn().mockResolvedValue(undefined)
+    const listMarketplacePlugins = vi.fn().mockResolvedValue({
+      items: [{ ...release, id: 18, accessRole: 'recipient' }, release],
+    })
+    const getMarketplacePluginDeleteImpact = vi.fn().mockResolvedValue({
+      pluginId: 17,
+      affectedUserCount: 0,
+      installedDeviceCount: 1,
+      sharedTargetCount: 0,
+      impactRevision: 'latest-impact',
+    })
+    const deletionInput = {
+      catalog,
+      publicationRequests: [],
+      accountPluginApi: { listMarketplacePlugins },
+      pluginApi: { deleteMarketplacePlugin, getMarketplacePluginDeleteImpact },
+      localPluginApi: { deletePersonalPlugin },
+      marketplaceCacheKeyValue: 'personal-delete',
+      setSelectedPluginId: vi.fn(),
+      setSelectedMarketplacePluginId: vi.fn(),
+      refreshLocalMarketplace: vi.fn(),
+    } as unknown as Omit<Parameters<typeof usePluginWorkspaceDeletion>[0], 't'>
+    const { result } = renderHook(() => {
+      const { t } = useTranslation('common')
+      return usePluginWorkspaceDeletion({ ...deletionInput, t })
+    })
+    const requestDelete = (cloudPluginId?: number | null) =>
+      act(() =>
+        result.current.requestDeletePersonalPlugin({
+          pluginName: localSource.raw.spec.source.pluginKey,
+          displayName: localSource.name,
+          marketplacePath: '/personal',
+          cloudPluginId,
+        })
+      )
+    const confirmDelete = () => act(() => result.current.confirmDeletePersonalPlugin())
+
+    if (when === 'before') await requestDelete()
+    fireEvent.click(await screen.findByRole('button', { name: 'Install' }))
+    fireEvent.click(await screen.findByTestId('personal-plugin-install-private-confirm'))
+    try {
+      await waitFor(() => expect(publishPrivate).toHaveBeenCalledTimes(1))
+      if (when !== 'after') {
+        if (when === 'before') await confirmDelete()
+        else await requestDelete()
+        expect(result.current.pendingPersonalPluginDelete).toBeNull()
+        expect(catalog.showNotice).toHaveBeenLastCalledWith(
+          expect.objectContaining({ id: 'personal-plugin-mutation-in-progress', kind: 'error' })
+        )
+      }
+    } finally {
+      await act(async () => upload.resolve({ pluginId: 17, releaseId: 42 }))
+    }
+    expect(api.installMarketplacePluginForAccount).toHaveBeenCalledExactlyOnceWith(17, 42)
+    if (when === 'after') await requestDelete(null)
+    await confirmDelete()
+    expect(deletePersonalPlugin).not.toHaveBeenCalled()
+    expect(deleteMarketplacePlugin).not.toHaveBeenCalled()
+
+    if (when === 'after') {
+      expect(result.current.pendingPersonalPluginDelete?.cloudPluginId).toBe(17)
+    } else {
+      await requestDelete(17)
+    }
+    expect(getMarketplacePluginDeleteImpact).toHaveBeenCalledExactlyOnceWith(17)
+    await confirmDelete()
+    expect(deleteMarketplacePlugin).toHaveBeenCalledExactlyOnceWith(17, {
+      impactRevision: 'latest-impact',
+      revokeAndDelete: false,
+    })
+    expect(deletePersonalPlugin).toHaveBeenCalledExactlyOnceWith('my-plugin', '/personal')
+  }
+)
 
 test.each([
   { session: 'unchanged', next: cloudConnection, installs: true },
