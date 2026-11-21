@@ -1,5 +1,8 @@
 import { collectCiRun } from './ci-run.js'
 
+const PENDING_STATUS_INTERVAL_MS = 15_000
+const STATUS_CHECK_DETAILS_INTERVAL_MS = 60_000
+
 export function changeRequestState(platform, url, data, sha) {
   return {
     kind: 'change_request',
@@ -145,11 +148,13 @@ export function createTrackedCollector(helpers) {
     // The status read and the checks read have separate collection deadlines.
     // Expire a failed checks phase so it cannot indefinitely delay fresh status.
     const currentStatus = next.resourceStates?.[target.url]
+    const statusObservedAt = Date.parse(currentStatus?.observedAt)
+    const statusRefreshAt = statusObservedAt + PENDING_STATUS_INTERVAL_MS
     const readChecks =
       statusWait &&
       !force &&
       next.pendingStatusChecks === true &&
-      Date.now() < Date.parse(currentStatus?.observedAt) + 45_000
+      Date.now() < statusObservedAt + 45_000
     if (statusWait && !readChecks) {
       const { data } = await ctx.git.read({
         ...target,
@@ -163,17 +168,24 @@ export function createTrackedCollector(helpers) {
         throw invalid('Observed change request identity or revision changed during collection')
       const event = projectStatus(platform, source, next, target, data, sha, helpers)
       if (target.sha !== sha || next.pendingStatusChecks !== false) next.page = 1
+      if (target.sha !== sha) delete next.nextStatusChecksAt
       target.sha = sha
       delete target.baseline
-      next.pendingStatusChecks =
+      const statusPending =
         data.state === 'OPEN' &&
         !['SUCCESS', 'FAILURE', 'ERROR'].includes(data.statusCheckRollup?.state)
-      next.nextCheckAt = Date.now() + (next.pendingStatusChecks ? 0 : 60_000)
+      if (!statusPending) delete next.nextStatusChecksAt
+      const observedAt = Date.parse(next.resourceStates[target.url].observedAt)
+      next.pendingStatusChecks = statusPending && !(next.nextStatusChecksAt > observedAt)
+      next.nextCheckAt = next.pendingStatusChecks
+        ? 0
+        : observedAt + (statusPending ? PENDING_STATUS_INTERVAL_MS : 60_000)
       return {
         events: [event],
         nextCheckpoint: next,
         resourceStates: Object.values(next.resourceStates),
         hasMore: false,
+        ...(statusPending ? { nextPollAt: next.nextCheckAt || observedAt } : {}),
       }
     }
     const step = statusWait ? 2 : (next.trackStep ?? 0)
@@ -207,7 +219,8 @@ export function createTrackedCollector(helpers) {
         // The aggregate status is still available when detailed checks are not.
         next.pendingStatusChecks = false
         next.page = 1
-        next.nextCheckAt = Date.parse(currentStatus.observedAt) + 60_000
+        next.nextCheckAt = statusRefreshAt
+        next.nextStatusChecksAt = Date.now() + STATUS_CHECK_DETAILS_INTERVAL_MS
       }
       if (step === 0) {
         if (target.entityKind === 'change_request' && source.monitoredObjects) {
@@ -232,6 +245,7 @@ export function createTrackedCollector(helpers) {
         nextCheckpoint: next,
         hasMore: !statusWait,
         resourceStates: Object.values(next.resourceStates ?? {}),
+        ...(statusWait ? { nextPollAt: statusRefreshAt } : {}),
       }
     }
     const stateEvents = []
@@ -328,8 +342,9 @@ export function createTrackedCollector(helpers) {
     }
     if (statusWait) {
       next.pendingStatusChecks = false
-      next.nextCheckAt = Date.parse(currentStatus.observedAt) + (rows.length === 100 ? 0 : 60_000)
+      next.nextCheckAt = statusRefreshAt
       next.page = rows.length === 100 ? (next.page ?? 1) + 1 : 1
+      if (rows.length < 100) next.nextStatusChecksAt = Date.now() + STATUS_CHECK_DETAILS_INTERVAL_MS
     } else if (rows.length === 100) next.page = (next.page ?? 1) + 1
     else advanceTracked(next, steps)
     return {
@@ -337,6 +352,7 @@ export function createTrackedCollector(helpers) {
       nextCheckpoint: next,
       hasMore: !statusWait,
       resourceStates: Object.values(next.resourceStates ?? {}),
+      ...(statusWait ? { nextPollAt: statusRefreshAt } : {}),
     }
   }
 }
