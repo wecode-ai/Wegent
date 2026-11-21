@@ -1,0 +1,23 @@
+[package]
+name = "wegent-execution-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Execution stream, cancellation, and task metrics lifecycle"
+
+[dependencies]
+brz-http = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
+wegent-execution-events = { workspace = true }
+wegent-python-compat = { workspace = true }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+tracing = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+wegent-backend-config = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

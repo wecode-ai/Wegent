@@ -1,0 +1,953 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! Streaming create bridge: chat-shell SSE → OpenAI Responses SSE.
+//!
+//! Mirrors `app/api/endpoints/openapi_responses.py:raw_chat_stream`
+//! (`:1274-1740`) composed with
+//! `app/services/openapi/streaming.py:OpenAPIStreamingService.
+//! create_streaming_response`. The source returns a `StreamingResponse` whose
+//! generator opens the chat-shell stream, transforms every internal
+//! `ExecutionEvent` into `StreamingChunk`s, and the streaming service turns
+//! those chunks into the OpenAI-compatible `data: {…}\n\n` frames the caller
+//! receives.
+//!
+//! The response body is a lazy `Stream` (no per-request spawn): each poll
+//! advances one upstream chunk, persists the parsed events through the same
+//! [`StatusUpdatingEmitter`] the callback path uses, and queues the SSE frames
+//! for that step.
+mod callback;
+mod device_text;
+mod events;
+mod failure;
+mod terminal_result;
+mod tools;
+
+use std::collections::{HashMap, VecDeque};
+use std::io;
+use std::time::Duration;
+
+use brz_http::Client as HttpClient;
+use brz_http_server::Bytes;
+use brz_mysql::MysqlService;
+use brz_redis::{Redis as _, RedisService};
+use futures_util::{future::BoxFuture, stream};
+use serde_json::{Value, json};
+
+use crate::http_compat::FastApiError;
+use crate::internal_callback::completion::{self, Completion, Tables};
+use crate::internal_callback::emitter::StatusUpdatingEmitter;
+use crate::internal_callback::event::ExecutionEvent;
+use crate::internal_callback::parser;
+use crate::state::AppState;
+use wegent_execution_runtime::stream_state::is_cancelled;
+use wegent_execution_runtime::stream_state::{register_stream, unregister_stream};
+
+use super::dispatch::{self, ExecutionRequest};
+use super::seam::BodyStream;
+use super::sse_sync::{SseFrames, drain_terminal_stream, stream_request, stream_transport_error};
+use super::streaming::framing_events;
+
+/// `_SSE_CANCEL_POLL_INTERVAL_SECONDS`.
+const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// `httpx`'s 300-second streaming per-read timeout.
+///
+/// This is an inactivity window, not a total request deadline. A streaming
+/// response may legitimately run longer than this as long as chunks keep
+/// arriving.
+const STREAM_TIMEOUT: Duration = Duration::from_secs(300);
+/// The OpenAI SDK appends `/responses` to its `.../v1` base URL.
+const RESPONSES_PATH: &str = "/v1/responses";
+
+/// The inputs the streaming branch keeps from the resolved create flow.
+pub(super) struct BridgeInput<'a> {
+    pub model_string: &'a str,
+    pub previous_response_id: Option<String>,
+    pub request_id: &'a str,
+    pub created_at: i64,
+    pub target_url: Option<&'a str>,
+}
+
+/// Build the streaming SSE body for one chat-shell create request.
+pub(super) fn stream(
+    state: &AppState,
+    request: &ExecutionRequest,
+    input: &BridgeInput<'_>,
+) -> Result<BodyStream, FastApiError> {
+    body_stream(Bridge::new(state, request, input, Mode::ChatShell)?)
+}
+
+/// Build the streaming SSE body for one HTTP+Callback executor request
+/// (`openapi_responses.py:1352-1379`): subscribe to the callback channel first,
+/// then fire-and-forget the executor dispatch, then stream the pushed events.
+pub(super) fn stream_callback(
+    state: &AppState,
+    request: &ExecutionRequest,
+    input: &BridgeInput<'_>,
+    device_route: Option<&str>,
+) -> Result<BodyStream, FastApiError> {
+    let target = match device_route {
+        Some(route) => CallbackDispatchTarget::Device {
+            route: route.to_owned(),
+        },
+        None => CallbackDispatchTarget::Executor {
+            url: input.target_url.map(str::to_owned),
+        },
+    };
+    body_stream(Bridge::new(
+        state,
+        request,
+        input,
+        Mode::Callback { target },
+    )?)
+}
+
+fn body_stream(bridge: Bridge) -> Result<BodyStream, FastApiError> {
+    Ok(Box::pin(stream::unfold(bridge, |mut bridge| async move {
+        bridge
+            .next()
+            .await
+            .map(|bytes| (Ok::<_, io::Error>(bytes), bridge))
+    })))
+}
+
+use super::callback_source::{
+    CallbackEventSource, CallbackMessage, CallbackSourceError, callback_channel,
+};
+use device_text::DeviceTextOffsets;
+use events::{Chunk, ResponseState};
+use failure::{BridgeFailure, FailureOrder};
+use tools::{ToolState, tool_result_chunk, tool_start_chunk, tool_update};
+
+/// Which upstream feeds the bridge.
+enum Mode {
+    /// `SSE` target: the chat-shell HTTP stream.
+    ChatShell,
+    /// `HTTP_CALLBACK` target: the callback Pub/Sub channel, plus the
+    /// fire-and-forget executor dispatch issued after subscribing.
+    Callback { target: CallbackDispatchTarget },
+}
+
+/// The callback source is shared; placement determines how the turn is submitted.
+#[derive(Clone)]
+enum CallbackDispatchTarget {
+    Executor { url: Option<String> },
+    Device { route: String },
+}
+
+/// The streaming bridge's lazy body state.
+struct Bridge {
+    app: std::sync::Weak<AppState>,
+    http: HttpClient,
+    url: String,
+    body: Value,
+    request_id: String,
+    task_id: i64,
+    subtask_id: i64,
+    message_id: Option<i64>,
+    model_string: String,
+    redis: Option<RedisService>,
+    mysql: MysqlService,
+    tables: Tables,
+    executor_manager: crate::executor_manager::ExecutorManager,
+    emitter: Option<StatusUpdatingEmitter<RedisService>>,
+    cancel_key: String,
+    mode: Mode,
+    /// The chat-shell HTTP response (`Mode::ChatShell` after `open`).
+    response: Option<brz_http::Response>,
+    /// The callback-channel subscription (`Mode::Callback` after `open`).
+    subscription: Option<Box<dyn CallbackEventSource>>,
+    /// `Mode::Callback`: the executor-manager dispatch issued after the
+    /// subscription exists (`openapi_responses.py:1365-1370`).
+    callback_dispatch: Option<(CallbackDispatchTarget, ExecutionRequest)>,
+    callback_dispatch_attempted: bool,
+    frames: SseFrames,
+    poll: tokio::time::Interval,
+    queue: VecDeque<Bytes>,
+    state: ResponseState,
+    /// `raw_chat_stream`'s per-tool lifecycle state, keyed by tool-use id and
+    /// recorded on TOOL_START (`openapi_responses.py:1458-1474`).
+    tool_states: HashMap<String, ToolState>,
+    device_text: DeviceTextOffsets,
+    registered: bool,
+    /// `_dispatch_chat_shell_sse`'s `finally: unregister_stream` already ran
+    /// its atomic intent/flag cleanup for this stream.
+    inner_unregistered: bool,
+    terminal: bool,
+    finished: bool,
+    failed_terminal: bool,
+}
+
+impl Bridge {
+    fn new(
+        state: &AppState,
+        request: &ExecutionRequest,
+        input: &BridgeInput<'_>,
+        mode: Mode,
+    ) -> Result<Self, FastApiError> {
+        let mut queue = VecDeque::new();
+        for event in framing_events(
+            request.task_id,
+            input.created_at,
+            input.model_string,
+            input.previous_response_id.clone(),
+        ) {
+            queue.push_back(event);
+        }
+        let chat_shell_url = match mode {
+            Mode::ChatShell => Some(input.target_url.ok_or_else(|| {
+                FastApiError::detail(
+                    brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
+                    "LLM request failed: Chat Shell SSE dispatch requires a target URL",
+                )
+            })?),
+            Mode::Callback { .. } => None,
+        };
+        let mut poll = tokio::time::interval(CANCEL_POLL_INTERVAL);
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let redis = state.redis.clone();
+        let emitter = redis
+            .clone()
+            .map(|redis| StatusUpdatingEmitter::new(redis, request.task_id, request.subtask_id));
+        let callback_dispatch = match &mode {
+            Mode::Callback { target } => Some((target.clone(), request.clone())),
+            Mode::ChatShell => None,
+        };
+        Ok(Self {
+            app: state.completion_app.get().cloned().unwrap_or_default(),
+            http: HttpClient::builder()
+                .read_timeout(STREAM_TIMEOUT)
+                .build()
+                .map_err(|_| FastApiError::internal())?,
+            url: chat_shell_url
+                .map(|url| format!("{}{RESPONSES_PATH}", url.trim_end_matches('/')))
+                .unwrap_or_default(),
+            body: serde_json::to_value(dispatch::assemble(request, true, false))
+                .unwrap_or(Value::Null),
+            request_id: input.request_id.to_string(),
+            task_id: request.task_id,
+            subtask_id: request.subtask_id,
+            message_id: request.message_id,
+            model_string: input.model_string.to_string(),
+            redis,
+            mysql: state.mysql.clone(),
+            tables: crate::internal_callback::tables(state),
+            executor_manager: state.executor_manager.clone(),
+            emitter,
+            cancel_key: wegent_execution_runtime::stream_state::cancel_key(request.subtask_id),
+            mode,
+            response: None,
+            subscription: None,
+            callback_dispatch,
+            callback_dispatch_attempted: false,
+            frames: SseFrames::default(),
+            poll,
+            queue,
+            state: ResponseState::new(
+                format!("resp_{}", request.task_id),
+                input.model_string.to_string(),
+                input.created_at,
+                input.previous_response_id.clone(),
+            ),
+            tool_states: HashMap::new(),
+            device_text: DeviceTextOffsets::default(),
+            registered: false,
+            inner_unregistered: false,
+            terminal: false,
+            finished: false,
+            failed_terminal: false,
+        })
+    }
+
+    async fn next(&mut self) -> Option<Bytes> {
+        loop {
+            if let Some(bytes) = self.queue.pop_front() {
+                return Some(bytes);
+            }
+            if self.finished {
+                return None;
+            }
+            let opened = match &self.mode {
+                Mode::ChatShell => self.response.is_some(),
+                Mode::Callback { .. } => self.subscription.is_some(),
+            };
+            if !opened {
+                if let Err(failure) = self.open().await {
+                    self.fail(failure).await;
+                    continue;
+                }
+                continue;
+            }
+            if self.terminal {
+                self.drain_and_finish().await;
+                continue;
+            }
+
+            enum Step {
+                Chunk(std::result::Result<Option<Bytes>, brz_http::Error>),
+                Message(std::result::Result<Option<CallbackMessage>, CallbackSourceError>),
+                Tick,
+                Flush,
+            }
+            // `_flush_stream_storage_after_delay` wakes exactly one second
+            // after the first buffered piece. The cancel-poll tick has its own
+            // phase, so it cannot drive the flush without changing the batch
+            // boundaries persisted to Redis.
+            let flush_at = self
+                .emitter
+                .as_ref()
+                .and_then(StatusUpdatingEmitter::flush_deadline);
+            let flush = async {
+                match flush_at {
+                    Some(at) => {
+                        tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await;
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            let step = if let Some(subscription) = self.subscription.as_mut() {
+                // `_iter_callback_events`: one `get_message(timeout=1.0)` poll,
+                // no `?` on a timeout. The source checks the cancellation flag
+                // only once per delivered event, so the callback source has no
+                // periodic cancel read and no emitter flush deadline.
+                tokio::select! {
+                    message = subscription.next_message() => Step::Message(message),
+                    _ = flush => Step::Flush,
+                }
+            } else {
+                let response = self.response.as_mut().expect("opened");
+                tokio::select! {
+                    chunk = response.chunk() => Step::Chunk(chunk),
+                    _ = self.poll.tick() => Step::Tick,
+                    _ = flush => Step::Flush,
+                }
+            };
+            match step {
+                Step::Tick => {
+                    if self.cancelled().await {
+                        self.cancel().await;
+                    }
+                    continue;
+                }
+                Step::Flush => {
+                    // `_flush_stream_storage_after_delay` is a detached task
+                    // that only writes the buffered batch; the per-event read
+                    // and the one-second poller own the cancellation reads.
+                    if let Some(emitter) = self.emitter.as_mut() {
+                        emitter.flush_due().await;
+                    }
+                    continue;
+                }
+                Step::Chunk(Ok(Some(chunk))) => {
+                    self.consume(&chunk).await;
+                }
+                Step::Chunk(Ok(None)) => {
+                    // Upstream EOF without a terminal event.
+                    self.fail_stream_end(
+                        "Chat Shell SSE stream ended without terminal event".to_string(),
+                    )
+                    .await;
+                }
+                Step::Chunk(Err(error)) => {
+                    self.fail(BridgeFailure::from_message(stream_transport_error(
+                        &error,
+                        STREAM_TIMEOUT,
+                    )))
+                    .await;
+                }
+                Step::Message(Ok(Some(message))) => {
+                    self.consume_message(&message.payload).await;
+                }
+                // A read-timeout tick: `_iter_callback_events` keeps polling.
+                Step::Message(Ok(None)) => {}
+                Step::Message(Err(error)) => {
+                    self.fail(BridgeFailure::generic(error.message)).await;
+                }
+            }
+        }
+    }
+
+    async fn open(&mut self) -> Result<(), BridgeFailure> {
+        match &self.mode {
+            Mode::ChatShell => {
+                // `raw_chat_stream` registers the stream before creating the
+                // dispatch task, and `_dispatch_chat_shell_sse` registers it
+                // again for its own reader; both preserve a committing cancel.
+                if let Some(redis) = &self.redis {
+                    register_stream(Some(redis), self.subtask_id).await;
+                    register_stream(Some(redis), self.subtask_id).await;
+                    // The outer consumer and inner poller each read cancellation
+                    // before START; keep that ordering after registration.
+                    let _ = is_cancelled(redis, self.cancel_key.as_str()).await;
+                    let _ = is_cancelled(redis, self.cancel_key.as_str()).await;
+                }
+                // `tokio::time::interval` completes its first tick
+                // immediately; the source's poller has already used that slot
+                // for the reads above.
+                self.poll.tick().await;
+            }
+            Mode::Callback { .. } => {
+                // Callback registration has the same atomic intent guard.
+                if !self.device_callback_mode() {
+                    register_stream(self.redis.as_ref(), self.subtask_id).await;
+                }
+            }
+        }
+        self.registered = true;
+        match &self.mode {
+            Mode::ChatShell => self.open_chat_shell().await,
+            Mode::Callback { .. } => self.open_callback().await,
+        }
+    }
+
+    /// `SSE` target: open the chat-shell stream, which triggers the dispatch.
+    async fn open_chat_shell(&mut self) -> Result<(), BridgeFailure> {
+        let request = stream_request(&self.http, &self.url, &self.body, &self.request_id)
+            .map_err(|_| BridgeFailure::network("Connection error.".to_string()))?;
+        let response = self
+            .http
+            .execute(request)
+            .await
+            .map_err(|_| BridgeFailure::network("Connection error.".to_string()))?;
+        if !response.status().is_success() {
+            return Err(BridgeFailure::status(response.status().as_u16()));
+        }
+        self.response = Some(response);
+        Ok(())
+    }
+
+    /// `HTTP_CALLBACK` target (`openapi_responses.py:1352-1370`): subscribe to
+    /// the callback channel, then fire-and-forget the executor dispatch.
+    async fn open_callback(&mut self) -> Result<(), BridgeFailure> {
+        let Some(app) = self.app.upgrade() else {
+            return Err(BridgeFailure::generic(
+                "Application state unavailable".to_string(),
+            ));
+        };
+        let Some(provider) = app.callback_subscriptions.as_ref() else {
+            return Err(BridgeFailure::generic(
+                "Failed to subscribe to callback stream channel".to_string(),
+            ));
+        };
+        let channel = callback_channel(self.subtask_id);
+        let dispatch = self.callback_dispatch.as_mut();
+        let attempted = &mut self.callback_dispatch_attempted;
+        let request_id = &self.request_id;
+        let dispatch_app = app.as_ref();
+        callback::subscribe_before_dispatch(
+            provider.as_ref(),
+            &channel,
+            &mut self.subscription,
+            || {
+                let dispatch: BoxFuture<'_, Result<(), FastApiError>> = Box::pin(async move {
+                    let Some((target, request)) = dispatch else {
+                        return Ok(());
+                    };
+                    *attempted = true;
+                    match target {
+                        CallbackDispatchTarget::Executor { url } => {
+                            super::seam::dispatch_executor_after_subscribe(
+                                dispatch_app,
+                                request,
+                                url.as_deref(),
+                                request_id,
+                            )
+                            .await
+                        }
+                        CallbackDispatchTarget::Device { route } => {
+                            super::seam::dispatch_responses_device(dispatch_app, request, route)
+                                .await
+                        }
+                    }
+                });
+                dispatch
+            },
+        )
+        .await
+    }
+
+    async fn consume(&mut self, chunk: &[u8]) {
+        let events = self.frames.push(chunk);
+        for event in events {
+            let Some(event_type) = event.get("type").and_then(Value::as_str) else {
+                continue;
+            };
+            let parsed = parser::shared().parse(
+                self.task_id,
+                self.subtask_id,
+                self.message_id,
+                event_type,
+                &event,
+            );
+            let Ok(Some(parsed)) = parsed else {
+                if let Err(error) = parsed {
+                    self.fail(BridgeFailure::generic(error.0)).await;
+                    return;
+                }
+                continue;
+            };
+            if self.handle_parsed(parsed).await {
+                return;
+            }
+        }
+    }
+
+    /// One callback-channel push (`_iter_callback_events`): the payload is the
+    /// `ExecutionEvent` JSON `/internal/callback` publishes.
+    async fn consume_message(&mut self, payload: &[u8]) {
+        let Ok(value) = serde_json::from_slice::<Value>(payload) else {
+            // `_iter_callback_events`'s `json.loads` raises: the stream fails
+            // instead of silently skipping the event and its cancel read.
+            self.fail(BridgeFailure::generic(
+                "invalid callback event payload".to_string(),
+            ))
+            .await;
+            return;
+        };
+        let parsed = ExecutionEvent::from_value(&value);
+        self.handle_parsed(parsed).await;
+    }
+
+    /// `raw_chat_stream`'s per-event body (`openapi_responses.py:1391-1640`),
+    /// shared by the chat-shell and callback event sources. Returns `true` when
+    /// the event ended the stream.
+    async fn handle_parsed(&mut self, parsed: ExecutionEvent) -> bool {
+        let redis = self.redis.clone();
+        self.handle_parsed_from_source(parsed, redis.as_ref()).await
+    }
+
+    async fn handle_parsed_from_source<R: brz_redis::Redis>(
+        &mut self,
+        mut parsed: ExecutionEvent,
+        redis: Option<&R>,
+    ) -> bool {
+        if parsed.event_type == "error" && !self.callback_mode() {
+            self.fail_with_order(
+                BridgeFailure {
+                    message: parsed.error.unwrap_or_else(|| "Unknown error".to_string()),
+                    error_code: None,
+                    terminal_winner: false,
+                },
+                FailureOrder::CompletionFirst,
+            )
+            .await;
+            return true;
+        }
+        if let Some(status) = completion::terminal_status(&parsed.event_type) {
+            self.finish_terminal(&mut parsed, status, redis).await;
+            return true;
+        }
+        // The chat-shell stream persists each event through the session's
+        // emitter. The callback consumer runs with `emitter=None`
+        // (`openapi_responses.py:1360-1370`): `/internal/callback` already
+        // persisted the event, so repeating it here would duplicate the
+        // producer's writes.
+        if !self.callback_mode()
+            && let Some(emitter) = self.emitter.as_mut()
+            && let Err(error) = emitter.emit_persist_only(&mut parsed).await
+        {
+            tracing::warn!(%error, "stream persistence failed");
+        }
+        // Legacy consumers check cancellation once per delivered event. Device
+        // cancellation is settled by the producer's canonical terminal event.
+        if !self.device_callback_mode() && cancellation_requested(redis, &self.cancel_key).await {
+            self.cancel().await;
+            return true;
+        }
+        let mut chunks = Vec::new();
+        match parsed.event_type.as_str() {
+            "chunk" => {
+                self.state
+                    .result_blocks(&mut self.queue, parsed.result.as_ref());
+                let content = if self.device_callback_mode() {
+                    self.device_text.unseen_suffix(&parsed)
+                } else {
+                    &parsed.content
+                };
+                if !content.is_empty() {
+                    chunks.push(Chunk::Text(content.to_owned()));
+                }
+            }
+            "thinking" => chunks.push(Chunk::Reasoning(parsed.content.clone())),
+            "block_created" => {
+                if let Some(block) = parsed.data.get("block") {
+                    chunks.push(Chunk::BlockCreated(block.clone()));
+                }
+            }
+            "block_updated" => {
+                if let (Some(block_id), Some(updates)) = (
+                    parsed.data.get("block_id").and_then(Value::as_str),
+                    parsed.data.get("updates"),
+                ) && updates.is_object()
+                {
+                    chunks.push(Chunk::BlockUpdated {
+                        block_id: block_id.to_string(),
+                        updates: updates.clone(),
+                    });
+                }
+            }
+            "tool_start" => {
+                if let Some(chunk) = tool_start_chunk(&mut self.tool_states, &parsed) {
+                    chunks.push(chunk);
+                }
+            }
+            // `EventType.TOOL`: an `mcp_call` arguments update. It never
+            // emits a client chunk and only touches a saved `mcp_call`.
+            "tool" => tool_update(&mut self.tool_states, &parsed),
+            "tool_result" => {
+                if let Some(chunk) = tool_result_chunk(&mut self.tool_states, &parsed) {
+                    chunks.push(chunk);
+                }
+            }
+            "done" => self
+                .state
+                .result_blocks(&mut self.queue, parsed.result.as_ref()),
+            _ => {}
+        }
+        for chunk in chunks {
+            self.state.handle_chunk(&mut self.queue, chunk);
+        }
+        false
+    }
+
+    async fn finish_terminal<R: brz_redis::Redis>(
+        &mut self,
+        event: &mut ExecutionEvent,
+        status: &'static str,
+        redis: Option<&R>,
+    ) {
+        if self.callback_mode() {
+            // `/internal/callback` owns the terminal persistence; the consumer
+            // only renders the event it received. Legacy executor callbacks
+            // still check cancellation; a committed device terminal wins it.
+            if !self.device_callback_mode() && cancellation_requested(redis, &self.cancel_key).await
+            {
+                self.cancel().await;
+                return;
+            }
+            if self.device_callback_mode() {
+                self.state
+                    .use_callback_result(&mut self.queue, event.result.as_ref());
+            }
+        } else {
+            if let Some(mut emitter) = self.emitter.take() {
+                emitter.close().await;
+            }
+            match self
+                .complete(status, event.result.as_ref(), event.error.as_deref(), None)
+                .await
+            {
+                Ok(Some(committed)) => event.result = committed.result,
+                Ok(None) => {
+                    self.finish_committed_winner().await;
+                    return;
+                }
+                Err(_) => {
+                    self.finish_persistence_error("Could not save the execution result")
+                        .await;
+                    return;
+                }
+            }
+            // The committed terminal event wins a concurrent cancellation.
+            // A delivered terminal event is persisted inside the emitter
+            // before the dispatch exits, so this stream's one inner
+            // `unregister_stream` runs after the completion.
+            self.dispatch_exit_unregister().await;
+        }
+        if status == "FAILED" {
+            let message = event
+                .error
+                .clone()
+                .unwrap_or_else(|| "Unknown error".to_string());
+            self.state.finish(
+                &mut self.queue,
+                "failed",
+                Some(json!({"code": "stream_error", "message": message})),
+            );
+            self.failed_terminal = true;
+            self.terminal = true;
+            return;
+        }
+        if !self.device_callback_mode() {
+            self.state
+                .result_blocks(&mut self.queue, event.result.as_ref());
+        }
+        self.terminal = true;
+    }
+
+    async fn drain_and_finish(&mut self) {
+        if let Some(response) = self.response.as_mut() {
+            drain_terminal_stream(response).await;
+        }
+        self.cleanup().await;
+        if !self.finished && !self.failed_terminal {
+            self.state.finish(&mut self.queue, "completed", None);
+        }
+        self.finished = true;
+    }
+
+    async fn cancel(&mut self) {
+        if self.callback_mode() {
+            self.cleanup().await;
+            self.state.finish(&mut self.queue, "completed", None);
+            self.finished = true;
+            return;
+        }
+        if let Some(mut emitter) = self.emitter.take() {
+            emitter.close().await;
+        }
+        let persisted = self.complete("CANCELLED", None, None, None).await;
+        self.finish_cancel(persisted).await;
+    }
+
+    async fn finish_cancel(
+        &mut self,
+        persisted: brz_mysql::MysqlResult<Option<completion::TerminalCompletion>>,
+    ) {
+        // The cancel endpoint can commit before the stream observes the flag.
+        // Read the winner when this stream did not own the terminal write.
+        match persisted {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                self.finish_committed_winner().await;
+                return;
+            }
+            Err(_) => {
+                self.finish_persistence_error("Could not save the cancellation")
+                    .await;
+                return;
+            }
+        }
+        // Cancellation is observed after the dispatch exits; the inner
+        // `unregister_stream` belongs to the dispatch, not the final response
+        // cleanup.
+        self.dispatch_exit_unregister().await;
+        self.cleanup().await;
+        self.state.finish(&mut self.queue, "completed", None);
+        self.finished = true;
+    }
+
+    /// A transport failure (`open`/read/parse error): the upstream dispatch
+    /// exits before the dispatcher's `except` branch persists the failure
+    /// (`emit_error`), so the inner `unregister_stream` DEL precedes the
+    /// FAILED completion.
+    async fn fail(&mut self, failure: BridgeFailure) {
+        self.fail_with_order(failure, FailureOrder::DispatchExitFirst)
+            .await;
+    }
+
+    /// A stream that ended without a terminal event: the dispatcher emits its
+    /// synthetic ERROR through the emitter, so the FAILED completion runs
+    /// before the dispatch exits and its inner `unregister_stream` DEL.
+    async fn fail_stream_end(&mut self, message: String) {
+        self.fail_with_order(
+            BridgeFailure::generic(message),
+            FailureOrder::CompletionFirst,
+        )
+        .await;
+    }
+
+    /// `order` decides only where the dispatch-exit DEL lands; the failure
+    /// carries its own `classify_error` code, which the FAILED completion
+    /// persists as `result.error_type`.
+    async fn fail_with_order(&mut self, failure: BridgeFailure, order: FailureOrder) {
+        if self.device_callback_mode() && failure.terminal_winner {
+            self.finish_committed_winner().await;
+            return;
+        }
+        let BridgeFailure {
+            message,
+            error_code,
+            ..
+        } = failure;
+        if self.callback_mode() {
+            if self.device_callback_mode()
+                && !self.callback_dispatch_attempted
+                && let Some(app) = self.app.upgrade()
+                && let Some((_, request)) = self.callback_dispatch.as_ref()
+            {
+                crate::responses::dispatch::finalize_executor_failure(
+                    &crate::responses::dispatch::ConsumerState::from_app(&app),
+                    self.task_id,
+                    self.subtask_id,
+                    request.user_id,
+                    self.message_id,
+                    (&message, "stream_subscribe_error"),
+                )
+                .await;
+            }
+            // The producer owns the failure persistence; the consumer renders
+            // the failed stream and releases its subscription.
+            self.cleanup().await;
+            self.state.finish(
+                &mut self.queue,
+                "failed",
+                Some(json!({"code": "stream_error", "message": message})),
+            );
+            self.finished = true;
+            return;
+        }
+        if order == FailureOrder::DispatchExitFirst {
+            self.dispatch_exit_unregister().await;
+        }
+        if let Some(mut emitter) = self.emitter.take() {
+            emitter.close().await;
+        }
+        let failure_result = error_code.map(|code| json!({"error_type": code}));
+        let completion = self
+            .complete(
+                "FAILED",
+                failure_result.as_ref(),
+                Some(&message),
+                error_code,
+            )
+            .await;
+        match completion {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                self.finish_committed_winner().await;
+                return;
+            }
+            Err(_) => {
+                self.finish_persistence_error("Could not save the execution result")
+                    .await;
+                return;
+            }
+        }
+        // `raw_chat_stream`'s per-event cancellation read for the failed event.
+        let _ = self.cancelled().await;
+        self.dispatch_exit_unregister().await;
+        if let Some(response) = self.response.as_mut() {
+            drain_terminal_stream(response).await;
+        }
+        self.cleanup().await;
+        self.state.finish(
+            &mut self.queue,
+            "failed",
+            Some(json!({"code": "stream_error", "message": message})),
+        );
+        self.finished = true;
+    }
+
+    async fn complete(
+        &mut self,
+        status: &str,
+        result: Option<&Value>,
+        error: Option<&str>,
+        error_code: Option<&str>,
+    ) -> brz_mysql::MysqlResult<Option<completion::TerminalCompletion>> {
+        let Some(redis) = &self.redis else {
+            return Err(brz_mysql::MysqlError::InvalidConfig {
+                reason: "Redis is required for execution completion".into(),
+            });
+        };
+        let app = self.app.upgrade();
+        if app.is_none() {
+            tracing::error!(
+                task_id = self.task_id,
+                "Application state unavailable during streamed task completion"
+            );
+        }
+        let ctx = Completion {
+            app: app.as_deref(),
+            mysql: &self.mysql,
+            redis,
+            tables: self.tables,
+            executor_manager: &self.executor_manager,
+        };
+        completion::complete_terminal_event(
+            &ctx,
+            self.task_id,
+            self.subtask_id,
+            status,
+            result,
+            error,
+            error_code,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// The HTTP+Callback consumer never owns the session's persistence or
+    /// completion; `/internal/callback` runs those producer-side effects.
+    fn callback_mode(&self) -> bool {
+        matches!(self.mode, Mode::Callback { .. })
+    }
+
+    fn device_callback_mode(&self) -> bool {
+        matches!(
+            self.mode,
+            Mode::Callback {
+                target: CallbackDispatchTarget::Device { .. }
+            }
+        )
+    }
+
+    async fn cancelled(&mut self) -> bool {
+        cancellation_requested(self.redis.as_ref(), &self.cancel_key).await
+    }
+
+    /// `_dispatch_chat_shell_sse`'s `finally: session_manager.unregister_stream`.
+    ///
+    /// Transport errors unregister before FAILED persistence; delivered terminal
+    /// events unregister afterwards. Outer cleanup unregisters once more.
+    /// Callback mode has no dispatch task in this process.
+    async fn dispatch_exit_unregister(&mut self) {
+        if self.inner_unregistered || self.callback_mode() || !self.registered {
+            return;
+        }
+        self.inner_unregistered = true;
+        unregister_stream(self.redis.as_ref(), self.subtask_id).await;
+    }
+
+    async fn cleanup(&mut self) {
+        // `raw_chat_stream`'s `finally` closes the Pub/Sub client before it
+        // unregisters the stream.
+        if let Some(subscription) = self.subscription.take() {
+            subscription.close().await;
+        }
+        // The device producer owns its execution state, including after SSE disconnects.
+        if self.device_callback_mode() {
+            self.registered = false;
+            return;
+        }
+        if !self.registered {
+            return;
+        }
+        if let Some(redis) = &self.redis {
+            // `raw_chat_stream`'s `finally`: one `unregister_stream`
+            // (atomic intent + flag DEL), then `delete_streaming_content`
+            // (`DEL chat:streaming:{subtask}`). A chat-shell stream's dispatch
+            // task ran its own unregister in `dispatch_exit_unregister`.
+            unregister_stream(Some(redis), self.subtask_id).await;
+            let _ = redis
+                .del(format!("chat:streaming:{}", self.subtask_id))
+                .await;
+        }
+        self.registered = false;
+    }
+}
+
+async fn cancellation_requested<R: brz_redis::Redis>(redis: Option<&R>, key: &str) -> bool {
+    match redis {
+        Some(redis) => is_cancelled(redis, key).await,
+        None => false,
+    }
+}
+
+impl Drop for Bridge {
+    fn drop(&mut self) {
+        let Some(subscription) = self.subscription.take() else {
+            return;
+        };
+        // Teardown releases only the reader; the device keeps executing its turn.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move { subscription.close().await });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

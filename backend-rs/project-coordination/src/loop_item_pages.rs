@@ -1,0 +1,834 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! `GET /api/v1/cloud-projects/{project_id}/loop-item-pages` — paged
+//! board tasks for an external-provider project.
+//!
+//! Mirrors `app.api.endpoints.deliveries.list_loop_item_page`:
+//! `external_loop_item_provider.list_page(db, project_id, current_user.id,
+//! item_status, parent_id, cursor, limit)` returns the matched issue page
+//! and a next-page cursor, then `loop_item_service.list_project_task_bindings`
+//! returns the active task bindings for the matched item ids. The response is
+//! `LoopItemPageResponse { items, task_bindings, next_cursor }`.
+//!
+//! Source pipeline (`app.services.loop_items.external_provider.list_page`):
+//! 1. `require_cloud_project_role(db, project_id, user_id, Viewer)` — the
+//!    set-based `project_access_query` resolves the active project row and the
+//!    caller's effective role in one statement; raises 404 when no permission
+//!    source grants the caller access to that project and 403 when the
+//!    resolved role is below `Viewer` (`RestrictedAnalyst`).
+//! 2. `_require_external(project)` — 409 when the project is not github/gitlab.
+//! 3. `item_status not in EXTERNAL_BOARD_STATUSES` — 422 "Unsupported board
+//!    status".
+//! 4. `_decode_page_cursor(cursor)` — 422 "Invalid page cursor" on bad base64
+//!    or out-of-range page.
+//! 5. `_list_issue_page` -> `_request_issue_page` -> `_request` — the provider
+//!    HTTP call, then one `_response` projection per matched issue (the active
+//!    `loop_item_executions` run overlay plus assignee lookups).
+//! 6. `loop_item_service.list_project_task_bindings` — the active execution
+//!    bindings for the matched item ids, after a second `Viewer` role check.
+//!
+//! The provider call may fail: a `404` response becomes `404 "TODO not found"`
+//! and every other provider failure becomes
+//! `502 "Provider request failed: {e}"`; on success the handler mirrors the
+//! source's dependency sequence — the authenticated `users` read, the
+//! `project_access_query`, the provider request, one
+//! `loop_item_executions` lookup and assignee `users` read per matched item,
+//! the second `project_access_query`, and the bindings read.
+use base64::Engine as _;
+use serde::Serialize;
+use serde_json::json;
+
+use crate::auth::SessionUser;
+use crate::board_snapshot::bindings::{BindingResponse, binding_response};
+use crate::board_snapshot::external_provider::PROVIDER_REQUEST_FAILED_PREFIX;
+use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectRow, has_permission};
+use crate::http_compat::FastApiError;
+use crate::{ExternalIssueReads, ProjectState};
+
+mod execution;
+mod page_cache;
+pub mod projection;
+mod provider;
+
+use projection::{LoopItemResponse, issue_response};
+use provider::{ProviderError, request_issue_page};
+
+/// `EXTERNAL_BOARD_STATUSES` (`app.services.loop_items.external_provider`).
+const EXTERNAL_BOARD_STATUSES: &[&str] =
+    &["inbox", "pending", "in_progress", "in_review", "completed"];
+
+/// `STATUS_PREFIX` (`app.services.loop_items.external_provider`).
+const STATUS_PREFIX: &str = "wegent:status:";
+
+/// `PARENT_MARKER` (`app.services.loop_items.external_provider`).
+const PARENT_MARKER: &str = "Wegent-Parent:";
+
+/// `CREATOR_PREFIX` (`app.services.loop_items.external_provider`).
+const CREATOR_PREFIX: &str = "wegent:creator:";
+
+/// `ASSIGNEE_PREFIX` (`app.services.loop_items.external_provider`).
+const ASSIGNEE_PREFIX: &str = "wegent:assignee:";
+
+/// `PRIORITY_PREFIX` (`app.services.loop_items.external_provider`).
+const PRIORITY_PREFIX: &str = "wegent:priority:";
+
+/// `SECURITY_PREFIX` (`app.services.loop_items.external_provider`).
+const SECURITY_PREFIX: &str = "wegent:security:";
+
+/// Query parameters for `GET /api/v1/cloud-projects/{project_id}/loop-item-pages`.
+///
+/// Mirrors the source `Query` constraints: `status` (alias for `item_status`,
+/// `max_length=32`, required), `parent_id` (`max_length=64`, default None),
+/// `cursor` (`max_length=64`, default None), `limit` (`ge=1, le=100`,
+/// default 10).
+#[derive(Debug, serde::Deserialize)]
+pub struct LoopItemPageQuery {
+    /// `Query(alias="status", max_length=32)` — the board status filter.
+    /// The source uses `alias="status"`, so the query string key is `status`
+    /// but the Python parameter is `item_status`.
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<String>,
+}
+
+/// FastAPI-style 422 validation error body.
+fn validation_error(field: &str, kind: &str, message: &str, input: &str) -> FastApiError {
+    FastApiError::validation(json!([{
+        "type": kind,
+        "loc": ["query", field],
+        "msg": message,
+        "input": input,
+    }]))
+}
+
+/// FastAPI-style 422 for an unparsable `project_id` path parameter. The
+/// source declares `project_id: int`, so a non-numeric path segment is
+/// rejected before the handler runs.
+fn path_validation_error(value: &str) -> FastApiError {
+    FastApiError::validation(json!([{
+        "type": "int_parsing",
+        "loc": ["path", "project_id"],
+        "msg": "Input should be a valid integer, unable to parse string as an integer",
+        "input": value,
+    }]))
+}
+
+impl LoopItemPageQuery {
+    /// Validate the FastAPI query contract and return the typed parameters.
+    ///
+    /// Returns `(item_status, parent_id, cursor, limit)` on success.
+    fn validated(self) -> Result<(String, Option<String>, Option<String>, i64), FastApiError> {
+        let item_status = match &self.status {
+            None => {
+                return Err(validation_error("status", "missing", "Field required", ""));
+            }
+            Some(value) if value.len() > 32 => {
+                return Err(validation_error(
+                    "status",
+                    "string_too_long",
+                    "String should have at most 32 characters",
+                    value,
+                ));
+            }
+            Some(value) => value.clone(),
+        };
+
+        let parent_id = match &self.parent_id {
+            Some(value) if value.len() > 64 => {
+                return Err(validation_error(
+                    "parent_id",
+                    "string_too_long",
+                    "String should have at most 64 characters",
+                    value,
+                ));
+            }
+            Some(value) if value.is_empty() => None,
+            Some(value) => Some(value.clone()),
+            None => None,
+        };
+
+        let cursor = match &self.cursor {
+            Some(value) if value.len() > 64 => {
+                return Err(validation_error(
+                    "cursor",
+                    "string_too_long",
+                    "String should have at most 64 characters",
+                    value,
+                ));
+            }
+            Some(value) if value.is_empty() => None,
+            Some(value) => Some(value.clone()),
+            None => None,
+        };
+
+        let limit = match &self.limit {
+            None => 10,
+            Some(raw) => {
+                let parsed: i64 = raw.parse().map_err(|_| {
+                    validation_error(
+                        "limit",
+                        "int_parsing",
+                        "Input should be a valid integer, unable to parse string as an integer",
+                        raw,
+                    )
+                })?;
+                if parsed < 1 {
+                    return Err(validation_error(
+                        "limit",
+                        "greater_than_equal",
+                        "Input should be greater than or equal to 1",
+                        raw,
+                    ));
+                }
+                if parsed > 100 {
+                    return Err(validation_error(
+                        "limit",
+                        "less_than_equal",
+                        "Input should be less than or equal to 100",
+                        raw,
+                    ));
+                }
+                parsed
+            }
+        };
+
+        Ok((item_status, parent_id, cursor, limit))
+    }
+}
+
+/// The `LoopItemPageResponse` payload returned by the source.
+///
+/// `items` carries the typed `LoopItemResponse` projection built by the
+/// loop-item-pages read path; `task_bindings` and `next_cursor` mirror the
+/// source `LoopItemPageResponse` schema.
+#[derive(Debug, Serialize)]
+struct LoopItemPageResponse {
+    items: Vec<LoopItemResponse>,
+    task_bindings: Vec<BindingResponse>,
+    next_cursor: Option<String>,
+}
+
+/// GET /api/v1/cloud-projects/{project_id}/loop-item-pages: the loop-item-pages
+/// free function, injecting the process-lifetime application state.
+#[brz_http_server::get("/api/v1/cloud-projects/:project_id/loop-item-pages", group = project_coordination)]
+async fn list_loop_item_page(
+    #[inject(state)] state: &ProjectState,
+    project_id: &str,
+    #[auth] current_user: SessionUser,
+    query: brz_http_server::Query<LoopItemPageQuery>,
+) -> Result<LoopItemPageResponse, FastApiError> {
+    loop_item_page(state, project_id, &current_user, &query).await
+}
+
+/// Handler body for `GET /api/v1/cloud-projects/{project_id}/loop-item-pages`.
+async fn loop_item_page(
+    state: &ProjectState,
+    project_id: &str,
+    current_user: &SessionUser,
+    params: &LoopItemPageQuery,
+) -> Result<LoopItemPageResponse, FastApiError> {
+    let (item_status, parent_id, cursor, limit) = LoopItemPageQuery {
+        status: params.status.clone(),
+        parent_id: params.parent_id.clone(),
+        cursor: params.cursor.clone(),
+        limit: params.limit.clone(),
+    }
+    .validated()?;
+
+    let repository = BoardSnapshotRepository::new(&state.mysql);
+
+    // FastAPI path typing (`project_id: int`) validates the path segment
+    // before the endpoint body runs.
+    let project_number: i64 = project_id
+        .parse()
+        .map_err(|_| path_validation_error(project_id))?;
+
+    // `require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)`:
+    // the set-based `project_access_query` resolves the active project row and
+    // the caller's effective role in one statement, so the request is
+    // authorized against the same grants as every other cloud-project route.
+    // A caller below `Viewer` fails `has_permission(role, Viewer)` and the
+    // source raises `403 {"detail": "Insufficient permission"}`.
+    let access = repository
+        .require_cloud_project_role(project_number, current_user.id)
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| {
+            FastApiError::detail(
+                brz_http_server::StatusCode::NOT_FOUND,
+                "Cloud project not found",
+            )
+        })?;
+    let project = access.project;
+    let role = access.role;
+    if !has_permission(&role, "Viewer") {
+        return Err(FastApiError::forbidden("Insufficient permission"));
+    }
+
+    // `_require_external(project)`: 409 when the project is not github/gitlab.
+    let task_provider = project.task_provider();
+    if !matches!(task_provider.as_str(), "github" | "gitlab") {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::CONFLICT,
+            "Project is not external",
+        ));
+    }
+
+    // `item_status not in EXTERNAL_BOARD_STATUSES`: 422.
+    if !EXTERNAL_BOARD_STATUSES.contains(&item_status.as_str()) {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+            "Unsupported board status",
+        ));
+    }
+
+    // `_decode_page_cursor(cursor)`: 422 on bad base64 or out-of-range page.
+    let page = decode_page_cursor(cursor.as_deref())?;
+
+    // `_list_issue_page` -> `_request_issue_page` -> `_request`: the provider
+    // HTTP call. The source maps a `404` response to `404 "TODO not found"`
+    // and every other provider failure to
+    // `502 "Provider request failed: {e}"`. The provider request carries the
+    // decrypted `provider_config` credential and the project's
+    // `task_provider`/`api_base`, both read from the already-resolved access
+    // row, so the failure reaches this branch without another read.
+    let batch = request_issue_page(
+        &state.attachment_http,
+        &state.jwt_key,
+        &project,
+        &item_status,
+        parent_id.as_deref(),
+        page,
+        limit,
+    )
+    .await
+    .map_err(|error| match error {
+        ProviderError::NotFound => {
+            FastApiError::detail(brz_http_server::StatusCode::NOT_FOUND, "TODO not found")
+        }
+        ProviderError::Failed(text) => FastApiError::detail(
+            brz_http_server::StatusCode::BAD_GATEWAY,
+            format!("{PROVIDER_REQUEST_FAILED_PREFIX}{text}"),
+        ),
+    })?;
+
+    // The source projects each issue to a `LoopItemResponse` row via
+    // `_response` (`_base_response` merged with `_with_execution_state`).
+    // Gitlab results need no post-filter; github filters on status, parent,
+    // and pull-request marker.
+    let mut matched: Vec<LoopItemResponse> = Vec::new();
+    for issue in &batch {
+        if task_provider != "gitlab"
+            && !issue_matches_page(&project, issue, &item_status, parent_id.as_deref())
+        {
+            continue;
+        }
+        let item = issue_response(&state.mysql, &project, &role, current_user.id, issue)
+            .await
+            .map_err(internal_error)?;
+        matched.push(item);
+    }
+
+    // `next_cursor = _encode_page_cursor(page + 1) if len(batch) == limit else None`.
+    let next_cursor = if batch.len() as i64 == limit {
+        Some(encode_page_cursor(page + 1))
+    } else {
+        None
+    };
+
+    // `list_page` returns `[r for r in responses if r["can_view_detail"]]`, and
+    // the endpoint derives the bindings lookup from exactly those items.
+    let items: Vec<LoopItemResponse> = matched
+        .into_iter()
+        .filter(LoopItemResponse::can_view_detail)
+        .collect();
+    let item_ids: Vec<String> = items.iter().map(|item| item.id()).collect();
+
+    // `loop_item_service.list_project_task_bindings`: active execution rows
+    // whose `loop_item_id` is in the item list. The source resolves
+    // `require_cloud_project_role(db, project_id, user_id)` again with the
+    // default `required_role = Viewer` before the query. A caller below
+    // `Viewer` fails `has_permission(role, Viewer)` and the source raises
+    // `403 {"detail": "Insufficient permission"}`.
+    let bindings_access = repository
+        .require_cloud_project_role(project_number, current_user.id)
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| {
+            FastApiError::detail(
+                brz_http_server::StatusCode::NOT_FOUND,
+                "Cloud project not found",
+            )
+        })?;
+    if !has_permission(&bindings_access.role, "Viewer") {
+        return Err(FastApiError::forbidden("Insufficient permission"));
+    }
+
+    let bindings = repository
+        .list_project_task_bindings(&project.id, &item_ids)
+        .await
+        .map_err(internal_error)?;
+
+    Ok(LoopItemPageResponse {
+        items,
+        task_bindings: bindings.iter().map(binding_response).collect(),
+        next_cursor,
+    })
+}
+
+/// `_decode_page_cursor(cursor)`: base64url decode the page cursor. Returns
+/// the 1-based page number. 422 on bad base64 or out-of-range page.
+fn decode_page_cursor(cursor: Option<&str>) -> Result<u32, FastApiError> {
+    let Some(cursor) = cursor else {
+        return Ok(1);
+    };
+    if cursor.is_empty() {
+        return Ok(1);
+    }
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(cursor.as_bytes())
+        .or_else(|_| {
+            // The source pads with `=` to a multiple of 4 before decoding.
+            let padded = format!("{}{}", cursor, "=".repeat((4 - cursor.len() % 4) % 4));
+            base64::engine::general_purpose::URL_SAFE.decode(padded.as_bytes())
+        })
+        .map_err(|_| {
+            FastApiError::detail(
+                brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+                "Invalid page cursor",
+            )
+        })?;
+    let page_str = String::from_utf8(decoded).map_err(|_| {
+        FastApiError::detail(
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+            "Invalid page cursor",
+        )
+    })?;
+    let page: u32 = page_str.parse().map_err(|_| {
+        FastApiError::detail(
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+            "Invalid page cursor",
+        )
+    })?;
+    if !(1..=100).contains(&page) {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+            "Invalid page cursor",
+        ));
+    }
+    Ok(page)
+}
+
+/// `_encode_page_cursor(page)`: base64url encode the page number without
+/// padding.
+fn encode_page_cursor(page: u32) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(page.to_string().as_bytes())
+}
+
+/// `external_loop_item_provider.list`: list the project's issues from the
+/// provider API, filter on the optional assignee label, and project each
+/// visible issue to a shared loop-item body.
+///
+/// `_response(include_description=False, include_badges=False)` keeps the
+/// description empty and leaves badges at the schema default, so this path is
+/// exactly the loop-item-pages projection plus the provider-level visibility
+/// filter the source applies before returning.
+pub async fn list_external_items(
+    state: &ExternalIssueReads<'_>,
+    project: &ProjectRow,
+    role: &str,
+    user_id: i32,
+    assignee_type: Option<&str>,
+    assignee_id: Option<&str>,
+) -> Result<Vec<crate::loop_items::response::LoopItemResponse>, FastApiError> {
+    let values = crate::board_snapshot::external_provider::list_issue_values(
+        state.attachment_http,
+        state.jwt_key,
+        project,
+    )
+    .await
+    .map_err(|error| {
+        FastApiError::detail(
+            brz_http_server::StatusCode::BAD_GATEWAY,
+            format!("{PROVIDER_REQUEST_FAILED_PREFIX}{error}"),
+        )
+    })?;
+
+    let assignee_label = match assignee_type {
+        Some(kind @ ("user" | "agent" | "team")) => assignee_id
+            .filter(|id| !id.is_empty())
+            .map(|id| format!("{ASSIGNEE_PREFIX}{kind}:{id}")),
+        _ => None,
+    };
+
+    let mut matched = Vec::with_capacity(values.len());
+    for value in values {
+        let Ok(issue) = serde_json::from_value::<PageIssue>(value) else {
+            continue;
+        };
+        if let Some(label) = assignee_label.as_deref()
+            && !issue.labels().iter().any(|candidate| candidate == label)
+        {
+            continue;
+        }
+        // `_response(include_description=False, include_badges=False)`.
+        let response = projection::issue_response(state.mysql, project, role, user_id, &issue)
+            .await
+            .map_err(internal_error)?;
+        if response.can_view_detail() {
+            matched.push(response);
+        }
+    }
+
+    // `_attach_badges(db, [r for r in responses if r["can_view_detail"]])`.
+    let matched = projection::LoopItemResponse::attach_badges(state.mysql, matched)
+        .await
+        .map_err(internal_error)?;
+    Ok(matched
+        .into_iter()
+        .map(projection::LoopItemResponse::into_loop_items)
+        .collect())
+}
+
+/// One raw issue from the provider page response. Only the fields consumed by
+/// the loop-item-pages read path are typed; the remaining fields are ignored
+/// by serde.
+#[derive(Debug, serde::Deserialize)]
+pub struct PageIssue {
+    #[serde(default)]
+    number: Option<i64>,
+    #[serde(default)]
+    iid: Option<i64>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default, alias = "state")]
+    _state: Option<String>,
+    #[serde(default)]
+    labels: Option<Vec<IssueLabel>>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    updated_at: Option<String>,
+    #[serde(default)]
+    closed_at: Option<String>,
+    #[serde(default)]
+    pull_request: Option<serde::de::IgnoredAny>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct IssueLabelObject {
+    name: Option<String>,
+    title: Option<String>,
+}
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum IssueLabel {
+    Text(String),
+    Object(IssueLabelObject),
+    Other(serde::de::IgnoredAny),
+}
+
+impl PageIssue {
+    /// Provider descriptions omit the parent marker stored in the issue body.
+    pub fn description(&self, provider: &str) -> String {
+        let body = if provider == "github" {
+            self.body.as_deref()
+        } else {
+            self.description.as_deref()
+        };
+        body.unwrap_or_default()
+            .lines()
+            .filter(|line| !line.trim().starts_with(PARENT_MARKER))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_owned()
+    }
+
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref().filter(|title| !title.is_empty())
+    }
+
+    /// `_number(issue)`: `number` (github) or `iid` (gitlab).
+    pub fn number(&self) -> i64 {
+        self.number.or(self.iid).unwrap_or(0)
+    }
+
+    /// `_labels(issue)`: the issue's label names.
+    pub fn labels(&self) -> Vec<String> {
+        self.labels
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|label| match label {
+                IssueLabel::Text(text) => Some(text.clone()),
+                IssueLabel::Object(label) => {
+                    if label.name.is_some() {
+                        label.name.clone()
+                    } else {
+                        label.title.clone()
+                    }
+                }
+                IssueLabel::Other(_) => None,
+            })
+            .collect()
+    }
+
+    /// `_status(labels, state)`: the board status from labels.
+    fn status(&self) -> String {
+        let labels = self.labels();
+        let value = labels
+            .iter()
+            .find_map(|label| label.strip_prefix(STATUS_PREFIX))
+            .unwrap_or("pending");
+        if matches!(
+            value,
+            "inbox" | "pending" | "in_progress" | "in_review" | "completed"
+        ) {
+            value.to_string()
+        } else {
+            "pending".to_string()
+        }
+    }
+}
+
+/// `_issue_matches_page`: github-only post-filter on status, parent_id, and
+/// pull_request marker.
+fn issue_matches_page(
+    project: &ProjectRow,
+    issue: &PageIssue,
+    item_status: &str,
+    parent_id: Option<&str>,
+) -> bool {
+    let _ = project;
+    issue.status() == item_status
+        && parent_id_matches(project, issue, parent_id)
+        && issue.pull_request.is_none()
+}
+
+/// `_parent_id(project, description)`: extract the parent id from the
+/// description marker line. `Some(None)` means an explicit empty marker.
+fn parent_id_from_issue(project: &ProjectRow, issue: &PageIssue) -> Option<Option<String>> {
+    // `_body_key(project)`: github issues carry the body under `body`, gitlab
+    // issues under `description`. There is no cross-key fallback.
+    let description = if project.task_provider() == "github" {
+        issue.body.as_deref()
+    } else {
+        issue.description.as_deref()
+    }
+    .unwrap_or("");
+    parent_id_from_description(project, description)
+}
+
+/// `_parent_id(project, description)`: parse the `Wegent-Parent:` marker.
+pub fn parent_id_from_description(
+    project: &ProjectRow,
+    description: &str,
+) -> Option<Option<String>> {
+    description.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.starts_with(PARENT_MARKER) {
+            let raw = trimmed.trim_start_matches(PARENT_MARKER).trim();
+            if raw.is_empty() {
+                return Some(None);
+            }
+            if raw.chars().all(|c| c.is_ascii_digit()) {
+                let key = project.project_key.as_deref().unwrap_or("");
+                return Some(Some(format!("{key}-{raw}")));
+            }
+            return Some(Some(raw.to_string()));
+        }
+        None
+    })
+}
+
+/// Whether the issue's extracted parent id matches the requested filter.
+fn parent_id_matches(project: &ProjectRow, issue: &PageIssue, parent_id: Option<&str>) -> bool {
+    let found = parent_id_from_issue(project, issue);
+    match (found, parent_id) {
+        (Some(Some(found)), Some(parent_id)) => found == parent_id,
+        (Some(None), None) => true,
+        (Some(Some(_)), None) => false,
+        (Some(None), Some(_)) => false,
+        (None, None) => true,
+        (None, Some(_)) => false,
+    }
+}
+
+fn internal_error(error: brz_mysql::MysqlError) -> FastApiError {
+    tracing::error!(%error, "loop-item-pages dependency failure");
+    FastApiError::detail(
+        brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
+        "Internal server error",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_page_cursor_defaults_to_one() {
+        assert_eq!(decode_page_cursor(None).unwrap(), 1);
+        assert_eq!(decode_page_cursor(Some("")).unwrap(), 1);
+    }
+
+    #[test]
+    fn encode_decode_page_cursor_roundtrip() {
+        for page in 1..=100u32 {
+            let encoded = encode_page_cursor(page);
+            let decoded = decode_page_cursor(Some(&encoded)).unwrap();
+            assert_eq!(decoded, page);
+        }
+    }
+
+    #[test]
+    fn decode_page_cursor_rejects_out_of_range() {
+        let encoded = encode_page_cursor(101);
+        assert!(decode_page_cursor(Some(&encoded)).is_err());
+        let encoded = encode_page_cursor(0);
+        // 0 is out of range
+        assert!(decode_page_cursor(Some(&encoded)).is_err());
+    }
+
+    #[test]
+    fn decode_page_cursor_rejects_garbage() {
+        assert!(decode_page_cursor(Some("!!!not-base64!!!")).is_err());
+    }
+
+    #[test]
+    fn validation_requires_status() {
+        let query = LoopItemPageQuery {
+            status: None,
+            parent_id: None,
+            cursor: None,
+            limit: None,
+        };
+        let error = query.validated().unwrap_err();
+        assert_eq!(
+            error.status(),
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+
+    #[test]
+    fn path_validation_rejects_a_non_numeric_project_id() {
+        let error = path_validation_error("not-a-project");
+        assert_eq!(
+            error.status(),
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let detail = error.validation_detail();
+        assert!(detail.contains("\"int_parsing\""), "{detail}");
+        assert!(detail.contains("\"path\""), "{detail}");
+        assert!(detail.contains("\"project_id\""), "{detail}");
+    }
+
+    #[test]
+    fn validation_defaults_limit_to_ten() {
+        let query = LoopItemPageQuery {
+            status: Some("in_review".to_string()),
+            parent_id: None,
+            cursor: None,
+            limit: None,
+        };
+        let (status, _, _, limit) = query.validated().unwrap();
+        assert_eq!(status, "in_review");
+        assert_eq!(limit, 10);
+    }
+
+    #[test]
+    fn validation_enforces_limit_bounds() {
+        let query = LoopItemPageQuery {
+            status: Some("in_review".to_string()),
+            parent_id: None,
+            cursor: None,
+            limit: Some("0".to_string()),
+        };
+        assert!(query.validated().is_err());
+
+        let query = LoopItemPageQuery {
+            status: Some("in_review".to_string()),
+            parent_id: None,
+            cursor: None,
+            limit: Some("101".to_string()),
+        };
+        assert!(query.validated().is_err());
+
+        let query = LoopItemPageQuery {
+            status: Some("in_review".to_string()),
+            parent_id: None,
+            cursor: None,
+            limit: Some("50".to_string()),
+        };
+        let (_, _, _, limit) = query.validated().unwrap();
+        assert_eq!(limit, 50);
+    }
+
+    #[test]
+    fn external_board_statuses_contains_all_known() {
+        assert!(EXTERNAL_BOARD_STATUSES.contains(&"in_review"));
+        assert!(EXTERNAL_BOARD_STATUSES.contains(&"inbox"));
+        assert!(EXTERNAL_BOARD_STATUSES.contains(&"pending"));
+        assert!(EXTERNAL_BOARD_STATUSES.contains(&"in_progress"));
+        assert!(EXTERNAL_BOARD_STATUSES.contains(&"completed"));
+        assert!(!EXTERNAL_BOARD_STATUSES.contains(&"unknown"));
+    }
+
+    #[test]
+    fn external_assignee_label_matches_source_format() {
+        // `ASSIGNEE_PREFIX` + `{type}:{id}`; only the three known kinds filter.
+        let label = |kind: &str| format!("{ASSIGNEE_PREFIX}{kind}:42");
+        assert_eq!(label("user"), "wegent:assignee:user:42");
+        assert_eq!(label("agent"), "wegent:assignee:agent:42");
+        assert_eq!(label("team"), "wegent:assignee:team:42");
+    }
+
+    fn issue_with(description: Option<&str>, body: Option<&str>) -> PageIssue {
+        PageIssue {
+            number: Some(1),
+            iid: None,
+            title: None,
+            _state: None,
+            labels: None,
+            description: description.map(str::to_string),
+            body: body.map(str::to_string),
+            created_at: None,
+            updated_at: None,
+            closed_at: None,
+            pull_request: None,
+        }
+    }
+
+    #[test]
+    fn parent_id_reads_the_provider_body_key_only() {
+        // `_body_key(project)`: github -> `body`, gitlab -> `description`.
+        // The github read must not fall back to `description`.
+        let github = ProjectRow::with_task_provider("github");
+        let marker_in_description = issue_with(Some("Wegent-Parent: 7"), None);
+        assert_eq!(parent_id_from_issue(&github, &marker_in_description), None);
+        let marker_in_body = issue_with(Some("ignored"), Some("Wegent-Parent: 7"));
+        assert_eq!(
+            parent_id_from_issue(&github, &marker_in_body),
+            Some(Some("WEWORK-7".to_string()))
+        );
+
+        let gitlab = ProjectRow::with_task_provider("gitlab");
+        assert_eq!(
+            parent_id_from_issue(&gitlab, &marker_in_description),
+            Some(Some("WEWORK-7".to_string()))
+        );
+    }
+}

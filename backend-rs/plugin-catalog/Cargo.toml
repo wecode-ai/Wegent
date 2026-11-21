@@ -1,0 +1,43 @@
+[package]
+name = "wegent-plugin-catalog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Plugin marketplace and release publication"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+getrandom.workspace = true
+jsonwebtoken.workspace = true
+pep440_rs.workspace = true
+regex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+tracing.workspace = true
+unicode-normalization.workspace = true
+url.workspace = true
+wegent-access.workspace = true
+wegent-backend-config.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-devices.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-plugin-store.workspace = true
+wegent-python-compat.workspace = true
+wegent-socket-events.workspace = true
+wegent-storage.workspace = true
+zip = { workspace = true, features = ["deflate"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+wegent-backend-test-support.workspace = true
+wegent-identity = { workspace = true, features = ["test-support"] }

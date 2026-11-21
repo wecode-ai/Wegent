@@ -18,26 +18,27 @@ ENV CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false
 WORKDIR /workspace/backend-rs
 
 FROM toolchain AS dependency-sources
-COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
 COPY shared/rust /workspace/shared/rust
 COPY shared/assets/calendars /workspace/shared/assets/calendars
-COPY backend-rs/crates ./crates
+COPY --exclude=be-server/src --exclude=be-server/examples --exclude=be-server/tests \
+    --exclude=config --exclude=docs --exclude=init_data --exclude=migrations --exclude=scripts backend-rs/ ./
 
 FROM dependency-sources AS dependencies
-RUN mkdir -p src examples && printf 'pub fn placeholder() {}\n' > src/lib.rs \
-    && printf 'fn main() {}\n' > src/main.rs \
-    && printf 'fn main() {}\n' > examples/attachment_s3_e2e.rs \
-    && printf 'fn main() {}\n' > examples/attachment_hosting_e2e.rs \
+RUN mkdir -p be-server/src be-server/examples \
+    && printf 'pub fn placeholder() {}\n' > be-server/src/lib.rs \
+    && printf 'fn main() {}\n' > be-server/src/main.rs \
+    && printf 'fn main() {}\n' > be-server/examples/attachment_s3_e2e.rs \
+    && printf 'fn main() {}\n' > be-server/examples/attachment_hosting_e2e.rs \
     && cargo build --release --locked --bin wegent-backend-rs \
       --example attachment_s3_e2e --example attachment_hosting_e2e
 
 FROM ${DEPS_IMAGE} AS build
 COPY shared/assets/codex-models /workspace/shared/assets/codex-models
-COPY backend-rs/src ./src
-COPY backend-rs/examples ./examples
+COPY backend-rs/be-server/src ./be-server/src
+COPY backend-rs/be-server/examples ./be-server/examples
 COPY backend-rs/migrations ./migrations
 COPY shared/data/builtin-connector-apps.json ../shared/data/builtin-connector-apps.json
-RUN find src examples -type f -exec touch {} + \
+RUN find be-server/src be-server/examples -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs \
       --example attachment_s3_e2e --example attachment_hosting_e2e
 

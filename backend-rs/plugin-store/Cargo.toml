@@ -1,0 +1,17 @@
+[package]
+name = "wegent-plugin-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared plugin installation storage and canonical device reconciliation"
+
+[dependencies]
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+wegent-backend-persistence = { workspace = true }
+wegent-devices = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+wegent-backend-test-support = { workspace = true }
