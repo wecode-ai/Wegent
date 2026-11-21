@@ -2,8 +2,9 @@
 use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlError, MysqlResult, MysqlTransaction};
 use serde_json::{Value, json};
+use wegent_identity::runtime_model_auth::RuntimeModelUser;
 
-use crate::{auth::SessionUser, http_compat::FastApiError, state::AppState};
+use crate::{http_compat::FastApiError, state::AppState};
 mod auth;
 pub(crate) mod collector;
 mod observers;
@@ -102,12 +103,13 @@ fn http_failure(error: MysqlError) -> FastApiError {
 #[brz_http_server::post("/api/runtime-observations/command")]
 async fn user_command(
     #[inject(state)] app: &AppState,
-    #[auth] user: SessionUser,
+    #[auth] user: RuntimeModelUser,
     body: Value,
 ) -> Result<Value, FastApiError> {
+    let owner = i64::from(user.0.id);
     if body
         .get("expectedOwnerId")
-        .is_some_and(|owner| owner.as_i64() != Some(i64::from(user.id)))
+        .is_some_and(|expected| expected.as_i64() != Some(owner))
     {
         return Err(FastApiError::detail(
             StatusCode::FORBIDDEN,
@@ -136,10 +138,10 @@ async fn user_command(
             "invalid_observation_action",
         ));
     }
-    let mut response = command(&app.mysql, i64::from(user.id), &body)
+    let mut response = command(&app.mysql, owner, &body)
         .await
         .map_err(http_failure)?;
-    response["ownerId"] = json!(user.id);
+    response["ownerId"] = json!(owner);
     Ok(response)
 }
 
