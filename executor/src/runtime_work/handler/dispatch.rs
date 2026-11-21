@@ -512,6 +512,12 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.plugin.install_local_first" => {
                 boxed_rpc(move || async move { self.install_local_plugin(payload).await })
             }
+            "runtime.codex.marketplace.check_updates" => {
+                boxed_rpc(move || async move { self.check_git_marketplace_versions(payload).await })
+            }
+            "runtime.codex.marketplace.list_configured" => {
+                boxed_rpc(move || async move { self.list_configured_marketplaces().await })
+            }
             "runtime.codex.plugin.sync_bundled" => {
                 boxed_rpc(move || async move { self.sync_bundled_plugin(payload).await })
             }

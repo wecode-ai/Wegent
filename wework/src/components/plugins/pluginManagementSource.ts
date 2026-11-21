@@ -1,6 +1,12 @@
 import type { TFunction } from 'i18next'
+import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
+import { gt, valid } from 'semver'
 import type { SetStateAction } from 'react'
-import type { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import type {
+  ConfiguredCodexMarketplace,
+  CodexMarketplacePluginVersion,
+  createLocalCodexPluginApi,
+} from '@/api/local/codexPlugins'
 import type { createLocalDevicePluginApi } from '@/features/plugins/pluginDeviceApi'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import {
@@ -20,10 +26,14 @@ import {
   getPluginMarketplaceAccountEpoch,
   removePluginMarketplaceInstallation,
   subscribePluginMarketplaceCache,
+  setPluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
+import { marketplaceItemCanRetryPluginUpdate } from '@/features/plugins/pluginAutoUpdate'
+import { currentDeviceInstallation } from './workspace/marketplaceWorkspaceHelpers'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
+import { clearLocalConnectorAuthHealthCache } from '@/api/local/localConnectorAuth'
 import { getErrorMessage } from '@/lib/error-message'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import { installedPluginTelemetryIdentity } from '@/telemetry/pluginIdentity'
@@ -46,19 +56,30 @@ import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 
-export type PluginManagementTab = 'codex' | 'core-dsh'
+export type PluginManagementTab = 'codex' | 'core-dsh' | 'marketplaces'
 interface SourceOptions {
   cacheKey: string
   knownDeviceId: string
   localPluginApi: ReturnType<typeof createLocalCodexPluginApi>
-  cloudPluginApi: ReturnType<typeof createLocalDevicePluginApi>
+  cloudPluginApi: ReturnType<typeof createLocalDevicePluginApi> & {
+    updatePublishedRelease: ReturnType<typeof createLocalDevicePluginApi>['updateInstalledPlugin']
+  }
+  cloudAvailable: boolean
 }
+type PluginVersionHint = { current: string; version: string }
 interface PluginManagementState {
   selectedPluginId: string | number | null
   pendingUninstall: { id: string | number; name: string; scope: PluginUninstallScope } | null
   uninstallingPluginIds: Set<string | number>
   pluginOperationNotice: PluginOperationNoticeState | null
   activeTab: PluginManagementTab
+  updatingPluginId: string | number | null
+  checkingMarketplaces: ReadonlySet<string>
+  gitMarketplaceVersions: ReadonlyMap<
+    string,
+    { sourceRevision: string; versions: ReadonlyMap<string, PluginVersionHint> }
+  >
+  publishedMarketplaceItems: PluginMarketplaceItem[]
 }
 interface SettingsOverlay {
   token: symbol
@@ -68,6 +89,58 @@ interface SettingsOverlay {
   componentKey?: string
   value?: boolean
 }
+export function findGitMarketplaceVersionHint(
+  plugin: InstalledPlugin,
+  catalogs: PluginManagementState['gitMarketplaceVersions']
+) {
+  const marketplace = installedPluginMarketplaceId(plugin)
+  return marketplace
+    ? catalogs.get(marketplace)?.versions.get(plugin.spec.source.pluginKey)
+    : undefined
+}
+
+function comparableGitVersion(version: string | null) {
+  if (!version) return null
+  return valid(version.replace(/^([v]?\d+\.\d+)(?=[+-]|$)/, '$1.0'))
+}
+
+function gitVersionHints(checked: CodexMarketplacePluginVersion[]) {
+  const hints = new Map<string, PluginVersionHint>()
+  let incomplete = false
+  for (const { pluginName, installedVersion, version } of checked) {
+    const current = comparableGitVersion(installedVersion)
+    const latest = comparableGitVersion(version)
+    if (current && latest && installedVersion && version) {
+      if (!gt(latest, current)) continue
+      hints.set(pluginName, { current: installedVersion, version })
+    } else {
+      incomplete = true
+    }
+  }
+  return { hints, incomplete }
+}
+
+export function resolvePublishedPluginUpdate(
+  plugin: InstalledPluginItem,
+  listing?: PluginMarketplaceItem | null
+) {
+  if (
+    !listing?.installedPluginId ||
+    !listing.latestReleaseId ||
+    !listing.version ||
+    !isCloudManagedInstalledPlugin(plugin.raw) ||
+    !marketplaceItemCanRetryPluginUpdate(listing)
+  )
+    return null
+  return {
+    id: listing.installedPluginId,
+    releaseId: listing.latestReleaseId,
+    current: listing.installedVersion ?? plugin.version,
+    version: listing.version,
+    marketplaceItemId: listing.id,
+  }
+}
+
 const EMPTY_MARKETPLACE: PluginMarketplaceItem[] = []
 
 /** One Backend/account/device inventory owns selection and pending management operations. */
@@ -76,6 +149,7 @@ export function createPluginManagementSource({
   knownDeviceId,
   localPluginApi,
   cloudPluginApi,
+  cloudAvailable,
 }: SourceOptions) {
   const epoch = getPluginMarketplaceAccountEpoch()
   const cached = getPluginMarketplaceCache(cacheKey)
@@ -87,6 +161,10 @@ export function createPluginManagementSource({
     uninstallingPluginIds: new Set(),
     pluginOperationNotice: null,
     activeTab: 'codex',
+    updatingPluginId: null,
+    checkingMarketplaces: new Set(),
+    gitMarketplaceVersions: new Map(),
+    publishedMarketplaceItems: [],
   }
   let projection:
     | (PluginManagementState & {
@@ -100,6 +178,7 @@ export function createPluginManagementSource({
   const listeners = new Set<() => void>()
   let stopInventory: (() => void) | null = null
   let generation = 0
+  let publishedRead = 0
   let observationGeneration = 0
   let noticeTimer: ReturnType<typeof setTimeout> | null = null
   let pendingUninstallOwner: (() => boolean) | null = null
@@ -179,9 +258,43 @@ export function createPluginManagementSource({
     const scope = capturePluginMarketplaceScope(cacheKey, getSnapshot().currentDeviceId)
     return () => observed() && version === generation && profileIsCurrent() && scope()
   }
+  async function refreshPublishedMarketplace(deviceId: string) {
+    if (!cloudAvailable || !deviceId || state.activeTab !== 'codex') return
+    const request = ++publishedRead
+    const version = generation
+    const isCurrent = () =>
+      observed() &&
+      version === generation &&
+      request === publishedRead &&
+      profileIsCurrent() &&
+      getSnapshot().currentDeviceId === deviceId
+    try {
+      const { items } = await cloudPluginApi.listMarketplacePlugins({ deviceId })
+      if (!Array.isArray(items)) throw new Error('Invalid plugin catalog')
+      if (isCurrent()) {
+        set('publishedMarketplaceItems', items)
+        set('pluginOperationNotice', notice =>
+          notice?.id === 'published-versions-load-failed' ? null : notice
+        )
+      }
+    } catch {
+      if (isCurrent() && state.activeTab === 'codex') {
+        set('pluginOperationNotice', {
+          id: 'published-versions-load-failed',
+          kind: 'error',
+          message: translator()('workbench.plugins_published_versions_load_failed'),
+          actionLabel: translator()('common.retry'),
+          onAction: () => void refreshPublishedMarketplace(deviceId),
+        })
+      }
+    }
+  }
+
   async function refresh() {
     const version = generation
     const isCurrent = () => observed() && version === generation && profileIsCurrent()
+    const initialDeviceId = getSnapshot().currentDeviceId
+    void refreshPublishedMarketplace(initialDeviceId)
     try {
       await refreshInstalledPluginInventory({
         cacheKey,
@@ -204,6 +317,8 @@ export function createPluginManagementSource({
       if (isCurrent()) {
         loading = false
         publish()
+        const deviceId = getSnapshot().currentDeviceId
+        if (deviceId !== initialDeviceId) void refreshPublishedMarketplace(deviceId)
       }
     }
   }
@@ -408,8 +523,192 @@ export function createPluginManagementSource({
       })
     }
   }
+  let configuredMarketplaceRevisions = new Map<string, string>()
+
+  function forgetGitMarketplaceVersions(id: string) {
+    set('gitMarketplaceVersions', previous => {
+      if (!previous.has(id)) return previous
+      const next = new Map(previous)
+      next.delete(id)
+      return next
+    })
+  }
+
+  function reconcileGitMarketplaceSources(marketplaces: ConfiguredCodexMarketplace[]) {
+    if (!profileIsCurrent()) return
+    configuredMarketplaceRevisions = new Map(
+      marketplaces
+        .filter(marketplace => marketplace.installed !== null)
+        .map(marketplace => [marketplace.id, marketplace.sourceRevision])
+    )
+    set('gitMarketplaceVersions', previous => {
+      const entries = [...previous].filter(
+        ([id, catalog]) => configuredMarketplaceRevisions.get(id) === catalog.sourceRevision
+      )
+      return entries.length === previous.size ? previous : new Map(entries)
+    })
+  }
+
+  async function checkGitMarketplace(marketplace: ConfiguredCodexMarketplace): Promise<boolean> {
+    const version = generation
+    const isCurrent = () => observed() && version === generation && profileIsCurrent()
+    if (
+      !isCurrent() ||
+      marketplace.sourceType !== 'git' ||
+      state.checkingMarketplaces.has(marketplace.id)
+    )
+      return false
+    set('checkingMarketplaces', previous => new Set([...previous, marketplace.id]))
+    try {
+      const checked = await localPluginApi.checkGitMarketplaceVersions(
+        marketplace.id,
+        marketplace.sourceRevision
+      )
+      if (
+        !isCurrent() ||
+        configuredMarketplaceRevisions.get(marketplace.id) !== marketplace.sourceRevision
+      )
+        return false
+      const { hints: versions, incomplete } = gitVersionHints(checked)
+      set('gitMarketplaceVersions', previous =>
+        new Map(previous).set(marketplace.id, {
+          sourceRevision: marketplace.sourceRevision,
+          versions,
+        })
+      )
+      const count = versions.size
+      const t = translator()
+      const message = count
+        ? t('workbench.plugins_marketplace_new_versions', { name: marketplace.name, count })
+        : incomplete
+          ? ''
+          : t('workbench.plugins_marketplace_no_new_versions', { name: marketplace.name })
+      set('pluginOperationNotice', {
+        id: 'checked-marketplace-' + marketplace.id,
+        kind: incomplete ? 'error' : 'success',
+        message: [
+          message,
+          incomplete
+            ? t('workbench.plugins_marketplace_versions_incomplete', { name: marketplace.name })
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      })
+    } catch (error) {
+      if (isCurrent()) {
+        const sourceChanged =
+          error instanceof DshExecutorTransportError && error.code === 'marketplace_source_changed'
+        if (sourceChanged) forgetGitMarketplaceVersions(marketplace.id)
+        set('pluginOperationNotice', {
+          id: 'check-marketplace-error-' + marketplace.id,
+          kind: 'error',
+          message: translator()('workbench.plugins_marketplace_check_failed', {
+            name: marketplace.name,
+            details: getErrorMessage(error, ''),
+          }),
+        })
+        return sourceChanged
+      }
+    } finally {
+      if (isCurrent())
+        set(
+          'checkingMarketplaces',
+          previous => new Set([...previous].filter(id => id !== marketplace.id))
+        )
+    }
+    return false
+  }
+
+  async function updatePublishedPlugin(id: string | number, targetReleaseId: number) {
+    const isCurrent = currentView()
+    const snapshot = getSnapshot()
+    if (!isCurrent() || state.updatingPluginId !== null || !snapshot.currentDeviceId) return
+    const plugin = snapshot.installedPlugins.find(item => String(item.id) === String(id))
+    if (!plugin) return
+    const listing = findMarketplaceItemForInstalled(plugin, snapshot.publishedMarketplaceItems)
+    const target = resolvePublishedPluginUpdate(plugin, listing)
+    if (!target || target.releaseId !== targetReleaseId) {
+      set('pluginOperationNotice', {
+        id: 'update-plugin-changed-' + id,
+        kind: 'error',
+        message: translator()('workbench.plugins_update_release_changed'),
+      })
+      return
+    }
+    const deviceId = snapshot.currentDeviceId
+    const scope = capturePluginMarketplaceScope(cacheKey, deviceId)
+    set('updatingPluginId', id)
+    try {
+      const { items: accountInstalls } = await cloudPluginApi.listInstalledPlugins(deviceId)
+      if (!isCurrent()) return
+      const expectedCurrentReleaseId = accountInstalls.find(
+        item => String(toInstalledPluginItem(item).id) === String(target.id)
+      )?.spec.releaseId
+      if (!expectedCurrentReleaseId) throw new Error('PLUGIN_UPDATE_RELEASE_CHANGED')
+      const updated = await cloudPluginApi.updatePublishedRelease(
+        target.id,
+        { releaseId: target.releaseId, expectedCurrentReleaseId },
+        deviceId
+      )
+      if (!profileIsCurrent() || !scope()) return
+      const device = currentDeviceInstallation(updated, deviceId)
+      if (device?.actualReleaseId !== target.releaseId || device.state !== 'installed') {
+        throw new Error(
+          translator()('workbench.plugins_update_failure_named', { name: plugin.name })
+        )
+      }
+      const items =
+        getPluginMarketplaceCache(cacheKey)?.marketplaceItems ?? snapshot.marketplaceItems
+      const applyReceipt = (item: PluginMarketplaceItem): PluginMarketplaceItem =>
+        item.id === target.marketplaceItemId
+          ? {
+              ...item,
+              currentDeviceInstallation: device,
+              installedVersion: target.version,
+              updateAvailable: item.latestReleaseId !== target.releaseId,
+            }
+          : item
+      commitPluginInventoryInstallation(cacheKey, deviceId, updated, items.map(applyReceipt))
+      if (isCurrent()) {
+        publishedRead += 1
+        set('publishedMarketplaceItems', previous => previous.map(applyReceipt))
+      }
+      notifyLocalPluginSkillsChanged()
+      if (isCurrent())
+        set('pluginOperationNotice', {
+          id: 'updated-plugin-' + id,
+          kind: 'success',
+          message: translator()('workbench.plugins_update_success_named', {
+            name: plugin.name,
+            version: target.version.replace(/^v/i, ''),
+          }),
+        })
+    } catch (error) {
+      if (!isCurrent()) return
+      const message = getErrorMessage(
+        error,
+        translator()('workbench.plugins_update_failure_named', { name: plugin.name })
+      )
+      set('pluginOperationNotice', {
+        id: 'update-plugin-error-' + id,
+        kind: 'error',
+        message:
+          message === 'PLUGIN_UPDATE_RELEASE_CHANGED'
+            ? translator()('workbench.plugins_update_release_changed')
+            : message,
+      })
+      void refresh()
+    } finally {
+      if (isCurrent()) set('updatingPluginId', null)
+    }
+  }
+
   return {
     getSnapshot,
+    updatePublishedPlugin,
+    checkGitMarketplace,
+    reconcileGitMarketplaceSources,
     setSelectedPluginId: (value: SetStateAction<PluginManagementState['selectedPluginId']>) =>
       set('selectedPluginId', value),
     setPendingUninstall: (value: SetStateAction<PluginManagementState['pendingUninstall']>) => {
@@ -418,7 +717,50 @@ export function createPluginManagementSource({
     },
     setPluginOperationNotice: (value: SetStateAction<PluginOperationNoticeState | null>) =>
       set('pluginOperationNotice', value),
-    setActiveTab: (tab: PluginManagementTab) => set('activeTab', tab),
+    refresh,
+    removeConfiguredMarketplaceFromInventory(marketplace: ConfiguredCodexMarketplace) {
+      if (!profileIsCurrent() || marketplace.installed === null) return
+      configuredMarketplaceRevisions.delete(marketplace.id)
+      forgetGitMarketplaceVersions(marketplace.id)
+      const current = getPluginMarketplaceCache(cacheKey)
+      if (current && (!knownDeviceId || current.deviceId === knownDeviceId)) {
+        const removedIds = new Set(marketplace.installed.map(plugin => plugin.id))
+        setPluginMarketplaceCache(
+          {
+            ...current,
+            installedPlugins: current.installedPlugins.filter(
+              plugin =>
+                installedPluginMarketplaceId(plugin) !== marketplace.id ||
+                !removedIds.has(String(toInstalledPluginItem(plugin).id))
+            ),
+            marketplaces: current.marketplaces.filter(
+              item => item.kind !== 'local' || item.id !== marketplace.id
+            ),
+            marketplaceItems: current.marketplaceItems.filter(
+              item => marketplaceItemMarketplaceId(item) !== marketplace.id
+            ),
+            selectedMarketplaceKey:
+              current.selectedMarketplaceKey === 'local:' + marketplace.id
+                ? ''
+                : current.selectedMarketplaceKey,
+          },
+          { mutation: true, persistImmediately: true }
+        )
+      }
+      clearLocalConnectorAuthHealthCache()
+      notifyLocalPluginSkillsChanged()
+      set('pluginOperationNotice', {
+        id: 'remove-marketplace-' + marketplace.id,
+        kind: 'success',
+        message: translator()('workbench.plugins_marketplace_removed', { name: marketplace.name }),
+      })
+      void refresh()
+    },
+    setActiveTab(tab: PluginManagementTab) {
+      if (tab === state.activeTab) return
+      set('activeTab', tab)
+      if (tab === 'codex') void refreshPublishedMarketplace(getSnapshot().currentDeviceId)
+    },
     toggleInstalledPlugin: (id: string | number) => {
       const plugin = getSnapshot().installedPlugins.find(item => String(item.id) === String(id))
       if (plugin) updateSettings(id, !plugin.enabled)
@@ -460,6 +802,10 @@ export function createPluginManagementSource({
                   pendingUninstall: null,
                   pluginOperationNotice: null,
                   uninstallingPluginIds: new Set(),
+                  updatingPluginId: null,
+                  checkingMarketplaces: new Set(),
+                  gitMarketplaceVersions: new Map(),
+                  publishedMarketplaceItems: [],
                 }
                 loading = false
                 publish()
@@ -477,6 +823,10 @@ export function createPluginManagementSource({
                   pendingUninstall: null,
                   pluginOperationNotice: null,
                   uninstallingPluginIds: new Set(),
+                  updatingPluginId: null,
+                  checkingMarketplaces: new Set(),
+                  gitMarketplaceVersions: new Map(),
+                  publishedMarketplaceItems: [],
                 }
               }
               for (const [field, overlay] of overlays)
@@ -504,7 +854,12 @@ export function createPluginManagementSource({
                 stopInventory = null
                 if (noticeTimer !== null) clearTimeout(noticeTimer)
                 noticeTimer = null
-                state = { ...state, uninstallingPluginIds: new Set() }
+                state = {
+                  ...state,
+                  uninstallingPluginIds: new Set(),
+                  updatingPluginId: null,
+                  checkingMarketplaces: new Set(),
+                }
                 projection = null
               })
           }

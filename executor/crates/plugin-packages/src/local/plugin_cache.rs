@@ -1,9 +1,116 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
-use super::bundled_plugins::directory_content_hash;
+use serde_json::Value;
+
+use super::{bundled_plugins::directory_content_hash, plugin_catalog::read_json_file};
+
+#[derive(PartialEq)]
+pub struct CachedCodexPlugin {
+    pub root: PathBuf,
+    pub manifest: Value,
+}
+
+pub fn native_cache_segment(value: &str) -> bool {
+    !value.is_empty()
+        && !matches!(value, "." | "..")
+        && value
+            .bytes()
+            .all(|ch| ch.is_ascii_alphanumeric() || b"-_.+".contains(&ch))
+}
+
+pub(super) fn preferred_native_version(candidate: &str, selected: &str) -> bool {
+    if candidate == selected || selected == "local" {
+        return false;
+    }
+    if candidate == "local" {
+        return true;
+    }
+    match (
+        semver::Version::parse(candidate),
+        semver::Version::parse(selected),
+    ) {
+        (Ok(candidate), Ok(selected)) => candidate > selected,
+        _ => candidate > selected,
+    }
+}
+
+pub fn read_codex_marketplace_cache(
+    codex_home: &Path,
+    marketplace: &str,
+) -> Result<BTreeMap<String, Option<CachedCodexPlugin>>, String> {
+    if !native_cache_segment(marketplace) {
+        return Err("Invalid Codex marketplace cache identity".into());
+    }
+    let mut directory = codex_home.to_path_buf();
+    for segment in ["plugins", "cache", marketplace] {
+        directory.push(segment);
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err("Invalid Codex marketplace cache directory".into()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let read = || -> io::Result<_> {
+        let mut plugins = BTreeMap::new();
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            let kind = entry.file_type()?;
+            if !native_cache_segment(&name) || !(kind.is_dir() || kind.is_symlink()) {
+                continue;
+            }
+            let package = if kind.is_dir() {
+                selected_codex_package(&entry.path(), &name)?
+            } else {
+                None
+            };
+            plugins.insert(name, package);
+        }
+        Ok(plugins)
+    };
+    read().map_err(|error| format!("Failed to read Codex marketplace cache: {error}"))
+}
+
+fn selected_codex_package(path: &Path, name: &str) -> io::Result<Option<CachedCodexPlugin>> {
+    let mut selected: Option<(String, PathBuf)> = None;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let Ok(version) = entry.file_name().into_string() else {
+            continue;
+        };
+        if !entry.file_type()?.is_dir() || !native_cache_segment(&version) {
+            continue;
+        }
+        if selected.as_ref().map_or(true, |(current, _)| {
+            preferred_native_version(&version, current)
+        }) {
+            selected = Some((version, entry.path()));
+        }
+    }
+    Ok(selected.and_then(|(_, root)| {
+        let root = root.canonicalize().ok()?;
+        let path = [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]
+            .into_iter()
+            .map(|relative| root.join(relative))
+            .find(|path| path.is_file())?;
+        if !path.canonicalize().ok()?.starts_with(&root) {
+            return None;
+        }
+        let manifest = read_json_file(&path, 1024 * 1024).ok()?;
+        // Keep the installation identity even if its package is unavailable or invalid.
+        (manifest["name"] == name).then_some(CachedCodexPlugin { root, manifest })
+    }))
+}
 
 pub fn cache_matches_source(source: &Path, cache: &Path) -> Result<bool, String> {
     if !cache.exists() {

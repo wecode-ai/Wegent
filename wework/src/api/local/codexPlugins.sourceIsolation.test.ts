@@ -110,6 +110,21 @@ describe('local plugin source isolation', () => {
     return local
   }
 
+  test('lists manageable sources without waiting for the installed catalog', async () => {
+    const source = { id: 'custom', sourceType: 'git', sourceRevision: 'rev', installed: [] }
+    const original = mocks.request.getMockImplementation()!
+    mocks.request.mockImplementation((method, args) => {
+      if (method === 'runtime.codex.marketplace.list_configured') return Promise.resolve([source])
+      if (method === 'codex.app_server_request' && args.method === 'plugin/installed')
+        return new Promise(() => {})
+      return original(method, args)
+    })
+
+    await expect(createLocalCodexPluginApi().listConfiguredMarketplaces()).resolves.toEqual([
+      { ...source, name: source.id },
+    ])
+  })
+
   test.each(['membership-only', 'catalog-pending'] as const)(
     'observes live %s inventory without selecting or mutating a catalog',
     async mode => {

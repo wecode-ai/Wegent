@@ -157,6 +157,7 @@ def mutate_local_plugin(
                     user_id=user_id,
                     installed_id=target_id,
                     release_id=request.releaseId,
+                    expected_current_release_id=request.expectedCurrentReleaseId,
                     commit=False,
                 )
             else:
@@ -335,7 +336,8 @@ def _rejection_context(
         yield
     except HTTPException as failure:
         definitive = failure.status_code in {400, 403, 404, 422} or (
-            failure.status_code == 409 and failure.detail == "INTENT_SUPERSEDED"
+            failure.status_code == 409
+            and failure.detail in ("INTENT_SUPERSEDED", "PLUGIN_UPDATE_RELEASE_CHANGED")
         )
         if definitive and type(order) is int and 0 < order < 2**63:
             # A timed-out predecessor may still be committing this same ID.
