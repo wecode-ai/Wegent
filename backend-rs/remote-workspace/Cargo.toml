@@ -1,0 +1,37 @@
+[package]
+name = "wegent-remote-workspace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Remote workspace authorization, status, file transport, and projections"
+
+[dependencies]
+wegent-identity = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-python-compat = { workspace = true }
+wegent-resource-store = { workspace = true }
+wegent-directory = { workspace = true }
+wegent-access = { workspace = true }
+wegent-task-store = { workspace = true }
+wegent-capabilities = { workspace = true }
+wegent-executor-manager = { workspace = true }
+wegent-media = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+brz-json = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
+jsonwebtoken = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+wegent-backend-test-support = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync", "time"] }

@@ -18,7 +18,8 @@ from integration_checks import test_collaboration_permission_mysql as mysql_cont
 mysql_url = mysql_contract.mysql_url
 
 SQL = (
-    Path(__file__).parents[2] / "backend-rs/src/cloud_projects/collaboration_access.sql"
+    Path(__file__).parents[2]
+    / "backend-rs/project-coordination/src/cloud_projects/collaboration_access.sql"
 ).read_text()
 
 
@@ -247,7 +248,10 @@ def test_cp02_cp03_cp04_cp05_cp06_cp07_cp13_cp18_cp19_rust_catalog_mysql_policy(
             )
             db.add(agent)
             db.flush()
-            sql_dir = Path(__file__).parents[2] / "backend-rs/src/cloud_projects"
+            sql_dir = (
+                Path(__file__).parents[2]
+                / "backend-rs/project-coordination/src/cloud_projects"
+            )
             grants_sql = (
                 (sql_dir / "environment_grants.sql").read_text().replace("?", "%s")
             )

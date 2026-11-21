@@ -17,21 +17,21 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 # Cache dependency compilation independently of application source changes.
 FROM rust-builder-base AS rust-builder-deps
-COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
-COPY backend-rs/crates ./crates
+COPY --exclude=be-server/src --exclude=be-server/examples --exclude=be-server/tests \
+    --exclude=config --exclude=docs --exclude=init_data --exclude=migrations --exclude=scripts backend-rs/ ./
 COPY shared/rust /app/shared/rust
 COPY shared/assets/calendars /app/shared/assets/calendars
-RUN mkdir src \
-    && printf 'pub fn placeholder() {}\n' > src/lib.rs \
-    && printf 'fn main() {}\n' > src/main.rs \
+RUN mkdir -p be-server/src \
+    && printf 'pub fn placeholder() {}\n' > be-server/src/lib.rs \
+    && printf 'fn main() {}\n' > be-server/src/main.rs \
     && cargo build --release --locked --bin wegent-backend-rs
 
 FROM rust-builder-deps AS rust-builder
 COPY shared/assets/codex-models /app/shared/assets/codex-models
-COPY backend-rs/src ./src
+COPY backend-rs/be-server/src ./be-server/src
 COPY backend-rs/migrations ./migrations
 COPY shared/data/builtin-connector-apps.json /app/shared/data/builtin-connector-apps.json
-RUN find src -type f -exec touch {} + \
+RUN find be-server/src -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs
 
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS runtime

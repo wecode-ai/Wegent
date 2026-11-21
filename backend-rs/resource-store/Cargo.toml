@@ -1,0 +1,20 @@
+[package]
+name = "wegent-resource-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Persisted CRD projections, references, and Kind lookup statements"
+
+[dependencies]
+url = { workspace = true }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+wegent-backend-persistence = { workspace = true }
+
+[dev-dependencies]
+wegent-backend-test-support = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
