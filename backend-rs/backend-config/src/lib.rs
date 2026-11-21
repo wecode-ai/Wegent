@@ -845,3 +845,6 @@ EMPTY=
         assert_eq!(parse_legacy_keys(""), Vec::<String>::new());
     }
 }
+
+/// The default local Python backend used by the hybrid gateway and packaged runtime.
+pub const DEFAULT_PYTHON_UPSTREAM: &str = "http://127.0.0.1:8004";

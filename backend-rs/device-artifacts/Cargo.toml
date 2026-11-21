@@ -1,0 +1,32 @@
+[package]
+name = "wegent-device-artifacts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Task-scoped artifact metadata and retrieval from execution environments"
+
+[dependencies]
+base64.workspace = true
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server.workspace = true
+brz-mysql.workspace = true
+brz-redis.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+tracing.workspace = true
+wegent-attachments.workspace = true
+wegent-backend-config.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-devices.workspace = true
+wegent-executor-manager.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-socket-events.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+jsonwebtoken.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }

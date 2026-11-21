@@ -20,7 +20,7 @@ use crate::state::AppState;
 async fn request(
     #[payload] data: Value,
     #[auth] user: &super::AuthenticatedUser,
-    #[session] session: &crate::socketio::mcp_app_ownership::Ownership,
+    #[session] session: &wegent_runtime_work::Ownership,
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
     let ack = runtime_request::handle(app, user.identity(), session, data).await?;

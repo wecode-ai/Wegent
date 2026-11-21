@@ -8,7 +8,7 @@ use crate::request_sql::{RequestSql, RouteKey};
 use crate::responses::create::contexts;
 use crate::sql_support::StatementArg::{Int, Str};
 use crate::state::AppState;
-use crate::task_detail_api::assembly::build_task_detail;
+use wegent_task_views::task_detail_api::assembly::build_task_detail;
 
 const MAX_REFERENCE_CHARS: usize = 100_000;
 const MAX_TOTAL_REFERENCE_CHARS: usize = 200_000;
@@ -52,19 +52,26 @@ async fn load(
     user_id: i64,
     id: i64,
 ) -> Result<ConversationReference, &'static str> {
-    let detail = build_task_detail(state, id, user_id, None, false)
-        .await
-        .map_err(|error| {
-            tracing::debug!(%error, task_id = id, "conversation reference unavailable");
-            "Referenced task is unavailable"
-        })?
-        .body;
+    let detail = build_task_detail(
+        &crate::task_view_state::build(state),
+        id,
+        user_id,
+        None,
+        false,
+    )
+    .await
+    .map_err(|error| {
+        tracing::debug!(%error, task_id = id, "conversation reference unavailable");
+        "Referenced task is unavailable"
+    })?
+    .body;
     let title = serde_json::from_str::<String>(detail.title.get())
         .ok()
         .filter(|title| !title.trim().is_empty())
         .unwrap_or_else(|| id.to_string());
+    let updated_at = serde_json::from_str(detail.updated_at.get()).unwrap_or_default();
     let mut transcript = Vec::new();
-    for subtask in detail.subtasks {
+    for subtask in detail.into_subtask_messages() {
         if subtask.status == "DELETE" {
             continue;
         }
@@ -89,7 +96,7 @@ async fn load(
     Ok(ConversationReference {
         task_id: id,
         title,
-        updated_at: serde_json::from_str(detail.updated_at.get()).unwrap_or_default(),
+        updated_at,
         transcript,
     })
 }

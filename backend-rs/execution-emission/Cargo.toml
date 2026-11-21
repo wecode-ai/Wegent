@@ -1,0 +1,24 @@
+[package]
+name = "wegent-execution-emission"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Execution stream buffer and Socket.IO event delivery"
+
+[features]
+test-support = []
+
+[dependencies]
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing.workspace = true
+wegent-execution-events.workspace = true
+wegent-execution-runtime.workspace = true
+wegent-protocol.workspace = true
+wegent-python-compat.workspace = true
+wegent-socket-events.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }

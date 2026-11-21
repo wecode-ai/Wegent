@@ -23,8 +23,7 @@ use brz_http_server::StatusCode;
 use brz_mysql::MysqlService;
 use serde::Serialize;
 
-use crate::board_snapshot::external_provider as provider;
-use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectAccess, ProjectRow};
+use crate::board_snapshot::repository::{ProjectAccess, ProjectRow};
 use crate::http_compat::FastApiError;
 use crate::loop_item_pages::PageIssue;
 use crate::loop_item_pages::projection::{LoopItemResponse, issue_response};
@@ -38,6 +37,9 @@ use wegent_project_coordination::loop_tasks::assignment_events::ActiveEvent;
 use wegent_project_coordination::loop_tasks::assignment_events::member_type_key;
 pub(crate) use wegent_project_coordination::loop_tasks::assignment_events::{
     active_events, uncancelled_events,
+};
+pub(crate) use wegent_project_coordination::loop_tasks::item_access::{
+    assignment_error as internal, item_number, require_cloud_project_role, todo_not_found,
 };
 
 /// One `IssueAssignmentResponse` row.
@@ -90,7 +92,7 @@ pub(super) async fn list_assignments(
     let mut result = list_assignment_items(&state.mysql, item_id, current_user).await?;
     for item in &mut result.items {
         if let Some(receipt) = item.dispatch_receipt.as_mut() {
-            super::assignment_receipts::project_delivery(state, receipt).await?;
+            super::assignment_receipts::project_delivery(&state.mysql, receipt).await?;
             super::assignment_receipts::project_device_wait(state, receipt).await;
         }
     }
@@ -152,7 +154,7 @@ pub(crate) async fn require_issue_read_for_user(
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
     // `issue_assignment_service.list`.
-    let access = match require_cloud_project_role(state, &project.id, user_id).await {
+    let access = match require_cloud_project_role(&state.mysql, &project.id, user_id).await {
         Ok(access) => access,
         Err(error) => {
             if error.status() == StatusCode::NOT_FOUND
@@ -177,20 +179,6 @@ pub(crate) async fn require_issue_read_for_user(
     }
 
     Ok(())
-}
-
-/// `require_cloud_project_role(db, project_id, user_id, Viewer)`.
-pub(crate) async fn require_cloud_project_role(
-    state: &AppState,
-    project_id: &str,
-    user_id: i32,
-) -> Result<ProjectAccess, FastApiError> {
-    let number: i64 = project_id.parse().map_err(|_| cloud_project_not_found())?;
-    BoardSnapshotRepository::new(&state.mysql)
-        .require_cloud_project_role(number, user_id)
-        .await
-        .map_err(internal)?
-        .ok_or_else(cloud_project_not_found)
 }
 
 /// `can_view_item(db, access, item, user_id)`.
@@ -276,7 +264,7 @@ async fn provider_get(state: &AppState, item_id: &str, user_id: i32) -> Result<(
         .await
         .map_err(internal)?
         .ok_or_else(todo_not_found)?;
-    let access = require_cloud_project_role(state, &project.id, user_id).await?;
+    let access = require_cloud_project_role(&state.mysql, &project.id, user_id).await?;
     require_provider_issue_view(state, &access, item_id, user_id)
         .await
         .map(|_| ())
@@ -319,36 +307,8 @@ pub(crate) async fn get_issue(
     project: &ProjectRow,
     number: i64,
 ) -> Result<PageIssue, FastApiError> {
-    let task_provider = project.task_provider();
-    let (config, token) = provider::resolve_provider_config(&state.auth.jwt_key, project)
-        .map_err(|error| FastApiError::detail(StatusCode::CONFLICT, error))?;
-    let repository = provider::provider_repository(&config)
-        .map_err(|error| FastApiError::detail(StatusCode::CONFLICT, error))?;
-    let api_base = provider::api_base(&task_provider, &config);
-    let path = if task_provider == "github" {
-        format!("/repos/{repository}/issues/{number}")
-    } else {
-        format!(
-            "/projects/{}/issues/{number}",
-            provider::url_encode_path(&repository)
-        )
-    };
-    let url = format!("{api_base}{path}");
-    let value = provider::request_json(&state.attachment_http, &token, &task_provider, &url)
+    crate::loop_item_pages::get_issue(&state.attachment_http, &state.auth.jwt_key, project, number)
         .await
-        .map_err(provider::RequestError::into_fastapi)?;
-    serde_json::from_value::<PageIssue>(value).map_err(|_| {
-        FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
-    })
-}
-
-/// `_item_number`: the numeric suffix of a `KEY-number` id.
-pub(crate) fn item_number(item_id: &str) -> Option<i64> {
-    let (_, number) = item_id.rsplit_once('-')?;
-    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    number.parse().ok()
 }
 
 /// `issue_assignment_service.response_values(db, row)`.
@@ -407,19 +367,6 @@ fn datetime_value(value: Option<chrono::NaiveDateTime>) -> Result<String, FastAp
     super::item_response::utc_datetime_string(value).ok_or_else(|| {
         FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
     })
-}
-
-pub(crate) fn cloud_project_not_found() -> FastApiError {
-    FastApiError::detail(StatusCode::NOT_FOUND, "Cloud project not found")
-}
-
-pub(crate) fn todo_not_found() -> FastApiError {
-    FastApiError::detail(StatusCode::NOT_FOUND, "TODO not found")
-}
-
-pub(crate) fn internal(error: brz_mysql::MysqlError) -> FastApiError {
-    tracing::error!(%error, "loop-items assignments dependency failure");
-    FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
 }
 
 #[cfg(test)]

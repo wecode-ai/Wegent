@@ -36,7 +36,6 @@ use brz_redis::{Redis, RedisBytes};
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::admin_service_keys::AdminUser;
 use crate::auth::SessionUser;
 use crate::cloud_device_deletion::delete_cloud_device;
 use crate::device_identity::{DeviceKindRow, device_connection_route_id, runtime_device_id};
@@ -44,6 +43,11 @@ use crate::device_identity_lock::{IDENTITY_LOCK_BODY_TIMEOUT, IdentityLock};
 use crate::devices::{internal_error, online_key};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use wegent_identity::auth::AdminUser;
+
+#[cfg(test)]
+use crate::device_identity::LOCK_DEVICE_OWNER_QUERY;
+pub(crate) use crate::device_identity::lock_device_owner;
 
 pub(crate) mod retention;
 
@@ -56,13 +60,6 @@ const REMOVED_MESSAGE: &str = "Device registration removed";
 /// `DeviceIdentityConflictError`'s message for a registration that is still
 /// online or busy.
 const IDENTITY_CONFLICT_MESSAGE: &str = "Device is online or busy; disconnect it before removal";
-
-/// `lock_device_owner` (`identity.lock_device_owner`): the owner row lock that
-/// serializes registration against deletion. Shared by the delete endpoint and
-/// the `/local-executor` registration path.
-pub(crate) const LOCK_DEVICE_OWNER_QUERY: &str = "SELECT users.id AS users_id \n\
-     FROM users \n\
-     WHERE users.id = ? \n LIMIT 1 FOR UPDATE";
 
 /// The owned active Device record the delete acts on
 /// (`db.query(Kind).filter_by(...).with_for_update().one_or_none()`): every
@@ -124,16 +121,6 @@ async fn has_active_project_execution(
         )
         .await?;
     Ok(row.is_some())
-}
-
-pub(crate) async fn lock_device_owner(
-    transaction: &mut impl MysqlTransaction,
-    user_id: i64,
-) -> Result<(), MysqlError> {
-    let _owner: Option<LockOwnerRow> = transaction
-        .fetch_optional(LOCK_DEVICE_OWNER_QUERY, (user_id,))
-        .await?;
-    Ok(())
 }
 
 pub(crate) async fn lock_online_device_for_binding<T: MysqlTransaction>(
@@ -516,14 +503,6 @@ fn status_unavailable() -> FastApiError {
         brz_http_server::StatusCode::SERVICE_UNAVAILABLE,
         "Device status is temporarily unavailable",
     )
-}
-
-/// The `users` row lock `lock_device_owner` takes; only its presence matters.
-#[derive(brz_mysql::FromMysqlRow)]
-pub(crate) struct LockOwnerRow {
-    #[allow(dead_code, reason = "the row's presence is the whole answer")]
-    #[mysql(rename = "users_id")]
-    pub(crate) users_id: i32,
 }
 
 /// The `subtasks` probe row; only its presence matters.

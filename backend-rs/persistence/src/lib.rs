@@ -14,6 +14,7 @@ pub mod transaction_outcome;
 pub mod entity_query;
 
 pub mod connection;
+pub mod project_projection;
 #[cfg(test)]
 use wegent_backend_test_support as sql_test_support;
 

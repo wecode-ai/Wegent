@@ -150,7 +150,7 @@ pub(super) fn advance(row: &mut Subscription, now: NaiveDateTime) {
         return;
     }
     let config = model::trigger_config(&row.json.0);
-    let next = crate::subscriptions_item::calculate_next_execution_time(&kind, &config, now);
+    let next = wegent_subscriptions::calculate_next_execution_time(&kind, &config, now);
     row.json.0["_internal"]["next_execution_time"] = next
         .map(model::iso)
         .map(Value::String)

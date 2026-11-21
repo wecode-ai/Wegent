@@ -13,7 +13,6 @@ pub mod file;
 pub mod kind_refs;
 pub use wegent_capabilities::kind_store as kinds;
 pub mod task_detail;
-pub mod user_cache;
 pub mod video_refresh;
 pub(crate) mod workspace_root;
 

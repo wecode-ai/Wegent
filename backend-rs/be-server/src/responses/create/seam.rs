@@ -26,6 +26,8 @@ pub(crate) use device::{
     dispatch_responses_device, enqueue_responses_device, settle_responses_device_failure,
 };
 
+use wegent_execution_knowledge::kb_context_creation::KbToolRef;
+
 use std::io;
 use std::pin::Pin;
 
@@ -122,9 +124,9 @@ pub struct DispatchInput<'a> {
     pub preload_skills: &'a [String],
     /// The request's normalized knowledge-base refs
     /// (`_get_current_knowledge_base_refs`).
-    pub knowledge_base_refs: &'a [super::schema::KbToolRef],
+    pub knowledge_base_refs: &'a [KbToolRef],
     /// The legacy `knowledge_base_names` fallback parameter.
-    pub knowledge_base_names: &'a [super::schema::KbToolRef],
+    pub knowledge_base_names: &'a [KbToolRef],
     /// `enable_chat_bot` (`wegent_chat_bot` in the request tools).
     pub enable_chat_bot: bool,
     pub enable_web_search: bool,
@@ -492,7 +494,7 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         executor_manager: &state.executor_manager,
     };
     let result = completion::collect_completed_result(
-        &ctx,
+        &ctx.storage(),
         task_id,
         subtask_id,
         "FAILED",
@@ -506,7 +508,7 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
     })
     .unwrap_or(None);
     let persisted = completion::persist_completed_result(
-        &ctx,
+        &ctx.storage(),
         task_id,
         subtask_id,
         "FAILED",
@@ -520,13 +522,6 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
     if let Err(error) = persisted {
         tracing::error!(%error, task_id, subtask_id, "request failure could not be saved");
     }
-}
-
-const SUBTASK_NOT_DISPATCHABLE: &str = "Assistant subtask is no longer dispatchable";
-
-pub(crate) fn is_subtask_not_dispatchable(error: &FastApiError) -> bool {
-    error.status() == StatusCode::CONFLICT
-        && error.detail_message() == Some(SUBTASK_NOT_DISPATCHABLE)
 }
 
 async fn persist_dispatch_start_failure(
@@ -567,7 +562,8 @@ pub(crate) async fn mark_subtask_running(
             tables,
             executor_manager: &state.executor_manager,
         };
-        completion::mark_subtask_running(&ctx, task_id, subtask_id, Some(shell.as_str())).await
+        completion::mark_subtask_running(&ctx.storage(), task_id, subtask_id, Some(shell.as_str()))
+            .await
     } else {
         completion::commit_subtask_running(
             &state.mysql,
@@ -588,7 +584,7 @@ pub(crate) async fn mark_subtask_running(
     } else {
         Err(FastApiError::detail(
             StatusCode::CONFLICT,
-            SUBTASK_NOT_DISPATCHABLE,
+            wegent_responses_streaming::streaming_bridge::SUBTASK_NOT_DISPATCHABLE,
         ))
     }
 }
@@ -805,7 +801,7 @@ pub(crate) async fn dispatch_chat_turn(
     }
     mark_subtask_running(state, request).await?;
     if target.mode == routing::CommunicationMode::Polling {
-        return crate::background_jobs::video::create::dispatch(state, request)
+        return crate::background_jobs::video::dispatch(state, request)
             .await
             .map_err(|error| {
                 tracing::error!(%error, task_id = request.task_id, "chat:send polling dispatch failed");

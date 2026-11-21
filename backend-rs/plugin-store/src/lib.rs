@@ -10,7 +10,7 @@ use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlTransaction};
 use chrono::NaiveDateTime;
 use std::collections::{HashMap, hash_map::Entry};
 use wegent_backend_persistence::mysql_query::MysqlQuery;
-use wegent_devices::device_identity::plugin_device_id_on;
+use wegent_device_identity::plugin_device_id_on;
 
 /// Row abstraction for `coalesce_plugin_device_rows`, letting the marketplace
 /// and installed-plugin APIs share the source coalescing contract while each

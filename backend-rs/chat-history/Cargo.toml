@@ -1,0 +1,26 @@
+[package]
+name = "wegent-chat-history"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Chat history, attachment text, and subtask records"
+
+[dependencies]
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing.workspace = true
+wegent-attachment-links.workspace = true
+wegent-attachments.workspace = true
+wegent-backend-config.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-python-compat.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

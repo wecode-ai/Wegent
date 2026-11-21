@@ -3,8 +3,6 @@
 
 //! Selectively mirror approved upstreams without changing the stored schema.
 
-pub(crate) mod metadata;
-pub(crate) mod package;
 mod publish;
 use crate::{
     AppState,
@@ -14,6 +12,7 @@ use anyhow::Result;
 use brz_mysql::FromMysqlRow;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
+use wegent_plugin_package as package;
 use wegent_storage::plugin_package as storage;
 
 const SYNC: &str = "app.tasks.plugin_marketplace_tasks.sync_plugin_upstreams";
@@ -83,7 +82,9 @@ async fn sync(state: &Arc<AppState>, context: &brz_schedule::JobContext) -> Resu
     Ok(json!({"synced":synced,"skipped":0}))
 }
 async fn sync_one(state: &Arc<AppState>, upstream: &Upstream) -> Result<()> {
-    let bytes = super::download::get(&upstream.upstream_url, package::MAXIMUM, 5).await?;
+    let bytes =
+        wegent_network_policy::public_download::get(&upstream.upstream_url, package::MAXIMUM, 5)
+            .await?;
     let remote = upstream.remote_plugin_id.clone();
     let parsed = tokio::task::spawn_blocking(move || package::prepare(bytes, &remote)).await??;
     publish::store(state, upstream, &parsed).await

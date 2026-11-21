@@ -13,6 +13,7 @@ pub mod headers;
 pub mod internal_auth;
 pub mod jwt_compat;
 pub mod runtime_model_auth;
+pub mod sensitive_data;
 pub mod share_token;
 pub mod user_reader;
 pub mod user_summary;

@@ -17,14 +17,14 @@ use brz_mysql::Mysql;
 use super::components::{StringItems, components, interface_object, plugin_interface};
 use super::db::{
     DeviceInstallationRow, InstalledKindRow, NamespaceRow, PluginReleaseRow, PluginRow,
-    ResourceMemberRow, UserRepository, UserRow, distinct_entity_resource_ids,
-    resource_ids_by_entity_ids,
+    ResourceMemberRow, UserRepository, UserRow,
 };
 use super::models::{
     DeviceInstallationItem, MarketplaceItem, MarketplaceListResponse, unset_id, unset_str,
 };
-use crate::device_identity::DeviceIdentitySnapshot;
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
+use wegent_access::entity_resources::{distinct_entity_resource_ids, resource_ids_by_entity_ids};
+use wegent_device_identity::DeviceIdentitySnapshot;
 use wegent_plugin_store::coalesce_plugin_device_rows_resolved;
 
 /// Optional request filters, mirroring the endpoint's query parameters.

@@ -113,7 +113,7 @@ pub(crate) async fn resolve(
     session_environment_id: Option<&str>,
     group_recovery: bool,
 ) -> Result<Value> {
-    authority::require(state, project_id, user_id).await?;
+    authority::require(&state.mysql, project_id, user_id).await?;
     if !config["model_policy"].is_object() {
         bail!(
             "RUNNER_CONFIGURATION_REQUIRED: Review the agent execution environment and model configuration"
@@ -415,12 +415,18 @@ async fn cloud_model_selection(state: &AppState, user_id: i64, model: &Value) ->
         .context("Cloud model identity is unavailable")?;
     let owner = authority::integer(&reference["resource_user_id"])
         .context("Cloud model identity is unavailable")?;
-    let config =
-        crate::llm_proxy::resolve_model_config(state, &user, name, model_type, namespace, owner)
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("RUNNER_MODEL_UNAVAILABLE: Cloud model is unavailable: {error:?}")
-            })?;
+    let config = crate::llm_proxy::resolve_model_config(
+        &state.llm_model_lookup(),
+        &user,
+        name,
+        model_type,
+        namespace,
+        owner,
+    )
+    .await
+    .map_err(|error| {
+        anyhow::anyhow!("RUNNER_MODEL_UNAVAILABLE: Cloud model is unavailable: {error:?}")
+    })?;
     let protocol = crate::llm_proxy::model_config::resolve_llm_proxy_protocol(name, &config)
         .map_err(|error| {
             anyhow::anyhow!("RUNNER_MODEL_UNAVAILABLE: Cloud model protocol is invalid: {error:?}")
@@ -446,50 +452,7 @@ pub(crate) async fn issue_binding(state: &AppState, issue: &Node) -> Result<Opti
     issue_binding_on(&mut &state.mysql, issue).await
 }
 
-pub(crate) async fn issue_binding_on(
-    query: &mut impl MysqlQuery,
-    issue: &Node,
-) -> Result<Option<String>> {
-    let metadata = &issue.metadata.0;
-    if authority::truthy(&metadata["runner_binding_conflict"]) {
-        bail!(
-            "ISSUE_RUNNER_CONFIGURATION_REQUIRED: Historical executions used conflicting or unavailable runners; review the Issue binding"
-        )
-    }
-    if !metadata["runner_binding"].is_null() {
-        let id = authority::integer(&metadata["runner_binding"]["environment_id"])
-            .filter(|v| *v > 0)
-            .context("ISSUE_RUNNER_CONFIGURATION_REQUIRED: Invalid Issue runner binding")?;
-        return Ok(Some(id.to_string()));
-    }
-    #[derive(FromMysqlRow)]
-    struct History {
-        owner_id: i64,
-        alias: String,
-    }
-    let history:Vec<History>=query.fetch_all("SELECT DISTINCT executor_owner_user_id AS owner_id,runtime_device_id AS alias FROM loop_item_executions WHERE loop_item_id=? AND runtime_device_id<>'' UNION SELECT DISTINCT task_user_id AS owner_id,device_id AS alias FROM loop_items WHERE resource_type='execution' AND loop_item_id=? AND device_id IS NOT NULL AND device_id<>''",(issue.id.as_str(),issue.id.as_str())).await?;
-    let mut ids = BTreeSet::new();
-    for value in history {
-        let id = crate::device_identity::resolve_owned_device_alias_on(
-            query,
-            value.owner_id,
-            &value.alias,
-        )
-        .await?
-        .map(|device| device.id.to_string())
-        .unwrap_or_else(|| format!("unresolved:{}:{}", value.owner_id, value.alias));
-        ids.insert(id);
-    }
-    if ids.is_empty() {
-        return Ok(None);
-    }
-    if ids.len() == 1 && !ids.first().unwrap().starts_with("unresolved:") {
-        return Ok(ids.pop_first());
-    }
-    bail!(
-        "ISSUE_RUNNER_CONFIGURATION_REQUIRED: Historical executions used conflicting or unavailable runners; review the Issue binding"
-    )
-}
+pub(crate) use super::runner_recovery::issue_binding_on;
 
 #[cfg(test)]
 mod tests {

@@ -17,38 +17,40 @@
 //! Every step runs inline in the request, awaited, exactly like the source:
 //! the event bus dispatches handlers with `asyncio.gather`, so they are part of
 //! the request rather than detached work.
-mod collect;
-mod delivery;
 mod events;
 mod handlers;
-mod metrics;
-mod persist;
 mod sql;
-mod text_value;
 
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
 
+#[cfg(test)]
+mod persist_running_tests;
+
 use std::borrow::Cow;
 
-use brz_mysql::{Mysql, MysqlResult, MysqlTransaction};
+use brz_mysql::{Mysql, MysqlResult};
 use brz_redis::Redis;
 use serde_json::Value;
 
 use crate::executor_manager::ExecutorManager;
 
-pub(crate) mod lease_receipt;
-pub(crate) use lease_receipt::LeaseReceipt;
+pub(crate) use wegent_execution_completion::DeviceAttempt;
+use wegent_execution_completion::delivery;
+#[cfg(test)]
+pub(crate) use wegent_execution_completion::lease_receipt::{self, LeaseReceipt};
+use wegent_execution_completion::{CompletionStore, collect, metrics, persist};
 
 pub(crate) use collect::collect_completed_result;
 pub(crate) use delivery::{
-    Delivery, acknowledge_delivery, delivery_lock_key, notification_key, publish_once,
-    with_delivery_lock, with_owned_lease,
+    Delivery, acknowledge_delivery, delivery_lock_key, notification_key, with_delivery_lock,
+    with_owned_lease,
 };
+#[cfg(test)]
+pub(crate) use persist::update_task_status;
 pub(crate) use persist::{
     CollaborationStatus, commit_subtask_running, mark_subtask_running, persist_completed_result,
-    update_task_status,
 };
 pub(crate) use sql::Tables;
 pub(crate) use sql::{dispatchable_task_status, is_active_task, latest_assistant_id};
@@ -67,7 +69,7 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
     // a fabricated empty object could erase a previously persisted answer.
     let result = if let Some(ctx) = ctx {
         match collect_completed_result(
-            ctx,
+            &ctx.storage(),
             task_id,
             subtask_id,
             "FAILED",
@@ -120,7 +122,14 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
         labels,
     );
     if let Some(ctx) = ctx {
-        persist::publish_task_run_metrics(ctx, &row, subtask_id, "FAILED", metrics_message).await;
+        persist::publish_task_run_metrics(
+            &ctx.storage(),
+            &row,
+            subtask_id,
+            "FAILED",
+            metrics_message,
+        )
+        .await;
         if let Err(error) =
             super::session::cleanup_streaming_state(ctx.redis, subtask_id, Some(task_id)).await
         {
@@ -150,22 +159,29 @@ pub(crate) struct Completion<'a, M: Mysql, R: Redis> {
     pub(crate) executor_manager: &'a ExecutorManager,
 }
 
+impl<M: Mysql, R: Redis> Completion<'_, M, R> {
+    pub(crate) fn storage(&self) -> CompletionStore<'_, M, R> {
+        CompletionStore {
+            mysql: self.mysql,
+            redis: self.redis,
+            tables: self.tables,
+            task_store: self.app.map(|app| app.task_store.as_ref()),
+        }
+    }
+}
+
 /// Resolve the physical tables together before opening a writer transaction.
 pub(crate) async fn resolve_tables(
     app: Option<&crate::AppState>,
     templates: Tables,
     task_id: i64,
 ) -> MysqlResult<(Cow<'static, str>, Cow<'static, str>)> {
-    match app {
-        Some(app) => {
-            let tables = app.task_store.message_edit_tables(task_id).await?;
-            Ok((Cow::Owned(tables.tasks), Cow::Owned(tables.subtasks)))
-        }
-        None => Ok((
-            Cow::Borrowed(templates.tasks),
-            Cow::Borrowed(templates.subtasks),
-        )),
-    }
+    wegent_execution_completion::resolve_tables(
+        app.map(|app| app.task_store.as_ref()),
+        templates,
+        task_id,
+    )
+    .await
 }
 
 /// One `TaskCompletedEvent` (`app/core/events.py`).
@@ -183,63 +199,12 @@ pub(crate) struct TaskCompletedEvent<'a> {
     pub(crate) error: Option<&'a str>,
 }
 
-/// `_get_task_status_user_id`: the owner of one active task, read before the
-/// event is emitted so the Socket.IO status frame can address `user:{id}`.
-pub(crate) async fn task_status_user_id<M: Mysql>(
-    mysql: &M,
-    task_table: &str,
-    task_id: i64,
-) -> Option<i64> {
-    let sql = sql::active_task_statement_single_state(task_table);
-    let row: brz_mysql::MysqlRow = mysql
-        .route(crate::task_routing::ByTaskId(task_id as u64))
-        .fetch_optional(sql, (task_id,))
-        .await
-        .ok()
-        .flatten()?;
-    task_column::<i64>(&row, "user_id")
-}
-
+pub(crate) use wegent_execution_completion::{
+    StoredTerminal, read_terminal_result, task_status_user_id,
+};
 pub(crate) use wegent_task_store::projection::task_column;
 
-pub(crate) struct StoredTerminal {
-    pub status: String,
-    pub result: Option<Value>,
-    pub error: Option<String>,
-}
-
-/// Read the winning terminal result on the writer after a competing commit.
-pub(crate) async fn read_terminal_result<M: Mysql>(
-    mysql: &M,
-    subtask_table: &str,
-    task_id: i64,
-    subtask_id: i64,
-) -> MysqlResult<Option<StoredTerminal>> {
-    let mysql = mysql.route(crate::task_routing::ByTaskId(task_id as u64));
-    mysql.with_transaction(async |tx| {
-        let row: Option<(String, Option<brz_mysql::Json<Value>>, Option<String>)> = tx
-            .fetch_optional(
-                format!("SELECT status, result, error_message FROM {subtask_table} WHERE id = ? AND task_id = ? AND status IN ('COMPLETED','FAILED','CANCELLED')"),
-                (subtask_id, task_id),
-            )
-            .await?;
-        Ok(row.map(|(status, result, error)| StoredTerminal {
-            status,
-            result: result.map(|json| json.0),
-            error,
-        }))
-    }).await
-}
-
-/// The status string a terminal event maps to (`SubtaskStatus`).
-pub(crate) fn terminal_status(event_type: &str) -> Option<&'static str> {
-    match event_type {
-        "done" => Some("COMPLETED"),
-        "error" => Some("FAILED"),
-        "cancelled" => Some("CANCELLED"),
-        _ => None,
-    }
-}
+pub(crate) use wegent_execution_events::event::terminal_status;
 
 /// A terminal state that was committed and can be delivered to callers.
 pub(crate) struct TerminalCompletion {
@@ -281,13 +246,6 @@ pub(crate) async fn complete_with_delivery<M: Mysql, R: Redis>(
         user_id,
         ..completion
     }))
-}
-
-/// Device binding observed by the heartbeat scan and rechecked under the writer lock.
-pub(crate) struct DeviceAttempt<'a> {
-    pub(crate) owner_id: i64,
-    pub(crate) name: &'a str,
-    pub(crate) namespace: &'a str,
 }
 
 pub(crate) async fn complete_device_timeout<M: Mysql, R: Redis>(
@@ -408,12 +366,18 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
     delivery: Option<(Delivery, Option<&Value>)>,
 ) -> MysqlResult<Option<TerminalCompletion>> {
     let final_result = collect::collect_completed_result(
-        ctx, task_id, subtask_id, status, result, error, error_code,
+        &ctx.storage(),
+        task_id,
+        subtask_id,
+        status,
+        result,
+        error,
+        error_code,
     )
     .await?;
 
     let committed = Box::pin(persist::persist_terminal_transition(
-        ctx,
+        &ctx.storage(),
         task_id,
         subtask_id,
         status,

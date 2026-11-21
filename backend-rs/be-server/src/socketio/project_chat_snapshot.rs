@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 
 use crate::background_jobs::project::completion::Message;
 use crate::device_identity::{device_identity_ids, resolve_owned_device_alias_on};
-use crate::runtime_work_transcript_access::require_project_chat_scope;
+use wegent_runtime_work::require_project_chat_scope;
 
 use super::device_reconcile::apply_snapshot;
 use super::execution_aggregate::ExecutionRow;
@@ -326,9 +326,9 @@ pub(crate) struct Reconciled {
 }
 
 /// `reconcile_execution_snapshot`.
-pub(crate) async fn reconcile<T: MysqlTransaction>(
+pub(crate) async fn reconcile(
     state: &crate::state::AppState,
-    transaction: &mut T,
+    transaction: &mut brz_mysql::MysqlTransactionService,
     user_id: i64,
     snapshot: &Snapshot,
 ) -> Result<Reconciled, SnapshotError> {
@@ -448,8 +448,8 @@ async fn chat_rows<T: MysqlTransaction>(
 
 /// One `_persist_outcome` call: the execution root, the locked activity and
 /// its task AI state are updated together.
-async fn persist_outcome<T: MysqlTransaction>(
-    transaction: &mut T,
+async fn persist_outcome(
+    transaction: &mut brz_mysql::MysqlTransactionService,
     user_id: i64,
     current: &Message,
     turn: &TurnSnapshot,
@@ -528,8 +528,15 @@ async fn persist_outcome<T: MysqlTransaction>(
             turn.completed_at.clone().unwrap_or(Value::Null),
         );
         write_message(transaction, &row, &metadata).await?;
-        if let Some(mut effect) =
-            apply_snapshot(transaction, execution, status, false, Some(turn_status)).await?
+        if let Some(mut effect) = apply_snapshot(
+            transaction,
+            &super::runtime_projection::ProjectActivities,
+            execution,
+            status,
+            false,
+            Some(turn_status),
+        )
+        .await?
         {
             effect.messages.retain(|message| message.id != row_id);
             effect.changed = false; // The snapshot publishes this Issue below.
@@ -961,7 +968,7 @@ pub(crate) async fn handle(
         publish_item_change(state, runtime, item_id, 0).await;
     }
     for effect in reconciled.effects {
-        effect.deliver(state, runtime).await;
+        super::runtime_projection::deliver(effect, state, runtime).await;
     }
     json!({"ok": true, "result": reconciled.messages})
 }

@@ -26,18 +26,11 @@ use crate::socketio::runtime::SocketRuntime;
 use crate::socketio::runtime_projection::{self, Projected, RuntimeIdentity};
 use crate::state::AppState;
 
-/// `WEWORK_RUNTIME_NAMESPACE`.
-pub const RUNTIME_NAMESPACE: &str = "/wework-runtime";
-/// `WEWORK_RUNTIME_EVENT`, the relay event name.
-pub const RUNTIME_EVENT: &str = "runtime:event";
-/// `PROJECT_CHAT_CREATED_EVENT`.
-pub const PROJECT_CHAT_CREATED_EVENT: &str = "wework:project_chat:message:created";
-/// `wework:loop_item:changed` (`loop_item_events.LOOP_ITEM_CHANGED_EVENT`).
-pub const LOOP_ITEM_CHANGED_EVENT: &str = "wework:loop_item:changed";
-/// `PROJECT_CHAT_AGENT_CHUNK_EVENT`.
-pub const PROJECT_CHAT_AGENT_CHUNK_EVENT: &str = "wework:project_chat:agent:chunk";
-/// `WEWORK_RUNTIME_USER_ROOM_PREFIX`.
-const RUNTIME_USER_ROOM_PREFIX: &str = "wework-runtime:user:";
+pub use wegent_socket_adapter::{
+    LOOP_ITEM_CHANGED_EVENT, PROJECT_CHAT_AGENT_CHUNK_EVENT, PROJECT_CHAT_CREATED_EVENT,
+    RUNTIME_EVENT, RUNTIME_NAMESPACE, runtime_user_room,
+};
+
 /// `app.services.wework_api.events.channel` prefix.
 const LIVE_CHANNEL_PREFIX: &str = "wework-api:live:";
 /// `RUNTIME_TERMINAL_EVENT_TYPES`: the only event names that settle a turn.
@@ -63,12 +56,6 @@ pub fn invalid_payload() -> Value {
 /// `_forward_runtime_event`'s success reply.
 fn accepted() -> Value {
     json!({"success": true})
-}
-
-/// `wework_runtime_user_room(user_id)`.
-#[must_use]
-pub fn runtime_user_room(user_id: i64) -> String {
-    format!("{RUNTIME_USER_ROOM_PREFIX}{user_id}")
 }
 
 /// `project_chat_room(project_id, task_id)`.
@@ -136,7 +123,7 @@ pub async fn forward(
         .logical_device_id
         .as_deref()
         .unwrap_or(device_id);
-    let personal_allowed = super::runtime_rpc_policy::personal_events_allowed(
+    let personal_allowed = wegent_runtime_work::personal_events_allowed(
         session.device.device_type == Some(super::device::DeviceType::App),
         data.get("appRemoteTaskAccessEnabled"),
     );

@@ -19,7 +19,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 sha2 = { workspace = true }
 tracing = { workspace = true }
-wegent-attachments = { workspace = true }
+wegent-attachment-links = { workspace = true }
 wegent-backend-config = { workspace = true }
 wegent-backend-persistence = { workspace = true }
 wegent-execution-runtime = { workspace = true }

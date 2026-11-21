@@ -1,0 +1,25 @@
+[package]
+name = "wegent-channel-streaming"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Callback delivery and streaming state for DingTalk cards and Telegram replies"
+
+[dependencies]
+anyhow.workspace = true
+brz-http = { workspace = true, features = ["json"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+getrandom.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-execution-events.workspace = true
+wegent-python-compat.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }

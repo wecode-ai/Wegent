@@ -309,8 +309,8 @@ async fn completed(
             .await
         {
             tracing::error!(document_id=request.document_id,%error,"Rust knowledge index dispatch failed");
-            crate::background_jobs::knowledge::index::dispatch_failed(
-                state,
+            wegent_knowledge_jobs::dispatch_failed(
+                &crate::attachment_access::upload_services(state),
                 request.document_id,
                 request.generation,
             )
@@ -321,8 +321,8 @@ async fn completed(
         return Ok(ConversionCompletedResponse::completed(index_task_id));
     }
     let Some(redis) = state.redis.as_ref() else {
-        crate::background_jobs::knowledge::index::dispatch_failed(
-            state,
+        wegent_knowledge_jobs::dispatch_failed(
+            &crate::attachment_access::upload_services(state),
             request.document_id,
             request.generation,
         )
@@ -352,8 +352,8 @@ async fn completed(
                 document_id = request.document_id,
                 "knowledge index dispatch failed"
             );
-            crate::background_jobs::knowledge::index::dispatch_failed(
-                state,
+            wegent_knowledge_jobs::dispatch_failed(
+                &crate::attachment_access::upload_services(state),
                 request.document_id,
                 request.generation,
             )

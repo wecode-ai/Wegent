@@ -1,0 +1,33 @@
+[package]
+name = "wegent-web-content"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Web page metadata and knowledge document scraping"
+
+[dependencies]
+anyhow.workspace = true
+brotli = { workspace = true, features = ["std"] }
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-server.workspace = true
+brz-mysql.workspace = true
+brz-redis.workspace = true
+flate2 = { workspace = true, features = ["zlib"] }
+md-5.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+url.workspace = true
+wegent-access.workspace = true
+wegent-backend-config.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-knowledge.workspace = true
+wegent-network-policy.workspace = true
+wegent-python-compat.workspace = true
+zstd = { workspace = true, features = ["arrays"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

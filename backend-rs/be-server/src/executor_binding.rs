@@ -32,7 +32,7 @@ pub(crate) fn dispatch_request(
         "user_id": request.user_id,
         "exp": chrono::Utc::now().timestamp() + 24 * 60 * 60,
     });
-    let token = crate::responses::create::tokens::sign(state, &claims, PURPOSE)
+    let token = crate::responses::create::tokens::sign(&state.auth, &claims, PURPOSE)
         .map_err(|_| "Could not sign executor binding credential".to_owned())?;
     let body = serde_json::to_value(payload)
         .map_err(|_| "Could not serialize executor dispatch request".to_owned())?;

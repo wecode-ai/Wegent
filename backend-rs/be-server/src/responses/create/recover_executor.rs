@@ -7,13 +7,15 @@ use anyhow::{Context, Result, ensure};
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow, MysqlTransaction};
 use serde_json::Value;
 
-use crate::chat_repository::{ChatHistoryRepository, TaskRow, contexts_by_subtask_ids_statement};
 use crate::json_compat::{python_str, python_truthy};
 use crate::state::AppState;
 use crate::task_routing::ByTaskId;
 use crate::task_store::TableTemplates;
 use crate::task_store_statements::{
     assistant_subtasks_by_task_statement, subtask_by_id_statement, subtask_column_index,
+};
+use wegent_chat_history::chat_repository::{
+    ChatHistoryRepository, TaskRow, contexts_by_subtask_ids_statement,
 };
 use wegent_workspace_archive::{recovery_archive_available, restore_workspace_for_runtime};
 
