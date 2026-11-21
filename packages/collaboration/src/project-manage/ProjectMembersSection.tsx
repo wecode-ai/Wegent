@@ -151,7 +151,10 @@ export function ProjectMembersSection<
                   {host.translate('todo.add_member', '添加成员')}
                 </PopoverTrigger>
                 {membersOpen && (
-                  <PopoverContent data-testid="cloud-project-member-picker">
+                  <PopoverContent
+                    data-testid="cloud-project-member-picker"
+                    initialFocus={() => memberSearchInputRef.current}
+                  >
                     <MemberSearchPicker
                       error={memberSearchError}
                       query={memberQuery}

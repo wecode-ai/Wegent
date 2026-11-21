@@ -1,0 +1,19 @@
+[package]
+name = "wegent-mcp-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Stateless MCP JSON-RPC, streamable HTTP, and tool schemas"
+
+[dependencies]
+brz-http-server = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+futures-util = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["time"] }
+wegent-http-compat = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

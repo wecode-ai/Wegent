@@ -45,7 +45,7 @@ digest = steps.find { |candidate| candidate["id"] == "runtime" }
   .fetch("env").fetch("SOURCE_DIGEST")
 
 recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
-%W[backend-rs/crates/** shared/rust/** shared/assets/codex-models/** shared/assets/calendars/** backend-rs/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
+%W[backend-rs/*/Cargo.toml backend-rs/*/src/** backend-rs/src/task_export_docx/templates/thumbnail.jpeg shared/rust/** shared/assets/codex-models/** shared/assets/calendars/** backend-rs/be-server/examples/** backend-rs/migrations/** #{recipe} .github/runtime-images/backend-rs-builder.Dockerfile].each do |input|
   raise "Backend Rust runtime digest omits #{input}" unless digest.include?("'#{input}'")
 end
 
@@ -66,7 +66,7 @@ end
   end
 end
 copies = builder.scan(/^COPY (backend-rs\/\S+) (\.\/\S+)$/)
-Dir[File.join(root, "backend-rs/src/migrations/**/*.rs")].each do |source|
+Dir[File.join(root, "backend-rs/be-server/src/migrations/**/*.rs")].each do |source|
   File.read(source).scan(/include_(?:str|bytes)!\(\s*"([^"]+)"/).flatten.each do |path|
     asset = File.expand_path(path, File.dirname(source))
     relative = asset.delete_prefix("#{root}/backend-rs/")
@@ -96,11 +96,12 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   FileUtils.mkdir_p(File.join(directory, File.dirname(recipe)))
   FileUtils.cp(File.join(root, recipe), File.join(directory, recipe))
   %w[.github/runtime-images/backend-rs-builder.Dockerfile .github/ci/rust-toolchain
-    .github/scripts/ci-prebuilt-images.mjs .github/scripts/resolve-ci-image.mjs backend-rs/Cargo.toml backend-rs/Cargo.lock].each do |input|
+    .github/scripts/ci-prebuilt-images.mjs .github/scripts/resolve-ci-image.mjs backend-rs/Cargo.toml backend-rs/Cargo.lock
+    backend-rs/be-server/Cargo.toml backend-rs/src/task_export_docx/templates/thumbnail.jpeg].each do |input|
     FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
     FileUtils.cp(File.join(root, input), File.join(directory, input))
   end
-  %w[backend-rs/crates shared/rust shared/assets/calendars].each do |input|
+  %w[backend-rs/backend-config shared/rust shared/assets/calendars].each do |input|
     FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
     FileUtils.cp_r(File.join(root, input), File.join(directory, input))
   end

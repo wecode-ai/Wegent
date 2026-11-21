@@ -64,8 +64,8 @@ done
 # Rust ownership already selects the full real desktop suite. Its shared matrix
 # must keep this checkpoint in both the Linux and Windows jobs.
 for permission_path in \
-  backend-rs/src/cloud_projects.rs \
-  backend-rs/src/cloud_projects/collaboration_access.sql; do
+  backend-rs/be-server/src/cloud_projects.rs \
+  backend-rs/project-coordination/src/cloud_projects/collaboration_access.sql; do
   assert_desktop_case "Rust project authorization retains override coverage: $permission_path" \
     "$full_desktop_expected" "$permission_path"
 done

@@ -1,0 +1,22 @@
+[package]
+name = "wegent-knowledge-access"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Knowledge access and deployment policy contracts"
+
+[dependencies]
+async-trait.workspace = true
+brz-http-server.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+jsonwebtoken.workspace = true
+serde = { workspace = true, features = ["derive"] }
+sha2.workspace = true
+wegent-access.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

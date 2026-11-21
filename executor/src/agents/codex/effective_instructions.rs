@@ -5,6 +5,8 @@ use sha2::{Digest, Sha256};
 const PREFIX: &str = "wework.host-policy.";
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
 const EXECUTION_KEY: &str = "wework.execution";
+pub(super) const OMITTED_MCP_CONTEXT: &str =
+    "Runtime context: Some MCP capabilities were omitted from this execution.";
 
 pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> String {
     let mut instructions = if request.extra.get("enable_tools").and_then(Value::as_bool)
@@ -30,7 +32,7 @@ pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig
         contributions.sort_by_key(|(key, _)| *key);
         if launch_config.mcp_unavailable {
             instructions.push_str("\n\n");
-            instructions.push_str(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT);
+            instructions.push_str(OMITTED_MCP_CONTEXT);
         }
         for (key, entry) in contributions {
             instructions.push_str(&format!(

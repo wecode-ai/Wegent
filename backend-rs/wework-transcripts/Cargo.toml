@@ -1,0 +1,29 @@
+[package]
+name = "wegent-wework-transcripts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Wework transcript leases, encrypted segments, and archives"
+
+[dependencies]
+base64 = { workspace = true }
+brz-http = { workspace = true }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+hmac = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-backend-persistence = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-python-compat = { workspace = true }
+wegent-storage = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+wegent-backend-test-support = { workspace = true }

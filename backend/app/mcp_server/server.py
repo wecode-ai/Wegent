@@ -793,7 +793,7 @@ _CONNECTORS_MCP_SPEC = McpAppSpec(
     token_context=connector_mcp_token_info,
     log_prefix="Connectors",
     # `GET`/`POST /api/mcp/connectors/sse` are Rust-owned
-    # (`backend-rs/src/mcp/connectors.rs`). `BACKEND_INTERNAL_URL` still points
+    # (`backend-rs/be-server/src/mcp/connectors.rs`). `BACKEND_INTERNAL_URL` still points
     # at this process and the executor configs use the unprefixed
     # `/mcp/connectors/sse`, so only that alias stays mounted here.
     rust_owned_public_path=True,

@@ -1,0 +1,28 @@
+[package]
+name = "wegent-onboarding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "New-user default resource application with original transaction boundaries"
+
+[dependencies]
+brz-json = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
+wegent-access = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-backend-persistence = { workspace = true }
+wegent-python-compat = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-resource-store = { workspace = true }
+wegent-task-store = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -92,7 +92,7 @@ async def test_python_and_rust_lua_can_read_each_others_index(storage):
     manager, client, subtask_id = storage
     script_path = (
         Path(__file__).resolve().parents[2]
-        / "backend-rs/src/internal_callback/block_index.lua"
+        / "backend-rs/execution-runtime/src/block_index.lua"
     )
     script = (
         script_path.read_text()
