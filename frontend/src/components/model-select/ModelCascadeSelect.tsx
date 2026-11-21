@@ -20,6 +20,8 @@ import {
 import { ModelCapabilityIcons } from './ModelCapabilityIcons'
 import { ModelCapabilityDescription } from './ModelCapabilityDescription'
 import { ModelSelectionGuideLink } from './ModelSelectionGuideLink'
+import { ModelPrimaryGroupIcon } from './ModelPrimaryGroupIcon'
+import { useModelPrimaryGroupIcons } from './useModelPrimaryGroupIcons'
 
 export interface ModelCascadeLabels {
   ungrouped: string
@@ -128,6 +130,9 @@ export function ModelCascadeContent<T extends GroupableModel>({
         uncategorizedLabel: labels.uncategorized,
       }),
     [models, labels.uncategorized, labels.ungrouped]
+  )
+  const groupIcons = useModelPrimaryGroupIcons(
+    groups.some(group => group.name !== labels.ungrouped)
   )
   const [activeGroupName, setActiveGroupName] = useState<string>('')
   const [activeSubGroupName, setActiveSubGroupName] = useState<string>('')
@@ -382,8 +387,13 @@ export function ModelCascadeContent<T extends GroupableModel>({
               !isLast && 'border-b border-border'
             )}
           >
-            <span className="min-w-0 truncate text-sm font-medium text-text-primary">
-              {group.name}
+            <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-text-primary">
+              <ModelPrimaryGroupIcon
+                group={group.name === labels.ungrouped ? undefined : group.name}
+                icon={groupIcons?.[group.name]}
+                decorative
+              />
+              <span className="truncate">{group.name}</span>
             </span>
             <span className="flex shrink-0 items-center gap-2">
               <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
@@ -571,7 +581,14 @@ export function ModelCascadeContent<T extends GroupableModel>({
                       isActive && 'bg-primary/10 text-primary'
                     )}
                   >
-                    <span className="min-w-0 truncate text-sm font-medium">{group.name}</span>
+                    <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                      <ModelPrimaryGroupIcon
+                        group={group.name === labels.ungrouped ? undefined : group.name}
+                        icon={groupIcons?.[group.name]}
+                        decorative
+                      />
+                      <span className="truncate">{group.name}</span>
+                    </span>
                     <span className="shrink-0 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
                       {getGroupCountLabel(group.count)}
                     </span>

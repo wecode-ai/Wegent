@@ -30,6 +30,8 @@ import { Tag } from '@/components/ui/tag'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { ModelSelectionGuideLink } from '@/components/model-select/ModelSelectionGuideLink'
+import { ModelPrimaryGroupIcon } from '@/components/model-select/ModelPrimaryGroupIcon'
+import { useModelPrimaryGroupIcons } from '@/components/model-select/useModelPrimaryGroupIcons'
 import {
   ModelCascadeContent,
   type ModelCascadeLabels,
@@ -302,6 +304,9 @@ export default function ModelSelector({
     }
   }, [isOpen])
 
+  const modelGroup = modelSelection.displayModelGroup?.trim()
+  const groupIcons = useModelPrimaryGroupIcons(Boolean(modelGroup))
+
   const selectedCascadeModel =
     modelSelection.selectedModel?.name === DEFAULT_MODEL_NAME
       ? modelSelection.boundDefaultModel
@@ -400,11 +405,15 @@ export default function ModelSelector({
                   {(!compact || triggerVariant === 'menu-item') && (
                     <span
                       className={cn(
-                        'min-w-0 truncate',
+                        'flex min-w-0 items-center gap-1',
                         triggerVariant === 'menu-item' ? 'flex-1 text-left text-sm' : 'text-xs'
                       )}
                     >
-                      {modelSelection.getDisplayText()}
+                      <span className="min-w-0 truncate">{modelSelection.getDisplayText()}</span>
+                      <ModelPrimaryGroupIcon
+                        group={modelGroup}
+                        icon={modelGroup ? groupIcons?.[modelGroup] : undefined}
+                      />
                     </span>
                   )}
                   {triggerVariant === 'menu-item' ? (

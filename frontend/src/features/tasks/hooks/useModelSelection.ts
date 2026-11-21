@@ -118,6 +118,7 @@ export interface UseModelSelectionReturn {
   compatibleProvider: CompatibleProvider[] | null
   hasAdvancedModels: boolean
   boundDefaultModel: Model | null
+  displayModelGroup?: string | null
 
   // Actions
   selectModel: (model: Model | null) => void
@@ -737,6 +738,12 @@ export function useModelSelection({
     compatibleProvider,
     hasAdvancedModels,
     boundDefaultModel,
+    displayModelGroup:
+      selectedModel?.name === DEFAULT_MODEL_NAME
+        ? getBoundModelDisplayNames().length === 1
+          ? boundDefaultModel?.modelGroup
+          : undefined
+        : selectedModel?.modelGroup,
 
     // Actions
     selectModel,
