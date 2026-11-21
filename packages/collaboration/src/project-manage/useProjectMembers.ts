@@ -117,7 +117,10 @@ export function useProjectMembers<
     { enabled: membersOpen }
   )
   useEscapeKey(() => setMembersOpen(false), membersOpen, memberComposerRef)
-  useFocusRequest(memberSearchInputRef, openMembersRequestId, { enabled: membersOpen })
+  // The popover owns initial focus when its trigger opens it.
+  useFocusRequest(memberSearchInputRef, openMembersRequestId, {
+    enabled: membersOpen && openMembersRequestId !== undefined,
+  })
   const query = memberQuery.trim()
   const searchResource = useMemo(
     () =>
