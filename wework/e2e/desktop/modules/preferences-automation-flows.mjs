@@ -52,7 +52,6 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
           // Background plugin synchronization can finish after consent is accepted.
           plugin_auto_update_succeeded: true,
           telemetry_preference_changed: true,
-          plugin_auto_update_succeeded: true,
         },
         event.event
       ),
