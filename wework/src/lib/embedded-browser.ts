@@ -1,6 +1,7 @@
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { normalizeBrowserUrl } from './browser-url'
 import { isElectronRuntime } from './runtime-environment'
+import { logRuntimeTaskCreateStage } from './runtime-create-diagnostics'
 import type { BrowserAnnotationState } from '@/types/browser-annotation'
 
 type UnlistenFn = () => void
@@ -299,13 +300,64 @@ function listenElectronBrowserEvents<EventPayload>(
 
 function startElectronBrowserEventListening(): void {
   if (electronBrowserEventUnlisten !== null) return
-  electronBrowserEventUnlisten = subscribeDesktopHostEvents(event => {
+  const stopFrameDiagnostics = observeBrowserLongFrames()
+  const stopEvents = subscribeDesktopHostEvents(event => {
     if (event.type !== 'browser.event') return
     const browserEvent = event.payload as unknown as ElectronBrowserHostEvent
+    if (browserEvent.type === 'agent-cursor' && import.meta.env.VITE_WEWORK_E2E === 'true') {
+      const cursor = browserEvent.payload as EmbeddedBrowserAgentCursorEvent
+      logRuntimeTaskCreateStage('browser-cursor-received', {
+        eventSequence: event.sequence,
+        label: cursor.label,
+        moveSequence: cursor.moveSequence,
+        visible: cursor.visible,
+        listenerCount: electronBrowserEventHandlers.get(browserEvent.type)?.size ?? 0,
+      })
+    }
     electronBrowserEventHandlers
       .get(browserEvent.type)
       ?.forEach(handler => handler(browserEvent.payload))
   })
+  electronBrowserEventUnlisten = () => {
+    stopEvents()
+    stopFrameDiagnostics()
+  }
+}
+
+function observeBrowserLongFrames(): () => void {
+  if (
+    import.meta.env.VITE_WEWORK_E2E !== 'true' ||
+    typeof PerformanceObserver === 'undefined' ||
+    !PerformanceObserver.supportedEntryTypes.includes('long-animation-frame')
+  )
+    return () => {}
+  const observer = new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) {
+      if (entry.duration < 250) continue
+      const frame = entry as PerformanceEntry & {
+        blockingDuration?: number
+        scripts?: Array<{
+          duration: number
+          sourceURL?: string
+          sourceFunctionName?: string
+          sourceCharPosition?: number
+        }>
+      }
+      logRuntimeTaskCreateStage('browser-long-frame', {
+        startTime: frame.startTime,
+        duration: frame.duration,
+        blockingDuration: frame.blockingDuration,
+        scripts: (frame.scripts ?? []).map(script => ({
+          duration: script.duration,
+          source: script.sourceURL?.split(/[?#]/)[0].split('/').at(-1),
+          functionName: script.sourceFunctionName,
+          position: script.sourceCharPosition,
+        })),
+      })
+    }
+  })
+  observer.observe({ type: 'long-animation-frame' })
+  return () => observer.disconnect()
 }
 
 export function listenEmbeddedBrowserCloseRequests(
