@@ -70,7 +70,7 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> Result<(), brz_mysql::MysqlError> {
-    if event.event_type == "start" {
+    if matches!(event.event_type.as_str(), "start" | "error" | "cancelled") {
         close_waiting_user_span(mysql, event).await?;
     }
     if event.event_type == "block_updated" {
@@ -250,10 +250,10 @@ fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
             _ => None,
         })
         .unwrap_or("running");
-    let end_at_ms = if status != "running" {
-        occurred_at
+    let (start_at_ms, end_at_ms) = if status == "running" {
+        (occurred_at, None)
     } else {
-        None
+        (None, occurred_at)
     };
     vec![NewTimingSpan {
         span_id: subagent_span_id(event, agent_id),
@@ -274,7 +274,7 @@ fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
             .unwrap_or(agent_id)
             .to_string(),
         status,
-        start_at_ms: occurred_at,
+        start_at_ms,
         end_at_ms,
         metadata: json!({"activity": event.data.clone()}),
     }]
@@ -918,8 +918,32 @@ mod tests {
         );
         let spans = event_timing_spans(&done);
         assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].start_at_ms, None);
         assert_eq!(spans[0].end_at_ms, Some(200));
         assert_eq!(spans[0].status, "failed");
+    }
+
+    #[tokio::test]
+    async fn terminal_failure_callbacks_close_waiting_user_spans() {
+        let mut event = block_event(
+            super::super::event::EventType::Error,
+            json!({"timing": {"agentStartedAt": 20}}),
+        );
+        event.task_id = 7;
+        event.subtask_id = 11;
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+
+        persist_callback_timing(&capture, &event, None, None)
+            .await
+            .expect("persist terminal timing");
+
+        let close_write = capture
+            .writes()
+            .into_iter()
+            .find(|write| write.sql.contains("UPDATE task_timing_spans"))
+            .expect("waiting-user close update");
+        assert!(close_write.sql.contains("kind = 'waiting_user'"));
+        assert_eq!(close_write.first_integer, Some(20));
     }
 
     #[test]

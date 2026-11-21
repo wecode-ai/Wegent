@@ -490,10 +490,7 @@ function unobservedIntervals(
   const intervals = data.spans
     .map(span => {
       if (span.start_at_ms === null || span.start_at_ms === undefined) return undefined
-      const fallbackEnd =
-        span.duration_ms === null || span.duration_ms === undefined
-          ? span.start_at_ms
-          : span.start_at_ms + span.duration_ms
+      const fallbackEnd = spanEffectiveEnd(span, bounds)
       return [span.start_at_ms, span.end_at_ms ?? fallbackEnd] as const
     })
     .filter((interval): interval is readonly [number, number] => interval !== undefined)
@@ -520,8 +517,7 @@ function barPosition(
     return { left: '0%', width: '0%' }
   }
   const start = span.start_at_ms ?? bounds.start
-  const fallbackEnd =
-    span.duration_ms === null || span.duration_ms === undefined ? start : start + span.duration_ms
+  const fallbackEnd = spanEffectiveEnd(span, bounds)
   const end = span.end_at_ms ?? fallbackEnd
   const scale = bounds.end - bounds.start
   const left = Math.max(start - bounds.start, 0)
@@ -530,6 +526,19 @@ function barPosition(
     left: `${(left / Math.max(scale, 1)) * 100}%`,
     width: `${(width / Math.max(scale, 1)) * 100}%`,
   }
+}
+
+function spanEffectiveEnd(
+  span: TaskTimingResponse['spans'][number],
+  bounds: TimelineBounds
+): number {
+  if (span.end_at_ms !== null && span.end_at_ms !== undefined) return span.end_at_ms
+  const startAtMs = span.start_at_ms ?? bounds.start
+  if (startAtMs === undefined) return 0
+  if (span.duration_ms !== null && span.duration_ms !== undefined) {
+    return startAtMs + span.duration_ms
+  }
+  return bounds.end ?? startAtMs
 }
 
 function percent(durationMs: number, bounds: TimelineBounds): string {

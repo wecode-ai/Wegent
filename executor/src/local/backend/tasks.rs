@@ -176,8 +176,11 @@ where
         state.handle.abort();
         let _ = state.handle.await;
         self.engine.cancel_pending(&task_id, subtask_id);
+        let builder = state
+            .builder
+            .with_timing_boundary("agentFinishedAt", current_epoch_ms());
         self.sink
-            .send(state.builder.response_cancelled(message))
+            .send(builder.response_cancelled(message))
             .await
             .is_ok()
     }
@@ -460,6 +463,11 @@ mod tests {
         assert_eq!(events[0].event_type, "response.created");
         assert_eq!(events[1].event_type, "response.incomplete");
         assert_eq!(events[1].data["response"]["status"], "cancelled");
+        let timing = events[1].data.get("timing").expect("cancelled timing");
+        assert!(
+            timing["agentFinishedAt"].as_i64().unwrap()
+                >= timing["agentStartedAt"].as_i64().unwrap()
+        );
     }
 
     #[tokio::test]

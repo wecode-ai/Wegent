@@ -29,11 +29,23 @@ def migration_config(tmp_path, monkeypatch):
 
 def test_task_timing_spans_upgrade_and_downgrade(migration_config):
     database_url = migration_config.get_main_option("sqlalchemy.url")
+    engine = sa.create_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+            )
+        )
+        connection.execute(
+            sa.text("INSERT INTO alembic_version (version_num) VALUES ('b1c2d3e4f5a6')")
+        )
+
     command.stamp(migration_config, "b1c2d3e4f5a6")
     command.upgrade(migration_config, "c2d3e4f5a6b7")
-    inspector = sa.inspect(sa.create_engine(database_url))
+    inspector = sa.inspect(engine)
     assert "task_timing_spans" in inspector.get_table_names()
 
     command.downgrade(migration_config, "b1c2d3e4f5a6")
-    inspector = sa.inspect(sa.create_engine(database_url))
+    inspector = sa.inspect(engine)
     assert "task_timing_spans" not in inspector.get_table_names()
+    engine.dispose()

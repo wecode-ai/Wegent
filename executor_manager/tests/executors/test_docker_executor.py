@@ -740,11 +740,38 @@ class TestDockerExecutor:
             "dispatchDurationMs": 100,
         }
 
-        executor._record_timing(sample_task, taskDispatchedAt=500, replace=True)
+        executor._replace_timing(sample_task, taskDispatchedAt=500)
 
         timing = sample_task["metadata"]["timing"]
         assert timing["taskDispatchedAt"] == 500
         assert timing["dispatchDurationMs"] == 400
+
+    def test_container_recreation_replaces_attempt_local_timing(
+        self, executor, sample_task
+    ):
+        """A replacement container must not inherit the previous attempt's timing."""
+        sample_task.setdefault("metadata", {})["timing"] = {
+            "instanceCreateStartedAt": 100,
+            "instanceCreateFinishedAt": 150,
+            "instanceReadyAt": 200,
+            "taskDispatchedAt": 300,
+            "createDurationMs": 50,
+            "waitReadyDurationMs": 50,
+            "provisionDurationMs": 100,
+            "dispatchDurationMs": 100,
+        }
+
+        executor._reset_attempt_timing(sample_task, instanceCreateStartedAt=1000)
+
+        timing = sample_task["metadata"]["timing"]
+        assert timing["instanceCreateStartedAt"] == 1000
+        assert "instanceCreateFinishedAt" not in timing
+        assert "instanceReadyAt" not in timing
+        assert "taskDispatchedAt" not in timing
+        assert "createDurationMs" not in timing
+        assert "waitReadyDurationMs" not in timing
+        assert "provisionDurationMs" not in timing
+        assert "dispatchDurationMs" not in timing
 
     @patch.dict(
         os.environ,

@@ -473,7 +473,7 @@ class DockerExecutor(Executor):
         if timeout is not None:
             request_kwargs["timeout"] = timeout
 
-        self._record_timing(task, taskDispatchedAt=_current_epoch_ms(), replace=True)
+        self._replace_timing(task, taskDispatchedAt=_current_epoch_ms())
         return self.requests.post(endpoint, json=task, **request_kwargs)
 
     def _create_new_container(
@@ -483,7 +483,7 @@ class DockerExecutor(Executor):
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
         prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
-        self._record_timing(task, instanceCreateStartedAt=_current_epoch_ms())
+        self._reset_attempt_timing(task, instanceCreateStartedAt=_current_epoch_ms())
         self.create_instance(task, task_info, executor_name)
         self._record_timing(task, instanceCreateFinishedAt=_current_epoch_ms())
 
@@ -594,26 +594,50 @@ class DockerExecutor(Executor):
             raise
 
     @staticmethod
-    def _record_timing(
-        task: Dict[str, Any], replace: bool = False, **boundaries: int
-    ) -> None:
+    def _record_timing(task: Dict[str, Any], **boundaries: int) -> None:
         """Record executor wall-time boundaries in the task payload."""
         if not boundaries:
             return
-        metadata = task.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {}
-            task["metadata"] = metadata
-        timing = metadata.get("timing")
+        timing = task.setdefault("metadata", {}).get("timing")
         if not isinstance(timing, dict):
             timing = {}
-            metadata["timing"] = timing
+            task["metadata"]["timing"] = timing
         for key, value in boundaries.items():
-            if replace:
-                timing[key] = value
-            else:
-                timing.setdefault(key, value)
+            timing.setdefault(key, value)
         _record_stage_durations(timing, boundaries)
+
+    @staticmethod
+    def _replace_timing(task: Dict[str, Any], **boundaries: int) -> None:
+        """Replace boundary values and derive durations from the same attempt."""
+        if not boundaries:
+            return
+        timing = task.setdefault("metadata", {}).get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+            task["metadata"]["timing"] = timing
+        for key, value in boundaries.items():
+            timing[key] = value
+        _record_stage_durations(timing, boundaries)
+
+    @staticmethod
+    def _reset_attempt_timing(task: Dict[str, Any], **boundaries: int) -> None:
+        """Replace attempt-local boundaries when a new container is created."""
+        timing = task.setdefault("metadata", {}).get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+            task["metadata"]["timing"] = timing
+        for key in (
+            "instanceCreateStartedAt",
+            "instanceCreateFinishedAt",
+            "instanceReadyAt",
+            "taskDispatchedAt",
+            "createDurationMs",
+            "waitReadyDurationMs",
+            "provisionDurationMs",
+            "dispatchDurationMs",
+        ):
+            timing.pop(key, None)
+        DockerExecutor._replace_timing(task, **boundaries)
 
     def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
         """Wait for a Docker container instance to become ready."""

@@ -130,6 +130,23 @@ const interiorGapResponse: TaskTimingResponse = {
   ],
 }
 
+const openSpanResponse: TaskTimingResponse = {
+  ...timingResponse,
+  spans: [
+    {
+      ...timingResponse.spans[0],
+      end_at_ms: null,
+      duration_ms: undefined,
+    },
+    {
+      ...timingResponse.spans[1],
+      start_at_ms: 15_000,
+      end_at_ms: 17_000,
+      duration_ms: 2_000,
+    },
+  ],
+}
+
 const unknownDurationResponse: TaskTimingResponse = {
   ...timingResponse,
   wall_time_ms: null,
@@ -310,6 +327,21 @@ describe('TaskTimingPanel', () => {
     expect(screen.getByTestId('task-timing-interior-gap-label')).toHaveTextContent(
       'timing.timeline.interior_gap:6s'
     )
+  })
+
+  it('extends open spans to the session end when computing timeline gaps', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue(openSpanResponse)
+    renderPanel()
+
+    await screen.findByTestId('task-timing-triage')
+    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
+
+    expect(screen.queryByTestId('task-timing-interior-gap')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-timing-interior-gap-label')).not.toBeInTheDocument()
+    const bars = screen.getAllByTestId('task-timing-span-bar')
+    expect(Number.parseFloat(bars[0].style.left)).toBeCloseTo((2 / 18) * 100, 10)
+    expect(Number.parseFloat(bars[0].style.width)).toBeCloseTo((16 / 18) * 100, 10)
   })
 
   it('does not invent absolute timestamps when no timeline anchor exists', async () => {
