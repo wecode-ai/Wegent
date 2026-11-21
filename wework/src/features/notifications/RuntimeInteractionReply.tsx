@@ -17,9 +17,11 @@ import { openWeworkScheme } from './schemeEvents'
 export function RuntimeInteractionReply({
   item,
   autoFocus = true,
+  equalOptions = false,
 }: {
   item: RuntimeInteraction
   autoFocus?: boolean
+  equalOptions?: boolean
 }) {
   const { t } = useTranslation('common')
   const interactions = useRuntimeInteractions()
@@ -49,7 +51,7 @@ export function RuntimeInteractionReply({
             <Button
               key={`${index}:${option.value ?? option.label}`}
               data-testid={`interaction-answer-${index}`}
-              variant={index === 0 ? 'primary' : 'secondary'}
+              variant={!equalOptions && index === 0 ? 'primary' : 'secondary'}
               autoFocus={autoFocus && index === 0 && !custom && !draft}
               disabled={disabled}
               onClick={() => void respond(item, option.value ?? option.label!)}

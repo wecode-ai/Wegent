@@ -332,6 +332,99 @@ fn transcript_message_turn_id(message: &Value) -> Option<String> {
         .or_else(|| string_field(message, "subtask_id"))
 }
 
+fn preparation_failure_message(link: &RuntimeTaskLink) -> Option<Value> {
+    if link.runtime != "codex" || link.status != "failed" || link.running {
+        return None;
+    }
+    let diagnostic = &link.runtime_handle["startupFailure"];
+    let subtask_id = string_field(diagnostic, "subtaskId")?;
+    let created_at = timestamp_ms_field(diagnostic, "createdAt")?;
+    let failed_at = timestamp_ms_field(diagnostic, "failedAt")?;
+    let message = string_field(diagnostic, "message")?;
+    let failure_info = diagnostic.get("errorInfo")?.clone();
+    Some(json!({
+        "id": format!("{}:assistant:{subtask_id}", link.local_task_id),
+        "role": "assistant",
+        "content": "",
+        "status": "failed",
+        "error": message,
+        "errorType": "response.failed",
+        "errorCode": failure_info["code"],
+        "errorInfo": failure_info,
+        "subtaskId": subtask_id,
+        "createdAt": created_at,
+        "completedAt": failed_at,
+    }))
+}
+
+// The current preparation diagnostic is a DTO overlay; native history remains authoritative.
+fn append_preparation_failure(response: &mut Value, link: &RuntimeTaskLink) {
+    if response["hasMoreAfter"] == true
+        || response["threadId"].as_str() != link.thread_id.as_deref()
+    {
+        return;
+    }
+    let Some(message) = preparation_failure_message(link) else {
+        return;
+    };
+    let turn_id = transcript_message_turn_id(&message).unwrap();
+    if response["turns"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|turn| {
+            turn["id"] == turn_id
+                && turn["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|item| item["type"] != "user_message" && item["type"] != "userMessage")
+        })
+    {
+        return;
+    }
+    let Some(messages) = response["messages"].as_array_mut() else {
+        return;
+    };
+    if messages.iter().any(|existing| {
+        existing["role"] == "assistant"
+            && transcript_message_turn_id(existing).as_deref() == Some(&turn_id)
+    }) {
+        return;
+    }
+    messages.push(message.clone());
+    let Some(diagnostic_turn) =
+        transcript_canonical_turns(&[message], TranscriptTurnItemSource::CachedMessages).pop()
+    else {
+        return;
+    };
+    let Some(turns) = response["turns"].as_array_mut() else {
+        return;
+    };
+    merge_preparation_failure_turn(turns, &turn_id, diagnostic_turn);
+}
+
+fn merge_preparation_failure_turn(turns: &mut Vec<Value>, turn_id: &str, mut diagnostic: Value) {
+    if let Some(turn) = turns.iter_mut().find(|turn| turn["id"] == turn_id) {
+        if let Some(items) = turn["items"].as_array() {
+            let mut merged = items.clone();
+            merged.extend(
+                diagnostic["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+            diagnostic["items"] = Value::Array(merged);
+        }
+        if let (Some(turn), Some(diagnostic)) = (turn.as_object_mut(), diagnostic.as_object()) {
+            turn.extend(diagnostic.clone());
+        }
+    } else {
+        turns.push(diagnostic);
+    }
+}
+
 fn transcript_canonical_turns(
     messages: &[Value],
     item_source: TranscriptTurnItemSource,
@@ -375,6 +468,7 @@ fn transcript_canonical_turns(
             "completedAt",
             "error",
             "errorType",
+            "errorInfo",
             "stoppedNotice",
             "fileChanges",
             "references",
@@ -383,6 +477,9 @@ fn transcript_canonical_turns(
             if let Some(value) = message.get(key) {
                 turn.insert(key.to_owned(), value.clone());
             }
+        }
+        if let Some(code) = message.get("errorCode") {
+            turn.insert("errorType".to_owned(), code.clone());
         }
         // Status aliases must describe the same message, not an earlier user item.
         if let Some(status) = message

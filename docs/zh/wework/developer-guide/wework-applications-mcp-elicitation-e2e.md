@@ -234,11 +234,10 @@ default_tools_approval_mode = "approve"
 ## 真实超时验证
 
 `permission-modes` 为隔离的应用及其 Executor 设置
-`WEGENT_CODEX_MCP_URL_TIMEOUT_MS=5000` 和 `WEGENT_CODEX_MCP_FORM_TIMEOUT_MS=45000`。
-URL 授权超时使用 5 秒真实计时器。并发和普通表单超时各使用 45 秒，三次固定等待
-合计约 95 秒。表单需要在过期前完成普通问题回答、两次待回答卡片重载及状态断言。
-CI Job `131059186468` 的 fixture 记录显示，`ordinary_first` 场景在第二次重载
-恢复等待状态期间，于 30060ms 收到了取消结果。45 秒的测试时限为该交互留出时间。
+`WEGENT_CODEX_MCP_URL_TIMEOUT_MS=12000` 和 `WEGENT_CODEX_MCP_FORM_TIMEOUT_MS=60000`。
+URL 授权使用 12 秒真实计时器，给手动取消用例留出桌面控制命令的传输时间。
+并发和普通表单超时各使用 60 秒。表单需要在过期前完成普通问题回答、两次待回答卡片
+重载及状态断言。
 其他 checkpoint 不自动设置该配置。未配置或配置无效时，生产默认值仍为 URL
 10 分钟、表单 5 分钟；普通执行审批的超时不受该配置影响。
 

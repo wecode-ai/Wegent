@@ -454,6 +454,9 @@ mod session_policy_tests {
 fn valid_collaboration(source: &Value) -> bool {
     source["enabled"].is_boolean()
         && source["allProjects"].is_boolean()
+        && source
+            .get("includeIndependentIssues")
+            .map_or(true, Value::is_boolean)
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
         && source["tags"].as_array().is_some_and(|tags| {
@@ -579,6 +582,54 @@ impl LocalTaskStore {
         Ok(saved)
     }
 
+    /// Update a routing reference without applying intake changes to local identities.
+    pub fn save_stand_in_delegation_route(
+        &self,
+        user: i64,
+        device: &str,
+        update: &Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        let invalid = || TaskRuntimeError::Invalid("invalid specialist route".into());
+        let id = update["roleId"]
+            .as_str()
+            .filter(|id| !id.is_empty() && *id != "@primary")
+            .ok_or_else(invalid)?;
+        let route = update.get("route").ok_or_else(invalid)?;
+        if !route.is_null()
+            && (route["id"] != id
+                || !route["name"].is_string()
+                || !route["prompt"].is_string()
+                || !route["enabled"].is_boolean()
+                || !route["executionDeviceId"]
+                    .as_str()
+                    .is_some_and(|target| !target.is_empty() && target != device))
+        {
+            return Err(invalid());
+        }
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (mut settings, _) = personal_snapshot(&connection, user, device)?;
+        if settings["version"] != update["version"] {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        let mut routes = settings["delegationRoutes"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        routes.retain(|route| route["id"] != id);
+        if !route.is_null() {
+            routes.push(json!({
+                "id":id, "name":route["name"], "prompt":route["prompt"],
+                "enabled":route["enabled"], "executionDeviceId":route["executionDeviceId"],
+            }));
+        }
+        settings["delegationRoutes"] = json!(routes);
+        settings["version"] = json!(settings["version"].as_i64().unwrap_or(0) + 1);
+        write_personal(&connection, &settings)?;
+        connection.commit()?;
+        Ok(settings)
+    }
+
     pub fn validate_personal_stand_in_settings(
         &self,
         user: i64,
@@ -640,6 +691,11 @@ impl LocalTaskStore {
         super::stand_in_lifecycle::preserve_stopped_import(&previous, &mut value)?;
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
+        }
+        if let Some(routes) = previous.get("delegationRoutes") {
+            value["delegationRoutes"] = routes.clone();
+        } else if let Some(fields) = value.as_object_mut() {
+            fields.remove("delegationRoutes");
         }
         if value["primary"].is_object() {
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
@@ -717,6 +773,21 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"]
         && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"];
     let enabled_at = json!(now());
+    if identity["enabled"] == true
+        && identity["collaboration"]["enabled"] == true
+        && identity["collaboration"]["includeIndependentIssues"] == true
+    {
+        identity["independentIssuesEnabledAfter"] = if preserve
+            && previous["collaboration"]["includeIndependentIssues"] == true
+            && previous["independentIssuesEnabledAfter"].is_string()
+        {
+            previous["independentIssuesEnabledAfter"].clone()
+        } else {
+            enabled_at.clone()
+        };
+    } else if let Some(fields) = identity.as_object_mut() {
+        fields.remove("independentIssuesEnabledAfter");
+    }
     // Explicit projects keep their own boundary when the catch-all scope changes.
     let mut projects = Vec::new();
     for source in [identity as &Value, previous] {

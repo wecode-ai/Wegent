@@ -140,6 +140,12 @@ for (const visibility of ['private', 'public'] as const) {
         })
         try {
           const guestPage = await guestContext.newPage()
+          if (visibility === 'private') {
+            const sharePath = `/collaboration/${projectId}/issues/${issueId}`
+            await guestPage.goto(sharePath)
+            await expect(guestPage.getByTestId('cloud-todo-detail-title')).toBeVisible()
+            await expect(guestPage).toHaveURL(new RegExp(`${sharePath}$`))
+          }
           await guestPage.goto(page.url())
           await expect(
             guestPage

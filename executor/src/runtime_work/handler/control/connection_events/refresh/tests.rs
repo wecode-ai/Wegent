@@ -163,6 +163,96 @@ fn desktop_cancellation_is_exact_durable_and_does_not_resume_goals_or_models() {
 }
 
 #[test]
+fn desktop_cancellation_uses_current_connection_for_cloud_bound_task() {
+    let _guard = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _home = EnvGuard::home(root.path().to_str().unwrap());
+            let app = axum::Router::new().route(
+                "/api/v1/runtime-tasks/cloud-context",
+                axum::routing::get(
+                    |uri: axum::http::Uri, headers: axum::http::HeaderMap| async move {
+                        assert_eq!(
+                            uri.query(),
+                            Some("device_id=control-test-device&task_id=task")
+                        );
+                        match headers[axum::http::header::AUTHORIZATION].to_str().unwrap() {
+                            "Bearer denied-session" => {
+                                (axum::http::StatusCode::FORBIDDEN, axum::Json(json!({})))
+                            }
+                            "Bearer current-session" => (
+                                axum::http::StatusCode::OK,
+                                axum::Json(json!({"task_id":"task"})),
+                            ),
+                            _ => panic!("Unexpected authorization for cloud task"),
+                        }
+                    },
+                ),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let _backend = EnvGuard::set(
+                "WEGENT_BACKEND_URL",
+                &format!("http://{address}/stale-environment"),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+            let mut link = seed(&handler, "task");
+            link.runtime_handle["cloudProjectId"] = json!("project");
+            link.runtime_handle["executionRequest"]["backend_url"] =
+                json!(format!("http://{address}/stale-backend"));
+            handler.store.upsert_task(link);
+            let id = handler.subscription_id("task", "watch");
+            let record = json!({"task_id":"task","device_id":"control-test-device",
+                "subscription_key":"watch","status":"armed","source":{"name":"PR"}});
+            handler.save_event_subscription(&id, &record).unwrap();
+            let ipc = crate::local::app_ipc::AppIpcServer::new()
+                .with_runtime_work_handler(handler.clone());
+            let command =
+                json!({"command_key":"connection_subscription_cancel","args":["task","watch"]});
+
+            let disconnected = ipc
+                .dispatch("device.execute_command", command.clone())
+                .await
+                .unwrap_err();
+            assert_eq!(disconnected.code, "cloud_unavailable");
+            let mut connection = ConnectionConfig {
+                backend_url: format!("http://{address}"),
+                auth_token: "denied-session".into(),
+                ..Default::default()
+            };
+            *handler.backend_connection.lock().unwrap() = Some(connection.clone());
+            let denied = ipc
+                .dispatch("device.execute_command", command.clone())
+                .await
+                .unwrap_err();
+            assert_eq!(denied.code, "permission_denied");
+            event_store::read(
+                &handler.event_subscription_path(),
+                event_store::Scope::Row("operations", &id),
+                |state| {
+                    assert_eq!(state["operations"][&id]["status"], "armed");
+                    Ok(())
+                },
+            )
+            .unwrap();
+
+            connection.auth_token = "current-session".into();
+            *handler.backend_connection.lock().unwrap() = Some(connection);
+            let receipt = ipc
+                .dispatch("device.execute_command", command)
+                .await
+                .unwrap();
+            assert_eq!(receipt["stdout"]["subscription"]["status"], "cancelled");
+            server.abort();
+        });
+}
+
+#[test]
 fn desktop_cancellation_rejects_delegated_task_origins() {
     let _guard = crate::test_env::lock();
     tokio::runtime::Builder::new_current_thread()

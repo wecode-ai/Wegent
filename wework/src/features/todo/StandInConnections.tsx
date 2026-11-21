@@ -103,6 +103,16 @@ export function StandInConnections({
         <label className="flex min-h-11 items-start gap-3 md:min-h-9">
           <Checkbox
             className="mt-1 accent-text-primary"
+            data-testid="stand-in-independent-issues"
+            checked={source.includeIndependentIssues === true}
+            disabled={disabled}
+            onCheckedChange={checked => setSource({ includeIndependentIssues: checked === true })}
+          />
+          <span>{t('standIn.workspace.receive_independent_issues')}</span>
+        </label>
+        <label className="flex min-h-11 items-start gap-3 md:min-h-9">
+          <Checkbox
+            className="mt-1 accent-text-primary"
             data-testid="stand-in-all-projects"
             checked={source.allProjects}
             disabled={disabled}

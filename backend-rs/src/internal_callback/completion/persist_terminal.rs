@@ -25,6 +25,15 @@ use crate::internal_callback::py_json::python_dumps;
 fn stored_result(result: Option<&Value>, existing: Option<&Value>) -> Option<Value> {
     let value = result.filter(|value| value.is_object())?;
     let mut stored = value.clone();
+    if let Value::Object(stored) = &mut stored {
+        stored.shift_remove("_chat_metrics");
+    }
+    if let (Value::Object(stored), Some(Value::Object(existing))) = (&mut stored, existing) {
+        // Execution labels belong to the server's guarded startup transition.
+        if let Some(metadata) = existing.get("_chat_metrics") {
+            stored.insert("_chat_metrics".into(), metadata.clone());
+        }
+    }
     if let (Value::Object(stored_object), Some(Value::Object(existing))) = (&mut stored, existing)
         && existing
             .get("silent_exit")

@@ -220,7 +220,10 @@ impl RuntimeWorkRpcHandler {
         {
             state = Value::Null;
         }
-        if collection_retry_pending(&state, version) {
+        // Older versions could leave this source waiting an hour on the same timed-out query.
+        let legacy_timeout = is_dingtalk_group_timeout(source, &state["error"]["code"])
+            && state["checkpoint"]["windowMinutes"].is_null();
+        if !legacy_timeout && collection_retry_pending(&state, version) {
             return Ok(());
         }
         let outcome = self
@@ -272,9 +275,25 @@ impl RuntimeWorkRpcHandler {
             )
         })?;
         validate_collection_version(store, user, &self.device_id, settings_version)?;
+        let event_count = messages.len();
         let page = (messages, json!({"checkpoint":checkpoint}));
-        self.collect_connection_page(store, user, source, roles, page)
-            .await
+        let next = self
+            .collect_connection_page(store, user, source, roles, page)
+            .await?;
+        if event_count > 0 {
+            log_executor_event(
+                "Stand-in source page collected",
+                &[
+                    ("provider", source_provider(source).to_owned()),
+                    (
+                        "kind",
+                        source["kind"].as_str().unwrap_or_default().to_owned(),
+                    ),
+                    ("event_count", event_count.to_string()),
+                ],
+            );
+        }
+        Ok(next)
     }
 
     async fn collect_connection_page(
@@ -460,6 +479,44 @@ fn collection_retry_pending(state: &Value, version: &Value) -> bool {
             .is_some_and(|at| at > chrono::Utc::now().timestamp_millis())
 }
 
+fn is_dingtalk_group_timeout(source: &Value, code: &Value) -> bool {
+    source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+        && source["kind"] == "group"
+        && source["collectionKey"] == "all-messages"
+        && code == "request_timeout"
+}
+
+fn recover_dingtalk_group_checkpoint(
+    source: &Value,
+    state: &mut Value,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    let checkpoint = &state["checkpoint"];
+    let after = checkpoint["after"]
+        .as_str()
+        .or_else(|| state["after"].as_str())
+        .unwrap_or_else(|| source["enabledAfter"].as_str().unwrap_or_default());
+    let window = checkpoint["windowMinutes"].as_u64().unwrap_or(15);
+    let (minutes, backlog_cutoff) = match window {
+        1 => (1, Some(now - chrono::Duration::minutes(1))),
+        5 => (1, Some(now - chrono::Duration::minutes(5))),
+        _ => (5, None),
+    };
+    if let Some(cutoff) = backlog_cutoff.filter(|cutoff| {
+        chrono::DateTime::parse_from_rfc3339(after).is_ok_and(|start| start < *cutoff)
+    }) {
+        log_executor_event(
+            "DingTalk group collection skipped timed-out backlog",
+            &[("from", after.to_owned()), ("until", cutoff.to_rfc3339())],
+        );
+        state["checkpoint"] =
+            json!({"after":cutoff.to_rfc3339(),"cursor":"0","windowMinutes":minutes});
+    } else if window != minutes {
+        // A cursor belongs to its original time window. Replay from the same start when shrinking.
+        state["checkpoint"] = json!({"after":after,"cursor":"0","windowMinutes":minutes});
+    }
+}
+
 fn save_collection_result(
     store: &LocalTaskStore,
     user: i64,
@@ -485,17 +542,32 @@ fn save_collection_result(
             if let Some(delay) = error.retry_after_ms.or_else(|| {
                 super::super::connection_host::collection_runtime_retry_after_ms(&error.code)
             }) {
+                let now = chrono::Utc::now();
                 let failures = state["failures"]
                     .as_u64()
                     .unwrap_or(0)
                     .saturating_add(1)
                     .min(10);
                 next["failures"] = json!(failures);
-                // Apply the base delay on the first failure, then back off repeated failures.
-                next["retryAt"] = json!(
-                    chrono::Utc::now().timestamp_millis()
-                        + ((30_000_i64 << failures.saturating_sub(1).min(7)).min(3_600_000))
-                            .max(delay as i64)
+                let retry_after_ms = if is_dingtalk_group_timeout(source, &next["error"]["code"]) {
+                    recover_dingtalk_group_checkpoint(source, &mut next, now);
+                    30_000
+                } else {
+                    (30_000_i64 << failures.saturating_sub(1).min(7)).min(3_600_000)
+                }
+                .max(delay as i64);
+                next["retryAt"] = json!(now.timestamp_millis() + retry_after_ms);
+                log_executor_event(
+                    "Stand-in source collection retry scheduled",
+                    &[
+                        ("provider", source_provider(source).to_owned()),
+                        (
+                            "kind",
+                            source["kind"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                        ("code", error.code),
+                        ("retry_after_ms", retry_after_ms.to_string()),
+                    ],
                 );
             } else {
                 next.as_object_mut().unwrap().remove("retryAt");

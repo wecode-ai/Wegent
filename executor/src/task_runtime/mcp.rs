@@ -44,6 +44,7 @@ mod parent_issue;
 mod stand_in;
 mod stand_in_questions;
 pub(crate) mod stand_in_tasks;
+pub(crate) use context::is_independent_issue_origin;
 #[cfg(test)]
 use context::role_categories;
 use context::space_context_grant;
@@ -136,6 +137,7 @@ pub(crate) struct SpaceMcpRequestContext {
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
+    stand_in_role_delegation: bool,
     control: Option<crate::workbench_control::ControlContext>,
     current_device_id: Option<String>,
     principal_id: Option<String>,
@@ -209,6 +211,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_role_delegation: false,
             control: None,
             current_device_id: None,
             principal_id: None,
@@ -225,6 +228,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_role_delegation: false,
             control: None,
             current_device_id: None,
             principal_id: None,

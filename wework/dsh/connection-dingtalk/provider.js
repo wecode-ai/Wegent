@@ -2,6 +2,7 @@ import { createReadCursor } from './read-cursor.js'
 import { readImages } from './read-images.js'
 
 const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
+const GROUP_CATCH_UP_WINDOW_MINUTES = 15
 
 export function createProvider() {
   const identities = new Map()
@@ -149,19 +150,32 @@ export function createProvider() {
       validateCollection(source)
       const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
       const start = checkpoint?.after ?? required(source, 'enabledAfter')
-      const until = checkpoint?.until ?? new Date().toISOString()
+      const now = Date.now()
+      const boundedGroup = source.collectionKey === 'all-messages'
+      const windowMinutes = boundedGroup ? checkpoint?.windowMinutes : undefined
+      const windowEnd = boundedGroup
+        ? Math.min(
+            now,
+            Date.parse(start) + (windowMinutes ?? GROUP_CATCH_UP_WINDOW_MINUTES) * 60_000
+          )
+        : now
+      const until = checkpoint?.until ?? new Date(windowEnd).toISOString()
       const cursor = checkpoint?.cursor ?? '0'
       const {
         events,
         hasMore,
         nextCursor: next,
       } = await readMessagePage(ctx, source, { start, end: until, limit: 100, cursor }, selfId)
+      const catchingUp = boundedGroup && Date.parse(until) < now
+      const nextCheckpoint = hasMore
+        ? { after: start, until, cursor: next }
+        : { after: until, cursor: '0' }
+      if (windowMinutes !== undefined && (hasMore || catchingUp))
+        nextCheckpoint.windowMinutes = windowMinutes
       return {
         events,
-        nextCheckpoint: hasMore
-          ? { after: start, until, cursor: next }
-          : { after: until, cursor: '0' },
-        hasMore,
+        nextCheckpoint,
+        hasMore: hasMore || catchingUp,
       }
     },
   }

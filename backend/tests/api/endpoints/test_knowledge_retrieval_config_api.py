@@ -21,6 +21,47 @@ def _create_knowledge_base(test_client, test_token: str, retrieval_config: dict)
     )
 
 
+@pytest.mark.api
+def test_create_persists_guided_questions_and_call_limits(
+    test_client, test_token
+) -> None:
+    headers = {"Authorization": f"Bearer {test_token}"}
+    settings = {
+        "guided_questions": ["Where is the handbook?"],
+        "max_calls_per_conversation": 8,
+        "exempt_calls_before_check": 2,
+    }
+    response = test_client.post(
+        "/api/knowledge-bases",
+        json={"name": "call-limits-kb", "rag_config_mode": "disabled", **settings},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    created = response.json()
+    assert {key: created[key] for key in settings} == settings
+
+    detail = test_client.get(f"/api/knowledge-bases/{created['id']}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    persisted = detail.json()
+    assert {key: persisted[key] for key in settings} == settings
+
+
+@pytest.mark.api
+def test_create_rejects_exempt_calls_equal_to_default_maximum(
+    test_client, test_token
+) -> None:
+    response = test_client.post(
+        "/api/knowledge-bases",
+        json={
+            "name": "invalid-call-limits-kb",
+            "rag_config_mode": "disabled",
+            "exempt_calls_before_check": 10,
+        },
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+    assert response.status_code == 400, response.text
+
+
 @pytest.mark.unit
 def test_dump_create_retrieval_config_preserves_explicit_fields_only() -> None:
     config = RetrievalConfigCreate(retriever_name="retriever-1")

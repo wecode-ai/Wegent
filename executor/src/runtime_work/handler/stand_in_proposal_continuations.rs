@@ -97,6 +97,9 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<(), AppIpcError> {
         let expected = request.extra.remove(EXPECTED);
         request.extra.remove(OWNER);
+        if !activity {
+            request.extra.remove("standInRoleResultRoot");
+        }
         let origin = request.extra.get("origin").cloned().unwrap_or(Value::Null);
         if origin["type"] != "stand_in_identity" {
             return Ok(());

@@ -100,6 +100,14 @@ pub(crate) fn stand_in_mcp_client_config(
     context.current_device_id = Some(identity.device.clone());
     context.principal_id = Some(identity.user.to_string());
     context.stand_in = Some(identity);
+    let origin = &request.extra["origin"];
+    context.stand_in_role_delegation = (origin["type"] == "stand_in_identity"
+        && origin["conversationScope"].is_null()
+        && !request
+            .extra
+            .get("source")
+            .is_some_and(|source| source["source"] == "im"))
+        || (origin["type"] == "stand_in_task" && origin["roleDelegation"].is_object());
     let registered = super::super::mcp_http::register_space_mcp_context(context)?;
     if let Some(signature) = batch_signature {
         crate::logging::write_executor_log_line(&crate::logging::format_executor_log(
@@ -208,6 +216,10 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         .is_some_and(|identity| identity.readonly_worker)
     {
         let mut tools = super::stand_in_tasks::read_tools();
+        if context.stand_in_role_delegation {
+            tools.extend(super::stand_in_tasks::role_delegation_tools());
+            return tools;
+        }
         tools.push(json!({"name":"list_connection_providers","description":"List only host-captured delegated source references and their provider read schemas. This cannot discover ungranted resources or change subscriptions.","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true,"openWorldHint":false}}));
         let mut read = connections::read_tool(false);
         read["annotations"] = json!({"readOnlyHint":true,"openWorldHint":true});
@@ -300,6 +312,9 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
             tools.push(read);
         }
     }
+    if context.stand_in_role_delegation {
+        tools.extend(super::stand_in_tasks::role_delegation_tools());
+    }
     tools
 }
 
@@ -318,6 +333,7 @@ pub(super) async fn call(
             .into_iter()
             .chain(super::stand_in_tasks::schedule_tools())
             .chain(super::stand_in_tasks::memory_review_tools())
+            .chain(super::stand_in_tasks::role_delegation_tools())
             .any(|tool| tool["name"] == name)
     {
         return match super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await

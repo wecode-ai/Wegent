@@ -159,6 +159,7 @@ pub(crate) use turn_recovery::same_goal_configuration;
 mod isolated_turn;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
+pub(crate) use thread_action::ModelActionRegistration;
 mod thread_resume;
 
 use debug_stdout::CodexStdout;

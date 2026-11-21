@@ -1087,7 +1087,11 @@ projectTest(
 test('removes My Work and Run Center from navigation and their former URLs', async ({ page }) => {
   await page.goto('/collaboration')
   await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
-  await expect(page.getByTestId('collaboration-nav-inbox')).toBeVisible()
+  const assigned = page.getByTestId('collaboration-primary-issues-assigned')
+  await expect(assigned).toBeVisible()
+  await assigned.click()
+  await expect(page).toHaveURL(/\/collaboration\/assigned$/)
+  await expect(page.getByTestId('personal-issues-assigned')).toBeVisible()
   await expect(page.getByTestId('collaboration-nav-my-work')).toHaveCount(0)
   await expect(page.getByTestId('collaboration-nav-runs')).toHaveCount(0)
   for (const removed of ['my-work', 'runs']) {

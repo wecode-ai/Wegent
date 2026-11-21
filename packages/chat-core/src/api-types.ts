@@ -12,6 +12,13 @@ export type TaskStatus =
   | 'DELETE'
   | 'PENDING_CONFIRMATION'
 
+export interface ChatErrorInfo {
+  code?: string
+  category?: string
+  stage?: string
+  retry_policy?: 'after_backoff' | 'after_change' | 'none' | 'unknown'
+}
+
 export interface TaskDetail {
   id: number
   status: TaskStatus

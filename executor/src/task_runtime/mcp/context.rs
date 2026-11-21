@@ -3,6 +3,10 @@
 
 use super::*;
 
+pub(crate) fn is_independent_issue_origin(origin: &Value) -> bool {
+    origin["type"] == "issue_dispatch" && origin["projectStore"] == "independent"
+}
+
 pub(super) fn space_context_grant(
     request: &ExecutionRequest,
 ) -> Result<Option<SpaceContextGrant>, String> {
@@ -55,6 +59,26 @@ pub(super) fn space_context_grant(
         .and_then(id_value)
         .or_else(|| origin_value("cloudProjectId", "cloud_project_id").and_then(id_value));
     let item_id = origin_value("loopItemId", "loop_item_id").and_then(id_value);
+    if request
+        .extra
+        .get("origin")
+        .is_some_and(is_independent_issue_origin)
+    {
+        // RuntimeWork checks the current assignee and the owning conversation separately.
+        // Independent Issue execution never carries a project capability.
+        if !stand_in_conversation
+            || dispatched
+            || dispatch_id.is_some()
+            || space_id.is_some()
+            || item_id.is_none()
+            || !human_assignment
+            || origin_value("assignmentId", "assignment_id").and_then(id_value)
+                != origin_value("humanAssignmentId", "human_assignment_id").and_then(id_value)
+        {
+            return Err("Independent Issue dispatch requires its own bound assignment".to_owned());
+        }
+        return Ok(None);
+    }
     if (dispatched || stand_in_conversation) && (space_id.is_none() || item_id.is_none()) {
         return Err("Issue dispatch requires a bound project space and board item".to_owned());
     }
@@ -118,6 +142,30 @@ fn id_value(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn independent_issue_dispatch_requires_its_assignment_and_grants_no_project_scope() {
+        let origin = json!({
+            "type":"issue_dispatch", "projectStore":"independent", "initiatedBy":"stand_in",
+            "publicConversation":true, "standInId":"review", "userId":7,
+            "loopItemId":"issue-1", "assignmentId":"assignment-1", "humanAssignmentId":"assignment-1",
+        });
+        let mut request = ExecutionRequest::default();
+        request.extra.insert("origin".into(), origin.clone());
+        assert!(space_context_grant(&request).unwrap().is_none());
+        assert!(crate::workbench_control::restricted_origin(Some(&origin)));
+        for (field, value) in [
+            ("initiatedBy", json!("user")),
+            ("assignmentId", json!("other-assignment")),
+            ("cloudProjectId", json!("another-project")),
+            ("dispatchRole", json!("executor")),
+            ("dispatchId", json!("project-dispatch")),
+        ] {
+            request.extra.insert("origin".into(), origin.clone());
+            request.extra.get_mut("origin").unwrap()[field] = value;
+            assert!(space_context_grant(&request).is_err(), "{field}");
+        }
+    }
 
     #[test]
     fn project_automation_null_dispatch_fields_do_not_declare_an_agent_role() {

@@ -39,14 +39,28 @@ const PROJECT_READ_METHODS: [&str; 2] = [
     "runtime.tasks.transcript",
     "runtime.tasks.transcript.search",
 ];
+pub(super) const STAND_IN_ROLE_START_METHOD: &str = "runtime.stand_in.role_task.start";
+const STAND_IN_ROLE_METHODS: [&str; 7] = [
+    STAND_IN_ROLE_START_METHOD,
+    "runtime.stand_in.role_task.verify",
+    "runtime.stand_in.role_task.status",
+    "runtime.stand_in.role_task.branches",
+    "runtime.stand_in.role_task.cancel",
+    "runtime.stand_in.role_task.retry",
+    "runtime.stand_in.role_task.accept_cancel",
+];
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum TaskGrant {
     Unscoped,
     ProjectRead,
+    StandInRole,
 }
 
 pub(super) fn authorize(route: &Route, method: &str, project_read: bool) -> Option<TaskGrant> {
+    if STAND_IN_ROLE_METHODS.contains(&method) {
+        return Some(TaskGrant::StandInRole);
+    }
     if remote_control_is_enabled(route.device_type) {
         return Some(TaskGrant::Unscoped);
     }
@@ -157,6 +171,26 @@ mod tests {
         assert!(authorize(&target, "runtime.tasks.guidance", true).is_none());
         assert!(authorize(&target, "runtime.worktrees.capabilities", true).is_none());
         assert!(authorize(&target, "runtime.worktrees.preflight", true).is_none());
+    }
+
+    #[test]
+    fn stand_in_grant_is_limited_to_specialist_methods() {
+        let mut target = route(Value::Null);
+        for device_type in [DeviceType::App, DeviceType::Cloud, DeviceType::Remote] {
+            target.device_type = device_type;
+            for method in STAND_IN_ROLE_METHODS {
+                assert_eq!(
+                    authorize(&target, method, false),
+                    Some(TaskGrant::StandInRole)
+                );
+            }
+            for method in ["runtime.stand_in.role_task.unknown", "runtime.tasks.send"] {
+                assert_ne!(
+                    authorize(&target, method, false),
+                    Some(TaskGrant::StandInRole)
+                );
+            }
+        }
     }
 
     #[test]

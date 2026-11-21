@@ -1,14 +1,15 @@
-import type { IndependentIssue, PersonalIssuesApi } from '@/api/personalIssues'
-import { useTranslation } from '@/hooks/useTranslation'
+import type { IndependentIssue, PersonalIssuesApi } from './personalIssuesApi'
+import type { CollaborationProject } from '../types'
+import { usePersonalIssueTranslation } from './personalIssueMessages'
 import {
   SelectContent,
   SelectItem,
   SelectRoot,
   SelectTrigger,
-} from '@wegent/collaboration/controls/SelectParts'
-import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
-import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { usePanelData } from '@wegent/collaboration/platform'
+} from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { Button as ControlButton } from '../markdown/Button'
+import { usePanelData } from './usePanelData'
 import { useCallback, useState } from 'react'
 import { IssueProjectSelect } from './IssueProjectSelect'
 
@@ -19,13 +20,13 @@ export function IndependentIssueProjectPicker({
   onConfirm,
   onCancel,
 }: {
-  api: PersonalIssuesApi
+  api: PersonalIssuesApi<CollaborationProject>
   issue: IndependentIssue
   busy: boolean
   onConfirm(projectId: string, status: string): void
   onCancel(): void
 }) {
-  const { t } = useTranslation('common')
+  const t = usePersonalIssueTranslation()
   const loadProjects = useCallback(() => api.projects(), [api])
   const { data, error, loading, refresh } = usePanelData(loadProjects)
   const projects = (data?.items ?? []).filter(project =>

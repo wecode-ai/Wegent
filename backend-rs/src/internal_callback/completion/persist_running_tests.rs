@@ -186,7 +186,7 @@ async fn the_running_transition_locks_the_parent_task_on_its_shard_first() {
         // read fails and the transition stops before the contexts read and the
         // status write.
         assert!(
-            mark_subtask_running(&ctx, 801_406_538_674_541, 801_406_538_674_542)
+            mark_subtask_running(&ctx, 801_406_538_674_541, 801_406_538_674_542, None)
                 .await
                 .is_err()
         );
@@ -287,7 +287,7 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
     };
 
     assert!(
-        commit_subtask_running(&mysql, tables, 12, 42)
+        commit_subtask_running(&mysql, tables, tables.tasks, 12, 42, None)
             .await?
             .is_some()
     );
@@ -307,12 +307,12 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
     assert_eq!(replica.queries(), [status_query, status_query]);
 
     assert!(
-        commit_subtask_running(&mysql, tables, 12, 43)
+        commit_subtask_running(&mysql, tables, tables.tasks, 12, 43, None)
             .await?
             .is_none()
     );
     assert!(
-        commit_subtask_running(&mysql, tables, 12, 44)
+        commit_subtask_running(&mysql, tables, tables.tasks, 12, 44, None)
             .await?
             .is_none()
     );
@@ -335,7 +335,7 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
             (),
         )
         .await?;
-    let failure = commit_subtask_running(&mysql, tables, 12, 42)
+    let failure = commit_subtask_running(&mysql, tables, tables.tasks, 12, 42, None)
         .await
         .unwrap_err();
     assert_eq!(failure.database_sql_state(), Some("45000"));

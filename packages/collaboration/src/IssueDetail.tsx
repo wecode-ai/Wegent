@@ -110,7 +110,7 @@ const browserDueDateExtensions = {
   dueDateToSource: dueDateTimeLocalToSource,
 }
 
-function browserSave(blob: Blob, filename: string): Promise<void> {
+export function saveBrowserIssueAttachment(blob: Blob, filename: string): Promise<void> {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
@@ -134,7 +134,7 @@ export function IssueCreate({
   onCreated,
   onError,
 }: IssueCreateProps) {
-  const port = useMemo(() => createSharedIssueDetailPort(api, browserSave), [api])
+  const port = useMemo(() => createSharedIssueDetailPort(api, saveBrowserIssueAttachment), [api])
   const editorTranslate =
     translate ??
     createCollaborationTranslator(messages === collaborationMessages.en ? 'en' : 'zh-CN')
@@ -232,7 +232,7 @@ function BrowserIssueDetail({
         canAssign: issue.invited_only === true,
         canStartWork: false,
       }
-  const port = useMemo(() => createSharedIssueDetailPort(api, browserSave), [api])
+  const port = useMemo(() => createSharedIssueDetailPort(api, saveBrowserIssueAttachment), [api])
   const editorTranslate =
     translate ??
     createCollaborationTranslator(messages === collaborationMessages.en ? 'en' : 'zh-CN')

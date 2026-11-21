@@ -58,6 +58,7 @@ export function CloudFilePreviewDialog({
 
   return createPortal(
     <div
+      data-wework-file-preview
       className="fixed inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm"
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
