@@ -512,10 +512,8 @@ class TestResponsesAPIEmitter:
         transport = GeneratorTransport()
         emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
 
-        with patch(
-            "shared.models.responses_api_emitter.time.time",
-            side_effect=[1_000.000, 1_001.000, 1_002.000, 1_003.000],
-        ):
+        with patch("shared.models.responses_api_emitter.time") as mock_time:
+            mock_time.time.side_effect = [1_000.000, 1_001.000]
             await emitter.start()
             await emitter.done(content="done")
 
@@ -536,10 +534,8 @@ class TestResponsesAPIEmitter:
             (lambda: emitter.incomplete(), "response.incomplete"),
             (lambda: emitter.error("failed"), "error"),
         ]:
-            with patch(
-                "shared.models.responses_api_emitter.time.time",
-                side_effect=[1_000.000, 1_001.000],
-            ):
+            with patch("shared.models.responses_api_emitter.time") as mock_time:
+                mock_time.time.side_effect = [1_000.000, 1_001.000]
                 await emitter.start()
                 await emit_terminal()
 
