@@ -1,4 +1,5 @@
 import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Ellipsis, Loader2, Store } from 'lucide-react'
 import { useMemo, useState, useSyncExternalStore } from 'react'
 import type { ConfiguredCodexMarketplace, LocalCodexPluginApi } from '@/api/local/codexPlugins'
@@ -84,14 +85,15 @@ export function PluginMarketplaceManagement({
           <span>{error ?? t('workbench.plugins_marketplace_inventories_unavailable')}</span>
           {(snapshot.status === 'error' ||
             (snapshot.status === 'ready' && inventoryUnavailable)) && (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="plugin-marketplace-management-retry"
-              className="min-h-11 rounded-md border border-border px-3 hover:bg-muted md:min-h-8"
               onClick={() => void resource.reload()}
             >
               {t('common.retry', '重试')}
-            </button>
+            </ControlButton>
           )}
         </div>
       )}
@@ -129,10 +131,12 @@ export function PluginMarketplaceManagement({
                 </p>
               </div>
               {marketplace.sourceType === 'git' && (
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid={'plugin-marketplace-management-check-' + marketplace.id}
-                  className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
+                  className="shrink-0"
                   disabled={
                     removing ||
                     snapshot.status !== 'ready' ||
@@ -149,7 +153,7 @@ export function PluginMarketplaceManagement({
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                   )}
                   {t('workbench.plugins_marketplace_check_updates')}
-                </button>
+                </ControlButton>
               )}
               <ActionMenu
                 testId={'plugin-marketplace-management-menu-' + marketplace.id}
