@@ -127,13 +127,18 @@ export function BranchPicker({
       emptyLabel={t('workbench.environment_branch_empty_results', '没有匹配的分支')}
       triggerContent={
         <>
-          <GitBranch className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <GitBranch
+            className={
+              composer ? 'h-4 w-4 shrink-0' : 'h-[18px] w-[18px] shrink-0 text-text-secondary'
+            }
+            aria-hidden="true"
+          />
           <span className="min-w-0 flex-1 truncate">{label}</span>
           <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
         </>
       }
-      appearance={composer ? 'composer' : 'outline'}
-      className="w-full"
+      appearance={composer ? 'composer' : 'plain'}
+      className={composer ? 'w-full' : 'h-9 w-full gap-3 rounded-md px-0 hover:bg-hover'}
       open={open}
       onOpenChange={changeOpen}
       query={query}

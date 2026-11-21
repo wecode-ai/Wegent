@@ -14,6 +14,8 @@ Open **Environment** in a task conversation to inspect the current branch's PR/M
 
 For repository events, use **My Stand-in → role profile → connection sources → GitHub/GitLab**, not just the status switch. Distinguish missing CLI, sign-in, network and permission failures before choosing login or retry.
 
+The branch name in Environment is a borderless interactive row. Select the name or its trailing arrow to open the branch picker. Branch and delivery actions share the other rows' left alignment.
+
 <a id="device-git-configuration"></a>
 
 ## Repository access configuration and device sync

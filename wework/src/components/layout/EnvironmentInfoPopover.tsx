@@ -177,8 +177,7 @@ export function EnvironmentInfoPopover({
             <section className="border-t border-border pt-3">
               {onManageTodo && (
                 <ControlButton
-                  variant="ghost"
-                  size="sm"
+                  variant="unstyled"
                   type="button"
                   data-testid="environment-todo-binding-button"
                   onClick={onManageTodo}
@@ -192,8 +191,7 @@ export function EnvironmentInfoPopover({
               )}
               {onDeliver && (
                 <ControlButton
-                  variant="ghost"
-                  size="sm"
+                  variant="unstyled"
                   type="button"
                   data-testid="environment-delivery-button"
                   onClick={onDeliver}
