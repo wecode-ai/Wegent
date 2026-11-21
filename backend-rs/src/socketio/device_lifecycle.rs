@@ -170,7 +170,7 @@ async fn register_session(
     runtime: &Arc<SocketRuntime>,
     session: &DeviceSession,
     socket_id: &str,
-    payload: RegisterPayload,
+    mut payload: RegisterPayload,
 ) -> Result<Reply<Value>, ClientError> {
     let snapshot = session.snapshot();
     let user_id = snapshot.user_id;
@@ -187,25 +187,40 @@ async fn register_session(
     let mut route_id = payload.device_id.clone();
     let mut logical_device_id = None;
     let mut persisted_display_name = None;
-    if payload.device_type == DeviceType::Cloud {
-        match device::match_cloud_device(state, user_id, &payload, runtime_transfer_host.as_deref())
-            .await
-        {
-            Ok(Some(row)) => {
-                is_cloud_device = true;
-                // Cloud registrations route by the executor's validated id.
-                // Keep the Kind name for reads and writes to the owned record.
-                let registered = device::registered(&row, &payload, true);
-                route_id = registered.route_id;
-                logical_device_id = Some(row.name);
-                persisted_display_name = Some(registered.display_name);
+    // Resolve server provisioning and restore soft-deleted managed rows before
+    // a local reconnect can reuse its cache.
+    match device::match_cloud_device(
+        state,
+        user_id,
+        &payload,
+        runtime_transfer_host.as_deref(),
+        snapshot.auth_type != "workspace_runner",
+    )
+    .await
+    {
+        Ok(Some(row)) => {
+            is_cloud_device = true;
+            if payload.device_type != DeviceType::Cloud {
+                tracing::warn!(
+                    user_id,
+                    device_id = %payload.device_id,
+                    reported_type = payload.device_type.value(),
+                    "preserving managed cloud type for its pinned Runtime"
+                );
+                payload.device_type = DeviceType::Cloud;
             }
-            Ok(None) => {}
-            Err(mismatch) => {
-                return Ok(Reply::payload(error_ack(&format!(
-                    "Registration failed: {mismatch}"
-                ))));
-            }
+            // Cloud registrations route by the executor's validated id.
+            // Keep the Kind name for reads and writes to the owned record.
+            let registered = device::registered(&row, &payload, true);
+            route_id = registered.route_id;
+            logical_device_id = Some(row.name);
+            persisted_display_name = Some(registered.display_name);
+        }
+        Ok(None) => {}
+        Err(mismatch) => {
+            return Ok(Reply::payload(error_ack(&format!(
+                "Registration failed: {mismatch}"
+            ))));
         }
     }
 

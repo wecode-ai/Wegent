@@ -23,9 +23,6 @@ import { KnowledgeAuthorizationObjects } from '@/features/knowledge/permission/c
 
 interface KnowledgeAccessDialogProps {
   restoreFocus?: () => void
-  resourceCreated?: boolean
-  refreshError?: string | null
-  onRetryRefresh?: () => void
   kbId: number
   kbNamespace?: string
   canManage?: boolean
@@ -132,33 +129,12 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
       >
         <DialogHeader className="pr-10 text-left">
           <DialogTitle className="text-lg font-semibold">
-            {t(
-              props.resourceCreated
-                ? 'document.creation.created'
-                : 'document.navigation.permissionDetails'
-            )}
+            {t('document.navigation.permissionDetails')}
           </DialogTitle>
         </DialogHeader>
         <DialogDescription className="text-xs leading-relaxed text-text-muted">
-          {t(
-            props.resourceCreated
-              ? 'document.creation.createdDescription'
-              : 'document.navigation.permissionDescription'
-          )}
+          {t('document.navigation.permissionDescription')}
         </DialogDescription>
-        {props.refreshError && (
-          <div role="alert">
-            {t('document.creation.refreshFailed')}
-            <Button
-              variant="outline"
-              className="min-h-11 min-w-11"
-              data-testid="retry-created-list"
-              onClick={props.onRetryRefresh}
-            >
-              {t('document.navigation.retry')}
-            </Button>
-          </div>
-        )}
         {(failed || blocked) && (
           <div role="alert">
             {t(
@@ -193,16 +169,6 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
               changed()
             }}
           />
-        )}
-        {props.resourceCreated && (
-          <Button
-            variant="outline"
-            className="min-h-11 min-w-11"
-            data-testid="finish-created-authorization"
-            onClick={props.onClose}
-          >
-            {t('document.creation.finishLater')}
-          </Button>
         )}
       </DialogContent>
     </Dialog>
