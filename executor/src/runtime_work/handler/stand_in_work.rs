@@ -116,6 +116,26 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         };
         if origin["type"] == "stand_in_task" {
+            if origin["roleDelegation"].is_object() {
+                let role_id = origin["standInId"].as_str();
+                let store =
+                    LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+                let settings = store
+                    .personal_stand_in(user, &self.device_id)
+                    .map_err(settings_error)?;
+                if role_id.is_none()
+                    || !settings["lifecycle"]["status"].is_null()
+                    || !stand_in_identities(&settings)
+                        .iter()
+                        .any(|role| role["id"].as_str() == role_id && role["enabled"] == true)
+                {
+                    return Err(AppIpcError::new(
+                        "role_unavailable",
+                        "The delegated role is no longer enabled",
+                    ));
+                }
+                request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(true);
+            }
             if request
                 .extra
                 .get("standInDelegation")

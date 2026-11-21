@@ -41,6 +41,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "standInOwnerRequest",
     "standInResult",
     "standInResultReceipt",
+    "standInRoleConsumedResults",
     "standInIssueWakeups",
     "startupFailure",
     "standInPublicTurn",

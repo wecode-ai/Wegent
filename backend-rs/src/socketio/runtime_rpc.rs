@@ -37,6 +37,8 @@ use crate::runtime_work::{
 };
 use crate::state::AppState;
 
+use super::runtime_rpc_policy::{self, STAND_IN_ROLE_START_METHOD, TaskGrant};
+
 /// `DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS`.
 const DEFAULT_TIMEOUT_SECONDS: i64 = 30;
 /// `MAX_RUNTIME_RPC_TIMEOUT_SECONDS`.
@@ -237,7 +239,7 @@ pub(crate) async fn call(
     let normalized_timeout = normalize_timeout(timeout_seconds);
     let route = resolve_route(app, user_id, submitted_device_id).await?;
 
-    let grant = super::runtime_rpc_policy::authorize(&route, method, allow_app_device_task_reading)
+    let grant = runtime_rpc_policy::authorize(&route, method, allow_app_device_task_reading)
         .ok_or_else(|| {
             CallFailure::Rpc(rpc_route_error(
                 "remote_control_disabled",
@@ -246,6 +248,12 @@ pub(crate) async fn call(
                 &route.logical_device_id,
             ))
         })?;
+    if grant == TaskGrant::StandInRole
+        && let Some(source_route) = role_task_source(method, user_id, &payload)
+            .map_err(|message| CallFailure::Rpc(rpc_error("permission_denied", message)))?
+    {
+        resolve_route(app, user_id, source_route).await?;
+    }
 
     let payload = if method == RUNTIME_TASK_CREATE_METHOD {
         negotiate_runtime_task_create_payload(payload, route.online.get("runtime_features"))
@@ -281,8 +289,10 @@ pub(crate) async fn call(
 
     let mut request = runtime_request_envelope(method, payload, user_id, &route.runtime_device_id)
         .map_err(|message| CallFailure::Rpc(rpc_error("bad_request", message)))?;
-    if grant == super::runtime_rpc_policy::TaskGrant::ProjectRead {
-        request["appTaskAccessScope"] = json!("project-session");
+    match grant {
+        TaskGrant::ProjectRead => request["appTaskAccessScope"] = json!("project-session"),
+        TaskGrant::StandInRole => request["appTaskAccessScope"] = json!("stand-in-role-task"),
+        TaskGrant::Unscoped => {}
     }
     let ack = call_runtime_method_envelope(
         app,
@@ -316,6 +326,27 @@ pub(crate) async fn call(
         route.response_device_id(),
         &route.logical_device_id,
     )))
+}
+
+fn role_task_source<'a>(
+    method: &str,
+    user_id: i64,
+    payload: &'a Value,
+) -> Result<Option<&'a str>, &'static str> {
+    if payload["userId"].as_i64() != Some(user_id) {
+        return Err("The role task owner must match the connected account");
+    }
+    if !matches!(
+        method,
+        STAND_IN_ROLE_START_METHOD | "runtime.stand_in.role_task.accept_cancel"
+    ) {
+        return Ok(None);
+    }
+    payload["intent"]["sourceRoute"]
+        .as_str()
+        .filter(|source| !source.trim().is_empty())
+        .map(Some)
+        .ok_or("A current owned source device is required")
 }
 
 fn runtime_request_envelope(

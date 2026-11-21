@@ -4,7 +4,9 @@ import { describe, expect, test, vi } from 'vitest'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
 import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
-import { useRuntimeTaskReminders } from './runtimeTaskReminders'
+import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
+import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
+import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 
 vi.mock('@/desktop/windowFocus', () => ({
@@ -84,6 +86,53 @@ function notificationItem(deviceId: string): RuntimeTaskReminderItem {
     projectName: 'Project',
   }
 }
+
+test('keeps memory review results silent with in-app and system reminders enabled', async () => {
+  const send = vi.mocked(sendSystemNotification)
+  send.mockClear()
+  const store = new RuntimeTaskLifecycleStore('memory-review-reminder-test')
+  const item = notificationItem('device-1')
+  const scheduled = {
+    ...item.task,
+    runtimeHandle: { origin: { type: 'stand_in_schedule' } },
+  }
+  const review = {
+    ...scheduled,
+    taskId: 'memory-review',
+    runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+  }
+  const work = {
+    projects: [],
+    chats: [{ ...item.workspace, tasks: [review, scheduled] }],
+    totalTasks: 2,
+  }
+  const items = collectRuntimeTaskReminderItems(work)
+  store.syncRuntimeWork(work)
+  for (const { address } of items) {
+    store.executorStarted(address)
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.executorSettled(address)
+  }
+  expect(store.getSnapshot().unreadTaskKeys).toContain(items[0].key)
+  const source = createRuntimeTaskReminderSource(store)
+  const stop = source.subscribe(() => {}, {
+    items,
+    listedItems: items,
+    unreadMessageCounts: new Map(),
+    notificationPreferences: {
+      ...defaultNotificationPreferences,
+      stand_in: { in_app: true, system: true, im: true },
+    },
+  })
+  try {
+    expect([...source.getSnapshot()]).toEqual([items[1].key])
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    expect(send.mock.calls[0]?.[0].address?.taskId).toBe(scheduled.taskId)
+  } finally {
+    stop()
+  }
+})
 
 test('notifies once when an unread completion survives a device alias migration', async () => {
   localStorage.setItem(

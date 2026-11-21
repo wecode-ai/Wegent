@@ -40,6 +40,18 @@ The desktop prompt above the composer offers **Notification settings**, **Don't 
 
 The number beside **My Stand-in** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. Each new message triggers at most one desktop notification. Clicking opens the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
 
+## Delegate work to a specialist role
+
+In **My assistant**, name a role when you hand off work. When you leave the choice open, the assistant can assign work automatically if the responsibilities clearly match. If the choice affects the outcome and several roles fit, the assistant asks first. One request can be split across roles, and a specialist can hand off a part that calls for different expertise.
+
+Expand **Delegated tasks** at the bottom of the original conversation to see roles, progress, and errors. The card prioritizes work that is still active. You can answer supported questions right in the card. Open a task to read its independent conversation and handle native approval prompts. Each role uses its saved model and working directory, and its long-running chat remains available. Results flow back to the assigning assistant, which summarizes them in the original conversation.
+
+Cross-device delegation uses the role's configured execution device on the same Wework account. While that device is offline, the task shows **Waiting for device**. You can open the task from the original conversation once the device is online and accepts it.
+
+Work that depends on earlier results shows **Waiting for prerequisites**. When the prerequisite succeeds, its result goes to the next role. A failed or cancelled prerequisite leaves the dependent task marked **A prerequisite did not complete**. Choose **Retry** beside a failed branch to run it again in the same task. Other branches keep their progress and results.
+
+Choose **Cancel branch** to stop one branch and its subtasks while the other branches continue. Choose **Cancel delegation** to stop every unfinished branch in the request. Completed results remain available. If the execution device is offline, the card shows **Waiting for device to confirm cancellation**.
+
 <a id="role-execution-device"></a>
 
 ## Individual role-profile operations
@@ -131,6 +143,8 @@ Memory search uses response-size-bounded pages. Oversized records are read in ch
 Pausing new-work intake for the stand-in or a role does not revoke saved source grants; those sources remain available for memory. Pause the memory consolidation arrangement to stop consolidation, or remove a source grant to revoke access. Automatic consolidation exposes only source- and run-validated memory reads, saves and progress tools, never Shell or external writes.
 
 Memory consolidation tasks are hidden from the left task sidebar, including running and finished records. Open **My stand-in → Settings → Connections → Calendar → 助理记忆整理** to view run history and open the original task. Hiding these tasks does not affect background consolidation or saved history.
+
+Memory consolidation runs silently. Results are available in the calendar, and the task sends no in-app, system, or connected IM notifications.
 
 After the primary stand-in is enabled, its execution device provisions a **助理记忆整理** (memory consolidation) arrangement once, checking every six hours by default. Open **My stand-in → Settings → Connections → Calendar → 助理记忆整理** to inspect its schedule and run history, pause, edit or delete it. Background provisioning does not recreate a paused or deleted arrangement. Consolidation uses an independent conversation, leaving the current chat free; the execution device and model must be available. Open the original task from its run history to inspect the result. Consolidation does not automatically start a primary conversation with ordinary tool permissions just to report completion.
 

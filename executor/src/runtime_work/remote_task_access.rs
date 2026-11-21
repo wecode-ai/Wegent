@@ -121,6 +121,17 @@ impl RemoteTaskAccess {
             || (access_scope == Some("project-session") && project_method)
             || (access_scope == Some("stand-in-conversation")
                 && method == "runtime.stand_in.conversation")
+            || (access_scope == Some("stand-in-role-task")
+                && matches!(
+                    method,
+                    "runtime.stand_in.role_task.start"
+                        | "runtime.stand_in.role_task.verify"
+                        | "runtime.stand_in.role_task.status"
+                        | "runtime.stand_in.role_task.branches"
+                        | "runtime.stand_in.role_task.cancel"
+                        | "runtime.stand_in.role_task.retry"
+                        | "runtime.stand_in.role_task.accept_cancel"
+                ))
             || (TASK_METHODS.contains(&method) && self.enabled())
         {
             return Ok(());

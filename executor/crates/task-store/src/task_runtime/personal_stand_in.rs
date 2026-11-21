@@ -582,6 +582,54 @@ impl LocalTaskStore {
         Ok(saved)
     }
 
+    /// Update a routing reference without applying intake changes to local identities.
+    pub fn save_stand_in_delegation_route(
+        &self,
+        user: i64,
+        device: &str,
+        update: &Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        let invalid = || TaskRuntimeError::Invalid("invalid specialist route".into());
+        let id = update["roleId"]
+            .as_str()
+            .filter(|id| !id.is_empty() && *id != "@primary")
+            .ok_or_else(invalid)?;
+        let route = update.get("route").ok_or_else(invalid)?;
+        if !route.is_null()
+            && (route["id"] != id
+                || !route["name"].is_string()
+                || !route["prompt"].is_string()
+                || !route["enabled"].is_boolean()
+                || !route["executionDeviceId"]
+                    .as_str()
+                    .is_some_and(|target| !target.is_empty() && target != device))
+        {
+            return Err(invalid());
+        }
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (mut settings, _) = personal_snapshot(&connection, user, device)?;
+        if settings["version"] != update["version"] {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        let mut routes = settings["delegationRoutes"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        routes.retain(|route| route["id"] != id);
+        if !route.is_null() {
+            routes.push(json!({
+                "id":id, "name":route["name"], "prompt":route["prompt"],
+                "enabled":route["enabled"], "executionDeviceId":route["executionDeviceId"],
+            }));
+        }
+        settings["delegationRoutes"] = json!(routes);
+        settings["version"] = json!(settings["version"].as_i64().unwrap_or(0) + 1);
+        write_personal(&connection, &settings)?;
+        connection.commit()?;
+        Ok(settings)
+    }
+
     pub fn validate_personal_stand_in_settings(
         &self,
         user: i64,
@@ -643,6 +691,11 @@ impl LocalTaskStore {
         super::stand_in_lifecycle::preserve_stopped_import(&previous, &mut value)?;
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
+        }
+        if let Some(routes) = previous.get("delegationRoutes") {
+            value["delegationRoutes"] = routes.clone();
+        } else if let Some(fields) = value.as_object_mut() {
+            fields.remove("delegationRoutes");
         }
         if value["primary"].is_object() {
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);

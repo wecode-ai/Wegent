@@ -364,6 +364,9 @@ async fn notify_runtime_event(
     let Some(payload) = envelope.get("payload").and_then(Value::as_object) else {
         return;
     };
+    if is_stand_in_memory_review(payload) {
+        return;
+    }
     if runtime_questions::question(payload).is_some() {
         let state = state.clone();
         let device_id = device_id.to_owned();
@@ -394,6 +397,19 @@ mod runtime_im_notification;
 
 #[path = "device_runtime_questions.rs"]
 mod runtime_questions;
+
+fn is_stand_in_memory_review(payload: &Map<String, Value>) -> bool {
+    if payload.get("conversationContext").and_then(Value::as_str) == Some("stand_in_memory_review")
+    {
+        return true;
+    }
+    // Older executors include the persisted task origin in terminal snapshots.
+    let origin = payload
+        .get("data")
+        .and_then(|data| data.pointer("/task/runtimeHandle/origin"))
+        .unwrap_or(&Value::Null);
+    origin["type"] == "stand_in_schedule" && origin["memoryReview"] == true
+}
 
 /// `RUNTIME_VALUE_ORIGINS`: the `valueOrigin` values the runtime terminal event
 /// keeps.
@@ -771,6 +787,31 @@ mod tests {
 
     fn plan(value: Value) -> Option<NotificationPlan> {
         notification_plan(273, "device-a", value.as_object().expect("payload object"))
+    }
+
+    #[test]
+    fn memory_review_is_silent_with_event_context_or_an_existing_task_snapshot() {
+        for (value, silent) in [
+            (
+                json!({"conversationContext": "stand_in_memory_review"}),
+                true,
+            ),
+            (
+                json!({"data": {"task": {"runtimeHandle": {"origin": {
+                    "type": "stand_in_schedule", "memoryReview": true
+                }}}}}),
+                true,
+            ),
+            (
+                json!({"data": {"task": {"runtimeHandle": {"origin": {"type": "stand_in_schedule"}}}}}),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                is_stand_in_memory_review(value.as_object().unwrap()),
+                silent
+            );
+        }
     }
 
     #[test]
