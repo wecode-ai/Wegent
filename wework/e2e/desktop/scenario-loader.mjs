@@ -1,3 +1,5 @@
+import { instrumentDesktopCpuBenchmark } from './desktop-cpu-benchmark.mjs'
+
 export async function loadDesktopScenario(moduleUrl, options) {
   if (!moduleUrl) return null
 
@@ -6,5 +8,7 @@ export async function loadDesktopScenario(moduleUrl, options) {
     throw new Error(`Desktop scenario module must export createDesktopScenario: ${moduleUrl}`)
   }
 
-  return scenarioModule.createDesktopScenario(options)
+  const scenario = await scenarioModule.createDesktopScenario(options)
+  instrumentDesktopCpuBenchmark(scenario, options.checkpoint)
+  return scenario
 }
