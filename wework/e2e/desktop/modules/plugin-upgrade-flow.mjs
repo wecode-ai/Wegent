@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { access, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { fetchJson, resultDir } from './shared.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS, fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 import { cleanupPluginUpgradeFixtures } from './plugin-upgrade-fixture-cleanup.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
@@ -142,7 +142,9 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     updatePolicy: 'manual',
   })
   await control.command('click', '[data-testid="plugins-button"]')
-  await control.command('click', '[data-testid="plugins-manage-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="plugins-manage-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', `[data-testid="installed-plugin-row-${managementPluginId}"]`, {
     timeoutMs: PLUGIN_SYNC_TIMEOUT_MS,
   })
