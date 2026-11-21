@@ -47,7 +47,9 @@ pub(super) async fn await_acknowledgement(
         if !versioned || attempt == MAX_ROUTE_CHANGES {
             return Err(RpcError::Closed);
         }
-        let Some(next) = resolve_reconnected_route(state, user_id, device_id, route).await else {
+        let Some(next) =
+            resolve_reconnected_route(state, user_id, device_id, route, &socket_id).await
+        else {
             return Err(RpcError::Closed);
         };
         if !supports_plugin_sync_v2(next.online.get("runtime_features")) {
@@ -138,18 +140,54 @@ pub(super) fn route_changed(online: Option<&Value>, socket_id: &str) -> bool {
     matches!(reported, Some(reported) if !reported.is_empty() && reported != socket_id)
 }
 
-/// The reconnect's route: re-resolve the owned device; `resolve_online_route`
-/// already enforces the Runtime-instance guard, so only a genuinely different
-/// socket survives.
+/// Re-resolve the owned route while keeping the dispatch bound to its original Runtime.
 async fn resolve_reconnected_route(
     state: &AppState,
     user_id: i64,
     device_id: &str,
-    previous: &OnlineRoute,
+    initial: &OnlineRoute,
+    socket_id: &str,
 ) -> Option<OnlineRoute> {
     match resolve_online_route(state, user_id, device_id).await.ok()? {
-        OnlineRouteResolution::Ready(next) if next.socket_id != previous.socket_id => Some(next),
+        OnlineRouteResolution::Ready(next) if can_retry_on_route(initial, socket_id, &next) => {
+            Some(next)
+        }
         _ => None,
+    }
+}
+
+fn can_retry_on_route(initial: &OnlineRoute, socket_id: &str, next: &OnlineRoute) -> bool {
+    next.runtime_device_id == initial.runtime_device_id
+        && next.runtime_instance_id == initial.runtime_instance_id
+        && next.socket_id != socket_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_must_keep_the_initial_runtime_and_change_the_current_socket() {
+        let route = |device: &str, instance: Option<&str>, socket: &str| OnlineRoute {
+            runtime_device_id: device.to_owned(),
+            runtime_instance_id: instance.map(str::to_owned),
+            socket_id: socket.to_owned(),
+            online: Value::Null,
+        };
+        let initial = route("device", Some("runtime"), "first");
+        assert!(can_retry_on_route(
+            &initial,
+            "second",
+            &route("device", Some("runtime"), "third")
+        ));
+        for next in [
+            route("device", Some("runtime"), "second"),
+            route("other-device", Some("runtime"), "third"),
+            route("device", Some("replacement"), "third"),
+            route("device", None, "third"),
+        ] {
+            assert!(!can_retry_on_route(&initial, "second", &next));
+        }
     }
 }
 

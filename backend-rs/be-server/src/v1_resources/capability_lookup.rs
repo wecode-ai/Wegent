@@ -48,9 +48,8 @@ pub struct CapabilityLookup<'a> {
     /// `names`: pending/resolved lookup names per kind (sorted like the
     /// source's `sorted(names)` before each batch).
     names: HashMap<String, BTreeSet<String>>,
-    /// `_direct`: per-scope name -> resolved row (or `None` for a recorded
-    /// miss).
-    direct: HashMap<DirectScope, HashMap<String, Option<KindRow>>>,
+    /// `_direct`: per-kind and scope name -> resolved row or recorded miss.
+    direct: HashMap<(String, DirectScope), HashMap<String, Option<KindRow>>>,
     /// `_references[kind][namespace]`: target-visible name -> source row.
     references: HashMap<(String, String), HashMap<String, KindRow>>,
     /// `_model_reference_sources`: per-namespace Model sources, in listing
@@ -250,12 +249,13 @@ impl<'a> CapabilityLookup<'a> {
         filters: String,
         tail: Vec<StatementArg>,
     ) -> Result<Option<KindRow>, FastApiError> {
+        let key = (kind.to_owned(), scope);
         self.names
             .entry(kind.to_string())
             .or_default()
             .insert(name.to_string());
         let pending: Vec<String> = {
-            let index = self.direct.get(&scope);
+            let index = self.direct.get(&key);
             self.names[kind]
                 .iter()
                 .filter(|candidate| index.is_none_or(|index| !index.contains_key(*candidate)))
@@ -268,7 +268,7 @@ impl<'a> CapabilityLookup<'a> {
             let rows = named_kind_rows(&self.state.mysql, &statement, arguments)
                 .await
                 .map_err(internal)?;
-            let index = self.direct.entry(scope.clone()).or_default();
+            let index = self.direct.entry(key.clone()).or_default();
             for candidate in &pending {
                 index.entry(candidate.clone()).or_insert(None);
             }
@@ -289,7 +289,7 @@ impl<'a> CapabilityLookup<'a> {
         }
         Ok(self
             .direct
-            .get(&scope)
+            .get(&key)
             .and_then(|index| index.get(name))
             .cloned()
             .flatten())

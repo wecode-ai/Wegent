@@ -475,6 +475,7 @@ async fn response_values_with_execution(
         .flat_map(history_user_ids)
         .collect();
     ids.extend(item.created_by_user_id.filter(|id| *id > 0));
+    ids.extend(item.assignee_user_id.filter(|id| *id != 0));
     ids.sort_unstable();
     ids.dedup();
     let context = SharedContext {

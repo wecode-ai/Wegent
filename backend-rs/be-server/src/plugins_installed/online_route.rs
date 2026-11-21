@@ -20,6 +20,8 @@ pub(crate) struct OnlineRoute {
     /// Record-scoped route the executor registry addresses
     /// (`runtime_route.runtime_device_route_id`).
     pub runtime_device_id: String,
+    /// Runtime installation pinned by the resolved Device record.
+    pub runtime_instance_id: Option<String>,
     /// Current socket from the online document.
     pub socket_id: String,
     /// The online document the route was resolved from.
@@ -81,6 +83,7 @@ pub(super) async fn resolve_online_route(
     }
     Ok(OnlineRouteResolution::Ready(OnlineRoute {
         runtime_device_id,
+        runtime_instance_id: runtime_instance_id(&device).map(str::to_owned),
         socket_id: socket_id.to_owned(),
         online,
     }))
@@ -130,16 +133,19 @@ fn runtime_device_route_id(device: &DeviceKindRow) -> String {
         .unwrap_or_else(|| device.name.trim().to_string())
 }
 
-/// `RuntimeRouteResolver.resolve`'s stale-instance guard.
-fn runtime_instance_matches(device: &DeviceKindRow, online: &Value) -> bool {
-    let expected = device
+fn runtime_instance_id(device: &DeviceKindRow) -> Option<&str> {
+    device
         .json
         .get("spec")
         .and_then(|spec| spec.get("runtimeInstanceId"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|id| !id.is_empty());
-    let Some(expected) = expected else {
+        .filter(|id| !id.is_empty())
+}
+
+/// `RuntimeRouteResolver.resolve`'s stale-instance guard.
+fn runtime_instance_matches(device: &DeviceKindRow, online: &Value) -> bool {
+    let Some(expected) = runtime_instance_id(device) else {
         return true;
     };
     let reported = online
