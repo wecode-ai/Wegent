@@ -1,4 +1,5 @@
 import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
+import { createBackgroundWindowRefreshChecks } from '../modules/background-window-refresh.mjs'
 import { createComposerLayoutChecks } from '../modules/streaming-text-composer-layout.mjs'
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
 import { createRichTaskSwitchChecks } from '../modules/streaming-text-rich-task-switch.mjs'
@@ -87,6 +88,7 @@ export function createDesktopScenario({
 }) {
   const completion = createStreamingCompletionChecks({ resultDir, uiTimeoutMs })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
+  const backgroundWindowRefresh = createBackgroundWindowRefreshChecks({ uiTimeoutMs })
   const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
   const richTaskSwitch = createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqliteHome })
   const composerLayout = createComposerLayoutChecks({ workspacePath, resultDir, uiTimeoutMs })
@@ -182,6 +184,7 @@ export function createDesktopScenario({
 
   return {
     cleanup() {
+      backgroundWindowRefresh.cleanup()
       completion.cleanup()
       guidanceOrder.cleanup()
     },
@@ -247,6 +250,7 @@ export function createDesktopScenario({
       const body = await readJson(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `wework-streaming-text-${Date.now()}`
+      if (await backgroundWindowRefresh.handleModelRequest(body, response, responseId)) return true
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
       if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
       if (await composerLayout.handleModelRequest(body, response, responseId)) return true
@@ -582,6 +586,7 @@ export function createDesktopScenario({
         [
           'streaming-conversation-switching',
           async control => {
+            await backgroundWindowRefresh.verify(control)
             await composerLayout.verify(control)
             await conversationSwitching.verify(control)
             await conversationScrollbar.verify(control)

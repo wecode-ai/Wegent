@@ -2950,6 +2950,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'blurMainWindow':
       await invokeDesktopHost('e2e.blurMainWindow')
       return ''
+    case 'minimizeMainWindow':
+      await invokeDesktopHost('window.minimize')
+      return ''
+    case 'getWorkbenchWindowActivity':
+      return String(await window.weworkElectronLifecycle?.getWorkbenchActivity?.())
     case 'pressWindowKey':
       await invokeDesktopHost('e2e.pressKey', {
         windowLabel: getDesktopWindowLabel(),

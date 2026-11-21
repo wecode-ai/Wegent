@@ -1158,6 +1158,32 @@ function scheduleCoreDshRestart(): void {
   }, 100)
 }
 
+const presentedWorkbenchWindows = new WeakSet<BrowserWindow>()
+
+function workbenchWindowActivity(window: BrowserWindow) {
+  // The macOS headless runner renders an initially unshown window for DOM assertions.
+  if (keepE2EWindowInBackground && window === mainWindow && !presentedWorkbenchWindows.has(window))
+    return 'foreground'
+  if (!window.isVisible() || window.isMinimized()) return 'hidden'
+  return window.isFocused() ? 'foreground' : 'background'
+}
+
+function observeWorkbenchWindowActivity(window: BrowserWindow) {
+  const notify = () => {
+    if (!window.webContents.isDestroyed())
+      window.webContents.send('window:workbench-activity', workbenchWindowActivity(window))
+  }
+  window.on('focus', notify)
+  window.on('blur', notify)
+  window.on('show', () => {
+    presentedWorkbenchWindows.add(window)
+    notify()
+  })
+  window.on('hide', notify)
+  window.on('minimize', notify)
+  window.on('restore', notify)
+}
+
 async function openWorkspaceWindow(input: {
   label: string
   route: string
@@ -1196,6 +1222,7 @@ async function openWorkspaceWindow(input: {
   workspaceWindows.set(input.label, workspaceWindow)
   secureDshContents(workspaceWindow.webContents, dshUrl)
   registerDshWindowLabel(workspaceWindow.webContents, input.label)
+  observeWorkbenchWindowActivity(workspaceWindow)
   workspaceWindow.on('closed', () => {
     if (workspaceWindows.get(input.label) === workspaceWindow) {
       workspaceWindows.delete(input.label)
@@ -1295,6 +1322,7 @@ async function createAuxiliaryWindow(
   secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
   if (!isSystemDrag) {
+    observeWorkbenchWindowActivity(auxiliaryWindow)
     auxiliaryWindow.webContents.on('before-input-event', (event, input) => {
       handlePopoutWindowInput(event, input, () => auxiliaryWindow.hide())
     })
@@ -1542,6 +1570,7 @@ async function createWindow(
     },
   })
   installE2ERendererCpuProfiling(mainWindow.webContents)
+  observeWorkbenchWindowActivity(mainWindow)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     ...startupLayout.bounds,
@@ -2010,6 +2039,12 @@ async function startupDiagnosticsText(): Promise<string> {
 }
 
 function installIpc(): void {
+  ipcMain.handle('window:get-workbench-activity', event => {
+    if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame)
+      throw new Error('Workbench activity requires a Wework main frame')
+    const window = BrowserWindow.fromWebContents(event.sender)
+    return window ? workbenchWindowActivity(window) : 'hidden'
+  })
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
     const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
     if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
