@@ -41,7 +41,7 @@ type PluginSyncTarget = Pick<
 interface PluginAutoUpdateDependencies {
   updateBatch: () => Promise<PluginAutoUpdateBatchResponse>
   syncPlugin: (installedPluginId: number) => Promise<PluginDeviceSyncResponse>
-  pendingInstalls?: PluginSyncTarget[]
+  readPendingInstalls?: () => Promise<PluginSyncTarget[]>
   onProgress?: (progress: PluginAutoUpdateProgress) => void
 }
 
@@ -102,7 +102,7 @@ function hasFailedReleaseGap(item: PluginUpdateState): boolean {
 export async function runPluginAutoUpdate({
   updateBatch,
   syncPlugin,
-  pendingInstalls = [],
+  readPendingInstalls,
   onProgress,
 }: PluginAutoUpdateDependencies): Promise<PluginAutoUpdateResult> {
   const attempt = beginOperation('plugin.auto_update')
@@ -110,11 +110,11 @@ export async function runPluginAutoUpdate({
     const result = await runPluginAutoUpdatePass({
       updateBatch,
       syncPlugin,
-      pendingInstalls,
+      readPendingInstalls,
       onProgress,
     })
     if (result.failedCount > 0) attempt.fail('confirm')
-    else if (result.updatedCount > 0 || pendingInstalls.length > 0) attempt.succeed()
+    else if (result.updatedCount > 0 || readPendingInstalls) attempt.succeed()
     else attempt.cancel()
     return result
   } catch (error) {
@@ -126,7 +126,7 @@ export async function runPluginAutoUpdate({
 async function runPluginAutoUpdatePass({
   updateBatch,
   syncPlugin,
-  pendingInstalls = [],
+  readPendingInstalls,
   onProgress,
 }: PluginAutoUpdateDependencies): Promise<PluginAutoUpdateResult> {
   let processedCount = 0
@@ -138,8 +138,8 @@ async function runPluginAutoUpdatePass({
       if (batch.remainingCount > 0) {
         throw new PluginAutoUpdateConfirmationError('Plugin auto-update made no progress')
       }
-      if (processedCount === 0) {
-        for (const item of pendingInstalls) {
+      if (processedCount === 0 && readPendingInstalls) {
+        for (const item of await readPendingInstalls()) {
           const failure = await syncPluginUpdate(item, syncPlugin)
           if (failure) failures.push(failure)
         }
@@ -198,7 +198,6 @@ export async function runCurrentDevicePluginAutoUpdate({
     if (local.partial) {
       throw new Error('Plugin auto-update requires a complete local plugin inventory')
     }
-    const marketplace = await listMarketplacePlugins(deviceId).catch(() => null)
     let deviceSyncPerformed = false
     const updateResult = await runPluginAutoUpdate({
       updateBatch,
@@ -206,7 +205,10 @@ export async function runCurrentDevicePluginAutoUpdate({
         deviceSyncPerformed = true
         return syncPlugin(deviceId, installedPluginId)
       },
-      pendingInstalls: pendingPluginSyncTargets(marketplace?.items ?? []),
+      readPendingInstalls: async () => {
+        const marketplace = await listMarketplacePlugins(deviceId).catch(() => null)
+        return pendingPluginSyncTargets(marketplace?.items ?? [])
+      },
     })
     return { deviceId, ...updateResult, deviceSyncPerformed }
   } finally {
@@ -239,7 +241,9 @@ function pluginSyncFailure(
 
 export function pendingPluginSyncTargets(items: PluginMarketplaceItem[]): PluginSyncTarget[] {
   return items.flatMap(item => {
-    if (!marketplaceItemNeedsDeviceSync(item) && !marketplaceItemNeedsPluginAutoUpdate(item)) {
+    const retryRelease =
+      hasFailedReleaseGap(item) && !marketplaceItemHasPausedPluginAutoUpdate(item)
+    if (!marketplaceItemNeedsDeviceSync(item) && !retryRelease) {
       return []
     }
     const installedPluginId = Number(item.installedPluginId)

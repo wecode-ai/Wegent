@@ -70,7 +70,12 @@ export function updatePluginCatalogDevice(ctx: PluginCatalogContext) {
       requireScope()
       return ctx.input.pluginApi.syncInstalledPluginToDevice(installedPluginId, deviceId)
     },
-    pendingInstalls: pendingPluginSyncTargets(ctx.catalog.items),
+    readPendingInstalls: async () => {
+      requireScope()
+      const marketplace = await ctx.input.pluginApi.listMarketplacePlugins({ deviceId })
+      requireScope()
+      return pendingPluginSyncTargets(marketplace.items)
+    },
     onProgress: ({ processedCount, remainingCount }) => {
       if (!scopeIsCurrent() || ctx.state.currentDeviceId !== deviceId) return
       ctx.publish({
