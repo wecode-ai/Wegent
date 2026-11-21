@@ -181,7 +181,7 @@ export function EnvironmentInfoPopover({
                   type="button"
                   data-testid="environment-todo-binding-button"
                   onClick={onManageTodo}
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-muted"
                 >
                   <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                     <Link2 className="h-[18px] w-[18px]" />
@@ -195,7 +195,7 @@ export function EnvironmentInfoPopover({
                   type="button"
                   data-testid="environment-delivery-button"
                   onClick={onDeliver}
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-muted"
                 >
                   <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                     <GitBranch className="h-[18px] w-[18px]" />

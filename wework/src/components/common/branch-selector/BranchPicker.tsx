@@ -138,7 +138,7 @@ export function BranchPicker({
         </>
       }
       appearance={composer ? 'composer' : 'plain'}
-      className={composer ? 'w-full' : 'h-9 w-full gap-3 rounded-md px-0 hover:bg-hover'}
+      className={composer ? 'w-full' : 'h-9 w-full gap-3 rounded-md px-0 hover:bg-muted'}
       open={open}
       onOpenChange={changeOpen}
       query={query}
