@@ -1,0 +1,16 @@
+{
+  "order": 146225,
+  "scenario": "./scenarios/conversation-event-control-context.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 107225, "shard": 3, "position": 16225 } },
+  "paths": [
+    "executor/src/agents/codex/thread_action.rs",
+    "executor/src/task_runtime/mcp_http.rs",
+    "executor/src/runtime_work/handler/goal_model_route.rs",
+    "executor/src/runtime_work/handler/control/connection_events/**",
+    "wework/e2e/desktop/modules/conversation-event-model.mjs",
+    "wework/e2e/desktop/scenarios/conversation-event-control-context.scenario.mjs",
+    "wework/e2e/desktop/scenarios/conversation-event-wakeup.scenario.mjs",
+    "wework/e2e/desktop/fixtures/conversation-events-provider.mjs"
+  ]
+}

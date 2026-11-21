@@ -1,61 +1,60 @@
-import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  pointerWithin,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type CollisionDetection,
-  type DragEndEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core'
 import type { ProjectBoardGroupBy } from './useProjectBoardState'
 
+export interface ProjectBoardDragMetadata {
+  itemId?: string
+  columnKey?: string
+  groupBy?: ProjectBoardGroupBy
+}
+export interface ProjectBoardDragItem extends ProjectBoardDragMetadata {
+  id: string
+}
+export interface ProjectBoardDropInput {
+  source: ProjectBoardDragItem
+  target: ProjectBoardDragItem | null
+}
 const rowColumnPrefix = 'todo-row-column:'
-
-export function projectBoardRowDropId(parentId: string | null, columnKey: string): string {
+export function projectBoardRowDropId(
+  parentId: string | null,
+  columnKey: string,
+): string {
   return `${rowColumnPrefix}${JSON.stringify([parentId, columnKey])}`
 }
-
-function rowDropTarget(id: unknown): { targetParentId: string | null; columnKey: string } | null {
+function rowDropTarget(
+  id: unknown,
+): { targetParentId: string | null; columnKey: string } | null {
   if (typeof id !== 'string' || !id.startsWith(rowColumnPrefix)) return null
   try {
     const value: unknown = JSON.parse(id.slice(rowColumnPrefix.length))
     if (!Array.isArray(value) || value.length !== 2) return null
     const [parentId, columnKey] = value
-    return (parentId === null || typeof parentId === 'string') && typeof columnKey === 'string'
+    return (parentId === null || typeof parentId === 'string') &&
+      typeof columnKey === 'string'
       ? { targetParentId: parentId, columnKey }
       : null
   } catch {
     return null
   }
 }
-
-export const projectBoardDnd = { DndContext, DragOverlay, useDroppable }
-
-export function useProjectBoardSensors() {
-  return useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
-}
-
-export function projectBoardDragItemId(active: DragStartEvent['active']): string | null {
-  const itemId = active.data.current?.itemId
+export function projectBoardDragItemId(
+  active: ProjectBoardDragItem,
+): string | null {
+  const itemId = active.itemId
   return typeof itemId === 'string' ? itemId : null
 }
-
-export function projectBoardDrop(event: Pick<DragEndEvent, 'active' | 'over'>) {
-  const activeData = event.active.data.current
-  const overData = event.over?.data.current
-  const beforeItemId = typeof overData?.itemId === 'string' ? overData.itemId : null
-  const id = event.over?.id
+export function projectBoardDrop(event: ProjectBoardDropInput) {
+  const activeData = event.source
+  const overData = event.target
+  const beforeItemId =
+    typeof overData?.itemId === 'string' ? overData.itemId : null
+  const id = event.target?.id
   const rowTarget = rowDropTarget(id)
   return {
-    activeItemId: projectBoardDragItemId(event.active),
+    activeItemId: projectBoardDragItemId(event.source),
     beforeItemId,
-    sourceColumnKey: typeof activeData?.columnKey === 'string' ? activeData.columnKey : undefined,
-    groupBy: activeData?.groupBy as ProjectBoardGroupBy | undefined,
+    sourceColumnKey: activeData?.columnKey,
+    groupBy: activeData?.groupBy,
     columnDropKey: beforeItemId
-      ? ((overData?.columnKey as string | undefined) ?? null)
+      ? (overData?.columnKey ?? null)
       : rowTarget
         ? rowTarget.columnKey
         : typeof id === 'string' && id.startsWith('todo-column:')
@@ -65,9 +64,4 @@ export function projectBoardDrop(event: Pick<DragEndEvent, 'active' | 'over'>) {
   }
 }
 
-/** Card insertion takes precedence over its containing lane's append target. */
-export const projectBoardCollisionDetection: CollisionDetection = args => {
-  const collisions = pointerWithin(args)
-  const card = collisions.find(collision => String(collision.id).startsWith('todo-card:'))
-  return card ? [card] : collisions.slice(0, 1)
-}
+export type ProjectBoardDrop = ReturnType<typeof projectBoardDrop>

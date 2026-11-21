@@ -194,6 +194,7 @@ function preserveLiveRecovery(
     status: latest.status,
     error: latest.error,
     errorType: latest.errorType,
+    errorInfo: latest.errorInfo,
     completedAt: latest.completedAt,
     durationMs: latest.durationMs,
     stoppedNotice: latest.stoppedNotice,
@@ -429,6 +430,7 @@ export function reduceRuntimeConversationTurns(
           fileChanges: action.fileChanges ?? turn.fileChanges,
           error: undefined,
           errorType: undefined,
+          errorInfo: undefined,
         };
       });
     case "assistant_cancelled":
@@ -452,6 +454,7 @@ export function reduceRuntimeConversationTurns(
           ...completeRuntimeTurnTiming(turn, action),
           error: action.error,
           errorType: action.errorType,
+          errorInfo: action.errorInfo,
         };
       });
     case "file_changes_updated":
@@ -480,6 +483,7 @@ export function reduceRuntimeConversationTurns(
               completedAt: undefined,
               error: undefined,
               errorType: undefined,
+              errorInfo: undefined,
               stoppedNotice: undefined,
             }),
           streamingThinkingContent:
@@ -531,6 +535,7 @@ export function reduceRuntimeConversationTurns(
               completedAt: undefined,
               error: undefined,
               errorType: undefined,
+              errorInfo: undefined,
               stoppedNotice: undefined,
             }),
           streamingThinkingContent:

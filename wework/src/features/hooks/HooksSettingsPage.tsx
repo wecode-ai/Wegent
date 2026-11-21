@@ -1,9 +1,10 @@
-import { Loader2, Plus, RefreshCw, Upload } from 'lucide-react'
-import { useState } from 'react'
 import { SettingsGroup, SettingsPage, SettingsPageHeader } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
-import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
 import { revealLocalFile } from '@/lib/local-terminal'
+import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, Plus, RefreshCw, Upload } from 'lucide-react'
+import { useState } from 'react'
 import { HookEditorDialog } from './HookEditorDialog'
 import { HookListItem } from './HookListItem'
 import type { ResolvedHookPlugin } from './hooksTypes'
@@ -20,9 +21,11 @@ export function HooksSettingsPage() {
         description={t('subtitle')}
         actions={
           <>
-            <button
+            <ControlButton
+              variant="secondary"
+              size="sm"
+              type="button"
               data-testid="hooks-import-button"
-              className="inline-flex h-8 items-center gap-2 rounded-full bg-muted px-3 text-sm"
               onClick={() =>
                 void openNativeDirectoryPicker().then(async path => {
                   if (path) await settings.install(path)
@@ -31,15 +34,17 @@ export function HooksSettingsPage() {
             >
               <Upload className="h-4 w-4" />
               {t('import')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
+              type="button"
               data-testid="hooks-add-button"
-              className="inline-flex h-8 items-center gap-2 rounded-full bg-text-primary px-3 text-sm text-background"
               onClick={() => setEditing(null)}
             >
               <Plus className="h-4 w-4" />
               {t('add')}
-            </button>
+            </ControlButton>
           </>
         }
       />
@@ -51,13 +56,15 @@ export function HooksSettingsPage() {
       ) : settings.error ? (
         <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive wework:bg-red-500/10 wework:text-red-500">
           {settings.error}
-          <button
+          <ControlButton
+            variant="unstyled"
+            type="button"
             className="ml-3"
             aria-label={t('retry', '重试')}
             onClick={() => void settings.reload()}
           >
             <RefreshCw className="inline h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
       ) : settings.data.length === 0 ? (
         <div className="py-12 text-center text-sm text-text-secondary">{t('empty')}</div>

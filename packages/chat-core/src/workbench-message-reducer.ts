@@ -107,6 +107,7 @@ export interface WorkbenchMessage<
   status: WorkbenchMessageStatus
   error?: string
   errorType?: string
+  errorInfo?: import('./api-types').ChatErrorInfo
   attachments?: TAttachment[]
   blocks?: WorkbenchProcessingBlock<TFileChanges>[]
   fileChanges?: TFileChanges
@@ -215,6 +216,7 @@ export type WorkbenchMessageAction<
       subtaskId?: string
       error: string
       errorType?: string
+      errorInfo?: import('./api-types').ChatErrorInfo
       startedAt?: number
       durationMs?: number
     }
@@ -461,6 +463,7 @@ export function reduceWorkbenchMessages<
               status: 'failed',
               error: action.error,
               errorType: action.errorType,
+              errorInfo: action.errorInfo,
               blocks: finalizeProcessingBlocks(undefined, 'error')
             })
           )
@@ -480,6 +483,10 @@ export function reduceWorkbenchMessages<
                 message.error && isGenericTaskStatusError(action.error)
                   ? message.errorType
                   : action.errorType,
+              errorInfo:
+                message.error && isGenericTaskStatusError(action.error)
+                  ? message.errorInfo
+                  : action.errorInfo,
               blocks: finalizeProcessingBlocks(message.blocks, 'error')
             })
           : message
@@ -1169,6 +1176,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   fileChanges,
   error,
   errorType,
+  errorInfo,
   runtimeStatus,
   completedAt,
   stoppedNotice
@@ -1184,6 +1192,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   fileChanges?: TFileChanges
   error?: string
   errorType?: string
+  errorInfo?: import('./api-types').ChatErrorInfo
   runtimeStatus?: WorkbenchRuntimeMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
@@ -1201,6 +1210,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
     fileChanges,
     error,
     errorType,
+    errorInfo,
     runtimeStatus,
     completedAt,
     stoppedNotice,
@@ -1211,11 +1221,12 @@ function createAssistantMessage<TAttachment, TFileChanges>({
 function clearMessageError<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>
 ): WorkbenchMessage<TAttachment, TFileChanges> {
-  if (!message.error && !message.errorType) return message
+  if (!message.error && !message.errorType && !message.errorInfo) return message
 
   const {
     error: _error,
     errorType: _errorType,
+    errorInfo: _errorInfo,
     ...messageWithoutError
   } = message
   return messageWithoutError

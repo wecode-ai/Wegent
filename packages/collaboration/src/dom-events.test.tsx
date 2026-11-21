@@ -13,7 +13,6 @@ import {
   useScrollRequest,
   type DomEventOptions,
 } from './dom-events'
-import { useOutsideClick } from './composer/useOutsideClick'
 import { ProjectChatComposerSurface } from './composer/ProjectChatComposerSurface'
 
 let container: HTMLDivElement
@@ -106,39 +105,6 @@ test('once and AbortSignal are enforced by the native target', () => {
   controller.abort()
   act(() => document.dispatchEvent(new Event('native-probe')))
   expect(listener).toHaveBeenCalledTimes(1)
-})
-
-test('outside clicks ignore all owned roots and stop responding when inactive', () => {
-  const onOutside = vi.fn()
-  function Outside({ active }: { active: boolean }) {
-    const rootRef = useRef<HTMLDivElement>(null),
-      additional = useRef<HTMLButtonElement>(null)
-    useOutsideClick(rootRef, active, onOutside, [additional])
-    return (
-      <>
-        <div ref={rootRef} data-testid="inside" />
-        <button ref={additional} data-testid="additional" />
-        <button data-testid="outside" />
-      </>
-    )
-  }
-  act(() => root.render(<Outside active />))
-  for (const name of ['inside', 'additional'])
-    act(() =>
-      container
-        .querySelector(`[data-testid="${name}"]`)!
-        .dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    )
-  expect(onOutside).not.toHaveBeenCalled()
-  act(() =>
-    container
-      .querySelector('[data-testid="outside"]')!
-      .dispatchEvent(new Event('pointerdown', { bubbles: true }))
-  )
-  expect(onOutside).toHaveBeenCalledTimes(1)
-  act(() => root.render(<Outside active={false} />))
-  act(() => document.dispatchEvent(new Event('pointerdown')))
-  expect(onOutside).toHaveBeenCalledTimes(1)
 })
 
 test('changing event owners detaches the previous target', () => {

@@ -197,10 +197,15 @@ mod stand_in_lifecycle;
 mod stand_in_memory;
 mod stand_in_memory_progress;
 mod stand_in_memory_review;
+mod stand_in_personal_issues;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
 mod stand_in_review;
+mod stand_in_role_cancellation;
+mod stand_in_role_delegation;
+mod stand_in_role_dependencies;
+mod stand_in_role_results;
 mod stand_in_schedules;
 mod stand_in_source_tasks;
 mod stand_in_task_results;
@@ -262,8 +267,9 @@ use super::{
         clear_completed_transcript_messages, clear_runtime_handle_messages,
         clear_transcript_snapshot_messages, completed_transcript_messages,
         merge_assistant_transcript_message, set_runtime_handle_messages,
-        set_transcript_snapshot_messages, transcript_snapshot_messages,
-        transcript_snapshot_pagination, user_message_presentations, visit_transcript_blocks_mut,
+        set_transcript_snapshot_messages, transcript_snapshot_message_refs,
+        transcript_snapshot_messages, transcript_snapshot_pagination, user_message_presentations,
+        visit_transcript_blocks_mut,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{normalized_user_request_content, notification_item, transcript_messages},
@@ -549,6 +555,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
+    transcript_transfer_cleanup: Arc<super::transcript_transport::TransferCleanup>,
     #[cfg(test)]
     transcript_test_workers: Option<Arc<tokio::sync::Semaphore>>,
     device_id: String,
@@ -607,9 +614,11 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    stand_in_intake_workers: Arc<Mutex<stand_in_processing::StandInIntakeWorkers>>,
     backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     cloud_connection_observations: Arc<AtomicBool>,
-    connection_scheduler_started: Arc<AtomicBool>,
+    connection_dispatcher_started: Arc<AtomicBool>,
+    connection_subscribers: Arc<Mutex<stand_in_ingress::ConnectionSubscribers>>,
     connection_observation_wakeup: Arc<tokio::sync::Notify>,
 }
 
@@ -679,7 +688,7 @@ struct CachedCodexTranscriptNavigation {
 }
 
 struct RuntimeThreadEventRoute {
-    goal_model_route: Option<Arc<crate::agents::LocalProxyRegistration>>,
+    goal_model_route: Option<crate::agents::ModelActionRegistration>,
     local_task_id: String,
     request: ExecutionRequest,
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
@@ -942,6 +951,7 @@ impl RuntimeWorkRpcHandler {
             );
         }
         let handler = Self {
+            transcript_transfer_cleanup: Arc::default(),
             #[cfg(test)]
             transcript_test_workers: None,
             device_id,
@@ -1006,9 +1016,11 @@ impl RuntimeWorkRpcHandler {
                 crate::agents::wework_codex_home(),
             ),
             backend_connection,
+            stand_in_intake_workers: Arc::new(Mutex::new(Default::default())),
             backend_device_route,
             cloud_connection_observations: Arc::new(AtomicBool::new(false)),
-            connection_scheduler_started: Arc::new(AtomicBool::new(false)),
+            connection_dispatcher_started: Arc::new(AtomicBool::new(false)),
+            connection_subscribers: Arc::new(Mutex::new(Default::default())),
             connection_observation_wakeup: Arc::new(tokio::sync::Notify::new()),
         };
         for (local_task_id, turn) in handler
@@ -1110,7 +1122,7 @@ impl RuntimeWorkRpcHandler {
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler.start_local_issue_scheduler();
-        handler.start_connection_scheduler();
+        handler.start_connection_dispatcher();
         if has_backend {
             handler.start_backend_services();
         }
@@ -1136,13 +1148,12 @@ impl RuntimeWorkRpcHandler {
     fn start_backend_services(&self) {
         crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
-        self.start_connection_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();
         for link in self.local_task_links(false) {
             self.sync_issue_human_requests(&link.local_task_id);
-            self.sync_stand_in_issue_replies(&link.local_task_id);
+            self.sync_public_issue_replies(&link.local_task_id);
         }
         self.start_supervisor_scheduler();
     }

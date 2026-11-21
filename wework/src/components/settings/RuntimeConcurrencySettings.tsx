@@ -1,8 +1,16 @@
-import { useContext, useMemo, useState, useSyncExternalStore } from 'react'
-import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeSettings } from '@/types/api'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import { SettingsRow } from './settings-ui'
 
 const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = {
@@ -107,25 +115,30 @@ export function RuntimeConcurrencySettings() {
           description={t(`workbench.${setting.label}_description`)}
           className={'py-4'}
           labelClassName={'font-normal'}
-          control={
-            <select
-              data-testid={setting.testId}
-              value={runtimeSettings[setting.key]}
+          children={
+            <SelectRoot
+              value={normalizeSelectValue(runtimeSettings[setting.key])}
               disabled={loading || saving || loadFailed || !runtimeWorkApi}
-              aria-label={t(`workbench.${setting.label}`)}
-              onChange={event => {
-                void saveConcurrency(setting.key, Number(event.target.value))
+              onValueChange={selectedValue => {
+                if (selectedValue === null) return
+                void saveConcurrency(setting.key, Number(selectedValue))
               }}
-              className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm text-text-primary max-md:h-11"
             >
-              {Array.from({ length: MAX_CONCURRENT_TASKS_LIMIT }, (_, index) => index + 1).map(
-                value => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                )
-              )}
-            </select>
+              <SelectTrigger
+                data-testid={setting.testId}
+                aria-label={t(`workbench.${setting.label}`)}
+                className="w-24"
+              />
+              <SelectContent>
+                {Array.from({ length: MAX_CONCURRENT_TASKS_LIMIT }, (_, index) => index + 1).map(
+                  value => (
+                    <SelectItem key={value} value={String(value)}>
+                      {value}
+                    </SelectItem>
+                  )
+                )}
+              </SelectContent>
+            </SelectRoot>
           }
         />
       ))}
@@ -133,7 +146,8 @@ export function RuntimeConcurrencySettings() {
         <div role="alert" className="px-4 py-2 text-sm text-destructive">
           {error}
           {loadFailed && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="general-concurrency-retry-button"
               onClick={() => {
@@ -143,7 +157,7 @@ export function RuntimeConcurrencySettings() {
               className="ml-2 min-h-6 underline max-md:min-h-11"
             >
               {t('workbench.retry')}
-            </button>
+            </ControlButton>
           )}
         </div>
       )}

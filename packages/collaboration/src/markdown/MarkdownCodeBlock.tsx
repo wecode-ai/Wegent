@@ -1,10 +1,18 @@
-import { useMarkdownServices } from './MarkdownServices'
-import { memo, useState } from 'react'
-import { useCodeHighlight } from './useCodeHighlight'
-import { codeThemeCSS } from './codeTheme'
-import type { CSSProperties, HTMLProps, ReactNode } from 'react'
+import {
+  ScrollArea,
+  ScrollAreaContent,
+  ScrollAreaScrollbar,
+  ScrollAreaThumb,
+  ScrollAreaViewport,
+} from '../controls/ScrollArea'
 import { ArrowRightToLine, Copy, CopyCheck, TextWrap } from 'lucide-react'
-import * as ScrollAreaPrimitive from '@radix-ui/react-scroll-area'
+import type { CSSProperties, HTMLProps, ReactNode } from 'react'
+import { memo, useState } from 'react'
+import { Button as ControlButton } from './Button'
+import { codeThemeCSS } from './codeTheme'
+import { useMarkdownServices } from './MarkdownServices'
+import { useCodeHighlight } from './useCodeHighlight'
+
 import type { HighlightedCode } from './highlightCode'
 
 const LANGUAGE_ALIASES: Record<string, string> = {
@@ -114,7 +122,8 @@ export function MarkdownCodeBlock({
         </span>
         <div className="flex items-center gap-1">
           {canToggleWrap ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               onClick={toggleWrapLines}
               className={CODE_ACTION_BUTTON_CLASS}
@@ -131,9 +140,10 @@ export function MarkdownCodeBlock({
                   data-testid="markdown-code-wrap-disabled-icon"
                 />
               )}
-            </button>
+            </ControlButton>
           ) : null}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={() => void handleCopy()}
             className={CODE_ACTION_BUTTON_CLASS}
@@ -146,7 +156,7 @@ export function MarkdownCodeBlock({
             ) : (
               <Copy className="h-3.5 w-3.5" data-testid="markdown-code-copy-icon" />
             )}
-          </button>
+          </ControlButton>
         </div>
       </div>
       <MarkdownCodeScrollArea
@@ -179,8 +189,8 @@ function MarkdownCodeScrollArea({
   const hideHorizontalScrollbar = isStreaming || wrapLines
 
   return (
-    <ScrollAreaPrimitive.Root type="always" className="relative max-w-full">
-      <ScrollAreaPrimitive.Viewport
+    <ScrollArea type="always" className="relative max-w-full">
+      <ScrollAreaViewport
         data-testid="markdown-code-scroll-container"
         data-wrap={wrapLines ? 'true' : 'false'}
         data-syntax-highlighted={syntaxHighlighted ? 'true' : 'false'}
@@ -191,20 +201,20 @@ function MarkdownCodeScrollArea({
             : 'scrollbar-soft overflow-x-auto',
         ].join(' ')}
       >
-        {children}
-      </ScrollAreaPrimitive.Viewport>
-      <ScrollAreaPrimitive.Scrollbar
+        <ScrollAreaContent>{children}</ScrollAreaContent>
+      </ScrollAreaViewport>
+      <ScrollAreaScrollbar
         orientation="horizontal"
         data-testid="markdown-code-horizontal-scrollbar"
         hidden={hideHorizontalScrollbar}
         className="flex h-2.5 touch-none select-none bg-transparent p-0.5"
       >
-        <ScrollAreaPrimitive.Thumb
+        <ScrollAreaThumb
           data-testid="markdown-code-horizontal-scrollbar-thumb"
           className="relative self-stretch rounded-full bg-text-muted hover:bg-text-secondary"
         />
-      </ScrollAreaPrimitive.Scrollbar>
-    </ScrollAreaPrimitive.Root>
+      </ScrollAreaScrollbar>
+    </ScrollArea>
   )
 }
 

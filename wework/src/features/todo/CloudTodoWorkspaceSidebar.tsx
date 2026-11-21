@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Check, Cloud, Copy, Ellipsis, HardDrive, Plus, Search } from 'lucide-react'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
 import { ProjectSpaceSidebar } from '@wegent/collaboration'
@@ -33,6 +34,7 @@ export function CloudTodoWorkspaceSidebar({ model }: { model: CloudTodoWorkspace
     setRenameProject,
     setRenameProjectName,
     setRenameError,
+    archiveBusy,
     setArchiveProject,
     setArchiveError,
     selectProject,
@@ -60,7 +62,8 @@ export function CloudTodoWorkspaceSidebar({ model }: { model: CloudTodoWorkspace
                       toggleTestId="cloud-todo-collapse-sidebar"
                     />
                     <Tooltip label={t('workbench.search')} side="bottom" align="end">
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="cloud-search-toggle"
                         onClick={() => setGlobalSearchOpen(true)}
@@ -68,7 +71,7 @@ export function CloudTodoWorkspaceSidebar({ model }: { model: CloudTodoWorkspace
                         aria-label={t('workbench.search')}
                       >
                         <Search className="h-4 w-4" />
-                      </button>
+                      </ControlButton>
                     </Tooltip>
                   </>
                 }
@@ -128,6 +131,7 @@ export function CloudTodoWorkspaceSidebar({ model }: { model: CloudTodoWorkspace
                 key: spaceKey,
                 name: project.name,
                 selected: sameProjectSpace(selectedProjectRef, projectSpaceRef(project)),
+                archiveDisabled: archiveBusy,
                 onArchive: () => {
                   setArchiveError(null)
                   setArchiveProject(project)

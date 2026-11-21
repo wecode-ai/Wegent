@@ -1,14 +1,17 @@
+import { useRef } from 'react'
+import { DialogSurface } from '../controls/DialogSurface'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { useDialogKeyboard } from '../controls/useDialogKeyboard'
-import { DialogForm } from '../controls/DialogForm'
 import { X } from 'lucide-react'
-import { GroupTemplateCreator } from '../templates/GroupTemplateCreator'
-import { GroupParticipantsEditor } from './GroupParticipantsEditor'
+import { DialogForm } from '../controls/DialogForm'
 import { applyTemplateGroups } from '../templates/apply'
+import { GroupTemplateCreator } from '../templates/GroupTemplateCreator'
 import { templateMessages } from '../templates/messages'
 import { GroupConfigurationError as ErrorMessage } from './GroupConfigurationFeedback'
+import { GroupParticipantsEditor } from './GroupParticipantsEditor'
 import type { GroupConfigurationModel } from './WorkspaceResourceConfiguration'
 
 export function GroupCreationDialog({ model }: { model: GroupConfigurationModel }) {
@@ -43,13 +46,7 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
     withCandidateName,
     workspace,
   } = model
-  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
-    if (saving) return
-    setFormOpen(false)
-    setError(null)
-    setCreateMembers([])
-    setLeader('')
-  })
+  const dialogRef = useRef<HTMLFormElement>(null)
   return (
     <div
       className="collaboration-dialog-backdrop"
@@ -60,57 +57,64 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
         }
       }}
     >
-      <DialogForm
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="collaboration-group-create-heading"
-        tabIndex={-1}
-        className="collaboration-dialog collaboration-resource-dialog collaboration-group-create-dialog"
-        data-testid="collaboration-group-form"
-        onSubmit={event => {
-          event.preventDefault()
-          if (!name.trim() || !leader) return
-          const [leaderKind, leaderId] = leader.split(':')
-          setSaving(true)
+      <DialogSurface
+        onClose={() => {
+          if (saving) return
+          setFormOpen(false)
           setError(null)
-          void commands
-            .createCollaborationGroup({
-              name: name.trim(),
-              description: description.trim(),
-              leader: {
-                kind: leaderKind as 'human' | 'agent',
-                id: leaderId,
-                name: persistedMemberName(leaderKind as 'human' | 'agent', leaderId),
-                responsibility: '',
-              },
-              members: [
-                withCandidateName({
-                  kind: leaderKind as 'human' | 'agent',
-                  id: leaderId,
-                  responsibility: '',
-                }),
-                ...createMembers
-                  .filter(member => `${member.kind}:${member.id}` !== leader)
-                  .map(withCandidateName),
-              ],
-              coordinationMode: 'manager',
-              instructions: '',
-              stages: [],
-              executionRequirements: { requiredTags: [] },
-            })
-            .then(created => {
-              if (!dialogRef.current?.isConnected) return
-              setName('')
-              setDescription('')
-              setLeader('')
-              setCreateMembers([])
-              setFormOpen(false)
-              setSelectedGroupId(created.id)
-            })
-            .catch(() => setError(messages.operationFailed))
-            .finally(() => setSaving(false))
         }}
+        render={
+          <DialogForm
+            ref={dialogRef}
+            aria-labelledby="collaboration-group-create-heading"
+            tabIndex={-1}
+            className="collaboration-dialog collaboration-resource-dialog collaboration-group-create-dialog"
+            data-testid="collaboration-group-form"
+            onSubmit={event => {
+              event.preventDefault()
+              if (!name.trim() || !leader) return
+              const [leaderKind, leaderId] = leader.split(':')
+              setSaving(true)
+              setError(null)
+              void commands
+                .createCollaborationGroup({
+                  name: name.trim(),
+                  description: description.trim(),
+                  leader: {
+                    kind: leaderKind as 'human' | 'agent',
+                    id: leaderId,
+                    name: persistedMemberName(leaderKind as 'human' | 'agent', leaderId),
+                    responsibility: '',
+                  },
+                  members: [
+                    withCandidateName({
+                      kind: leaderKind as 'human' | 'agent',
+                      id: leaderId,
+                      responsibility: '',
+                    }),
+                    ...createMembers
+                      .filter(member => `${member.kind}:${member.id}` !== leader)
+                      .map(withCandidateName),
+                  ],
+                  coordinationMode: 'manager',
+                  instructions: '',
+                  stages: [],
+                  executionRequirements: { requiredTags: [] },
+                })
+                .then(created => {
+                  if (!dialogRef.current?.isConnected) return
+                  setName('')
+                  setDescription('')
+                  setLeader('')
+                  setCreateMembers([])
+                  setFormOpen(false)
+                  setSelectedGroupId(created.id)
+                })
+                .catch(() => setError(messages.operationFailed))
+                .finally(() => setSaving(false))
+            }}
+          />
+        }
       >
         <div className="collaboration-group-create-heading">
           <div>
@@ -125,11 +129,13 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
                   : 'Add participants and choose a leader to create the group.'}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-group-create-close"
             data-testid="collaboration-group-create-close"
             aria-label={locale === 'zh-CN' ? '关闭' : 'Close'}
+            showTooltip={false}
             disabled={saving}
             onClick={() => {
               setFormOpen(false)
@@ -139,7 +145,7 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
             }}
           >
             <X size={18} aria-hidden="true" />
-          </button>
+          </ControlButton>
         </div>
         <div className="collaboration-group-create-layout">
           <div className="collaboration-group-create-main">
@@ -183,7 +189,7 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
                 <div className="collaboration-group-field-grid collaboration-group-create-fields">
                   <label>
                     <span>{messages.groupName}</span>
-                    <input
+                    <ControlInput
                       data-testid="collaboration-group-name"
                       value={name}
                       autoFocus
@@ -192,7 +198,7 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
                   </label>
                   <label>
                     <span>{messages.groupDescription}</span>
-                    <input
+                    <ControlInput
                       data-testid="collaboration-group-description"
                       value={description}
                       placeholder={
@@ -243,7 +249,8 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
             </div>
 
             <div className="collaboration-resource-form-actions collaboration-group-create-actions">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className="collaboration-link-button"
                 data-testid="collaboration-group-create-cancel"
@@ -256,21 +263,22 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
                 }}
               >
                 {messages.cancel}
-              </button>
+              </ControlButton>
               <span />
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="submit"
                 className="collaboration-primary-button"
                 data-testid="collaboration-group-create"
                 disabled={saving || participantsPending || !name.trim() || !leader}
               >
                 {messages.createGroup}
-              </button>
+              </ControlButton>
             </div>
             <ErrorMessage message={error} />
           </div>
         </div>
-      </DialogForm>
+      </DialogSurface>
     </div>
   )
 }

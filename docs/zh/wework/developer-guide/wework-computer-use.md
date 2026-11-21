@@ -102,11 +102,7 @@ stdio EOF 会丢弃对应 HTTP 请求；Electron 在响应连接异常关闭时�
 以探针编号关联同一次查询。Codex 的进程启动及输出收集 trace 写入 Executor 日志，
 可以用调用和进程编号与 transcript 对时。探针仅记录时间和进程元数据。
 
-ChatGPT 官方订阅的 Responses 推理通过本地兼容代理使用 WebSocket。同一连接支持
-带 `previous_response_id` 的增量工具结果，上游只支持 HTTP 时由 Codex 切回 POST。
 桌面工具同时返回相同的文本 JSON 和结构化内容时，Executor 只保留结构化副本。
-诊断模式下，Executor 还按连接和请求编号记录首个响应帧、首个输出项、首个增量、
-结束帧和本地读写耗时。上游提供引擎计时时，日志只记录已知的数值字段。
 
 ## 权限与设置
 

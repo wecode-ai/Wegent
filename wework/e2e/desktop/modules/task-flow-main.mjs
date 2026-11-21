@@ -599,7 +599,7 @@ async function verifyProjectAiSettings({
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_INITIAL_INSTRUCTIONS,
   })
-  await control.command('fill', '[data-testid="local-project-model-select"]', {
+  await control.command('select', '[data-testid="local-project-model-select"]', {
     value: PROJECT_AI_MODEL_VALUE,
   })
   await waitForControlValue(
@@ -608,7 +608,7 @@ async function verifyProjectAiSettings({
     PROJECT_AI_MODEL_VALUE,
     'The project default model selection did not update'
   )
-  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+  await control.command('select', '[data-testid="local-project-reasoning-select"]', {
     value: 'low',
   })
   await waitForControlValue(
@@ -741,7 +741,7 @@ async function verifyProjectAiSettings({
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_UPDATED_INSTRUCTIONS,
   })
-  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+  await control.command('select', '[data-testid="local-project-reasoning-select"]', {
     value: 'high',
   })
   await waitForControlValue(
@@ -1118,9 +1118,7 @@ async function main() {
   const executorHome = usesDefaultUserData
     ? join(homePath, '.wegent/workbench/wework/default')
     : join(resultDir, 'executor-home')
-  const codexHome = usesDefaultUserData
-    ? join(homePath, '.wework/codex')
-    : join(executorHome, 'codex')
+  const codexHome = join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
   const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
@@ -1345,12 +1343,13 @@ async function main() {
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
+      const codexFixtureHome = desktopScenario?.codexFixtureHome ?? codexHome
       const usesModelRoutingSubscription = DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY
       const modelRoutingConfigToml = usesModelRoutingSubscription
         ? `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "${control.url}/backend-api/"`
         : ''
       await writeCodexConfig(
-        codexHome,
+        codexFixtureHome,
         desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${modelRoutingConfigToml}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
@@ -1376,7 +1375,7 @@ async function main() {
           })
         ).toString('base64url')
         await writeFile(
-          join(codexHome, 'auth.json'),
+          join(codexFixtureHome, 'auth.json'),
           `${JSON.stringify({
             auth_mode: 'chatgpt',
             tokens: {
@@ -1391,7 +1390,7 @@ async function main() {
         )
       } else {
         await writeFile(
-          join(codexHome, 'auth.json'),
+          join(codexFixtureHome, 'auth.json'),
           `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
           'utf8'
         )
@@ -1745,7 +1744,10 @@ async function main() {
     if (usesNativeCloudInspector) {
       assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
       nativeCloudLogin = nativeCloudAuthorizationFixture(
-        cloudEnvironment,
+        {
+          backendUrl: appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL,
+          authToken: cloudEnvironment.authToken,
+        },
         electronUserDataDirectory,
         control
       )
@@ -2905,6 +2907,35 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
           testId.startsWith('runtime-local-task-row-')
         )
+      )
+      const [viewport] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+        )
+      )
+      const [dock] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-empty-composer-dock"]`
+        )
+      )
+      const [environmentSpacer] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-spacer"]`
+        )
+      )
+      const usableCenter = viewport.left + (viewport.width - environmentSpacer.width) / 2
+      const dockCenter = dock.left + dock.width / 2
+      assert.ok(
+        Math.abs(dockCenter - usableCenter) <= 2,
+        `The new-task composer must be centered in its workbench. Center offset: ${dockCenter - usableCenter}px`
+      )
+      const bottomGap = viewport.bottom - dock.bottom
+      assert.ok(
+        bottomGap >= 0 && bottomGap <= 16,
+        `The new-task composer must stay at the bottom of its workbench. Bottom gap: ${bottomGap}px`
       )
       phase = 'initial-task'
       const initialTaskRequest = await sendPromptUntilScenarioRequest(
@@ -4123,6 +4154,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
+      await control.command('pointerLeave', filePanelLinkSelector, {
+        target: rightWorkspacePanelSelector,
+      })
       await control.command('hover', filePanelLinkSelector)
       await control.command('waitFor', filePanelLinkTooltipSelector, {
         visible: true,
@@ -4161,14 +4195,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )
       await captureVerificationScreenshot(control, 'file-panel-anchor-03-link-tooltip.png')
       await control.command('press', filePanelLinkSelector, { key: 'Escape' })
-      await waitForSnapshot(
-        control,
-        snapshot =>
-          snapshot.testIds.includes(linkedFileTabId) &&
-          !snapshot.testIds.includes('assistant-markdown-link-tooltip'),
-        'The assistant file-link tooltip did not dismiss above the open file panel',
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      await control.command('waitFor', filePanelLinkTooltipSelector, {
+        visible: false,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('waitFor', linkedFileTabSelector, {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
 
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(

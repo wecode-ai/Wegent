@@ -1,4 +1,11 @@
-import { useState } from 'react'
+import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
+import { useTranslation } from '@/hooks/useTranslation'
+import { copyTextToClipboard } from '@/lib/clipboard'
+import { cn } from '@/lib/utils'
+import type { ProjectWithTasks, RuntimeDeviceWorkspace, User as UserProfile } from '@/types/api'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Check,
   ChevronDown,
@@ -13,14 +20,9 @@ import {
   Settings2,
   UserRound,
 } from 'lucide-react'
-import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
-import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import { useTranslation } from '@/hooks/useTranslation'
-import { copyTextToClipboard } from '@/lib/clipboard'
-import { cn } from '@/lib/utils'
-import type { ProjectWithTasks, RuntimeDeviceWorkspace, User as UserProfile } from '@/types/api'
-import type { TodoDetailItem } from './todoViewTypes'
+import { useState } from 'react'
 import { projectColor } from './todoProject'
+import type { TodoDetailItem } from './todoTypes'
 
 export type TodoProjectView = 'overview' | 'work-items'
 
@@ -73,13 +75,13 @@ export function ProjectSwitcherOverlay({
         </div>
         <label className="relative block shrink-0">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-text-muted" />
-          <input
+          <ControlInput
             autoFocus
             data-testid="todo-project-search-input"
             value={search}
             onChange={event => onSearchChange(event.target.value)}
             placeholder={t('todo.search_projects', '搜索项目…')}
-            className="h-[34px] w-full rounded-md border border-border bg-muted pl-8 pr-2 text-xs text-text-primary outline-none placeholder:text-text-secondary keyboard:focus:border-focus"
+            className="h-[34px] w-full bg-muted pl-8 pr-2 text-xs placeholder:text-text-secondary"
           />
         </label>
         <span className="shrink-0 text-xs font-semibold text-text-secondary">
@@ -98,7 +100,8 @@ export function ProjectSwitcherOverlay({
                 0
               )
               return (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={entry.project.id}
                   type="button"
                   data-testid={`todo-project-menu-item-${entry.project.id}`}
@@ -132,13 +135,14 @@ export function ProjectSwitcherOverlay({
                   ) : (
                     <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
                   )}
-                </button>
+                </ControlButton>
               )
             })
           )}
         </div>
         <div className="h-px shrink-0 bg-border" />
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="todo-view-all-projects"
           onClick={onViewAll}
@@ -146,7 +150,7 @@ export function ProjectSwitcherOverlay({
         >
           <FolderOpen className="h-3.5 w-3.5" />
           {t('todo.view_all_projects', '查看全部项目')}
-        </button>
+        </ControlButton>
       </section>
     </div>
   )
@@ -182,15 +186,17 @@ export function TodoSearchOverlay({
       >
         <label className="relative flex h-14 shrink-0 items-center border-b border-border px-4">
           <Search className="h-4 w-4 shrink-0 text-text-secondary" />
-          <input
+          <ControlInput
+            appearance="plain"
             autoFocus
             data-testid="todo-search-input"
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder={t('todo.search_todos', '搜索标题、编号或任务内容…')}
-            className="min-w-0 flex-1 bg-transparent px-3 text-sm text-text-primary outline-none placeholder:text-text-secondary"
+            className="min-w-0 flex-1 placeholder:text-text-secondary"
           />
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="todo-search-close"
             onClick={onClose}
@@ -198,7 +204,7 @@ export function TodoSearchOverlay({
             aria-label={t('workbench.close', '关闭')}
           >
             <span className="font-mono text-xs">ESC</span>
-          </button>
+          </ControlButton>
         </label>
         <div className="min-h-0 overflow-y-auto p-2">
           {results.length === 0 ? (
@@ -207,7 +213,8 @@ export function TodoSearchOverlay({
             </div>
           ) : (
             results.map(item => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={item.id}
                 type="button"
                 data-testid={`todo-search-result-${item.id}`}
@@ -223,7 +230,7 @@ export function TodoSearchOverlay({
                   </span>
                 </span>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-              </button>
+              </ControlButton>
             ))
           )}
         </div>
@@ -317,7 +324,8 @@ export function TodoSidebar({
         <div className="absolute inset-x-2 bottom-14 top-[146px] overflow-y-auto">
           <div className="flex h-8 items-center justify-between px-2 text-xs font-semibold text-text-secondary">
             <span>{t('workbench.projects', '项目')}</span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="todo-sidebar-add-project"
               onClick={onAddProject}
@@ -325,12 +333,13 @@ export function TodoSidebar({
               aria-label={t('todo.add_project', '添加项目')}
             >
               <Plus className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           </div>
           {selectedProject && (
             <section className="relative">
               <div className="flex h-9 items-center rounded-md bg-muted pr-1">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`todo-sidebar-project-${selectedProject.project.id}`}
                   aria-expanded={selectedExpanded}
@@ -349,8 +358,9 @@ export function TodoSidebar({
                   <span className="truncate text-xs font-semibold text-text-primary">
                     {selectedProject.project.name}
                   </span>
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`todo-sidebar-project-more-${selectedProject.project.id}`}
                   aria-expanded={projectActionsOpen}
@@ -359,14 +369,15 @@ export function TodoSidebar({
                   aria-label={t('todo.project_actions', '项目操作')}
                 >
                   <Ellipsis className="h-3.5 w-3.5 text-text-secondary" />
-                </button>
+                </ControlButton>
               </div>
               {projectActionsOpen && (
                 <div
                   data-testid="todo-sidebar-project-menu"
                   className="absolute right-0 top-10 z-30 w-44 rounded-md border border-border bg-popover p-1 shadow-lg"
                 >
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="todo-sidebar-open-in-wework"
                     onClick={onOpenProjects}
@@ -374,8 +385,9 @@ export function TodoSidebar({
                   >
                     <FolderOpen className="h-3.5 w-3.5" />
                     {t('todo.open_in_wework', '在 Wework 中打开')}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="todo-sidebar-copy-project-id"
                     onClick={() => {
@@ -394,8 +406,9 @@ export function TodoSidebar({
                     {projectIdCopied
                       ? t('todo.project_id_copied', '项目 ID 已复制')
                       : t('todo.copy_project_id', '复制项目 ID')}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="todo-sidebar-menu-add-project"
                     onClick={onAddProject}
@@ -403,7 +416,7 @@ export function TodoSidebar({
                   >
                     <Plus className="h-3.5 w-3.5" />
                     {t('todo.add_project', '添加项目')}
-                  </button>
+                  </ControlButton>
                 </div>
               )}
               {selectedExpanded && (
@@ -438,7 +451,8 @@ export function TodoSidebar({
           {otherProjects.length > 0 && (
             <section className="mt-0.5">
               {otherProjects.map((entry, index) => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={entry.project.id}
                   type="button"
                   data-testid={`todo-sidebar-project-${entry.project.id}`}
@@ -459,7 +473,7 @@ export function TodoSidebar({
                   <span className="font-mono text-xs text-text-secondary">
                     {projectItemCount(entry)}
                   </span>
-                </button>
+                </ControlButton>
               ))}
             </section>
           )}
@@ -495,7 +509,8 @@ function SidebarAction({
   onClick?: () => void
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       onClick={onClick}
@@ -503,7 +518,7 @@ function SidebarAction({
     >
       <Icon className="h-4 w-4 text-current" />
       <span>{label}</span>
-    </button>
+    </ControlButton>
   )
 }
 
@@ -523,7 +538,8 @@ function ProjectNav({
   onClick: () => void
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       onClick={onClick}
@@ -546,6 +562,6 @@ function ProjectNav({
           {count}
         </span>
       )}
-    </button>
+    </ControlButton>
   )
 }

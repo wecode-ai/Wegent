@@ -7,8 +7,7 @@ use std::{collections::BTreeMap, env, time::Duration};
 
 mod diagnostics;
 
-const INVALID_FORM_MESSAGE: &str = "模型给出的表单格式不对";
-const FORM_GENERATION_FAILED_MESSAGE: &str = "交互式表单生成失败";
+pub const MCP_UNAVAILABLE_MESSAGE: &str = "连接器暂时不可用，已跳过相关能力，其他工作可以继续。";
 const TOOL_PROTOCOL_MCP_CALL: &str = "mcp_call";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,7 +57,6 @@ pub enum InteractiveMcpError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskTerminalStatus {
     Completed,
-    Failed,
     DeferredMcpRetry,
 }
 
@@ -66,7 +64,7 @@ pub enum TaskTerminalStatus {
 pub enum DeferredMcpResponseAction {
     CompleteWaitingForUser,
     Retry,
-    Fail,
+    ContinueWithoutServer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -240,6 +238,16 @@ pub fn deferred_proxy_response_decision(
     deferred_mcp_retry_count: usize,
     max_deferred_mcp_retries: usize,
 ) -> DeferredMcpResponseDecision {
+    if proxy_result.is_error {
+        return deferred_proxy_unavailable(
+            &DeferredToolUse {
+                id: proxy_result.tool_use_id.clone(),
+                name: proxy_result.tool_name.clone(),
+                input: Value::Null,
+            },
+            "tool_error",
+        );
+    }
     let tool_start = Some(tool_start_event(
         &proxy_result.tool_use_id,
         &proxy_result.tool_name,
@@ -290,16 +298,14 @@ pub fn deferred_proxy_response_decision(
         };
     }
 
-    DeferredMcpResponseDecision {
-        action: DeferredMcpResponseAction::Fail,
-        status: TaskTerminalStatus::Failed,
-        tool_start,
-        tool_done,
-        done: None,
-        retry_query: None,
-        user_error: Some(INVALID_FORM_MESSAGE.to_owned()),
-        internal_error: None,
-    }
+    deferred_proxy_unavailable(
+        &DeferredToolUse {
+            id: proxy_result.tool_use_id.clone(),
+            name: proxy_result.tool_name.clone(),
+            input: Value::Null,
+        },
+        "invalid_form",
+    )
 }
 
 pub fn build_retry_tool_result_query(
@@ -315,7 +321,7 @@ pub fn build_retry_tool_result_query(
     build_tool_result_query(tool_use_id, payload, true)
 }
 
-pub fn deferred_proxy_exception_failure(
+pub fn deferred_proxy_unavailable(
     deferred_tool_use: &DeferredToolUse,
     internal_error: &str,
 ) -> DeferredMcpResponseDecision {
@@ -326,8 +332,8 @@ pub fn deferred_proxy_exception_failure(
         .unwrap_or_default();
 
     DeferredMcpResponseDecision {
-        action: DeferredMcpResponseAction::Fail,
-        status: TaskTerminalStatus::Failed,
+        action: DeferredMcpResponseAction::ContinueWithoutServer,
+        status: TaskTerminalStatus::DeferredMcpRetry,
         tool_start: Some(tool_start_event(
             &deferred_tool_use.id,
             &deferred_tool_use.name,
@@ -336,12 +342,20 @@ pub fn deferred_proxy_exception_failure(
             &deferred_tool_use.id,
             &deferred_tool_use.name,
             &server_label,
-            Some(FORM_GENERATION_FAILED_MESSAGE.to_owned()),
-            Some(FORM_GENERATION_FAILED_MESSAGE.to_owned()),
+            Some(MCP_UNAVAILABLE_MESSAGE.to_owned()),
+            Some(MCP_UNAVAILABLE_MESSAGE.to_owned()),
         )),
         done: None,
-        retry_query: None,
-        user_error: Some(FORM_GENERATION_FAILED_MESSAGE.to_owned()),
+        retry_query: Some(build_tool_result_query(
+            &deferred_tool_use.id,
+            json!({
+                "error": "mcp_unavailable",
+                "message": MCP_UNAVAILABLE_MESSAGE,
+                "instruction": "Continue with available tools. Do not retry this MCP service in this execution or infer missing user input or permission."
+            }),
+            true,
+        )),
+        user_error: Some(MCP_UNAVAILABLE_MESSAGE.to_owned()),
         internal_error: Some(internal_error.to_owned()),
     }
 }

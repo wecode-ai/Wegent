@@ -593,10 +593,16 @@ export function createCloudConnectionSession(initialTranslate: TFunction) {
       serviceKey: isConnected
         ? `${effectiveSnapshot.apiBaseUrl ?? ''}:${effectiveSnapshot.tokenExpiresAt ?? ''}:${effectiveSnapshot.user?.id ?? ''}`
         : effectiveSnapshot.status,
+      getTokenForAccount,
       connectWithAuthorization,
       refreshUser,
       disconnect,
     }
+  }
+  function getTokenForAccount(apiBaseUrl: string | undefined, userId: number | undefined) {
+    return value.isConnected && value.apiBaseUrl === apiBaseUrl && value.user?.id === userId
+      ? value.token
+      : null
   }
   function updateValue() {
     const next = buildValue()

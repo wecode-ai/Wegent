@@ -1,23 +1,16 @@
-import { useBoardRuntimeGoal, type BoardRuntimeGoalLoader } from './boardRuntimeGoal'
-import { runtimeTaskProgress, runtimeToolActivityText } from '@wegent/collaboration'
-import {
-  IssueBoardCard,
-  IssueBoardCardContent,
-  IssueCardTaskSummary,
-  createIssueBoardCardLabels,
-  createCollaborationTranslator,
-  standInProcessingActor,
-} from '@wegent/collaboration'
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import type { CollaborationIssueBadge } from '@wegent/collaboration'
+import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { isRuntimeChatStreamDebugEnabled } from '@/api/runtime/runtimeChatStream'
-import { canEditProjectSpaceIssue } from './projectSpaceSelection'
-import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
-import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
+import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
+import {
+  autoRepairStatus,
+  stoppedTaskNeedsAttention,
+} from '@/features/workbench/changeRequestStatus'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -27,21 +20,30 @@ import type {
   RuntimeTaskSummary,
 } from '@/types/api'
 import type { RuntimeConversationTurn } from '@/types/workbench'
-import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
-import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
+import type { CollaborationIssueBadge } from '@wegent/collaboration'
 import {
-  autoRepairStatus,
-  stoppedTaskNeedsAttention,
-} from '@/features/workbench/changeRequestStatus'
-import { isLoopItemExecutionActive } from './cloudMyWorkModel'
-import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
-import {
-  useBoardRuntimeConversations,
-  type UseBoardRuntimeConversationsOptions,
-} from './useBoardRuntimeConversations'
-import { BoardRuntimeConversations } from './boardRuntimeConversations'
+  createCollaborationTranslator,
+  createIssueBoardCardLabels,
+  IssueBoardCard,
+  IssueBoardCardContent,
+  IssueCardTaskSummary,
+  runtimeTaskProgress,
+  runtimeToolActivityText,
+  standInProcessingActor,
+} from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Archive, CircleCheck } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { BoardRuntimeConversations } from './boardRuntimeConversations'
+import type { BoardRuntimeGoalLoader } from './boardRuntimeGoal'
+import { useBoardRuntimeGoal } from './boardRuntimeGoal'
+import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { IssueBadges } from './IssueBadges'
+import { canEditProjectSpaceIssue } from './projectSpaceSelection'
+import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
+import type { UseBoardRuntimeConversationsOptions } from './useBoardRuntimeConversations'
+import { useBoardRuntimeConversations } from './useBoardRuntimeConversations'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -309,7 +311,8 @@ export function CloudTodoBoardCard({
           {cardAction ? (
             <span className="absolute right-2 top-2 z-20">
               <Tooltip label={cardAction.label} side="bottom" align="end">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={cardAction.testId}
                   aria-label={cardAction.label}
@@ -328,7 +331,7 @@ export function CloudTodoBoardCard({
                   ) : (
                     <CircleCheck className="h-3.5 w-3.5" />
                   )}
-                </button>
+                </ControlButton>
               </Tooltip>
             </span>
           ) : undefined}
@@ -489,7 +492,8 @@ function RuntimeTaskProgressSummary({
               className="mb-2 flex items-center justify-between gap-2 text-xs text-destructive"
             >
               <span>{goalTranslate('todo.current_conversation_goal_failed')}</span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`cloud-todo-card-goal-retry-${item.id}-${binding.id}`}
                 className="shrink-0 rounded-md px-2 py-1 hover:bg-muted"
@@ -499,7 +503,7 @@ function RuntimeTaskProgressSummary({
                 }}
               >
                 {goalTranslate('workbench.retry')}
-              </button>
+              </ControlButton>
             </div>
           )}
         </>

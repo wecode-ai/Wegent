@@ -1,18 +1,32 @@
-import { createStandInOpenedReceipt } from '@/telemetry/standInOpenedReceipt'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
-import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useCallback, useContext, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import type { RuntimeTaskAddress } from '@/types/api'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { localRuntimeAttachments } from '@/lib/runtime-attachments'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
+import { createStandInOpenedReceipt } from '@/telemetry/standInOpenedReceipt'
+import type { RuntimeTaskAddress } from '@/types/api'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { WorkspaceStandInSettings } from '@wegent/collaboration'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
+import { selectStandInDelegatedWork } from './standInDelegatedBranches'
+import { StandInDelegatedWork } from './StandInDelegatedWork'
 import { useStandInConversationModel } from './useStandInConversationModel'
-import { createAsyncResource } from '@wegent/chat-core/async-resource'
 
 export function StandInConversation({
   api,
@@ -91,6 +105,30 @@ export function StandInConversation({
   )
   const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
   const address = snapshot.data
+  const roleBranches = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify([userId, deviceId, taskId]),
+        () => api.remoteRoleBranches(userId, deviceId, taskId),
+        { refreshIntervalMs: 3000, refreshIntervalMode: 'after-settle', refreshOnSubscribe: true }
+      ),
+    [api, userId, deviceId, taskId]
+  )
+  const remoteBranches = useSyncExternalStore(
+    active && !scope && address ? roleBranches.subscribe : subscribeIdleResource,
+    roleBranches.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const delegatedWork = scope
+    ? []
+    : selectStandInDelegatedWork(
+        workbench?.runtimeTaskReminders.items ?? [],
+        remoteBranches.data?.items ?? [],
+        userId,
+        deviceId,
+        taskId,
+        aliases
+      )
   const error = snapshot.status === 'error' ? getStandInErrorMessage(snapshot.error) : null
   const setAddress = useCallback(
     (value: RuntimeTaskAddress | null) => {
@@ -101,7 +139,8 @@ export function StandInConversation({
   const failureNotice = error ? (
     <div role="alert" className="p-5 text-sm text-error">
       <p>{error}</p>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="stand-in-conversation-retry"
         className="mt-2 underline"
@@ -110,7 +149,7 @@ export function StandInConversation({
         }}
       >
         {t('standIn.reload')}
-      </button>
+      </ControlButton>
     </div>
   ) : null
   if (error && address === undefined) return failureNotice
@@ -130,7 +169,41 @@ export function StandInConversation({
         instanceId={`stand-in:${deviceId}:${taskId}`}
         testId="stand-in-conversation"
         draftRequest={draftRequest}
-        contentFooter={contentFooter}
+        contentFooter={
+          delegatedWork.length ? (
+            <>
+              <StandInDelegatedWork
+                tasks={delegatedWork}
+                taskId={taskId}
+                onOpenTask={onOpenTask}
+                onCancel={async (root, branch) => {
+                  await api.cancelRoleWork(
+                    userId,
+                    branch?.dispatcherDeviceId ?? deviceId,
+                    taskId,
+                    root,
+                    branch?.taskId
+                  )
+                  void roleBranches.reload()
+                }}
+                onRetry={async branch => {
+                  await api.retryRoleWork(
+                    userId,
+                    branch.dispatcherDeviceId,
+                    taskId,
+                    branch.root,
+                    branch.taskId,
+                    branch.attempt
+                  )
+                  await roleBranches.reload()
+                }}
+              />
+              {contentFooter}
+            </>
+          ) : (
+            contentFooter
+          )
+        }
         onDraftRequestConsumed={onDraftRequestConsumed}
         initialAddress={address}
         controlledAddress={address}

@@ -1,3 +1,5 @@
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -5,10 +7,10 @@ import { useRef, useState } from 'react'
 import type { CollaborationLocale } from '../i18n'
 import { importTemplate } from './document'
 import { templateMessages } from './messages'
-import type { CollaborationTemplate } from './types'
 import type { CollaborationTemplateStore } from './store'
 import { TemplatePanel } from './TemplatePanel'
 import { TemplatePreview } from './TemplatePreview'
+import type { CollaborationTemplate } from './types'
 
 export function TemplateImportDialog({
   store,
@@ -44,16 +46,18 @@ export function TemplateImportDialog({
       footer={
         <>
           {!embedded && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               disabled={busy}
               data-testid="template-import-cancel"
               onClick={onClose}
             >
               {m.cancel}
-            </button>
+            </ControlButton>
           )}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-primary-button"
             data-testid="template-import-save"
@@ -74,13 +78,13 @@ export function TemplateImportDialog({
             }}
           >
             {busy ? m.saving : m.save}
-          </button>
+          </ControlButton>
         </>
       }
     >
       <label className="collaboration-template-field">
         <span>{m.file}</span>
-        <input
+        <ControlInput
           type="file"
           accept=".yaml,.yml"
           data-testid="template-import-file"

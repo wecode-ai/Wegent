@@ -12,7 +12,7 @@ import {
 } from '../../../electron/src/host/model-interface-runtime'
 import {
   assertLocalRuntimeSidebarIdentity,
-  qualifyLocalRuntimeWork,
+  getLocalRuntimeSourceIdentity,
   isInvalidLocalRuntimeIdentityError,
   type LocalRuntimeSidebarOptions,
   type LocalRuntimeSidebarIdentity,
@@ -556,16 +556,7 @@ export function createHybridWorkbenchServices(
     localRuntimeProjectKeys.clear()
     projectDevicePluginApis.forEach(api => api.invalidate?.())
   }
-  const getLocalRuntimeSidebarIdentity = async () => {
-    let identity: LocalRuntimeSidebarIdentity | null
-    try {
-      identity = (await localServices.getLocalRuntimeSidebarIdentity?.()) ?? null
-    } catch (error) {
-      if (isInvalidLocalRuntimeIdentityError(error)) {
-        revokeLocalRuntimeIdentity()
-      }
-      throw error
-    }
+  const reconcileLocalRuntimeIdentity = (identity: LocalRuntimeSidebarIdentity | null) => {
     if (
       !identity ||
       rememberedLocalDevices.some(
@@ -576,7 +567,16 @@ export function createHybridWorkbenchServices(
     ) {
       revokeLocalRuntimeIdentity()
     }
-    return identity
+  }
+  const getLocalRuntimeSidebarIdentity = async () => {
+    try {
+      const identity = (await localServices.getLocalRuntimeSidebarIdentity?.()) ?? null
+      reconcileLocalRuntimeIdentity(identity)
+      return identity
+    } catch (error) {
+      if (isInvalidLocalRuntimeIdentityError(error)) revokeLocalRuntimeIdentity()
+      throw error
+    }
   }
   const rememberCloudDevices = (
     devices: DeviceInfo[],
@@ -891,16 +891,14 @@ export function createHybridWorkbenchServices(
       NonNullable<WorkbenchServices['runtimeWorkApi']>['listRuntimeWork']
     >[0]
   ) => {
-    const identity = await getLocalRuntimeSidebarIdentity()
     try {
-      const work = requestOptions
-        ? await localServices.runtimeWorkApi!.listRuntimeWork(requestOptions)
-        : await localServices.runtimeWorkApi!.listRuntimeWork()
-      if (identity)
-        assertLocalRuntimeSidebarIdentity(identity, await getLocalRuntimeSidebarIdentity())
-      const qualifiedWork = identity ? qualifyLocalRuntimeWork(work, identity) : work
-      rememberLocalRuntimeWorkDevices(qualifiedWork)
-      return qualifiedWork
+      const work = await localServices.runtimeWorkApi!.listRuntimeWork(requestOptions)
+      // The IPC layer attaches its identity only after validating both ends of the read.
+      const identity = getLocalRuntimeSourceIdentity(work)
+      if (!identity) throw new Error('local-sidebar-identity-unavailable')
+      reconcileLocalRuntimeIdentity(identity)
+      rememberLocalRuntimeWorkDevices(work)
+      return work
     } catch (error) {
       if (isInvalidLocalRuntimeIdentityError(error)) revokeLocalRuntimeIdentity()
       throw error
@@ -1985,6 +1983,28 @@ export function createHybridWorkbenchServices(
       async inbox(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).inbox(userId, deviceId)
       },
+      async remoteRoleBranches(userId, deviceId, taskId) {
+        return (await standInApiForDevice(deviceId)).remoteRoleBranches(userId, deviceId, taskId)
+      },
+      async cancelRoleWork(userId, deviceId, taskId, root, branchTaskId) {
+        return (await standInApiForDevice(deviceId)).cancelRoleWork(
+          userId,
+          deviceId,
+          taskId,
+          root,
+          branchTaskId
+        )
+      },
+      async retryRoleWork(userId, deviceId, taskId, root, branchTaskId, attempt) {
+        return (await standInApiForDevice(deviceId)).retryRoleWork(
+          userId,
+          deviceId,
+          taskId,
+          root,
+          branchTaskId,
+          attempt
+        )
+      },
       async workMessages(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).workMessages(userId, deviceId, workId)
       },
@@ -2077,6 +2097,15 @@ export function createHybridWorkbenchServices(
       },
       async personalSave(userId, settings, deviceId) {
         return (await standInApiForDevice(deviceId)).personalSave(userId, settings, deviceId)
+      },
+      async saveDelegationRoute(userId, deviceId, version, roleId, route) {
+        return (await standInApiForDevice(deviceId)).saveDelegationRoute(
+          userId,
+          deviceId,
+          version,
+          roleId,
+          route
+        )
       },
       async readTask(deviceId, taskId, options) {
         return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId, options)
@@ -2192,6 +2221,8 @@ function filterRuntimeChatStreamHandlers(
     onGuidanceApplied: route(handlers.onGuidanceApplied),
     onRuntimeEventLagged: handlers.onRuntimeEventLagged,
     onRuntimeTransportReplaced: localRuntime ? handlers.onRuntimeTransportReplaced : undefined,
+    onIssueShared: localRuntime ? undefined : handlers.onIssueShared,
+    onIssueAssignmentsChanged: localRuntime ? undefined : handlers.onIssueAssignmentsChanged,
     onWeworkNotification: acceptsDevice(undefined) ? handlers.onWeworkNotification : undefined,
     onProjectTaskAssigned: handlers.onProjectTaskAssigned
       ? payload => {

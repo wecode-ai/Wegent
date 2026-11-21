@@ -194,6 +194,9 @@ pub async fn setup_chat_session(
             input.crd.auto_delete_executor,
         );
         apply_model_option_labels(&mut task_json, input);
+        if let Some(device_id) = input.crd.device_id {
+            task_json["spec"]["device_id"] = serde_json::json!(device_id);
+        }
         if input.create_assistant {
             continuation::mark_pending(&mut task_json, input.crd.updated_at);
         }

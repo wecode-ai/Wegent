@@ -8,6 +8,7 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    sync::Mutex,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -121,6 +122,33 @@ impl TranscriptDecoder {
 const CHUNK_BYTES: usize = 360 * 1024;
 const STRING_BYTES: usize = 1024;
 const SNAPSHOT_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+const TRANSFER_CLEANUP_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Default)]
+pub(super) struct TransferCleanup {
+    last_started: Mutex<Option<Instant>>,
+}
+
+impl TransferCleanup {
+    pub(super) fn run_if_due(&self, runtime_directory: &Path, now: Instant) {
+        // Keep the guard for the sweep so concurrent reads can skip it.
+        let Ok(mut last_started) = self.last_started.try_lock() else {
+            return;
+        };
+        if last_started
+            .is_some_and(|last| now.saturating_duration_since(last) < TRANSFER_CLEANUP_INTERVAL)
+        {
+            return;
+        }
+        *last_started = Some(now);
+        if let Err(error) = remove_expired_transfers(runtime_directory) {
+            crate::logging::log_executor_event(
+                "runtime transcript transfer cleanup failed",
+                &[("error", error.message)],
+            );
+        }
+    }
+}
 
 pub(super) fn requested(payload: &Value) -> Result<bool, AppIpcError> {
     match payload.get("transcriptProtocolVersion") {
@@ -543,7 +571,7 @@ fn remove_expired_snapshots(directory: &Path) -> Result<(), AppIpcError> {
     Ok(())
 }
 
-pub(super) fn remove_expired_transfers(runtime_directory: &Path) -> Result<(), AppIpcError> {
+fn remove_expired_transfers(runtime_directory: &Path) -> Result<(), AppIpcError> {
     let entries = match fs::read_dir(runtime_directory.join("transcript-transfers")) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),

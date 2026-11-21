@@ -135,6 +135,19 @@ pub(crate) async fn load_codex_transcript(
         .transpose()?
         .flatten()
     {
+        if cursor.is_history_start()
+            && request.direction == CodexTranscriptDirection::Ascending
+            && thread["historyMode"] == "legacy"
+        {
+            return super::codex_legacy_search::load_legacy_transcript_page(
+                thread,
+                None,
+                request.direction,
+                request.limit,
+            )
+            .await
+            .map_err(Into::into);
+        }
         return super::codex_transcript_search::load_context_page(
             client,
             thread,

@@ -1261,6 +1261,7 @@ class KnowledgeBaseSpec(BaseModel):
         None,
         description="Model reference for summary generation. Required when summaryEnabled=True",
     )
+    guidedQuestions: Optional[List[str]] = Field(None, max_length=3)
 
     # Knowledge base tool call limit configuration
     maxCallsPerConversation: Optional[int] = Field(

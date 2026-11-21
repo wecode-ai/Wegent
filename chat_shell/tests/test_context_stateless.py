@@ -4,6 +4,7 @@
 
 """Tests for stateless history and tool toggles in chat context."""
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,6 +20,56 @@ from shared.utils.attachment_block import build_attachment_header
 
 def _block(text: str):
     return [{"type": "input_text", "text": text}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "server",
+    [
+        {"type": "stdio", "command": "tool", "args": ["context-value"]},
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "headers": {"X-Context": "context-value"},
+        },
+    ],
+)
+async def test_request_mcp_configuration_survives_other_connector_failures(
+    server: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from langchain_core.tools import StructuredTool
+
+    class FakeClient:
+        def __init__(self, *, connections, **_kwargs):
+            self.connections = connections
+
+        async def get_tools(self, *, server_name):
+            connection = self.connections[server_name]
+            value = (
+                connection["args"][0]
+                if connection["transport"] == "stdio"
+                else connection["headers"]["X-Context"]
+            )
+            return [
+                StructuredTool.from_function(
+                    func=lambda: value, name="healthy", description="Healthy service"
+                )
+            ]
+
+    monkeypatch.setattr("chat_shell.tools.mcp.client.MultiServerMCPClient", FakeClient)
+    context = ChatContext(
+        ExecutionRequest(
+            mcp_servers=[
+                {"name": "connector", "url": "${{backend_api_url}}/mcp/connectors/sse"},
+                {"name": [], "url": "https://example.test/invalid"},
+                {"name": "healthy", **server},
+            ]
+        )
+    )
+    tools, clients = await asyncio.wait_for(context._connect_mcp_servers(), timeout=2.0)
+    assert await tools[0].ainvoke({}) == "context-value"
+    assert len(clients) == 1
+    assert context._mcp_unavailable is True
 
 
 def _doc_block() -> str:

@@ -1,3 +1,6 @@
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Checkbox as ControlCheckbox } from '@wegent/collaboration/controls/Checkbox'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { resolveIssueReference } from './resolveIssueReference'
 import { CloudTodoWorkspaceSidebar } from './CloudTodoWorkspaceSidebar'
 import { createCloudTodoBoardSlots } from './cloudTodoBoardSlots'
@@ -155,6 +158,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
     setBatchConfirmItems,
     setBatchConfirmRetryItemKeys,
     runtimeBatchArchiveItems,
+    batchArchiveError,
     setRuntimeBatchArchiveItems,
     applyProjectSelection,
     selectProject,
@@ -202,6 +206,11 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
             className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             data-testid="cloud-todo-main"
           >
+            {isMyTasksBoard && batchArchiveError && (
+              <p className="shrink-0 px-4 py-2 text-sm text-destructive" role="alert">
+                {batchArchiveError}
+              </p>
+            )}
             {!embedded && !selectedProject && (
               <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
             )}
@@ -224,14 +233,15 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                 className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-destructive/5 px-4 py-2 text-sm text-destructive"
               >
                 <span>本地项目空间加载失败：{localProjectsError}</span>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="local-project-spaces-retry"
                   onClick={retryLocalProjects}
                   className="h-7 shrink-0 rounded-md border border-destructive/30 px-2 text-xs font-medium hover:bg-destructive/10"
                 >
                   {t('common.retry', '重试')}
-                </button>
+                </ControlButton>
               </div>
             ) : null}
             {issueComposerOpen ? (
@@ -256,14 +266,15 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                 className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-sm text-destructive"
               >
                 <span>本地项目空间加载失败：{localProjectsError}</span>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="local-project-spaces-retry"
                   onClick={retryLocalProjects}
                   className="h-8 rounded-lg border border-destructive/30 px-3 text-sm font-medium hover:bg-destructive/10"
                 >
                   {t('common.retry', '重试')}
-                </button>
+                </ControlButton>
               </div>
             ) : (projectSpaceApis.local ? localProjectsLoading : cloudWorkspace.state.loading) ? (
               <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
@@ -331,7 +342,8 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                           side="bottom"
                           align="end"
                         >
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             ref={actionRefs.search}
                             type="button"
                             data-testid="cloud-project-task-search-toggle"
@@ -349,7 +361,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                                 ? t('todo.search_tasks', '搜索任务')
                                 : t('todo.search_issues', '搜索 Issue')
                               : null}
-                          </button>
+                          </ControlButton>
                         </Tooltip>
                         {canCreateBoardTask ? (
                           <Tooltip
@@ -361,7 +373,8 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                             side="bottom"
                             align="end"
                           >
-                            <button
+                            <ControlButton
+                              variant="unstyled"
                               ref={actionRefs.add}
                               type="button"
                               data-testid="cloud-todo-add"
@@ -381,7 +394,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                                   ? t('todo.new_task', '新建任务')
                                   : t('todo.new_issue', '新建 Issue')
                                 : null}
-                            </button>
+                            </ControlButton>
                           </Tooltip>
                         ) : null}
                       </>
@@ -430,7 +443,8 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                         side="bottom"
                         align="end"
                       >
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           ref={actionRefs.add}
                           type="button"
                           data-testid="cloud-todo-add"
@@ -445,7 +459,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                           className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
                         >
                           <Plus className="h-3.5 w-3.5" />
-                        </button>
+                        </ControlButton>
                       </Tooltip>
                     ) : null}
                   </>
@@ -519,7 +533,8 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
             </ProjectBoardSettingsDialog>
           ) : null}
           {selectedItem && backgroundTaskItemId !== selectedItem.id ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="cloud-todo-detail-dismiss-layer"
               aria-label={taskPanelOpen ? '关闭任务对话' : '关闭 Issue 详情'}
@@ -665,20 +680,18 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                 createTodoProject.location === 'cloud' && !createTodoParent ? (
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-text-secondary">
                     <label className="flex cursor-pointer items-center gap-2">
-                      <input
-                        type="checkbox"
+                      <ControlCheckbox
                         data-testid="cloud-todo-create-runtime-option"
                         checked={createTodoStartRuntime}
-                        onChange={event => setCreateTodoStartRuntime(event.target.checked)}
+                        onCheckedChange={checked => setCreateTodoStartRuntime(checked === true)}
                       />
                       {t('todo.create_runtime_task_after_issue', '创建后启动 Runtime 任务')}
                     </label>
                     <label className="flex cursor-pointer items-center gap-2">
-                      <input
-                        type="checkbox"
+                      <ControlCheckbox
                         data-testid="cloud-todo-continue-creating-option"
                         checked={createTodoContinueCreating}
-                        onChange={event => setCreateTodoContinueCreating(event.target.checked)}
+                        onCheckedChange={checked => setCreateTodoContinueCreating(checked === true)}
                       />
                       {t('todo.continue_creating', '继续创建')}
                     </label>
@@ -721,7 +734,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
             <div className="px-5 pb-5 pt-4">
               <label className="block text-sm font-medium text-text-secondary">
                 项目名称
-                <input
+                <ControlInput
                   data-testid="cloud-project-rename-input"
                   value={renameProjectName}
                   autoFocus
@@ -738,22 +751,24 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                 <p className="mt-3 text-xs text-destructive wework:text-red-600">{renameError}</p>
               ) : null}
               <div className="mt-6 flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   onClick={() => setRenameProject(null)}
                   disabled={renameBusy}
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   取消
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="submit"
                   data-testid="cloud-project-rename-confirm"
                   disabled={!renameProjectName.trim() || renameBusy}
                   className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
                 >
                   {renameBusy ? '保存中…' : '保存'}
-                </button>
+                </ControlButton>
               </div>
             </div>
           </Modal>
@@ -761,11 +776,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
         {runtimeBatchArchiveItems && (
           <Modal
             title={t('todo.archive_completed_tasks_title', '归档已完成任务？')}
-            onClose={() => {
-              if (archiveBusy) return
-              setRuntimeBatchArchiveItems(null)
-              setArchiveError(null)
-            }}
+            onClose={() => setRuntimeBatchArchiveItems(null)}
           >
             <div className="px-5 pb-5 pt-4">
               <p className="text-sm leading-5 text-text-secondary">
@@ -775,35 +786,28 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                   { count: runtimeBatchArchiveItems.length }
                 )}
               </p>
-              {archiveError ? (
-                <p className="mt-3 text-xs text-destructive" role="alert">
-                  {archiveError}
-                </p>
-              ) : null}
+
               <div className="mt-6 flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-my-tasks-archive-completed-cancel"
-                  disabled={archiveBusy}
-                  onClick={() => {
-                    setRuntimeBatchArchiveItems(null)
-                    setArchiveError(null)
-                  }}
+                  onClick={() => setRuntimeBatchArchiveItems(null)}
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   {t('common.cancel', '取消')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-my-tasks-archive-completed-confirm"
-                  disabled={archiveBusy}
                   onClick={() => void archiveCompletedItems(runtimeBatchArchiveItems)}
                   className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-50 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
                 >
                   {archiveBusy
                     ? t('todo.archiving', '归档中…')
                     : t('todo.confirm_archive', '确认归档')}
-                </button>
+                </ControlButton>
               </div>
             </div>
           </Modal>
@@ -832,7 +836,8 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                 </p>
               ) : null}
               <div className="mt-6 flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-todo-batch-confirm-review-cancel"
                   disabled={batchConfirmBusy}
@@ -844,8 +849,9 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   {t('common.cancel', '取消')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-todo-batch-confirm-review-confirm"
                   disabled={batchConfirmBusy}
@@ -855,7 +861,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                   {batchConfirmBusy
                     ? t('todo.batch_confirming', '确认中…')
                     : t('todo.confirm_complete', '确认完成')}
-                </button>
+                </ControlButton>
               </div>
             </div>
           </Modal>
@@ -881,7 +887,8 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                 <p className="mt-3 text-xs text-destructive wework:text-red-600">{archiveError}</p>
               ) : null}
               <div className="mt-6 flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-archive-cancel"
                   disabled={archiveBusy}
@@ -893,8 +900,9 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   取消
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={
                     archiveProject ? 'cloud-project-archive-confirm' : 'cloud-todo-archive-confirm'
@@ -906,7 +914,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                   className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-50 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
                 >
                   {archiveBusy ? '归档中…' : '确认归档'}
-                </button>
+                </ControlButton>
               </div>
             </div>
           </Modal>

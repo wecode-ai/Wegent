@@ -1,3 +1,5 @@
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -280,7 +282,7 @@ export function IssueDetailAttachments({
         {editable && compact ? (
           <label className="add">
             {busy ? labels.uploading : labels.upload}
-            <input
+            <ControlInput
               data-testid={inputTestId}
               type="file"
               multiple
@@ -326,7 +328,8 @@ export function IssueDetailAttachments({
                   compact ? 'task-detail-rail-file group' : 'shared-issue-detail-attachment-row'
                 }
               >
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={onOpen ? openTestId(attachment.id) : downloadTestId(attachment.id)}
                   disabled={!onOpen || downloadingId === attachment.id}
@@ -377,9 +380,10 @@ export function IssueDetailAttachments({
                       </span>
                     ) : null}
                   </span>
-                </button>
+                </ControlButton>
                 {onDownload ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={downloadTestId(attachment.id)}
                     disabled={downloadingId === attachment.id}
@@ -388,10 +392,11 @@ export function IssueDetailAttachments({
                     onClick={() => void onDownload(attachment)}
                   >
                     {icons?.download ?? '↓'}
-                  </button>
+                  </ControlButton>
                 ) : null}
                 {editable ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={removeTestId(attachment.id)}
                     disabled={busy}
@@ -402,7 +407,7 @@ export function IssueDetailAttachments({
                     aria-label={labels.remove(attachment.displayName)}
                   >
                     {icons?.remove ?? '×'}
-                  </button>
+                  </ControlButton>
                 ) : null}
               </div>
             ))}
@@ -416,7 +421,7 @@ export function IssueDetailAttachments({
           >
             {icons?.upload}
             {busy ? labels.uploading : labels.dropzone}
-            <input
+            <ControlInput
               data-testid={compact ? undefined : inputTestId}
               type="file"
               multiple

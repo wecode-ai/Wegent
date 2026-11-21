@@ -1,3 +1,7 @@
+import { SelectField } from '../controls/SelectField'
+import { Button as ControlButton } from '../markdown/Button'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { Tooltip } from '../controls/Tooltip'
 import { persistIssueDetailFields } from './persistIssueDetailFields'
 import { runnerEnvironmentError } from '../execution-environment/runnerEnvironmentError'
 import { IssueHierarchySummary } from './IssueHierarchySummary'
@@ -14,7 +18,7 @@ import {
   Waypoints,
   X,
 } from 'lucide-react'
-import { IssueDetailCollaboratorPicker, IssueStatusHistoryList, Tooltip } from './index'
+import { IssueDetailCollaboratorPicker, IssueStatusHistoryList } from './index'
 import { stripLocalFileUrlsFromClipboardText } from './clipboardText'
 import { IssuePropertyRow as RailProp } from './IssuePropertyRow'
 import { IssueSaveButton } from './IssueSaveButton'
@@ -22,7 +26,7 @@ import { localizeStandardStatusName } from '../i18n'
 import { ExecutionConfigurationNotice } from '../runtime-profile/ExecutionConfigurationNotice'
 import { IssueLinkedTasks, IssueDeliveries } from './IssueExecutionLists'
 import { taskDeviceLabel } from './taskBindingPresentation'
-import { cn, columnDotClasses, memberNameById, overlayControlClass } from './issueEditorSupport'
+import { cn, columnDotClasses, memberNameById } from './issueEditorSupport'
 import { TodoAttachmentSection } from './IssueEditorControls'
 import type { IssueDetailViewModel } from './IssueDetailMainView'
 export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel }) {
@@ -181,7 +185,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
           data-testid="issue-title-properties"
         >
           <div className="min-w-0 flex-1">
-            <textarea
+            <ControlTextarea
               ref={titleRef}
               data-testid={isCreate ? 'cloud-todo-title' : 'cloud-todo-detail-title'}
               aria-label={t('todo.issue_title', '任务标题')}
@@ -287,7 +291,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                 {railProps}
               </div>
               <div className="task-detail-expanded-properties">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="task-detail-workspace-properties-toggle"
                   data-testid="cloud-todo-more-properties"
@@ -300,7 +305,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                     className={cn('h-3.5 w-3.5', propertiesExpanded && 'rotate-180')}
                     aria-hidden="true"
                   />
-                </button>
+                </ControlButton>
                 <div
                   id={propertiesId}
                   role="region"
@@ -322,45 +327,49 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                     side="bottom"
                     align="start"
                   >
-                    <span className="task-detail-state-security">
-                      <Eye aria-hidden="true" size={15} />
-                      <strong>{issueSecurityLabel}</strong>
-                      <ChevronDown aria-hidden="true" size={12} />
-                      <select
-                        data-testid="cloud-issue-security-level"
-                        aria-label={t('todo.issue_security', '任务可见范围')}
-                        className={overlayControlClass}
-                        value={item.security_level ?? 'open'}
-                        disabled={fieldSaves.pendingFields.has('security')}
-                        onChange={async event => {
-                          if (!editProps) return
-                          setSaveError(null)
-                          try {
-                            const security = event.target.value as 'open' | 'related'
-                            await fieldSaves.save('security', source =>
-                              persistIssueDetailFields(
-                                source,
-                                { security_level: security },
-                                editorPort.issues
-                              )
+                    <SelectField<'open' | 'related'>
+                      testId="cloud-issue-security-level"
+                      accessibleLabel={t('todo.issue_security', '任务可见范围')}
+                      appearance="plain"
+                      density="compact"
+                      value={item.security_level ?? 'open'}
+                      options={[
+                        {
+                          value: 'open',
+                          label: t('todo.issue_security_open', '项目可访问者可见'),
+                        },
+                        {
+                          value: 'related',
+                          label: t('todo.issue_security_related', '仅相关人员可见'),
+                        },
+                      ]}
+                      disabled={fieldSaves.pendingFields.has('security')}
+                      triggerContent={
+                        <span className="inline-flex min-w-0 items-center gap-1.5">
+                          <Eye aria-hidden="true" className="shrink-0" size={15} />
+                          <strong>{issueSecurityLabel}</strong>
+                        </span>
+                      }
+                      onChange={async security => {
+                        if (!editProps) return
+                        setSaveError(null)
+                        try {
+                          await fieldSaves.save('security', source =>
+                            persistIssueDetailFields(
+                              source,
+                              { security_level: security },
+                              editorPort.issues
                             )
-                          } catch (cause) {
-                            setSaveError(
-                              cause instanceof Error
-                                ? cause.message
-                                : t('todo.save_issue_failed', '保存任务失败')
-                            )
-                          }
-                        }}
-                      >
-                        <option value="open">
-                          {t('todo.issue_security_open', '项目可访问者可见')}
-                        </option>
-                        <option value="related">
-                          {t('todo.issue_security_related', '仅相关人员可见')}
-                        </option>
-                      </select>
-                    </span>
+                          )
+                        } catch (cause) {
+                          setSaveError(
+                            cause instanceof Error
+                              ? cause.message
+                              : t('todo.save_issue_failed', '保存任务失败')
+                          )
+                        }
+                      }}
+                    />
                   </Tooltip>
                 ) : null}
               </div>
@@ -428,7 +437,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
               <span className="task-detail-meta-item relative cursor-pointer">
                 {assigneeSelect}
                 {item?.assignment_history?.length ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     ref={setAssignmentChainTrigger}
                     type="button"
                     data-testid="cloud-todo-assignment-chain-trigger"
@@ -439,7 +449,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                     className="relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-secondary transition hover:bg-muted hover:text-text-primary"
                   >
                     <Waypoints className="h-3.5 w-3.5" />
-                  </button>
+                  </ControlButton>
                 ) : null}
               </span>
             ) : null}
@@ -484,7 +494,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                 onInlineAttachmentIdsChange: attachmentIds =>
                   setInlinePreviewAttachmentIds(new Set(attachmentIds)),
               }) ?? (
-                <textarea
+                <ControlTextarea
                   data-testid="cloud-todo-detail-description"
                   aria-label={t('todo.issue_description', '任务描述')}
                   value={description}
@@ -527,7 +537,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
             descriptionExpanded ? (
               <div className="task-detail-desc-footer">
                 {twoColumn && !editingContent && (descriptionCanExpand || descriptionExpanded) ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="issue-description-toggle"
                     aria-expanded={descriptionExpanded}
@@ -546,7 +557,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                         descriptionExpanded && 'rotate-180'
                       )}
                     />
-                  </button>
+                  </ControlButton>
                 ) : null}
                 <p
                   className={cn(
@@ -559,13 +570,14 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                 </p>
                 {workspacePanel && editable && !editingContent ? (
                   <span className="task-detail-desc-actions">
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="issue-description-edit"
                       onClick={() => beginContentEditing('description')}
                     >
                       {t('todo.edit_description', '编辑描述')}
-                    </button>
+                    </ControlButton>
                   </span>
                 ) : null}
                 {workspacePanel && editingContent ? (
@@ -573,14 +585,15 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                     className="task-detail-desc-actions"
                     onClick={event => event.stopPropagation()}
                   >
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="cloud-todo-cancel-content-edit"
                       disabled={savingDescription}
                       onClick={cancelContentEditing}
                     >
                       {t('common.cancel', '取消')}
-                    </button>
+                    </ControlButton>
                     <IssueSaveButton
                       testId="cloud-todo-save"
                       className="task-detail-assignment-save"
@@ -622,14 +635,15 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                 ? fieldSaves.error.message
                 : t('todo.save_issue_failed', '保存任务失败'))}
             {fieldSaves.error ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="cloud-todo-field-retry"
                 onClick={fieldSaves.retry}
                 className="ml-2 underline"
               >
                 {t('todo.milestone_retry', '重试')}
-              </button>
+              </ControlButton>
             ) : null}
           </p>
         )}
@@ -676,7 +690,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                     <span>{props.defaultAssistant.capabilitySummary}</span>
                   ) : null}
                 </span>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-todo-start-default-assistant"
                   onClick={() => props.onCreateTask?.()}
@@ -684,7 +699,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                   {t('todo.handoff_to_assistant', '交给{{name}}', {
                     name: props.defaultAssistant.name,
                   })}
-                </button>
+                </ControlButton>
               </section>
             ) : null}
 
@@ -806,14 +821,15 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                       : childItems.length}
                   </span>
                   {editable && editProps?.onAddChild ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="cloud-todo-detail-add-child"
                       onClick={editProps.onAddChild}
                       className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
                     >
                       <Plus className="h-3 w-3" /> {t('todo.create_sub_issue', '新建子任务')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                 </div>
                 {twoColumn && childItems.length > 0 ? (
@@ -864,7 +880,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                     {collaborators.length + (item.resource_participants?.length ?? 0)}
                   </span>
                   {editable ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="cloud-todo-add-collaborator"
                       disabled={!collaboratorEditingSupported}
@@ -879,7 +896,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                     >
                       <Plus className="h-3 w-3" />
                       {t('todo.add_collaborator', '添加参与者')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                 </div>
                 {collaboratorAvailabilityNote}
@@ -908,7 +925,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                           </span>
                         )}
                         {canEditCollaborators ? (
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             aria-label={t('todo.remove_collaborator', '移除参与者 {{name}}', {
                               name: collaborator.user_name,
@@ -918,7 +936,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary transition hover:bg-background hover:text-text-primary disabled:opacity-40"
                           >
                             <X className="h-3.5 w-3.5" />
-                          </button>
+                          </ControlButton>
                         ) : null}
                       </div>
                     ))}
@@ -967,7 +985,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                   </h3>
                   <div className="mt-1 space-y-1">
                     {deliveries.map(delivery => (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         key={delivery.id}
                         type="button"
                         onClick={() => void openDelivery(delivery.id)}
@@ -983,7 +1002,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                           {delivery.delivered_at?.slice(0, 10)}
                         </span>
                         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                      </button>
+                      </ControlButton>
                     ))}
                   </div>
                 </section>

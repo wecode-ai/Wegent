@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TaskDetail, TaskStatus as ApiTaskStatus } from '../api-types'
+import type { ChatErrorInfo, TaskDetail, TaskStatus as ApiTaskStatus } from '../api-types'
 import type { ContextMetricsSnapshot } from '../api-types'
 import type { MessageBlock } from '../message-blocks'
 import type { TaskRuntimePhase } from './taskStatusClassifier'
@@ -75,6 +75,7 @@ export interface UnifiedMessage {
   /** Whether reasoning content is actively streaming (reasoning chunks arriving, no content yet) */
   isReasoningStreaming?: boolean
   result?: {
+    error_info?: ChatErrorInfo
     value?: string
     thinking?: unknown[]
     workbench?: Record<string, unknown>
@@ -256,11 +257,26 @@ export type Event =
       subtaskId: number
       block: Partial<MessageBlock> & { id: string }
     }
-  | { type: 'CHAT_ERROR'; subtaskId: number; error: string; messageId?: number; errorType?: string }
+  | {
+      type: 'CHAT_ERROR'
+      subtaskId: number
+      error: string
+      messageId?: number
+      errorType?: string
+      errorInfo?: ChatErrorInfo
+    }
   | { type: 'CHAT_CANCELLED'; subtaskId: number }
   | { type: 'SEND_ACCEPTED'; acceptedAt: string }
-  | { type: 'TASK_STATUS_RECEIVED'; taskStatus: ApiTaskStatus; updatedAt?: string }
-  | { type: 'TASK_DETAIL_SYNCED'; taskStatus: ApiTaskStatus; updatedAt?: string }
+  | {
+      type: 'TASK_STATUS_RECEIVED'
+      taskStatus: ApiTaskStatus
+      updatedAt?: string
+    }
+  | {
+      type: 'TASK_DETAIL_SYNCED'
+      taskStatus: ApiTaskStatus
+      updatedAt?: string
+    }
   | { type: 'LEAVE' }
 
 /**

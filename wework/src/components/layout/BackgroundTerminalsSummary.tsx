@@ -1,7 +1,8 @@
-import { Loader2, Square, SquareTerminal } from 'lucide-react'
-import { useState } from 'react'
 import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, Square, SquareTerminal } from 'lucide-react'
+import { useState } from 'react'
 import type { BackgroundTerminal } from './backgroundTerminals'
 
 export function BackgroundTerminalsSummary({
@@ -43,7 +44,8 @@ export function BackgroundTerminalsSummary({
             key={terminal.id}
             className="group flex min-h-11 items-center rounded-md hover:bg-hover md:min-h-8"
           >
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`open-background-terminal-${terminal.id}`}
               className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left text-sm text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 md:min-h-8"
@@ -54,9 +56,10 @@ export function BackgroundTerminalsSummary({
               <span className="min-w-0 truncate">
                 {unwrapShellCommand(terminal.command) || t('workbench.background_terminal')}
               </span>
-            </button>
+            </ControlButton>
             {onStop && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`stop-background-terminals-${terminal.id}`}
                 aria-label={t('workbench.background_terminals_stop_all')}
@@ -70,7 +73,7 @@ export function BackgroundTerminalsSummary({
                 ) : (
                   <Square className="h-4 w-4" aria-hidden="true" />
                 )}
-              </button>
+              </ControlButton>
             )}
           </div>
         ))}

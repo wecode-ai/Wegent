@@ -138,13 +138,15 @@ def main() -> None:
             client.close()
             emit("released")
         return
-    if mode != "lease":
+    if mode not in {"lease", "observe-lease"}:
         raise ValueError("Unknown coordination fault")
     if not name or name == "undefined":
         raise ValueError("The fixture requires a plugin scope")
-    lock = client.lock(key, timeout=30, blocking_timeout=10, thread_local=False)
-    if not lock.acquire():
-        raise RuntimeError("The fixture could not acquire the plugin write lease")
+    lock = None
+    if mode == "lease":
+        lock = client.lock(key, timeout=30, blocking_timeout=10, thread_local=False)
+        if not lock.acquire():
+            raise RuntimeError("The fixture could not acquire the plugin write lease")
     stopped = threading.Event()
     release_requested = threading.Event()
     failures: SimpleQueue[Exception] = SimpleQueue()
@@ -158,9 +160,12 @@ def main() -> None:
                 if stopped.is_set():
                     return
                 if command["command"].startswith(f"SET {key} "):
-                    emit("contended")
+                    emit("contended" if lock is not None else "lease-set")
+                elif lock is None and command["command"] == f"ECHO {key}:pause-barrier":
+                    emit("pause-barrier")
 
     def renew() -> None:
+        assert lock is not None
         while not stopped.wait(5):
             if not lock.reacquire():
                 raise RuntimeError("The fixture lost the plugin write lease")
@@ -177,7 +182,10 @@ def main() -> None:
             failures.put(exc)
             release_requested.set()
 
-    for operation in (observe, renew, wait_for_release):
+    operations = [observe, wait_for_release]
+    if lock is not None:
+        operations.append(renew)
+    for operation in operations:
         threading.Thread(target=guarded, args=(operation,), daemon=True).start()
     try:
         # Closing stdin always relinquishes the lease, including failed tests.
@@ -186,7 +194,8 @@ def main() -> None:
             raise failures.get()
     finally:
         stopped.set()
-        lock.release()
+        if lock is not None:
+            lock.release()
         client.close()
         emit("released")
 

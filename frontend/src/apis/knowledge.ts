@@ -52,8 +52,11 @@ export async function listKnowledgeBases(
 /**
  * Get a knowledge base by ID
  */
-export async function getKnowledgeBase(id: number): Promise<KnowledgeBase> {
-  return apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`)
+export async function getKnowledgeBase(
+  id: number,
+  options?: { cache?: RequestCache }
+): Promise<KnowledgeBase> {
+  return apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`, options)
 }
 
 /** Return the effective reader capability used only for knowledge UI state. */

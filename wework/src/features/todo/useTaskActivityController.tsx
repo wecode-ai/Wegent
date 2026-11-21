@@ -1,3 +1,4 @@
+import { useDialogRequests } from '@/components/common/useDialogRequests'
 import { type IssueReplyContextKind } from './issueReplyCopy'
 
 import { issueAssignmentRevision, sameIssueAssignment } from './issueAssignmentReceiptScope'
@@ -377,7 +378,10 @@ export function useTaskActivityController({
   }
   function cardHasExecution(card: TaskReplyCard) {
     return [card.root, ...card.replies].some(
-      message => message.sender.type === 'agent' && !isPublicStandInMessage(message)
+      message =>
+        message.sender.type === 'agent' &&
+        (message.metadata.execution_dispatch !== 'comment_only' ||
+          message.metadata.collaboration_turn_start === true)
     )
   }
   function cardReplyLabel(card: TaskReplyCard) {
@@ -580,7 +584,13 @@ export function useTaskActivityController({
     return address
   }
   function taskSummaryForMessage(message: ProjectChatMessage): ExecutionTaskSummary | undefined {
-    return issueTaskSummaryForMessage(message, taskBindings, task.title, onOpenTask)
+    return issueTaskSummaryForMessage(
+      message,
+      taskBindings,
+      task.title,
+      onOpenTask,
+      issueTimeline && project.project_store === 'backend' ? onOpenRuntimeTask : undefined
+    )
   }
   function deviceNameForMessage(message: ProjectChatMessage): string | null {
     const deviceId = message.runtimeAddress?.deviceId
@@ -591,9 +601,13 @@ export function useTaskActivityController({
   }
   const acceptTask = activity.acceptTask
   const approveTaskRun = activity.approveTaskRun
+  const { prompt: requestText, dialogs: requestDialogs } = useDialogRequests((key, fallback) =>
+    String(t(key, { defaultValue: fallback }))
+  )
   async function rejectTaskRun() {
-    const reason = window.prompt(t('workbench.task_activity_reject_reason_prompt')) ?? undefined
-    if (reason !== undefined) await activity.rejectTaskRun(reason.trim() || undefined)
+    const isCurrent = activity.captureScope()
+    const reason = await requestText(t('workbench.task_activity_reject_reason_prompt'))
+    if (reason !== null && isCurrent()) await activity.rejectTaskRun(reason.trim() || undefined)
   }
 
   async function stopRuntimeTask(message: ProjectChatMessage) {
@@ -872,6 +886,7 @@ export function useTaskActivityController({
     return true
   }
   return {
+    requestDialogs,
     acceptTask,
     activeUserId,
     activity,

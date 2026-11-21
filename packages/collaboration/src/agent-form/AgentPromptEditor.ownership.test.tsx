@@ -61,8 +61,8 @@ const element = (id: string) => container.querySelector<HTMLElement>(`[data-test
 async function type(value: string) {
   const editor = element('agent-prompt') as HTMLElement & { value: string }
   await act(async () => {
-    editor.value = value
     editor.focus()
+    editor.value = value
     editor.dispatchEvent(new KeyboardEvent('keyup', { key: value.at(-1), bubbles: true }))
   })
   return editor
@@ -73,9 +73,9 @@ test('updates an open skill catalog without broadcasting events or remounting th
     nextSkills = [{ id: 2, name: 'respond' }]
   await act(async () => root.render(<Harness skills={oldSkills} />))
   const editor = await type('$re')
-  expect(element('local-skill-option-review')).not.toBeNull()
+  await vi.waitFor(() => expect(element('local-skill-option-review')).not.toBeNull())
   await act(async () => root.render(<Harness skills={nextSkills} />))
-  expect(element('local-skill-option-respond')).not.toBeNull()
+  await vi.waitFor(() => expect(element('local-skill-option-respond')).not.toBeNull())
   expect(element('local-skill-option-review')).toBeNull()
   expect(element('agent-prompt')).toBe(editor)
   expect(editor.value).toBe('$re')
@@ -88,7 +88,7 @@ test('uses new skills when a previously closed menu is opened and keeps the prom
   const editor = element('agent-prompt')
   await act(async () => root.render(<Harness skills={nextSkills} />))
   await type('$re')
-  expect(element('local-skill-option-respond')).not.toBeNull()
+  await vi.waitFor(() => expect(element('local-skill-option-respond')).not.toBeNull())
   expect(element('local-skill-option-review')).toBeNull()
   expect(element('agent-prompt')).toBe(editor)
 })

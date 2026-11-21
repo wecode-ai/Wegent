@@ -18,24 +18,27 @@ pub(super) fn resolve(args: &Value) -> Result<Value, AppIpcError> {
         .filter(|s| matches!(*s, "merge" | "checks" | "run"))
         .ok_or_else(|| invalid("Choose git_wait: merge, checks or run"))?;
     let (topic, number, github) = selection(&args["source"], preset)?;
-    let sha = args["head_sha"]
-        .as_str()
-        .filter(|s| s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        .ok_or_else(|| invalid("git_wait requires the exact 40-character head_sha"))?
-        .to_ascii_lowercase();
     let mut filter = json!({"/topicId":topic});
     if preset != "run" {
         filter["/external/eventType"] = json!("tracked.status");
     } else if !github {
         filter["/external/eventType"] = json!("tracked.pipeline");
     }
-    filter[if preset == "run" && github {
-        "/external/payload/head_sha"
-    } else if github {
-        "/external/payload/headRefOid"
-    } else {
-        "/external/payload/sha"
-    }] = json!(sha);
+    if preset != "merge" || args.get("head_sha").is_some() {
+        let sha = args["head_sha"]
+            .as_str()
+            .filter(|s| s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(|| invalid("git_wait requires the exact 40-character head_sha"))?;
+        if preset != "merge" {
+            filter[if preset == "run" && github {
+                "/external/payload/head_sha"
+            } else if github {
+                "/external/payload/headRefOid"
+            } else {
+                "/external/payload/sha"
+            }] = json!(sha.to_ascii_lowercase());
+        }
+    }
     if preset == "run" {
         filter["/external/payload/id"] = json!(number);
         if github {
@@ -78,9 +81,107 @@ pub(super) fn resolve(args: &Value) -> Result<Value, AppIpcError> {
                 ]
             });
         }
+        if github && preset == "merge" {
+            filter
+                .as_object_mut()
+                .unwrap()
+                .remove("/external/eventType");
+            let alternatives = alternatives.as_array_mut().unwrap();
+            for alternative in alternatives.iter_mut() {
+                alternative["/external/eventType"] = json!("tracked.status");
+            }
+            alternatives.extend(
+                ["failure", "timed_out", "action_required", "startup_failure"].map(|conclusion| {
+                    json!({"/external/eventType":"tracked.checks",
+                        "/external/payload/status":"completed",
+                        "/external/payload/conclusion":conclusion})
+                }),
+            );
+        }
         filter["$any"] = alternatives;
     }
     Ok(filter)
+}
+
+const GITHUB_CONFLICT_FIELDS: [&str; 2] = [
+    "/external/payload/mergeable",
+    "/external/payload/mergeStateStatus",
+];
+
+fn conflict_alternative(alternative: &Value) -> bool {
+    GITHUB_CONFLICT_FIELDS
+        .iter()
+        .any(|field| alternative.get(field).is_some())
+}
+
+pub(super) fn same_merge_wait(record: &Value, intent: &Value, session: &Value) -> bool {
+    if record["session"] != *session
+        || !matches!(
+            record["status"].as_str(),
+            Some("preparing" | "armed" | "pending")
+        )
+        || record["source"]["observeCurrentStatus"] != true
+        || !["providerId", "profile", "kind", "id"]
+            .iter()
+            .all(|field| record["source"][*field] == intent["source"][*field])
+    {
+        return false;
+    }
+    merge_filter_for_intent(&record["match"], intent) == intent["match"]
+}
+
+pub(super) fn legacy_merge_retry(stored: &Value, intent: &Value, previous: &Value) -> bool {
+    let mut normalized = stored.clone();
+    let filter = merge_filter_for_intent(&stored["match"], intent);
+    if filter == stored["match"] {
+        return false;
+    }
+    normalized["match"] = filter;
+    normalized == *intent || normalized == *previous
+}
+
+fn merge_filter_for_intent(filter: &Value, intent: &Value) -> Value {
+    let mut filter = filter.clone();
+    if let Some(fields) = filter.as_object_mut() {
+        fields.remove("/external/payload/headRefOid");
+        fields.remove("/external/payload/sha");
+    }
+    if intent["source"]["providerId"] != "@wegent/dsh-connection-git/github" {
+        return filter;
+    }
+
+    // Match only the exact historical merge predicates when replacing old waits.
+    let Some(alternatives) = intent["match"]["$any"].as_array() else {
+        return filter;
+    };
+    let status: Vec<_> = alternatives
+        .iter()
+        .filter(|alternative| alternative["/external/eventType"] == "tracked.status")
+        .map(|alternative| {
+            let mut alternative = alternative.as_object().unwrap().clone();
+            alternative.remove("/external/eventType");
+            Value::Object(alternative)
+        })
+        .collect();
+    let conflicts: Vec<_> = status
+        .iter()
+        .filter(|alternative| conflict_alternative(alternative))
+        .cloned()
+        .collect();
+    let checks: Vec<_> = alternatives
+        .iter()
+        .filter(|alternative| !conflict_alternative(alternative))
+        .cloned()
+        .collect();
+    let topic = &intent["match"]["/topicId"];
+    if filter == json!({"/topicId":topic,"/external/eventType":"tracked.status","$any":status})
+        || filter
+            == json!({"/topicId":topic,"/external/eventType":"tracked.status","$any":conflicts})
+        || filter == json!({"/topicId":topic,"$any":checks})
+    {
+        return intent["match"].clone();
+    }
+    filter
 }
 
 fn outcomes(pointer: &str, values: &[&str]) -> Value {
@@ -194,7 +295,7 @@ mod tests {
         }
         let mut wrong = event("PENDING", "CONFLICTING");
         wrong["external"]["payload"]["headRefOid"] = json!("other");
-        assert!(!matches_event(&filter, &wrong));
+        assert!(matches_event(&filter, &wrong));
         wrong = event("FAILURE", "MERGEABLE");
         wrong["topicId"] = json!("https://github.com/other/repo/pull/4749");
         assert!(!matches_event(&filter, &wrong));

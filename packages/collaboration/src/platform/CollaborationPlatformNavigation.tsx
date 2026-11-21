@@ -1,20 +1,23 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useId, useMemo, useRef, useState } from 'react'
 import { useEscapeKey } from '../markdown/useEscapeKey'
-import { useDOMEvent } from '../dom-events'
+import { useDOMEvent, useFocusRequest } from '../dom-events'
 import {
   CloudOff,
   ChevronRight,
   Ellipsis,
   FolderOpen,
   FolderPlus,
+  Pin,
+  PinOff,
   Plus,
   Settings,
   SquarePen,
 } from 'lucide-react'
-import { ActionMenu } from '../controls/ActionMenu'
+import { ActionMenu, type ActionMenuItem } from '../controls/ActionMenu'
 import {
   CollaborationPrimaryNavigation,
   CollaborationManagementNavigation,
@@ -28,6 +31,10 @@ import type {
 import type { CollaborationDomain, CollaborationPlatformHostAdapter } from './types'
 import type { PlatformMessages } from './platformMessages'
 import { buildWorkspaceNavigation } from './workspaceNavigation'
+
+function projectPinKey(project: CollaborationProject) {
+  return `${project.project_store}:${project.id}`
+}
 
 export function CollaborationPlatformNavigation({
   domain,
@@ -144,6 +151,22 @@ export function CollaborationPlatformNavigation({
     string | null
   >(autoExpandedWorkspaceId)
   const projectFirst = host.capabilities.projectNavigation === 'projects'
+  const projectPins = projectFirst ? host.projectPins : undefined
+  const pinnedKeys = new Set(projectPins?.keys)
+  const visibleProjectsByKey = new Map(
+    [...projectsByWorkspace].flatMap(([workspaceId, items]) =>
+      items.map(project => [projectPinKey(project), { project, workspaceId }] as const)
+    )
+  )
+  const pinnedProjects = [...pinnedKeys].flatMap(key => {
+    const project = visibleProjectsByKey.get(key)
+    return project ? [project] : []
+  })
+  const [pinErrorScope, setPinErrorScope] = useState<string>()
+  const [pinFocusRequest, setPinFocusRequest] = useState<{
+    key: string
+    scope: string
+  }>()
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true)
   const [retryingNavigation, setRetryingNavigation] = useState(false)
   const fullSidebar = host.capabilities.sidebarPresentation !== 'context'
@@ -183,7 +206,7 @@ export function CollaborationPlatformNavigation({
     workspace => allowLocalProjects && workspace.location === 'local'
   )
   const createWorkspaceButton = canCreateWorkspace ? (
-    <button
+    <ControlButton variant="unstyled"
       type="button"
       className="collaboration-workspace-section-create"
       aria-label={messages.createWorkspace}
@@ -194,7 +217,7 @@ export function CollaborationPlatformNavigation({
       <span data-testid="collaboration-workspace-sidebar-create">
         <FolderPlus aria-hidden="true" />
       </span>
-    </button>
+    </ControlButton>
   ) : null
   const renderWorkspaceActions = (
     candidate: ReturnType<typeof buildWorkspaceNavigation>['workspaces'][number]['workspace'],
@@ -287,7 +310,9 @@ export function CollaborationPlatformNavigation({
     isDefault,
   }: ReturnType<typeof buildWorkspaceNavigation>['workspaces'][number]) => {
     const expanded = workspaceExpansion.get(candidate.id) ?? projectFirst
-    const candidateProjects = projectsByWorkspace.get(candidate.id) ?? []
+    const candidateProjects = (projectsByWorkspace.get(candidate.id) ?? []).filter(
+      project => !pinnedKeys.has(projectPinKey(project))
+    )
     const workspaceActive = host.location.workspaceId === candidate.id && !host.location.projectId
     const canManageWorkspace =
       isDefault ||
@@ -306,7 +331,7 @@ export function CollaborationPlatformNavigation({
           }${canManageWorkspace ? ' has-actions' : ''}`}
         >
           {canOpen ? (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               className="collaboration-workspace-identity"
               data-testid={
@@ -326,7 +351,7 @@ export function CollaborationPlatformNavigation({
               >
                 <span className="collaboration-workspace-title">{candidate.name}</span>
               </span>
-            </button>
+            </ControlButton>
           ) : (
             <div
               className="collaboration-workspace-identity"
@@ -349,7 +374,7 @@ export function CollaborationPlatformNavigation({
             </div>
           ) : null}
           {candidateProjects.length > 0 ? (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               className="collaboration-workspace-toggle"
               aria-expanded={expanded}
@@ -358,7 +383,7 @@ export function CollaborationPlatformNavigation({
               onClick={() => toggleWorkspace(candidate.id)}
             >
               <ChevronRight aria-hidden="true" />
-            </button>
+            </ControlButton>
           ) : null}
         </div>
         {expanded ? (
@@ -366,18 +391,56 @@ export function CollaborationPlatformNavigation({
             className="collaboration-workspace-project-list"
             aria-label={`${candidate.name} · ${messages.projects}`}
           >
-            {candidateProjects.map(project => (
-              <ProjectNavigationRow
-                key={project.id}
-                project={project}
-                host={navigationHost}
-                messages={messages}
-                onArchiveProject={onArchiveProject}
-              />
-            ))}
+            {candidateProjects.map(project => renderProjectRow(project, candidate.id))}
           </nav>
         ) : null}
       </section>
+    )
+  }
+  const renderProjectRow = (project: CollaborationProject, workspaceId: string) => {
+    const key = projectPinKey(project)
+    const pinned = pinnedKeys.has(key)
+    return (
+      <ProjectNavigationRow
+        key={key}
+        project={project}
+        host={navigationHost}
+        messages={messages}
+        onArchiveProject={onArchiveProject}
+        focusRequest={
+          pinFocusRequest?.scope === host.accountScope && pinFocusRequest.key === key
+            ? pinFocusRequest
+            : undefined
+        }
+        onFocusRestored={() => setPinFocusRequest(undefined)}
+        pinAction={
+          projectPins && {
+            label: pinned ? projectPins.unpinLabel : projectPins.pinLabel,
+            icon: pinned ? PinOff : Pin,
+            testId: `collaboration-project-pin-${project.id}`,
+            onSelect: async () => {
+              const focusOwner = document.activeElement
+              try {
+                await projectPins.setPinned(key, !pinned)
+              } catch {
+                setPinErrorScope(host.accountScope)
+                return
+              }
+              if (pinned) {
+                setWorkspaceExpansion(current => new Map(current).set(workspaceId, true))
+              }
+              setPinErrorScope(undefined)
+              if (
+                focusOwner &&
+                (document.activeElement === focusOwner ||
+                  (!focusOwner.isConnected && document.activeElement === document.body))
+              ) {
+                setPinFocusRequest({ key, scope: host.accountScope })
+              }
+            },
+          }
+        }
+      />
     )
   }
   return (
@@ -387,7 +450,7 @@ export function CollaborationPlatformNavigation({
       data-navigation-expanded={mobileNavigationOpen}
     >
       {fullSidebar || projectSettings ? (
-        <button
+        <ControlButton variant="unstyled"
           ref={toggleRef}
           type="button"
           className={`collaboration-mobile-navigation-toggle${projectSettings ? ' collaboration-settings-navigation-toggle' : ''}`}
@@ -402,7 +465,7 @@ export function CollaborationPlatformNavigation({
         >
           <span>{projectSettings ? messages.settingsNavigation : messages.navigation}</span>
           <ChevronRight aria-hidden="true" />
-        </button>
+        </ControlButton>
       ) : null}
       <div
         ref={navigationRef}
@@ -434,7 +497,7 @@ export function CollaborationPlatformNavigation({
                   {messages.collaborationSpaces}
                 </span>
               ) : (
-                <button
+                <ControlButton variant="unstyled"
                   type="button"
                   className="collaboration-workspace-section-toggle"
                   aria-expanded={workspacesExpanded}
@@ -443,7 +506,7 @@ export function CollaborationPlatformNavigation({
                 >
                   <span>{messages.collaborationSpaces}</span>
                   <ChevronRight aria-hidden="true" />
-                </button>
+                </ControlButton>
               )}
               <div className="collaboration-workspace-section-actions">{createWorkspaceButton}</div>
             </div>
@@ -455,7 +518,7 @@ export function CollaborationPlatformNavigation({
               data-testid="collaboration-navigation-error"
             >
               <span>{messages.navigationLoadFailed}</span>
-              <button
+              <ControlButton variant="unstyled"
                 type="button"
                 className="collaboration-link-button"
                 data-testid="collaboration-navigation-retry"
@@ -470,11 +533,36 @@ export function CollaborationPlatformNavigation({
                 }}
               >
                 {messages.retryNavigation}
-              </button>
+              </ControlButton>
             </div>
           ) : null}
           {projectFirst ? (
             <>
+              {projectPins && pinErrorScope === host.accountScope ? (
+                <div className="collaboration-navigation-error" role="alert">
+                  {projectPins.saveError}
+                </div>
+              ) : null}
+              {projectPins && pinnedProjects.length > 0 ? (
+                <section
+                  className="collaboration-pinned-projects"
+                  data-testid="collaboration-pinned-projects"
+                >
+                  <div className="collaboration-workspace-section-heading">
+                    <span className="collaboration-workspace-section-title">
+                      {projectPins.heading}
+                    </span>
+                  </div>
+                  <nav
+                    aria-label={projectPins.heading}
+                    className="collaboration-workspace-project-list collaboration-ungrouped-projects"
+                  >
+                    {pinnedProjects.map(({ project, workspaceId }) =>
+                      renderProjectRow(project, workspaceId)
+                    )}
+                  </nav>
+                </section>
+              ) : null}
               <div className="collaboration-workspace-section-heading">
                 <span className="collaboration-workspace-section-title">{messages.projects}</span>
                 <div className="collaboration-workspace-section-actions">
@@ -513,18 +601,29 @@ function ProjectNavigationRow({
   host,
   messages,
   onArchiveProject,
+  pinAction,
+  focusRequest,
+  onFocusRestored,
 }: {
   project: CollaborationProject
   host: CollaborationPlatformHostAdapter
   messages: PlatformMessages
   onArchiveProject(project: CollaborationProject): void
+  pinAction?: ActionMenuItem
+  focusRequest?: object
+  onFocusRestored(): void
 }) {
+  const rowButton = useRef<HTMLButtonElement>(null)
+  useFocusRequest(rowButton, focusRequest, { enabled: Boolean(focusRequest) })
+  const canManage = canAccessCollaborationProjectView(project, 'manage')
   return (
     <div
       className={`collaboration-workspace-project-row${project.project_store === 'local' ? ' has-offline-project' : ''}`}
-      key={project.id}
     >
-      <button
+      <ControlButton
+        variant="unstyled"
+        ref={rowButton}
+        onFocus={focusRequest ? onFocusRestored : undefined}
         type="button"
         className={`collaboration-workspace-project${
           host.location.projectId === project.id ? ' active' : ''
@@ -546,10 +645,10 @@ function ProjectNavigationRow({
       >
         {host.renderProjectSidebarBadge?.(project)}
         <span>{project.name}</span>
-      </button>
+      </ControlButton>
       {project.project_store === 'local' ? (
         host.convertLocalProjectToCloud ? (
-          <button
+          <ControlButton variant="unstyled"
             type="button"
             className="collaboration-project-offline"
             data-testid={`collaboration-project-convert-${project.id}`}
@@ -558,7 +657,7 @@ function ProjectNavigationRow({
             onClick={() => host.convertLocalProjectToCloud?.(project)}
           >
             <CloudOff aria-hidden="true" />
-          </button>
+          </ControlButton>
         ) : (
           <span
             className="collaboration-project-offline"
@@ -571,33 +670,41 @@ function ProjectNavigationRow({
         )
       ) : null}
       <div className="collaboration-project-row-actions">
-        {canAccessCollaborationProjectView(project, 'manage') && (
+        {(pinAction || canManage) && (
           <ActionMenu
             ariaLabel={`${messages.projectActions} · ${project.name}`}
             testId={`collaboration-project-menu-${project.id}`}
+            density="dense"
+            showTriggerTooltip={false}
             triggerClassName="collaboration-project-new-conversation"
             items={[
-              {
-                label: messages.projectSettings,
-                icon: Settings,
-                testId: `collaboration-project-settings-${project.id}`,
-                onSelect: () =>
-                  host.navigate({
-                    platformView: 'spaces',
-                    collaborationDomain: project.project_store === 'local' ? 'local' : 'cloud',
-                    workspaceId: project.workspace_id ?? null,
-                    workspaceView: 'projects',
-                    projectId: project.id,
-                    projectView: 'manage',
-                    projectSettingsSection: 'project',
-                    issueId: null,
-                  }),
-              },
-              {
-                label: messages.archiveProject,
-                testId: `collaboration-project-archive-${project.id}`,
-                onSelect: () => onArchiveProject(project),
-              },
+              ...(pinAction ? [pinAction] : []),
+              ...(canManage
+                ? [
+                    {
+                      label: messages.projectSettings,
+                      icon: Settings,
+                      testId: `collaboration-project-settings-${project.id}`,
+                      onSelect: () =>
+                        host.navigate({
+                          platformView: 'spaces',
+                          collaborationDomain:
+                            project.project_store === 'local' ? 'local' : 'cloud',
+                          workspaceId: project.workspace_id ?? null,
+                          workspaceView: 'projects',
+                          projectId: project.id,
+                          projectView: 'manage',
+                          projectSettingsSection: 'project',
+                          issueId: null,
+                        }),
+                    },
+                    {
+                      label: messages.archiveProject,
+                      testId: `collaboration-project-archive-${project.id}`,
+                      onSelect: () => onArchiveProject(project),
+                    },
+                  ]
+                : []),
             ]}
           />
         )}

@@ -1,3 +1,7 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -82,7 +86,8 @@ export function ProjectCards({
   return (
     <div className="collaboration-project-card-grid">
       {projects.map(project => (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="collaboration-project-card"
           data-testid={`collaboration-project-card-${project.id}`}
@@ -95,7 +100,7 @@ export function ProjectCards({
             <small>{project.description || project.project_key}</small>
           </span>
           <em>{messages.enterProject} →</em>
-        </button>
+        </ControlButton>
       ))}
     </div>
   )
@@ -184,10 +189,10 @@ export function WorkspaceHome({
               <h2>{messages.operatingProjects}</h2>
               <p>{messages.operatingProjectsHint}</p>
             </div>
-            <button type="button" onClick={onOpenProjects}>
+            <ControlButton variant="unstyled" type="button" onClick={onOpenProjects}>
               {messages.viewAll}
               <ChevronRight aria-hidden="true" />
-            </button>
+            </ControlButton>
           </div>
           <div className="collaboration-workspace-operation-table">
             {snapshot.operations.map(operation => {
@@ -201,7 +206,8 @@ export function WorkspaceHome({
                       ? 'running'
                       : 'idle'
               return (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`collaboration-workspace-operation-project-${operation.project.id}`}
                   key={operation.project.id}
@@ -242,7 +248,7 @@ export function WorkspaceHome({
                     {formatOperationTime(locale, operation.updatedAt)}
                   </time>
                   <ChevronRight aria-hidden="true" />
-                </button>
+                </ControlButton>
               )
             })}
           </div>
@@ -261,7 +267,8 @@ export function WorkspaceHome({
           {snapshot.unavailableProjects.length > 0 || snapshot.attentionItems.length > 0 ? (
             <div className="collaboration-workspace-attention-list">
               {snapshot.unavailableProjects.map(operation => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`collaboration-workspace-unavailable-${operation.project.id}`}
                   key={`unavailable:${operation.project.id}`}
@@ -273,12 +280,13 @@ export function WorkspaceHome({
                   <time dateTime={operation.updatedAt}>
                     {formatOperationTime(locale, operation.updatedAt)}
                   </time>
-                </button>
+                </ControlButton>
               ))}
               {snapshot.attentionItems.map(({ issue, project }) => {
                 const state = workspaceIssueOperationState(issue)
                 return (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`collaboration-workspace-attention-${issue.id}`}
                     key={issue.id}
@@ -290,7 +298,7 @@ export function WorkspaceHome({
                     <time dateTime={issue.updated_at}>
                       {formatOperationTime(locale, issue.updated_at)}
                     </time>
-                  </button>
+                  </ControlButton>
                 )
               })}
             </div>
@@ -421,7 +429,8 @@ function WorkItemRow({
   const status = workItemStatus(item, messages)
   const OwnerIcon = owner.icon
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       className="collaboration-home-work-row"
       data-testid={`collaboration-home-work-${item.id}`}
@@ -451,7 +460,7 @@ function WorkItemRow({
       <OperationStateBadge messages={messages} state={status.state} />
       <time dateTime={item.updated_at}>{formatOperationTime(locale, item.updated_at)}</time>
       <ChevronRight aria-hidden="true" />
-    </button>
+    </ControlButton>
   )
 }
 
@@ -498,7 +507,8 @@ export function FirstWorkStarter({
         </span>
       </div>
       {onCreateIssue ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="collaboration-first-issue-create"
           className="collaboration-primary-button collaboration-first-project-create"
@@ -506,7 +516,7 @@ export function FirstWorkStarter({
         >
           <SquarePen aria-hidden="true" />
           {messages.createIndependentIssue}
-        </button>
+        </ControlButton>
       ) : (
         <ProjectCreationAction
           className="collaboration-primary-button collaboration-first-project-create"
@@ -586,13 +596,17 @@ export function WorkspaceSettings({
       <p>{messages.workspaceSettingsHint}</p>
       <label>
         {messages.name}
-        <input value={name} onChange={event => setName(event.target.value)} />
+        <ControlInput value={name} onChange={event => setName(event.target.value)} />
       </label>
       <label>
         {messages.description}
-        <textarea value={description} onChange={event => setDescription(event.target.value)} />
+        <ControlTextarea
+          value={description}
+          onChange={event => setDescription(event.target.value)}
+        />
       </label>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         className="collaboration-primary-button"
         data-testid="collaboration-workspace-settings-save"
@@ -607,7 +621,7 @@ export function WorkspaceSettings({
         }}
       >
         {messages.save}
-      </button>
+      </ControlButton>
     </section>
   )
 }
@@ -633,24 +647,33 @@ export function WorkspaceProjectPicker({
   const cloudLoginRequired = cloudAccess && !cloudAccess.authenticated
   return (
     <div className="collaboration-dialog-backdrop">
-      <section
-        className="collaboration-dialog collaboration-workspace-picker"
-        role="dialog"
-        aria-modal="true"
-        aria-label={messages.chooseProjectWorkspace}
+      <DialogSurface
+        onClose={onClose}
+        render={
+          <section
+            className="collaboration-dialog collaboration-workspace-picker"
+            aria-label={messages.chooseProjectWorkspace}
+          />
+        }
       >
         <header>
           <div>
             <h2>{messages.chooseProjectWorkspace}</h2>
             <p>{messages.chooseProjectWorkspaceHint}</p>
           </div>
-          <button type="button" onClick={onClose} aria-label={messages.cancel}>
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            onClick={onClose}
+            aria-label={messages.cancel}
+          >
             <X aria-hidden="true" />
-          </button>
+          </ControlButton>
         </header>
         <div>
           {workspaces.map(workspace => (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`collaboration-project-workspace-${workspace.id}`}
               key={workspace.id}
@@ -664,10 +687,11 @@ export function WorkspaceProjectPicker({
                 </small>
               </span>
               <ChevronRight aria-hidden="true" />
-            </button>
+            </ControlButton>
           ))}
           {showCloudEntry ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={
                 cloudLoginRequired
@@ -690,10 +714,10 @@ export function WorkspaceProjectPicker({
                 </small>
               </span>
               <ChevronRight aria-hidden="true" />
-            </button>
+            </ControlButton>
           ) : null}
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

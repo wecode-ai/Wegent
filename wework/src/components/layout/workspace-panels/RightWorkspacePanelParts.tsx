@@ -1,5 +1,7 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { WorkspaceTitleTab } from './WorkspaceTitleTab'
 
+import type { LucideIcon } from 'lucide-react'
 import {
   CheckCircle2,
   CircleAlert,
@@ -12,9 +14,8 @@ import {
   PanelRight,
   SquareTerminal,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
-import { useCallback, useState } from 'react'
 import type { ComponentType } from 'react'
+import { useCallback, useState } from 'react'
 
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 
@@ -25,9 +26,9 @@ import { getPlatform } from '@/lib/platform'
 
 import { cn } from '@/lib/utils'
 
-import { workspaceFileTabLabel } from './workspaceFileTabs'
 import { type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
+import { workspaceFileTabLabel } from './workspaceFileTabs'
 
 import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 
@@ -36,14 +37,14 @@ import {
   resolveRightWorkspaceExtensionDescriptor,
   rightWorkspaceDshSidebar,
   titleOfWeworkWorkspaceSidebarTab,
-  type WeworkWorkspaceSidebarTabDescriptor,
   type RightWorkspaceExtensionTabState,
+  type WeworkWorkspaceSidebarTabDescriptor,
 } from './rightWorkspaceDshSidebar'
 import type {
+  RightWorkspaceBrowserPanelSlotProps,
+  RightWorkspaceBrowserState,
   RightWorkspaceBrowserTab,
   RightWorkspacePanelTab,
-  RightWorkspaceBrowserState,
-  RightWorkspaceBrowserPanelSlotProps,
 } from './RightWorkspacePanel.types'
 
 import {
@@ -231,7 +232,8 @@ export function SmartAppDevelopmentVerification({
         ) : null}
       </div>
       {issues.length > 1 ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="smart-app-development-preview-verification-details"
           aria-expanded={detailsOpen}
@@ -241,9 +243,10 @@ export function SmartAppDevelopmentVerification({
           {detailsOpen
             ? t('workbench.smart_app_preview_verification_hide_details')
             : t('workbench.smart_app_preview_verification_show_details', { count: issues.length })}
-        </button>
+        </ControlButton>
       ) : null}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="smart-app-development-preview-verify"
         disabled={disabled || preview.verificationStatus === 'running'}
@@ -251,7 +254,7 @@ export function SmartAppDevelopmentVerification({
         className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
       >
         {t('workbench.smart_app_preview_verify')}
-      </button>
+      </ControlButton>
       {detailsOpen && issues.length > 1 ? (
         <div
           data-testid="smart-app-development-preview-verification-issues"
@@ -531,7 +534,8 @@ export function RightWorkspaceLauncherItem({
   'data-testid': string
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       onClick={onClick}
@@ -550,6 +554,6 @@ export function RightWorkspaceLauncherItem({
           {shortcut}
         </span>
       )}
-    </button>
+    </ControlButton>
   )
 }

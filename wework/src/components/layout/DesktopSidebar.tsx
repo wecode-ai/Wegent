@@ -1,12 +1,13 @@
-import { DesktopSidebarProjectCreateMenu } from './DesktopSidebarProjectCreateMenu'
-import {
-  DesktopSidebarProjectEditDialogs,
-  DesktopSidebarArchiveDialogs,
-  DesktopSidebarStandaloneDialog,
-  DesktopSidebarReleaseNotesDialog,
-} from './DesktopSidebarDialogs'
 import { BetaBadge } from '@/components/common/BetaBadge'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Archive, FolderPlus, MessageSquarePlus, Plus, Search, UserRound } from 'lucide-react'
+import {
+  DesktopSidebarArchiveDialogs,
+  DesktopSidebarProjectEditDialogs,
+  DesktopSidebarReleaseNotesDialog,
+  DesktopSidebarStandaloneDialog,
+} from './DesktopSidebarDialogs'
+import { DesktopSidebarProjectCreateMenu } from './DesktopSidebarProjectCreateMenu'
 
 import { ActionMenu } from '@/components/common/ActionMenu'
 
@@ -17,8 +18,8 @@ import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 
-import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
 import { prefetchDshSidebarNavigation } from '@/features/dsh-runtime/dshSidebarNavigation'
+import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
 import { rightWorkspaceDshSidebar } from './workspace-panels/rightWorkspaceDshSidebar'
 
 import { navigateTo } from '@/lib/navigation'
@@ -30,31 +31,31 @@ import {
 import { cn } from '@/lib/utils'
 import { SidebarWorklistsScroll } from './SidebarWorklistsScroll'
 
-import { getWorkbenchPaneKey } from './workbenchPaneIdentity'
 import { DesktopSidebarAccount } from './DesktopSidebarAccount'
-import { DesktopWindowControls } from './DesktopWindowControls'
 import {
   DesktopSidebarHeader,
   DesktopSidebarNavItem,
   DesktopSidebarSectionHeader,
 } from './DesktopSidebarPrimitives'
-import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
-import { SidebarSortableList } from './SidebarSortableList'
 import { DesktopSidebarPrioritySection } from './DesktopSidebarPrioritySection'
 import { DesktopSidebarTaskViewControl } from './DesktopSidebarTaskViewControl'
+import { DesktopWindowControls } from './DesktopWindowControls'
+import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
+import { SidebarSortableList } from './SidebarSortableList'
+import { getWorkbenchPaneKey } from './workbenchPaneIdentity'
 
-import { isRuntimeTaskSelected } from './runtimeTaskSidebarHelpers'
 import { runtimeSidebarScrollMetrics } from '@/features/workbench/runtimeSidebarDiagnostics'
+import { isRuntimeTaskSelected } from './runtimeTaskSidebarHelpers'
 
-import type { DesktopSidebarProps, OpenSettingsOptions } from './desktopSidebarTypes'
 import {
   SIDEBAR_HEADER_ICON_BUTTON_CLASS,
-  getRuntimeTaskSplitGroup,
   getRuntimeTaskSortableId,
+  getRuntimeTaskSplitGroup,
 } from './desktopSidebarHelpers'
-import { SidebarReleaseNotesCard, LocalHarnessSessionRow } from './DesktopSidebarWidgets'
-import { RuntimeTaskRow } from './DesktopSidebarTaskRow'
 import { ProjectItem } from './DesktopSidebarProjectItem'
+import { RuntimeTaskRow } from './DesktopSidebarTaskRow'
+import type { DesktopSidebarProps, OpenSettingsOptions } from './desktopSidebarTypes'
+import { LocalHarnessSessionRow, SidebarReleaseNotesCard } from './DesktopSidebarWidgets'
 import { useDesktopSidebarModel } from './useDesktopSidebarModel'
 export function DesktopSidebar(props: DesktopSidebarProps) {
   const model = useDesktopSidebarModel(props)
@@ -115,6 +116,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
     onArchiveRuntimeTask,
     markAllPriorityTasksRead,
     openPriorityArchiveDialog,
+    isArchivingPriority,
     splitGroupMemberships,
     visibleUnreadRuntimeTaskKeys,
     imNotificationSettings,
@@ -237,7 +239,8 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                     align="end"
                     testId="runtime-search-tooltip"
                   >
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="runtime-search-button"
                       onClick={onOpenSearch}
@@ -245,7 +248,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                       aria-label={t('workbench.search')}
                     >
                       <Search className="h-4 w-4" />
-                    </button>
+                    </ControlButton>
                   </Tooltip>
                 )}
                 <DesktopSidebarTaskViewControl
@@ -400,7 +403,9 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                   Boolean(onMarkRuntimeTaskRead) && unreadPriorityTaskItems.length > 0
                 }
                 canArchivePriority={
-                  Boolean(onArchiveRuntimeTask) && priorityView.priorityItems.length > 0
+                  !isArchivingPriority &&
+                  Boolean(onArchiveRuntimeTask) &&
+                  priorityView.priorityItems.length > 0
                 }
                 onMarkAllAsRead={markAllPriorityTasksRead}
                 onArchivePriority={openPriorityArchiveDialog}
@@ -454,6 +459,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                     {visiblePinnedTaskItems.length > 0 && (
                       <SidebarSortableList
                         testId="pinned-runtime-task-sortable-list"
+                        accessibleLabel={t('workbench.pinned') + ' · ' + t('workbench.chats')}
                         className="space-y-0.5"
                         items={visiblePinnedTaskItems}
                         getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
@@ -534,6 +540,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                     {pinnedProjects.length > 0 && (
                       <SidebarSortableList
                         testId="pinned-runtime-project-sortable-list"
+                        accessibleLabel={t('workbench.pinned') + ' · ' + t('workbench.projects')}
                         className="mt-1 space-y-1"
                         items={pinnedProjects}
                         getId={({ project }) => `project:${project.id}`}
@@ -641,13 +648,15 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                               onSelect: () => setShowOfflineDeviceItems(visible => !visible),
                             },
                           ]}
-                          triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                          density="compact"
+                          triggerClassName="flex items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                         />
                         <Tooltip
                           label={t('workbench.new_project', '新建项目')}
                           testId="projects-create-button-tooltip"
                         >
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             aria-label={t('workbench.new_project', '新建项目')}
                             data-testid="projects-create-button"
@@ -659,7 +668,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                             aria-expanded={projectCreateDialogOpen}
                           >
                             <FolderPlus className="h-4 w-4" />
-                          </button>
+                          </ControlButton>
                         </Tooltip>
                       </div>
                     </DesktopSidebarSectionHeader>
@@ -678,6 +687,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                       {sidebarProjects.length > 0 && (
                         <SidebarSortableList
                           testId="runtime-project-sortable-list"
+                          accessibleLabel={t('workbench.projects')}
                           className="space-y-1"
                           items={regularSortableProjects}
                           getId={({ project }) => `project:${project.id}`}
@@ -774,13 +784,15 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                             onSelect: () => setArchiveSectionMode('chats'),
                           },
                         ]}
-                        triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                        density="compact"
+                        triggerClassName="flex items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                       />
                       <Tooltip
                         label={t('workbench.new_task')}
                         testId="runtime-chat-section-new-chat-tooltip"
                       >
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           aria-label={t('workbench.new_task')}
                           data-testid="runtime-chat-section-new-chat-button"
@@ -791,7 +803,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                           className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                         >
                           <MessageSquarePlus className="h-4 w-4" />
-                        </button>
+                        </ControlButton>
                       </Tooltip>
                     </div>
                   </DesktopSidebarSectionHeader>
@@ -800,7 +812,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                     <div className="space-y-0.5 pb-2">
                       {standaloneLocalHarnessSessions.length === 0 &&
                       regularChatTaskItems.length === 0 ? (
-                        runtimeWorkLoad && runtimeWorkLoad.phase !== 'ready' ? null : (
+                        runtimeWorkLoad && props.runtimeWork == null ? null : (
                           <div
                             data-testid="runtime-chat-empty"
                             className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
@@ -813,6 +825,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                       ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList
                           testId="runtime-chat-task-sortable-list"
+                          accessibleLabel={t('workbench.chats')}
                           className="space-y-0.5"
                           items={regularChatTaskItems}
                           getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
@@ -932,7 +945,8 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
       </div>
 
       {!collapsed && !hideResizeHandle && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="sidebar-resize-handle"
           onPointerDown={handleResizeStart}

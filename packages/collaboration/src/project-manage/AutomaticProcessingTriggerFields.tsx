@@ -1,15 +1,26 @@
+import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
+import { RadioGroup, Radio } from '../controls/RadioGroup'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { CalendarClock, ChevronDown } from 'lucide-react'
-import { useCallback, useRef } from 'react'
+import { CalendarClock } from 'lucide-react'
+import { useCallback, useRef, useState } from 'react'
 import { WorkdayOnlyField } from './WorkdayOnlyField'
 
 import type { AutomationEventType } from '../automation/types'
 import type { CollaborationTranslate } from '../i18n'
 import type { WorkspaceIncomingHook } from '../ports/SharedWorkspaceApi'
 import type { CollaborationStatus } from '../types'
+import type {
+  AutomaticProcessingDraft,
+  ScheduleFrequency,
+  TriggerKind,
+} from './automaticProcessing'
 import {
   buildScheduleCron,
   eventLabel,
@@ -18,11 +29,6 @@ import {
   scheduleLabel,
   TRIGGER_OPTIONS,
   WEEKDAY_OPTIONS,
-} from './automaticProcessing'
-import type {
-  AutomaticProcessingDraft,
-  ScheduleFrequency,
-  TriggerKind,
 } from './automaticProcessing'
 
 interface AutomaticProcessingTriggerFieldsProps {
@@ -55,10 +61,14 @@ export function AutomaticProcessingTriggerFields({
   statuses,
 }: AutomaticProcessingTriggerFieldsProps) {
   const cronInput = useRef<HTMLInputElement>(null)
-  const attachCronDetails = useCallback(
-    (details: HTMLDetailsElement | null) => {
-      if (!details || !cronError) return
-      details.open = true
+  const [cronExpansion, setCronExpansion] = useState({ error: cronError, open: Boolean(cronError) })
+  if (cronExpansion.error !== cronError) {
+    setCronExpansion({ error: cronError, open: cronError ? true : cronExpansion.open })
+  }
+  const attachCronInput = useCallback(
+    (input: HTMLInputElement | null) => {
+      cronInput.current = input
+      if (!input || !cronError) return
       cronInput.current?.focus()
       cronInput.current?.scrollIntoView({ block: 'center', inline: 'nearest' })
     },
@@ -70,7 +80,18 @@ export function AutomaticProcessingTriggerFields({
 
   return (
     <>
-      <fieldset className="flex flex-wrap gap-2" data-testid="automatic-processing-trigger">
+      <RadioGroup
+        value={draft.trigger}
+        name="automatic-processing-trigger"
+        aria-label={translate('todo.when', '当发生')}
+        onValueChange={next => {
+          const option = TRIGGER_OPTIONS.find(option => option.kind === next)
+          if (option) selectTrigger(option.kind)
+        }}
+        render={<fieldset />}
+        className="flex flex-wrap gap-2"
+        data-testid="automatic-processing-trigger"
+      >
         <legend className="mb-2 text-sm font-medium text-text-primary">
           {translate('todo.when', '当发生')}
         </legend>
@@ -85,15 +106,10 @@ export function AutomaticProcessingTriggerFields({
                 }`}
                 key={option.kind}
               >
-                <input
-                  autoFocus={index === 0}
-                  checked={selected}
-                  className="h-4 w-4 accent-current"
-                  data-testid={`automatic-processing-trigger-${option.kind}`}
-                  name="automatic-processing-trigger"
-                  onChange={() => selectTrigger(option.kind)}
-                  type="radio"
+                <Radio
                   value={option.kind}
+                  autoFocus={index === 0}
+                  data-testid={`automatic-processing-trigger-${option.kind}`}
                 />
                 <span className="min-w-0">
                   <strong className="block text-sm font-medium text-text-primary">
@@ -106,7 +122,7 @@ export function AutomaticProcessingTriggerFields({
             )
           }
         )}
-      </fieldset>
+      </RadioGroup>
 
       <p className="text-sm leading-5 text-text-secondary" aria-live="polite">
         {
@@ -126,8 +142,9 @@ export function AutomaticProcessingTriggerFields({
               >
                 {translate('todo.matching_tag', '标签')}
               </label>
-              <input
-                className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
+              <ControlInput
+                density="compact"
+                className="min-w-0 flex-1"
                 data-testid="automatic-processing-tag"
                 id="automatic-processing-tag"
                 placeholder={translate('todo.matching_tag_placeholder', '输入需要匹配的标签')}
@@ -145,17 +162,15 @@ export function AutomaticProcessingTriggerFields({
               >
                 {translate('todo.matching_status', '状态')}
               </label>
-              <select
-                className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus md:h-8"
-                data-testid="automatic-processing-status"
-                id="automatic-processing-status"
-                value={
+              <SelectRoot
+                value={normalizeSelectValue(
                   draft.statusTransition === 'entered_processing'
                     ? '__entered_processing__'
                     : (draft.statuses[0] ?? '')
-                }
-                onChange={event => {
-                  const value = event.target.value
+                )}
+                onValueChange={selectedValue => {
+                  if (selectedValue === null) return
+                  const value = selectedValue
                   updateDraft(
                     value === '__entered_processing__'
                       ? { statuses: [], statusTransition: 'entered_processing' }
@@ -166,27 +181,28 @@ export function AutomaticProcessingTriggerFields({
                   )
                 }}
               >
-                <option className="bg-background text-text-primary" value="">
-                  {translate('todo.select_matching_status', '请选择状态')}
-                </option>
-                {draft.statusTransition === 'entered_processing' ? (
-                  <option
-                    className="bg-background text-text-primary"
-                    value="__entered_processing__"
-                  >
-                    {translate('todo.trigger_entered_processing', '进入处理阶段')}
-                  </option>
-                ) : null}
-                {statuses.map(status => (
-                  <option
-                    className="bg-background text-text-primary"
-                    key={status.id}
-                    value={status.id}
-                  >
-                    {status.name}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  density="compact"
+                  className="min-w-0 flex-1"
+                  data-testid="automatic-processing-status"
+                  id="automatic-processing-status"
+                />
+                <SelectContent>
+                  <SelectItem value="">
+                    {translate('todo.select_matching_status', '请选择状态')}
+                  </SelectItem>
+                  {draft.statusTransition === 'entered_processing' ? (
+                    <SelectItem value="__entered_processing__">
+                      {translate('todo.trigger_entered_processing', '进入处理阶段')}
+                    </SelectItem>
+                  ) : null}
+                  {statuses.map(status => (
+                    <SelectItem key={status.id} value={String(status.id)}>
+                      {status.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </SelectRoot>
             </div>
           ) : null}
 
@@ -197,12 +213,11 @@ export function AutomaticProcessingTriggerFields({
                   <span className="block font-medium text-text-primary">
                     {translate('todo.schedule_frequency', '重复')}
                   </span>
-                  <select
-                    className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
-                    data-testid="automatic-processing-schedule-frequency"
-                    value={schedule.frequency}
-                    onChange={event => {
-                      const frequency = event.target.value as ScheduleFrequency
+                  <SelectRoot
+                    value={normalizeSelectValue(schedule.frequency)}
+                    onValueChange={selectedValue => {
+                      if (selectedValue === null) return
+                      const frequency = selectedValue as ScheduleFrequency
                       if (frequency === 'custom') {
                         return
                       }
@@ -214,28 +229,38 @@ export function AutomaticProcessingTriggerFields({
                       })
                     }}
                   >
-                    <option value="daily">{translate('todo.schedule_daily', '每天')}</option>
-                    <option value="weekdays">
-                      {translate(
-                        'todo.schedule_weekdays',
-                        locale === 'zh-CN' ? '周一至周五' : 'Monday–Friday'
-                      )}
-                    </option>
-                    <option value="weekly">{translate('todo.schedule_weekly', '每周')}</option>
-                    {schedule.frequency === 'custom' ? (
-                      <option value="custom">
-                        {translate('todo.schedule_custom', '自定义 Cron')}
-                      </option>
-                    ) : null}
-                  </select>
+                    <SelectTrigger
+                      className="h-10 w-full"
+                      data-testid="automatic-processing-schedule-frequency"
+                    />
+                    <SelectContent>
+                      <SelectItem value="daily">
+                        {translate('todo.schedule_daily', '每天')}
+                      </SelectItem>
+                      <SelectItem value="weekdays">
+                        {translate(
+                          'todo.schedule_weekdays',
+                          locale === 'zh-CN' ? '周一至周五' : 'Monday–Friday'
+                        )}
+                      </SelectItem>
+                      <SelectItem value="weekly">
+                        {translate('todo.schedule_weekly', '每周')}
+                      </SelectItem>
+                      {schedule.frequency === 'custom' ? (
+                        <SelectItem value="custom">
+                          {translate('todo.schedule_custom', '自定义 Cron')}
+                        </SelectItem>
+                      ) : null}
+                    </SelectContent>
+                  </SelectRoot>
                 </label>
 
                 <label className="space-y-1.5 text-sm">
                   <span className="block font-medium text-text-primary">
                     {translate('todo.schedule_time', '执行时间')}
                   </span>
-                  <input
-                    className="h-10 w-full rounded-lg border border-border bg-background px-3 tabular-nums outline-none keyboard:focus:border-focus"
+                  <ControlInput
+                    className="h-10 w-full tabular-nums"
                     data-testid="automatic-processing-schedule-time"
                     onChange={event =>
                       updateDraft({
@@ -258,25 +283,30 @@ export function AutomaticProcessingTriggerFields({
                   <span className="block font-medium text-text-primary">
                     {translate('todo.schedule_weekday', '星期')}
                   </span>
-                  <select
-                    className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
-                    data-testid="automatic-processing-schedule-weekday"
-                    value={schedule.weekday}
-                    onChange={event =>
-                      updateDraft({
-                        cronExpression: buildScheduleCron({
-                          ...schedule,
-                          weekday: event.target.value,
-                        }),
-                      })
-                    }
+                  <SelectRoot
+                    value={normalizeSelectValue(schedule.weekday)}
+                    onValueChange={selectedValue => {
+                      if (selectedValue !== null)
+                        return updateDraft({
+                          cronExpression: buildScheduleCron({
+                            ...schedule,
+                            weekday: selectedValue,
+                          }),
+                        })
+                    }}
                   >
-                    {WEEKDAY_OPTIONS.map(([value, zhLabel, enLabel]) => (
-                      <option key={value} value={value}>
-                        {locale === 'zh-CN' ? zhLabel : enLabel}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger
+                      className="h-10 w-full"
+                      data-testid="automatic-processing-schedule-weekday"
+                    />
+                    <SelectContent>
+                      {WEEKDAY_OPTIONS.map(([value, zhLabel, enLabel]) => (
+                        <SelectItem key={value} value={String(value)}>
+                          {locale === 'zh-CN' ? zhLabel : enLabel}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </SelectRoot>
                 </label>
               ) : null}
 
@@ -304,57 +334,56 @@ export function AutomaticProcessingTriggerFields({
                 <span className="ml-auto text-xs text-text-muted">{draft.timezone}</span>
               </div>
 
-              <details
-                ref={attachCronDetails}
+              <CollapsibleRoot
+                open={cronExpansion.open}
+                onOpenChange={open => setCronExpansion({ error: cronError, open })}
                 className="group rounded-lg border border-border bg-background"
                 data-testid="automatic-processing-cron-advanced"
               >
-                <summary
+                <CollapsibleTrigger
                   className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-sm font-medium text-text-secondary"
                   data-testid="automatic-processing-cron-advanced-toggle"
                 >
                   {translate('todo.schedule_advanced', '高级设置（Cron）')}
-                  <ChevronDown
-                    aria-hidden="true"
-                    className="h-4 w-4 transition-transform group-open:rotate-180"
-                  />
-                </summary>
-                <div className="space-y-2 border-t border-border px-3 py-3">
-                  <label className="sr-only" htmlFor="automatic-processing-cron">
-                    {translate('todo.schedule_expression', 'Cron 表达式')}
-                  </label>
-                  <input
-                    ref={cronInput}
-                    aria-invalid={cronError ? true : undefined}
-                    aria-describedby={cronError ? 'automatic-processing-cron-error' : undefined}
-                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 font-mono text-sm outline-none keyboard:focus:border-focus"
-                    data-testid="automatic-processing-cron"
-                    id="automatic-processing-cron"
-                    placeholder="0 9 * * 1-5"
-                    value={draft.cronExpression}
-                    onChange={event =>
-                      updateDraft({
-                        cronExpression: event.target.value,
-                      })
-                    }
-                  />
-                  {cronError ? (
-                    <p
-                      id="automatic-processing-cron-error"
-                      className="collaboration-alert"
-                      role="alert"
-                    >
-                      {cronError}
+                </CollapsibleTrigger>
+                <CollapsiblePanel>
+                  <div className="space-y-2 border-t border-border px-3 py-3">
+                    <label className="sr-only" htmlFor="automatic-processing-cron">
+                      {translate('todo.schedule_expression', 'Cron 表达式')}
+                    </label>
+                    <ControlInput
+                      ref={attachCronInput}
+                      aria-invalid={cronError ? true : undefined}
+                      aria-describedby={cronError ? 'automatic-processing-cron-error' : undefined}
+                      className="h-9 w-full font-mono"
+                      data-testid="automatic-processing-cron"
+                      id="automatic-processing-cron"
+                      placeholder="0 9 * * 1-5"
+                      value={draft.cronExpression}
+                      onChange={event =>
+                        updateDraft({
+                          cronExpression: event.target.value,
+                        })
+                      }
+                    />
+                    {cronError ? (
+                      <p
+                        id="automatic-processing-cron-error"
+                        className="collaboration-alert"
+                        role="alert"
+                      >
+                        {cronError}
+                      </p>
+                    ) : null}
+                    <p className="text-xs text-text-muted">
+                      {translate(
+                        'todo.schedule_cron_help',
+                        '格式：分钟 小时 日 月 星期，例如 0 9 * * 1-5。'
+                      )}
                     </p>
-                  ) : null}
-                  <p className="text-xs text-text-muted">
-                    {translate(
-                      'todo.schedule_cron_help',
-                      '格式：分钟 小时 日 月 星期，例如 0 9 * * 1-5。'
-                    )}
-                  </p>
-                </div>
-              </details>
+                  </div>
+                </CollapsiblePanel>
+              </CollapsibleRoot>
             </div>
           ) : null}
 
@@ -367,14 +396,15 @@ export function AutomaticProcessingTriggerFields({
                   title={hooksError}
                 >
                   <p>{translate('todo.event_sources_load_failed', '读取事件来源失败，请重试。')}</p>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-link-button"
                     data-testid="automatic-processing-hooks-retry"
                     onClick={refreshHooks}
                   >
                     {translate('todo.event_sources_refresh', '刷新来源')}
-                  </button>
+                  </ControlButton>
                 </div>
               ) : !hooksLoading && hooks.length === 0 ? (
                 <div
@@ -398,14 +428,15 @@ export function AutomaticProcessingTriggerFields({
                     >
                       {translate('todo.event_sources_setup_help', '查看接入说明')}
                     </a>
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="collaboration-link-button"
                       data-testid="automatic-processing-hooks-refresh"
                       onClick={refreshHooks}
                     >
                       {translate('todo.event_sources_refresh', '刷新来源')}
-                    </button>
+                    </ControlButton>
                   </div>
                 </div>
               ) : null}
@@ -416,31 +447,39 @@ export function AutomaticProcessingTriggerFields({
                 >
                   {translate('todo.event_source', '来源')}
                 </label>
-                <select
-                  className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
-                  data-testid="automatic-processing-hook"
-                  id="automatic-processing-hook"
+                <SelectRoot
                   disabled={hooksLoading || hooks.length === 0}
-                  value={draft.hookId}
-                  onChange={event => {
-                    const hook = hooks.find(candidate => candidate.id === event.target.value)
+                  value={normalizeSelectValue(draft.hookId)}
+                  items={hooks.map(hook => ({ value: String(hook.id), label: hook.name }))}
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    const hook = hooks.find(candidate => candidate.id === selectedValue)
                     updateDraft({
-                      hookId: event.target.value,
+                      hookId: selectedValue,
                       eventType: hook ? (eventTypesForHook(hook)[0] ?? '') : '',
                     })
                   }}
                 >
-                  <option value="">
-                    {hooksLoading
-                      ? translate('common.loading', '加载中…')
-                      : translate('common.select', '请选择')}
-                  </option>
-                  {hooks.map(hook => (
-                    <option key={hook.id} value={hook.id}>
-                      {hook.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    density="compact"
+                    className="min-w-0 flex-1"
+                    data-testid="automatic-processing-hook"
+                    data-value={draft.hookId}
+                    id="automatic-processing-hook"
+                  />
+                  <SelectContent>
+                    <SelectItem value="">
+                      {hooksLoading
+                        ? translate('common.loading', '加载中…')
+                        : translate('common.select', '请选择')}
+                    </SelectItem>
+                    {hooks.map(hook => (
+                      <SelectItem key={hook.id} value={String(hook.id)}>
+                        {hook.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               </div>
               <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
                 <label
@@ -449,25 +488,31 @@ export function AutomaticProcessingTriggerFields({
                 >
                   {translate('todo.event_type', '事件')}
                 </label>
-                <select
-                  className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
-                  data-testid="automatic-processing-event"
-                  id="automatic-processing-event"
+                <SelectRoot
                   disabled={hooksLoading || !draft.hookId}
-                  value={draft.eventType}
-                  onChange={event =>
-                    updateDraft({
-                      eventType: event.target.value as AutomationEventType,
-                    })
-                  }
+                  value={normalizeSelectValue(draft.eventType)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null)
+                      return updateDraft({
+                        eventType: selectedValue as AutomationEventType,
+                      })
+                  }}
                 >
-                  <option value="">{translate('common.select', '请选择')}</option>
-                  {externalEventTypes.map(eventType => (
-                    <option key={eventType} value={eventType}>
-                      {eventLabel(eventType, locale)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    density="compact"
+                    className="min-w-0 flex-1"
+                    data-testid="automatic-processing-event"
+                    id="automatic-processing-event"
+                  />
+                  <SelectContent>
+                    <SelectItem value="">{translate('common.select', '请选择')}</SelectItem>
+                    {externalEventTypes.map(eventType => (
+                      <SelectItem key={eventType} value={String(eventType)}>
+                        {eventLabel(eventType, locale)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               </div>
             </>
           ) : null}

@@ -147,7 +147,7 @@ async fn codex_named_home_persists_mcp_and_rebinds_followup_credentials() {
     let starts: Vec<_> = messages.iter().filter(|message| message["method"] == "thread/start").collect();
     assert_eq!(starts.len(), 2);
     for (start, secret) in starts.iter().zip(["synthetic-first-secret", "synthetic-second-secret"]) {
-        assert_eq!(start["params"]["config"]["mcp_servers.retained"]["env"]["TOKEN"], secret);
+        assert_eq!(start["params"]["config"]["mcp_servers"]["retained"]["env"]["TOKEN"], secret);
     }
     let launches: Vec<_> = messages.iter().filter(|message| message.get("args").is_some()).collect();
     assert_eq!(launches.len(), 2);
@@ -1058,16 +1058,20 @@ async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
     let executor_home = unique_dir("codex-mcp-home");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
     let _capabilities = EnvGuard::set("WEGENT_CAPABILITIES_HOME", executor_home.join("capabilities").to_str().unwrap());
-    let manifest_path = executor_home.join("capabilities/manifest.json");
+    let manifest_path = wegent_executor::local::capabilities::default_manifest_path();
     fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
     fs::write(
         &manifest_path,
         serde_json::to_string(&json!({
-            "version": 1,
+            "version": 2,
             "revision": 1,
             "skills": {},
             "plugins": {},
             "mcps": {
+                "connector": {"server": {
+                    "url": "${{backend_api_url}}/mcp/connectors/sse",
+                    "headers": {"Authorization": "Bearer ${{task_token}}"}
+                }},
                 "docs": {
                     "server": {
                         "type": "streamable-http",
@@ -1119,17 +1123,19 @@ async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
 
     let messages = read_json_lines(&log_path);
     let args = messages[0]["args"].as_array().unwrap();
-    assert_config_arg(
-        args,
-        "mcp_servers.docs.url=\"https://mcp.example.com/docs\"",
-    );
-    assert_config_arg(args, "mcp_servers.docs.bearer_token_env_var=\"DOCS_TOKEN\"");
-    assert_config_arg(args, "mcp_servers.shell.command=\"uvx\"");
-    assert_config_arg(args, "mcp_servers.shell.args=[\"tool\",\"--flag\"]");
+    assert!(!args.iter().filter_map(Value::as_str).any(|argument|
+        argument.starts_with("mcp_servers.docs.") || argument.starts_with("mcp_servers.shell.")
+    ));
     assert_eq!(messages[0]["env"]["FOO"], "");
     assert!(!args.iter().filter_map(Value::as_str).any(|argument| argument.starts_with("mcp_servers.shell.env")));
     let start = messages.iter().find(|message| message["method"] == "thread/start").unwrap();
-    assert_eq!(start["params"]["config"]["mcp_servers.shell.env"]["FOO"], "bar");
+    let config = &start["params"]["config"];
+    assert_eq!(config["mcp_servers"]["docs"]["url"], "https://mcp.example.com/docs");
+    assert_eq!(config["mcp_servers"]["docs"]["bearer_token_env_var"], "DOCS_TOKEN");
+    assert_eq!(config["mcp_servers"]["shell"]["command"], "uvx");
+    assert_eq!(config["mcp_servers"]["shell"]["args"], json!(["tool", "--flag"]));
+    assert!(config["mcp_servers"].get("connector").is_none());
+    assert_eq!(start["params"]["config"]["mcp_servers"]["shell"]["env"]["FOO"], "bar");
 }
 
 async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
@@ -1163,6 +1169,11 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
             }
         }]),
         mcp_servers: vec![
+            json!({
+                "name": "connector", "type": "streamable-http",
+                "url": "${{backend_api_url}}/mcp/connectors/sse",
+                "headers": {"Authorization": "Bearer ${{task_token}}"}
+            }),
             json!({
                 "name": "request-docs",
                 "type": "streamable-http",
@@ -1198,41 +1209,28 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
 
     let messages = read_json_lines(&log_path);
     let args = messages[0]["args"].as_array().unwrap();
-    assert_config_arg(
-        args,
-        "mcp_servers.request-docs.url=\"https://mcp.example.com/request-docs\"",
-    );
-    assert_config_arg(
-        args,
-        "mcp_servers.request-docs.bearer_token_env_var=\"REQUEST_DOCS_TOKEN\"",
-    );
-    assert!(args.iter().filter_map(Value::as_str).any(|argument| argument.starts_with(
-        "mcp_servers.request-docs.env_http_headers.Authorization=\"WEGENT_MCP_HEADER_"
-    )));
     assert!(!args.iter().filter_map(Value::as_str).any(|argument| argument.contains("Bearer task-token")));
-    assert_config_arg(args, "mcp_servers.bot-shell.command=\"uvx\"");
-    assert_config_arg(args, "mcp_servers.bot-shell.args=[\"bot-tool\"]");
+    assert!(args.iter().any(|argument| argument == "mcp_servers={}"));
+    assert!(!args.iter().filter_map(Value::as_str).any(|argument|
+        ["request-docs", "request-sensitive", "bot-shell", "sensitive-shell", "connector"]
+            .iter().any(|name| argument.starts_with(&format!("mcp_servers.{name}.")))
+    ));
     assert_eq!(messages[0]["env"]["BOT_ENV"], "");
     assert!(!args.iter().filter_map(Value::as_str).any(|argument| argument.starts_with("mcp_servers.bot-shell.env")));
     let start = messages.iter().find(|message| message["method"] == "thread/start").unwrap();
-    assert_eq!(start["params"]["config"]["mcp_servers.bot-shell.env"]["BOT_ENV"], "1");
-    assert_config_arg(
-        args,
-        "mcp_servers.bot-shell.default_tools_approval_mode=\"approve\"",
-    );
-    assert_config_arg(args, "mcp_servers.sensitive-shell.command=\"node\"");
-    assert_config_arg(
-        args,
-        "mcp_servers.sensitive-shell.default_tools_approval_mode=\"prompt\"",
-    );
-    assert_config_arg(
-        args,
-        "mcp_servers.request-docs.default_tools_approval_mode=\"approve\"",
-    );
-    assert_config_arg(
-        args,
-        "mcp_servers.request-sensitive.default_tools_approval_mode=\"prompt\"",
-    );
+    let config = &start["params"]["config"];
+    assert_eq!(config["mcp_servers"]["request-docs"]["url"], "https://mcp.example.com/request-docs");
+    assert_eq!(config["mcp_servers"]["request-docs"]["bearer_token_env_var"], "REQUEST_DOCS_TOKEN");
+    assert_eq!(config["mcp_servers"]["request-docs"]["http_headers"]["Authorization"], "Bearer task-token");
+    assert_eq!(config["mcp_servers"]["bot-shell"]["command"], "uvx");
+    assert_eq!(config["mcp_servers"]["bot-shell"]["args"], json!(["bot-tool"]));
+    assert!(config["mcp_servers"].get("connector").is_none());
+    assert_eq!(start["params"]["config"]["mcp_servers"]["bot-shell"]["env"]["BOT_ENV"], "1");
+    assert_eq!(config["mcp_servers"]["bot-shell"]["default_tools_approval_mode"], "approve");
+    assert_eq!(config["mcp_servers"]["sensitive-shell"]["command"], "node");
+    assert_eq!(config["mcp_servers"]["sensitive-shell"]["default_tools_approval_mode"], "prompt");
+    assert_eq!(config["mcp_servers"]["request-docs"]["default_tools_approval_mode"], "approve");
+    assert_eq!(config["mcp_servers"]["request-sensitive"]["default_tools_approval_mode"], "prompt");
 }
 
 async fn codex_app_server_engine_times_out_unresponsive_rpc() {

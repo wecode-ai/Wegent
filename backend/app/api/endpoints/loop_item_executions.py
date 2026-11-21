@@ -14,11 +14,23 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
+from app.core.security import (
+    get_current_user,
+    get_current_user_jwt_apikey_tasktoken,
+    oauth2_scheme_optional,
+)
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -575,7 +587,11 @@ def enqueue_execution_batch(
         from app.services.collaboration_round_assignment import assign_round_owner
 
         assign_round_owner(
-            db, item=item, assignments=assignment_activity, user_id=current_user.id
+            db,
+            item=item,
+            assignments=assignment_activity,
+            user_id=current_user.id,
+            manager=manager,
         )
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         assignment_message = ProjectChatMessage(
@@ -643,19 +659,27 @@ def enqueue_execution_batch(
 def report_collaboration_assignment_status(
     project_id: int,
     values: LoopItemExecutionManagerStatus | LoopItemExecutionAssignmentStatus,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    session_token: str | None = Depends(oauth2_scheme_optional),
 ) -> dict[str, object]:
     """Bind collaboration sessions and record progress; Executor owns the round."""
 
     require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
+    runtime_profiles = None
     try:
         if isinstance(values, LoopItemExecutionManagerStatus):
             from app.services.collaboration_manager_activity import (
                 project_collaboration_manager_activity,
             )
 
-            message, changed = project_collaboration_manager_activity(
+            if values.refresh_runtime_profiles and (
+                not session_token
+                or get_current_user(token=session_token, db=db).id != current_user.id
+            ):
+                raise HTTPException(403, "Runtime profiles require the owner's session")
+            message, changed, runtime_profiles = project_collaboration_manager_activity(
                 db, project_id=project_id, user_id=current_user.id, values=values
             )
         else:
@@ -689,7 +713,11 @@ def report_collaboration_assignment_status(
             message.status,
         )
         push_project_chat_message(view)
-    return {"message": view, "changed": changed}
+    result: dict[str, object] = {"message": view, "changed": changed}
+    if runtime_profiles is not None:
+        response.headers["Cache-Control"] = "no-store"
+        result["runtime_profiles"] = runtime_profiles
+    return result
 
 
 @router.post("/{project_id}/executions/manager-decision")

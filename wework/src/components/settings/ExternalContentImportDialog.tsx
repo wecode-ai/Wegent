@@ -1,9 +1,10 @@
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { CheckCircle2, Code2, Loader2, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
 import { createLocalCodexPluginApi, type ExternalContentSource } from '@/api/local/codexPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CheckCircle2, Code2, Loader2, X } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
 
 interface ExternalContentImportDialogProps {
   onClose: () => void
@@ -21,13 +22,7 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
   const [importing, setImporting] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(
-    () => {
-      if (!importing) onClose()
-    },
-    true,
-    '[data-testid="external-content-import-confirm-button"]:not([disabled])'
-  )
+  const dialogRef = useRef<HTMLDivElement>(null)
 
   const handleImport = async () => {
     setImporting(true)
@@ -44,13 +39,20 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
-      <div
-        role="dialog"
-        ref={dialogRef}
-        aria-modal="true"
-        aria-labelledby="external-content-import-title"
-        data-testid="external-content-import-dialog"
-        className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-2xl"
+      <DialogSurface
+        onClose={() => {
+          if (!importing) onClose()
+        }}
+        initialFocus={'[data-testid="external-content-import-confirm-button"]:not([disabled])'}
+        render={
+          <div
+            role="dialog"
+            ref={dialogRef}
+            aria-labelledby="external-content-import-title"
+            data-testid="external-content-import-dialog"
+            className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-2xl"
+          />
+        }
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -64,7 +66,8 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
               {t('workbench.external_import_description')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="external-content-import-close-button"
             aria-label={t('common.close', '关闭')}
@@ -72,7 +75,7 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface hover:text-text-primary"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         {completed ? (
@@ -87,7 +90,8 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
           <>
             <div className="mt-5 grid grid-cols-2 gap-3">
               {sources.map(item => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={item.id}
                   type="button"
                   data-testid={`external-content-source-${item.id}`}
@@ -108,7 +112,7 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
                   <span className="mt-1 text-xs leading-4 text-text-secondary">
                     {t(`workbench.external_import_${item.id.replace('-', '_')}_description`)}
                   </span>
-                </button>
+                </ControlButton>
               ))}
             </div>
             {error && (
@@ -123,15 +127,18 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
         )}
 
         <div className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={onClose}
             className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-surface"
           >
             {completed ? t('common.done', '完成') : t('common.cancel', '取消')}
-          </button>
+          </ControlButton>
           {!completed && (
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="external-content-import-confirm-button"
               disabled={importing}
@@ -142,10 +149,10 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
               {importing
                 ? t('workbench.external_import_importing')
                 : t('workbench.external_import_action')}
-            </button>
+            </ControlButton>
           )}
         </div>
-      </div>
+      </DialogSurface>
     </div>
   )
 }

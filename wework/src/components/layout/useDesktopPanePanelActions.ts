@@ -1,3 +1,4 @@
+import { useDialogRequests } from '@/components/common/useDialogRequests'
 import type { WorkbenchMessage } from '@/types/workbench'
 import type { DesktopWorkbenchPaneProps } from './desktopWorkbenchMainHelpers'
 import { useDesktopPaneBrowserActions } from './useDesktopPaneBrowserActions'
@@ -394,7 +395,10 @@ export function useDesktopPanePanelActions({
     },
     [openRightPanelTab, setSelectedAssistantPlan]
   )
-  const closeRightPanelTab = (tab: RightWorkspacePanelTab) => {
+  const { confirm: confirmBrowserClose, dialogs: panelActionDialogs } = useDialogRequests(
+    (key, fallback) => String(t(key, { defaultValue: fallback }))
+  )
+  const closeRightPanelTab = async (tab: RightWorkspacePanelTab) => {
     if (isQuestionDiscussionTab(tab)) questionPanels.close(tab)
     if (isMcpAppPanelTab(tab)) {
       const panel = getMcpAppPanel(tab)
@@ -409,7 +413,7 @@ export function useDesktopPanePanelActions({
     const browserState = isRightWorkspaceBrowserTab(tab) ? browserStates[tab] : null
     if (
       browserState?.hasActiveDownload &&
-      !window.confirm(t('workbench.browser_close_browser_with_download_confirm'))
+      !(await confirmBrowserClose(t('workbench.browser_close_browser_with_download_confirm')))
     ) {
       return
     }
@@ -546,6 +550,7 @@ export function useDesktopPanePanelActions({
     onPaneResourceRetained(paneKey, 'bottom-panel', false)
   }
   return {
+    panelActionDialogs,
     openRightPanelTab,
     backgroundTerminals,
     runningBackgroundTerminals,

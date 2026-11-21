@@ -114,22 +114,34 @@ describe('Web adapter for the PC activity tools', () => {
     expect(button('approve')).not.toBeNull()
   })
 
-  it('treats prompt cancellation as no action and sends the trimmed rejection reason', async () => {
-    const prompt = vi
-      .spyOn(window, 'prompt')
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce('  missing evidence  ')
+  it('treats rejection dialog cancellation as no action and sends the trimmed rejection reason', async () => {
     await mount()
     await act(async () => button('reject')!.click())
     expect(props.api.issues.rejectRun).not.toHaveBeenCalled()
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[data-testid="text-input-request-cancel-button"]')!.click()
+    )
+    expect(props.api.issues.rejectRun).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-testid="text-input-request"]')).toBeNull()
     await act(async () => button('reject')!.click())
-    expect(props.api.issues.rejectRun).toHaveBeenCalledWith(
+    await act(async () => {
+      const input = document.querySelector<HTMLInputElement>('[data-testid="text-input-request"]')!
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        input,
+        '  missing evidence  '
+      )
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[data-testid="text-input-request-confirm"]')!.click()
+    )
+    expect(props.api.issues.rejectRun).toHaveBeenCalledExactlyOnceWith(
       'project-1',
       'issue-1',
       7,
       'missing evidence'
     )
-    expect(prompt).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-testid="text-input-request"]')).toBeNull()
   })
 
   it('does not offer acceptance again after the Issue is completed', async () => {

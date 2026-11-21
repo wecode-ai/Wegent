@@ -24,8 +24,6 @@ export function useDesktopSidebarSectionArchives({
   >(null)
   const [isArchivingProjectSection, setIsArchivingProjectSection] = useState(false)
   const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
-  const isArchiveSectionSubmitting =
-    archiveSectionMode === 'projects' ? isArchivingProjectSection : isArchivingChatSection
   const archiveSectionDialogTestId =
     archiveSectionMode === 'chats'
       ? 'runtime-chat-section-archive-conversations-dialog'
@@ -33,9 +31,7 @@ export function useDesktopSidebarSectionArchives({
   const archiveSectionDialogCount =
     archiveSectionMode === 'chats' ? chatSectionArchiveCount : projectSectionArchiveCount
   const closeArchiveSectionDialog = () => {
-    if (!isArchiveSectionSubmitting) {
-      setArchiveSectionMode(null)
-    }
+    setArchiveSectionMode(null)
   }
   const forceArchiveSectionDialogTestId =
     forceArchiveSectionMode === 'chats'
@@ -46,17 +42,20 @@ export function useDesktopSidebarSectionArchives({
     options?: ArchiveRuntimeTaskOptions
   ) => {
     if (mode === 'projects') {
-      if (!onArchiveProjectsConversations || projectSectionArchiveKeys.length === 0) return
+      if (
+        isArchivingProjectSection ||
+        !onArchiveProjectsConversations ||
+        projectSectionArchiveKeys.length === 0
+      )
+        return
+      setArchiveSectionMode(null)
+      setForceArchiveSectionMode(null)
       setIsArchivingProjectSection(true)
       try {
         const result = await onArchiveProjectsConversations(projectSectionArchiveKeys, options)
         if (result?.status === 'dirty_worktree') {
-          setArchiveSectionMode(null)
           setForceArchiveSectionMode('projects')
-          return
         }
-        setArchiveSectionMode(null)
-        setForceArchiveSectionMode(null)
       } finally {
         setIsArchivingProjectSection(false)
       }
@@ -64,17 +63,20 @@ export function useDesktopSidebarSectionArchives({
     }
 
     if (mode === 'chats') {
-      if (!onArchiveChatConversations || chatSectionArchiveAddresses.length === 0) return
+      if (
+        isArchivingChatSection ||
+        !onArchiveChatConversations ||
+        chatSectionArchiveAddresses.length === 0
+      )
+        return
+      setArchiveSectionMode(null)
+      setForceArchiveSectionMode(null)
       setIsArchivingChatSection(true)
       try {
         const result = await onArchiveChatConversations(chatSectionArchiveAddresses, options)
         if (result?.status === 'dirty_worktree') {
-          setArchiveSectionMode(null)
           setForceArchiveSectionMode('chats')
-          return
         }
-        setArchiveSectionMode(null)
-        setForceArchiveSectionMode(null)
       } finally {
         setIsArchivingChatSection(false)
       }
@@ -85,9 +87,7 @@ export function useDesktopSidebarSectionArchives({
     void runArchiveSectionConversations(archiveSectionMode)
   }
   const closeForceArchiveSectionDialog = () => {
-    if (!isArchiveSectionSubmitting) {
-      setForceArchiveSectionMode(null)
-    }
+    setForceArchiveSectionMode(null)
   }
   const confirmForceArchiveSectionConversations = () => {
     if (!forceArchiveSectionMode) return
@@ -99,7 +99,6 @@ export function useDesktopSidebarSectionArchives({
     forceArchiveSectionMode,
     isArchivingProjectSection,
     isArchivingChatSection,
-    isArchiveSectionSubmitting,
     archiveSectionDialogTestId,
     archiveSectionDialogCount,
     closeArchiveSectionDialog,

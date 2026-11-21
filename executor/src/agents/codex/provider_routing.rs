@@ -90,6 +90,8 @@ pub(super) fn configure_request_provider(
     log_route(request, route, &provider)?;
     if let Some((mut upstream, _)) = upstream {
         inject_session_headers(&mut upstream.default_headers, &request.task_id);
+        let official_websocket = upstream.is_official_chatgpt_codex()
+            && native_provider::official_websocket_enabled(&request_home(request)?)?;
         configure_codex_router(
             launch,
             route_scope,
@@ -97,6 +99,7 @@ pub(super) fn configure_request_provider(
             codex_request_model(request),
             request_model_switched(request),
             vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
+            official_websocket,
         );
     } else {
         launch.model_provider = Some(codex_model_catalog::PROVIDER_ID.to_owned());
@@ -208,6 +211,7 @@ experimental_bearer_token="must-not-select"
             Some("gpt-test".to_owned()),
             false,
             None,
+            false,
         );
         assert!(launch.local_proxy_registration.is_some());
         assert!(!launch
@@ -216,7 +220,7 @@ experimental_bearer_token="must-not-select"
         let profile = super::super::native_provider::profile_for_test(&launch.config_overrides);
         assert_eq!(profile["requires_openai_auth"], true);
         assert_eq!(profile["wire_api"], "responses");
-        assert_eq!(profile["supports_websockets"], true);
+        assert_eq!(profile["supports_websockets"], false);
         assert_eq!(profile["supports_standalone_web_search"], false);
         assert!(profile.get("auth").is_none());
         assert!(profile["base_url"]

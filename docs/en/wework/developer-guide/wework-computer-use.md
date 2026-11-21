@@ -134,13 +134,8 @@ process exit, and pipe closure under a single probe ID. The Executor log also re
 Codex process startup and output-collection trace events for correlation with the
 transcript by call and process ID. The schema probe records timing and process metadata only.
 
-Official ChatGPT subscription inference uses Responses WebSocket through the local proxy.
-The same connection accepts incremental tool results with `previous_response_id`.
-Codex switches to HTTP POST when the upstream only supports HTTP. When a desktop tool
-returns the same JSON as text and structured content, the Executor keeps the structured
-copy. In diagnostic mode the Executor records the first response frame, first output item,
-first delta, terminal frame, and local processing and write times by connection and
-request number. When the upstream supplies engine timings, the log records known numeric fields.
+When a desktop tool returns the same JSON as text and structured content, the Executor
+keeps the structured copy.
 
 ## Permissions and settings
 

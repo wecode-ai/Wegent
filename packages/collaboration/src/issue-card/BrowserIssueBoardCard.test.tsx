@@ -60,7 +60,10 @@ const work = {
 function DraftSeed() {
   const draft = useBrowserTaskDraft('device-1:task-1')
   return (
-    <button data-testid="seed-task-draft" onClick={() => draft.setDraft('继续检查目录')}>
+    <button
+      data-testid="seed-task-draft"
+      onClick={() => draft.setDraft('继续检查目录')}
+    >
       Seed draft
     </button>
   )
@@ -80,7 +83,7 @@ describe('Web board with the native runtime progress presentation', () => {
         observe() {}
         unobserve() {}
         disconnect() {}
-      }
+      },
     )
     vi.stubGlobal('matchMedia', () => ({
       matches: false,
@@ -108,7 +111,9 @@ describe('Web board with the native runtime progress presentation', () => {
         interruptAndSendRuntimeMessage: vi.fn(),
         cancelRuntimeTask: vi.fn(),
         revertRuntimeFileChanges: vi.fn(),
-        getRuntimeGoal: vi.fn().mockResolvedValue({ accepted: true, taskId: 'task-1', goal: null }),
+        getRuntimeGoal: vi
+          .fn()
+          .mockResolvedValue({ accepted: true, taskId: 'task-1', goal: null }),
       },
       getTranscript: vi.fn().mockResolvedValue({
         runtime: 'codex',
@@ -192,22 +197,32 @@ describe('Web board with the native runtime progress presentation', () => {
               />
             </BrowserTaskDrafts>
           )}
-        </BrowserTaskDrafts>
-      )
+        </BrowserTaskDrafts>,
+      ),
     )
   }
   it('shows APP access guidance in the card, popup and drawer without starting runtime readers', async () => {
-    runtime.checkDeviceAccess = vi.fn().mockResolvedValue({ 'device-1': 'app-local-only' })
+    runtime.checkDeviceAccess = vi
+      .fn()
+      .mockResolvedValue({ 'device-1': 'app-local-only' })
     await render()
     expect(container.textContent).toContain('请在 PC App 查看进展')
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-todo-card-issue-1"]',
+        )!
+        .click(),
     )
     expect(document.body.textContent).toContain('请在 PC App 查看进展')
     expect(
-      document.querySelector('[data-testid="cloud-todo-card-progress-retry-issue-1"]')
+      document.querySelector(
+        '[data-testid="cloud-todo-card-progress-retry-issue-1"]',
+      ),
     ).toBeNull()
-    expect(document.querySelector('[data-testid="runtime-device-access-retry"]')).toBeNull()
+    expect(
+      document.querySelector('[data-testid="runtime-device-access-retry"]'),
+    ).toBeNull()
     await render(true, true)
     expect(document.body.textContent).toContain('请在 PC App 查看进展')
     expect(runtime.getTranscript).not.toHaveBeenCalled()
@@ -217,7 +232,9 @@ describe('Web board with the native runtime progress presentation', () => {
   })
 
   it('keeps the execution dialog closable for an APP task without requesting a transcript', async () => {
-    runtime.checkDeviceAccess = vi.fn().mockResolvedValue({ 'device-1': 'app-local-only' })
+    runtime.checkDeviceAccess = vi
+      .fn()
+      .mockResolvedValue({ 'device-1': 'app-local-only' })
     const close = vi.fn()
     await act(async () =>
       root.render(
@@ -230,19 +247,30 @@ describe('Web board with the native runtime progress presentation', () => {
             senderName: 'Codex',
             taskTitle: 'pwd',
           }}
-        />
-      )
+        />,
+      ),
     )
     const dialog = document.querySelector('[role="dialog"]')!
     expect(dialog.textContent).toContain('请在 PC App 查看进展')
-    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+    expect(close).not.toHaveBeenCalled()
+    await act(async () =>
+      dialog.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    )
     expect(close).toHaveBeenCalledOnce()
     expect(runtime.getTranscript).not.toHaveBeenCalled()
     expect(runtime.subscribe).not.toHaveBeenCalled()
   })
 
   it('reads project execution history without requiring ownership of the agent device', async () => {
-    runtime.checkDeviceAccess = vi.fn().mockResolvedValue({ 'device-1': 'unavailable' })
+    runtime.checkDeviceAccess = vi
+      .fn()
+      .mockResolvedValue({ 'device-1': 'unavailable' })
     const address = {
       deviceId: binding.deviceId,
       taskId: binding.taskId,
@@ -255,11 +283,13 @@ describe('Web board with the native runtime progress presentation', () => {
           translate={translate}
           onClose={vi.fn()}
           target={{ address, senderName: 'Codex' }}
-        />
-      )
+        />,
+      ),
     )
     expect(runtime.checkDeviceAccess).not.toHaveBeenCalled()
-    expect(runtime.getTranscript).toHaveBeenCalledWith(expect.objectContaining(address))
+    expect(runtime.getTranscript).toHaveBeenCalledWith(
+      expect.objectContaining(address),
+    )
   })
 
   it('retries an access lookup failure and resumes the normal conversation for an allowed device', async () => {
@@ -272,8 +302,10 @@ describe('Web board with the native runtime progress presentation', () => {
     expect(runtime.getTranscript).not.toHaveBeenCalled()
     await act(async () =>
       container
-        .querySelector<HTMLButtonElement>('[data-testid="runtime-device-access-retry"]')!
-        .click()
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="runtime-device-access-retry"]',
+        )!
+        .click(),
     )
     expect(runtime.getTranscript).toHaveBeenCalled()
     expect(runtime.subscribe).toHaveBeenCalled()
@@ -303,14 +335,19 @@ describe('Web board with the native runtime progress presentation', () => {
     expect(
       container
         .querySelector('[data-testid="cloud-todo-card-goal-issue-1-binding-1"]')
-        ?.getAttribute('aria-label')
+        ?.getAttribute('aria-label'),
     ).toContain(goal.objective)
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-todo-card-issue-1"]',
+        )!
+        .click(),
     )
     expect(
-      document.querySelector('[data-testid="cloud-todo-card-popup-goal-issue-1-binding-1"]')
-        ?.textContent
+      document.querySelector(
+        '[data-testid="cloud-todo-card-popup-goal-issue-1-binding-1"]',
+      )?.textContent,
     ).toContain(goal.objective)
     expect(runtime.work.getRuntimeGoal).toHaveBeenCalledOnce()
   })
@@ -323,23 +360,33 @@ describe('Web board with the native runtime progress presentation', () => {
     })
     await render()
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-todo-card-issue-1"]',
+        )!
+        .click(),
     )
-    expect(document.body.textContent).toContain('Goal is temporarily unavailable')
+    expect(document.body.textContent).toContain(
+      'Goal is temporarily unavailable',
+    )
     const subscriptions = vi.mocked(runtime.subscribe).mock.calls.length
     await act(async () =>
       document
-        .querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-goal-retry-issue-1"]')!
-        .click()
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-todo-card-goal-retry-issue-1"]',
+        )!
+        .click(),
     )
-    expect(document.body.textContent).not.toContain('Goal is temporarily unavailable')
+    expect(document.body.textContent).not.toContain(
+      'Goal is temporarily unavailable',
+    )
     expect(runtime.work.getRuntimeGoal).toHaveBeenCalledTimes(2)
     expect(runtime.subscribe).toHaveBeenCalledTimes(subscriptions)
   })
   it('loads the actual task and updates its final answer from live events', async () => {
     await render()
     expect(runtime.getTranscript).toHaveBeenCalledWith(
-      expect.objectContaining({ deviceId: 'device-1', taskId: 'task-1' })
+      expect.objectContaining({ deviceId: 'device-1', taskId: 'task-1' }),
     )
     expect(container.textContent).toContain('Working on pwd')
     await act(async () => {
@@ -359,36 +406,56 @@ describe('Web board with the native runtime progress presentation', () => {
       handlers.onAssistantSettled?.('turn-1', 'succeeded')
     })
     expect(
-      container.querySelector('[data-testid="cloud-todo-card-final-response-issue-1"]')?.textContent
+      container.querySelector(
+        '[data-testid="cloud-todo-card-final-response-issue-1"]',
+      )?.textContent,
     ).toBe('/repo')
   })
   it('disables the card progress preview while the Issue drawer is present', async () => {
     await render()
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-todo-card-issue-1"]',
+        )!
+        .click(),
     )
     expect(
-      document.querySelector('[data-testid="cloud-todo-card-progress-popup-issue-1"]')
+      document.querySelector(
+        '[data-testid="cloud-todo-card-progress-popup-issue-1"]',
+      ),
     ).not.toBeNull()
     await render(true)
     expect(
-      document.querySelector('[data-testid="cloud-todo-card-progress-popup-issue-1"]')
+      document.querySelector(
+        '[data-testid="cloud-todo-card-progress-popup-issue-1"]',
+      ),
     ).toBeNull()
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-todo-card-issue-1"]',
+        )!
+        .click(),
     )
     expect(
-      document.querySelector('[data-testid="cloud-todo-card-progress-popup-issue-1"]')
+      document.querySelector(
+        '[data-testid="cloud-todo-card-progress-popup-issue-1"]',
+      ),
     ).toBeNull()
   })
   it('surfaces transcript failure and recovers through the same subscription', async () => {
-    vi.mocked(runtime.getTranscript).mockRejectedValueOnce(new Error('Device disconnected'))
+    vi.mocked(runtime.getTranscript).mockRejectedValueOnce(
+      new Error('Device disconnected'),
+    )
     await render()
     expect(container.textContent).toContain('Device disconnected')
     await act(async () =>
       container
-        .querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-progress-retry-issue-1"]')!
-        .click()
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-todo-card-progress-retry-issue-1"]',
+        )!
+        .click(),
     )
     expect(container.textContent).not.toContain('Device disconnected')
     expect(container.textContent).toContain('Working on pwd')
@@ -397,25 +464,35 @@ describe('Web board with the native runtime progress presentation', () => {
   it('uses the native conversation and preserves its draft from the progress popup to the sidebar', async () => {
     await render()
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid="seed-task-draft"]')!.click()
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="seed-task-draft"]')!
+        .click(),
     )
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid="cloud-todo-card-issue-1"]')!.click()
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-todo-card-issue-1"]',
+        )!
+        .click(),
     )
     const popup = document.querySelector(
-      '[data-testid="cloud-todo-card-popup-conversation-issue-1"]'
+      '[data-testid="cloud-todo-card-popup-conversation-issue-1"]',
     )
     expect(popup).not.toBeNull()
-    expect(popup?.querySelector('[data-testid="chat-input"]')?.textContent).toContain(
-      '继续检查目录'
-    )
-    expect(popup?.querySelector('[data-testid="right-workspace-chat-scroll-area"]')).not.toBeNull()
+    expect(
+      popup?.querySelector('[data-testid="chat-input"]')?.textContent,
+    ).toContain('继续检查目录')
+    expect(
+      popup?.querySelector('[data-testid="right-workspace-chat-scroll-area"]'),
+    ).not.toBeNull()
     await render(true, true)
     expect(
-      document.querySelector('[data-testid="cloud-todo-card-popup-conversation-issue-1"]')
+      document.querySelector(
+        '[data-testid="cloud-todo-card-popup-conversation-issue-1"]',
+      ),
     ).toBeNull()
-    expect(container.querySelector('[data-testid="chat-input"]')?.textContent).toContain(
-      '继续检查目录'
-    )
+    expect(
+      container.querySelector('[data-testid="chat-input"]')?.textContent,
+    ).toContain('继续检查目录')
   })
 })

@@ -1,25 +1,10 @@
-import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
-import {
-  Check,
-  ChevronDown,
-  GitBranch,
-  LoaderCircle,
-  Plus,
-  Search,
-  Sparkles,
-  X,
-} from 'lucide-react'
-import { useCallback, useMemo, useRef, useState, type FormEvent } from 'react'
-import { useIsMobile } from '@/hooks/useIsMobile'
-import {
-  calculateFloatingMenuLayout,
-  getFloatingMenuVisibleBounds,
-  type FloatingMenuPlacement,
-} from '@/lib/floating-menu'
 import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
 import { normalizeGeneratedBranchName } from '@/lib/branch-name'
-
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { LoaderCircle, Plus, Sparkles } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
+import { BranchPicker } from './branch-selector/BranchPicker'
 interface BranchSelectorProps {
   currentBranch?: string
   loading?: boolean
@@ -33,23 +18,7 @@ interface BranchSelectorProps {
   mobileSheet?: boolean
 }
 
-const BRANCH_MENU_MAX_HEIGHT = 420
 const BRANCH_NAME_GENERATION_TIMEOUT_MS = 30_000
-
-function branchMatchesQuery(branch: string, query: string): boolean {
-  const normalizedBranch = branch.toLowerCase()
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery || normalizedBranch.includes(normalizedQuery)) return true
-
-  let queryIndex = 0
-  for (const character of normalizedBranch) {
-    if (character === normalizedQuery[queryIndex]) {
-      queryIndex += 1
-      if (queryIndex === normalizedQuery.length) return true
-    }
-  }
-  return false
-}
 
 export function BranchSelector({
   currentBranch,
@@ -64,113 +33,19 @@ export function BranchSelector({
   mobileSheet = false,
 }: BranchSelectorProps) {
   const { t } = useTranslation('common')
-  const isMobile = useIsMobile()
-  const rootRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const [open, setOpen] = useState(false)
-  const [branches, setBranches] = useState<string[]>([])
-  const [query, setQuery] = useState('')
-  const [branchesLoading, setBranchesLoading] = useState(false)
+  const prefix = variant === 'environment' ? 'environment' : 'project'
   const [action, setAction] = useState<'idle' | 'switching' | 'creating' | 'generating'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [createFormOpen, setCreateFormOpen] = useState(false)
   const [newBranchName, setNewBranchName] = useState('')
-  const [desktopMenuLayout, setDesktopMenuLayout] = useState<{
-    placement: FloatingMenuPlacement
-    maxHeight: number
-  }>({
-    placement: variant === 'environment' ? 'below' : 'above',
-    maxHeight: BRANCH_MENU_MAX_HEIGHT,
-  })
-  const prefix = variant === 'environment' ? 'environment' : 'project'
-  const useMobileSheet = mobileSheet && isMobile && variant === 'workbar'
-  const filteredBranches = useMemo(
-    () => branches.filter(branch => branchMatchesQuery(branch, query)),
-    [branches, query]
-  )
-
-  const close = useCallback(() => {
-    setOpen(false)
-    setQuery('')
+  const [revision, setRevision] = useState(0)
+  const close = () => {
+    setRevision(count => count + 1)
     setError(null)
     setCreateFormOpen(false)
     setNewBranchName('')
     setAction('idle')
-  }, [])
-
-  const updateDesktopMenuLayout = useCallback(() => {
-    if (!open || useMobileSheet || typeof window === 'undefined') return
-
-    const triggerRect = triggerRef.current?.getBoundingClientRect()
-    if (!triggerRect) return
-
-    const preferredPlacement = variant === 'environment' ? 'below' : 'above'
-    const nextLayout = calculateFloatingMenuLayout({
-      triggerRect,
-      visibleBounds: getFloatingMenuVisibleBounds(rootRef.current),
-      preferredPlacement,
-      maxHeight: BRANCH_MENU_MAX_HEIGHT,
-    })
-
-    setDesktopMenuLayout(current =>
-      current.placement === nextLayout.placement && current.maxHeight === nextLayout.maxHeight
-        ? current
-        : nextLayout
-    )
-  }, [open, useMobileSheet, variant])
-
-  useDocumentEvent(
-    'pointerdown',
-    event => {
-      if (!rootRef.current?.contains(event.target as Node)) close()
-    },
-    { enabled: open && !useMobileSheet }
-  )
-  useWindowEvent(
-    'keydown',
-    event => {
-      if (event.key === 'Escape') close()
-    },
-    { enabled: open }
-  )
-
-  const bindMenu = useCallback(
-    (menu: HTMLDivElement | null) => {
-      if (menu) updateDesktopMenuLayout()
-    },
-    [updateDesktopMenuLayout]
-  )
-
-  useWindowEvent('resize', updateDesktopMenuLayout, { enabled: open && !useMobileSheet })
-  useWindowEvent('scroll', updateDesktopMenuLayout, {
-    enabled: open && !useMobileSheet,
-    capture: true,
-  })
-
-  async function handleToggle() {
-    if (open) {
-      close()
-      return
-    }
-
-    setOpen(true)
-    setError(null)
-    setBranchesLoading(true)
-    try {
-      await onRefresh?.()
-      setBranches(await onListBranches())
-    } catch (nextError) {
-      setBranches([])
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : t('workbench.environment_branch_load_failed', '分支加载失败')
-      )
-    } finally {
-      setBranchesLoading(false)
-    }
   }
-
   async function handleCheckout(branchName: string) {
     setError(null)
     setAction('switching')
@@ -183,6 +58,7 @@ export function BranchSelector({
           ? nextError.message
           : t('workbench.environment_branch_checkout_failed', '切换分支失败')
       )
+      throw nextError
     } finally {
       setAction('idle')
     }
@@ -264,180 +140,57 @@ export function BranchSelector({
     }
   }
 
-  const emptyBranchLabel =
-    variant === 'workbar'
-      ? t('workbench.environment_branch_select', '选择分支')
-      : t('workbench.environment_branch_empty', '暂无分支')
-  const branchLabel = loading ? t('common.loading', '加载中...') : currentBranch || emptyBranchLabel
-
   return (
-    <div
-      ref={rootRef}
-      className={cn('relative', variant === 'workbar' && 'min-w-0 max-w-[18rem] shrink')}
-    >
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid={`${prefix}-branch-${variant === 'environment' ? 'row' : 'button'}`}
-        onClick={() => void handleToggle()}
-        className={cn(
-          variant === 'environment'
-            ? 'flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover'
-            : 'flex h-9 w-full min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
-          useMobileSheet && 'font-medium',
-          open &&
-            variant === 'workbar' &&
-            'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
-        )}
-        title={variant === 'workbar' ? branchLabel : undefined}
-        aria-label={t('workbench.environment_branch_menu', '切换分支')}
-        aria-expanded={open}
-      >
-        <GitBranch className={variant === 'environment' ? 'h-[18px] w-[18px]' : 'h-4 w-4'} />
-        <span className="min-w-0 flex-1 truncate">{branchLabel}</span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
-      </button>
-
-      {open && useMobileSheet && (
-        <div className="fixed inset-0 z-modal bg-black/25" onClick={close} />
-      )}
-
-      {open && (
-        <div
-          ref={bindMenu}
-          data-testid={`${prefix}-branch-menu`}
-          data-mobile={useMobileSheet ? 'true' : undefined}
-          className={cn(
-            useMobileSheet
-              ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[56dvh] flex-col rounded-t-[28px] border border-border bg-background px-5 pb-2 text-text-primary shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-              : 'absolute z-system-popover flex w-[320px] flex-col overflow-hidden rounded-2xl border border-border bg-background px-3 py-3 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.18)]',
-            !useMobileSheet &&
-              (variant === 'environment'
-                ? desktopMenuLayout.placement === 'below'
-                  ? 'right-[calc(100%-44px)] top-[38px]'
-                  : 'bottom-[38px] right-[calc(100%-44px)]'
-                : desktopMenuLayout.placement === 'below'
-                  ? 'right-0 top-11'
-                  : 'bottom-11 right-0')
-          )}
-          style={useMobileSheet ? undefined : { maxHeight: desktopMenuLayout.maxHeight }}
-        >
-          {useMobileSheet && (
-            <>
-              <div className="mx-auto mt-2 h-1 w-11 shrink-0 rounded-full bg-border" />
-              <div className="flex shrink-0 items-center justify-between pb-2 pt-3">
-                <div className="min-w-0">
-                  <h2 className="text-base font-semibold text-text-primary">
-                    {t('workbench.environment_branch_menu', '切换分支')}
-                  </h2>
-                  <p className="truncate text-xs text-text-muted">{branchLabel}</p>
-                </div>
-                <button
-                  type="button"
-                  data-testid={`${prefix}-branch-mobile-close-button`}
-                  aria-label={t('workbench.close_menu', '关闭菜单')}
-                  onClick={close}
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-surface text-text-primary"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-            </>
-          )}
-          <label
-            className={cn(
-              'flex h-9 shrink-0 items-center gap-2 rounded-lg px-2 text-text-muted',
-              useMobileSheet && 'h-10 shrink-0 rounded-2xl bg-surface px-4'
-            )}
-          >
-            <Search className="h-4 w-4 shrink-0" />
-            <input
-              data-testid={`${prefix}-branch-search-input`}
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              className={cn(
-                'min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted',
-                useMobileSheet && 'text-base leading-5'
-              )}
-              placeholder={t('workbench.environment_branch_search', '搜索分支')}
-              autoFocus={!useMobileSheet}
-            />
-          </label>
-          <h3
-            className={cn(
-              'mt-3 shrink-0 px-2 text-xs font-medium text-text-secondary',
-              useMobileSheet && 'mt-2'
-            )}
-          >
-            {t('workbench.environment_branches', '分支')}
-          </h3>
-          <div
-            data-testid={`${prefix}-branch-list`}
-            className={cn(
-              'mt-2 min-h-0 flex-1 max-h-[220px] overflow-y-auto',
-              useMobileSheet && 'scrollbar-none min-h-0 max-h-[260px] space-y-1 pb-1'
-            )}
-          >
-            {branchesLoading && (
-              <p className="px-2 py-3 text-sm text-text-muted">
-                {t('common.loading', '加载中...')}
-              </p>
-            )}
-            {!branchesLoading && error && !createFormOpen && (
-              <p className="px-2 py-3 text-xs text-destructive wework:text-red-500">{error}</p>
-            )}
-            {!branchesLoading &&
-              !error &&
-              filteredBranches.map(branch => (
-                <button
-                  type="button"
-                  key={branch}
-                  data-testid={`${prefix}-branch-option`}
-                  disabled={action !== 'idle'}
-                  onClick={() => void handleCheckout(branch)}
-                  className={cn(
-                    'flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60',
-                    useMobileSheet && 'h-10 text-base'
-                  )}
-                >
-                  <GitBranch className="h-4 w-4 shrink-0 text-text-secondary" />
-                  <span className="min-w-0 flex-1 truncate">{branch}</span>
-                  {branch === currentBranch && (
-                    <Check className="h-4 w-4 shrink-0 text-text-secondary" />
-                  )}
-                </button>
-              ))}
-            {!branchesLoading && !error && filteredBranches.length === 0 && (
-              <p className="px-2 py-3 text-sm text-text-muted">
-                {t('workbench.environment_branch_empty_results', '没有匹配的分支')}
-              </p>
-            )}
-          </div>
-          <div
-            className={cn(
-              'mt-2 shrink-0 border-t border-border pt-2',
-              useMobileSheet && 'mt-1 pt-1'
-            )}
-          >
+    <div className="min-w-0 max-w-72">
+      <BranchPicker
+        closeSignal={revision}
+        mobileSheet={mobileSheet}
+        composer={variant === 'workbar'}
+        value={currentBranch ?? ''}
+        label={
+          loading
+            ? t('common.loading', '加载中...')
+            : currentBranch || t('workbench.environment_branch_select', '选择分支')
+        }
+        prefix={prefix}
+        triggerTestId={prefix + '-branch-' + (variant === 'environment' ? 'row' : 'button')}
+        accessibleLabel={t('workbench.environment_branch_menu', '切换分支')}
+        onListBranches={onListBranches}
+        onRefresh={onRefresh}
+        onChoose={handleCheckout}
+        busy={action !== 'idle'}
+        error={createFormOpen ? null : error}
+        onOpenChange={open => {
+          if (!open) {
+            setError(null)
+            setCreateFormOpen(false)
+            setNewBranchName('')
+          }
+        }}
+        footer={
+          <div className="pt-1">
+            {' '}
             {createFormOpen ? (
               <div>
                 <form className="flex items-center gap-2" onSubmit={handleCreate}>
-                  <input
+                  <ControlInput
+                    density="compact"
                     data-testid={`${prefix}-new-branch-input`}
                     value={newBranchName}
                     onChange={event => setNewBranchName(event.target.value)}
                     disabled={action === 'generating'}
                     aria-busy={action === 'generating'}
-                    className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm outline-none keyboard:focus:border-primary disabled:cursor-wait disabled:bg-surface disabled:text-text-muted"
+                    className="min-w-0 flex-1 disabled:cursor-wait disabled:bg-surface disabled:text-text-muted"
                     placeholder={
                       action === 'generating'
                         ? t('workbench.environment_branch_generating', 'AI 正在生成分支名…')
                         : t('workbench.environment_new_branch_placeholder', '输入新分支名')
                     }
-                    autoFocus={!useMobileSheet}
+                    autoFocus
                   />
                   {onGenerateBranchName && (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`${prefix}-generate-new-branch-button`}
                       disabled={action !== 'idle'}
@@ -451,9 +204,11 @@ export function BranchSelector({
                       ) : (
                         <Sparkles className="h-4 w-4" />
                       )}
-                    </button>
+                    </ControlButton>
                   )}
-                  <button
+                  <ControlButton
+                    variant="primary"
+                    size="sm"
                     type="submit"
                     data-testid={`${prefix}-confirm-new-branch-button`}
                     disabled={!newBranchName.trim() || action !== 'idle'}
@@ -462,7 +217,7 @@ export function BranchSelector({
                     {action === 'creating'
                       ? t('workbench.environment_branch_creating', '创建中')
                       : t('workbench.environment_branch_create_confirm', '创建')}
-                  </button>
+                  </ControlButton>
                 </form>
                 {action === 'generating' && (
                   <p
@@ -486,7 +241,8 @@ export function BranchSelector({
                 )}
               </div>
             ) : (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`${prefix}-open-new-branch-button`}
                 disabled={!onCreateBranch || action !== 'idle'}
@@ -495,11 +251,11 @@ export function BranchSelector({
               >
                 <Plus className="h-4 w-4" />
                 {t('workbench.environment_branch_create_checkout', '创建并检出新分支...')}
-              </button>
+              </ControlButton>
             )}
           </div>
-        </div>
-      )}
+        }
+      />
     </div>
   )
 }

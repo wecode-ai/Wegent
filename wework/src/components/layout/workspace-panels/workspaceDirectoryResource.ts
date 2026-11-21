@@ -10,7 +10,8 @@ export function createWorkspaceDirectoryResource(
   api: WorkspaceFileApi,
   deviceId: string,
   rootPath: string,
-  directoryPath: string
+  directoryPath: string,
+  initialDirectoryPath?: string | null
 ) {
   let snapshot: DirectorySnapshot = { entries: {}, errors: {}, loading: 0 }
   const listeners = new Set<() => void>()
@@ -49,7 +50,18 @@ export function createWorkspaceDirectoryResource(
     load,
     subscribe(listener: () => void) {
       listeners.add(listener)
-      if (listeners.size === 1) void load(directoryPath)
+      if (listeners.size === 1) {
+        void load(directoryPath).then(() => {
+          if (
+            initialDirectoryPath &&
+            snapshot.entries[directoryPath]?.some(
+              entry => entry.isDirectory && entry.path === initialDirectoryPath
+            )
+          ) {
+            void load(initialDirectoryPath)
+          }
+        })
+      }
       return () => {
         listeners.delete(listener)
         if (listeners.size) return

@@ -19,6 +19,11 @@
 //!   source's `500 {"detail": "LLM request failed: <message>"}`.
 //!
 //! The chat-shell upstream is the deployment's `CHAT_SHELL_URL`.
+mod device;
+
+pub(super) use device::dispatch_responses_device;
+use device::{dispatch_device_turn, resolve_device_route_id};
+
 use std::io;
 use std::pin::Pin;
 
@@ -97,6 +102,8 @@ pub struct DispatchInput<'a> {
     pub is_group_chat: bool,
     pub stream: bool,
     pub background: bool,
+    /// The current owned device connection route, resolved before session setup.
+    pub device_id: Option<String>,
     pub previous_response_id: Option<String>,
     /// The caller's model string (echoed in the response).
     pub model_string: &'a str,
@@ -227,7 +234,7 @@ pub async fn dispatch_create(
         chat_shell_mode: &chat_shell_mode,
         chat_shell_url: &chat_shell,
         executor_manager_url: &executor_manager,
-        device_id: None,
+        device_id: input.device_id.as_deref(),
         model_is_video: false,
         model_protocol,
     });
@@ -241,6 +248,7 @@ pub async fn dispatch_create(
     // The callback stream subscribes before submitting the job.
     if branch != CreateBranch::CallbackStream
         && target.mode != routing::CommunicationMode::HttpCallback
+        && target.mode != routing::CommunicationMode::Websocket
     {
         recover_before_dispatch(state, &mut request, None).await?;
         if let Err(error) = mark_subtask_running(state, &request).await {
@@ -264,12 +272,15 @@ pub async fn dispatch_create(
                     created_at,
                     target_url: target.url.as_deref(),
                 },
+                input.device_id.as_deref(),
             )?;
             return Ok(sse_stream_response(events));
         }
         // Non-streaming: fire-and-forget the executor dispatch and return
         // `queued`.
-        if let Some(url) = target.url.as_deref() {
+        if let Some(device_route) = input.device_id.as_deref() {
+            dispatch_responses_device(state, &mut request, device_route).await?;
+        } else if let Some(url) = target.url.as_deref() {
             if target.mode == routing::CommunicationMode::Inprocess {
                 enqueue_chat_shell_dispatch(state, Some(url), request.clone(), input.request_id);
             } else {
@@ -482,7 +493,11 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         Some(message),
         None,
     )
-    .await;
+    .await
+    .inspect_err(|error| {
+        tracing::warn!(%error, task_id, subtask_id, "request failure result read failed");
+    })
+    .unwrap_or(None);
     let persisted = completion::persist_completed_result(
         &ctx,
         task_id,
@@ -530,6 +545,13 @@ pub(crate) async fn mark_subtask_running(
 ) -> Result<(), FastApiError> {
     let (task_id, subtask_id) = (request.task_id, request.subtask_id);
     let tables = crate::internal_callback::tables(state);
+    let (task_table, _) = completion::resolve_tables(Some(state), tables, task_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, task_id, subtask_id, "task running table resolution failed");
+            FastApiError::internal()
+        })?;
+    let shell = routing::shell_type(request);
     let running = if let Some(redis) = state.redis.as_ref() {
         let ctx = completion::Completion {
             app: Some(state),
@@ -538,11 +560,18 @@ pub(crate) async fn mark_subtask_running(
             tables,
             executor_manager: &state.executor_manager,
         };
-        completion::mark_subtask_running(&ctx, task_id, subtask_id).await
+        completion::mark_subtask_running(&ctx, task_id, subtask_id, Some(shell.as_str())).await
     } else {
-        completion::commit_subtask_running(&state.mysql, tables, task_id, subtask_id)
-            .await
-            .map(|row| row.is_some())
+        completion::commit_subtask_running(
+            &state.mysql,
+            tables,
+            &task_table,
+            task_id,
+            subtask_id,
+            Some(shell.as_str()),
+        )
+        .await
+        .map(|row| row.is_some())
     };
     if running.map_err(|error| {
         tracing::error!(%error, task_id, subtask_id, "task running transition failed");
@@ -555,198 +584,6 @@ pub(crate) async fn mark_subtask_running(
             SUBTASK_NOT_DISPATCHABLE,
         ))
     }
-}
-
-/// `ExecutionDispatcher._resolve_device_route_id` (`dispatcher.py:391-415`):
-/// map a submitted device identity to its heartbeat connection route. A missing
-/// owned row falls back to the submitted route; it never errors or drops the
-/// device routing.
-async fn resolve_device_route_id(
-    state: &AppState,
-    request: &ExecutionRequest,
-    device_id: Option<&str>,
-) -> Result<Option<String>, FastApiError> {
-    let Some(device_id) = device_id else {
-        return Ok(None);
-    };
-    if request.user.get("id").and_then(Value::as_i64).is_none()
-        || has_fork_workspace_archive(request)
-    {
-        return Ok(Some(device_id.to_string()));
-    }
-    match crate::device_identity::resolve_owned_device_alias(
-        &state.mysql,
-        request.user_id,
-        device_id,
-    )
-    .await
-    {
-        Ok(Some(device)) => Ok(Some(crate::device_identity::device_connection_route_id(
-            &device,
-        ))),
-        Ok(None) => Ok(Some(device_id.to_string())),
-        Err(error) => {
-            tracing::error!(%error, task_id = request.task_id, "device route resolution failed");
-            Err(FastApiError::internal())
-        }
-    }
-}
-
-/// `_has_fork_workspace_archive`: a fork runtime with a stored archive keeps
-/// its submitted route.
-fn has_fork_workspace_archive(request: &ExecutionRequest) -> bool {
-    request
-        .fork_runtime
-        .as_ref()
-        .and_then(|runtime| runtime.get("workspaceArchive"))
-        .and_then(|archive| archive.get("storageKey"))
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
-}
-
-/// `ExecutionDispatcher._dispatch_websocket` (`dispatcher.py:571-620`): set
-/// the device executor on the subtask, emit the START pair on `/chat`, then
-/// publish `task:execute` to the device room.
-async fn dispatch_device_turn(
-    state: &AppState,
-    request: &ExecutionRequest,
-    created_task: Option<crate::internal_callback::emitter::CreatedTask>,
-    device_route: &str,
-) -> Result<(), FastApiError> {
-    set_subtask_executor(state, request, device_route).await?;
-    mark_subtask_running(state, request).await?;
-    let Some(redis) = state.redis.as_ref() else {
-        tracing::error!(task_id = request.task_id, "device dispatch has no Redis");
-        return Err(FastApiError::internal());
-    };
-    let shell = routing::shell_type(request);
-    if let Err(error) = crate::internal_callback::publish_chat_start(
-        redis,
-        request.task_id,
-        request.subtask_id,
-        Value::String(request.bot_name.clone()),
-        &shell,
-        request.message_id,
-    )
-    .await
-    {
-        tracing::error!(%error, task_id = request.task_id, "chat:start emit failed");
-        return Err(FastApiError::internal());
-    }
-    if let Some(created) = created_task.as_ref()
-        && let Err(error) =
-            crate::internal_callback::publish_task_created(redis, request.task_id, created).await
-    {
-        tracing::error!(%error, task_id = request.task_id, "task:created emit failed");
-        return Err(FastApiError::internal());
-    }
-    let mut payload = super::dispatch::device_execution_payload(request, device_route);
-    if let Some(user) = payload.get_mut("user").and_then(Value::as_object_mut) {
-        user.remove("git_token");
-        user.remove("gitToken");
-    }
-    payload["git_auth_transport"] = serde_json::json!("device_local");
-    let message = crate::socketio_emit::device_execution_message(
-        "task:execute",
-        &payload,
-        "/local-executor",
-        &format!("device:{}:{device_route}", request.user_id),
-    );
-    use brz_redis::Redis as _;
-    if let Err(error) = redis
-        .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message)
-        .await
-    {
-        tracing::error!(%error, task_id = request.task_id, "task:execute publish failed");
-        return Err(FastApiError::internal());
-    }
-    Ok(())
-}
-
-/// `SubtaskStore.update_executor_info` (`dispatcher.py:417-454`): the subtask's
-/// executor identity must name the device before its progress/result events
-/// pass the device namespace's ownership check.
-async fn set_subtask_executor(
-    state: &AppState,
-    request: &ExecutionRequest,
-    runtime_device_id: &str,
-) -> Result<(), FastApiError> {
-    let redis = state.redis.as_ref().ok_or_else(FastApiError::internal)?;
-    let tables = state.task_store.table_templates();
-    let mysql = state
-        .mysql
-        .route(crate::task_routing::ByTaskId(request.task_id as u64));
-    // `update_executor_info`'s `db.query(...).first()` is a different shape
-    // from the shared no-limit `db.refresh` helper, so this call site adds the
-    // Source's `LIMIT 1`.
-    let read = format!(
-        "{} \n LIMIT 1",
-        crate::task_store_statements::subtask_by_id_labeled_refresh_statement(tables.subtasks)
-    );
-    // `_set_subtask_executor`'s subtask session also loads the subtask's
-    // contexts (`WHERE subtask_id IN (?) ORDER BY id ASC`) before the update.
-    let contexts = format!(
-        "SELECT {} \nFROM subtask_contexts \n\
-         WHERE subtask_contexts.subtask_id IN (?) \
-         ORDER BY subtask_contexts.id ASC",
-        crate::task_store_listing::subtask_context_columns()
-    );
-    use brz_mysql::MysqlTransaction as _;
-    let now = chrono::Local::now().naive_local();
-    mysql
-        .with_transaction(async |transaction| {
-            let registration = crate::device_records::lock_online_device_for_binding(
-                transaction,
-                redis,
-                request.user_id,
-                runtime_device_id,
-            )
-            .await?;
-            if !registration.is_some_and(|device| {
-                crate::device_identity::device_connection_route_id(&device) == runtime_device_id
-            }) {
-                return Ok(Err(FastApiError::detail(
-                    StatusCode::BAD_REQUEST,
-                    "Selected device is offline",
-                )));
-            }
-            // The turn has just been committed. Read it on the binding writer
-            // after taking the device owner lock that protects registration.
-            let row: Option<brz_mysql::MysqlRow> = transaction
-                .fetch_optional(read, (request.subtask_id,))
-                .await?;
-            if row.is_none() {
-                return Ok(Err(FastApiError::detail(
-                    StatusCode::NOT_FOUND,
-                    "Subtask not found",
-                )));
-            }
-            let _: Vec<brz_mysql::MysqlRow> = transaction
-                .fetch_all(contexts, (request.subtask_id,))
-                .await?;
-            transaction
-                .execute(
-                    format!(
-                        "UPDATE {table} SET executor_namespace=?, executor_name=?, updated_at=? \
-                         WHERE {table}.id=? AND task_id=? AND status IN ('PENDING', 'RUNNING')",
-                        table = tables.subtasks
-                    ),
-                    (
-                        format!("user-{}", request.user_id),
-                        format!("device-{runtime_device_id}"),
-                        now,
-                        request.subtask_id,
-                        request.task_id,
-                    ),
-                )
-                .await?;
-            Ok(Ok(()))
-        })
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, subtask_id = request.subtask_id, "executor update failed");
-            FastApiError::internal()
-        })?
 }
 
 /// Submit the dispatch after the response stream subscribes to its callbacks.

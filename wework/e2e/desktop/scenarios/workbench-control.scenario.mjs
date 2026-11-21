@@ -615,6 +615,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           assert.ok(changeRequestContext.includes(JSON.stringify([PR])))
           assert.ok(changeRequestContext.includes('subscribe_connection_events'))
           assert.ok(changeRequestContext.includes('exact head SHA'))
+          assert.match(changeRequestContext, /single merge wait for CI results and conflicts/)
+          assert.match(changeRequestContext, /git_wait:merge/)
           followUpRequests += 1
           events = [assistantMessage('WEWORK_CONTROL_ORIGINAL_RESUMED'), responseCompleted(id)]
         } else if (serialized.includes(SOURCE)) {
@@ -755,6 +757,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('clickWhenEnabled', `${WORKBENCH} [data-testid="send-message-button"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'WEWORK_CONTROL_CLOUD_UI_RESUMED',
+        timeoutMs: modelResponseTimeoutMs,
       })
       assert.equal(cloudUiFollowUpRequests, 1)
       const localResumed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
@@ -779,6 +782,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('clickWhenEnabled', `${WORKBENCH} [data-testid="send-message-button"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'WEWORK_CONTROL_REMOTE_UI_RESUMED',
+        timeoutMs: modelResponseTimeoutMs,
       })
       if (failure) throw failure
       const resumed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))

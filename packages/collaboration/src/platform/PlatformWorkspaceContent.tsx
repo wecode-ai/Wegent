@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -253,7 +254,8 @@ export function renderPlatformWorkspaceContent({
           action={
             <div className="collaboration-platform-page-actions">
               {host.location.workspaceView === 'home' && canManageWorkspace ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="collaboration-platform-secondary-button"
                   data-testid="collaboration-workspace-home-settings"
@@ -267,7 +269,7 @@ export function renderPlatformWorkspaceContent({
                 >
                   <Settings aria-hidden="true" />
                   {messages.settings}
-                </button>
+                </ControlButton>
               ) : null}
               {createProjectAction}
             </div>
@@ -289,7 +291,8 @@ export function renderPlatformWorkspaceContent({
                   supportsLocalImport={usesProjectImporter}
                   testId="collaboration-workspace-starter-create-project"
                 />
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="collaboration-platform-secondary-button"
                   data-testid="collaboration-workspace-starter-configure-agents"
@@ -302,9 +305,10 @@ export function renderPlatformWorkspaceContent({
                   }
                 >
                   {messages.configureAgents}
-                </button>
+                </ControlButton>
                 {workspace.location === 'cloud' ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-platform-secondary-button"
                     data-testid="collaboration-workspace-starter-invite-members"
@@ -317,7 +321,7 @@ export function renderPlatformWorkspaceContent({
                     }
                   >
                     {messages.inviteMembers}
-                  </button>
+                  </ControlButton>
                 ) : null}
               </div>
             </section>

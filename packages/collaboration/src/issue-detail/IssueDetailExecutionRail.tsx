@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { ChevronRight, FileText, Link2, ListTodo } from 'lucide-react'
 import { taskDeviceLabel } from './taskBindingPresentation'
 import { cn } from './issueEditorSupport'
@@ -60,14 +61,15 @@ export function IssueDetailExecutionRail({ model }: { model: IssueDetailViewMode
                     : childItems.length}
                 </span>
                 {editable && editProps?.onAddChild ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="cloud-todo-detail-add-child"
                     onClick={editProps.onAddChild}
                     className="add"
                   >
                     ＋ {t('common.add', '添加')}
-                  </button>
+                  </ControlButton>
                 ) : null}
               </div>
               {childItems.length > 0 ? (
@@ -103,7 +105,8 @@ export function IssueDetailExecutionRail({ model }: { model: IssueDetailViewMode
                     ))}
                   </div>
                   {childItems.length > 2 && (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="task-detail-rail-more"
                       onClick={() => toggleRailSection('children')}
@@ -113,7 +116,7 @@ export function IssueDetailExecutionRail({ model }: { model: IssueDetailViewMode
                         : t('todo.view_all_count', '查看全部 {{count}} 个', {
                             count: childItems.length,
                           })}
-                    </button>
+                    </ControlButton>
                   )}
                 </>
               )}
@@ -155,7 +158,8 @@ export function IssueDetailExecutionRail({ model }: { model: IssueDetailViewMode
                   )}
                 >
                   {visibleRailTasks.map(task => (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={task.id}
                       type="button"
                       data-testid={`cloud-todo-open-task-conversation-${task.id}`}
@@ -183,11 +187,12 @@ export function IssueDetailExecutionRail({ model }: { model: IssueDetailViewMode
                         </span>
                         <ChevronRight className="h-3.5 w-3.5 text-text-muted" />
                       </span>
-                    </button>
+                    </ControlButton>
                   ))}
                 </div>
                 {effectiveTasks.length > 2 && (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="task-detail-rail-more"
                     onClick={() => toggleRailSection('executions')}
@@ -197,7 +202,7 @@ export function IssueDetailExecutionRail({ model }: { model: IssueDetailViewMode
                       : t('todo.view_all_count', '查看全部 {{count}} 个', {
                           count: effectiveTasks.length,
                         })}
-                  </button>
+                  </ControlButton>
                 )}
               </>
             )}
@@ -221,7 +226,8 @@ export function IssueDetailExecutionRail({ model }: { model: IssueDetailViewMode
                   )}
                 >
                   {visibleRailDeliveries.map(delivery => (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={delivery.id}
                       type="button"
                       onClick={() => void openDelivery(delivery.id)}
@@ -240,11 +246,12 @@ export function IssueDetailExecutionRail({ model }: { model: IssueDetailViewMode
                       <span className="task-detail-rail-meta">
                         {delivery.delivered_at?.slice(0, 10)}
                       </span>
-                    </button>
+                    </ControlButton>
                   ))}
                 </div>
                 {deliveries.length > 2 && (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="task-detail-rail-more"
                     onClick={() => toggleRailSection('deliveries')}
@@ -254,7 +261,7 @@ export function IssueDetailExecutionRail({ model }: { model: IssueDetailViewMode
                       : t('todo.view_all_count', '查看全部 {{count}} 个', {
                           count: deliveries.length,
                         })}
-                  </button>
+                  </ControlButton>
                 )}
               </>
             )}

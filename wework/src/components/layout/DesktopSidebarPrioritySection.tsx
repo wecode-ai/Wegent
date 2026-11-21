@@ -92,7 +92,8 @@ export function DesktopSidebarPrioritySection<Item>({
                   onSelect: onArchivePriority,
                 },
               ]}
-              triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+              density="dense"
+              triggerClassName="flex items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             />
           </div>
         </div>

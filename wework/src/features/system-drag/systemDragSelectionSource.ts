@@ -1,3 +1,4 @@
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import {
   getAppPreferences,
@@ -311,7 +312,9 @@ export function createSystemDragSelectionSource() {
       if (pending || disposed || !observed()) return
       pending = true
       try {
-        const payloads = await invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending')
+        const payloads = await invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending', {
+          windowLabel: getDesktopWindowLabel(),
+        })
         if (!disposed && observed()) payloads.forEach(handlePayload)
       } catch (error) {
         if (!disposed) reportTransferError(error)

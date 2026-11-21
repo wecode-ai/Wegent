@@ -6,6 +6,34 @@ use crate::task_runtime::personal_stand_in::{
     stand_in_collection_connection, stand_in_connection, stand_in_identities,
 };
 
+const MAX_INTAKE_WORKERS: usize = 8;
+const INTAKE_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn stand_in_work_signature(link: &RuntimeTaskLink) -> Value {
+    json!([
+        link.turn_status,
+        link.interaction_status,
+        link.completed_at,
+        link.status
+    ])
+}
+
+struct IntakeWorker {
+    revision: String,
+    result: tokio::task::JoinHandle<Result<Vec<Value>, AppIpcError>>,
+}
+
+#[derive(Default)]
+pub(super) struct StandInIntakeWorkers {
+    tasks: HashMap<(i64, String), IntakeWorker>,
+}
+
+impl Drop for IntakeWorker {
+    fn drop(&mut self) {
+        self.result.abort();
+    }
+}
+
 #[path = "stand_in_intake_policy.rs"]
 mod intake_policy;
 use intake_policy::{immediate_intake, intake_order};
@@ -54,6 +82,28 @@ fn task_id(user: i64) -> String {
     format!("stand-in-coordinator-{user}")
 }
 
+fn log_intake_failure(event: &Value, error: &AppIpcError) {
+    log_executor_event(
+        "Stand-in event routing deferred",
+        &[
+            (
+                "event_id",
+                event["id"].as_str().unwrap_or_default().to_owned(),
+            ),
+            (
+                "kind",
+                event["kind"].as_str().unwrap_or_default().to_owned(),
+            ),
+            ("code", error.code.clone()),
+        ],
+    );
+}
+
+fn stand_in_owns_work(link: &RuntimeTaskLink, user: i64) -> bool {
+    let origin = &link.runtime_handle["origin"];
+    origin["initiatedBy"] == "stand_in" && origin["userId"] == user
+}
+
 fn waits_for_user(link: &RuntimeTaskLink) -> bool {
     link.interaction_status
         .as_deref()
@@ -86,15 +136,27 @@ impl RuntimeWorkRpcHandler {
             .local_task_link(&task_id(user))
             .is_some_and(|link| waits_for_user(&link)));
         state["taskId"] = json!(task_id(user));
+        let actions = store
+            .recent_stand_in_actions(user, 30)
+            .map_err(settings_error)?;
         if state["error"].is_null() {
-            if let Some(link) = self
+            if let Some(action) = actions
+                .iter()
+                .find(|action| action["kind"] == "assess")
+                .filter(|action| {
+                    action["status"] == "failed"
+                        && action["error"]["code"] == "coordination_stopped"
+                })
+            {
+                state["error"] = action["error"].clone();
+            } else if let Some(link) = self
                 .local_task_link(&task_id(user))
                 .filter(|link| link.status == "failed")
             {
                 state["error"] = json!({"code":"coordinator_failed","message":link.runtime_handle["lastError"].as_str().unwrap_or("The background coordinator failed. Review the handling history and try again.")});
             }
         }
-        state["actions"] = json!(store.recent_stand_in_actions(user, 30).map_err(settings_error)?.into_iter().map(|action| json!({"id":action["id"],"kind":action["kind"],"status":action["status"],"error":action["error"],"result":action["result"],"createdAt":action["createdAt"]})).collect::<Vec<_>>());
+        state["actions"] = json!(actions.into_iter().map(|action| json!({"id":action["id"],"kind":action["kind"],"status":action["status"],"error":action["error"],"result":action["result"],"createdAt":action["createdAt"]})).collect::<Vec<_>>());
         Ok(state)
     }
 
@@ -125,7 +187,24 @@ impl RuntimeWorkRpcHandler {
             }) else {
                 continue;
             };
-            if self
+            let origin = &link.runtime_handle["origin"];
+            if origin["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+                // The inventory is a hint. Current assignment authority is checked at action time.
+                if super::stand_in_personal_issues::personal_issue_role(role, user).is_none() {
+                    continue;
+                }
+            } else if origin["projectStore"] == "cloud" {
+                let project = origin["cloudProjectId"].as_str().unwrap_or_default();
+                if !crate::task_runtime::personal_stand_in::role_project_matches(
+                    role, project, "cloud",
+                ) || crate::task_runtime::personal_stand_in::project_policy(
+                    role, project, "cloud",
+                )["automatic"]
+                    == false
+                {
+                    continue;
+                }
+            } else if self
                 .validate_followup_role(store, user, role, &link)
                 .await
                 .is_err()
@@ -180,50 +259,44 @@ impl RuntimeWorkRpcHandler {
             .collect();
         let now = chrono::Utc::now().timestamp_millis();
         let identities = stand_in_identities(settings);
+        let configuration = LocalTaskStore::coordination_event_version(&json!([
+            LocalTaskStore::coordination_configuration_version(settings),
+            self.backend_connection_snapshot()?
+                .as_ref()
+                .map(super::runtime_owner::connection_owner_key),
+        ]));
+        let pending_ids: HashSet<_> = pending
+            .iter()
+            .filter_map(|event| event["id"].as_str())
+            .collect();
+        self.stand_in_intake_workers
+            .lock()
+            .expect("intake worker lock poisoned")
+            .tasks
+            .retain(|(owner, id), _| *owner != user || pending_ids.contains(id.as_str()));
         pending.sort_by_key(|event| intake_order(&identities, event, now));
         let mut events = Vec::new();
         for mut event in pending {
             event = self.resolve_connection_event_binding(&event, &identities);
-            let mut recipients = Vec::new();
-            for role in &identities {
-                if role["enabled"] != true || self.validate_intake_role(role, &event).is_err() {
+            let result = if self.intake_uses_cloud(&event) {
+                let Some(result) = self
+                    .poll_intake_worker(user, &event, &identities, &configuration)
+                    .await
+                else {
+                    continue;
+                };
+                result
+            } else {
+                self.authorize_intake_event(store, user, &event, &identities)
+                    .await
+            };
+            let recipients = match result {
+                Ok(recipients) => recipients,
+                Err(error) => {
+                    log_intake_failure(&event, &error);
                     continue;
                 }
-                let validation = if event["kind"] == "assignment" {
-                    self.read_assignment_intake(store, user, role, &event)
-                        .await
-                        .map(|_| ())
-                } else if matches!(event["kind"].as_str(), Some("work_state" | "followup")) {
-                    match event["taskId"]
-                        .as_str()
-                        .and_then(|id| self.local_task_link(id))
-                    {
-                        Some(link) => self.validate_followup_role(store, user, role, &link).await,
-                        None => Err(AppIpcError::new(
-                            "source_removed",
-                            "The followed work no longer exists",
-                        )),
-                    }
-                } else {
-                    Ok(())
-                };
-                match validation {
-                    Ok(()) => {}
-                    Err(error)
-                        if matches!(
-                            error.code.as_str(),
-                            "source_removed"
-                                | "permission_denied"
-                                | "invalid_assignment"
-                                | "not_found"
-                        ) =>
-                    {
-                        continue
-                    }
-                    Err(error) => return Err(error),
-                }
-                recipients.push(role["id"].clone());
-            }
+            };
             let paused = recipients.is_empty()
                 && identities.iter().any(|role| {
                     role["enabled"] == false && self.validate_intake_role(role, &event).is_ok()
@@ -254,15 +327,142 @@ impl RuntimeWorkRpcHandler {
         Ok(events)
     }
 
+    fn intake_uses_cloud(&self, event: &Value) -> bool {
+        match event["kind"].as_str() {
+            Some("assignment") => matches!(
+                event["projectStore"].as_str(),
+                Some("cloud" | super::stand_in_personal_issues::INDEPENDENT)
+            ),
+            Some("work_state" | "followup") => event["taskId"]
+                .as_str()
+                .and_then(|id| self.local_task_link(id))
+                .is_some_and(|link| {
+                    matches!(
+                        link.runtime_handle["origin"]["projectStore"].as_str(),
+                        Some("cloud" | super::stand_in_personal_issues::INDEPENDENT)
+                    )
+                }),
+            _ => false,
+        }
+    }
+
+    async fn poll_intake_worker(
+        &self,
+        user: i64,
+        event: &Value,
+        identities: &[Value],
+        configuration: &str,
+    ) -> Option<Result<Vec<Value>, AppIpcError>> {
+        let key = (user, event["id"].as_str()?.to_owned());
+        let revision = LocalTaskStore::coordination_event_version(&json!([configuration, event]));
+        let mut worker = {
+            let mut workers = self
+                .stand_in_intake_workers
+                .lock()
+                .expect("intake worker lock poisoned");
+            if let Some(worker) = workers.tasks.get(&key) {
+                if worker.revision == revision {
+                    if !worker.result.is_finished() {
+                        return None;
+                    }
+                    workers.tasks.remove(&key)?
+                } else {
+                    workers.tasks.remove(&key);
+                    return None;
+                }
+            } else {
+                if workers.tasks.len() >= MAX_INTAKE_WORKERS {
+                    return None;
+                }
+                let handler = self.clone();
+                let event = event.clone();
+                let roles = identities.to_vec();
+                let result = tokio::spawn(async move {
+                    let store = LocalTaskStore::open(handler.task_store_path.as_ref())
+                        .map_err(settings_error)?;
+                    tokio::time::timeout(
+                        INTAKE_TIMEOUT,
+                        handler.authorize_intake_event(&store, user, &event, &roles),
+                    )
+                    .await
+                    .map_err(|_| {
+                        AppIpcError::new("stand_in_event_timeout", "Event authorization timed out")
+                    })?
+                });
+                workers.tasks.insert(key, IntakeWorker { revision, result });
+                return None;
+            }
+        };
+        Some((&mut worker.result).await.unwrap_or_else(|_| {
+            Err(AppIpcError::new(
+                "stand_in_event_worker_failed",
+                "Event authorization worker stopped",
+            ))
+        }))
+    }
+
+    async fn authorize_intake_event(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        event: &Value,
+        identities: &[Value],
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let mut recipients = Vec::new();
+        for role in identities {
+            if role["enabled"] != true || self.validate_intake_role(role, event).is_err() {
+                continue;
+            }
+            let result = match event["kind"].as_str() {
+                Some("assignment") => self
+                    .read_assignment_intake(store, user, role, event)
+                    .await
+                    .map(|_| ()),
+                Some("work_state" | "followup") => {
+                    let Some(link) = event["taskId"]
+                        .as_str()
+                        .and_then(|id| self.local_task_link(id))
+                    else {
+                        continue;
+                    };
+                    self.validate_followup_role(store, user, role, &link).await
+                }
+                _ => Ok(()),
+            };
+            match result {
+                Ok(()) => recipients.push(role["id"].clone()),
+                Err(error)
+                    if matches!(
+                        error.code.as_str(),
+                        "source_removed" | "permission_denied" | "invalid_assignment" | "not_found"
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(recipients)
+    }
+
     fn coordinator_work(&self, user: i64) -> Vec<RuntimeTaskLink> {
         self.store
-            .list_task_summaries(false)
-            .into_iter()
-            .filter(|link| {
-                let origin = &link.runtime_handle["origin"];
-                origin["initiatedBy"] == "stand_in" && origin["userId"] == user
+            .list_filtered_task_summaries(false, |link| stand_in_owns_work(link, user))
+    }
+
+    fn coordinator_work_by_id(&self, user: i64, id: &str) -> Option<RuntimeTaskLink> {
+        self.store
+            .read_task(id, |link| {
+                (link.status != "archived" && stand_in_owns_work(link, user))
+                    .then(|| link.list_summary())
             })
-            .collect()
+            .flatten()
+    }
+
+    fn has_stand_in_work_change(&self, user: i64, state: &Value) -> bool {
+        self.store.any_unarchived_task(|link| {
+            stand_in_owns_work(link, user)
+                && state["observed"]
+                    .get(&link.local_task_id)
+                    .map_or(true, |previous| *previous != stand_in_work_signature(link))
+        })
     }
 
     fn observe_stand_in_work(
@@ -272,29 +472,38 @@ impl RuntimeWorkRpcHandler {
         state: &mut Value,
     ) -> Result<(), AppIpcError> {
         let mut observed = state["observed"].as_object().cloned().unwrap_or_default();
-        for link in self.coordinator_work(user) {
-            let signature = json!([
-                link.turn_status,
-                link.interaction_status,
-                link.completed_at,
-                link.status
-            ]);
-            let changed = observed.get(&link.local_task_id).map_or_else(
+        let work_states = self.store.list_filtered_task_values(
+            false,
+            |link| stand_in_owns_work(link, user),
+            |link| {
+                (
+                    link.local_task_id.clone(),
+                    link.created_at,
+                    stand_in_work_signature(link),
+                    link.runtime_handle["origin"]["standInId"].clone(),
+                )
+            },
+        );
+        for (task_id, created_at, signature, role_id) in work_states {
+            let changed = observed.get(&task_id).map_or_else(
                 || {
                     state["observedSince"]
                         .as_i64()
-                        .is_some_and(|since| link.created_at >= since)
-                        && (link.turn_status.is_some()
-                            || link.interaction_status.is_some()
-                            || link.completed_at.is_some()
-                            || matches!(link.status.as_str(), "done" | "failed" | "cancelled"))
+                        .is_some_and(|since| created_at >= since)
+                        && (!signature[0].is_null()
+                            || !signature[1].is_null()
+                            || !signature[2].is_null()
+                            || matches!(
+                                signature[3].as_str(),
+                                Some("done" | "failed" | "cancelled")
+                            ))
                 },
                 |previous| *previous != signature,
             );
             if changed {
-                store.enqueue_stand_in_event(user, json!(["work-state",link.local_task_id,signature]), json!({"kind":"work_state","taskId":link.local_task_id,"state":signature,"roleIds":[link.runtime_handle["origin"]["standInId"]]})).map_err(settings_error)?;
+                store.enqueue_stand_in_event(user, json!(["work-state",task_id,signature]), json!({"kind":"work_state","taskId":task_id,"state":signature,"roleIds":[role_id]})).map_err(settings_error)?;
             }
-            observed.insert(link.local_task_id, signature);
+            observed.insert(task_id, signature);
         }
         state["observed"] = json!(observed);
         if !state["observedSince"].is_i64() {
@@ -337,13 +546,6 @@ impl RuntimeWorkRpcHandler {
                 Err(error) => {
                     action["status"] = json!("failed");
                     action["error"] = json!({"code":error.code,"message":error.message});
-                    let mut state = store
-                        .stand_in_processing_state(user)
-                        .map_err(settings_error)?;
-                    state["error"] = action["error"].clone();
-                    store
-                        .save_stand_in_processing_state(user, &state)
-                        .map_err(settings_error)?;
                 }
             }
             store
@@ -529,7 +731,7 @@ impl RuntimeWorkRpcHandler {
                             json!(selected)
                         );
                         request["prompt"] = json!(message);
-                        result = self.send_message(json!({"taskId":id,"message":required(args, "message")?,"restoreUserMessageContent":true,"executionRequest":request,"clientUserMessageId":client,"commandId":client,"queueIfBusy":true,"automaticStandIn":true})).await?;
+                        result = self.send_message_from_event(json!({"taskId":id,"message":required(args, "message")?,"restoreUserMessageContent":true,"executionRequest":request,"clientUserMessageId":client,"commandId":client,"queueIfBusy":true,"automaticStandIn":true})).await?;
                         if result["pending"] == true {
                             return Ok(None);
                         }
@@ -545,17 +747,13 @@ impl RuntimeWorkRpcHandler {
             "ignore_events" | "defer_events" => {}
             "schedule_followup" => {
                 let id = required(args, "taskId")?;
-                if !self
-                    .coordinator_work(user)
-                    .iter()
-                    .any(|link| link.local_task_id == id)
-                {
+                let Some(link) = self.coordinator_work_by_id(user, id) else {
                     return Err(AppIpcError::new(
                         "permission_denied",
                         "Target is not an active stand-in work",
                     ));
-                }
-                store.enqueue_stand_in_event(user,json!(["followup",action["id"]]),json!({"kind":"followup","taskId":id,"notBefore":args["at"],"reason":args["reason"],"roleIds":[self.local_task_link(id).map(|link| link.runtime_handle["origin"]["standInId"].clone()).unwrap_or(Value::Null)]})).map_err(settings_error)?;
+                };
+                store.enqueue_stand_in_event(user,json!(["followup",action["id"]]),json!({"kind":"followup","taskId":id,"notBefore":args["at"],"reason":args["reason"],"roleIds":[link.runtime_handle["origin"]["standInId"]]})).map_err(settings_error)?;
             }
             _ => {
                 return Err(AppIpcError::new(
@@ -661,11 +859,20 @@ impl RuntimeWorkRpcHandler {
         if event["kind"] == "assignment" {
             let project = event["projectId"].as_str().unwrap_or_default();
             let storage = event["projectStore"].as_str().unwrap_or_default();
-            if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, storage)
-                || crate::task_runtime::personal_stand_in::project_policy(role, project, storage)
-                    ["automatic"]
-                    != true
-            {
+            let connected = if storage == super::stand_in_personal_issues::INDEPENDENT {
+                super::stand_in_personal_issues::personal_issue_role(
+                    role,
+                    role["userId"].as_i64().unwrap_or_default(),
+                )
+                .is_some()
+            } else {
+                crate::task_runtime::personal_stand_in::role_project_matches(role, project, storage)
+                    && crate::task_runtime::personal_stand_in::project_policy(
+                        role, project, storage,
+                    )["automatic"]
+                        == true
+            };
+            if !connected {
                 return Err(AppIpcError::new(
                     "source_removed",
                     "Project is no longer automatic or connected",
@@ -757,24 +964,39 @@ impl RuntimeWorkRpcHandler {
         } else {
             let project = origin["cloudProjectId"].as_str().unwrap_or_default();
             let kind = origin["projectStore"].as_str().unwrap_or_default();
-            if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind) {
-                return Err(AppIpcError::new(
-                    "permission_denied",
-                    "Work project is no longer connected",
-                ));
+            let independent = kind == super::stand_in_personal_issues::INDEPENDENT;
+            let config = if independent {
+                super::stand_in_personal_issues::personal_issue_role(role, user)
+            } else {
+                crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind)
+                    .then(|| {
+                        crate::task_runtime::personal_stand_in::project_role(
+                            role, user, project, kind,
+                        )
+                    })
             }
+            .ok_or_else(|| {
+                let message = if independent {
+                    "Independent Issue work is no longer connected"
+                } else {
+                    "Work project is no longer connected"
+                };
+                AppIpcError::new("permission_denied", message)
+            })?;
             let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
             let mut issue = self.read_stand_in_issue(store, user, origin).await?;
             if kind == "local" {
                 issue["tags"] = issue["metadata"]["tags"].clone();
             }
-            let config =
-                crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
-            if super::personal_stand_in::matching_personal_roles(
-                std::slice::from_ref(&config),
-                &issue,
-            )
-            .is_empty()
+            if (independent
+                && !super::stand_in_personal_issues::personal_assignment_after_enable(
+                    &issue, &config,
+                ))
+                || super::personal_stand_in::matching_personal_roles(
+                    std::slice::from_ref(&config),
+                    &issue,
+                )
+                .is_empty()
             {
                 return Err(AppIpcError::new(
                     "permission_denied",
@@ -791,10 +1013,7 @@ impl RuntimeWorkRpcHandler {
                     "Issue is no longer assigned to you",
                 ));
             }
-            if crate::task_runtime::personal_stand_in::project_policy(role, project, kind)
-                ["automatic"]
-                == false
-            {
+            if config["handlingPolicy"]["automatic"] == false {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Automatic project handling is disabled",
@@ -888,8 +1107,24 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
             let event = &events[0];
-            let project = required(event, "projectId")?;
             let kind = required(event, "projectStore")?;
+            if kind == super::stand_in_personal_issues::INDEPENDENT {
+                let mut config = super::stand_in_personal_issues::personal_issue_role(role, user)
+                    .ok_or_else(|| {
+                    AppIpcError::new(
+                        "source_removed",
+                        "Independent Issues are no longer connected",
+                    )
+                })?;
+                config["intakeRouted"] = json!(true);
+                let (issue, binding) = self
+                    .read_assignment_intake(store, user, role, event)
+                    .await?;
+                self.execute_stand_in_task(&config, &issue, &binding)
+                    .await?;
+                return Ok(json!({"success":true}));
+            }
+            let project = required(event, "projectId")?;
             let mut config =
                 crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
             config["intakeRouted"] = json!(true);

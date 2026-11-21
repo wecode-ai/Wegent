@@ -31,6 +31,8 @@ In a Codex conversation, select **Full access** in the permission menu. Choose h
 - **Review risky commands with AI** lets Codex decide whether to approve.
 - **Run risky commands automatically** opens a confirmation with all three choices. You can change your selection there. Eligible risky commands can run automatically once enabled.
 
+Wework remembers your last choice and uses it for Full access in new standalone conversations.
+
 Under **Settings → General → General**, choose the Wework feature mode:
 
 - **Focus mode** hides the Code hosting and Worktrees entries and disables Wework's built-in Git
@@ -202,6 +204,7 @@ Open the account menu in the lower-left corner of Wework and select **About** to
 The version shown in the About page is read from the running Electron application package metadata,
 so it matches the version shown by the macOS **About Wework** system menu. Release builds that
 inject a version through the Electron configuration use that value in both places.
+On the About page, **Downloading update** shows the current download progress.
 When an update is downloading from the same menu, its progress appears directly below **Check for updates**, separate from **About**.
 Wework finishes downloading the update package before it asks to restart. No restart confirmation
 appears while the download is in progress; the **Update and restart** confirmation appears only
@@ -394,6 +397,7 @@ Open **Settings → Personal → Appearance**. Changes stay on this device. **Re
 | Restore theme accent                     | After customizing the accent, click Restore to use the current light/dark theme's accent again; fonts and background images remain unchanged                                                                       |
 | Translucent sidebar                      | Toggle transparency; system and window background affect the result                                                                                                                                                |
 | Use different light and dark backgrounds | Enable to configure each mode separately; disable for a shared background                                                                                                                                          |
+| Background visibility, Background blur | After selecting an image, use the sliders to set visibility (0–100) and blur radius (0–20px); unavailable until an image is selected |
 | Background image                         | Select or remove an image on the relevant mode card; adjust visibility and blur and choose main, sidebar or top-bar regions                                                                                        |
 | UI font, UI font size                    | Enter the interface font and adjust its size                                                                                                                                                                       |
 | Code font, Code font size                | Set the font and size for code/monospace content separately                                                                                                                                                        |
@@ -416,7 +420,7 @@ Open **Settings → Personal → Context**:
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Inject Terminal information             | Toggle terminal context inclusion; does not itself authorize command execution                                                 |
 | Context compaction threshold            | Enter a percentage and blur the field or press Enter; controls the manual-compaction indicator, not automatic model compaction |
-| Codex personality                       | Open the selector and choose a reply style                                                                                     |
+| Interaction style (Codex personality)                       | Open the selector and choose a reply style                                                                                     |
 | Default stand-in supervision principles | With experimental features enabled, edit and save; not a project permission policy                                             |
 | Wework instructions                     | Edit the text and save; unsaved text is not applied and instructions cannot override application permissions or security rules |
 
@@ -435,6 +439,8 @@ Open **Settings → Personal → Context**:
 | Settings → Coding → Hooks → Add Hook | Set plugin ID, name, version, event, matcher, command, Windows command, timeout, asynchronous execution and status message; save | Lifecycle events always run asynchronously; configure trusted commands      |
 | Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                    | Fix invalid configuration or missing commands first                         |
 | Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                              | Testing actually executes the command, rather than merely validating syntax |
+
+In the Runtime creation form, **Device** identifies where the task runs and **Model** selects the model it uses.
 
 Runtime profiles, project defaults, and devices load independently; models load when you open the create dialog. Use Retry beside a failed section to reload that data while retaining other sections and form drafts. A successful save closes the create dialog; if the following list refresh fails, retrying only reloads data and does not create another Runtime.
 

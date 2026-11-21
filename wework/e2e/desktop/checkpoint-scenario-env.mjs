@@ -3,6 +3,10 @@ import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from './upgrade-suite.mjs'
 
 export function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'plugin-development' && env.WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN) {
+    nextEnv.WEWORK_E2E_EXECUTOR_BIN = env.WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN
+  }
+  delete nextEnv.WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN
   if (checkpoint === 'temporary-chat') {
     nextEnv.WEWORK_E2E_CONVERSATION_CACHE_IDLE_TTL_MS ??= '10000'
   }
@@ -48,6 +52,7 @@ export function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'core-task-flow' ||
     checkpoint === 'task-completion-notifications' ||
     checkpoint === 'project-assignment-notification' ||
+    checkpoint === 'collaboration-personal-issues' ||
     checkpoint === 'stand-in-profile-settings' ||
     checkpoint === 'stand-in-git' ||
     checkpoint.startsWith('human-interactions')

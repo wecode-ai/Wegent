@@ -1,9 +1,10 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useId, useState, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { useId, useState, type ReactNode } from 'react'
 
 export function GroupSettingsSection({
   name,
@@ -23,7 +24,8 @@ export function GroupSettingsSection({
   return (
     <section className="collaboration-group-settings-section">
       <h3>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           id={`${id}-heading`}
           aria-expanded={open}
@@ -34,7 +36,7 @@ export function GroupSettingsSection({
           <ChevronDown aria-hidden="true" className={open ? 'expanded' : undefined} />
           <span>{label}</span>
           <small>{summary}</small>
-        </button>
+        </ControlButton>
       </h3>
       <div id={`${id}-content`} role="region" aria-labelledby={`${id}-heading`} hidden={!open}>
         {open ? children : null}

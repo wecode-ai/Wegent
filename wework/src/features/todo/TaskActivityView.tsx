@@ -1,24 +1,24 @@
-import { IssueTimelineActions } from './IssueTimelineActions'
-import { boundCardSessionAddress } from './taskActivityHelpers'
-import { useContext } from 'react'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { LOCAL_USER } from '@/api/local/localSession'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { LOCAL_USER } from '@/api/local/localSession'
 import { IssueCommentChildAction } from '@wegent/collaboration'
+import { useContext } from 'react'
+import { IssueAssignmentEvent } from './IssueAssignmentEvent'
+import { IssueAssignmentReceiptStatus } from './IssueAssignmentReceipts'
+import { IssueHumanRequests } from './IssueHumanRequests'
 import { IssueManagerEvent } from './IssueManagerEvent'
 import { IssueReplyContext } from './IssueReplyContext'
 import { issueReplyCopy } from './issueReplyCopy'
-import { IssueHumanRequests } from './IssueHumanRequests'
-import { IssueAssignmentEvent } from './IssueAssignmentEvent'
-import { IssueAssignmentReceiptStatus } from './IssueAssignmentReceipts'
+import { IssueTimelineActions } from './IssueTimelineActions'
+import { boundCardSessionAddress } from './taskActivityHelpers'
 
 import { issueActivityRole } from './issueActivityRole'
 
 import {
+  formatIssueTimestamp,
   IssueActivityFeed,
   IssueActivityThread,
-  issueThreadActivityTimestamp,
-  formatIssueTimestamp,
   IssueStatusHistoryList,
 } from '@wegent/collaboration'
 
@@ -34,18 +34,18 @@ import { ChatInput } from '@/components/chat/ChatInput'
 import { ConversationQueuePanel } from '@/components/chat/ConversationQueuePanel'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 
-import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer } from './CardCommentComposer'
+import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { TaskCommentComposer } from './TaskCommentComposer'
 
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import { statusHistoryLabels } from './statusHistoryLabels'
 import { ChatMessage } from './TaskActivityMessage'
 import { resolveMessageRunStatus } from './taskActivityMessageUtils'
-import { statusHistoryLabels } from './statusHistoryLabels'
 import { memberNameById } from './todoShared'
-import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 
-import { useTaskActivityController } from './useTaskActivityController'
 import type { TaskActivityViewProps } from './taskActivityTypes'
+import { useTaskActivityController } from './useTaskActivityController'
 export type { StartHumanTaskFromReplyInput } from './taskActivityTypes'
 function TaskActivityContent(props: TaskActivityViewProps) {
   const {
@@ -98,6 +98,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
     rail,
     readError,
     rejectTaskRun,
+    requestDialogs,
     replyComposerRef,
     replyContextKind,
     replyHumanDispatch,
@@ -123,7 +124,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
     visibleActivity,
   } = useTaskActivityController(props)
   const renderCommentChildAction = (message: ProjectChatMessage) =>
-    issueTimeline && commentAssignment?.createChild && client ? (
+    issueTimeline && commentAssignment?.createChild && client && message.content.trim() ? (
       <IssueCommentChildAction
         body={message.content}
         messageId={message.messageId}
@@ -176,7 +177,6 @@ function TaskActivityContent(props: TaskActivityViewProps) {
           taskAiState={task.ai_state}
           executionDeviceName={deviceNameForMessage(message)}
           taskSummary={taskSummaryForMessage(message)}
-          hideTime={issueTimeline && isRoot}
           onOpenExecution={
             address && onOpenRuntimeTask
               ? () => onOpenRuntimeTask(address)
@@ -221,6 +221,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
         userId={activeUserId ?? undefined}
         members={members}
       />
+      {requestDialogs}
       <IssueActivityFeed
         mode={linear ? 'linear' : rail ? 'rail' : 'document'}
         testId={`cloud-task-activity-${task.id}`}
@@ -360,14 +361,15 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                     data-activity-collapsed-last-sequence={row.lastSequence}
                   >
                     <span aria-hidden="true" className="h-px flex-1 bg-border" />
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="issue-expand-activity"
                       onClick={() => setExpandedActivityScope(activityScope)}
                       className="min-h-11 shrink-0 rounded-lg border border-border px-3 text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-8"
                     >
                       {t('personalHome.expandActivity', { count: row.count })}
-                    </button>
+                    </ControlButton>
                     <span aria-hidden="true" className="h-px flex-1 bg-border" />
                   </div>
                 )
@@ -456,6 +458,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                       item => item.device_id === address.deviceId && item.task_id === address.taskId
                     )
                   : undefined
+                const canReply = humanDispatchForCard(card) && onStartHumanTaskFromReply
                 return (
                   <div key={rootId} data-testid={`cloud-task-activity-card-${rootId}`}>
                     <div data-activity-sequence={card.root.sequenceNumber}>
@@ -476,14 +479,9 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                     </div>
                     <IssueTimelineActions
                       rootId={rootId}
-                      createdAt={issueThreadActivityTimestamp(card)}
                       replyLabel={cardReplyLabel(card)}
                       active={replyTarget?.root.messageId === rootId}
-                      onReply={
-                        humanDispatchForCard(card) && onStartHumanTaskFromReply
-                          ? () => beginReply(card)
-                          : undefined
-                      }
+                      onReply={canReply ? () => beginReply(card) : undefined}
                     >
                       {renderCommentChildAction(card.root)}
                     </IssueTimelineActions>
@@ -519,7 +517,6 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                       {issueTimeline ? (
                         <IssueTimelineActions
                           rootId={rootId}
-                          createdAt={issueThreadActivityTimestamp(card)}
                           replyLabel={cardReplyLabel(card)}
                           active={replyTarget?.root.messageId === rootId}
                           onReply={() => beginReply(card)}

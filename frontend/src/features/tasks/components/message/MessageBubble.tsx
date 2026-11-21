@@ -71,6 +71,7 @@ export interface Message {
   thinking?: ThinkingStep[] | null
   /** Full result data from backend (for code executor with workbench, or chat with shell_type) */
   result?: {
+    error_info?: import('@wegent/chat-core').ChatErrorInfo
     value?: string
     thinking?: unknown[]
     workbench?: Record<string, unknown>
@@ -1366,6 +1367,7 @@ const MessageBubble = memo(
                   <ErrorCard
                     error={msg.error}
                     errorType={msg.errorType}
+                    errorInfo={msg.result?.error_info}
                     subtaskId={msg.subtaskId}
                     taskId={selectedTaskDetail?.id}
                     timestamp={msg.timestamp || Date.now()}
@@ -1461,6 +1463,8 @@ const MessageBubble = memo(
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
       prevProps.msg.errorType === nextProps.msg.errorType &&
+      prevProps.msg.result?.error_info?.retry_policy ===
+        nextProps.msg.result?.error_info?.retry_policy &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
       prevProps.isEditing === nextProps.isEditing &&
       prevProps.isLastAiMessage === nextProps.isLastAiMessage &&

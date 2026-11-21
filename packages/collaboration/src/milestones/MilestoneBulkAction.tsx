@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { useState, useSyncExternalStore } from 'react'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationIssue } from '../types'
@@ -85,7 +86,7 @@ export function MilestoneBulkAction({
         disabled={busy}
         testId="milestone-bulk-select"
       />
-      <button
+      <ControlButton variant="outline"
         type="button"
         data-testid="milestone-bulk-apply"
         disabled={busy || value === undefined || query.loading || query.error}
@@ -93,7 +94,7 @@ export function MilestoneBulkAction({
         onClick={() => void apply()}
       >
         {failures.length ? m.retryFailed : m.apply}
-      </button>
+      </ControlButton>
       {failures.length ? (
         <span role="alert">
           {m.bulkFailed}{' '}

@@ -531,6 +531,8 @@ enum GitCloneFailure {
 }
 
 async fn assert_git_clone_failure_contract(failure: GitCloneFailure) {
+    // Give the real shell preflight time to start under full-suite contention.
+    const CLONE_TIMEOUT_SECONDS: &str = "5";
     let times_out = !matches!(failure, GitCloneFailure::Exit);
     let _lock = env_lock().lock().await;
     let _environment = isolated_environment();
@@ -589,7 +591,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     );
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _timeout = if times_out {
-        EnvGuard::set("WEGENT_GIT_CLONE_TIMEOUT_SECONDS", "1")
+        EnvGuard::set("WEGENT_GIT_CLONE_TIMEOUT_SECONDS", CLONE_TIMEOUT_SECONDS)
     } else {
         EnvGuard::remove("WEGENT_GIT_CLONE_TIMEOUT_SECONDS")
     };
@@ -618,7 +620,9 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     let outcome = engine.run(with_backend_identity(request)).await;
 
     assert_eq!(
-        fs::read_to_string(preflight_environment).unwrap(),
+        fs::read_to_string(preflight_environment).unwrap_or_else(|err| panic!(
+            "Git preflight did not record its environment: {err}; {outcome:?}"
+        )),
         "0\n2048\n5\n"
     );
     if times_out {
@@ -626,7 +630,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
             matches!(
                 outcome,
                 ExecutionOutcome::Failed { ref message }
-                    if message.contains("git clone timed out after 1s")
+                    if message.contains(&format!("git clone timed out after {CLONE_TIMEOUT_SECONDS}s"))
             ),
             "{outcome:?}"
         );

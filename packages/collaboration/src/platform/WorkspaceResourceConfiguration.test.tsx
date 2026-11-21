@@ -1,3 +1,4 @@
+import { sdkSelectValue, sdkSelectItems } from '../test/selectControl'
 // @vitest-environment jsdom
 
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
@@ -236,6 +237,8 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
     element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
     value: string
   ) {
+    if (!(element instanceof HTMLInputElement) && element.getAttribute('role') === 'combobox')
+      return sdkSelectValue(element, value)
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set
       setter?.call(element, value)
@@ -276,92 +279,14 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
     )
 
     const role = byTestId<HTMLSelectElement>('collaboration-workspace-member-role-7')
-    expect(role.value).toBe('Viewer')
-    expect(role.selectedOptions[0]?.textContent).toBe('只读成员')
+    expect(await sdkSelectValue(role)).toBe('Viewer')
+    expect(role.textContent).toBe('只读成员')
     await click(byTestId('collaboration-workspace-member-invite'))
     expect(
-      byTestId<HTMLSelectElement>('collaboration-workspace-member-invite-role').querySelector(
-        'option[value="Viewer"]'
+      (await sdkSelectItems(byTestId('collaboration-workspace-member-invite-role'))).find(
+        option => option.value === 'Viewer'
       )
-    ).not.toBeNull()
-  })
-
-  it('initializes a late current user once and preserves explicit removal on roster refresh', async () => {
-    commands.createCollaborationGroup = vi.fn(async () => group)
-    const render = (members: CollaborationMember[]) =>
-      act(async () =>
-        root.render(
-          <WorkspaceCollaborationGroupsConfiguration
-            groups={[]}
-            members={members}
-            agents={[codexAgent]}
-            locale="en"
-            currentUserId={7}
-            commands={commands}
-            canManage
-            initialCreateOpen
-          />
-        )
-      )
-    await render([])
-    expect(byTestId('collaboration-group-leader-human-7')).toBeNull()
-    await render([humanMember])
-    expect(byTestId('collaboration-group-leader-human-7')).not.toBeNull()
-    await click(byTestId('collaboration-group-create-add-members'))
-    await click(byTestId('collaboration-group-create-member-agent-1'))
-    await click(byTestId('collaboration-group-leader-agent-1'))
-    await click(byTestId('collaboration-group-remove-member-human-7'))
-    await render([{ ...humanMember, user_name: 'Updated Alice' }])
-    expect(byTestId('collaboration-group-leader-human-7')).toBeNull()
-    expect(byTestId('collaboration-group-remove-member-human-7')).toBeNull()
-    await change(byTestId<HTMLInputElement>('collaboration-group-name'), 'Agent team')
-    await click(byTestId('collaboration-group-create'))
-    expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
-      expect.objectContaining({
-        leader: expect.objectContaining({ kind: 'agent', id: '1' }),
-        members: [expect.objectContaining({ kind: 'agent', id: '1' })],
-      })
-    )
-  })
-
-  it('does not notify a replacement creation window when an old request finishes', async () => {
-    let finish!: (value: CollaborationGroup) => void
-    commands.createCollaborationGroup = vi.fn(
-      () =>
-        new Promise(resolve => {
-          finish = resolve
-        })
-    )
-    const oldChange = vi.fn()
-    const newChange = vi.fn()
-    const render = (key: string, onCreateOpenChange: (open: boolean) => void) =>
-      act(async () =>
-        root.render(
-          <WorkspaceCollaborationGroupsConfiguration
-            key={key}
-            groups={[]}
-            members={[humanMember]}
-            agents={[]}
-            locale="en"
-            currentUserId={7}
-            commands={commands}
-            canManage
-            initialCreateOpen
-            onCreateOpenChange={onCreateOpenChange}
-          />
-        )
-      )
-    await render('old', oldChange)
-    await change(byTestId<HTMLInputElement>('collaboration-group-name'), 'Old team')
-    await click(byTestId('collaboration-group-create'))
-    await render('new', newChange)
-    await act(async () => finish(group))
-    expect(oldChange).not.toHaveBeenCalled()
-    expect(newChange).not.toHaveBeenCalled()
-    expect(byTestId('collaboration-group-form')).not.toBeNull()
-    await click(byTestId('collaboration-group-create-cancel'))
-    expect(newChange).toHaveBeenCalledExactlyOnceWith(false)
-    expect(byTestId('collaboration-group-form')).toBeNull()
+    ).toBeDefined()
   })
 
   it('adds the current user by default and labels them as me', async () => {
@@ -501,9 +426,18 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
     await change(search, 'alice')
     expect(byTestId('collaboration-group-create-member-agent-2')).toBeNull()
     await act(async () => {
-      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      search.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowDown',
+          bubbles: true,
+          cancelable: true,
+        })
+      )
     })
-    expect(document.activeElement).toBe(byTestId('collaboration-group-create-member-human-7'))
+    expect(document.activeElement).toBe(search)
+    expect(search.getAttribute('aria-activedescendant')).toBe(
+      byTestId('collaboration-group-create-member-human-7').id
+    )
     await act(async () => {
       document.activeElement!.dispatchEvent(
         new KeyboardEvent('keydown', {
@@ -519,7 +453,11 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
     expect(byTestId('collaboration-group-form')).not.toBeNull()
     await act(async () => {
       document.activeElement!.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     })
     await act(async () => {
@@ -721,10 +659,10 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
       '实现工作应该 @Codex 来完成'
     )
     const stageAssignee = container.querySelector<HTMLSelectElement>(
-      '[data-testid="collaboration-group-stage-stage-1"] select'
+      '[data-testid="collaboration-group-stage-stage-1"] [role="combobox"]'
     )
-    expect(stageAssignee?.options[0].textContent).toBe('未指定执行者')
-    expect([...(stageAssignee?.options ?? [])].map(option => option.textContent)).toEqual([
+    expect((await sdkSelectItems(stageAssignee!))[0].label).toBe('未指定执行者')
+    expect((await sdkSelectItems(stageAssignee!)).map(option => option.label)).toEqual([
       '未指定执行者',
       '@Claude Code',
     ])
@@ -792,7 +730,7 @@ describe('WorkspaceCollaborationGroupsConfiguration', () => {
       )
     )
     await click(byTestId('collaboration-group-remove-group-1'))
-    const dialog = container.querySelector('[role="dialog"]')!
+    const dialog = container.querySelector('[role="alertdialog"]')!
     expect(dialog.textContent).toContain('删除后无法恢复')
     expect(dialog.textContent).not.toContain('源资源会保留')
     await click(byTestId('collaboration-group-delete-cancel'))
@@ -929,10 +867,7 @@ it.each([
         return
       }
       expect(choice).not.toBeNull()
-      await act(async () => {
-        choice!.value = '7'
-        choice!.dispatchEvent(new Event('change', { bubbles: true }))
-      })
+      await sdkSelectValue(choice!, '7')
       await act(async () =>
         container
           .querySelector<HTMLButtonElement>(

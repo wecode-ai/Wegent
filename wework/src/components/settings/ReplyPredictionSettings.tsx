@@ -1,7 +1,7 @@
-import { useState } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { updateAppPreferences, type AppPreferencesPatch } from '@/desktop/appPreferences'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useState } from 'react'
 import { SettingsRow, SettingsSwitch } from './settings-ui'
 
 export function ReplyPredictionSettings() {
@@ -27,7 +27,7 @@ export function ReplyPredictionSettings() {
         labelClassName="font-normal"
         label={t('workbench.reply_prediction_enable')}
         description={t('workbench.reply_prediction_description')}
-        control={
+        children={
           <SettingsSwitch
             checked={state?.preferences.replyPredictionsEnabled ?? false}
             disabled={!state?.loaded || saving}

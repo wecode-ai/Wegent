@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { ChevronRight, File, FileText, Loader2, ScanText, X } from 'lucide-react'
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import {
@@ -101,7 +102,8 @@ function RemoveAttachmentButton<Id extends string | number>({
   tile?: boolean
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="remove-attachment-button"
       onClick={() => onRemoveAttachment(attachmentId)}
@@ -111,7 +113,7 @@ function RemoveAttachmentButton<Id extends string | number>({
       <X
         className={`h-4 w-4 rounded-full bg-text-primary p-0.5 text-background ${tile ? 'ring-2 ring-background' : ''}`}
       />
-    </button>
+    </ControlButton>
   )
 }
 
@@ -157,7 +159,9 @@ function DocumentAttachmentCard({
       </div>
       <AttachmentTileBorder />
       {onOpen && (
-        <button
+        <ControlButton
+          variant="primary"
+          size="sm"
           type="button"
           data-testid="attachment-document-preview-button"
           aria-label={filename}
@@ -212,7 +216,8 @@ function TextAttachmentCard({
           {pending ? (
             labels.addingText
           ) : onShowText ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="show-text-attachment-button"
               className="relative z-10 inline-flex min-h-11 min-w-11 max-w-full items-center gap-1 underline underline-offset-2 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary md:min-h-0 md:min-w-0"
@@ -220,14 +225,16 @@ function TextAttachmentCard({
             >
               <span className="truncate">{labels.showText}</span>
               <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-            </button>
+            </ControlButton>
           ) : (
             labels.pastedText
           )}
         </span>
       </span>
       {onOpen && (
-        <button
+        <ControlButton
+          variant="primary"
+          size="sm"
           type="button"
           data-testid="attachment-text-open-button"
           aria-label={preview || labels.pastedText}
@@ -399,7 +406,9 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
           <span className="min-w-0 truncate">{fileId}</span>
           <span className="min-w-0 truncate">{error}</span>
           {onDismissAttachmentError && (
-            <button
+            <ControlButton
+              variant="destructive"
+              size="sm"
               type="button"
               data-testid="dismiss-attachment-error-button"
               aria-label={labels.dismissError}
@@ -408,7 +417,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
               onClick={() => onDismissAttachmentError(fileId)}
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
+            </ControlButton>
           )}
         </span>
       ))}

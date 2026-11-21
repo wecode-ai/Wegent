@@ -1,13 +1,13 @@
-import { createConnectionEventStatusSource } from './connectionEventStatusSource'
-import { useCallback, useId, useState, useSyncExternalStore } from 'react'
+import { ResourceObservationStatus } from '@/components/common/ResourceObservationStatus'
 import { Button } from '@/components/ui/button'
-import { ChevronRight, CircleAlert, Radio } from 'lucide-react'
+import { connectionObservationHealth } from '@/features/workbench/resourceObservation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { connectionEventCondition } from '@/lib/connection-event-condition'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
-import { ResourceObservationStatus } from '@/components/common/ResourceObservationStatus'
-import { connectionObservationHealth } from '@/features/workbench/resourceObservation'
 import type { RuntimeTaskInteractionStatus } from '@/types/api'
+import { ChevronRight, CircleAlert, CircleArrowDown, Radio } from 'lucide-react'
+import { useCallback, useId, useState, useSyncExternalStore } from 'react'
+import { createConnectionEventStatusSource } from './connectionEventStatusSource'
 
 export function ConnectionEventStatus({
   subscriptions,
@@ -92,7 +92,7 @@ export function ConnectionEventStatus({
         const executionFailed = ['error', 'needs_attention'].includes(item.status)
         const observing = item.status === 'armed'
         const failed = setupFailed || executionFailed || (observing && Boolean(observation.error))
-        const Icon = failed ? CircleAlert : Radio
+        const Icon = failed ? CircleAlert : received ? CircleArrowDown : Radio
         const label = setupFailed
           ? observation.state === 'auth_required'
             ? t('workbench.observation_auth_required', '连接需要重新授权')

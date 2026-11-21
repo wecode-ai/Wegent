@@ -181,7 +181,8 @@ describe('CollaborationPage platform routing', () => {
       dingtalkAitable: false,
       projectLocation: 'cloud',
       workspaceLocations: ['cloud'],
-      sidebarPresentation: 'context',
+      sidebarPresentation: 'full',
+      projectNavigation: 'projects',
     })
     expect(capturedHost?.currentUser).toEqual({
       id: 7,
@@ -275,10 +276,14 @@ describe('CollaborationPage platform routing', () => {
     ['agents', '/collaboration/agents'],
     ['teams', '/collaboration/teams'],
     ['devices', '/collaboration/devices'],
-  ])('opens the cloud %s resource center from the Web collaboration sidebar', (kind, path) => {
+    ['issues-assigned', '/collaboration/assigned'],
+    ['issues-created', '/collaboration/created'],
+    ['issues-participating', '/collaboration/participating'],
+  ] as const)('routes the shared collaboration sidebar destination %s', (rootView, path) => {
     render(<CollaborationPage />)
 
-    fireEvent.click(screen.getByTestId(`collaboration-nav-${kind}`))
+    const host = capturedHost!
+    host.navigate({ ...host.location, rootView })
 
     expect(mockPush).toHaveBeenCalledWith(path)
   })

@@ -1,6 +1,17 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+
+import { ActionMenu } from '@/components/common/ActionMenu'
+import { WorkbenchSplitActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
+import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import type { DeviceInfo } from '@/types/api'
+import {
+  Resizable,
+  ResizableHandle,
+  ResizablePanel,
+} from '@wegent/collaboration/controls/Resizable'
 import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
-import { useCallback, useRef, useState, type ReactNode } from 'react'
 import {
   Columns2,
   Focus,
@@ -11,12 +22,7 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import { Group, Panel, Separator } from 'react-resizable-panels'
-import { ActionMenu } from '@/components/common/ActionMenu'
-import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
-import { WorkbenchSplitActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import {
   WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT,
   WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT,
@@ -467,17 +473,17 @@ function WorkbenchLayoutRenderer({
   }
 
   return (
-    <Group
+    <Resizable
       id={node.id}
       orientation={node.orientation}
-      defaultLayout={Object.fromEntries(
-        node.children.map((child, index) => [
-          child.id,
-          node.sizes[index] ?? 100 / node.children.length,
-        ])
-      )}
-      onLayoutChanged={(sizes, meta) => {
-        if (meta.isUserInteraction) onSizesChanged(node.id, sizes)
+      defaultLayout={node.sizes}
+      onLayoutCommit={(sizes, details) => {
+        if (details.reason !== 'resize') {
+          onSizesChanged(
+            node.id,
+            Object.fromEntries(node.children.map((child, index) => [child.id, sizes[index]]))
+          )
+        }
       }}
       className="relative h-full w-full"
     >
@@ -504,7 +510,7 @@ function WorkbenchLayoutRenderer({
           />
         </LayoutPanel>
       ))}
-    </Group>
+    </Resizable>
   )
 }
 
@@ -524,17 +530,16 @@ function LayoutPanel({
   return (
     <>
       {index > 0 ? (
-        <Separator
+        <ResizableHandle
           data-testid={`workbench-split-separator-${split.id}-${index}`}
           aria-label={labels.resize}
           className={cn(
             'group/separator relative z-critical shrink-0 bg-border/60 outline-none after:absolute after:inset-[-3px]',
-            'data-[separator=hover]:bg-primary/40 data-[separator=active]:bg-primary/60',
             split.orientation === 'horizontal' ? 'w-px cursor-col-resize' : 'h-px cursor-row-resize'
           )}
         />
       ) : null}
-      <Panel
+      <ResizablePanel
         id={child.id}
         defaultSize={`${split.sizes[index] ?? 100 / split.children.length}%`}
         minSize={
@@ -543,7 +548,7 @@ function LayoutPanel({
         className="relative min-h-0 min-w-0 overflow-hidden"
       >
         {children}
-      </Panel>
+      </ResizablePanel>
     </>
   )
 }
@@ -606,7 +611,8 @@ function WorkbenchPaneView({
             focused && 'shadow-[inset_0_2px_0_0_hsl(var(--primary)/0.65)]'
           )}
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`workbench-pane-title-${pane.id}`}
             className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
@@ -614,7 +620,7 @@ function WorkbenchPaneView({
             onClick={() => onFocus(pane.id)}
           >
             {title}
-          </button>
+          </ControlButton>
           <div
             id={`workbench-pane-header-actions-${pane.id}`}
             data-testid={`workbench-pane-header-actions-${pane.id}`}
@@ -624,7 +630,9 @@ function WorkbenchPaneView({
             )}
           />
           <TitlebarTooltip label={focusedView ? labels.restoreSplit : labels.focusTask} align="end">
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid={`workbench-focus-pane-${pane.id}`}
               aria-label={focusedView ? labels.restoreSplit : labels.focusTask}
@@ -633,7 +641,7 @@ function WorkbenchPaneView({
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             >
               {focusedView ? <Columns2 className="h-4 w-4" /> : <Focus className="h-4 w-4" />}
-            </button>
+            </ControlButton>
           </TitlebarTooltip>
           <WorkbenchPaneMenu
             paneId={pane.id}
@@ -643,7 +651,9 @@ function WorkbenchPaneView({
             onClose={onClose}
           />
           <TitlebarTooltip label={labels.closePane} align="end">
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid={`workbench-close-pane-${pane.id}`}
               aria-label={labels.closePane}
@@ -651,7 +661,7 @@ function WorkbenchPaneView({
               className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </TitlebarTooltip>
         </div>
       ) : null}
@@ -703,7 +713,8 @@ function WorkbenchPaneMenu({
       ariaLabel={labels.paneMenu}
       testId={`workbench-pane-menu-${paneId}`}
       placement="bottom-end"
-      triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+      density="dense"
+      triggerClassName="flex items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
       items={[
         {
           label: labels.splitLeft,

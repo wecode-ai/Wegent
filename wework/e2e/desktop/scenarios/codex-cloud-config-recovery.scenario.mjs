@@ -293,8 +293,11 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       const rejected = await transcript(protectedTask)
       assert.equal(rejected.running, false)
       assert.equal(rejected.threadId, null)
-      assert.deepEqual(rejected.turns, [])
-      // Prelaunch failures are published by the Runtime and have no native history.
+      // Prelaunch rejection creates no native turn, but a refreshed transcript
+      // still exposes the Runtime diagnostic as one synthetic failed turn.
+      assert.equal(rejected.turns.length, 1)
+      assert.equal(rejected.turns[0].status, 'failed')
+      assert.match(rejected.turns[0].error, /^Codex authentication mode is busy/)
       await waitForLogPattern(
         logPath,
         new RegExp(

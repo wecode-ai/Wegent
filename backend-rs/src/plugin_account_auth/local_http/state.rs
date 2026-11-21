@@ -232,12 +232,29 @@ async fn no_transfer(
     .map_err(credentials::failure)
 }
 
+pub(super) enum ExchangeOutcome {
+    Fresh(Value),
+    Replayed(Value),
+}
+
+impl ExchangeOutcome {
+    pub(super) fn is_replayed(&self) -> bool {
+        matches!(self, Self::Replayed(_))
+    }
+
+    pub(super) fn into_response(self) -> Value {
+        let (Self::Fresh(mut value) | Self::Replayed(mut value)) = self;
+        value["success"] = json!(true);
+        value
+    }
+}
+
 pub(super) async fn exchange(
     tx: &mut impl MysqlTransaction,
     p: &Principal,
     operation: &str,
     data: &Value,
-) -> MysqlResult<Value> {
+) -> MysqlResult<ExchangeOutcome> {
     match operation {
         "plugin.auth.execute"
         | "plugin.auth.read"

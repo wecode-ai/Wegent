@@ -1,6 +1,7 @@
 import type { WeworkNotificationPreferences } from '@/api/notifications'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { standInOrigin } from '@/features/notifications/standInNotifications'
+import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { isStandInIdentity } from './useStandInMessageReminders'
@@ -75,7 +76,9 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         const current = input
         const lifecycle = store.getSnapshot()
         const byKey = new Map(current.items.map(item => [item.key, item]))
-        const newlyUnread = [...lifecycle.unreadTaskKeys].filter(key => !previousUnread.has(key))
+        const newlyUnread = [...lifecycle.unreadTaskKeys].filter(
+          key => !previousUnread.has(key) && store.isNewlyUnread(key)
+        )
         previousUnread = new Set(lifecycle.unreadTaskKeys)
         for (const key of awaitingMetadata.keys())
           if (!lifecycle.unreadTaskKeys.has(key)) awaitingMetadata.delete(key)
@@ -100,6 +103,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
               (originalPreferences &&
                 !originalPreferences[runtimeTaskNotificationCategory(item)].system) ||
               isStandInIdentity(item) ||
+              isStandInMemoryReviewTask(item.task) ||
               standInOrigin(item) ||
               !current.notificationPreferences[runtimeTaskNotificationCategory(item)].system ||
               item.lifecycle?.interactionStatus ||
@@ -121,6 +125,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         const visibleItems = current.listedItems.filter(
           item =>
             !isStandInIdentity(item) &&
+            !isStandInMemoryReviewTask(item.task) &&
             (current.notificationPreferences[runtimeTaskNotificationCategory(item)].in_app ||
               standInOrigin(item))
         )

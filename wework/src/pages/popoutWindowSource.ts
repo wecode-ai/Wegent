@@ -3,6 +3,7 @@ import { isLocalStandaloneDevice } from '@/components/chat/composer/project-work
 import { isOnlineDevice } from '@/lib/device-selection'
 import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
+import { findSelectableProject } from '@/features/workbench/workbenchRuntimeHelpers'
 const POPOUT_LAST_PROJECT_STORAGE_KEY = 'wework.popout.lastProjectId.v1'
 const POPOUT_OVERLAY_SELECTOR = [
   '[data-testid="quick-phrase-menu"]',
@@ -45,8 +46,8 @@ type PopoutInput = Pick<
 export function createPopoutWindowSource() {
   let input: PopoutInput | undefined
   let initialized = false
-  let restoring: number | null | undefined
-  let overlayOpen = false
+  let restoring: ((state: PopoutInput['state']) => boolean) | undefined
+  let snapshot = { overlayOpen: false, ready: false }
   let persistedProject: number | null | undefined
   let mode: 'conversation' | 'menu' | 'composer' | undefined
   let observer: MutationObserver | undefined
@@ -56,25 +57,34 @@ export function createPopoutWindowSource() {
     const { state, selectProject, selectStandaloneDevice, setWorkbenchError } = input
     if (!state.isBootstrapping && !initialized) {
       const remembered = readRememberedProjectId()
-      const exists =
-        remembered !== null && state.projects.some(project => project.id === remembered)
-      restoring = exists ? remembered : null
+      const project =
+        remembered === null
+          ? null
+          : findSelectableProject(state.projects, state.runtimeWork, remembered)
       initialized = true
-      if (exists) selectProject(remembered)
-      else {
+      if (project) {
+        restoring = current => current.currentProject?.id === project.id
+        selectProject(project.id, { navigate: false })
+      } else {
         const local = state.devices.find(
           device =>
             isLocalStandaloneDevice(device) &&
             isOnlineDevice(device) &&
             isWeWorkExecutorVersionCompatible(device.executor_version)
         )
-        if (local) selectStandaloneDevice(local.device_id)
-        else setWorkbenchError(input.localDeviceRequired)
+        if (local) {
+          restoring = current => current.standaloneChatKey !== state.standaloneChatKey
+          selectStandaloneDevice(local.device_id, { navigate: false })
+        } else setWorkbenchError(input.localDeviceRequired)
       }
     }
     if (initialized && !state.isBootstrapping) {
-      if (restoring === undefined || (state.currentProject?.id ?? null) === restoring) {
+      if (!restoring || restoring(state)) {
         restoring = undefined
+        if (!snapshot.ready) {
+          snapshot = { ...snapshot, ready: true }
+          for (const listener of listeners) listener()
+        }
         const projectId = state.currentProject?.id ?? null
         if (persistedProject !== projectId) {
           persistedProject = projectId
@@ -82,7 +92,11 @@ export function createPopoutWindowSource() {
         }
       }
     }
-    const nextMode = state.currentRuntimeTask ? 'conversation' : overlayOpen ? 'menu' : 'composer'
+    const nextMode = state.currentRuntimeTask
+      ? 'conversation'
+      : snapshot.overlayOpen
+        ? 'menu'
+        : 'composer'
     if (mode !== nextMode) {
       mode = nextMode
       void setPopoutWindowMode(nextMode)
@@ -90,14 +104,14 @@ export function createPopoutWindowSource() {
   }
   const observeOverlay = () => {
     const next = document.querySelector(POPOUT_OVERLAY_SELECTOR) !== null
-    if (next !== overlayOpen) {
-      overlayOpen = next
+    if (next !== snapshot.overlayOpen) {
+      snapshot = { ...snapshot, overlayOpen: next }
       for (const listener of listeners) listener()
     }
     synchronize()
   }
   return {
-    getSnapshot: () => overlayOpen,
+    getSnapshot: () => snapshot,
     subscribe(listener: () => void, next: PopoutInput) {
       input = next
       listeners.add(listener)

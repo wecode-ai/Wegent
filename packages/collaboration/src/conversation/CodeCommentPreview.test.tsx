@@ -19,16 +19,18 @@ afterEach(() => {
   container.remove()
   vi.useRealTimers()
 })
-function pointer(element: Element, type: 'pointerover' | 'pointerout') {
+function pointer(element: Element, type: 'pointerenter' | 'pointerleave', clientX = 0) {
   act(() =>
-    element.dispatchEvent(new MouseEvent(type, { bubbles: true, relatedTarget: document.body }))
+    element.dispatchEvent(
+      new PointerEvent(type, { pointerType: 'mouse', clientX, relatedTarget: document.body })
+    )
   )
 }
 function preview() {
   return document.querySelector('[data-testid="comment-preview"]')
 }
 
-test('keeps the hover preview open across the trigger gap and cancels pending close on unmount', () => {
+test('keeps the hover preview open across the trigger gap and cancels pending close on unmount', async () => {
   act(() =>
     root.render(
       <CollaborationTheme mode="light">
@@ -39,21 +41,30 @@ test('keeps the hover preview open across the trigger gap and cancels pending cl
     )
   )
   const trigger = container.querySelector('[data-testid="comment-trigger"]')!.parentElement!
-  pointer(trigger, 'pointerover')
+  pointer(trigger, 'pointerenter')
   expect(preview()).not.toBeNull()
-  pointer(trigger, 'pointerout')
+  pointer(trigger, 'pointerleave')
   act(() => vi.advanceTimersByTime(119))
   expect(preview()).not.toBeNull()
-  pointer(preview()!, 'pointerover')
+  pointer(preview()!, 'pointerenter')
   act(() => vi.advanceTimersByTime(120))
   expect(preview()).not.toBeNull()
-  pointer(preview()!, 'pointerout')
+  pointer(preview()!, 'pointerleave', 200)
   act(() => vi.advanceTimersByTime(120))
   expect(preview()).toBeNull()
-  pointer(trigger, 'pointerover')
-  pointer(trigger, 'pointerout')
-  expect(vi.getTimerCount()).toBe(1)
-  act(() => root.render(null))
-  expect(vi.getTimerCount()).toBe(0)
-  expect(preview()).toBeNull()
+  pointer(trigger, 'pointerenter')
+  const schedule = vi.spyOn(globalThis, 'setTimeout')
+  const cancel = vi.spyOn(globalThis, 'clearTimeout')
+  try {
+    pointer(trigger, 'pointerleave', 200)
+    const index = schedule.mock.calls.findIndex(([, timeout]) => timeout === 120)
+    expect(index).toBeGreaterThanOrEqual(0)
+    const timer = schedule.mock.results[index]?.value
+    await act(async () => root.render(null))
+    expect(cancel.mock.calls.some(([cancelled]) => cancelled === timer)).toBe(true)
+    expect(preview()).toBeNull()
+  } finally {
+    schedule.mockRestore()
+    cancel.mockRestore()
+  }
 })

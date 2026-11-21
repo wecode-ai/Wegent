@@ -164,7 +164,16 @@ export function useDesktopPaneContext({
           },
         }
       }
-      const messages = await paneSession.loadFullTranscriptForExport()
+      // The dialog owns this task independently of pane hydration and selection.
+      const transcript = await loadRuntimeTranscriptForPane(currentRuntimeTask, {
+        includeFullContent: true,
+        refresh: true,
+        isolated: true,
+      })
+      if (transcript.fullContent !== true) {
+        throw new Error('The complete task transcript is unavailable')
+      }
+      const { messages } = transcript
       return {
         modelSelection: projectChat.modelSelectionDiagnostics,
         task: {
@@ -397,6 +406,7 @@ export function useDesktopPaneContext({
     getDraftEditVersion,
     runtimeWork,
     runtimeTaskSummary: contextSnapshot.runtimeTaskSummary,
+    connectionEventSubscriptions: contextSnapshot.connectionEventSubscriptions,
     currentRuntimeConversationSource,
     currentProjectSpaceRuntimeTask,
     runtimeTaskTitle,

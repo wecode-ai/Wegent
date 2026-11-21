@@ -37,6 +37,7 @@ fn local_backend_config_uses_heartbeat_call_timeout_env() {
             backend_url: "http://localhost:8000".to_owned(),
             socket_url: String::new(),
             auth_token: "wg-token".to_owned(),
+            authenticated_user_id: None,
             runtime_auth_token: "runtime-wg-token".to_owned(),
         },
         ..DeviceConfig::default()

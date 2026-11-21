@@ -40,6 +40,18 @@ The desktop prompt above the composer offers **Notification settings**, **Don't 
 
 The number beside **My Stand-in** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. Each new message triggers at most one desktop notification. Clicking opens the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
 
+## Delegate work to a specialist role
+
+In **My assistant**, name a role when you hand off work. When you leave the choice open, the assistant can assign work automatically if the responsibilities clearly match. If the choice affects the outcome and several roles fit, the assistant asks first. One request can be split across roles, and a specialist can hand off a part that calls for different expertise.
+
+Expand **Delegated tasks** at the bottom of the original conversation to see roles, progress, and errors. The card prioritizes work that is still active. You can answer supported questions right in the card. Open a task to read its independent conversation and handle native approval prompts. Each role uses its saved model and working directory, and its long-running chat remains available. Results flow back to the assigning assistant, which summarizes them in the original conversation.
+
+Cross-device delegation uses the role's configured execution device on the same Wework account. While that device is offline, the task shows **Waiting for device**. You can open the task from the original conversation once the device is online and accepts it.
+
+Work that depends on earlier results shows **Waiting for prerequisites**. When the prerequisite succeeds, its result goes to the next role. A failed or cancelled prerequisite leaves the dependent task marked **A prerequisite did not complete**. Choose **Retry** beside a failed branch to run it again in the same task. Other branches keep their progress and results.
+
+Choose **Cancel branch** to stop one branch and its subtasks while the other branches continue. Choose **Cancel delegation** to stop every unfinished branch in the request. Completed results remain available. If the execution device is offline, the card shows **Waiting for device to confirm cancellation**.
+
 <a id="role-execution-device"></a>
 
 ## Individual role-profile operations
@@ -132,6 +144,8 @@ Pausing new-work intake for the stand-in or a role does not revoke saved source 
 
 Memory consolidation tasks are hidden from the left task sidebar, including running and finished records. Open **My stand-in → Settings → Connections → Calendar → 助理记忆整理** to view run history and open the original task. Hiding these tasks does not affect background consolidation or saved history.
 
+Memory consolidation runs silently. Results are available in the calendar, and the task sends no in-app, system, or connected IM notifications.
+
 After the primary stand-in is enabled, its execution device provisions a **助理记忆整理** (memory consolidation) arrangement once, checking every six hours by default. Open **My stand-in → Settings → Connections → Calendar → 助理记忆整理** to inspect its schedule and run history, pause, edit or delete it. Background provisioning does not recreate a paused or deleted arrangement. Consolidation uses an independent conversation, leaving the current chat free; the execution device and model must be available. Open the original task from its run history to inspect the result. Consolidation does not automatically start a primary conversation with ordinary tool permissions just to report completion.
 
 Background consolidation preserves evidence and scope, following conversation pages and long-message continuations. Incomplete reads or failed saves must not advance a conversation's completion watermark. After correction or forgetting, consolidation does not reconstruct that memory from the same old evidence. Forgetting does not delete the original conversation. As selected by the user, minimal forgetting rules also retain the compact excluded fact and its scope, not original conversations, files or evidence excerpts. Rules are not active memories: stand-ins read them to avoid relearning the same meaning without excluding new facts about the same topic. Exact fingerprints are enforced by code; semantic comparison across paraphrases is model-mediated and does not guarantee recognition of every equivalent statement. Expand **Forgetting rules** below the memory list to inspect compact facts and scopes. Choose **Delete rule** and confirm to allow future learning; cancel makes no change. Deletion neither restores an active memory immediately nor changes other rules. Failed reads or deletion preserve existing data with a separate reload action. Native semantic behavior across paraphrases still requires verification.
@@ -165,6 +179,8 @@ Stand-in chats currently require the Codex runtime for operation approvals; the 
 
 ## DingTalk and collaboration sources
 
+The shared DSH EventBus schedules connection collection for the assistant, the GitHub and GitLab sidebar, and task subscriptions. The host combines duplicate collection requests, provider plugins read their resources, and the Executor stores each subscriber’s cursor and delivery receipts. A source collection is cancelled after 15 seconds. The conversation manages any model turn it has already accepted.
+
 Connections groups sources under **Configured** and **Available**. Each source appears once with its receive scope, status, and next action; other sources remain visible. A configured scope does not mean intake is active: projects retain their scope summary when **Receiving is off**. Calendar has a separate **Scheduled work** section.
 
 Search by app name or configured scope name at the top, or select the configured count to show existing sources only. Select **All sources** to restore the full catalog. The count is per source, and filtering does not change the stand-in's configuration.
@@ -180,6 +196,8 @@ In these DingTalk source settings, both all-group mentions and all-contact direc
 <a id="dingtalk-group-message-scope"></a>
 
 Open **Sidebar → My stand-in → select primary or role → Stand-in details → Manage stand-in → Connections → DingTalk**. After adding an individual group under filtered sources, use **Receive** beside that group to choose **Mentions only** (the default) or **All messages**. Existing individual groups can also be edited. The all-groups subscription still receives mentions only; direct messages do not have this option. Click **Save** in settings to apply the change; cancel discards it. A scope change starts intake at its save boundary without importing earlier history. Receiving all messages does not mean replying to every message: responsibilities, handling settings and sending approvals still determine the response.
+
+DingTalk groups set to **All messages** catch up in windows of up to 15 minutes. After a timeout, collection retries from the same starting point with a five-minute window. If that also times out, collection skips backlog older than five minutes and uses one-minute windows for recent messages. If timeouts continue, collection keeps advancing as time passes. Skipped messages remain available in DingTalk.
 
 You can manually mention yourself in a connected group to delegate work. You can also select yourself explicitly as a direct-message contact under filtered sources and save, then manually send instructions in your self-chat. The source's handling and approval policies still apply. Selecting all contacts alone does not enable this entry, and your outgoing messages to other contacts are not treated as instructions. Stand-in replies always retain DingTalk's AI-send marker.
 
@@ -201,6 +219,8 @@ All four combinations are supported, including immediate separate conversations 
 Direct handling does not require responsibilities or preferences to be filled in. When exactly one role is eligible, an earlier background-coordinator failure or pending question does not block direct dispatch. Existing questions and failures remain visible; this does not automatically answer approvals or replay commands with uncertain outcomes. Coordinator retries recover from actual native sessions and execution receipts, not merely the existence of a task record.
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
+
+Background processing handles failures per event. If a cloud Issue cannot be read, its event is canceled or left pending for retry as appropriate. Other authorized source events continue to dispatch.
 
 Connected collaboration projects display their names, including accessible projects whose parent workspace you have not joined. Names remain visible and existing connections can be removed when switching the stand-in execution device. New local project connections can only be added when executing on the current device.
 

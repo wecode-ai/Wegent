@@ -1,42 +1,40 @@
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { Archive, CheckCheck } from 'lucide-react'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
+import { Tooltip } from '@/components/ui/tooltip'
+import type {
+  BoardCardDisplaySettings,
+  CloudTodoBoardTaskBinding,
+} from '@/features/todo/CloudTodoBoardCard'
+import { CloudTodoBoardCard } from '@/features/todo/CloudTodoBoardCard'
+import { CloudTodoModal as Modal } from '@/features/todo/CloudTodoModal'
+import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import { findProjectSpaceContextSourceForTask } from '@/features/todo/projectSpaceSelection'
+import type { RuntimeMyWorkItem } from '@/features/todo/runtimeMyWork'
+import { runtimeMyWorkItems } from '@/features/todo/runtimeMyWork'
+import { TaskBoardColumnCreateButton } from '@/features/todo/TaskBoardActions'
+import { columnDotClasses, columns } from '@/features/todo/todoShared'
+import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import { getRuntimeTaskReminderKey } from '@/features/workbench/runtimeTaskReminders'
+import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
+import { useTranslation } from '@/hooks/useTranslation'
+import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
+import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import { createCollaborationTranslator } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { ProjectBoardColumn, ProjectBoardGroupBy } from '@wegent/collaboration/project-board'
 import {
   createStandardCloudBoardColumns,
   ProjectBoardBody,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
-  type ProjectBoardColumn,
-  type ProjectBoardGroupBy,
 } from '@wegent/collaboration/project-board'
-import { projectBoardDnd } from '@wegent/collaboration/project-board/projectBoardDnd'
-import {
-  CloudTodoBoardCard,
-  type BoardCardDisplaySettings,
-  type CloudTodoBoardTaskBinding,
-} from '@/features/todo/CloudTodoBoardCard'
-import { TaskBoardColumnCreateButton } from '@/features/todo/TaskBoardActions'
-import { CloudTodoModal as Modal } from '@/features/todo/CloudTodoModal'
-import {
-  findProjectSpaceContextSourceForTask,
-  type ProjectSpaceApi,
-} from '@/features/todo/projectSpaceSelection'
-import { runtimeMyWorkItems, type RuntimeMyWorkItem } from '@/features/todo/runtimeMyWork'
-import { columnDotClasses, columns } from '@/features/todo/todoShared'
-import { getRuntimeTaskReminderKey } from '@/features/workbench/runtimeTaskReminders'
-import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
-import { useTranslation } from '@/hooks/useTranslation'
-import { createCollaborationTranslator } from '@wegent/collaboration'
-import { Tooltip } from '@/components/ui/tooltip'
-import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
-import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import { Archive, CheckCheck } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import type { RuntimeTaskContextSource } from './taskBoardContextSource'
 import {
   BULK_TASK_CONCURRENCY,
   createTaskBoardContextSource,
   runtimeTaskContextKey as runtimeTaskKey,
   sameProjectSpaceApis,
-  type RuntimeTaskContextSource,
 } from './taskBoardContextSource'
 
 interface TaskBoardViewProps {
@@ -388,6 +386,7 @@ export function TaskBoardView({
 
   async function archiveCompletedTasks(completedItems: RuntimeMyWorkItem[]) {
     if (batchArchiveBusy || completedItems.length === 0) return
+    updateBatch('batchArchiveItems', null)
     updateBatch('batchArchiveBusy', true)
     updateBatch('batchArchiveError', null)
     try {
@@ -401,7 +400,6 @@ export function TaskBoardView({
         )
         return
       }
-      updateBatch('batchArchiveItems', null)
     } catch (error) {
       console.error('[TaskBoard] Failed to archive completed Runtime Tasks', error)
       updateBatch(
@@ -418,7 +416,12 @@ export function TaskBoardView({
   }
 
   return (
-    <div className="contents" data-testid="task-board-surface">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="task-board-surface">
+      {batchArchiveError && (
+        <p className="shrink-0 px-4 py-2 text-sm text-destructive" role="alert">
+          {batchArchiveError}
+        </p>
+      )}
       <ProjectBoardBody<RuntimeMyWorkItem>
         translate={boardTranslate}
         state={board.state}
@@ -429,8 +432,6 @@ export function TaskBoardView({
         columns={board.columns}
         currentParent={board.currentParent}
         currentParentId={board.currentParentId}
-        dnd={projectBoardDnd}
-        dndContextProps={{}}
         externalGroupLabel="记录"
         externalGroupValues={[]}
         externalManagedLabel=""
@@ -501,7 +502,8 @@ export function TaskBoardView({
                 side="bottom"
                 align="end"
               >
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="task-board-batch-confirm-review"
                   disabled={batchConfirmBusy}
@@ -513,7 +515,7 @@ export function TaskBoardView({
                   aria-label={t('todo.batch_confirm_review_tasks', '批量确认完成待确认任务')}
                 >
                   <CheckCheck className="h-3.5 w-3.5" />
-                </button>
+                </ControlButton>
               </Tooltip>
             )
           }
@@ -524,7 +526,8 @@ export function TaskBoardView({
                 side="bottom"
                 align="end"
               >
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="task-board-batch-archive-completed"
                   disabled={batchArchiveBusy}
@@ -536,7 +539,7 @@ export function TaskBoardView({
                   aria-label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
                 >
                   <Archive className="h-3.5 w-3.5" />
-                </button>
+                </ControlButton>
               </Tooltip>
             )
           }
@@ -551,7 +554,6 @@ export function TaskBoardView({
             />
           )
         }}
-        renderDragOverlay={() => null}
         renderExternalGroupPicker={() => null}
         renderGroupPicker={(value, onChange) => (
           <ProjectBoardGroupPicker
@@ -588,7 +590,7 @@ export function TaskBoardView({
                       updateBatch('batchConfirmItems', [item])
                     },
                   }
-                : item.status === 'completed'
+                : item.status === 'completed' && !batchArchiveBusy
                   ? {
                       kind: 'archive',
                       label: t('todo.archive_task', '归档任务'),
@@ -641,7 +643,9 @@ export function TaskBoardView({
               </p>
             ) : null}
             <div className="mt-6 flex justify-end gap-2">
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="task-board-batch-confirm-review-cancel"
                 disabled={batchConfirmBusy}
@@ -652,8 +656,10 @@ export function TaskBoardView({
                 className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
               >
                 {t('common.cancel', '取消')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid="task-board-batch-confirm-review-confirm"
                 disabled={batchConfirmBusy}
@@ -663,7 +669,7 @@ export function TaskBoardView({
                 {batchConfirmBusy
                   ? t('todo.batch_confirming', '确认中…')
                   : t('todo.confirm_complete', '确认完成')}
-              </button>
+              </ControlButton>
             </div>
           </div>
         </Modal>
@@ -672,7 +678,6 @@ export function TaskBoardView({
         <Modal
           title={t('todo.archive_completed_tasks_title', '归档已完成任务？')}
           onClose={() => {
-            if (batchArchiveBusy) return
             updateBatch('batchArchiveItems', null)
             updateBatch('batchArchiveError', null)
           }}
@@ -685,16 +690,13 @@ export function TaskBoardView({
                 { count: batchArchiveItems.length }
               )}
             </p>
-            {batchArchiveError ? (
-              <p className="mt-3 text-xs text-destructive" role="alert">
-                {batchArchiveError}
-              </p>
-            ) : null}
+
             <div className="mt-6 flex justify-end gap-2">
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="task-board-batch-archive-completed-cancel"
-                disabled={batchArchiveBusy}
                 onClick={() => {
                   updateBatch('batchArchiveItems', null)
                   updateBatch('batchArchiveError', null)
@@ -702,18 +704,19 @@ export function TaskBoardView({
                 className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
               >
                 {t('common.cancel', '取消')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="destructive"
+                size="sm"
                 type="button"
                 data-testid="task-board-batch-archive-completed-confirm"
-                disabled={batchArchiveBusy}
                 onClick={() => void archiveCompletedTasks(batchArchiveItems)}
                 className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-50 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
               >
                 {batchArchiveBusy
                   ? t('todo.archiving', '归档中…')
                   : t('todo.confirm_archive', '确认归档')}
-              </button>
+              </ControlButton>
             </div>
           </div>
         </Modal>

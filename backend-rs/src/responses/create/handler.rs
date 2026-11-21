@@ -58,6 +58,7 @@ async fn create_response(
     if super::wework::is_wework_request(&body) {
         return super::wework::create_response(state, principal, body, limit, &limit_key).await;
     }
+    let mut observation = crate::chat_metrics::RequestObservation::new("api");
     let input: ResponseCreateInput = serde_json::from_value(body).map_err(invalid_body)?;
     create_response_flow(
         state,
@@ -67,6 +68,7 @@ async fn create_response(
         &limit_key,
         request_id,
         auto_delete_executor.or(auto_delete_executor_dash),
+        &mut observation,
     )
     .await
 }
@@ -192,6 +194,7 @@ struct PreparedCreate {
     bot_ids: Vec<i64>,
     model_type: Option<String>,
     project_id: i64,
+    device_id: Option<String>,
     setup: ChatSessionSetup,
 }
 
@@ -299,6 +302,19 @@ async fn resolve_create_scope(
         ));
     };
 
+    let device_id = super::device::resolve(
+        &mut &mut *transaction,
+        user_id,
+        input
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.device_id()),
+        continuation
+            .as_ref()
+            .map(|continuation| &continuation.task_json),
+    )
+    .await?;
+
     // `create_new_task`'s API source group (`params.is_api_call`): the group
     // id is written to the placeholder Task row. A `previous_response_id`
     // reuse skips task creation, so the source resolves no group.
@@ -352,7 +368,7 @@ async fn resolve_create_scope(
                 is_api_call: true,
                 auto_delete_executor,
                 omit_mcp_binary_output: input.omit_mcp_binary_output,
-                device_id: None,
+                device_id: device_id.as_deref(),
                 git_workspace: false,
                 created_at: crd_timestamp,
                 updated_at: crd_timestamp,
@@ -390,6 +406,7 @@ async fn resolve_create_scope(
         bot_ids: bots.bot_ids,
         model_type,
         project_id,
+        device_id,
         setup,
     })
 }
@@ -414,6 +431,7 @@ async fn create_response_flow(
     // The raw `auto_delete_executor` / `auto-delete-executor` header; the
     // endpoint body normalizes it after the rate-limit check.
     raw_auto_delete_executor: Option<&str>,
+    observation: &mut crate::chat_metrics::RequestObservation,
 ) -> Result<CreateResponse, FastApiError> {
     // `setup_chat_session`: task + workspace + paired subtasks.
     let input_text = extract_input_text(&input.input);
@@ -479,12 +497,14 @@ async fn create_response_flow(
         FastApiError::internal,
     )
     .await?;
+    observation.accept();
     let (
         PreparedCreate {
             user,
             team,
             bot,
             bot_ids,
+            device_id,
             setup,
             ..
         },
@@ -646,6 +666,7 @@ async fn create_response_flow(
         previous_response_id: input.previous_response_id.clone(),
         model_string: &input.model,
         task_project_id,
+        device_id,
         executor_name: &setup.assistant_executor_name,
         executor_namespace: &setup.assistant_executor_namespace,
         // `enable_tools`: `enable_chat_bot or current/inherited KB refs`

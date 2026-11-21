@@ -223,6 +223,7 @@ export function updateStartedTurn(
       completedAt: undefined,
       error: undefined,
       errorType: undefined,
+      errorInfo: undefined,
       stoppedNotice: undefined,
     });
   }

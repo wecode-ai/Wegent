@@ -1,16 +1,15 @@
-import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
+import { createAgentResourceSaveOperation } from '@/features/collaboration/agentResourceSaveOperation'
 import {
   AgentEnvironmentFields,
   AgentModelFields,
 } from '@/features/collaboration/AgentRoutingFields'
+import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
 import { useAgentRuntimeSettings } from '@/features/collaboration/useAgentRuntimeSettings'
-import { useMemo, useState, useSyncExternalStore } from 'react'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
-import { createAgentResourceSaveOperation } from '@/features/collaboration/agentResourceSaveOperation'
 import {
   AgentCapabilitiesSelector,
   AgentCapabilityModeSelector,
@@ -21,6 +20,9 @@ import {
   resolveAgentPromptCapabilityReferences,
   type UnifiedAgentCapabilityMode,
 } from '@wegent/collaboration'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 
 import type { UnifiedAgentDefinition, UnifiedAgentPluginRef } from '@/api/agentDefinition'
 import type { createAgentResourceApi } from '@/api/agentResources'
@@ -30,8 +32,8 @@ import type {
   LocalProjectChatAgentModel,
   createLocalProjectChatAgentApi,
 } from '@/api/local/localDelivery'
-import { isDefaultLocalAgentName } from '@/features/collaboration/defaultLocalAgent'
 import { parseAgentMcpServers } from '@/features/collaboration/agentFormModel'
+import { isDefaultLocalAgentName } from '@/features/collaboration/defaultLocalAgent'
 import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import type {
   ProjectPluginCatalogApi,
@@ -652,14 +654,15 @@ function ProjectChatAgentEditorContent({
                     ? modelSnapshot.error.message
                     : t('workbench.agent_creator_models_load_failed', '加载模型失败')}
                 </p>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-project-chat-agent-models-retry"
                   className="min-h-11 underline md:min-h-8"
                   onClick={() => void modelsResource.reload()}
                 >
                   {t('workbench.retry')}
-                </button>
+                </ControlButton>
               </div>
             )}
             <div className="max-h-48 space-y-1 overflow-y-auto">
@@ -675,17 +678,16 @@ function ProjectChatAgentEditorContent({
                     className="flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-text-primary hover:bg-muted"
                     key={key}
                   >
-                    <input
+                    <Checkbox
                       checked={selectedAllowedModelKeys.has(key)}
                       data-testid={`cloud-project-chat-agent-model-${candidate.name}`}
-                      onChange={event =>
+                      onCheckedChange={checked =>
                         setAllowedModels(current =>
-                          event.target.checked
+                          checked === true
                             ? [...current, value]
                             : current.filter(item => modelKey(item) !== key)
                         )
                       }
-                      type="checkbox"
                     />
                     <span>{candidate.displayName || candidate.name}</span>
                   </label>
@@ -704,7 +706,8 @@ function ProjectChatAgentEditorContent({
                       {modelSnapshot.status === 'ready' &&
                         t('workbench.project_chat_agent_model_unavailable', '（当前不可用）')}
                     </span>
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       aria-label={`${t(
                         'workbench.project_chat_agent_remove_model',
                         '移除模型'
@@ -717,7 +720,7 @@ function ProjectChatAgentEditorContent({
                       type="button"
                     >
                       {t('workbench.agent_creator_remove', '移除')}
-                    </button>
+                    </ControlButton>
                   </div>
                 )
               })}

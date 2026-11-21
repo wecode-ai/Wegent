@@ -28,7 +28,7 @@ export * from './issue-card'
 export * from './issue-archive'
 export * from './issue-detail'
 export * from './issueDraft'
-export { IssueCreate, IssueDetail } from './IssueDetail'
+export { IssueCreate, IssueDetail, saveBrowserIssueAttachment } from './IssueDetail'
 export * from './my-work'
 export * from './ports/SharedWorkspaceApi'
 export * from './project-board'
@@ -41,7 +41,8 @@ export type {
   CommentIssueActions,
   IssueCommentBoardContext,
 } from './issue-detail/issueCommentActions'
-export { IssueDetailSearchableSelect } from './issue-detail/IssueDetailControls'
+export { SearchableSelect } from './controls/SearchableSelect'
+export { Tooltip, type TooltipProps } from './controls/Tooltip'
 export * from './permissions'
 export * from './platform'
 export * from './plugin-catalog'

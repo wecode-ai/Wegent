@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { cp, writeFile } from 'node:fs/promises'
+import { cp, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { createDesktopScenario as createBridgeScenario } from './stand-in-plugin-bridge.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
@@ -21,6 +22,7 @@ import {
   ACTIVE_WORKBENCH_SELECTOR,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
+  MODEL_PROVIDER_ID,
   createSingleRootLocalProject,
   selectE2EModel,
 } from '../modules/shared.mjs'
@@ -35,6 +37,7 @@ import {
 
 const MARKER = 'WEWORK_CONVERSATION_EVENT'
 const PROVIDER = '@test/connection-source/records'
+const CONTROL_MCP_IDLE_TTL_MS = 1000
 
 function latestWaitingSubscriptions(body) {
   const snapshot = body.input.findLast(
@@ -47,11 +50,12 @@ function latestWaitingSubscriptions(body) {
   return JSON.parse(snapshot.output)
 }
 
-export function createDesktopScenario(options) {
+export function createDesktopScenario(options, { controlContextOnly = false } = {}) {
   const base = createBridgeScenario(options, { versionedEventTypes: ['git.event'] })
   const {
     resultDir,
     electronUserDataDirectory,
+    executorHome,
     workspacePath,
     uiTimeoutMs,
     modelResponseTimeoutMs,
@@ -69,6 +73,7 @@ export function createDesktopScenario(options) {
   let busyResponse
   let busyStarted = false
   let ownerResponse
+  let resumedGoalDeadline
   const releaseBusy = () => {
     if (!busyResponse) return
     const { response, id } = busyResponse
@@ -155,7 +160,101 @@ export function createDesktopScenario(options) {
         : {}),
   })
 
+  async function verifyResumedGoalControlContext(control) {
+    active = true
+    phase = 'resumed_goal_seed'
+    const taskId = 'resumed-goal-control-context'
+    const prompt = `${MARKER}_${phase}`
+    const created = await rpc(control, 'runtime.tasks.create', {
+      taskId,
+      workspacePath,
+      runtime: 'codex',
+      message: prompt,
+      modelSelection: {
+        modelName: DEFAULT_MODEL_ID,
+        modelType: 'runtime',
+        options: { codexProviderId: MODEL_PROVIDER_ID, codexProviderType: 'custom' },
+      },
+      executionRequest: {
+        task_id: taskId,
+        subtask_id: `${taskId}-initial`,
+        user_id: 9001,
+        prompt,
+        new_session: true,
+        bot: [{ shell_type: 'Codex' }],
+        model_config: { model_id: DEFAULT_MODEL_ID, model_provider: MODEL_PROVIDER_ID },
+      },
+    })
+    assert.equal(created.accepted, true, JSON.stringify(created))
+    const getTask = () => rpc(control, 'runtime.tasks.get', { taskId })
+    const initial = await waitForValue(
+      getTask,
+      result => result.task?.threadId && !result.task.running && result.task.status === 'done',
+      'The initial native conversation must complete before Goal activation',
+      modelResponseTimeoutMs
+    )
+    phase = 'resumed_goal'
+    const marker = `${MARKER}_${phase}`
+    const getWait = async () =>
+      (await getTask()).task.runtimeHandle?.connectionEventSubscriptions?.find(
+        item => item.subscription_key === marker
+      )
+    const setGoal = params => rpc(control, 'runtime.tasks.goal.set', { taskId, ...params })
+    const getGoal = () => rpc(control, 'runtime.tasks.goal.get', { taskId })
+    const paused = await setGoal({ objective: marker, status: 'paused' })
+    assert.equal(paused.goal?.status, 'paused', JSON.stringify(paused))
+    const { promise, resolve } = Promise.withResolvers()
+    resumedGoalDeadline = promise
+    try {
+      const resumed = await setGoal({ status: 'active' })
+      assert.equal(resumed.goal?.status, 'active', JSON.stringify(resumed))
+    } finally {
+      resolve()
+    }
+    await waitForValue(
+      getWait,
+      wait => wait?.status === 'armed',
+      'The resumed native Goal must arm its MCP subscription after the idle deadline',
+      modelResponseTimeoutMs
+    )
+    await waitForValue(
+      getGoal,
+      result => result.goal?.status === 'blocked',
+      'The subscription must suspend the original Goal',
+      uiTimeoutMs
+    )
+    events.push(event('resumed-goal-event', `${marker}_EVENT_RECEIVED`))
+    await saveEvents()
+    await waitForValue(
+      async () => {
+        const wait = await getWait()
+        if (wait?.status === 'needs_attention') {
+          const journal = JSON.parse(
+            await readFile(join(executorHome, 'runtime-work/control-operations.json'), 'utf8')
+          )
+          const { error, result } = journal.operations[wait.operation_id]
+          assert.fail(`The event continuation was rejected: ${JSON.stringify(error ?? result)}`)
+        }
+        const { goal } = await getGoal()
+        return { wait, goal }
+      },
+      ({ wait, goal }) => {
+        assert.ok(!wait?.error_code, `Event delivery failed: ${JSON.stringify(wait)}`)
+        return completed.has(phase) && goal?.status === 'complete'
+      },
+      'The event must wake and complete the original Goal',
+      30000
+    )
+    assert.equal((await getTask()).task.threadId, initial.task.threadId)
+  }
+
   return {
+    appEnvironment: {
+      ...base.appEnvironment,
+      ...(controlContextOnly
+        ? { WEWORK_E2E_CONTROL_MCP_IDLE_TTL_MS: String(CONTROL_MCP_IDLE_TTL_MS) }
+        : {}),
+    },
     async prepareApp(context) {
       await base.prepareApp(context)
       codexHome = context.codexHome
@@ -184,6 +283,13 @@ export function createDesktopScenario(options) {
       if (handleEmptyReplyPrediction(body, response)) return true
       if (!modelRequestTexts(body).includes(MARKER)) return false
       modelRequests++
+      if (phase === 'resumed_goal' && resumedGoalDeadline) {
+        const deadline = resumedGoalDeadline
+        resumedGoalDeadline = undefined
+        await deadline
+        // Age the native client's idle credential while real Goal inference is in flight.
+        await delay(CONTROL_MCP_IDLE_TTL_MS + 100)
+      }
       if (
         phase === 'owner' &&
         !ownerResponse &&
@@ -228,7 +334,13 @@ export function createDesktopScenario(options) {
       const id = `conversation-event-${++sequence}`
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.end(
-        createSse([responseCreated(id), ...modelEvents(body, phase), responseCompleted(id)])
+        createSse([
+          responseCreated(id),
+          ...(phase === 'resumed_goal_seed'
+            ? [assistantMessage('Ready to resume a Goal.')]
+            : modelEvents(body, phase)),
+          responseCompleted(id),
+        ])
       )
       return true
     },
@@ -250,6 +362,7 @@ export function createDesktopScenario(options) {
         providerId: PROVIDER,
         aliases: ['source'],
       })
+      if (controlContextOnly) return verifyResumedGoalControlContext(control)
       await createSingleRootLocalProject(control, workspacePath, 'conversation-events')
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       active = true
@@ -338,8 +451,8 @@ export function createDesktopScenario(options) {
           if (phase === 'workflow') {
             await control.command(
               'waitFor',
-              `[data-testid="runtime-local-task-event-${address.taskId}"]`,
-              { visible: true }
+              `[data-testid="runtime-local-task-event-${address.taskId}"][data-state="waiting"]`,
+              { visible: true, timeoutMs: uiTimeoutMs }
             )
           }
           const getTask = () => rpc(control, 'runtime.tasks.get', { address })
@@ -352,6 +465,14 @@ export function createDesktopScenario(options) {
           if (phase === 'human') await human.prepare(control, getTask)
           const requestsBefore = modelRequests
           const before = await getTask()
+          if (phase === 'workflow' || phase === 'workflow_conflict') {
+            const waits = before.task.runtimeHandle?.connectionEventSubscriptions ?? []
+            assert.equal(
+              waits.filter(wait => ['preparing', 'armed', 'pending'].includes(wait.status)).length,
+              1,
+              'Alternative Git outcomes use one active wait in the original task'
+            )
+          }
           await captureScreenshot(control, `conversation-event-${phase}-waiting.png`)
           if (phase === 'goal') {
             const goal = await rpc(control, 'runtime.tasks.goal.get', { address })

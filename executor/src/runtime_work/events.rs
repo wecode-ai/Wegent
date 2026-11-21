@@ -80,7 +80,10 @@ pub(super) fn apply_runtime_event_conversation_context(
     if let Some(payload) = payload.as_object_mut() {
         payload.remove("conversationContext");
     }
-    if super::util::is_private_discussion(request) {
+    let origin = request.extra.get("origin").unwrap_or(&Value::Null);
+    if origin["type"] == "stand_in_schedule" && origin["memoryReview"] == true {
+        payload["conversationContext"] = json!("stand_in_memory_review");
+    } else if super::util::is_private_discussion(request) {
         payload["conversationContext"] = json!("private_discussion");
     }
 }
@@ -321,6 +324,7 @@ pub(crate) struct CodexNotificationEventMapper {
     proxy_retry_wait_ids: BTreeSet<String>,
     native_retry_waits: BTreeMap<String, Value>,
     completed_context_compaction_ids: BTreeSet<String>,
+    unavailable_mcp_servers: BTreeSet<String>,
 }
 
 struct ProcessTextStream {
@@ -390,6 +394,27 @@ impl CodexNotificationEventMapper {
             );
         }
         match notification.method.as_str() {
+            "mcpServer/startupStatus/updated" => {
+                let server = notification.params["name"].as_str().unwrap_or_default();
+                if matches!(
+                    notification.params["status"].as_str(),
+                    Some("failed" | "cancelled")
+                ) && self.unavailable_mcp_servers.insert(server.to_owned())
+                {
+                    self.emit_completed_process_text(
+                        &emit_context,
+                        "text",
+                        "assistant_message",
+                        Some(format!(
+                            "mcp-unavailable-{}-{}",
+                            request.subtask_id,
+                            self.unavailable_mcp_servers.len()
+                        )),
+                        wegent_mcp_runtime::interactive_mcp::MCP_UNAVAILABLE_MESSAGE.to_owned(),
+                        None,
+                    );
+                }
+            }
             "item/agentMessage/delta" => {
                 if self.is_subagent_delta(notification.params) {
                     self.emit_subagent_text_delta(
@@ -2753,6 +2778,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mcp_startup_failures_emit_one_safe_notice_without_failing_the_response() {
+        let (event_tx, mut events) = broadcast::channel(4);
+        let request = ExecutionRequest::default();
+        let mut mapper = CodexNotificationEventMapper::default();
+        for status in ["starting", "failed", "failed", "cancelled"] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device",
+                "task",
+                &request,
+                json!({"method":"mcpServer/startupStatus/updated",
+                    "params":{"name":"connector", "status":status,
+                        "failureReason":"private-credential-and-response"}}),
+            );
+        }
+        let notice = events.try_recv().unwrap();
+        assert_eq!(notice["event"], "response.block.created");
+        assert_eq!(notice["payload"]["data"]["block"]["status"], "done");
+        assert_eq!(
+            notice["payload"]["data"]["block"]["content"],
+            wegent_mcp_runtime::interactive_mcp::MCP_UNAVAILABLE_MESSAGE
+        );
+        assert!(!notice
+            .to_string()
+            .contains("private-credential-and-response"));
+        assert!(events.try_recv().is_err());
+    }
+
+    #[test]
     fn emits_private_discussion_context_from_each_source_request_without_hiding_content() {
         let (event_tx, mut events) = broadcast::channel(6);
         for private in [true, false] {
@@ -2797,6 +2851,35 @@ mod tests {
                 } else {
                     assert!(emitted["payload"].get("conversationContext").is_none());
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn marks_memory_review_events_without_changing_the_transcript() {
+        let (event_tx, mut events) = broadcast::channel(4);
+        for memory_review in [true, false] {
+            let mut request = ExecutionRequest::default();
+            request.extra.insert(
+                "origin".into(),
+                json!({"type": "stand_in_schedule", "memoryReview": memory_review}),
+            );
+            for event in ["response.block.created", "response.completed"] {
+                let data = json!({"value": "Original transcript"});
+                emit_response_event(
+                    &Some(event_tx.clone()),
+                    "device",
+                    event,
+                    "task",
+                    &request,
+                    data.clone(),
+                );
+                let emitted = events.try_recv().unwrap();
+                assert_eq!(emitted["payload"]["data"], data);
+                assert_eq!(
+                    emitted["payload"]["conversationContext"].as_str(),
+                    memory_review.then_some("stand_in_memory_review")
+                );
             }
         }
     }

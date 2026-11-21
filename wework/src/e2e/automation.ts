@@ -100,7 +100,13 @@ import {
 import { executeVerificationControlCommand } from './verification-control'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
-import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
+import {
+  desktopControlElementEnabled as desktopControlChoiceEnabled,
+  desktopControlSelectionValue,
+  chooseDesktopControlChoice,
+  selectDesktopControlChoice,
+  selectDesktopControlOption,
+} from './desktop-control-select'
 import { cloudIdentityFailure } from './cloud-identity-diagnostics'
 import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
@@ -681,7 +687,7 @@ export function seedDesktopE2ELocalModels(
       continue
     }
     saveLocalModelConfig({
-      catalogReady: localModelsCatalogReady,
+      catalogReady: localModelsCatalogReady || undefined,
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
@@ -749,8 +755,9 @@ async function seedDesktopE2ECloudConnection(
   return connection
 }
 
-export async function seedDesktopE2ERuntime(): Promise<void> {
-  const runtimeConfig = getDesktopE2ERuntimeConfig()
+async function seedDesktopE2ELocalModelRuntime(
+  runtimeConfig: DesktopE2ERuntimeConfig
+): Promise<void> {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
   const modelServerUrl = resolveDesktopE2EModelServerUrl(runtimeConfig, backendUrl)
   if (modelServerUrl) {
@@ -762,7 +769,21 @@ export async function seedDesktopE2ERuntime(): Promise<void> {
       if (configurationError) throw new Error(configurationError)
     }
   }
-  await seedDesktopE2ECloudConnection(runtimeConfig, true)
+}
+
+let desktopE2ELocalModelSeed: Promise<void> = Promise.resolve()
+
+export function waitForDesktopE2ELocalModelSeed(): Promise<void> {
+  return desktopE2ELocalModelSeed
+}
+
+export async function seedDesktopE2ERuntime(
+  beforeSeed: Promise<void> = Promise.resolve()
+): Promise<void> {
+  const runtimeConfig = beforeSeed.catch(() => undefined).then(() => getDesktopE2ERuntimeConfig())
+  desktopE2ELocalModelSeed = runtimeConfig.then(seedDesktopE2ELocalModelRuntime)
+  await desktopE2ELocalModelSeed
+  await seedDesktopE2ECloudConnection(await runtimeConfig, true)
 }
 
 export async function installWeworkAutomationBridge(
@@ -779,10 +800,11 @@ export async function installWeworkAutomationBridge(
     installLocalHarnessDiagnostics()
   }
   installDesktopE2EClipboard()
+  // Recovery controls connect before seeding; model commands must await its owner snapshot.
+  const runtimeSeed = seedDesktopE2ERuntime(beforeSeed)
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
-  await beforeSeed.catch(() => undefined)
-  await seedDesktopE2ERuntime()
+  await runtimeSeed
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
@@ -1268,7 +1290,7 @@ async function waitForDesktopControlTick(): Promise<void> {
   await new Promise<void>(resolve => window.setTimeout(resolve, 16))
 }
 
-function desktopControlEventOptions(element: HTMLElement): MouseEventInit & PointerEventInit {
+function desktopControlEventOptions(element: HTMLElement) {
   const rect = element.getBoundingClientRect()
   const clientX = Math.max(0, Math.floor(rect.left + rect.width / 2))
   const clientY = Math.max(0, Math.floor(rect.top + rect.height / 2))
@@ -1290,10 +1312,9 @@ function dispatchDesktopControlPointerEvent(
   options: MouseEventInit & PointerEventInit
 ) {
   if (typeof PointerEvent === 'function' && type.startsWith('pointer')) {
-    element.dispatchEvent(new PointerEvent(type, options))
-    return
+    return element.dispatchEvent(new PointerEvent(type, options))
   }
-  element.dispatchEvent(new MouseEvent(type.replace(/^pointer/, 'mouse'), options))
+  return element.dispatchEvent(new MouseEvent(type.replace(/^pointer/, 'mouse'), options))
 }
 
 function hoverDesktopControlElement(selector: string): string {
@@ -1515,13 +1536,44 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
   }
   const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
   const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
-  dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  const hit = element.ownerDocument.elementFromPoint(startOptions.clientX, startOptions.clientY)
+  const layers = Array.from(
+    element.ownerDocument.querySelectorAll<HTMLElement>('[data-slot$="-content"][data-open]'),
+    layer => ({
+      slot: layer.dataset.slot,
+      testId: layer.dataset.testid,
+      modal: layer.getAttribute('aria-modal'),
+      containsSource: layer.contains(element),
+    })
+  )
+  const pressed = dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  const start = {
+    source: command.selector,
+    target: command.target,
+    start: [startOptions.clientX, startOptions.clientY],
+    end: [endOptions.clientX, endOptions.clientY],
+    sourceConnected: element.isConnected,
+    targetConnected: target.isConnected,
+    hitSource: hit !== null && element.contains(hit),
+    hitId: hit?.closest('[data-testid]')?.getAttribute('data-testid'),
+    defaultPrevented: !pressed,
+    layers,
+  }
   await waitForDesktopControlTick()
-  dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  const moved = dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
   dispatchDesktopControlPointerEvent(element, 'pointermove', endOptions)
   await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
   await waitForDesktopControlTick()
+  console.info(
+    `[desktop-e2e-drag-start] ${JSON.stringify({
+      ...start,
+      moveDefaultPrevented: !moved,
+      previews: document.querySelectorAll('[data-drag-preview]').length,
+      dragging: element.hasAttribute('data-dragging'),
+      pressed: element.getAttribute('aria-pressed'),
+    })}`
+  )
   activeDesktopControlDrag = {
     endOptions,
     sourceElement: element,
@@ -1734,7 +1786,7 @@ async function doubleClickDesktopControlElement(selector: string): Promise<strin
   return secondElement.textContent?.trim() ?? ''
 }
 
-function desktopControlElementValue(element: HTMLElement): string {
+async function desktopControlElementValue(element: HTMLElement): Promise<string> {
   if (
     element instanceof HTMLInputElement ||
     element instanceof HTMLTextAreaElement ||
@@ -1745,6 +1797,8 @@ function desktopControlElementValue(element: HTMLElement): string {
   const declaredValue =
     element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
   if (declaredValue !== null && declaredValue !== undefined) return declaredValue
+  const selectionValue = await desktopControlSelectionValue(element)
+  if (selectionValue !== undefined) return selectionValue
   if (element.isContentEditable) {
     const propertyValue = (element as HTMLElement & { value?: unknown }).value
     if (
@@ -1764,7 +1818,8 @@ function desktopControlElementValue(element: HTMLElement): string {
 
 async function waitForDesktopControlElement(
   command: DesktopControlCommand,
-  onMatch?: (element: HTMLElement) => string
+  onMatch?: (element: HTMLElement) => string | Promise<string>,
+  isEnabled = desktopControlElementEnabled
 ): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -1789,9 +1844,7 @@ async function waitForDesktopControlElement(
       : elements
     const text = matchingElements.map(element => element.textContent?.trim() ?? '').join('\n')
     const hasExpectedText = !command.text || text.includes(command.text)
-    const matchedElement = matchingElements.find(
-      element => !command.enabled || desktopControlElementEnabled(element)
-    )
+    const matchedElement = matchingElements.find(element => !command.enabled || isEnabled(element))
     if (matchedElement && hasExpectedText) {
       matchedAt ??= Date.now()
       if (Date.now() - matchedAt >= (command.stableMs ?? 0)) {
@@ -1809,7 +1862,7 @@ async function waitForDesktopControlElement(
       dataPresentation: element.dataset.presentation ?? null,
       hidden: element.hidden,
       ariaHidden: element.getAttribute('aria-hidden'),
-      enabled: desktopControlElementEnabled(element),
+      enabled: isEnabled(element),
       state: { ...element.dataset },
       rendered: desktopControlElementRendered(element),
       visible: desktopControlElementVisible(element),
@@ -3040,6 +3093,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         attributeNames?: string[]
         waitForMatch?: boolean
         includeSelection?: boolean
+        clickSelector?: string
       }
       if (
         options.attributeNames !== undefined &&
@@ -3054,6 +3108,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           options.attributeNames ?? [],
           options.includeSelection === true
         )
+      if (options.clickSelector) {
+        const trigger = findDesktopControlElements(options.clickSelector)[0]
+        if (!trigger || !desktopControlElementEnabled(trigger)) {
+          throw new Error(`Unable to activate "${options.clickSelector}" before measuring`)
+        }
+        const observation = waitForDesktopControlElement(command, snapshot)
+        trigger.click()
+        return observation
+      }
       return options.waitForMatch === true
         ? waitForDesktopControlElement(command, snapshot)
         : snapshot()
@@ -3496,8 +3559,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
     }
     case 'chooseWhenEnabled': {
-      return waitForDesktopControlElement({ ...command, enabled: true, visible: true }, element =>
-        chooseDesktopControlOption(element, command.value ?? '')
+      return waitForDesktopControlElement(
+        { ...command, enabled: true, visible: true },
+        element =>
+          chooseDesktopControlChoice(
+            element,
+            command.value ?? '',
+            command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+          ),
+        desktopControlChoiceEnabled
       )
     }
     case 'setExpanded': {
@@ -3979,10 +4049,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'select': {
       return waitForDesktopControlElement({ ...command, enabled: true }, element => {
-        if (!(element instanceof HTMLSelectElement)) {
-          throw new Error(`Selector "${command.selector}" is not a select element`)
-        }
-        return selectDesktopControlOption(element, command.value ?? '', command.by)
+        return selectDesktopControlChoice(
+          element,
+          command.value ?? '',
+          command.by,
+          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+        )
       })
     }
     case 'submit': {
@@ -4192,7 +4264,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
   }
 }
 
-function installDesktopControlClient() {
+export function installDesktopControlClient() {
   if (!isDesktopRuntime()) return
   const url = desktopControlUrl()
   const windowLabel = getDesktopE2ERuntimeConfig().windowLabel ?? getDesktopWindowLabel()
@@ -4201,9 +4273,9 @@ function installDesktopControlClient() {
     (windowLabel !== 'main' &&
       windowLabel !== 'popout-window' &&
       windowLabel !== 'process-explorer' &&
+      windowLabel !== 'system-drag-panel' &&
       !windowLabel.startsWith('workspace-') &&
-      !windowLabel.startsWith('plugin-development-')) ||
-    window.location.pathname.startsWith('/system-drag')
+      !windowLabel.startsWith('plugin-development-'))
   ) {
     return
   }

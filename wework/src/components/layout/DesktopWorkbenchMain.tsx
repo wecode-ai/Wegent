@@ -1,44 +1,44 @@
-import { useElementGeometry } from '@wegent/collaboration/dom-events'
-import { createDesktopWorkbenchWorkspaceSource } from './desktopWorkbenchWorkspaceSource'
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { useRuntimeTaskSummaryResolver } from '@/features/workbench/runtimeTaskLifecycle'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
+import { WORKBENCH_MAIN_HEADER_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
 import {
   defaultAppearance,
   getWorkbenchBackground,
   useOptionalAppearance,
 } from '@/features/appearance'
-import { WORKBENCH_MAIN_HEADER_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
-import { closeLocalTerminal } from '@/lib/local-terminal'
+import { useRuntimeTaskSummaryResolver } from '@/features/workbench/runtimeTaskLifecycle'
+import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
+import { closeLocalTerminal } from '@/lib/local-terminal'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
+import { useElementGeometry } from '@wegent/collaboration/dom-events'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import styles from './DesktopWorkbenchMain.module.css'
+import {
+  DEFAULT_ENVIRONMENT_INFO_VISIBILITY,
+  type DesktopWorkbenchMainProps,
+  type EnvironmentInfoVisibilityState,
+  sanitizeEmbeddedBrowserLabelSegment,
+} from './desktopWorkbenchMainHelpers'
+import { DesktopWorkbenchPane } from './DesktopWorkbenchPane'
+import { createDesktopWorkbenchWorkspaceSource } from './desktopWorkbenchWorkspaceSource'
+import type {
+  LocalHarnessSessionRegistrationOptions,
+  LocalHarnessWorkbenchSession,
+} from './localHarnessWorkbench'
 import {
   getRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
   resolveRuntimeWorkbenchPane,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
-import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
-import styles from './DesktopWorkbenchMain.module.css'
-import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
 import { SingleWorkbenchPane } from './workbenchPanePresentation'
-import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
-import type {
-  LocalHarnessSessionRegistrationOptions,
-  LocalHarnessWorkbenchSession,
-} from './localHarnessWorkbench'
-import {
-  type EnvironmentInfoVisibilityState,
-  DEFAULT_ENVIRONMENT_INFO_VISIBILITY,
-  type DesktopWorkbenchMainProps,
-  sanitizeEmbeddedBrowserLabelSegment,
-} from './desktopWorkbenchMainHelpers'
-import { DesktopWorkbenchPane } from './DesktopWorkbenchPane'
+import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
   const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(state.runtimeWork)

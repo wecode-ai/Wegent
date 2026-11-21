@@ -7,13 +7,14 @@ import { useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import { MarkdownLinkScope } from './markdownLinkScope'
 import { useMarkdownServices } from './MarkdownServices'
 import {
+  classifyMarkdownLink,
   getAuthenticatedAttachmentId,
   getMarkdownAttachmentId,
-  classifyMarkdownLink,
   isAuthenticatedAttachmentImageSrc,
   localMarkdownImagePath,
   resolveDirectMarkdownImageSrc,
 } from './assistantMarkdownLinks'
+import { Button as ControlButton } from './Button'
 export function AssistantMarkdownImage({
   src,
   alt,
@@ -138,7 +139,8 @@ export function AssistantMarkdownImage({
       >
         {translate('image.failed')}: {alt || rawSrc}
         {rawSrc && !insideLink ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="assistant-markdown-image-retry"
             className="ml-2 min-h-11 min-w-11 underline md:min-h-0 md:min-w-0"
@@ -149,7 +151,7 @@ export function AssistantMarkdownImage({
             }}
           >
             {translate('image.retry')}
-          </button>
+          </ControlButton>
         ) : null}
       </span>
     )
@@ -179,7 +181,8 @@ export function AssistantMarkdownImage({
     />
   )
   return openMarkdownImage && readOwnedImage && !insideLink ? (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="assistant-markdown-image-open"
       aria-label={translate('image.open')}
@@ -193,7 +196,7 @@ export function AssistantMarkdownImage({
       }}
     >
       {image}
-    </button>
+    </ControlButton>
   ) : (
     image
   )

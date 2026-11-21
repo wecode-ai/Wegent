@@ -1,3 +1,5 @@
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { resolveIssueReference } from './resolveIssueReference'
@@ -9,7 +11,7 @@ import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import { IndependentIssuesProvider } from './IndependentIssuesProvider'
-import { createPersonalIssuesApi } from '@/api/personalIssues'
+import { useCloudIssueApis } from './useCloudIssueApis'
 import { PersonalIssuesView } from './PersonalIssuesView'
 
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -86,6 +88,7 @@ import {
 } from './weworkCollaborationRuntime'
 import type { WeworkCollaborationPlatformProps } from './weworkCollaborationTypes'
 import { WeworkSharedProject } from './WeworkSharedProject'
+import { useCollaborationProjectPins } from './useCollaborationProjectPins'
 export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
   const loadProjectCollaborationGroupGenerationModels = useCallback(async () => {
@@ -131,20 +134,21 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
     scope: string
     selection: string | null | undefined
   }>({ scope: '', selection: undefined })
-  const personalIssuesApi = useMemo(
-    () =>
-      cloudConnection.isConnected
-        ? createPersonalIssuesApi(
-            createHttpClient({
-              baseUrl: templateBackend,
-              getToken: () => cloudConnection.token,
-              redirectOnUnauthorized: false,
-            })
-          )
-        : null,
-    [cloudConnection.isConnected, cloudConnection.token, templateBackend]
-  )
+  const focusKey = props.focusedPersonalIssueId
+    ? (props.focusedCommentRequestKey ?? props.focusedPersonalIssueId)
+    : null
+  const [appliedFocus, setAppliedFocus] = useState<{ scope: string; key: string | null }>()
+  const personalIssuesApi = useCloudIssueApis(cloudConnection)?.personal ?? null
   const templateScope = `${templateBackend}:${cloudConnection.user?.id ? 'account' : 'local'}:${templateOwnerId}`
+  if (
+    personalIssuesApi &&
+    (appliedFocus?.scope !== templateScope || appliedFocus.key !== focusKey)
+  ) {
+    setAppliedFocus({ scope: templateScope, key: focusKey })
+    if (props.focusedPersonalIssueId)
+      setIndependentSelection({ scope: templateScope, selection: props.focusedPersonalIssueId })
+  }
+  const projectPins = useCollaborationProjectPins(templateScope)
   const independentIssueSelection =
     independentSelection.scope === templateScope ? independentSelection.selection : undefined
   const setIndependentIssueSelection = (selection: string | null | undefined) =>
@@ -616,6 +620,13 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
               />
             ),
             openProjectConversation,
+            projectPins: {
+              ...projectPins,
+              heading: t('workbench.pinned'),
+              pinLabel: t('workbench.pin_project'),
+              unpinLabel: t('workbench.unpin_project'),
+              saveError: t('workbench.collaboration_project_pin_save_failed'),
+            },
             renderProjectSidebarBadge: project => {
               const enabled = standInProjects.has(
                 `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
@@ -717,12 +728,19 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
                     if (event.target === event.currentTarget) onClose()
                   }}
                 >
-                  <section
-                    aria-modal="true"
-                    className="w-full max-w-lg rounded-lg border border-border bg-popover p-5 shadow-lg"
-                    role="dialog"
+                  <DialogSurface
+                    onClose={onClose}
+                    render={
+                      <section
+                        aria-labelledby="local-device-resource-title"
+                        className="w-full max-w-lg rounded-lg border border-border bg-popover p-5 shadow-lg"
+                      />
+                    }
                   >
-                    <h2 className="text-sm font-semibold text-text-primary">
+                    <h2
+                      id="local-device-resource-title"
+                      className="text-sm font-semibold text-text-primary"
+                    >
                       {locale === 'zh-CN' ? '本地设备' : 'Local device'}
                     </h2>
                     <p className="mt-2 text-sm leading-6 text-text-secondary">
@@ -731,16 +749,17 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
                         : 'This device is already part of your personal group. Install and enable its execution environments to run Agents and teams locally.'}
                     </p>
                     <div className="mt-5 flex justify-end">
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         className="inline-flex h-8 items-center rounded-md bg-text-primary px-4 text-sm text-background"
                         data-testid="local-device-resource-confirm"
                         onClick={onClose}
                         type="button"
                       >
                         {locale === 'zh-CN' ? '知道了' : 'Done'}
-                      </button>
+                      </ControlButton>
                     </div>
-                  </section>
+                  </DialogSurface>
                 </div>
               ),
             renderProjectImporter: props.renderLocalProjectImporter
@@ -826,7 +845,8 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
               : undefined,
             sidebarHeaderActions: (
               <Tooltip label={t('todo.search_issues', '搜索 Issue')}>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="collaboration-issue-search-open"
                   aria-label={t('todo.search_issues', '搜索 Issue')}
@@ -834,7 +854,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
                 >
                   <Search className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </Tooltip>
             ),
             workspaceOwnerOptions,
@@ -855,6 +875,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
             const runtimePort = issueRuntimePort(project.project_store, props.services)
             return (
               <WeworkSharedProject
+                workspaceActive={props.workspaceActive}
                 api={projectApi}
                 projectCatalogApi={platformApi?.projects}
                 detailServices={

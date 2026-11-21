@@ -18,7 +18,7 @@ describe('mobile error copy follows PC classification', () => {
     const raw =
       '远程设备不可用：fetch failed: UnexpectedException: The request timed out. (at ExpoModulesCore/Promise.swift:56)'
     const error = describeMobileError(raw)
-    expect(error.title).toBe('连接未完成')
+    expect(error.title).toBe('请求超时')
     expect(error.message).not.toContain('Promise.swift')
     expect(error.message).not.toContain('fetch')
     expect(error.details).toContain('Promise.swift:56')
@@ -42,6 +42,25 @@ describe('mobile error copy follows PC classification', () => {
   it('uses structured errors from the shared parser', () => {
     const error = describeMobileError({ error: { type: 'quota_exceeded', message: 'detail' } })
     expect(error.title).toBe('模型额度已用尽')
+  })
+
+  it.each([
+    ['authentication_expired', '登录或凭据已失效'],
+    ['skills_unmanaged_entries', 'Skills 目录与管理记录不一致'],
+    ['skill_deploy_failed', '技能准备失败'],
+    ['executor_start_failed', '执行器启动失败'],
+    ['workspace_unavailable', '工作区不可用'],
+    ['tool_execution_failed', '工具执行失败'],
+    ['connector_unavailable', '连接器暂时不可用'],
+    ['plugin_load_failed', '插件加载失败'],
+    ['stream_protocol_error', '响应流解析失败'],
+    ['internal_error', '平台内部错误'],
+    ['storage_error', '对话数据读写失败'],
+    ['dispatch_error', '任务调度失败'],
+  ])('covers the shared %s classification', (code, title) => {
+    const error = describeMobileError({ error: { code, message: 'detail' } })
+    expect(error.title).toBe(title)
+    expect(error.message).not.toBe('detail')
   })
 
   it('redacts URL credentials, query/fragment secrets, headers and structured keys', () => {

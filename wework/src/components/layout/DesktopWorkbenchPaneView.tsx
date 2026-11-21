@@ -586,6 +586,7 @@ export function DesktopWorkbenchPaneView({
       }}
     >
       {content}
+      {model.panelActionDialogs}
     </AttachmentPreviewContext.Provider>
   )
 }

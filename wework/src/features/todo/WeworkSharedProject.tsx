@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { createWeworkProjectSession } from './weworkProjectSession'
 
 import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
@@ -48,6 +49,8 @@ import { issueDispatchPersonalTaskInput } from '@/features/notifications/Notific
 import { humanTaskDispatchInput } from './humanTaskDispatch'
 
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useCloudIssueApis } from './useCloudIssueApis'
+import { SharedIssueSourceButton } from './SharedIssueSourceButton'
 
 import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
@@ -72,6 +75,7 @@ import {
 } from './weworkCollaborationRuntime'
 import type { WeworkSharedProjectProps } from './weworkCollaborationTypes'
 export function WeworkSharedProject({
+  workspaceActive,
   api,
   projectCatalogApi,
   detailServices,
@@ -115,6 +119,7 @@ export function WeworkSharedProject({
   const detailExpanded = personalIssue?.detailExpanded ?? localDetailExpanded
   const setDetailExpanded = personalIssue?.onDetailExpandedChange ?? setLocalDetailExpanded
   const cloudConnection = useOptionalCloudConnection()
+  const personalIssuesApi = useCloudIssueApis(cloudConnection)?.personal
   const sessionOwner = [
     project.id,
     project.project_store,
@@ -227,7 +232,8 @@ export function WeworkSharedProject({
       renderBoardToolbarAction: onOpenProjectConversation
         ? () => (
             <Tooltip label={t('workbench.project_space_chat.open')} side="bottom">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="project-space-chat-open"
                 aria-label={t('workbench.project_space_chat.open')}
@@ -242,7 +248,7 @@ export function WeworkSharedProject({
                 <span className="project-board-action-label">
                   {t('workbench.project_space_chat.open')}
                 </span>
-              </button>
+              </ControlButton>
             </Tooltip>
           )
         : undefined,
@@ -585,8 +591,19 @@ export function WeworkSharedProject({
       showFullscreenControl={!personalIssue}
       headerActions={
         <>
+          {project.project_store === 'backend' &&
+            personalIssuesApi &&
+            Number(cloudConnection.user?.id) === issue.created_by_user_id && (
+              <SharedIssueSourceButton
+                key={issue.id}
+                api={personalIssuesApi}
+                issueId={issue.id}
+                onOpen={closeDrawers}
+              />
+            )}
           {personalIssue?.presentation === 'drawer' ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="personal-issue-detail-expand"
               aria-label={t(
@@ -608,10 +625,11 @@ export function WeworkSharedProject({
               ) : (
                 <Maximize2 aria-hidden="true" className="h-4 w-4" />
               )}
-            </button>
+            </ControlButton>
           ) : null}
           {personalIssue?.onOpenInProject ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="personal-home-open-in-project"
               aria-label={t('personalHome.openInProject')}
@@ -620,7 +638,7 @@ export function WeworkSharedProject({
               className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md md:h-8 md:w-8 text-text-secondary hover:bg-muted hover:text-text-primary"
             >
               <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
-            </button>
+            </ControlButton>
           ) : null}
         </>
       }
@@ -697,6 +715,7 @@ export function WeworkSharedProject({
 
   const renderIssueDetail = (context: CollaborationIssueDetailRenderContext) => (
     <IssueConversationDrawers
+      active={workspaceActive}
       embedded={Boolean(personalIssue)}
       key={context.issue.id}
       label={createCollaborationTranslator(locale)('todo.issue_details')}

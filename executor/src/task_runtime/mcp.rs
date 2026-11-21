@@ -18,6 +18,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::protocol::ExecutionRequest;
@@ -43,6 +44,7 @@ mod parent_issue;
 mod stand_in;
 mod stand_in_questions;
 pub(crate) mod stand_in_tasks;
+pub(crate) use context::is_independent_issue_origin;
 #[cfg(test)]
 use context::role_categories;
 use context::space_context_grant;
@@ -135,6 +137,7 @@ pub(crate) struct SpaceMcpRequestContext {
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
+    stand_in_role_delegation: bool,
     control: Option<crate::workbench_control::ControlContext>,
     current_device_id: Option<String>,
     principal_id: Option<String>,
@@ -208,6 +211,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_role_delegation: false,
             control: None,
             current_device_id: None,
             principal_id: None,
@@ -224,6 +228,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_role_delegation: false,
             control: None,
             current_device_id: None,
             principal_id: None,
@@ -1976,7 +1981,7 @@ async fn call_backend_tool(
     arguments: &Value,
 ) -> Result<Value, String> {
     let client = reqwest::Client::new();
-    let base = format!("{}/api/v1", context.backend_url.trim_end_matches('/'));
+    let base = crate::agents::runtime_capabilities::api_url(context.backend_url, "/api/v1")?;
     let project_id = context.project_id;
     let grant = context.grant;
     let auth_token = context.auth_token;
@@ -2308,12 +2313,31 @@ async fn call_backend_tool(
             let item = task_id()?;
             let mut body = json!({
                 "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
-                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([]))
+                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([])),
             });
-            // A model cannot select or replace its publication identity. The
-            // server independently validates the current owned Issue binding.
-            if let Some(address) = grant
-                .filter(|grant| grant.item_id.as_deref() == Some(item))
+            if let Some(target) = arguments.get("reply_to_comment_id") {
+                body["reply_to_comment_id"] = target.clone();
+            }
+            let issue_grant = grant.filter(|grant| grant.item_id.as_deref() == Some(item));
+            if let Some((grant, dispatch_id)) = issue_grant
+                .filter(|grant| grant.role.is_some())
+                .and_then(|grant| grant.dispatch_id.as_deref().map(|id| (grant, id)))
+            {
+                let address = delivery_address(Some(grant)).map_err(|error| error.to_string())?;
+                let message_id = if body["reply_to_comment_id"].is_string() {
+                    let message_key =
+                        json!(["explicit-reply", body["reply_to_comment_id"], body["body"]]);
+                    format!("{:x}", Sha256::digest(message_key.to_string().as_bytes()))
+                } else {
+                    uuid::Uuid::new_v4().to_string()
+                };
+                body["collaboration"] = json!({
+                    "device_id": address.device_id,
+                    "task_id": address.task_id,
+                    "dispatch_id": dispatch_id,
+                    "message_id": message_id
+                });
+            } else if let Some(address) = issue_grant
                 .and_then(|grant| delivery_address(Some(grant)).ok())
             {
                 body["assistant_source"] = json!({
@@ -2321,11 +2345,15 @@ async fn call_backend_tool(
                     "requires_confirmation": true
                 });
             }
-            client.post(format!(
+            let request = client.post(format!(
                 "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
                 encode_segment(project_id),
                 encode_segment(item)
-            )).json(&body)
+            )).json(&body);
+            if body["collaboration"].is_object() {
+                return comments::send_collaboration(request.bearer_auth(auth_token)).await;
+            }
+            request
         },
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
@@ -3166,7 +3194,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "add_board_item_comment",
-            "Post an Issue comment. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Pass mentions as [{\"type\":\"user\",\"id\":\"52\",\"label\":\"qindi\"}]. Plain @name text does not notify. Do not send a separate notification for the same mention.",
+            "Post an Issue comment or reply. To reply in an existing thread, read list_board_item_comments and pass the target's id as reply_to_comment_id. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Plain @name text does not notify. Do not send a separate notification for the same mention.",
             comments::create_schema(),
         ),
         tool(
@@ -4273,7 +4301,7 @@ mod tests {
             }),
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let backend_url = format!("http://{address}");
+        let backend_url = format!("http://{address}/api/");
         let context = BackendToolContext {
             backend_url: &backend_url,
             auth_token: "unit-token",

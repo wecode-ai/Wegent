@@ -1,10 +1,11 @@
-import { useDocumentEvent } from '@wegent/collaboration/dom-events'
-import { Check, Loader2, MessageSquare, Minus, Undo2 } from 'lucide-react'
-import { useRef } from 'react'
 import type { GitPatchAction } from '@/api/environment'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isImeComposingEvent } from '@/lib/ime'
+import { Popover, PopoverContent } from '@wegent/collaboration/controls/Popover'
+import { controlPopup } from '@wegent/collaboration/controls/recipes'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Loader2, MessageSquare, Minus, Undo2 } from 'lucide-react'
 import type { DiffCommentSelection } from './fileChangesReviewUtils'
 
 export function ReviewPatchActionButton({
@@ -25,7 +26,8 @@ export function ReviewPatchActionButton({
   const Icon = action === 'revert' ? Undo2 : action === 'unstage' ? Minus : Check
 
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={`file-changes-review-${action}-${scope}-button`}
       disabled={disabled}
@@ -39,7 +41,7 @@ export function ReviewPatchActionButton({
       ) : (
         <Icon className="h-3.5 w-3.5" />
       )}
-    </button>
+    </ControlButton>
   )
 }
 
@@ -57,75 +59,72 @@ export function DiffCommentComposer({
   onSubmit: () => void
 }) {
   const { t } = useTranslation('chat')
-  const composerRef = useRef<HTMLDivElement>(null)
   const hasDraft = Boolean(comment.trim())
 
-  // An empty composer dismisses like a popover; a draft stays until cancelled.
-  useEscapeKey(onCancel, !hasDraft, composerRef)
-
-  useDocumentEvent(
-    'pointerdown',
-    event => {
-      // A diff line-number press moves the composer instead of closing it.
-      if (event.defaultPrevented) return
-      if (!composerRef.current?.contains(event.target as Node)) onCancel()
-    },
-    { enabled: !hasDraft }
-  )
-
   return (
-    <div
-      ref={composerRef}
-      data-testid="file-changes-review-comment-composer"
-      className="absolute bottom-4 left-4 right-4 z-popover rounded-xl border border-border bg-background p-3 shadow-xl"
-      onKeyDown={event => {
-        if (event.key !== 'Escape' || !hasDraft || isImeComposingEvent(event)) return
-        // Keep the draft open without letting Escape reach layers behind it.
-        event.preventDefault()
-        event.stopPropagation()
+    <Popover
+      open
+      dismissible={!hasDraft}
+      onOpenChange={(next, details) => {
+        if (next) return
+        if (hasDraft || details.event?.defaultPrevented) {
+          details.cancel()
+          return
+        }
+        onCancel()
       }}
     >
-      <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
-        <MessageSquare className="h-4 w-4" />
-        <span className="min-w-0 flex-1 truncate">
-          {selection.path}:{selection.startLine}
-          {selection.endLine === selection.startLine ? '' : `-${selection.endLine}`}
-        </span>
-      </div>
-      <textarea
-        autoFocus
-        data-testid="file-changes-review-comment-input"
-        value={comment}
-        onChange={event => onCommentChange(event.target.value)}
-        onKeyDown={event => {
-          if (isImeComposingEvent(event)) return
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && hasDraft) {
-            event.preventDefault()
-            onSubmit()
-          }
-        }}
-        placeholder={t('file_changes.comment_placeholder')}
-        className="min-h-20 w-full resize-none rounded-lg border border-border bg-surface p-2 text-sm outline-none keyboard:focus:border-primary"
-      />
-      <div className="mt-2 flex justify-end gap-2">
-        <button
-          type="button"
-          data-testid="file-changes-review-comment-cancel-button"
-          className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted"
-          onClick={onCancel}
-        >
-          {t('file_changes.cancel')}
-        </button>
-        <button
-          type="button"
-          data-testid="file-changes-review-add-comment-button"
-          className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
-          disabled={!comment.trim()}
-          onClick={onSubmit}
-        >
-          {t('file_changes.add_comment')}
-        </button>
-      </div>
-    </div>
+      <PopoverContent
+        inline
+        aria-label={t('file_changes.comment_placeholder')}
+        data-testid="file-changes-review-comment-composer"
+        initialFocus='[data-testid="file-changes-review-comment-input"]'
+        className={controlPopup + ' absolute bottom-4 left-4 right-4 p-3'}
+      >
+        <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
+          <MessageSquare className="h-4 w-4" />
+          <span className="min-w-0 flex-1 truncate">
+            {selection.path}:{selection.startLine}
+            {selection.endLine === selection.startLine ? '' : `-${selection.endLine}`}
+          </span>
+        </div>
+        <ControlTextarea
+          data-testid="file-changes-review-comment-input"
+          value={comment}
+          onChange={event => onCommentChange(event.target.value)}
+          onKeyDown={event => {
+            if (isImeComposingEvent(event)) return
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && hasDraft) {
+              event.preventDefault()
+              onSubmit()
+            }
+          }}
+          placeholder={t('file_changes.comment_placeholder')}
+          className="min-h-20 w-full resize-none rounded-lg border border-border bg-surface p-2 text-sm outline-none keyboard:focus:border-primary"
+        />
+        <div className="mt-2 flex justify-end gap-2">
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid="file-changes-review-comment-cancel-button"
+            className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted"
+            onClick={onCancel}
+          >
+            {t('file_changes.cancel')}
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
+            type="button"
+            data-testid="file-changes-review-add-comment-button"
+            className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
+            disabled={!comment.trim()}
+            onClick={onSubmit}
+          >
+            {t('file_changes.add_comment')}
+          </ControlButton>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }

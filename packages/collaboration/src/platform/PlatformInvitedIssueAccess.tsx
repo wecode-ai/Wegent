@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { ProjectLoadingSkeleton } from '../project-shell'
 import type { createCollaborationTranslator } from '../i18n'
 
@@ -16,14 +17,15 @@ export function PlatformInvitedIssueAccess({
     return (
       <div className="collaboration-alert" role="alert">
         {error}
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="collaboration-issue-access-retry"
           onClick={retry}
           className="min-h-11 px-2 underline md:min-h-8"
         >
           {translate('common.retry', '重试')}
-        </button>
+        </ControlButton>
       </div>
     )
   if (loadError)

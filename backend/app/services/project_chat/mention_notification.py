@@ -39,30 +39,25 @@ def notify_project_chat_mentions(
 
     if not mentions:
         return
-    recipient_ids = [
-        user_id
-        for user_id in _mentioned_member_ids(
-            mentions, project_participant_ids(db, project)
-        )
-        if user_id != actor_user_id
-    ]
-    if not recipient_ids:
-        return
-    targets = [
-        _authorized_mention_target(db, project, task_id, item, recipient_id)
-        for recipient_id in recipient_ids
-    ]
-
-    preview = comment_preview(content)
-    target = targets[0]
-    message = mention_message(
-        actor_name=actor_name,
-        preview=preview,
-        comment_id=comment_id,
-        target=target,
-        reply_preview=reply_preview,
+    recipient_ids = _mentioned_member_ids(
+        mentions, project_participant_ids(db, project)
     )
-    for recipient_id in recipient_ids:
+    for recipient_id in sorted(recipient_ids):
+        target = _authorized_mention_target(db, project, task_id, item, recipient_id)
+        if task_id:
+            _enqueue_issue_mention_wakeup(
+                db, str(project.id), task_id, comment_id, recipient_id
+            )
+        if recipient_id == actor_user_id:
+            continue
+
+        message = mention_message(
+            actor_name=actor_name,
+            preview=comment_preview(content),
+            comment_id=comment_id,
+            target=target,
+            reply_preview=reply_preview,
+        )
         create_notification(
             db,
             user_id=recipient_id,
@@ -75,6 +70,26 @@ def notify_project_chat_mentions(
             comment_id=message.comment_id,
             payload=message.payload,
         )
+
+
+def _enqueue_issue_mention_wakeup(
+    db: Session,
+    project_id: str,
+    item_id: str,
+    comment_id: str,
+    recipient_id: int,
+) -> None:
+    from app.services.project_chat.stand_in_events import enqueue_issue_wakeup
+
+    enqueue_issue_wakeup(
+        db,
+        user_id=recipient_id,
+        payload={
+            "projectId": project_id,
+            "itemId": item_id,
+            "commentId": comment_id,
+        },
+    )
 
 
 def _authorized_mention_target(

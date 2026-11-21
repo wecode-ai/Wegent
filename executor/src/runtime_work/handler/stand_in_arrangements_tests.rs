@@ -845,7 +845,15 @@ async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_polic
             .unwrap();
         assert_eq!(prepared["title"], "Review");
         assert_eq!(prepared["message"], "Review progress");
-        assert!(handler.arrangement_contexts(&store).unwrap().is_empty());
+        let contexts = handler
+            .coordination_rpc("runtime.coordination.contexts", json!({}))
+            .await
+            .unwrap();
+        let contexts = contexts["contexts"].as_array().unwrap();
+        assert_eq!(contexts.len(), 1);
+        let context = &contexts[0];
+        assert_eq!(context["id"], "personal:7");
+        assert_eq!(context["needsProcessing"], true);
         handler.arrangement_contexts(&store).unwrap();
         let events = store.stand_in_events(7).unwrap();
         assert_eq!(events.len(), 1);
@@ -853,16 +861,6 @@ async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_polic
         assert_eq!(events[0]["message"]["text"], "Review progress");
         assert_eq!(events[0]["runId"], run.id);
         assert!(handler.local_task_links(true).is_empty());
-        let contexts = handler
-            .coordination_rpc("runtime.coordination.contexts", json!({}))
-            .await
-            .unwrap();
-        let context = contexts["contexts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|context| context["id"] == "personal:7")
-            .unwrap();
         let snapshot = handler
             .coordination_rpc(
                 "runtime.coordination.snapshot",

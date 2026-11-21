@@ -1,9 +1,9 @@
-import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Button } from '@/components/ui/button'
 import { getRemoteTaskAccess, setRemoteTaskAccess } from '@/desktop/remoteTaskAccess'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './settings-ui'
 
 export function RemoteTaskAccessSetting() {
@@ -54,7 +54,7 @@ export function RemoteTaskAccessSetting() {
         <SettingsRow
           label={t('workbench.remote_task_access_title')}
           description={t('workbench.remote_task_access_description')}
-          control={
+          children={
             <SettingsSwitch
               data-testid="remote-task-access-toggle"
               checked={enabled}

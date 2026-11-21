@@ -7,90 +7,115 @@ use crate::task_runtime::personal_stand_in::{
 };
 use chrono::TimeZone;
 
+#[derive(Clone, Copy)]
+enum ConnectionSubscriber {
+    Assistant,
+    Conversation,
+    Observations,
+    SidebarLease,
+    GitDisconnects,
+}
+
+#[derive(Default)]
+pub(super) struct ConnectionSubscribers {
+    maintenance_at: i64,
+    jobs: [Option<tokio::task::JoinHandle<()>>; 5],
+}
+
 impl RuntimeWorkRpcHandler {
-    pub(super) fn start_connection_scheduler(&self) {
+    pub(super) fn start_connection_dispatcher(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
         if self
-            .connection_scheduler_started
+            .connection_dispatcher_started
             .swap(true, Ordering::AcqRel)
         {
             return;
         }
         let handler = self.clone();
-        let observers = self.clone();
         runtime.spawn(async move {
-            let mut next_maintenance = 0;
             loop {
-                let started_at = chrono::Utc::now().timestamp_millis();
-                let maintenance =
-                    Self::connection_maintenance_due(&mut next_maintenance, started_at);
-                let (conversation_result, stand_in_result) = tokio::join!(
-                    handler.poll_conversation_connection_events(maintenance),
-                    async {
-                        if maintenance {
-                            handler.poll_connection_stand_ins().await
-                        } else {
-                            Ok(())
-                        }
-                    }
-                );
-                if let Err(error) = conversation_result {
-                    log_executor_event(
-                        "Conversation event collection failed",
-                        &[("code", error.code)],
-                    );
-                }
-                if let Err(error) = stand_in_result {
-                    log_executor_event(
-                        "Connection stand-in collection failed",
-                        &[("code", error.code), ("error", error.message)],
-                    );
-                }
-                let source = handler.connection_observation_poll_delay(false, started_at);
-                let delay = Self::connection_maintenance_delay(
-                    next_maintenance,
-                    chrono::Utc::now().timestamp_millis(),
-                    source,
-                );
-                tokio::select! {
-                    _ = tokio::time::sleep(delay) => {},
-                    _ = handler.connection_observation_wakeup.notified() => {},
+                handler.connection_observation_wakeup.notified().await;
+                if let Err(error) = handler
+                    .dispatch_conversation_connection_events(false, false)
+                    .await
+                {
+                    log_executor_event("Connection event delivery failed", &[("code", error.code)]);
                 }
             }
         });
-        runtime.spawn(async move {
-            let mut next_maintenance = 0;
-            loop {
-                let started_at = chrono::Utc::now().timestamp_millis();
-                let maintenance =
-                    Self::connection_maintenance_due(&mut next_maintenance, started_at);
-                let (sources, cleanup) =
-                    tokio::join!(observers.poll_ui_observer_sources(), async {
-                        if maintenance {
-                            observers.poll_ui_observers().await
-                        } else {
-                            Ok(())
-                        }
-                    });
-                for result in [sources, cleanup] {
-                    if let Err(error) = result {
-                        log_executor_event(
-                            "UI observation maintenance deferred",
-                            &[("code", error.code)],
-                        );
-                    }
-                }
-                let source = observers.connection_observation_poll_delay(true, started_at);
-                tokio::time::sleep(Self::connection_maintenance_delay(
-                    next_maintenance,
-                    chrono::Utc::now().timestamp_millis(),
-                    source,
-                ))
-                .await;
+    }
+
+    pub(super) fn schedule_connection_subscribers(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut subscribers = self
+            .connection_subscribers
+            .lock()
+            .expect("connection subscriber lock");
+        let maintenance = Self::connection_maintenance_due(&mut subscribers.maintenance_at, now);
+        for (kind, enabled) in [
+            (ConnectionSubscriber::Assistant, maintenance),
+            (ConnectionSubscriber::Conversation, true),
+            (ConnectionSubscriber::Observations, true),
+            (ConnectionSubscriber::SidebarLease, maintenance),
+            (ConnectionSubscriber::GitDisconnects, maintenance),
+        ] {
+            let index = kind as usize;
+            if !enabled
+                || subscribers.jobs[index]
+                    .as_ref()
+                    .is_some_and(|job| !job.is_finished())
+            {
+                continue;
             }
-        });
+            let handler = self.clone();
+            subscribers.jobs[index] = Some(runtime.spawn(async move {
+                let result = match kind {
+                    ConnectionSubscriber::Assistant => handler.poll_connection_stand_ins().await,
+                    ConnectionSubscriber::Conversation => {
+                        handler
+                            .dispatch_conversation_connection_events(maintenance, true)
+                            .await
+                    }
+                    ConnectionSubscriber::Observations => {
+                        handler.poll_connection_observation_sources().await
+                    }
+                    ConnectionSubscriber::SidebarLease => handler.poll_ui_observers().await,
+                    ConnectionSubscriber::GitDisconnects => handler.poll_git_disconnections().await,
+                };
+                if let Err(error) = result {
+                    log_executor_event("Connection subscriber failed", &[("code", error.code)]);
+                }
+            }));
+        }
+    }
+
+    async fn poll_git_disconnections(&self) -> Result<(), AppIpcError> {
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        for settings in store
+            .all_personal_stand_ins(&self.device_id)
+            .map_err(settings_error)?
+        {
+            let user = settings["userId"].as_i64().unwrap_or_default();
+            if let Err(error) = self.verify_local_stand_in_owner(user) {
+                log_executor_event(
+                    "Git disconnection owner unavailable",
+                    &[("code", error.code)],
+                );
+                continue;
+            }
+            if let Err(error) = self.reconcile_git_disconnects(&store, user).await {
+                log_executor_event(
+                    "Stand-in Git disconnection reconciliation deferred",
+                    &[("code", error.code)],
+                );
+            }
+        }
+        Ok(())
     }
 
     async fn poll_connection_stand_ins(&self) -> Result<(), AppIpcError> {
@@ -100,7 +125,6 @@ impl RuntimeWorkRpcHandler {
             .map_err(settings_error)?
         {
             let user = settings["userId"].as_i64().unwrap_or_default();
-            self.reconcile_git_disconnects(&store, user).await?;
             let identities = stand_in_identities(&settings);
             let receiving: Vec<Value> = identities
                 .iter()
@@ -108,40 +132,30 @@ impl RuntimeWorkRpcHandler {
                 .cloned()
                 .collect();
             let sources = collection_sources(&receiving);
-            if !sources.is_empty() && self.backend_connection_snapshot()?.is_some() {
-                self.verify_runtime_user(&json!({"userId":user})).await?;
-            }
-            for (source, roles) in sources.values() {
-                let mut state = store
-                    .stand_in_source(user, source)
-                    .map_err(settings_error)?;
-                if state["source"]["enabledAfter"] != source["enabledAfter"]
-                    || state["source"]["generation"] != source["generation"]
-                    || state["source"]["subscriptionId"] != source["subscriptionId"]
-                {
-                    state = Value::Null;
-                }
-                if collection_retry_pending(&state, &settings["version"]) {
+            if !sources.is_empty() {
+                if let Err(error) = self.verify_local_stand_in_owner(user) {
+                    log_executor_event(
+                        "Stand-in owner verification deferred",
+                        &[("code", error.code)],
+                    );
                     continue;
                 }
-                let outcome = self
-                    .collect_connection_source(
-                        &store,
-                        user,
-                        source,
-                        roles,
-                        &state,
-                        &settings["version"],
-                    )
-                    .await;
-                save_collection_result(
-                    &store,
-                    user,
-                    source,
-                    &settings["version"],
-                    &state,
-                    outcome,
-                )?;
+            }
+            let store_ref = &store;
+            let version = &settings["version"];
+            let mut collection = stream::iter(sources.into_values())
+                .map(|(source, roles)| async move {
+                    self.poll_stand_in_connection_source(store_ref, user, &source, &roles, version)
+                        .await
+                })
+                .buffer_unordered(4);
+            while let Some(result) = collection.next().await {
+                if let Err(error) = result {
+                    log_executor_event(
+                        "Stand-in source collection deferred",
+                        &[("code", error.code)],
+                    );
+                }
             }
             for mut work in store
                 .list_stand_in_work(user, None)
@@ -189,6 +203,35 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
+    async fn poll_stand_in_connection_source(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        source: &Value,
+        roles: &[Value],
+        version: &Value,
+    ) -> Result<(), AppIpcError> {
+        let mut state = store
+            .stand_in_source(user, source)
+            .map_err(settings_error)?;
+        if ["enabledAfter", "generation", "subscriptionId"]
+            .into_iter()
+            .any(|key| state["source"][key] != source[key])
+        {
+            state = Value::Null;
+        }
+        // Older versions could leave this source waiting an hour on the same timed-out query.
+        let legacy_timeout = is_dingtalk_group_timeout(source, &state["error"]["code"])
+            && state["checkpoint"]["windowMinutes"].is_null();
+        if !legacy_timeout && collection_retry_pending(&state, version) {
+            return Ok(());
+        }
+        let outcome = self
+            .collect_connection_source(store, user, source, roles, &state, version)
+            .await;
+        save_collection_result(store, user, source, version, &state, outcome)
+    }
+
     async fn collect_connection_source(
         &self,
         store: &LocalTaskStore,
@@ -214,7 +257,7 @@ impl RuntimeWorkRpcHandler {
         });
         let page = self
             .connection_call(
-                "collect",
+                "collectObservation",
                 Some(source_provider(source)),
                 json!({"source":source,"checkpoint":checkpoint}),
             )
@@ -232,9 +275,25 @@ impl RuntimeWorkRpcHandler {
             )
         })?;
         validate_collection_version(store, user, &self.device_id, settings_version)?;
+        let event_count = messages.len();
         let page = (messages, json!({"checkpoint":checkpoint}));
-        self.collect_connection_page(store, user, source, roles, page)
-            .await
+        let next = self
+            .collect_connection_page(store, user, source, roles, page)
+            .await?;
+        if event_count > 0 {
+            log_executor_event(
+                "Stand-in source page collected",
+                &[
+                    ("provider", source_provider(source).to_owned()),
+                    (
+                        "kind",
+                        source["kind"].as_str().unwrap_or_default().to_owned(),
+                    ),
+                    ("event_count", event_count.to_string()),
+                ],
+            );
+        }
+        Ok(next)
     }
 
     async fn collect_connection_page(
@@ -420,6 +479,44 @@ fn collection_retry_pending(state: &Value, version: &Value) -> bool {
             .is_some_and(|at| at > chrono::Utc::now().timestamp_millis())
 }
 
+fn is_dingtalk_group_timeout(source: &Value, code: &Value) -> bool {
+    source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+        && source["kind"] == "group"
+        && source["collectionKey"] == "all-messages"
+        && code == "request_timeout"
+}
+
+fn recover_dingtalk_group_checkpoint(
+    source: &Value,
+    state: &mut Value,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    let checkpoint = &state["checkpoint"];
+    let after = checkpoint["after"]
+        .as_str()
+        .or_else(|| state["after"].as_str())
+        .unwrap_or_else(|| source["enabledAfter"].as_str().unwrap_or_default());
+    let window = checkpoint["windowMinutes"].as_u64().unwrap_or(15);
+    let (minutes, backlog_cutoff) = match window {
+        1 => (1, Some(now - chrono::Duration::minutes(1))),
+        5 => (1, Some(now - chrono::Duration::minutes(5))),
+        _ => (5, None),
+    };
+    if let Some(cutoff) = backlog_cutoff.filter(|cutoff| {
+        chrono::DateTime::parse_from_rfc3339(after).is_ok_and(|start| start < *cutoff)
+    }) {
+        log_executor_event(
+            "DingTalk group collection skipped timed-out backlog",
+            &[("from", after.to_owned()), ("until", cutoff.to_rfc3339())],
+        );
+        state["checkpoint"] =
+            json!({"after":cutoff.to_rfc3339(),"cursor":"0","windowMinutes":minutes});
+    } else if window != minutes {
+        // A cursor belongs to its original time window. Replay from the same start when shrinking.
+        state["checkpoint"] = json!({"after":after,"cursor":"0","windowMinutes":minutes});
+    }
+}
+
 fn save_collection_result(
     store: &LocalTaskStore,
     user: i64,
@@ -445,17 +542,32 @@ fn save_collection_result(
             if let Some(delay) = error.retry_after_ms.or_else(|| {
                 super::super::connection_host::collection_runtime_retry_after_ms(&error.code)
             }) {
+                let now = chrono::Utc::now();
                 let failures = state["failures"]
                     .as_u64()
                     .unwrap_or(0)
                     .saturating_add(1)
                     .min(10);
                 next["failures"] = json!(failures);
-                // Apply the base delay on the first failure, then back off repeated failures.
-                next["retryAt"] = json!(
-                    chrono::Utc::now().timestamp_millis()
-                        + ((30_000_i64 << failures.saturating_sub(1).min(7)).min(3_600_000))
-                            .max(delay as i64)
+                let retry_after_ms = if is_dingtalk_group_timeout(source, &next["error"]["code"]) {
+                    recover_dingtalk_group_checkpoint(source, &mut next, now);
+                    30_000
+                } else {
+                    (30_000_i64 << failures.saturating_sub(1).min(7)).min(3_600_000)
+                }
+                .max(delay as i64);
+                next["retryAt"] = json!(now.timestamp_millis() + retry_after_ms);
+                log_executor_event(
+                    "Stand-in source collection retry scheduled",
+                    &[
+                        ("provider", source_provider(source).to_owned()),
+                        (
+                            "kind",
+                            source["kind"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                        ("code", error.code),
+                        ("retry_after_ms", retry_after_ms.to_string()),
+                    ],
                 );
             } else {
                 next.as_object_mut().unwrap().remove("retryAt");

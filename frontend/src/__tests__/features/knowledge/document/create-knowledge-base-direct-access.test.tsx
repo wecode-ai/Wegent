@@ -34,30 +34,43 @@ jest.mock('@/apis/knowledge', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
+  ...jest.requireActual('@/features/knowledge/document/components/KnowledgeBaseForm'),
   KnowledgeBaseForm: ({
-    advancedExtras,
+    documentSyncSetting,
+    navigation,
+    locationSection,
     typeSection,
     directAccessRequirement,
     onDirectAccessRequirementChange,
     onNameChange,
     onSummaryEnabledChange,
-    config,
+    retrievalConfig,
     onRetrievalConfigChange,
     onRetrievalConfigUserChange,
   }: {
-    advancedExtras?: import('react').ReactNode
+    navigation: { selectSection: (section: 'basic' | 'retrieval') => void }
+    documentSyncSetting?: import('react').ReactNode
+    locationSection?: import('react').ReactNode
     typeSection?: import('react').ReactNode
     directAccessRequirement: DirectAccessRequirement
     onDirectAccessRequirementChange: (value: DirectAccessRequirement) => void
     onNameChange: (value: string) => void
     onSummaryEnabledChange: (value: boolean) => void
-    config: RetrievalConfigDraft
+    retrievalConfig: RetrievalConfigDraft
     onRetrievalConfigChange: (value: RetrievalConfigDraft) => void
-    onRetrievalConfigUserChange: () => void
+    onRetrievalConfigUserChange: (changes: RetrievalConfigDraft) => void
   }) => (
     <div>
-      {advancedExtras}
+      {documentSyncSetting}
+      {locationSection}
       {typeSection}
+      <button type="button" onClick={() => navigation.selectSection('retrieval')}>
+        open retrieval
+      </button>
+      <button type="button" onClick={() => navigation.selectSection('basic')}>
+        open basic
+      </button>
+      <output data-testid="retrieval-threshold">{retrievalConfig.score_threshold}</output>
       <button type="button" onClick={() => onNameChange('Private docs')}>
         set name
       </button>
@@ -67,11 +80,21 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
       <button
         type="button"
         onClick={() => {
-          onRetrievalConfigChange({ ...config, top_k: 9 })
-          onRetrievalConfigUserChange()
+          onRetrievalConfigChange({ ...retrievalConfig, top_k: 9 })
+          onRetrievalConfigUserChange({ top_k: 9 })
         }}
       >
         change retrieval settings
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const retriever = { retriever_name: 'vector-store', retriever_namespace: 'default' }
+          onRetrievalConfigUserChange(retriever)
+          onRetrievalConfigChange({ ...retrievalConfig, ...retriever, retrieval_mode: 'vector' })
+        }}
+      >
+        select vector retriever
       </button>
       <button
         type="button"
@@ -113,7 +136,7 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
 
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
-    await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
+    expect(getKnowledgeBaseRetrievalProfile).not.toHaveBeenCalled()
     expect(screen.getByTestId('knowledge-base-direct-access-read')).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: 'set name' }))
     fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
@@ -130,23 +153,116 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
     })
   })
 
-  it('submits a retrieval configuration after the creator changes it', async () => {
+  it('keeps late profile defaults and submits only the creator’s retrieval edits', async () => {
     const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
     mockedGetKnowledgeBaseRetrievalProfile.mockClear()
+    let resolveProfile!: (value: unknown) => void
+    mockedGetKnowledgeBaseRetrievalProfile.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveProfile = resolve
+        })
+    )
 
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: 'set name' }))
     fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
     fireEvent.click(screen.getByRole('button', { name: 'change retrieval settings' }))
+    await act(async () =>
+      resolveProfile({
+        version: 1,
+        health: { status: 'valid', fallback_reason: null },
+        retrieval_config: { score_threshold: 0.8 },
+      })
+    )
+    expect(screen.getByTestId('retrieval-threshold')).toHaveTextContent('0.8')
     fireEvent.click(screen.getByRole('button', { name: 'common:actions.create' }))
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ retrieval_config: expect.objectContaining({ top_k: 9 }) })
+        expect.objectContaining({ retrieval_config: { top_k: 9 } })
       )
     })
+  })
+
+  it('submits the displayed mode when changing retrievers normalizes it', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
+    await waitFor(() => expect(screen.getByTestId('retrieval-threshold')).toHaveTextContent('0.3'))
+    fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'select vector retriever' }))
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        retrieval_config: {
+          retriever_name: 'vector-store',
+          retriever_namespace: 'default',
+          retrieval_mode: 'vector',
+        },
+      })
+    )
+  })
+
+  it('keeps an inactive space’s normalized mode when the default profile arrives', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    let resolveProfile!: (value: unknown) => void
+    mockedGetKnowledgeBaseRetrievalProfile
+      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveProfile = resolve
+          })
+      )
+    render(
+      <CreateKnowledgeBaseDialog
+        open
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+        showGroupSelector
+        defaultGroupId="one"
+        availableGroups={[
+          { id: 'one', name: 'team-one', displayName: 'Team One', type: 'group', canCreate: true },
+          { id: 'two', name: 'team-two', displayName: 'Team Two', type: 'group', canCreate: true },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
+    fireEvent.click(screen.getByRole('button', { name: 'select vector retriever' }))
+    fireEvent.click(screen.getByRole('button', { name: 'open basic' }))
+    fireEvent.click(screen.getByTestId('group-selector'))
+    fireEvent.click(await screen.findByTestId('create-space-option-two'))
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
+    await act(async () =>
+      resolveProfile({
+        version: 1,
+        health: { status: 'valid', fallback_reason: null },
+        retrieval_config: { retrieval_mode: 'hybrid', score_threshold: 0.8 },
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'open basic' }))
+    fireEvent.click(screen.getByTestId('group-selector'))
+    fireEvent.click(await screen.findByTestId('create-space-option-one'))
+    expect(screen.getByTestId('retrieval-threshold')).toHaveTextContent('0.8')
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedGroupId: 'one',
+        retrieval_config: {
+          retriever_name: 'vector-store',
+          retriever_namespace: 'default',
+          retrieval_mode: 'vector',
+        },
+      })
+    )
   })
 
   it('does not reuse a previous profile after reopening with an invalid profile', async () => {
@@ -156,6 +272,7 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
       <CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
     mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValueOnce({
       version: 2,
@@ -167,6 +284,7 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
     )
     rerender(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(2))
     fireEvent.click(screen.getByRole('button', { name: 'set name' }))
     fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
@@ -181,9 +299,11 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
   })
 })
 
-it('creates with automatic DingTalk updates enabled and resets it after success', async () => {
+it('creates with automatic DingTalk updates enabled and resets it on the next opening', async () => {
   const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
-  render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+  const { rerender } = render(
+    <CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />
+  )
   const toggle = screen.getByTestId('knowledge-dingtalk-auto-sync')
   expect(toggle).not.toBeChecked()
   fireEvent.click(toggle)
@@ -195,7 +315,48 @@ it('creates with automatic DingTalk updates enabled and resets it after success'
       expect.objectContaining({ dingtalk_auto_sync_enabled: true })
     )
   )
-  await waitFor(() => expect(toggle).not.toBeChecked())
+  rerender(<CreateKnowledgeBaseDialog open={false} onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+  await act(async () => {
+    rerender(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+  })
+  expect(screen.getByTestId('knowledge-dingtalk-auto-sync')).not.toBeChecked()
+})
+
+it('submits retrieval edits only in the space where they were made', async () => {
+  const onSubmit = jest.fn().mockResolvedValue(undefined)
+  render(
+    <CreateKnowledgeBaseDialog
+      open
+      onOpenChange={jest.fn()}
+      onSubmit={onSubmit}
+      showGroupSelector
+      defaultGroupId="one"
+      availableGroups={[
+        { id: 'one', name: 'team-one', displayName: 'Team One', type: 'group', canCreate: true },
+        { id: 'two', name: 'team-two', displayName: 'Team Two', type: 'group', canCreate: true },
+      ]}
+    />
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+  fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+  fireEvent.click(screen.getByRole('button', { name: 'change retrieval settings' }))
+  fireEvent.click(screen.getByTestId('group-selector'))
+  fireEvent.click(await screen.findByTestId('create-space-option-two'))
+  fireEvent.click(screen.getByTestId('submit-create-kb'))
+  expect(onSubmit).toHaveBeenLastCalledWith(
+    expect.objectContaining({ selectedGroupId: 'two', retrieval_config: undefined })
+  )
+
+  fireEvent.click(screen.getByTestId('group-selector'))
+  fireEvent.click(await screen.findByTestId('create-space-option-one'))
+  fireEvent.click(screen.getByTestId('submit-create-kb'))
+  expect(onSubmit).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      selectedGroupId: 'one',
+      retrieval_config: expect.objectContaining({ top_k: 9 }),
+    })
+  )
 })
 
 it('defaults to a filtered team and shows its space selector with inheritance stated', async () => {

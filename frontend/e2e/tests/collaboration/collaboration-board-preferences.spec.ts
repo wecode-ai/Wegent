@@ -5,6 +5,7 @@ import { expect, test, type Locator, type Page, type Request } from '@playwright
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { LoginPage } from '../../pages/auth/login.page'
 import {
+  chooseCollaborationOption,
   enableLegacyBoardGrouping,
   showAllProjectIssues,
   webApi,
@@ -99,7 +100,7 @@ for (const role of ['Developer', 'Viewer'] as const) {
         await groupBy(page, 'assignee')
         const filter = page.getByTestId('cloud-board-group-filter')
         const search = page.getByTestId('cloud-board-search')
-        await filter.selectOption(`assignee-${member!.id}`)
+        await chooseCollaborationOption(page, filter, { value: `assignee-${member!.id}` })
         await expectIssues(page, all, [mineAlpha, mineBeta])
         await search.fill('alpha')
         await expectIssues(page, all, [mineAlpha])
@@ -107,15 +108,15 @@ for (const role of ['Developer', 'Viewer'] as const) {
         await expectIssues(page, all, [])
         await search.clear()
         await expectIssues(page, all, [mineAlpha, mineBeta])
-        await filter.selectOption(`assignee-${owner.id}`)
+        await chooseCollaborationOption(page, filter, { value: `assignee-${owner.id}` })
         await expectIssues(page, all, [other])
-        await filter.selectOption('assignee-unassigned')
+        await chooseCollaborationOption(page, filter, { value: 'assignee-unassigned' })
         await expectIssues(page, all, [unassigned])
-        await filter.selectOption('')
+        await chooseCollaborationOption(page, filter, { value: '' })
         await expectIssues(page, all, all)
 
         // Only grouping is a saved personal preference; search and value filters reset.
-        await filter.selectOption(`assignee-${member!.id}`)
+        await chooseCollaborationOption(page, filter, { value: `assignee-${member!.id}` })
         await search.fill('alpha')
         await page.reload()
         await showAllProjectIssues(page)
@@ -123,7 +124,7 @@ for (const role of ['Developer', 'Viewer'] as const) {
           'data-value',
           'assignee'
         )
-        await expect(page.getByTestId('cloud-board-group-filter')).toHaveValue('')
+        await expect(page.getByTestId('cloud-board-group-filter')).toHaveAttribute('data-value', '')
         await expect(page.getByTestId('cloud-board-search')).toHaveValue('')
         await expectIssues(page, all, all)
         await page.close()

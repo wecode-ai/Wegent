@@ -21,6 +21,7 @@ export type OpenCloudAuthorizationUrl = (
 export interface CloudConnectionContextValue extends CloudConnectionSnapshot {
   isConnected: boolean
   serviceKey: string
+  getTokenForAccount?: (apiBaseUrl: string | undefined, userId: number | undefined) => string | null
   connectWithAuthorization: (
     backendUrl: string,
     openAuthorizationUrl?: OpenCloudAuthorizationUrl,

@@ -1,8 +1,10 @@
-import { TelemetryCollectionNotice } from './TelemetryCollectionNotice'
-import { ShieldCheck } from 'lucide-react'
-import { useRef, type KeyboardEvent } from 'react'
-import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ShieldCheck } from 'lucide-react'
+import { useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { TelemetryCollectionNotice } from './TelemetryCollectionNotice'
 
 interface TelemetryConsentDialogProps {
   onChoose: (enabled: boolean) => void
@@ -12,34 +14,21 @@ export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps
   const { t } = useTranslation('common')
   const sectionRef = useRef<HTMLElement>(null)
 
-  const trapFocus = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key !== 'Tab') return
-    const focusable = sectionRef.current?.querySelectorAll<HTMLElement>('button:not([disabled])')
-    if (!focusable?.length) return
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
-
   return createPortal(
     <div
       data-testid="telemetry-consent-overlay"
       className="fixed inset-0 z-system flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
     >
-      <section
-        ref={sectionRef}
-        onKeyDown={trapFocus}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="telemetry-consent-title"
-        aria-describedby="telemetry-consent-description"
-        className="w-full max-w-[460px] rounded-2xl border border-border bg-background p-6 text-text-primary shadow-2xl"
+      <DialogSurface
+        initialFocus='[data-testid="telemetry-consent-accept"]'
+        render={
+          <section
+            ref={sectionRef}
+            aria-labelledby="telemetry-consent-title"
+            aria-describedby="telemetry-consent-description"
+            className="w-full max-w-[460px] rounded-2xl border border-border bg-background p-6 text-text-primary shadow-2xl"
+          />
+        }
       >
         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted">
           <ShieldCheck className="h-5 w-5" />
@@ -58,15 +47,19 @@ export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps
         </p>
         <TelemetryCollectionNotice />
         <div className="mt-6 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="telemetry-consent-decline"
             onClick={() => onChoose(false)}
             className="h-10 rounded-lg border border-border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50"
           >
             {t('workbench.telemetry_consent_decline')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             autoFocus
             data-testid="telemetry-consent-accept"
@@ -74,9 +67,9 @@ export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps
             className="h-10 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {t('workbench.telemetry_consent_accept')}
-          </button>
+          </ControlButton>
         </div>
-      </section>
+      </DialogSurface>
     </div>,
     document.body
   )

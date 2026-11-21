@@ -1,20 +1,22 @@
-import { SquareTerminal, X } from 'lucide-react'
-import { memo, useCallback, useMemo, useState } from 'react'
-import type { KeyboardEvent } from 'react'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { DshIcon } from '@/features/dsh-runtime/DshIcon'
+import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
+import { TabsList, TabsRoot } from '@wegent/collaboration/controls/Tabs'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { SquareTerminal, X } from 'lucide-react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import { useResizableBottomPanel } from './useResizableWorkspacePanel'
+import type { WorkspacePanelMenuActions } from './workspace-panel-tools'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
-import type { WorkspacePanelMenuActions } from './workspace-panel-tools'
-import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
-import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
-import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
-import { DshIcon } from '@/features/dsh-runtime/DshIcon'
+import { WorkspaceTitleTab } from './WorkspaceTitleTab'
 
 interface BottomWorkspacePanelTab {
   id: string
@@ -213,7 +215,8 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
             onPointerDown={handleResizeStart}
             aria-label={t('workbench.resize_bottom_workspace_panel')}
           />
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={contentTestIdsEnabled ? 'close-bottom-workspace-panel-button' : undefined}
             onClick={onRequestClose}
@@ -221,46 +224,57 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
             aria-label={t('workbench.close_bottom_workspace_panel')}
           >
             <X className="h-3.5 w-3.5" />
-          </button>
-          <header
-            data-testid={contentTestIdsEnabled ? 'bottom-workspace-tabbar' : undefined}
-            role="tablist"
-            className={cn(
-              'flex h-10 shrink-0 items-center gap-1.5 overflow-hidden px-2 pr-12',
-              showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
-            )}
+          </ControlButton>
+          <TabsRoot
+            value={activeTabId}
+            onValueChange={next => {
+              if (next) setActiveTabId(next)
+            }}
+            render={<div className="contents" />}
           >
-            <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
-              {tabs.map(tab => (
-                <BottomWorkspaceTitleTab
-                  key={tab.id}
-                  testIdsEnabled={contentTestIdsEnabled}
-                  active={activeTerminalTab?.id === tab.id}
-                  label={tab.title}
-                  onSelect={() => setActiveTabId(tab.id)}
-                  onClose={() => closeTab(tab.id)}
-                />
-              ))}
-              {extensionTabs.map(tab => (
-                <BottomWorkspaceExtensionTitleTab
-                  key={tab.id}
-                  active={activeExtensionTab?.id === tab.id}
-                  icon={tab.icon}
-                  id={tab.id}
-                  label={tab.label}
-                  testIdsEnabled={contentTestIdsEnabled}
-                  onSelect={() => setActiveTabId(tab.id)}
-                />
-              ))}
-            </div>
-            <WorkspaceAddMenu
-              ariaLabel={t('workbench.workspace_tab_new', '打开新标签页')}
-              buttonTestId={contentTestIdsEnabled ? 'workspace-terminal-new-tab-button' : undefined}
-              menuTestId={contentTestIdsEnabled ? 'workspace-terminal-new-tab-menu' : undefined}
-              items={menuItems}
-              buttonClassName="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
-            />
-          </header>
+            <TabsList
+              render={<header />}
+              data-testid={contentTestIdsEnabled ? 'bottom-workspace-tabbar' : undefined}
+              className={cn(
+                'flex h-10 shrink-0 items-center gap-1.5 overflow-hidden px-2 pr-12',
+                showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+                {tabs.map(tab => (
+                  <BottomWorkspaceTitleTab
+                    id={tab.id}
+                    key={tab.id}
+                    testIdsEnabled={contentTestIdsEnabled}
+                    active={activeTerminalTab?.id === tab.id}
+                    label={tab.title}
+                    onSelect={() => setActiveTabId(tab.id)}
+                    onClose={() => closeTab(tab.id)}
+                  />
+                ))}
+                {extensionTabs.map(tab => (
+                  <BottomWorkspaceExtensionTitleTab
+                    key={tab.id}
+                    active={activeExtensionTab?.id === tab.id}
+                    icon={tab.icon}
+                    id={tab.id}
+                    label={tab.label}
+                    testIdsEnabled={contentTestIdsEnabled}
+                    onSelect={() => setActiveTabId(tab.id)}
+                  />
+                ))}
+              </div>
+              <WorkspaceAddMenu
+                ariaLabel={t('workbench.workspace_tab_new', '打开新标签页')}
+                buttonTestId={
+                  contentTestIdsEnabled ? 'workspace-terminal-new-tab-button' : undefined
+                }
+                menuTestId={contentTestIdsEnabled ? 'workspace-terminal-new-tab-menu' : undefined}
+                items={menuItems}
+                buttonClassName="flex shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+              />
+            </TabsList>
+          </TabsRoot>
           <div className="relative flex min-h-0 flex-1 overflow-hidden">
             {tabs.map(tab => (
               <BottomWorkspaceTabContent
@@ -329,33 +343,18 @@ function BottomWorkspaceExtensionTitleTab({
   icon?: string
   id: string
   label: string
-  onSelect: () => void
+  onSelect(): void
 }) {
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    onSelect()
-  }
-
   return (
-    <div
-      data-testid={testIdsEnabled ? `bottom-workspace-extension-tab-${id}` : undefined}
-      role="tab"
-      aria-selected={active}
-      tabIndex={0}
+    <WorkspaceTitleTab
+      value={id}
+      testId={testIdsEnabled ? `bottom-workspace-extension-tab-${id}` : undefined}
+      active={active}
+      label={label}
       title={label}
-      onClick={onSelect}
-      onKeyDown={handleKeyDown}
-      className={cn(
-        'flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl px-2 py-1 text-left text-xs font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40',
-        active
-          ? 'bg-muted text-text-primary'
-          : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
-      )}
-    >
-      <DshIcon name={icon} className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-    </div>
+      onSelect={onSelect}
+      icon={<DshIcon name={icon} className="h-4 w-4" />}
+    />
   )
 }
 
@@ -423,60 +422,39 @@ function BottomWorkspaceTabContent({
 }
 
 function BottomWorkspaceTitleTab({
+  id,
   testIdsEnabled,
   active,
   label,
   onSelect,
   onClose,
 }: {
+  id: string
   testIdsEnabled: boolean
   active: boolean
   label: string
-  onSelect: () => void
-  onClose: () => void
+  onSelect(): void
+  onClose(): void
 }) {
   const { t } = useTranslation('common')
-  const testId = (value: string) => (testIdsEnabled ? value : undefined)
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Enter' && event.key !== ' ') {
-      return
-    }
-    event.preventDefault()
-    onSelect()
-  }
   return (
-    <div
-      data-testid={testId('bottom-workspace-terminal-tab')}
-      role="tab"
-      aria-selected={active}
-      tabIndex={0}
+    <WorkspaceTitleTab
+      value={id}
+      testId={testIdsEnabled ? 'bottom-workspace-terminal-tab' : undefined}
+      active={active}
+      label={label}
       title={label}
-      onClick={onSelect}
-      onKeyDown={handleKeyDown}
-      className={cn(
-        'group relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl py-1 pl-2 pr-7 text-left text-xs font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40',
-        active
-          ? 'bg-muted text-text-primary'
-          : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
-      )}
-    >
-      <SquareTerminal
-        data-testid={testId('bottom-workspace-terminal-tab-icon')}
-        className="h-3.5 w-3.5 shrink-0 text-text-secondary"
-      />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <button
-        type="button"
-        data-testid={testId('close-bottom-workspace-tab-button')}
-        onClick={event => {
-          event.stopPropagation()
-          onClose()
-        }}
-        className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:!bg-text-secondary hover:text-background focus-visible:pointer-events-auto focus-visible:bg-border/70 focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:bg-border/70 group-hover:opacity-100"
-        aria-label={t('workbench.close_terminal', '关闭终端')}
-      >
-        <X className="h-3 w-3" />
-      </button>
-    </div>
+      onSelect={onSelect}
+      onClose={onClose}
+      closeTestId={testIdsEnabled ? 'close-bottom-workspace-tab-button' : undefined}
+      closeLabel={t('workbench.close_terminal', '关闭终端')}
+      icon={
+        <SquareTerminal
+          data-testid={testIdsEnabled ? 'bottom-workspace-terminal-tab-icon' : undefined}
+          aria-hidden="true"
+          className="h-4 w-4"
+        />
+      }
+    />
   )
 }

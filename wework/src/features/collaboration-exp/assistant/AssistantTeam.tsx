@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Settings, Trash2, UserRound } from 'lucide-react'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { IconButton } from '@wegent/collaboration/controls/IconButton'
 import type {
   PersonalStandInSettings,
   StandInHandlingPolicy,
@@ -9,6 +9,9 @@ import type {
 import { roleIncludesProject, standInPolicy } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Settings, UserRound } from 'lucide-react'
+import { useState } from 'react'
 import { projectScopeOf, type ExperienceProjectData } from '../model'
 
 export interface AssistantTeamProps {
@@ -56,14 +59,15 @@ export function AssistantTeam({
     <section data-testid="collaboration-exp-assistant-team">
       <div className="flex items-center justify-between px-4 py-2">
         <h2 className="text-sm font-medium text-text-secondary">{t('assistant.team')}</h2>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="collaboration-exp-assistant-team-manage"
           onClick={() => onConfigure()}
           className="min-h-11 px-2 text-xs text-text-muted hover:bg-muted md:min-h-8"
         >
           {t('assistant.manage')}
-        </button>
+        </ControlButton>
       </div>
       {rows.map(({ id, name, role, collaboration }) => (
         <div
@@ -88,25 +92,21 @@ export function AssistantTeam({
                 : t('assistant.defaultProtected')}
             </p>
           </div>
-          <button
+          <IconButton
             type="button"
             data-testid={`collaboration-exp-assistant-configure-${id}`}
             aria-label={t('assistant.configureRole', { name })}
             onClick={() => onConfigure(role?.id)}
-            className="inline-flex size-11 shrink-0 items-center justify-center text-text-muted hover:bg-muted md:size-8"
           >
             <Settings aria-hidden="true" className="size-4" />
-          </button>
+          </IconButton>
           {role && (
-            <button
+            <DeleteIconButton
               type="button"
               data-testid={`collaboration-exp-assistant-delete-${id}`}
               aria-label={t('assistant.deleteRole', { name })}
               onClick={() => setDeleting(role)}
-              className="inline-flex size-11 shrink-0 items-center justify-center text-text-muted hover:bg-muted md:size-8"
-            >
-              <Trash2 aria-hidden="true" className="size-4" />
-            </button>
+            />
           )}
           {onRegister && collaboration ? (
             <div className="col-span-full flex flex-wrap gap-2 pl-7">
@@ -124,7 +124,9 @@ export function AssistantTeam({
                 )
                 .filter(({ project }) => project.project_store !== 'local')
                 .map(({ project }) => (
-                  <button
+                  <ControlButton
+                    variant="ghost"
+                    size="sm"
                     key={project.id}
                     type="button"
                     data-testid={`collaboration-exp-assistant-register-${id}-${project.id}`}
@@ -146,10 +148,10 @@ export function AssistantTeam({
                         )
                       ).finally(() => setRegistering(current => (current === key ? null : current)))
                     }}
-                    className="min-h-11 text-xs text-text-muted underline md:min-h-8"
+                    className="underline"
                   >
                     {t('create.registerInProject', { project: project.name })}
-                  </button>
+                  </ControlButton>
                 ))}
             </div>
           ) : null}

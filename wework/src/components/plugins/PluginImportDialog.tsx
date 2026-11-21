@@ -1,14 +1,16 @@
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { AlertTriangle, Archive, CheckCircle2, Download, Loader2, Upload, X } from 'lucide-react'
-import { useState } from 'react'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type {
   LocalCodexPluginApi,
   LocalPluginImportCompletion,
   LocalPluginImportIssue,
   LocalPluginImportPreview,
 } from '@/api/local/codexPlugins'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertTriangle, Archive, CheckCircle2, Download, Loader2, Upload, X } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { PluginInstallWarning } from './PluginInstallWarning'
 
 function issueGuidance(
@@ -165,13 +167,7 @@ export function PluginImportDialog({
   const [riskConfirmed, setRiskConfirmed] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const busy = analyzing || importing || savingExample
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    () => {
-      if (!busy) onCancel()
-    },
-    true,
-    '[data-testid="plugin-import-close"]'
-  )
+  const dialogRef = useRef<HTMLElement>(null)
 
   async function choosePackage() {
     const selected = await invokeDesktopHost<{ canceled: boolean; filePaths: string[] }>(
@@ -240,13 +236,19 @@ export function PluginImportDialog({
 
   return (
     <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="plugin-import-title"
-        data-testid="plugin-import-dialog"
-        className="plugin-dialog-surface flex max-h-[min(720px,92vh)] w-full max-w-[600px] flex-col overflow-hidden"
+      <DialogSurface
+        onClose={() => {
+          if (!busy) onCancel()
+        }}
+        initialFocus={'[data-testid="plugin-import-close"]'}
+        render={
+          <section
+            ref={dialogRef}
+            aria-labelledby="plugin-import-title"
+            data-testid="plugin-import-dialog"
+            className="plugin-dialog-surface flex max-h-[min(720px,92vh)] w-full max-w-[600px] flex-col overflow-hidden"
+          />
+        }
       >
         <header className="flex shrink-0 items-start justify-between gap-4 px-5 pt-5">
           <div>
@@ -260,7 +262,8 @@ export function PluginImportDialog({
               )}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="plugin-import-close"
             aria-label={t('common.close', '关闭')}
@@ -269,12 +272,14 @@ export function PluginImportDialog({
             onClick={onCancel}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <div className="flex flex-col gap-2 sm:flex-row">
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="plugin-import-select"
               disabled={busy}
@@ -289,8 +294,10 @@ export function PluginImportDialog({
               {analyzing
                 ? t('workbench.plugins_import_analyzing', '正在检查')
                 : t('workbench.plugins_import_select', '选择插件 ZIP')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="plugin-import-download-example"
               disabled={busy}
@@ -303,7 +310,7 @@ export function PluginImportDialog({
                 <Download className="h-4 w-4" />
               )}
               {t('workbench.plugins_import_download_example', '下载插件示例包')}
-            </button>
+            </ControlButton>
           </div>
 
           {!preview && !error && (
@@ -388,12 +395,11 @@ export function PluginImportDialog({
 
               {needsRiskConfirmation && (
                 <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/30 px-3 py-3 text-sm">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     data-testid="plugin-import-risk-confirm"
                     checked={riskConfirmed}
                     className="mt-0.5"
-                    onChange={event => setRiskConfirmed(event.target.checked)}
+                    onCheckedChange={checked => setRiskConfirmed(checked === true)}
                   />
                   <span>
                     <span className="font-medium text-text-primary">
@@ -421,16 +427,19 @@ export function PluginImportDialog({
         </div>
 
         <footer className="flex shrink-0 justify-end gap-2 border-t border-border/20 px-5 py-4">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="h-9 rounded-lg px-4 text-sm font-medium text-text-secondary hover:bg-surface"
             disabled={busy}
             onClick={onCancel}
           >
             {t('common.cancel', '取消')}
-          </button>
+          </ControlButton>
           {preview?.valid && (
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="plugin-import-confirm"
               disabled={!canSubmit}
@@ -447,10 +456,10 @@ export function PluginImportDialog({
                 : preview.existing
                   ? t('workbench.plugins_import_overwrite', '覆盖并重新安装')
                   : t('workbench.plugins_import_confirm', '导入并安装')}
-            </button>
+            </ControlButton>
           )}
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

@@ -50,6 +50,15 @@ During the initial task load, the desktop sidebar shows **Loading tasks…** bel
 | Queued executions                | Hover for up/down actions; use the right-click menu to move to the front. Force-start requests immediate execution, so consider resource usage                                                                                                                                                                                                                                                                                                                            |
 | Pin, unread and archive          | Use the task-row actions to pin/unpin, mark read/unread or archive; restore from Archived tasks in settings                                                                                                                                                                                                                                                                                                                                                               |
 
+### Share a conversation as an issue
+
+In a desktop task, select **Share as issue** above the composer. It opens the same creation view as the collaboration sidebar. Edit the title at the top. On the left, choose participants, assign the issue and optionally link a project. You are the default assignee. On the right, choose what to share and add a to-do. Sign in to your team's Wework service if prompted.
+
+- Leave participants and the project blank and select **Create Issue** to keep the issue private. Select colleagues and choose **Create and share** to notify them.
+- Choose a project to place the issue on its board under the project's default issue visibility.
+- **Content to share** lists conversation excerpts from oldest to newest. Use the shortcuts to select all messages, the first message or the last message. Click a message or image to select it, then click again to deselect it. Use the button at the top right of an image to enlarge it. Select up to 100 attachments.
+- Status, priority, assignee and due date are under **More settings**. The issue keeps a snapshot of the submitted content.
+
 <a id="conversation-interactions"></a>
 
 ### Interact inside a conversation
@@ -68,6 +77,8 @@ Select **Wait condition** on the event status row above the composer to expand t
 Follow-up turns in Codex conversations receive a summary of subscriptions still waiting for events. The next turn receives an empty list after the last wait ends. The summary reflects the state at turn submission, and AI can query the subscription tool for the latest state. When the conversation has a bound PR or MR, the context includes its link and prompts AI to verify the current commit and use an event subscription if it needs to wait.
 
 A matching event starts a new turn in an idle Codex conversation or guides the current turn in a running conversation. Sending a message also resumes a Goal that is waiting on an event subscription. Events wait for pending questions and approvals to be resolved before delivery.
+
+When a registered event wakes a local conversation, the Executor delivers and deduplicates it locally without fetching the cloud account profile again.
 
 In the **task conversation composer**, ask AI to continue here when a document or another connected resource changes. AI discovers installed connection providers, selects the resource and saves a subscription through tools. No manual schedule setup is required. Ordinary conversations and Goals both support this; available events depend on the provider and account permissions. The device executor must advertise event protocol support. Older devices retain ordinary chat and existing PR status queries; unavailable event actions show an upgrade hint.
 
@@ -266,11 +277,15 @@ After supervision starts, the right-side **Environment** panel shows its status 
 
 While a reply is retrying, the processing area distinguishes server overload, rate limiting, and reconnection, and shows attempt counts when supplied by the runtime. The status disappears when progress resumes. A terminal failure shows the relevant timeout, connection, or overload message below the reply, with **Retry** and **Switch model and retry** when available. Select **Error details** to expand the original diagnostics, or select it again to collapse them. Internal recovery information such as an app-server restart appears only in these details. A response timeout means no progress arrived within the stated interval; it does not establish that the model provider was slow.
 
+<a id="processing-activity"></a>
+
 ## Review the processing timeline
 
 The **Processed** section in an AI response displays tool calls from top to bottom by their actual creation time. Even when executor events arrive out of order, commands, file operations, and other tools created earlier remain above later activity so the timeline reflects the real execution sequence.
 
 Completed processing activity is summarized by type. Terminal commands and Node.js REPL JavaScript calls count as commands, MCP and other capabilities count as tools, and file reads or edits use their own categories. Expand the processing area, then select a row or its chevron to inspect the details. The collapsed row uses a readable short name; the detail view shows the full tool name, invocation input, and returned output. Status-only activity without input or output does not show an empty disclosure control.
+
+Expanding a successful connection event provider lookup shows the total number of providers and how many are ready. Select **Show full result** to view the catalog, including availability and subscription parameters.
 
 A plan generated in Plan mode remains part of the visible response instead of being placed inside the completed **Processed** disclosure. It stays directly visible after restoring a background task or reopening the conversation. Ordinary commands, file operations, and tool calls continue to use the summary and disclosure behavior described above.
 

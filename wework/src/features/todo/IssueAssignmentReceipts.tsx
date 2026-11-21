@@ -1,19 +1,19 @@
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
-import { navigateTo } from '@/lib/navigation'
-import { getRuntimeConfig } from '@/config/runtime'
-import { Check, CircleAlert, CircleDashed, CircleHelp } from 'lucide-react'
-import { StandInIcon } from '@wegent/collaboration'
 import { Tooltip } from '@/components/ui/tooltip'
-import { useCallback, useMemo, useSyncExternalStore } from 'react'
-import { sameIssueAssignment } from './issueAssignmentReceiptScope'
+import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
-
-import {
-  createIssueAssignmentReceiptObservation,
-  type ReceiptApi,
-  type IssueAssignmentReceiptState,
-  type IssueAssignmentReceiptObservation,
+import { navigateTo } from '@/lib/navigation'
+import { StandInIcon } from '@wegent/collaboration'
+import { Button } from '@wegent/collaboration/markdown/Button'
+import { Check, CircleAlert, CircleDashed, CircleHelp } from 'lucide-react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import type {
+  IssueAssignmentReceiptObservation,
+  IssueAssignmentReceiptState,
+  ReceiptApi,
 } from './issueAssignmentReceiptObservation'
+import { createIssueAssignmentReceiptObservation } from './issueAssignmentReceiptObservation'
+import { sameIssueAssignment } from './issueAssignmentReceiptScope'
 export type { IssueAssignmentReceiptState } from './issueAssignmentReceiptObservation'
 
 export function IssueAssignmentReceipts({
@@ -164,14 +164,16 @@ function DispatchReceipt({
     >
       <span>{label}</span>
       {repair && canRepair && (
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           type="button"
           data-testid="issue-assignment-dispatch-repair"
           className="underline"
           onClick={() => navigateTo('/stand-in?profileId=@primary')}
         >
           {t('todo.dispatch.repair')}
-        </button>
+        </Button>
       )}
     </span>
   )

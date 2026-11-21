@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Tooltip } from '../issue-detail/Tooltip'
+import { Tooltip } from '../controls/Tooltip'
 import { useClock } from '../clock'
 import type { CollaborationExecutionEnvironment } from '../types'
 import type { PlatformMessages } from './platformMessages'

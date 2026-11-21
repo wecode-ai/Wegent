@@ -451,7 +451,7 @@ export async function verifyWorkspaceAgentDisplayNames(
   // The editor resolves its saved routing before a rename can be submitted.
   await control.command(
     'waitFor',
-    '[data-testid="wework-agent-model"] option:not([value=""]):checked',
+    '[data-testid="wework-agent-model"][data-value]:not([data-value=""])',
     { timeoutMs }
   )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', {

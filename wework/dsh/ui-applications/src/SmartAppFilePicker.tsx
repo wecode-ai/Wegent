@@ -58,7 +58,7 @@ export function SmartAppFilePicker({
         multiple={multiple}
         aria-label={label}
         data-testid={inputTestId}
-        className="sr-only"
+        hidden
         onChange={event => {
           onChange(Array.from(event.target.files ?? []))
           event.target.value = ''

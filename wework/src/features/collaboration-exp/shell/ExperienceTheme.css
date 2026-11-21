@@ -34,11 +34,6 @@
   --color-sidebar-text-muted: var(--color-text-muted);
   --color-focus-ring: 51 156 255;
   --color-link: 51 156 255;
-  --font-ui:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', sans-serif;
-  --font-size-ui: 14px;
-  --font-weight-ui: 400;
   --radius: 8px;
   --radius-default: 8px;
   --radius-sm: 8px;
@@ -49,7 +44,6 @@
   --text-xs-line: 16px;
   --text-sm: 13px;
   --text-sm-line: 19px;
-  --text-base: 14px;
   --text-base-line: 21px;
   --text-lg: 16px;
   --text-lg-line: 24px;

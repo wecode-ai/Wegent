@@ -593,9 +593,23 @@ fn local_chat_frame(
                         .unwrap_or_else(|| "Unknown error".to_string()),
                 ),
             );
-            if let Some(error_code) = event.error_code.as_ref() {
-                payload.insert("type".into(), Value::String(error_code.clone()));
-            }
+            let info = crate::chat_errors::classify_chat_error(
+                event.error_code.as_deref(),
+                event.error.as_deref(),
+            );
+            payload.insert(
+                "type".into(),
+                json!(event.error_code.as_deref().unwrap_or(info.code)),
+            );
+            payload.insert(
+                "error_info".into(),
+                json!({
+                    "code": info.code,
+                    "category": info.category,
+                    "retry_policy": info.retry_policy,
+                    "stage": crate::chat_errors::error_stage(info.code),
+                }),
+            );
             Some(("chat:error", payload))
         }
         "cancelled" => Some(("chat:cancelled", payload)),

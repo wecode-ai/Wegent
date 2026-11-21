@@ -174,6 +174,9 @@ impl AppState {
             jwt_algorithm: self.jwt_algorithm.clone(),
             internal_chat: self.internal_chat.clone(),
             user_reader: Arc::clone(&self.user_reader),
+            runtime_model_keys: Arc::new(crate::runtime_model_auth::RuntimeModelKeys(
+                self.mysql.clone(),
+            )),
         })
     }
 }

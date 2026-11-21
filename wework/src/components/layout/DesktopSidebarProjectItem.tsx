@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Archive,
   ChevronDown,
@@ -16,8 +17,8 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 
-import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { Tooltip } from '@/components/ui/tooltip'
 
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
@@ -41,13 +42,13 @@ import type {
   DeviceInfo,
   ProjectWithTasks,
   RuntimeIMNotificationSettingsResponse,
-  RuntimeProjectWork,
   RuntimeProjectAppearanceRequest,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
-  RuntimeTaskPinRequest,
+  RuntimeProjectWork,
   RuntimeTaskAddress,
+  RuntimeTaskPinRequest,
 } from '@/types/api'
 
 import type {
@@ -57,49 +58,49 @@ import type {
 } from '@/features/workbench/workbenchContextTypes'
 import { getWorkbenchPaneKey } from './workbenchPaneIdentity'
 
-import { SidebarSortableList } from './SidebarSortableList'
 import { SidebarHoverCard } from './SidebarHoverCard'
+import { SidebarSortableList } from './SidebarSortableList'
 
 import { ProjectSidebarHoverCardContent } from './ProjectSidebarHoverCardContent'
 
 import {
+  RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
   getNextRuntimeSidebarTaskVisibleLimit,
-  getRuntimeTaskAddress,
   getRuntimeSidebarTaskItems,
-  shortenSidebarHomePath,
+  getRuntimeTaskAddress,
   getVisibleRuntimeSidebarTaskItems,
   hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
-  RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
+  shortenSidebarHomePath,
 } from './runtimeTaskSidebarHelpers'
 
-import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
-import type { WorkbenchSplitGroupMembership } from './workbenchSplitGroups'
-import type { ProjectCreateMenuPosition } from './desktopSidebarTypes'
 import {
   PROJECT_APPEARANCE_COLORS,
   PROJECT_APPEARANCE_COLOR_VALUES,
-  getProjectDeviceId,
-  getSidebarDeviceState,
-  isSidebarDeviceOnline,
-  getRuntimeProjectDeviceState,
-  isRuntimeRemoteProject,
-  isRuntimeTaskWaiting,
-  getRuntimeTaskSplitGroup,
-  getRuntimeTaskSortableId,
-  getProjectHoverSources,
-  getProjectFinderWorkspacePath,
-  shouldShowProjectDeviceStatus,
   formatSidebarTemplate,
   getDeviceUnavailableActionTitle,
+  getProjectDeviceId,
+  getProjectFinderWorkspacePath,
+  getProjectHoverSources,
+  getRuntimeProjectDeviceState,
+  getRuntimeTaskSortableId,
+  getRuntimeTaskSplitGroup,
+  getSidebarDeviceState,
+  isRuntimeRemoteProject,
+  isRuntimeTaskWaiting,
+  isSidebarDeviceOnline,
+  shouldShowProjectDeviceStatus,
 } from './desktopSidebarHelpers'
+import { RuntimeTaskRow } from './DesktopSidebarTaskRow'
+import type { ProjectCreateMenuPosition } from './desktopSidebarTypes'
 import {
   ArchiveConversationsConfirmDialog,
-  ProjectDeviceInlineStatus,
   LocalHarnessSessionRow,
+  ProjectDeviceInlineStatus,
 } from './DesktopSidebarWidgets'
-import { RuntimeTaskRow } from './DesktopSidebarTaskRow'
+import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
+import type { WorkbenchSplitGroupMembership } from './workbenchSplitGroups'
 export function ProjectItem({
   nowMs,
   project,
@@ -350,32 +351,26 @@ export function ProjectItem({
     }
   }
   const closeArchiveConfirm = () => {
-    if (!projectArchiving) {
-      setArchiveConfirmOpen(false)
-    }
+    setArchiveConfirmOpen(false)
   }
   const runArchiveProjectConversations = async (options?: ArchiveRuntimeTaskOptions) => {
     const runtimeProjectKey = runtimeProjectWork?.project.key
-    if (!runtimeProjectKey || !onArchiveProjectConversations) return
+    if (projectArchiving || !runtimeProjectKey || !onArchiveProjectConversations) return
+    setArchiveConfirmOpen(false)
+    setForceArchiveConfirmOpen(false)
     setProjectArchiving(true)
     try {
       const result = await onArchiveProjectConversations(runtimeProjectKey, options)
       if (result?.status === 'dirty_worktree') {
-        setArchiveConfirmOpen(false)
         setForceArchiveConfirmOpen(true)
-        return
       }
-      setArchiveConfirmOpen(false)
-      setForceArchiveConfirmOpen(false)
     } finally {
       setProjectArchiving(false)
     }
   }
   const confirmArchiveProjectConversations = () => runArchiveProjectConversations()
   const closeForceArchiveConfirm = () => {
-    if (!projectArchiving) {
-      setForceArchiveConfirmOpen(false)
-    }
+    setForceArchiveConfirmOpen(false)
   }
   const confirmForceArchiveProjectConversations = () =>
     runArchiveProjectConversations({ force: true })
@@ -435,7 +430,8 @@ export function ProjectItem({
           }}
           className="group/project relative flex h-[30px] min-w-0 items-center gap-1 rounded-[10px] pl-2.5 pr-1 text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="project-item-button"
             data-sidebar-drag-activator
@@ -491,7 +487,7 @@ export function ProjectItem({
                 />
               </span>
             </span>
-          </button>
+          </ControlButton>
           {showProjectDeviceStatus && (
             <ProjectDeviceInlineStatus
               deviceState={projectDeviceState}
@@ -582,7 +578,8 @@ export function ProjectItem({
               label={newProjectChatTitle}
               testId={`project-new-conversation-${project.id}-tooltip`}
             >
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="project-new-conversation-button"
                 disabled={!canStartProjectChat}
@@ -595,7 +592,7 @@ export function ProjectItem({
                 aria-label={newProjectChatTitle}
               >
                 <MessageSquarePlus className="h-4 w-4" />
-              </button>
+              </ControlButton>
             </Tooltip>
           </div>
         </div>
@@ -640,6 +637,7 @@ export function ProjectItem({
               <>
                 <SidebarSortableList
                   testId={`project-runtime-task-sortable-${project.id}`}
+                  accessibleLabel={project.name + ' · ' + t('workbench.chats')}
                   className="space-y-0.5"
                   items={visibleRuntimeTaskItems}
                   getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
@@ -724,7 +722,8 @@ export function ProjectItem({
                 {(hasHiddenRuntimeTasks || canCollapseRuntimeTasks) && (
                   <div className="ml-9 flex h-8 items-center gap-2">
                     {hasHiddenRuntimeTasks && (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid={`project-runtime-tasks-expand-${project.id}`}
                         onClick={() =>
@@ -739,10 +738,11 @@ export function ProjectItem({
                         className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.show_more', '显示更多')}
-                      </button>
+                      </ControlButton>
                     )}
                     {canCollapseRuntimeTasks && (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid={`project-runtime-tasks-collapse-${project.id}`}
                         onClick={() =>
@@ -752,7 +752,7 @@ export function ProjectItem({
                         className="flex h-[30px] items-center rounded-md px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.show_less', '收起')}
-                      </button>
+                      </ControlButton>
                     )}
                   </div>
                 )}
@@ -773,7 +773,6 @@ export function ProjectItem({
         })}
         confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
         cancelLabel={t('workbench.cancel', '取消')}
-        submitting={projectArchiving}
         testId={`archive-project-conversations-dialog-${project.id}`}
         onClose={closeArchiveConfirm}
         onConfirm={confirmArchiveProjectConversations}
@@ -800,7 +799,6 @@ export function ProjectItem({
         description={t('workbench.archive_runtime_task_dirty_worktree_force_desc')}
         confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
         cancelLabel={t('workbench.cancel', '取消')}
-        submitting={projectArchiving}
         testId={`archive-project-force-dialog-${project.id}`}
         onClose={closeForceArchiveConfirm}
         onConfirm={confirmForceArchiveProjectConversations}

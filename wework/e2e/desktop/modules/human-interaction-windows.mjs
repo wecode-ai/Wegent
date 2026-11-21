@@ -30,6 +30,9 @@ export async function verifyHumanInteractionAcrossWindows({
   })
   await detached.command('click', '[data-testid="wework-notifications-pending"]')
   await detached.command('waitFor', page, { text: question })
+  await detached.command('clickWhenEnabled', `${page} [data-testid="interaction-show-context"]`, {
+    visible: true,
+  })
   await detached.command(
     'waitFor',
     `${page} [data-testid="request-user-input-custom-question_1"]:not(:disabled)`,

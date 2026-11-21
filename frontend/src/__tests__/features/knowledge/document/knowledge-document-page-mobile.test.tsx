@@ -166,8 +166,8 @@ jest.mock('@/features/knowledge/document/components/CreateKnowledgeBaseDialog', 
     ) : null,
 }))
 jest.mock('@/features/knowledge/document/components/EditKnowledgeBaseDialog', () => ({
-  EditKnowledgeBaseDialog: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="mock-edit-knowledge-base-dialog" /> : null,
+  EditKnowledgeBaseDialog: ({ open, spaceName }: { open: boolean; spaceName?: string }) =>
+    open ? <div data-testid="mock-edit-knowledge-base-dialog">{spaceName}</div> : null,
 }))
 jest.mock('@/apis/code-wiki', () => ({
   codeWikiApi: { create: jest.fn(), configureScheduledUpdate: jest.fn() },
@@ -304,15 +304,25 @@ it.each(['group', 'organization'])(
   }
 )
 
-it('keeps the code reader and existing configuration dialog', async () => {
-  const kb = { ...baseKb, kb_type: 'code_wiki' as const }
-  data.personal.created_by_me = [row(kb)]
+it('opens code Wiki settings with the owning space instead of a matching navigation name', async () => {
+  const kb = { ...baseKb, kb_type: 'code_wiki' as const, namespace: 'shared' }
+  data.personal.created_by_me = []
+  data.groups = [
+    {
+      group_name: 'shared',
+      group_display_name: 'Shared team space',
+      kb_count: 1,
+      knowledge_bases: [row(kb, 'group')],
+    },
+  ]
   jest.mocked(getKnowledgeBase).mockResolvedValue(kb)
-  mockPathname = '/knowledge/default/Docs'
-  render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Docs" />)
+  mockPathname = '/knowledge/shared/Docs'
+  render(<KnowledgeDocumentPageMobile initialKbNamespace="shared" initialKbName="Docs" />)
   expect(await screen.findByTestId('mock-code-wiki-reader')).toHaveTextContent('Docs')
   await userEvent.setup().click(await screen.findByTestId('open-code-wiki-config'))
-  expect(screen.getByTestId('mock-edit-knowledge-base-dialog')).toBeInTheDocument()
+  expect(screen.getByTestId('mock-edit-knowledge-base-dialog')).toHaveTextContent(
+    'Shared team space'
+  )
 })
 
 it('retains document creation settings and the dedicated code creation endpoint', async () => {

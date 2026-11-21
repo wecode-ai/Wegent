@@ -1,4 +1,5 @@
-import { useDocumentEvent } from '../dom-events'
+import { Button as ControlButton } from '../markdown/Button'
+import { Menu, MenuContent, MenuItem, MenuTrigger } from '../controls/MenuParts'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -15,6 +16,7 @@ export interface ProjectSpaceSidebarNavItem {
 
 export interface ProjectSpaceSidebarProject {
   actionsAvailable?: boolean
+  archiveDisabled?: boolean
   canManage: boolean
   count?: number
   icon: ReactNode
@@ -78,35 +80,13 @@ export function ProjectSpaceSidebar({
   sectionOnly = false,
   sectionLabel,
 }: ProjectSpaceSidebarProps) {
-  const [openProjectId, setOpenProjectId] = useState<string | null>(null)
   const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null)
-
-  useDocumentEvent(
-    'mousedown',
-    event => {
-      if (
-        event.target instanceof Element &&
-        !event.target.closest('[data-cloud-project-menu-root]')
-      ) {
-        setOpenProjectId(null)
-      }
-    },
-    { enabled: openProjectId !== null }
-  )
-  useDocumentEvent(
-    'keydown',
-    event => {
-      if (event.key === 'Escape') setOpenProjectId(null)
-    },
-    { enabled: openProjectId !== null }
-  )
 
   const copyProjectId = (project: ProjectSpaceSidebarProject) => {
     void project.onCopyId().then(() => {
       setCopiedProjectId(project.id)
       window.setTimeout(() => setCopiedProjectId(null), 2000)
     })
-    setOpenProjectId(null)
   }
   const primaryTextClass = sectionOnly
     ? 'text-text-primary'
@@ -123,7 +103,8 @@ export function ProjectSpaceSidebar({
   const activeBackgroundClass = sectionOnly ? 'bg-hover' : 'bg-[rgb(var(--color-sidebar-active))]'
 
   const addButton = (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="cloud-project-add"
       onClick={onAdd}
@@ -132,25 +113,23 @@ export function ProjectSpaceSidebar({
       title={renderTooltip ? undefined : addLabel}
     >
       {addIcon}
-    </button>
+    </ControlButton>
   )
 
   const renderProjectMoreButton = (project: ProjectSpaceSidebarProject) => {
     const button = (
-      <button
-        type="button"
+      <MenuTrigger
+        render={<button type="button" />}
         data-testid={`cloud-sidebar-project-more-${project.id}`}
-        onClick={() => setOpenProjectId(current => (current === project.id ? null : project.id))}
-        className={`hidden h-7 w-7 shrink-0 items-center justify-center rounded-md transition focus:flex group-hover:flex ${secondaryTextClass} ${hoverBackgroundClass} ${hoverPrimaryTextClass}`}
-        aria-expanded={openProjectId === project.id}
+        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 transition focus:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100 ${secondaryTextClass} ${hoverBackgroundClass} ${hoverPrimaryTextClass}`}
         aria-label={labels.actions}
         title={renderTooltip ? undefined : labels.actions}
       >
         {moreIcon}
-      </button>
+      </MenuTrigger>
     )
 
-    return renderTooltip
+    const trigger = renderTooltip
       ? renderTooltip({
           align: 'end',
           children: button,
@@ -158,6 +137,49 @@ export function ProjectSpaceSidebar({
           side: 'bottom',
         })
       : button
+    return (
+      <Menu>
+        {trigger}
+        <MenuContent
+          data-testid={`cloud-sidebar-project-menu-${project.id}`}
+          align="end"
+          aria-label={labels.actions}
+          className="w-36"
+        >
+          {project.canManage ? (
+            <>
+              <MenuItem
+                data-testid={`cloud-sidebar-rename-project-${project.id}`}
+                onSelect={project.onRename}
+              >
+                <span className="w-3.5 text-center" aria-hidden="true">
+                  Aa
+                </span>
+                {labels.rename}
+              </MenuItem>
+              <MenuItem
+                destructive
+                data-testid={`cloud-sidebar-archive-project-${project.id}`}
+                disabled={project.archiveDisabled}
+                onSelect={project.onArchive}
+              >
+                <span className="w-3.5 text-center" aria-hidden="true">
+                  ×
+                </span>
+                {labels.archive}
+              </MenuItem>
+            </>
+          ) : null}
+          <MenuItem
+            data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
+            onSelect={() => copyProjectId(project)}
+          >
+            {copiedProjectId === project.id ? checkIcon : copyIcon}
+            {copiedProjectId === project.id ? labels.copied : labels.copyId}
+          </MenuItem>
+        </MenuContent>
+      </Menu>
+    )
   }
 
   return (
@@ -166,7 +188,8 @@ export function ProjectSpaceSidebar({
       {!sectionOnly ? (
         <nav className="space-y-0.5">
           {navItems.map(item => (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={item.testId}
               aria-current={item.selected ? 'page' : undefined}
@@ -180,7 +203,7 @@ export function ProjectSpaceSidebar({
             >
               {item.icon}
               <span>{item.label}</span>
-            </button>
+            </ControlButton>
           ))}
         </nav>
       ) : null}
@@ -204,14 +227,14 @@ export function ProjectSpaceSidebar({
         {projects.map(project => (
           <div
             key={project.key}
-            data-cloud-project-menu-root
             className={
               project.selected
                 ? `group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5 ${activeBackgroundClass} ${primaryTextClass}`
                 : `group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5 ${primaryTextClass} ${hoverBackgroundClass}`
             }
           >
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`cloud-sidebar-project-${project.id}`}
               onClick={() => onSelectProject(project.key)}
@@ -219,7 +242,7 @@ export function ProjectSpaceSidebar({
             >
               {project.icon}
               <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
-            </button>
+            </ControlButton>
             {project.count ? (
               <span
                 className={`flex h-7 w-7 shrink-0 items-center justify-center text-xs group-hover:hidden ${secondaryTextClass}`}
@@ -228,58 +251,6 @@ export function ProjectSpaceSidebar({
               </span>
             ) : null}
             {project.actionsAvailable !== false ? renderProjectMoreButton(project) : null}
-            {openProjectId === project.id ? (
-              <div
-                data-testid={`cloud-sidebar-project-menu-${project.id}`}
-                role="menu"
-                className="absolute right-0 top-8 z-30 w-36 rounded-lg border border-border bg-background p-1 shadow-md"
-              >
-                {project.canManage ? (
-                  <>
-                    <button
-                      type="button"
-                      data-testid={`cloud-sidebar-rename-project-${project.id}`}
-                      onClick={() => {
-                        project.onRename()
-                        setOpenProjectId(null)
-                      }}
-                      role="menuitem"
-                      className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
-                    >
-                      <span className="w-3.5 text-center" aria-hidden="true">
-                        Aa
-                      </span>
-                      {labels.rename}
-                    </button>
-                    <button
-                      type="button"
-                      data-testid={`cloud-sidebar-archive-project-${project.id}`}
-                      onClick={() => {
-                        project.onArchive()
-                        setOpenProjectId(null)
-                      }}
-                      role="menuitem"
-                      className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
-                    >
-                      <span className="w-3.5 text-center" aria-hidden="true">
-                        ×
-                      </span>
-                      {labels.archive}
-                    </button>
-                  </>
-                ) : null}
-                <button
-                  type="button"
-                  data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
-                  onClick={() => copyProjectId(project)}
-                  role="menuitem"
-                  className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
-                >
-                  {copiedProjectId === project.id ? checkIcon : copyIcon}
-                  {copiedProjectId === project.id ? labels.copied : labels.copyId}
-                </button>
-              </div>
-            ) : null}
           </div>
         ))}
       </div>

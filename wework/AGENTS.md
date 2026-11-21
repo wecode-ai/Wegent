@@ -64,6 +64,8 @@ Wework and shared packages prohibit product-level React useEffect. Only the exac
 
 ## UI and component rules
 
+- Find reusable controls in the [component catalog](../docs/zh/wework/component-library.md) ([English](../docs/en/wework/component-library.md)). Run `pnpm --filter wework storybook` for examples; add stories for new public controls and keep the catalog current.
+
 - Before changing Wework UI or interaction behavior, read and follow [`DESIGN.md`](DESIGN.md). It is the source of truth for product-level visual, interaction, accessibility, and responsive-design decisions.
 - Follow the shared [page data loading and error isolation rules](../frontend/AGENTS.md#page-data-loading-and-error-isolation), including for `packages/collaboration/`: active pages own their requests; unrelated pages never share a blocking loading or failure boundary.
 - Mobile is `<=767px`, tablet `768px–1023px`, desktop `>=1024px`. Split mobile and desktop components when layout or interaction differs materially; otherwise use responsive classes. Mobile controls must be at least `44px × 44px`.

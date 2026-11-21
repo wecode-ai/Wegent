@@ -248,6 +248,18 @@ async function verifyDraft(control, project, existingItem) {
     visible: true,
   })
   await verifyIssueRuntimeTitleIsolation(control, content, project, persisted, binding)
+  if (!existingItem) {
+    // Settle the created Issue's automatic read before the next draft baseline.
+    await control.command(
+      'clickWhenEnabled',
+      `${content} [data-testid="work-item-guide-open-summary"]`
+    )
+    await control.command('waitFor', '[data-testid="work-item-context-panel"]', {
+      text: persisted.title,
+      visible: true,
+    })
+    await waitForViewedIssueRead(control, project.name, persisted.title)
+  }
   await control.command('click', `[data-testid="workspace-tab-close-${tabId}"]`)
   console.log(`[e2e] Draft ${existingItem ? 'association' : 'creation'} persisted: ${persisted.id}`)
 }

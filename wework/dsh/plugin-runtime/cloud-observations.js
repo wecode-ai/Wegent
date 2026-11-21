@@ -1,5 +1,3 @@
-import { collectObservation } from './connection-observations.js'
-
 /** The token authorizes only one Backend-owned source lease. */
 export function cloudObservationClient(backendUrl, collectorToken, fetchRequest = fetch) {
   const endpoint = new URL(`${backendUrl.replace(/\/+$/, '')}/api/runtime-observations/collector`)
@@ -29,7 +27,7 @@ export function cloudObservationClient(backendUrl, collectorToken, fetchRequest 
 }
 
 /** A caller runs this inside the user's DSH sandbox with its read capability adapter. */
-export async function runCloudObservation(registry, request, { expectedOwnerId } = {}) {
+export async function runCloudObservation(request, collect, { expectedOwnerId } = {}) {
   const { observation, ownerId } = await request('read_lease')
   if (expectedOwnerId !== undefined && ownerId !== expectedOwnerId)
     throw Object.assign(new Error('Observation account changed'), {
@@ -55,15 +53,14 @@ export async function runCloudObservation(registry, request, { expectedOwnerId }
   let page
   let failure
   try {
-    page = await collectObservation(
-      registry,
+    page = await collect(
       observation.source.providerId,
       {
         source: observation.source,
         checkpoint: observation.checkpoint,
         force: observation.lease.forceVersion > observation.collectedForceVersion,
       },
-      { signal: collection.signal }
+      collection.signal
     )
   } catch (error) {
     failure = error

@@ -8,7 +8,7 @@ import { checked, test } from '../../fixtures/recent-team-history'
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 
-test('a failed retry stays retryable until the device reconnects', async ({ history }) => {
+test('a failed retry stays retryable until the device reconnects', async ({ history, request }) => {
   const team = await history.teamWithModes('device-retry', ['chat'])
   const deviceId = `${history.prefix}-device`
   const connect = (namespace: string) =>
@@ -41,6 +41,20 @@ test('a failed retry stays retryable until the device reconnects', async ({ hist
       )
     )
     return list.items.find(item => item.device_id === deviceId)
+  }
+
+  const metricTotal = async (name: string, outcome: string) => {
+    const response = await request.get(`${API_URL}/metrics`)
+    expect(response.status()).toBe(200)
+    const body = await response.text()
+    return body
+      .split('\n')
+      .filter(line => line.startsWith(`${name}{outcome="${outcome}",entrypoint="web"`))
+      .reduce((total, line) => {
+        const value = Number(line.slice(line.lastIndexOf('}') + 1).trim())
+        expect(Number.isFinite(value)).toBe(true)
+        return total + value
+      }, 0)
   }
 
   try {
@@ -78,25 +92,48 @@ test('a failed retry stays retryable until the device reconnects', async ({ hist
     })
     await expect.poll(state).toEqual(['CANCELLED', 'CANCELLED'])
 
+    const rejectedBeforeRetry = await metricTotal('wegent_chat_requests_total', 'rejected')
+    expect(await socket.timeout(10_000).emitWithAck('chat:retry', { task_id: taskId })).toEqual({
+      error: 'Invalid payload',
+    })
+    await expect
+      .poll(() => metricTotal('wegent_chat_requests_total', 'rejected'))
+      .toBeGreaterThan(rejectedBeforeRetry)
+
     device.dispose()
     await expect.poll(async () => (await deviceRecord())?.status).toBe('offline')
+    const failedBeforeRetry = await metricTotal('wegent_chat_runs_total', 'failed')
     expect(await socket.timeout(10_000).emitWithAck('chat:retry', turn)).toEqual({
       error: 'Internal server error',
     })
     await expect.poll(state).toEqual(['FAILED', 'FAILED'])
+    // The retry was admitted and reset the subtask before dispatch failed.
+    await expect
+      .poll(() => metricTotal('wegent_chat_runs_total', 'failed'))
+      .toBeGreaterThan(failedBeforeRetry)
 
     device = connect('/local-executor')
     const replacement = await register()
     const nextDelivery = new Promise<{ subtask_id: number; task_id: number }>(resolve =>
       replacement.once('task:execute', resolve)
     )
+    const acceptedBeforeRetry = await metricTotal('wegent_chat_requests_total', 'accepted')
     expect(await socket.timeout(10_000).emitWithAck('chat:retry', turn)).toEqual({ success: true })
     expect(await nextDelivery).toMatchObject(turn)
     await expect.poll(state).toEqual(['RUNNING', 'RUNNING'])
+    await expect
+      .poll(() => metricTotal('wegent_chat_requests_total', 'accepted'))
+      .toBeGreaterThan(acceptedBeforeRetry)
+    const cancelledBeforeRetry = await metricTotal('wegent_chat_runs_total', 'cancelled')
     expect(await socket.timeout(10_000).emitWithAck('chat:cancel', turn)).toMatchObject({
       success: true,
     })
     await expect.poll(state).toEqual(['CANCELLED', 'CANCELLED'])
+    // The retry reset the same assistant subtask into a new execution attempt.
+    // Its committed cancellation must therefore increase the terminal counter.
+    await expect
+      .poll(() => metricTotal('wegent_chat_runs_total', 'cancelled'))
+      .toBeGreaterThan(cancelledBeforeRetry)
   } finally {
     chat.dispose()
     device.dispose()

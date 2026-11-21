@@ -211,7 +211,12 @@ pub(super) enum Transition {
 }
 
 enum PendingTransition {
-    Written(MysqlRow, Option<String>, CollaborationStatus),
+    Written(
+        MysqlRow,
+        Option<String>,
+        CollaborationStatus,
+        crate::chat_metrics::RunLabels,
+    ),
     Replay(Transition),
 }
 
@@ -308,6 +313,7 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         else {
             return Ok(None);
         };
+        let labels = super::metrics::labels(&row, &task);
         let task_status = update_locked_task_status(
             &task_table,
             &subtask_table,
@@ -327,6 +333,7 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
             row,
             metrics_message,
             task_status,
+            labels,
         )))
     };
     let committed = match crate::transaction_outcome::run_mysql_with_deadlock_retry(
@@ -349,11 +356,21 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         }
         outcome => outcome?,
     };
-    let (row, metrics_message, task_status) = match committed {
+    let (row, metrics_message, task_status, labels) = match committed {
         None => return Ok(None),
         Some(PendingTransition::Replay(transition)) => return Ok(Some(transition)),
-        Some(PendingTransition::Written(row, message, advance)) => (row, message, advance),
+        Some(PendingTransition::Written(row, message, advance, labels)) => {
+            (row, message, advance, labels)
+        }
     };
+    super::metrics::record(
+        &row,
+        &normalized_status,
+        error_code,
+        metrics_message.as_deref(),
+        result,
+        labels,
+    );
     publish_task_run_metrics(ctx, &row, subtask_id, &normalized_status, metrics_message).await;
     if let Err(failure) =
         session::cleanup_streaming_state(ctx.redis, subtask_id, Some(task_id)).await
@@ -414,9 +431,9 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
     subtask_table: &str,
     task_id: i64,
     subtask_id: i64,
-    result: &Value,
+    result: Option<&Value>,
     message: &str,
-) -> MysqlResult<Option<(MysqlRow, Option<String>)>> {
+) -> MysqlResult<Option<(MysqlRow, Option<String>, crate::chat_metrics::RunLabels)>> {
     mysql
         .route(crate::task_routing::ByTaskId(task_id as u64))
         .with_transaction(async |transaction| {
@@ -443,7 +460,7 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
                 row,
                 subtask_id,
                 "FAILED",
-                Some(result),
+                result,
                 Some(message),
                 None,
                 None,
@@ -453,6 +470,7 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
             else {
                 return Ok(None);
             };
+            let labels = super::metrics::labels(&settled.0, &task);
             update_locked_task_status(
                 task_table,
                 subtask_table,
@@ -467,7 +485,7 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
             )
             .await?
             .ok_or(MysqlError::RowNotFound)?;
-            Ok(Some(settled))
+            Ok(Some((settled.0, settled.1, labels)))
         })
         .await
 }
@@ -547,8 +565,18 @@ pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     task_id: i64,
     subtask_id: i64,
+    shell: Option<&str>,
 ) -> MysqlResult<bool> {
-    let Some(row) = commit_subtask_running(ctx.mysql, ctx.tables, task_id, subtask_id).await?
+    let (task_table, _) = super::resolve_tables(ctx.app, ctx.tables, task_id).await?;
+    let Some(row) = commit_subtask_running(
+        ctx.mysql,
+        ctx.tables,
+        &task_table,
+        task_id,
+        subtask_id,
+        shell,
+    )
+    .await?
     else {
         return Ok(false);
     };
@@ -563,8 +591,10 @@ pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
 pub(crate) async fn commit_subtask_running<M: Mysql>(
     mysql: &M,
     tables: sql::Tables,
+    task_table: &str,
     task_id: i64,
     subtask_id: i64,
+    shell: Option<&str>,
 ) -> MysqlResult<Option<MysqlRow>> {
     let [read_subtask, read_contexts, update_running] = running_transition_statements(tables);
     mysql
@@ -572,7 +602,7 @@ pub(crate) async fn commit_subtask_running<M: Mysql>(
         .with_transaction(async |tx| {
             let task: Option<MysqlRow> = tx
                 .fetch_optional(
-                    crate::task_store::task_for_update_first_statement(tables.tasks),
+                    crate::task_store::task_for_update_first_statement(task_table),
                     (task_id,),
                 )
                 .await?;
@@ -603,9 +633,32 @@ pub(crate) async fn commit_subtask_running<M: Mysql>(
                 Some("PENDING") => {
                     // Preserve the eager context read in the dispatch transaction.
                     let _: Vec<MysqlRow> = tx.fetch_all(read_contexts, (subtask_id,)).await?;
-                    let updated = tx
-                        .execute(update_running, ("RUNNING", now.as_str(), subtask_id))
-                        .await?;
+                    let updated = if let Some(shell) = shell {
+                        let mut result = subtask_column::<Json<Value>>(&row, "result")
+                            .map(|value| value.0)
+                            .filter(Value::is_object)
+                            .unwrap_or_else(|| Value::Object(Map::new()));
+                        result["_chat_metrics"] = super::metrics::startup_labels(&row, &task)
+                            .with_shell(shell)
+                            .metadata();
+                        tx.execute(
+                            format!(
+                                "UPDATE {} SET status=?, result=?, updated_at=? WHERE id=? AND task_id=? AND status='PENDING'",
+                                tables.subtasks
+                            ),
+                            (
+                                "RUNNING",
+                                python_dumps(&result),
+                                now.as_str(),
+                                subtask_id,
+                                task_id,
+                            ),
+                        )
+                        .await?
+                    } else {
+                        tx.execute(update_running, ("RUNNING", now.as_str(), subtask_id))
+                            .await?
+                    };
                     if updated.rows_affected != 1 {
                         return Ok(None);
                     }
@@ -618,7 +671,7 @@ pub(crate) async fn commit_subtask_running<M: Mysql>(
                 complete_task_model(&mut payload);
                 let json = python_dumps(&Value::Object(render_task_crd(payload)));
                 tx.execute(
-                    sql::update_task_json_statement(tables.tasks),
+                    sql::update_task_json_statement(task_table),
                     (json, now, task_id),
                 )
                 .await?;

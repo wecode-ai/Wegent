@@ -9,6 +9,7 @@ use std::{sync::Arc, time::Duration};
 use super::BackgroundJobRegistry;
 use crate::AppState;
 
+const ISSUE_SHARE_CLEANUP: &str = "issue_share_cleanup";
 const REPOSITORY_UPDATE: &str = "repository_update";
 const USERS: &str = "SELECT id, user_name, git_info FROM users WHERE is_active = true";
 
@@ -20,6 +21,12 @@ struct RepositoryUser {
 }
 
 pub(super) fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState>) -> Result<()> {
+    let cleanup_state = state.clone();
+    registry.register(ISSUE_SHARE_CLEANUP, move |_, _| {
+        let state = cleanup_state.clone();
+        async move { crate::personal_issues::share::retry_deleted_shares(&state).await }
+    })?;
+    registry.interval(ISSUE_SHARE_CLEANUP, Duration::from_secs(600), false)?;
     let interval = crate::config::env_or_dotenv("REPO_UPDATE_INTERVAL_SECONDS")
         .map(|value| value.parse::<u64>())
         .transpose()?

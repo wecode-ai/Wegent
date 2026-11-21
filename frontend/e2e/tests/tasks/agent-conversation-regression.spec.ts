@@ -5,12 +5,12 @@
  * backend execution routing. CI uses:
  * - mock-model-server for Chat Shell, ClaudeCode, and Codex model requests
  * - real executor-manager plus a real coding executor image for ClaudeCode and Codex HTTP tasks
- * - real local executor registered as a Wework app device for device WebSocket tasks
+ * - real local executors registered as Wework app and traditional devices for WebSocket tasks
  */
 
 import { APIRequestContext, Page, expect, test, type Route } from '@playwright/test'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
-import { ADMIN_USER } from '../../config/test-users'
+import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
 import {
@@ -30,6 +30,8 @@ const CODEX_MODEL_SERVER_URL = process.env.E2E_CODEX_MODEL_SERVER_URL || MOCK_MO
 const LOCAL_CLAUDE_MODEL_SERVER_URL =
   process.env.E2E_LOCAL_CLAUDE_MODEL_SERVER_URL || MOCK_MODEL_SERVER_URL
 const DEVICE_ID = process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
+const TRADITIONAL_DEVICE_ID =
+  process.env.E2E_COMPACTION_DEVICE_ID || 'e2e-claudecode-compaction-device'
 const TEST_PREFIX = `e2e-agent-reg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const CHAT_MODEL_NAME = `${TEST_PREFIX}-chat-model`
 const CLAUDE_MODEL_NAME = `${TEST_PREFIX}-claude-model`
@@ -82,6 +84,22 @@ type InteractiveToolResponse = {
   nameIncludes: string
   input: Record<string, unknown>
   text?: string
+}
+
+type DeviceResponseObject = {
+  id: string
+  status: string
+  output: Array<{
+    type: string
+    role?: string
+    content?: Array<{ type: string; text?: string }>
+  }>
+}
+
+type DeviceResponseEvent = {
+  type: string
+  delta?: string
+  response?: DeviceResponseObject
 }
 
 // Fail the transport only: no payload is fabricated, and every other request
@@ -987,6 +1005,158 @@ test.describe('Agent conversation regression', () => {
     await expect(page.getByTestId('messages-container')).toContainText(reply)
     await page.reload()
     await expect(page.getByTestId('messages-container')).toContainText(reply)
+  })
+
+  test('traditional executor Responses stream completes and inherits its device', async ({
+    request,
+  }) => {
+    await expect
+      .poll(
+        async () => {
+          const response = await request.get(`${API_BASE_URL}/api/devices`, {
+            headers: authHeaders(),
+            timeout: 5_000,
+          })
+          expect(response.status()).toBe(200)
+          const { items } = (await response.json()) as {
+            items: Array<{ device_id: string; device_type: string; status: string }>
+          }
+          const device = items.find(item => item.device_id === TRADITIONAL_DEVICE_ID)
+          return device && `${device.status}:${device.device_type}`
+        },
+        { timeout: 30_000, message: 'The existing traditional executor must be online' }
+      )
+      .toBe('online:local')
+
+    const contextToken = makeContextToken('responses_device')
+    const firstPrompt = `Return the first traditional device reply for ${contextToken}`
+    const followUpPrompt = `Return the follow-up traditional device reply for ${contextToken}`
+    const firstReply = `设备首轮 ${contextToken}`
+    const followUpReply = `设备续聊 ${contextToken}`
+    await configureStreamRule(request, firstPrompt, firstReply, 0)
+    await configureStreamRule(request, followUpPrompt, followUpReply, 0)
+
+    const first = await test.step(
+      'Complete the first traditional executor SSE reply',
+      () =>
+        createTraditionalDeviceStream(request, {
+          input: firstPrompt,
+          execution: { type: 'wegent', device_id: TRADITIONAL_DEVICE_ID },
+        }),
+      { timeout: 35_000 }
+    )
+    expect(deviceResponseText(first)).toBe(firstReply)
+    const firstRetrieved = await readDeviceResponse(request, first.id)
+    expect(firstRetrieved.status).toBe('completed')
+    expect(deviceResponseText(firstRetrieved)).toBe(deviceResponseText(first))
+
+    // No execution selection is sent: the persisted Task supplies its device.
+    const followUp = await test.step(
+      'Complete the inherited-device follow-up SSE reply',
+      () =>
+        createTraditionalDeviceStream(request, {
+          input: followUpPrompt,
+          previous_response_id: first.id,
+        }),
+      { timeout: 35_000 }
+    )
+    expect(followUp.id).toBe(first.id)
+    expect(deviceResponseText(followUp)).toBe(followUpReply)
+    const retrieved = await readDeviceResponse(request, first.id)
+    expect(retrieved.status).toBe('completed')
+    expect(deviceResponseText(retrieved)).toBe(firstReply + followUpReply)
+
+    const detail = await request.get(`${API_BASE_URL}/api/tasks/${first.id.slice(5)}`, {
+      headers: authHeaders(),
+      timeout: 10_000,
+    })
+    expect(detail.status()).toBe(200)
+    const task = (await detail.json()) as {
+      device_id: string
+      subtasks: Array<{
+        role: string
+        status: string
+        executor_name: string
+        result?: { value?: string }
+      }>
+    }
+    expect(task.device_id).toBe(TRADITIONAL_DEVICE_ID)
+    expect(task.subtasks.filter(subtask => subtask.role === 'ASSISTANT')).toEqual([
+      expect.objectContaining({
+        status: 'COMPLETED',
+        executor_name: `device-${TRADITIONAL_DEVICE_ID}`,
+        result: expect.objectContaining({ value: firstReply }),
+      }),
+      expect.objectContaining({
+        status: 'COMPLETED',
+        executor_name: `device-${TRADITIONAL_DEVICE_ID}`,
+        result: expect.objectContaining({ value: deviceResponseText(followUp) }),
+      }),
+    ])
+    const resumed = (await loadCapturedModelRequests(request)).find(
+      capture =>
+        isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(followUpPrompt)
+    )
+    expect(
+      resumed,
+      'The completed inherited-device turn must have a real model request'
+    ).toBeDefined()
+    if (!resumed) throw new Error('The inherited-device model request was not captured')
+    expect(extractText(resumed.body)).toContain(firstPrompt)
+
+    const outsider = createApiClient(request)
+    const login = await outsider.login(REGULAR_USER.username, REGULAR_USER.password, 1)
+    expect(login.status).toBe(200)
+    const outsiderToken = login.data?.access_token
+    expect(outsiderToken).toBeTruthy()
+    if (!outsiderToken) throw new Error('Regular user login did not return an access token')
+    const me = await request.get(`${API_BASE_URL}/api/users/me`, {
+      headers: { Authorization: `Bearer ${outsiderToken}` },
+      timeout: 10_000,
+    })
+    expect(me.status()).toBe(200)
+    const outsiderId = ((await me.json()) as { id: number }).id
+    const memberPath = `${API_BASE_URL}/api/share/Team/${deviceTeam.id}/members`
+    const member = await request.post(memberPath, {
+      headers: authHeaders(),
+      data: { user_id: outsiderId, role: 'Reporter' },
+      timeout: 10_000,
+    })
+    expect(member.status()).toBe(200)
+    const memberId = ((await member.json()) as { id: number }).id
+    try {
+      const rejectionPrompt = `Reject a forbidden device without dispatch ${contextToken}`
+      for (const selection of [
+        { token, deviceId: `${TEST_PREFIX}-missing-device` },
+        { token: outsiderToken, deviceId: TRADITIONAL_DEVICE_ID },
+      ]) {
+        const rejected = await request.post(`${API_BASE_URL}/api/v1/responses`, {
+          headers: { Authorization: `Bearer ${selection.token}` },
+          timeout: 10_000,
+          data: {
+            model: `default#${deviceTeam.name}`,
+            input: rejectionPrompt,
+            stream: true,
+            background: false,
+            execution: { type: 'wegent', device_id: selection.deviceId },
+          },
+        })
+        expect(rejected.status(), await rejected.text()).toBe(404)
+        expect(await rejected.json()).toMatchObject({
+          detail: 'Device not found or not accessible',
+        })
+      }
+      const captures = await loadCapturedModelRequests(request)
+      expect(captures.some(capture => extractText(capture.body).includes(rejectionPrompt))).toBe(
+        false
+      )
+    } finally {
+      const removed = await request.delete(`${memberPath}/${memberId}`, {
+        headers: authHeaders(),
+        timeout: 10_000,
+      })
+      expect(removed.status()).toBe(200)
+    }
   })
 
   test('device Git project runs without server AES keys on the executor', async ({ request }) => {
@@ -1979,7 +2149,8 @@ test.describe('Agent conversation regression', () => {
   async function configureStreamRule(
     request: APIRequestContext,
     matchText: string,
-    responseContent: string
+    responseContent: string,
+    chunkDelayMs = 20
   ): Promise<void> {
     streamRuleMatchTexts.add(matchText)
     const response = await request.post(`${MOCK_MODEL_SERVER_URL}/stream-rules`, {
@@ -1987,7 +2158,7 @@ test.describe('Agent conversation regression', () => {
       data: {
         matchText,
         responseContent,
-        chunkDelayMs: 20,
+        chunkDelayMs,
       },
     })
     expect(response.status()).toBe(200)
@@ -2843,6 +3014,65 @@ test.describe('Agent conversation regression', () => {
         }
       )
       .toBe('online:claudecode:app')
+  }
+
+  async function createTraditionalDeviceStream(
+    request: APIRequestContext,
+    data: Record<string, unknown>
+  ): Promise<DeviceResponseObject> {
+    const response = await request.post(`${API_BASE_URL}/api/v1/responses`, {
+      headers: authHeaders(),
+      data: { model: `default#${deviceTeam.name}`, stream: true, background: false, ...data },
+      timeout: 30_000,
+    })
+    const body = await response.text()
+    expect(response.status(), body).toBe(200)
+    expect(response.headers()['content-type']).toContain('text/event-stream')
+    const events = body
+      .split(/\r?\n/)
+      .filter(line => line.startsWith('data: ') && line !== 'data: [DONE]')
+      .map(line => JSON.parse(line.slice(6)) as DeviceResponseEvent)
+    const created = events.find(event => event.type === 'response.created')?.response
+    expect(created?.id, body).toMatch(/^resp_\d+$/)
+    if (created) createdTaskIds.add(Number(created.id.slice(5)))
+    const completed = events.filter(event => event.type === 'response.completed')
+    expect(completed, body).toHaveLength(1)
+    expect(
+      events.filter(event => event.type === 'response.failed'),
+      body
+    ).toHaveLength(0)
+    const terminal = completed[0].response
+    expect(terminal, body).toBeDefined()
+    if (!terminal) throw new Error('Completed event did not include its response')
+    expect(terminal.status).toBe('completed')
+    expect(
+      events
+        .filter(event => event.type === 'response.output_text.delta')
+        .map(event => event.delta)
+        .join('')
+    ).toBe(deviceResponseText(terminal))
+    return terminal
+  }
+
+  async function readDeviceResponse(
+    request: APIRequestContext,
+    responseId: string
+  ): Promise<DeviceResponseObject> {
+    const response = await request.get(`${API_BASE_URL}/api/v1/responses/${responseId}`, {
+      headers: authHeaders(),
+      timeout: 10_000,
+    })
+    expect(response.status()).toBe(200)
+    return response.json()
+  }
+
+  function deviceResponseText(response: DeviceResponseObject): string {
+    return response.output
+      .filter(item => item.type === 'message' && item.role === 'assistant')
+      .flatMap(item => item.content ?? [])
+      .filter(part => part.type === 'output_text')
+      .map(part => part.text ?? '')
+      .join('')
   }
 
   async function expectServiceHealthy(

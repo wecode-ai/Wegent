@@ -23,6 +23,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { createGoalAdmissionRecovery } from '../modules/goal-admission-recovery.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const GOAL = 'WEWORK_OVERLOADED_GOAL'
 const RECOVERED = 'WEWORK_OVERLOADED_GOAL_RECOVERED'
@@ -114,15 +115,26 @@ export function createDesktopScenario(options) {
           await createSingleRootLocalProject(control, workspace, `goal-overload-${action}`)
           await selectE2EModel(control, undefined, 'GPT-5.6 Luna', ACTIVE_WORKBENCH_SELECTOR)
           await control.command(
-            'click',
-            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`
+            'setExpanded',
+            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`,
+            { value: 'true', visible: true, timeoutMs: options.uiTimeoutMs }
           )
-          await control.command('click', '[data-testid="set-goal-button"]')
+          await control.command(
+            'clickWhenEnabled',
+            '[data-testid="add-context-menu"] [data-testid="set-goal-button"]',
+            { visible: true, timeoutMs: options.uiTimeoutMs }
+          )
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${GOAL}_${action}` })
           // Hold the real failed frame until both UI and RPC observe the stopped Goal.
           // Neither the baseline read nor a user mutation may race native recovery.
           await existing.overloadTerminalGate.arm()
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+          await waitForValue(
+            () => requests,
+            count => count > 0,
+            `The overloaded Goal did not reach its first model request for ${action}`,
+            options.modelResponseTimeoutMs
+          )
           await existing.overloadTerminalGate.wait()
           const stopped = await waitForWorkbenchDebugState(
             control,

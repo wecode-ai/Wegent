@@ -355,9 +355,13 @@ export async function verifyCachedHistorySearch(
   }
   const beforeShortcut = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'Before find')
   // The native key helper scrolls its focus target into view; keep it outside the transcript.
-  await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
-    key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
-  })
+  await control.command(
+    'nativePress',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
+    {
+      key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+    }
+  )
   await control.command('waitFor', OLDER)
   const afterShortcut = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'After find')
   assert.equal(
@@ -373,9 +377,13 @@ export async function verifyCachedHistorySearch(
   const afterClose = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'After closing find')
   assert.equal(afterClose.scrollHeight, beforeShortcut.scrollHeight)
   assert.ok(Math.abs(afterClose.scrollTop - beforeShortcut.scrollTop) <= 2)
-  await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
-    key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
-  })
+  await control.command(
+    'nativePress',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
+    {
+      key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+    }
+  )
   for (const { query, matches, browseContext } of CASES) {
     await control.command('fill', FIND, { value: '' })
     await control.command('waitFor', '[data-testid="conversation-find-next-button"][disabled]')

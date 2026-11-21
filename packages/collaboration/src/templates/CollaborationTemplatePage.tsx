@@ -1,3 +1,5 @@
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -228,7 +230,8 @@ function ScopedCollaborationTemplatePage({
             <p>{m.description}</p>
           </div>
           <div className="collaboration-template-actions">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="template-refresh"
               aria-label={m.refresh}
@@ -236,8 +239,9 @@ function ScopedCollaborationTemplatePage({
               onClick={() => void refresh()}
             >
               <RefreshCw aria-hidden="true" />
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="template-import-open"
               disabled={busy}
@@ -247,14 +251,15 @@ function ScopedCollaborationTemplatePage({
               }}
             >
               {m.import}
-            </button>
+            </ControlButton>
           </div>
         </header>
         {!store.library.remote && <p className="collaboration-template-notice">{m.offline}</p>}
         <div className="collaboration-template-toolbar">
           <div role="group" aria-label={m.title}>
             {(['discover', 'available', 'mine'] as const).map(value => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 key={value}
                 data-testid={`template-tab-${value}`}
@@ -262,10 +267,10 @@ function ScopedCollaborationTemplatePage({
                 onClick={() => setTab(value)}
               >
                 {value === 'available' && mode === 'marketplace' ? m.capabilities : m[value]}
-              </button>
+              </ControlButton>
             ))}
           </div>
-          <input
+          <ControlInput
             aria-label={m.search}
             placeholder={m.search}
             data-testid="template-search"
@@ -276,7 +281,8 @@ function ScopedCollaborationTemplatePage({
         {(remoteError || local.error) && (
           <p role="alert">
             {m.failed}{' '}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="template-retry"
               onClick={() => {
@@ -285,7 +291,7 @@ function ScopedCollaborationTemplatePage({
               }}
             >
               {m.retry}
-            </button>
+            </ControlButton>
           </p>
         )}
         {error && (
@@ -296,7 +302,8 @@ function ScopedCollaborationTemplatePage({
         {local.records.some(record => record.pendingSync) && (
           <div className="collaboration-template-notice">
             <span>{m.pending}</span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="template-sync"
               disabled={!store.library.remote || local.syncing}
@@ -308,7 +315,7 @@ function ScopedCollaborationTemplatePage({
               }
             >
               {m.sync}
-            </button>
+            </ControlButton>
           </div>
         )}
         <div className="collaboration-template-grid">
@@ -343,7 +350,8 @@ function ScopedCollaborationTemplatePage({
                 {card.ownerId === store.library.ownerId &&
                   card.namespace === 'default' &&
                   (!card.record || card.record.source === 'personal') && (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="collaboration-danger-button"
                       data-testid={`template-delete-${card.record?.document.metadata.name ?? card.id}`}
@@ -355,9 +363,10 @@ function ScopedCollaborationTemplatePage({
                       }}
                     >
                       {m.delete}
-                    </button>
+                    </ControlButton>
                   )}
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`template-details-${card.record?.document.metadata.name ?? card.id}`}
                   disabled={busy}
@@ -367,7 +376,7 @@ function ScopedCollaborationTemplatePage({
                   }}
                 >
                   {m.details}
-                </button>
+                </ControlButton>
               </footer>
               {card.record?.syncError && (
                 <p role="alert" className="collaboration-template-error">
@@ -381,14 +390,15 @@ function ScopedCollaborationTemplatePage({
           <p className="collaboration-template-empty">{m.noResults}</p>
         )}
         {tab === 'discover' && nextCursor && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="template-load-more"
             disabled={remoteLoading}
             onClick={() => void catalog.loadMore()}
           >
             {m.more}
-          </button>
+          </ControlButton>
         )}
       </div>
       {selected && (
@@ -402,17 +412,19 @@ function ScopedCollaborationTemplatePage({
           footer={
             <>
               {(!embedded || !hostNavigation) && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="template-detail-cancel"
                   disabled={busy}
                   onClick={() => setSelected(null)}
                 >
                   {embedded ? m.backToTemplates : m.cancel}
-                </button>
+                </ControlButton>
               )}
               {mode === 'marketplace' ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="collaboration-primary-button"
                   data-testid="template-account-add"
@@ -438,10 +450,11 @@ function ScopedCollaborationTemplatePage({
                   }}
                 >
                   {status ?? (selectedInstalled ? m.cloudAdded : m.cloudAdd)}
-                </button>
+                </ControlButton>
               ) : null}
               {(mode !== 'marketplace' || onUse) && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="collaboration-primary-button"
                   data-testid="template-use"
@@ -476,7 +489,7 @@ function ScopedCollaborationTemplatePage({
                     )
                       ? m.use
                       : m.download)}
-                </button>
+                </ControlButton>
               )}
             </>
           }
@@ -500,16 +513,18 @@ function ScopedCollaborationTemplatePage({
           footer={
             <>
               {!embedded && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="template-delete-cancel"
                   disabled={busy}
                   onClick={() => setDeleting(null)}
                 >
                   {m.cancel}
-                </button>
+                </ControlButton>
               )}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className="collaboration-danger-button"
                 data-testid="template-delete-confirm"
@@ -532,7 +547,7 @@ function ScopedCollaborationTemplatePage({
                 }}
               >
                 {m.delete}
-              </button>
+              </ControlButton>
             </>
           }
         >

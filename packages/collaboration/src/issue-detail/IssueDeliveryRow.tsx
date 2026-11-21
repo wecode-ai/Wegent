@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
@@ -81,7 +82,7 @@ export function IssueDeliveryRow({
   const at = delivery.delivered_at ?? delivery.created_at
 
   return (
-    <button
+    <ControlButton variant="unstyled"
       type="button"
       data-testid={`todo-detail-open-delivery-${delivery.id}`}
       onClick={() => onOpen(delivery.id)}
@@ -112,6 +113,6 @@ export function IssueDeliveryRow({
         </span>
       </span>
       <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-    </button>
+    </ControlButton>
   )
 }

@@ -162,7 +162,7 @@ export async function verifyPluginSourceContinuation({
     assert.equal(await control.command('getValue', testId(`${PREFIX}-display-name`)), name)
     await control.command('click', testId(`${DIALOG}-advanced-toggle`))
     await control.command('clickWhenEnabled', testId(`${PREFIX}-plugins-add`))
-    await control.command('waitFor', `${candidate}:checked`)
+    await control.command('waitFor', `${candidate}[role="checkbox"][aria-checked="true"]`)
     entry.persistedPluginBindingSelected = true
     if (faultActive) await checkFault(`${entry.name}-after-reopen`)
     await control.command('click', testId(`${PREFIX}-plugins-add`))

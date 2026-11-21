@@ -1,48 +1,43 @@
-import { ArrowLeft, Cloud, Code2, LogOut, Plus, Server } from 'lucide-react'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
-import { DeviceSection } from './DeviceSection'
-import { useSettingsCloudModels } from './useSettingsCloudModels'
-import { createSettingsDeviceCollection } from './settingsDeviceCollection'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { ConnectorConnectionsSection } from './ConnectorConnectionsSection'
-import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
-import { useTranslation } from '@/hooks/useTranslation'
-import { WorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import { useWorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
-import { SettingsPage, SettingsPageHeader } from './settings-ui'
-import { navigateTo } from '@/lib/navigation'
-import { isElectronRuntime } from '@/lib/runtime-environment'
-import { cn } from '@/lib/utils'
-import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
-import { isClaudeCodeDevice, isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
-import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/devices'
-import {
-  defaultAppearance,
-  getWorkbenchBackground,
-  useOptionalAppearance,
-} from '@/features/appearance'
-import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
-import { DeviceGitSyncSection } from './DeviceGitSyncSection'
-import { RemoteTaskAccessSetting } from './RemoteTaskAccessSetting'
-import { type CloudSettingsConnection } from './settings-cloud-api'
+import { WorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import {
   resolveDshSettingsPath,
   type WeworkDshSettingsPage,
 } from '@/features/dsh-runtime/dshSettings'
-import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
-import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
 import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
+import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { isClaudeCodeDevice, isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
+import { navigateTo } from '@/lib/navigation'
+import { isElectronRuntime } from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
+import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
+import type { DeviceInfo } from '@/types/devices'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Cloud, Code2, LogOut, Plus, Server } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
+import { ConnectorConnectionsSection } from './ConnectorConnectionsSection'
+import { DeviceGitSyncSection } from './DeviceGitSyncSection'
+import { DeviceSection } from './DeviceSection'
+import { RemoteTaskAccessSetting } from './RemoteTaskAccessSetting'
+import { type CloudSettingsConnection } from './settings-cloud-api'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
+import { createSettingsDeviceCollection } from './settingsDeviceCollection'
+import { SettingsShell } from './SettingsShell'
+import { useSettingsCloudModels } from './useSettingsCloudModels'
 
 export { DeviceSection } from './DeviceSection'
 
@@ -254,14 +249,16 @@ export function ConnectionsDeviceSettingsPage({
                   )}
                 </p>
               </div>
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid="settings-cloud-connect-button"
                 onClick={() => setConnectDialogOpen(true)}
-                className="inline-flex h-10 shrink-0 items-center justify-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
+                className="shrink-0"
               >
                 {t('workbench.cloud_connection_connect_action', '连接云端')}
-              </button>
+              </ControlButton>
             </div>
           </section>
 
@@ -324,17 +321,19 @@ export function ConnectionsDeviceSettingsPage({
                 </div>
               </div>
             </div>
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="settings-cloud-disconnect-button"
               onClick={() => {
                 cloudConnection.disconnect()
               }}
-              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
+              className="shrink-0"
             >
               <LogOut className="h-4 w-4" />
               {t('workbench.cloud_connection_disconnect', '断开连接')}
-            </button>
+            </ControlButton>
           </div>
         </section>
 
@@ -355,7 +354,8 @@ export function ConnectionsDeviceSettingsPage({
                 {t('workbench.connections_authorized_devices', '云端设备')}
               </h2>
               {!loading && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="connection-add-device-button"
                   onClick={() => setAddDialogOpen(true)}
@@ -364,7 +364,7 @@ export function ConnectionsDeviceSettingsPage({
                 >
                   <Plus className="h-4 w-4" />
                   {t('workbench.connection_add', '添加')}
-                </button>
+                </ControlButton>
               )}
             </div>
 
@@ -385,14 +385,15 @@ export function ConnectionsDeviceSettingsPage({
                       ? deviceSnapshot.error.message
                       : t('workbench.load_failed')}
                   </span>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="connection-devices-retry"
                     onClick={() => void refreshDevices()}
                     className="shrink-0 rounded-md px-2 py-1 hover:bg-muted"
                   >
                     {t('workbench.retry')}
-                  </button>
+                  </ControlButton>
                 </div>
               )}
               {loading ? (
@@ -464,10 +465,6 @@ export function ConnectionsSettingsPage({
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
-  const appearanceContext = useOptionalAppearance()
-  const appearance = appearanceContext?.appearance ?? defaultAppearance
-  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
-  const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const isDesktopRuntime = isElectronRuntime()
   const settingsContributions = useDshSlotEntries<WeworkDshSettingsPage>(
     WEWORK_DSH_SLOTS.settingsPage
@@ -516,40 +513,17 @@ export function ConnectionsSettingsPage({
     settingsContributions.find(item => item.id === 'general')
 
   return (
-    <div
-      data-testid="wework-settings-page"
-      className={cn(
-        'relative flex h-full min-w-0 flex-1 overflow-hidden text-text-primary',
-        background.imagePath && (background.inMain || background.inSidebar || background.inTopBar)
-          ? 'bg-transparent'
-          : 'bg-background'
-      )}
-    >
-      <aside
-        className={cn(
-          'relative flex shrink-0 flex-col border-r border-border/70 px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))]',
-          background.imagePath && background.inSidebar
-            ? 'bg-background/25'
-            : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150'
-        )}
-        style={{ width: sidebarWidth }}
-      >
-        <DesktopTopBar
-          testId="settings-sidebar-topbar"
-          className="-mx-1.5 mb-1 w-[calc(100%+0.75rem)] shrink-0 bg-transparent pr-2 pl-2"
-          left={
-            <button
-              type="button"
-              data-testid="settings-back-button"
-              onClick={onBack}
-              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-[rgb(var(--color-sidebar-hover))] max-md:min-h-11"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              {t('workbench.settings_back_to_app', '返回')}
-            </button>
-          }
-        />
-
+    <SettingsShell
+      onBack={onBack}
+      activeLabel={
+        activeContribution
+          ? t(
+              `workbench.${activeContribution.labelKey ?? activeContribution.id}`,
+              activeContribution.label
+            )
+          : t('workbench.settings', '设置')
+      }
+      navigation={closeNavigation => (
         <nav
           data-testid="settings-sidebar-nav"
           className="scrollbar-soft min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5"
@@ -570,10 +544,13 @@ export function ConnectionsSettingsPage({
                     {t(`workbench.${item.categoryLabelKey}`, item.categoryLabel)}
                   </div>
                 )}
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`settings-nav-${item.id}`}
+                  aria-current={effectiveActiveNav === item.id ? 'page' : undefined}
                   onClick={() => {
+                    closeNavigation()
                     setActiveNav(item.id)
                     navigateTo(item.path)
                   }}
@@ -597,56 +574,41 @@ export function ConnectionsSettingsPage({
                       testId={`settings-nav-${item.id}-experimental-badge`}
                     />
                   ) : null}
-                </button>
+                </ControlButton>
               </div>
             )
           })}
         </nav>
-
-        <button
-          type="button"
-          data-testid="settings-sidebar-resize-handle"
-          onPointerDown={handleResizeStart}
-          className="absolute right-[-4px] top-0 z-20 h-full w-3 cursor-col-resize bg-transparent"
-          aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
+      )}
+    >
+      {activeContribution?.module ? (
+        <DshSettingsSurface
+          page={activeContribution}
+          services={services}
+          devices={devices}
+          onBack={onBack}
+          onOpenCloudSettings={openCloudSettings}
+          onOpenRuntimeTask={onOpenRuntimeTask}
+          onRefreshWorkLists={onRefreshWorkLists}
+          autoOpenAddCloudDeviceDialog={shouldAutoOpenAddCloudDeviceDialog}
         />
-      </aside>
-
-      <main
-        className={cn(
-          'min-w-0 flex-1 overflow-auto px-8 pt-8 pb-8',
-          background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background'
-        )}
-      >
-        {activeContribution?.module ? (
-          <DshSettingsSurface
-            page={activeContribution}
-            services={services}
-            devices={devices}
-            onBack={onBack}
-            onOpenCloudSettings={openCloudSettings}
-            onOpenRuntimeTask={onOpenRuntimeTask}
-            onRefreshWorkLists={onRefreshWorkLists}
-            autoOpenAddCloudDeviceDialog={shouldAutoOpenAddCloudDeviceDialog}
-          />
-        ) : activeContribution ? (
-          <DshSlotSurface
-            className="contents"
-            entryId={activeContribution.id}
-            props={{
-              services,
-              devices,
-              onBack,
-              onOpenCloudSettings: openCloudSettings,
-              onOpenRuntimeTask,
-              onRefreshWorkLists,
-              autoOpenAddCloudDeviceDialog: shouldAutoOpenAddCloudDeviceDialog,
-            }}
-            slot={WEWORK_DSH_SLOTS.settingsPage}
-            testId={`dsh-settings-surface-${activeContribution.id}`}
-          />
-        ) : null}
-      </main>
-    </div>
+      ) : activeContribution ? (
+        <DshSlotSurface
+          className="contents"
+          entryId={activeContribution.id}
+          props={{
+            services,
+            devices,
+            onBack,
+            onOpenCloudSettings: openCloudSettings,
+            onOpenRuntimeTask,
+            onRefreshWorkLists,
+            autoOpenAddCloudDeviceDialog: shouldAutoOpenAddCloudDeviceDialog,
+          }}
+          slot={WEWORK_DSH_SLOTS.settingsPage}
+          testId={`dsh-settings-surface-${activeContribution.id}`}
+        />
+      ) : null}
+    </SettingsShell>
   )
 }
