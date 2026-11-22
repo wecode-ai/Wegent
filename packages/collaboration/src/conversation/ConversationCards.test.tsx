@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
+import { WindowedMarkdownChunk } from "../markdown/WindowedMarkdownChunk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TurnFileChangesSummary } from "@wegent/chat-core/runtime";
 import { createCollaborationTranslator } from "../i18n";
@@ -401,6 +403,35 @@ describe("shared conversation cards without Electron", () => {
     } finally {
       selection.removeAllRanges();
       detach();
+    }
+  });
+
+  it("retains offscreen Markdown placeholder prose around the selected chunk", () => {
+    vi.stubGlobal("IntersectionObserver", class {});
+    try {
+      container.innerHTML = renderToStaticMarkup(
+        <article data-message-id="windowed"><div data-message-selectable-text>
+          <WindowedMarkdownChunk chunkIndex={0} content="Before selection" eager={false}><p>Before selection</p></WindowedMarkdownChunk>
+          <p data-selected>Selected prose</p>
+          <WindowedMarkdownChunk chunkIndex={2} content="After selection" eager={false}><p>After selection</p></WindowedMarkdownChunk>
+        </div></article>
+      );
+      expect(container.querySelectorAll('[data-markdown-window-placeholder]')).toHaveLength(2);
+      const range = document.createRange();
+      range.selectNodeContents(container.querySelector('[data-selected]')!);
+      range.getBoundingClientRect = () => new DOMRect(100, 100, 40, 20);
+      document.getSelection()!.addRange(range);
+      const state = createMessageTextSelectionState("conversation", false, true);
+      const detach = state.attach(container);
+      state.update();
+      const capture = state.getSnapshot().textSelection!;
+      expect(capture.content).toContain("Before selection");
+      expect(capture.content).toContain("After selection");
+      expect(capture.content.slice(capture.start, capture.start + capture.text.length)).toBe("Selected prose");
+      detach();
+    } finally {
+      document.getSelection()!.removeAllRanges();
+      vi.unstubAllGlobals();
     }
   });
 
