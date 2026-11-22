@@ -32,20 +32,30 @@ pub(super) fn verified_memory_key(
             "Training case scope is no longer available".into(),
         ));
     }
-    let fingerprint = Sha256::digest(
-        json!([
-            user,
-            case["roleId"],
-            evidence["taskId"],
-            evidence["messageId"]
-        ])
-        .to_string(),
-    );
-    // A source observation and feedback on an answer can cite the same record.
+    Ok(training_memory_key(user, evidence))
+}
+
+fn training_memory_key(user: i64, evidence: &Value) -> String {
+    let case = &evidence["trainingCase"];
+    let source_record = json!([
+        user,
+        case["roleId"],
+        evidence["taskId"],
+        evidence["messageId"]
+    ]);
     if case["kind"] == "observation" {
-        Ok(format!("stand-in-observation:{fingerprint:x}"))
+        let fingerprint = Sha256::digest(source_record.to_string());
+        format!("stand-in-observation:{fingerprint:x}")
     } else {
-        Ok(format!("stand-in-training-memory:{fingerprint:x}"))
+        let fingerprint = Sha256::digest(
+            json!([
+                source_record,
+                case["sceneMessageId"],
+                case["actualMessageId"]
+            ])
+            .to_string(),
+        );
+        format!("stand-in-training-memory:{fingerprint:x}")
     }
 }
 
@@ -121,6 +131,16 @@ pub(in super::super) fn local_issue_visible(
 }
 
 impl LocalTaskStore {
+    /// Validate model input before the executor records a durable pending review write.
+    pub fn training_memory_write_key(
+        user: i64,
+        content: &str,
+        evidence: &Value,
+    ) -> Result<String, TaskRuntimeError> {
+        super::validate_memory_content(Some(content))?;
+        super::validate_memory_evidence(Some(evidence))?;
+        Ok(training_memory_key(user, evidence))
+    }
     pub fn local_issue_review_visible(
         &self,
         role: &Value,
@@ -269,6 +289,22 @@ impl LocalTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn feedback_keys_allow_one_owner_response_to_verify_multiple_sent_answers() {
+        let mut evidence = json!({"taskId":"source","messageId":"owner-response",
+            "trainingCase":{"kind":"correction","roleId":"role","sceneMessageId":"request",
+            "actualMessageId":"answer"}});
+        let key = LocalTaskStore::training_memory_write_key(7, "Lesson", &evidence).unwrap();
+        assert_eq!(training_memory_key(7, &evidence), key);
+        evidence["trainingCase"]["actualMessageId"] = json!("other-answer");
+        assert_ne!(training_memory_key(7, &evidence), key);
+        assert!(
+            LocalTaskStore::training_memory_write_key(7, &"x".repeat(4001), &evidence).is_err()
+        );
+        evidence["excerpt"] = json!("x".repeat(8001));
+        assert!(LocalTaskStore::training_memory_write_key(7, "Lesson", &evidence).is_err());
+    }
 
     #[test]
     fn case_rotation_preserves_ordinary_memories_and_retires_dependent_proposals() {

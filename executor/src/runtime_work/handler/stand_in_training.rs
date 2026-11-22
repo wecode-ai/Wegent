@@ -132,6 +132,15 @@ fn case_evidence(
                 "The verified assistant answer must be between the request and owner feedback",
             ));
         }
+        if !external
+            && (!answer["trainingRequestId"].is_string()
+                || answer["trainingRequestId"] != scene["id"]
+                || expected["trainingPreviousReplyId"] != answer["id"])
+        {
+            return Err(invalid(
+                "Direct feedback must belong to the adjacent native request and final answer",
+            ));
+        }
     } else if expected_at < scene_at || (expected_at == scene_at && !quotes(expected, scene)) {
         return Err(invalid("The owner's demonstration must follow the request"));
     }
@@ -170,7 +179,11 @@ fn case_evidence(
             ));
         }
         if let Some(answer) = actual {
-            validate_reply(answer, &[scene], group)?;
+            if !quotes(answer, scene) {
+                return Err(invalid(
+                    "The sent answer needs a verified link to this request",
+                ));
+            }
             validate_reply(expected, &[scene, answer], group)?;
         } else {
             validate_reply(expected, &[scene], group)?;
@@ -334,6 +347,7 @@ impl RuntimeWorkRpcHandler {
             })
             .unwrap_or(excerpt);
         let message = json!({"id":id,"author":author,"content":content,"turnId":m["turnId"],"nativeFinalReplyItemId":native_final,
+            "trainingRequestId":m["trainingRequestId"],"trainingPreviousReplyId":m["trainingPreviousReplyId"],
             "at":timestamp_ms_field(m,"completedAt").or_else(|| timestamp_ms_field(m,"createdAt"))});
         Ok((json!({"roleId":role_id}), message))
     }
@@ -402,6 +416,8 @@ impl RuntimeWorkRpcHandler {
                 .await?
         };
         let content = super::stand_in_tasks::required(args, "content")?;
+        let write = LocalTaskStore::training_memory_write_key(identity.user, content, &evidence)
+            .map_err(super::stand_in::settings_error)?;
         let role = binding["roleId"]
             .as_str()
             .ok_or_else(|| invalid("Missing case role"))?;
@@ -421,23 +437,6 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| invalid("Missing live memory review run"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
-        let write = format!(
-            "{:x}",
-            Sha256::digest(
-                json!([
-                    if observation {
-                        "observation"
-                    } else {
-                        "training"
-                    },
-                    evidence["messageId"]
-                ])
-                .to_string()
-            )
-        );
-        store
-            .record_memory_review_write(identity.user, task, run, &write, true)
-            .map_err(super::stand_in::settings_error)?;
         let memory = json!({"evidence":evidence,"content":content,
             "sourceTaskId":task,"scope":scope});
         let settings = store
@@ -446,6 +445,9 @@ impl RuntimeWorkRpcHandler {
         let device = self
             .local_stand_in_role_device(&settings, role)
             .ok_or_else(|| invalid("Learning role moved to another device"))?;
+        store
+            .record_memory_review_write(identity.user, task, run, &write, true)
+            .map_err(super::stand_in::settings_error)?;
         let result = super::stand_in_memory_review::memory_review_save_result(
             store.save_verified_training_memory(identity.user, &device, memory),
         )?;
@@ -577,7 +579,7 @@ mod tests {
     fn replay_scene_excludes_future_assistant_answer_and_owner_correction() {
         let binding = json!({"roleId":"engineer","source":{"id":"chat"}});
         let question = json!({"id":"q","author":"participant","at":100,"content":"An operation takes 20 minutes","conversationId":"chat","topicId":"slow"});
-        let answer = json!({"id":"a","author":"assistant","at":120,"content":"It is stuck","conversationId":"chat","topicId":"slow"});
+        let mut answer = json!({"id":"a","author":"assistant","at":120,"content":"It is stuck","conversationId":"chat","topicId":"slow"});
         let feedback = json!({"id":"f","author":"owner","at":130,"content":"It is slow but still progressing","conversationId":"chat","topicId":"slow"});
         let build = |answer: &Value, feedback: &Value| {
             case_evidence(
@@ -589,6 +591,8 @@ mod tests {
                 feedback,
             )
         };
+        assert!(build(&answer, &feedback).is_err());
+        answer["quotedMessageId"] = json!("q");
         let case = build(&answer, &feedback).unwrap();
         assert_eq!(case["trainingCase"]["scene"], question["content"]);
         assert_eq!(case["trainingCase"]["actual"], answer["content"]);

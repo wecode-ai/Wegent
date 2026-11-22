@@ -62,7 +62,9 @@ pub(super) fn issue_delivery_at_completion(
                 .and_then(Value::as_str)
         })
         .flatten();
-    let versions = crate::task_runtime::mcp::stand_in_turn_versions(request);
+    let versions = turn["turn"]
+        .as_str()
+        .and_then(|id| crate::task_runtime::mcp::stand_in_turn_versions(request, id));
     Some(
         json!({"source":source,"roleDeviceId":context["roleDeviceId"],"requestId":trigger,
         "ghostVersion":versions.as_ref().map(|v|&v.0),"memoryVersion":versions.as_ref().map(|v|&v.1)}),

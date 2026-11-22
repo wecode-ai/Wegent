@@ -178,6 +178,7 @@ async fn issue_review_recovers_the_published_reply_and_stops_after_tag_revocatio
         json!({"wework.stand-in.memories":{"value":"current memory"}}),
     );
     let witness = crate::task_runtime::mcp::begin_stand_in_turn_witness(&mut request).unwrap();
+    crate::task_runtime::mcp::bind_stand_in_turn_context(&request, "native");
     let turn = json!({"origin":origin,"turn":"native","triggerCommentId":scene.message_id});
     let link = RuntimeTaskLink {
         runtime_handle: json!({"turnIdsBySubtask":{"subtask":"native"}}),

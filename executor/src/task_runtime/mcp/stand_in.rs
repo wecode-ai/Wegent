@@ -1,6 +1,8 @@
 //! A context-bound surface for inspecting identities and proposing reviewed changes.
 use super::*;
 use crate::task_runtime::LocalTaskStore;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
 use wegent_local_task_store::store::{AcceptedReply, DeliveryRole};
 
 #[path = "stand_in_processing.rs"]
@@ -25,7 +27,15 @@ pub(super) struct DeliveryContext {
     ghost: Option<String>,
     pub(super) role_device: String,
     injected: String,
-    reads: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+    memory: Arc<Mutex<DeliveryMemory>>,
+}
+
+#[derive(Debug, Default)]
+struct DeliveryMemory {
+    native_turn: Option<String>,
+    active: bool,
+    unbound_read: bool,
+    reads: BTreeSet<String>,
 }
 
 impl DeliveryContext {
@@ -39,7 +49,7 @@ impl DeliveryContext {
             ghost,
             role_device,
             injected: batch_fingerprint(memory),
-            reads: Default::default(),
+            memory: Default::default(),
         })
     }
 
@@ -47,19 +57,31 @@ impl DeliveryContext {
         if page["items"].as_array().map_or(true, Vec::is_empty) && page["itemChunk"].is_null() {
             return;
         }
-        if let Ok(mut reads) = self.reads.lock() {
-            reads.insert(batch_fingerprint(
-                &json!([page["items"], page["itemChunk"]]).to_string(),
-            ));
+        if let Ok(mut memory) = self.memory.lock() {
+            if memory.active {
+                memory.reads.insert(batch_fingerprint(
+                    &json!([page["items"], page["itemChunk"]]).to_string(),
+                ));
+            } else if memory.native_turn.is_none() {
+                memory.unbound_read = true;
+            }
         }
     }
 
     pub(super) fn versions(&self) -> Option<(&str, String)> {
-        let reads = self.reads.lock().ok()?;
-        let memory = if reads.is_empty() {
+        self.versions_for(None)
+    }
+
+    fn versions_for(&self, native_turn: Option<&str>) -> Option<(&str, String)> {
+        let memory = self.memory.lock().ok()?;
+        let bound_turn = memory.native_turn.as_deref()?;
+        if memory.unbound_read || !native_turn.map_or(memory.active, |id| id == bound_turn) {
+            return None;
+        }
+        let memory = if memory.reads.is_empty() {
             self.injected.clone()
         } else {
-            batch_fingerprint(&json!([self.injected, *reads]).to_string())
+            batch_fingerprint(&json!([self.injected, memory.reads]).to_string())
         };
         Some((self.ghost.as_deref()?, memory))
     }
@@ -79,7 +101,11 @@ pub(crate) struct StandInTurnWitness(String);
 impl Drop for StandInTurnWitness {
     fn drop(&mut self) {
         if let Ok(mut live) = deliveries().lock() {
-            live.remove(&self.0);
+            if let Some(delivery) = live.remove(&self.0) {
+                if let Ok(mut memory) = delivery.memory.lock() {
+                    memory.active = false;
+                }
+            }
         }
     }
 }
@@ -89,7 +115,7 @@ pub(crate) fn begin_stand_in_turn_witness(
 ) -> Option<StandInTurnWitness> {
     if !matches!(
         request.extra.get("origin")?["type"].as_str(),
-        Some("stand_in_identity" | "issue_dispatch")
+        Some("stand_in_identity" | "issue_dispatch" | "connection_work" | "dingtalk_work")
     ) {
         return None;
     }
@@ -107,9 +133,40 @@ fn active_delivery(request: &ExecutionRequest) -> Option<DeliveryContext> {
     deliveries().lock().ok()?.get(key).cloned()
 }
 
-pub(crate) fn stand_in_turn_versions(request: &ExecutionRequest) -> Option<(String, String)> {
+/// Only a native turn that accepted the host's prepared additional context can
+/// attest to the injected versions. Goal continuations use the same MCP handle.
+pub(crate) fn bind_stand_in_turn_context(request: &ExecutionRequest, turn_id: &str) {
+    let Some(delivery) = active_delivery(request) else {
+        return;
+    };
+    if let Ok(mut memory) = delivery.memory.lock() {
+        if memory.native_turn.is_none() {
+            memory.native_turn = Some(turn_id.to_owned());
+            memory.active = true;
+        }
+    };
+}
+
+pub(crate) fn observe_stand_in_turn_boundary(
+    request: &ExecutionRequest,
+    active_turn: Option<&str>,
+) {
+    let Some(delivery) = active_delivery(request) else {
+        return;
+    };
+    if let Ok(mut memory) = delivery.memory.lock() {
+        if active_turn.is_none() || active_turn != memory.native_turn.as_deref() {
+            memory.active = false;
+        }
+    };
+}
+
+pub(crate) fn stand_in_turn_versions(
+    request: &ExecutionRequest,
+    native_turn: &str,
+) -> Option<(String, String)> {
     let delivery = active_delivery(request)?;
-    let (ghost, memory) = delivery.versions()?;
+    let (ghost, memory) = delivery.versions_for(Some(native_turn))?;
     Some((ghost.to_owned(), memory))
 }
 

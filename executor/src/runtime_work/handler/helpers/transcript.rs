@@ -717,6 +717,9 @@ fn project_conversation_context_messages(messages: &mut Vec<Value>) {
                         .is_some_and(|v| !v.trim().is_empty())
             })
             .and_then(|item| {
+                if let Some(final_id) = item["deduplicatedFinalItemId"].as_str() {
+                    return Some((final_id.to_owned(), true));
+                }
                 Some((
                     item["id"].as_str()?.to_owned(),
                     item["phase"] == "final_answer",

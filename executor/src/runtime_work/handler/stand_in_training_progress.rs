@@ -252,6 +252,15 @@ impl RuntimeWorkRpcHandler {
                 gap = page["coverageGap"].clone();
             }
             let next = next_cursor(&page, cursor.as_ref())?.cloned();
+            if next
+                .as_ref()
+                .is_some_and(|next| !visited.insert(next.clone()))
+            {
+                return Err(AppIpcError::new(
+                    "incomplete_history",
+                    "Connection pagination repeated a cursor",
+                ));
+            }
             if page["messages"]
                 .as_array()
                 .is_some_and(|rows| !rows.is_empty())
@@ -269,13 +278,7 @@ impl RuntimeWorkRpcHandler {
                 return self.cache_training_page(run, &source, page).await.map(Some);
             }
             match next {
-                Some(next) if visited.insert(next.clone()) => cursor = Some(next),
-                Some(_) => {
-                    return Err(AppIpcError::new(
-                        "incomplete_history",
-                        "Connection pagination repeated a cursor",
-                    ))
-                }
+                Some(next) => cursor = Some(next),
                 None => break,
             }
         }
@@ -587,28 +590,36 @@ impl RuntimeWorkRpcHandler {
                 "Connection history already completed",
             ));
         }
-        let continuing =
-            state["runId"] == run && state["readStarted"] == true && args["restart"] != true;
+        let state = if args["restart"] == true {
+            store
+                .restart_memory_review_read(identity.user, source, &run, version)
+                .map_err(settings_error)?
+        } else {
+            state
+        };
+        let version = state["version"].as_i64().unwrap_or(0);
+        let continuing = state["runId"] == run && state["readStarted"] == true;
         let pending = state["pending"]
             .as_array()
             .and_then(|pending| pending.first());
-        let writes = state["pendingWrites"].as_array().map_or(0, Vec::len);
         if continuing && pending.is_none() {
+            let writes = state["pendingWrites"].as_array().map_or(0, Vec::len);
             return Ok(
                 json!({"taskId":source,"historyReadComplete":true,"readyToComplete":writes==0,"pendingWriteCount":writes,"version":version}),
             );
         }
         let cursor = if continuing { pending } else { None };
-        let cached = if cursor.is_none() && args["restart"] != true {
-            self.training_preflights
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .get(&run)
-                .and_then(|scan| scan.pages.get(source))
-                .cloned()
-        } else {
-            None
-        };
+        let cached =
+            if cursor.is_none() && !(state["runId"] == run && state["freshReadRequired"] == true) {
+                self.training_preflights
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .get(&run)
+                    .and_then(|scan| scan.pages.get(source))
+                    .cloned()
+            } else {
+                None
+            };
         let (page, token) = if let Some(token) = cached {
             (
                 self.cached_training_page(&run, source, &token).await?,
@@ -620,9 +631,10 @@ impl RuntimeWorkRpcHandler {
                 .await?;
             if cursor.is_none()
                 && state["completedThrough"].as_i64().is_some_and(|at| at > 0)
-                && page["messages"]
-                    .as_array()
-                    .is_some_and(|messages| !messages.is_empty())
+                && (page["hasMore"] == true
+                    || page["messages"]
+                        .as_array()
+                        .is_some_and(|messages| !messages.is_empty()))
             {
                 self.add_preceding_context(store, identity.user, &binding, since, &mut page)
                     .await;
@@ -644,7 +656,13 @@ impl RuntimeWorkRpcHandler {
                 json!(next.into_iter().collect::<Vec<_>>()),
                 coverage_since(&binding, since, through, &page)?,
             )
-            .map_err(settings_error)?;
+            .map_err(|error| match error {
+                crate::task_runtime::TaskRuntimeError::Invalid(message) => {
+                    AppIpcError::new("incomplete_history", message)
+                }
+                error => settings_error(error),
+            })?;
+        let writes = state["pendingWrites"].as_array().map_or(0, Vec::len);
         Ok(
             json!({"page":page,"readArguments":{"taskId":source,"pageToken":token},"version":state["version"],"pendingWriteCount":writes,
             "historyReadComplete":next.is_none(),"readyToComplete":next.is_none() && writes==0}),

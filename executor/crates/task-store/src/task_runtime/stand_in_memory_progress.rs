@@ -2,6 +2,7 @@
 use super::*;
 
 const RESOURCE: &str = "stand_in_memory_progress";
+const TRAINING_SOURCE_PREFIX: &str = "training-source:";
 
 fn key(user: i64, source: &str) -> String {
     use sha2::{Digest, Sha256};
@@ -37,7 +38,38 @@ fn start_run(state: &mut Value, run: &str) {
         state["runId"] = json!(run);
         state["readStarted"] = json!(false);
         state["pendingWrites"] = json!([]);
+        state.as_object_mut().unwrap().remove("freshReadRequired");
     }
+}
+
+fn clear_training_cursors(db: &Connection, parent: &str) -> Result<(), TaskRuntimeError> {
+    db.execute(
+        "DELETE FROM loop_items WHERE parent_id=?1 AND resource_type='stand_in_memory_cursor'",
+        [parent],
+    )?;
+    Ok(())
+}
+
+fn remember_training_cursor(
+    db: &Connection,
+    parent: &str,
+    cursor: &Value,
+) -> Result<(), TaskRuntimeError> {
+    let id = format!(
+        "{parent}:cursor:{}",
+        LocalTaskStore::coordination_event_version(cursor)
+    );
+    let inserted = db.execute(
+        "INSERT INTO loop_items(id,parent_id,resource_type,created_at,updated_at)
+         VALUES (?1,?2,'stand_in_memory_cursor',?3,?3) ON CONFLICT(id) DO NOTHING",
+        params![id, parent, now()],
+    )?;
+    if inserted == 0 {
+        return Err(TaskRuntimeError::Invalid(
+            "Connection history repeated a cursor; restart the source".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn finish_coverage(state: &mut Value) {
@@ -103,7 +135,10 @@ impl LocalTaskStore {
                 .unwrap()
                 .push(json!("collectedObservations"));
         }
-        format!("training-source:{}", Self::coordination_event_version(&key))
+        format!(
+            "{TRAINING_SOURCE_PREFIX}{}",
+            Self::coordination_event_version(&key)
+        )
     }
 
     pub fn memory_review_progress(
@@ -113,6 +148,34 @@ impl LocalTaskStore {
     ) -> Result<Value, TaskRuntimeError> {
         let connection = self.connection()?;
         read(&connection, user, source)
+    }
+
+    /// Abandon the previous traversal, retaining its write obligations and committed history.
+    pub fn restart_memory_review_read(
+        &self,
+        user: i64,
+        source: &str,
+        run: &str,
+        version: i64,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut state = read(&tx, user, source)?;
+        if state["version"] != version {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        start_run(&mut state, run);
+        clear_training_cursors(&tx, &key(user, source))?;
+        state["pending"] = json!([]);
+        state["readStarted"] = json!(false);
+        state["freshReadRequired"] = json!(true);
+        state["version"] = json!(version + 1);
+        for field in ["reviewCoverageSince", "reviewThrough"] {
+            state.as_object_mut().unwrap().remove(field);
+        }
+        write(&tx, user, source, &state)?;
+        tx.commit()?;
+        Ok(state)
     }
 
     // The checkpoint and its evidence boundary must be committed in the same transaction.
@@ -155,9 +218,22 @@ impl LocalTaskStore {
         start_run(&mut state, run);
         state["reviewThrough"] = json!(through);
         state["pending"] = pending;
+        state.as_object_mut().unwrap().remove("freshReadRequired");
         state["readStarted"] = json!(true);
         state["version"] = json!(version + 1);
         write(&connection, user, source, &state)?;
+        if source.starts_with(TRAINING_SOURCE_PREFIX) {
+            let parent = key(user, source);
+            let next = state["pending"]
+                .as_array()
+                .and_then(|pending| pending.first());
+            if first_page || next.is_none() {
+                clear_training_cursors(&connection, &parent)?;
+            }
+            if let Some(cursor) = next {
+                remember_training_cursor(&connection, &parent, cursor)?;
+            }
+        }
         connection.commit()?;
         Ok(state)
     }
@@ -283,59 +359,104 @@ mod tests {
     fn memory_progress_retains_pending_writes_across_restart_and_read_pages() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("tasks.sqlite");
+        let source = "training-source:chat";
         let store = LocalTaskStore::open(&path).unwrap();
         store
-            .record_memory_review_page(7, "chat", "run", 100, 0, json!([]), None)
+            .record_memory_review_page(7, source, "previous", 10, 0, json!([]), Some(5))
+            .unwrap();
+        let completed = store
+            .complete_memory_review_source(7, source, "previous", 1, true)
             .unwrap();
         store
-            .record_memory_review_write(7, "chat", "run", "fact", true)
+            .record_memory_review_page(
+                7,
+                source,
+                "run",
+                100,
+                completed["version"].as_i64().unwrap(),
+                json!(["A"]),
+                None,
+            )
+            .unwrap();
+        store
+            .record_memory_review_write(7, source, "run", "fact", true)
             .unwrap();
         drop(store);
         let store = LocalTaskStore::open(&path).unwrap();
-        let state = store.memory_review_progress(7, "chat").unwrap();
+        let state = store.memory_review_progress(7, source).unwrap();
         assert_eq!(state["pendingWrites"], json!(["fact"]));
+        let checkpoint = |version, cursor: &str| {
+            store.record_memory_review_page(
+                7,
+                source,
+                "run",
+                100,
+                version,
+                json!([cursor]),
+                Some(10),
+            )
+        };
+        let state = checkpoint(state["version"].as_i64().unwrap(), "B").unwrap();
+        let version = state["version"].as_i64().unwrap();
+        let error = checkpoint(version, "A").unwrap_err();
+        assert!(error.to_string().contains("repeated a cursor"));
+        assert_eq!(store.memory_review_progress(7, source).unwrap(), state);
+        assert!(store
+            .restart_memory_review_read(7, source, "run", version - 1)
+            .is_err());
+        let state = store
+            .restart_memory_review_read(7, source, "run", version)
+            .unwrap();
+        assert_eq!(state["completedThrough"], 10);
+        assert_eq!(state["coverageIntervals"], json!([[5, 10]]));
+        assert_eq!(state["readStarted"], false);
+        assert_eq!(state["pending"], json!([]));
+        assert_eq!(state["pendingWrites"], json!(["fact"]));
+        assert_eq!(state["freshReadRequired"], true);
+        let state = checkpoint(state["version"].as_i64().unwrap(), "A").unwrap();
         let state = store
             .record_memory_review_page(
                 7,
-                "chat",
+                source,
                 "run",
                 100,
                 state["version"].as_i64().unwrap(),
                 json!([]),
-                None,
+                Some(10),
             )
             .unwrap();
         assert!(store
             .complete_memory_review_source(
                 7,
-                "chat",
+                source,
                 "run",
                 state["version"].as_i64().unwrap(),
                 false
             )
             .is_err());
         store
-            .record_memory_review_write(7, "chat", "run", "fact", false)
+            .record_memory_review_write(7, source, "run", "fact", false)
             .unwrap();
-        let state = store.memory_review_progress(7, "chat").unwrap();
+        let state = store.memory_review_progress(7, source).unwrap();
         let completed = store
             .complete_memory_review_source(
                 7,
-                "chat",
+                source,
                 "run",
                 state["version"].as_i64().unwrap(),
-                false,
+                true,
             )
             .unwrap();
         assert_eq!(completed["completedThrough"], 100);
+        assert_eq!(completed["coverageIntervals"], json!([[5, 100]]));
         store
-            .record_memory_review_write(7, "chat", "next", "fact", true)
+            .record_memory_review_write(7, source, "next", "fact", true)
             .unwrap();
-        let state = store.memory_review_progress(7, "chat").unwrap();
+        let state = store.memory_review_progress(7, source).unwrap();
         assert_eq!(state["readStarted"], false);
         assert_eq!(state["completedThrough"], 100);
         assert!(store
-            .record_memory_review_write(7, "chat", "run", "fact", false)
+            .record_memory_review_write(7, source, "run", "fact", false)
             .is_err());
     }
 

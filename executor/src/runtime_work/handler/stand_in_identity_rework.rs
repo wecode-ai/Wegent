@@ -82,7 +82,7 @@ impl RuntimeWorkRpcHandler {
         if link.runtime_handle["origin"]["conversationScope"] != origin["conversationScope"] {
             return;
         }
-        let versions = crate::task_runtime::mcp::stand_in_turn_versions(request);
+        let versions = crate::task_runtime::mcp::stand_in_turn_versions(request, &turn.turn_id);
         let result = LocalTaskStore::open(self.task_store_path.as_ref()).and_then(|store| {
             let settings = store.configured_personal_stand_in(user, &self.device_id)?;
             if self.direct_learning_role(&link, &settings, user) != Some(role) {

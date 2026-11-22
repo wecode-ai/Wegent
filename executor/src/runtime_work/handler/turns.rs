@@ -1805,6 +1805,10 @@ impl RuntimeWorkRpcHandler {
                     ) {
                         return;
                     }
+                    crate::task_runtime::mcp::observe_stand_in_turn_boundary(
+                        &active_turn_request,
+                        Some(&turn_id),
+                    );
                     active_turn_handler
                         .start_queue_run(&active_turn_local_task_id, &active_turn_request);
                     *callback_hook_turn
@@ -1897,7 +1901,12 @@ impl RuntimeWorkRpcHandler {
             let finished_turn_handler = handler.clone();
             let finished_turn_local_task_id = turn_local_task_id.clone();
             let finished_turn_presentation = Arc::clone(&pending_turn_presentation);
+            let finished_turn_request = request.clone();
             let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                crate::task_runtime::mcp::observe_stand_in_turn_boundary(
+                    &finished_turn_request,
+                    None,
+                );
                 *finished_turn_presentation
                     .lock()
                     .expect("turn presentation lock should not be poisoned") = None;

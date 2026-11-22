@@ -180,12 +180,6 @@ impl Report {
             self.unattributed += 1;
             return;
         };
-        let cohort = self.cohorts.entry(versions).or_default();
-        cohort.first = Some(cohort.first.map_or(first, |before| before.min(first)));
-        cohort.last = request
-            .answers
-            .iter()
-            .fold(cohort.last, |last, (_, sent)| last.max(*sent));
         let through = first.saturating_add(DAY);
         if through > now_ms {
             self.pending += 1;
@@ -207,9 +201,9 @@ impl Report {
         }
         let mut owner_rework = false;
         let mut withdrawn = false;
-        for (answer, sent) in request.answers {
-            for &(at, present) in feedback.get(&answer).into_iter().flatten() {
-                if at >= sent && at < through {
+        for (answer, sent) in &request.answers {
+            for &(at, present) in feedback.get(answer).into_iter().flatten() {
+                if at >= *sent && at < through {
                     owner_rework |= present;
                     withdrawn |= !present;
                 }
@@ -220,6 +214,12 @@ impl Report {
             return;
         }
         self.complete.add(owner_rework);
+        let cohort = self.cohorts.entry(versions).or_default();
+        cohort.first = Some(cohort.first.map_or(first, |before| before.min(first)));
+        cohort.last = request
+            .answers
+            .iter()
+            .fold(cohort.last, |last, (_, sent)| last.max(*sent));
         cohort.count.add(owner_rework);
         if let Some(cluster) = cluster {
             cohort
@@ -869,6 +869,28 @@ mod tests {
         assert_eq!(comparison["matchedSources"], 9);
         assert_eq!(comparison["baselineRequests"], 45);
         assert_eq!(comparison["difference"], -0.2);
+        let request = |ghost: &str, at| Request {
+            answers: vec![(format!("answer-{ghost}"), at)],
+            versions: Some((ghost.into(), "changed".into())),
+            ..Default::default()
+        };
+        report.observe(
+            Some("shared-0".into()),
+            request("pending", DAY),
+            &json!([]),
+            &Feedback::new(),
+            DAY + 1,
+        );
+        report.observe(
+            Some("shared-0".into()),
+            request("incomplete", 4),
+            &json!([]),
+            &Feedback::new(),
+            DAY + 10,
+        );
+        assert_eq!(report.pending, 1);
+        assert_eq!(report.incomplete, 1);
+        assert_eq!(compare(&report.cohorts), comparison);
         assert_eq!(
             median_interval(&mut [-0.2, 0.1, 0.0, -0.2, 0.0, -0.1]),
             (-0.05, -0.2, 0.1)

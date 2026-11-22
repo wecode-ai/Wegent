@@ -23,6 +23,7 @@ async fn direct_reply_requires_the_owned_native_turn_and_complete_followup_revie
         thread_id: "thread".into(),
         turn_id: "native-turn".into(),
     };
+    crate::task_runtime::mcp::bind_stand_in_turn_context(&request, &turn.turn_id);
     handler.record_identity_completion(
         "primary",
         &request,
@@ -31,7 +32,7 @@ async fn direct_reply_requires_the_owned_native_turn_and_complete_followup_revie
         Some(sent),
     );
     drop(witness);
-    assert!(crate::task_runtime::mcp::stand_in_turn_versions(&request).is_none());
+    assert!(crate::task_runtime::mcp::stand_in_turn_versions(&request, &turn.turn_id).is_none());
     let messages = json!([
         {"id":"old-question","role":"user","turnId":"old-turn","content":"Which document?","createdAt":sent-400},
         {"id":"old-answer","role":"assistant","turnId":"old-turn","status":"done","content":"Last version","createdAt":sent-350,
@@ -80,6 +81,7 @@ async fn direct_reply_requires_the_owned_native_turn_and_complete_followup_revie
     case["content"] = json!("Use the requested revision.");
     case["scene"] = reference("old-question", "Which document?");
     case["actual"] = reference("old-answer", "Last version");
+    assert!(handler.save_training_case(&reviewer, &case).await.is_err());
     case["expected"] = reference("old-correction", "Use the new version");
     handler.save_training_case(&reviewer, &case).await.unwrap();
     let report = || {

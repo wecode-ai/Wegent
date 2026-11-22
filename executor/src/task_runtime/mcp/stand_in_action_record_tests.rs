@@ -98,6 +98,9 @@ async fn reply_actions_select_exact_versions_without_bypassing_source_authority(
 #[test]
 fn delivery_context_tracks_injected_and_retrieved_memory_for_its_own_turn() {
     let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("origin".into(), json!({"type":"connection_work"}));
     request.extra.insert(
         "additionalContext".into(),
         json!({
@@ -109,7 +112,10 @@ fn delivery_context_tracks_injected_and_retrieved_memory_for_its_own_turn() {
         "standInDeliveryContext".into(),
         json!({"roleDeviceId":"mac","ghostVersion":"ghost-1"}),
     );
-    let first = DeliveryContext::from_request(&request).unwrap();
+    let first_witness = begin_stand_in_turn_witness(&mut request).unwrap();
+    let first = active_delivery(&request).unwrap();
+    assert!(first.versions().is_none());
+    bind_stand_in_turn_context(&request, "first");
     let first_versions = first.versions().unwrap();
     first
         .clone()
@@ -120,13 +126,43 @@ fn delivery_context_tracks_injected_and_retrieved_memory_for_its_own_turn() {
     first.remember_page(&json!({"items":[{"id":"other","version":2,"content":"retrieved"}]}));
     assert_eq!(first.versions().unwrap(), with_retrieval);
 
-    let fresh = DeliveryContext::from_request(&request).unwrap();
+    let mut fresh_request = request.clone();
+    let _fresh_witness = begin_stand_in_turn_witness(&mut fresh_request).unwrap();
+    bind_stand_in_turn_context(&fresh_request, "fresh");
+    let fresh = active_delivery(&fresh_request).unwrap();
     assert_eq!(fresh.versions().unwrap(), first_versions);
-    request.extra.get_mut("additionalContext").unwrap()["wework.stand-in.memories"]["value"] =
-        json!("edited memory");
-    request.extra.get_mut("standInDeliveryContext").unwrap()["ghostVersion"] = json!("ghost-2");
-    let later = DeliveryContext::from_request(&request).unwrap();
+    let mut later_request = request.clone();
+    later_request.extra.get_mut("additionalContext").unwrap()["wework.stand-in.memories"]
+        ["value"] = json!("edited memory");
+    later_request
+        .extra
+        .get_mut("standInDeliveryContext")
+        .unwrap()["ghostVersion"] = json!("ghost-2");
+    let _later_witness = begin_stand_in_turn_witness(&mut later_request).unwrap();
+    bind_stand_in_turn_context(&later_request, "later");
+    let later = active_delivery(&later_request).unwrap();
     assert_ne!(later.versions().unwrap().0, first_versions.0);
     assert_ne!(later.versions().unwrap().1, first_versions.1);
     assert_eq!(first.versions().unwrap(), with_retrieval);
+
+    // Codex may reuse the worker and its MCP registration for a native Goal turn.
+    // The previous native completion can be projected after the continuation starts.
+    observe_stand_in_turn_boundary(&request, None);
+    observe_stand_in_turn_boundary(&request, Some("continuation"));
+    first.remember_page(&json!({"items":[{"id":"new","version":1,"content":"another turn"}]}));
+    assert!(first.versions().is_none());
+    assert!(stand_in_turn_versions(&request, "continuation").is_none());
+    assert_eq!(
+        stand_in_turn_versions(&request, "first"),
+        Some((with_retrieval.0.to_owned(), with_retrieval.1))
+    );
+    drop(first_witness);
+    assert!(stand_in_turn_versions(&request, "first").is_none());
+    assert!(first.versions().is_none());
+
+    // Claude retains the role/device for receipt scope but has no Codex admission witness.
+    request.extra.get_mut("standInDeliveryContext").unwrap()["ghostVersion"] = Value::Null;
+    let claude = DeliveryContext::from_request(&request).unwrap();
+    assert_eq!(claude.role_device, "mac");
+    assert!(claude.versions().is_none());
 }

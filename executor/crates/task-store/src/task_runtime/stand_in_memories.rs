@@ -20,6 +20,22 @@ mod training_cases;
 use training_cases::{case_binding, case_visible, recent_lesson, reserve_memory_slot};
 pub(super) use training_cases::{local_issue_visible, training_cases_on};
 
+fn validate_memory_content(content: Option<&str>) -> Result<&str, TaskRuntimeError> {
+    content
+        .map(str::trim)
+        .filter(|text| !text.is_empty() && text.len() <= 4000)
+        .ok_or_else(|| TaskRuntimeError::Invalid("Memory content must contain 1–4000 bytes".into()))
+}
+
+fn validate_memory_evidence(evidence: Option<&Value>) -> Result<(), TaskRuntimeError> {
+    if evidence.is_some_and(|value| value.to_string().len() > 8000) {
+        return Err(TaskRuntimeError::Invalid(
+            "Memory evidence exceeds 8000 bytes".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl LocalTaskStore {
     pub fn recall_stand_in_memories(
         &self,
@@ -270,13 +286,7 @@ impl LocalTaskStore {
         input: Value,
         training: bool,
     ) -> Result<Value, TaskRuntimeError> {
-        let content = input["content"]
-            .as_str()
-            .map(str::trim)
-            .filter(|text| !text.is_empty() && text.len() <= 4000)
-            .ok_or_else(|| {
-                TaskRuntimeError::Invalid("Memory content must contain 1–4000 bytes".into())
-            })?;
+        let content = validate_memory_content(input["content"].as_str())?;
         let scope = &input["scope"];
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -425,14 +435,7 @@ impl LocalTaskStore {
         } else if changed && !input["evidence"].is_object() {
             evidence = None;
         }
-        if evidence
-            .as_ref()
-            .is_some_and(|value| value.to_string().len() > 8000)
-        {
-            return Err(TaskRuntimeError::Invalid(
-                "Memory evidence exceeds 8000 bytes".into(),
-            ));
-        }
+        validate_memory_evidence(evidence.as_ref())?;
         let case = evidence
             .as_ref()
             .map(|evidence| &evidence["trainingCase"])

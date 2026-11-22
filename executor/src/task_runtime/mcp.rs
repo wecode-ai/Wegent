@@ -51,7 +51,10 @@ use context::space_context_grant;
 pub(crate) use stand_in::stand_in_identity;
 pub(crate) use stand_in::stand_in_mcp_client_config;
 pub(crate) use stand_in::StandInMcpIdentity;
-pub(crate) use stand_in::{begin_stand_in_turn_witness, stand_in_turn_versions};
+pub(crate) use stand_in::{
+    begin_stand_in_turn_witness, bind_stand_in_turn_context, observe_stand_in_turn_boundary,
+    stand_in_turn_versions,
+};
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";

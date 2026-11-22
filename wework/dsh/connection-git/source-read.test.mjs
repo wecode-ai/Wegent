@@ -66,6 +66,8 @@ test('review windows read only the authorized native discussion and bind continu
     const f = fixture(platform)
     const source = { ...f.source, monitoredObjects: [{ entityKind: 'issue', number: 17 }] }
     const calls = []
+    let deleted = false
+    let confidential = false
     const provider = bindGitProvider(
       source.providerId,
       createProvider(platform),
@@ -90,18 +92,29 @@ test('review windows read only the authorized native discussion and bind continu
                   number: 17,
                   iid: 17,
                   title: 'Question',
+                  confidential,
                   user: by(12),
                   author: by(12),
                   created_at: at,
                   updated_at: at,
                 }
               : [
-                  post(34, 7),
+                  ...(deleted ? [] : [post(34, 7)]),
                   post(42, 12),
                   { ...post(43, 7), updated_at: '2020-09-12T12:10:00Z' },
                   { ...post(44, 7), updated_at: query.trainingUntil },
+                  ...(platform === 'gitlab'
+                    ? [
+                        { ...post(45, 12), internal: true },
+                        { ...post(46, 12), confidential: true },
+                      ]
+                    : []),
                 ]
-        return { profile: source.profile, data }
+        if (!Array.isArray(data)) return { profile: source.profile, data }
+        const params = new URLSearchParams(input.path.split('?')[1])
+        const page = Number(params.get('page'))
+        const count = Number(params.get('per_page'))
+        return { profile: source.profile, data: data.slice((page - 1) * count, page * count) }
       }
     )
     const first = await provider.readSource(f.ctx, { source, query })
@@ -158,6 +171,28 @@ test('review windows read only the authorized native discussion and bind continu
     const empty = await f.provider.readSource(f.ctx, { source: f.source, query })
     assert.deepEqual(empty.items, [])
     assert.equal(empty.reviewUseCollectedEvents, undefined)
+    const single = { ...query, limit: 1 }
+    const start = await provider.readSource(f.ctx, { source, query: single })
+    const firstNote = await provider.readSource(f.ctx, { source, cursor: start.nextCursor })
+    assert.equal(firstNote.items[0].text, 'Reply 34')
+    deleted = true
+    await assert.rejects(provider.readSource(f.ctx, { source, cursor: firstNote.nextCursor }), {
+      code: 'source_read_cursor_invalid',
+    })
+    const restart = await provider.readSource(f.ctx, { source, query: single })
+    const nowFirst = await provider.readSource(f.ctx, { source, cursor: restart.nextCursor })
+    assert.equal(nowFirst.items[0].text, 'Reply 42')
+    if (platform === 'gitlab') {
+      confidential = true
+      const count = calls.length
+      const hidden = await provider.readSource(f.ctx, { source, cursor: nowFirst.nextCursor })
+      assert.deepEqual(hidden.items, [])
+      assert.equal(hidden.hasMore, false)
+      assert.deepEqual(
+        calls.slice(count).map(call => call.operation),
+        ['repository', 'object']
+      )
+    }
   }
 })
 
@@ -190,6 +225,29 @@ test('personal Git review stays in its authenticated activity feed without openi
     ['activity']
   )
   assert.match(view.items[0].topicId, /other\/repo\/issues\/1$/)
+  const events = [1, 2].map(id => ({
+    id,
+    repo: { name: 'other/repo' },
+    created_at: '2020-09-12T12:00:00Z',
+    payload: {
+      action: 'created',
+      issue: { number: 1 },
+      comment: { id, body: 'Reply ' + id, created_at: '2020-09-12T12:00:00Z' },
+    },
+  }))
+  const changing = fixture('github', () => events)
+  const first = await changing.provider.readSource(changing.ctx, {
+    source,
+    query: { ...query, limit: 1 },
+  })
+  assert.equal(first.items[0].text, 'Reply 1')
+  events.shift()
+  await assert.rejects(
+    changing.provider.readSource(changing.ctx, { source, cursor: first.nextCursor }),
+    {
+      code: 'source_read_cursor_invalid',
+    }
+  )
 
   const gl = fixture('gitlab', () => [
     {

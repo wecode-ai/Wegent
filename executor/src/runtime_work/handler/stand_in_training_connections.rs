@@ -363,12 +363,22 @@ impl RuntimeWorkRpcHandler {
                         )
                     )
                 });
+            let receipt_request = if author == "assistant" && item["quotedMessageId"].is_null() {
+                store
+                    .training_reply_request_id(user, role, source, id)
+                    .map_err(settings_error)?
+            } else {
+                None
+            };
+            let quoted = item["quotedMessageId"]
+                .as_str()
+                .or(receipt_request.as_deref());
             messages.push(json!({"id":id,
                 "author":author,"at":at,"content":content,
                 "conversationId":item["conversationId"],"topicId":item["topicId"],
                 "isSelfConversation":item["isSelfConversation"] == true,
                 "participantKey":participant_key,
-                "quotedMessageId":item["quotedMessageId"],"truncated":item["truncated"] == true}));
+                "quotedMessageId":quoted,"truncated":item["truncated"] == true}));
         }
         let mut result = json!({"messages":messages,"hasMore":page["hasMore"].as_bool().ok_or_else(invalid)?,
             "nextCursor":page["nextCursor"]});

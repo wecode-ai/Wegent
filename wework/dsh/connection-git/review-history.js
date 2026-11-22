@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 // Review only public issue/change-request discussions in this authorized repository.
 // Other feedback channels, including inline reviews and private discussions, are not covered.
 const invalid = message => Object.assign(new Error(message), { code: 'git_connection_invalid' })
@@ -55,17 +57,52 @@ function pageRows(data, limit) {
   return data
 }
 
+// Native REST feeds use page numbers. Keep only a digest of visible positions
+// and revisions, and verify the boundary again using the current credentials.
+async function guardedPage(read, page, previous) {
+  const rows = await read(page)
+  const fingerprint = rows =>
+    createHash('sha256')
+      .update(
+        JSON.stringify(
+          rows.map(row => [
+            row.id ?? row.number ?? row.iid ?? row.note?.id ?? row.payload?.comment?.id,
+            row.updated_at ?? row.created_at,
+            row.note?.updated_at ?? row.payload?.comment?.updated_at,
+          ])
+        )
+      )
+      .digest('hex')
+  const digest = fingerprint(rows)
+  if (
+    previous &&
+    (previous.page === page ? digest : fingerprint(await read(previous.page))) !== previous.digest
+  )
+    throw Object.assign(new Error('Native Git history changed; restart the read'), {
+      code: 'source_read_cursor_invalid',
+    })
+  return { rows, boundary: { page, digest } }
+}
+
+function privateGitLabPost(row) {
+  return row.internal === true || row.confidential === true
+}
+
 async function discover(platform, query, state, read) {
   const list = state.lists[0]
   const github = platform === 'github'
   const params = github
     ? 'state=all&sort=updated&direction=desc' + (list === 'issues' ? '&since=' + query.since : '')
     : 'scope=all&order_by=updated_at&sort=desc&updated_after=' + query.since
-  const result = await read({
-    operation: 'api',
-    path: list + '?' + params + '&per_page=' + query.limit + '&page=' + state.page,
-  })
-  const rows = pageRows(result, query.limit)
+  const load = async page =>
+    pageRows(
+      await read({
+        operation: 'api',
+        path: list + '?' + params + '&per_page=' + query.limit + '&page=' + page,
+      }),
+      query.limit
+    )
+  const { rows, boundary } = await guardedPage(load, state.page, state.discoveryBoundary)
   let ended = rows.length < query.limit
   for (const row of rows) {
     const updated = Date.parse(row.updated_at)
@@ -82,13 +119,17 @@ async function discover(platform, query, state, read) {
   if (ended) {
     state.lists.shift()
     state.page = 1
-  } else state.page++
+    delete state.discoveryBoundary
+  } else {
+    state.discoveryBoundary = boundary
+    state.page++
+  }
 }
 
 function reviewItem(platform, identity, source, target, row, query, isRoot, canonicalCommentId) {
   const github = platform === 'github'
   const actor = github ? row.user : row.author
-  if (row.system === true) return null
+  if (row.system === true || (!github && privateGitLabPost(row))) return null
   const created = Date.parse(row.created_at)
   const timestamp = Math.max(
     created,
@@ -197,12 +238,12 @@ export async function readActivityPage(
   const github = platform === 'github'
   const operation = state.lists[0]
   const search = operation === 'assigned' || operation === 'reviews'
-  const response = await read({
-    operation,
-    page: state.page,
-    ...(search ? { after: query.since } : {}),
-  })
-  const rows = pageRows(search && github ? response?.items : response, 100)
+  const load = async page => {
+    const response = await read({ operation, page, ...(search ? { after: query.since } : {}) })
+    return pageRows(search && github ? response?.items : response, 100)
+  }
+  const { rows, boundary } = await guardedPage(load, state.page, state.activityBoundary)
+  state.activityBoundary = boundary
   const items = []
   while (state.offset < rows.length && items.length < query.limit) {
     const event = rows[state.offset++]
@@ -231,6 +272,7 @@ export async function readActivityPage(
     ) {
       state.lists.shift()
       state.page = 1
+      delete state.activityBoundary
     } else state.page++
     state.offset = 0
   }
@@ -251,14 +293,22 @@ export async function readReviewPage(
   if (!state.objects.length && state.lists.length) await discover(platform, query, state, read)
   const target = state.objects[0]
   if (target) {
-    if (!state.commentPage) {
-      const data = await read({ operation: 'object', ...target })
+    const github = platform === 'github'
+    let data
+    if (!state.commentPage || !github) {
+      data = await read({ operation: 'object', ...target })
       const number = platform === 'github' ? data?.number : data?.iid
       if (
         number !== target.number ||
         (platform === 'github' && target.entityKind === 'issue' && data.pull_request)
       )
         throw invalid('Selected discussion changed')
+    }
+    if (!github && privateGitLabPost(data)) {
+      state.objects.shift()
+      state.commentPage = 0
+      delete state.commentBoundary
+    } else if (!state.commentPage) {
       const item = reviewItem(
         platform,
         identity,
@@ -272,24 +322,21 @@ export async function readReviewPage(
       if (item) items.push(item)
       state.commentPage = 1
     } else {
-      const github = platform === 'github'
       const path = github
-        ? 'issues/' +
-          target.number +
-          '/comments?since=' +
-          query.since +
-          '&sort=updated&direction=desc'
+        ? 'issues/' + target.number + '/comments?since=' + query.since
         : (target.entityKind === 'issue' ? 'issues' : 'merge_requests') +
           '/' +
           target.number +
           '/notes?order_by=updated_at&sort=desc'
-      const rows = pageRows(
-        await read({
-          operation: 'api',
-          path: path + '&per_page=' + query.limit + '&page=' + state.commentPage,
-        }),
-        query.limit
-      )
+      const load = async page =>
+        pageRows(
+          await read({
+            operation: 'api',
+            path: path + '&per_page=' + query.limit + '&page=' + page,
+          }),
+          query.limit
+        )
+      const { rows, boundary } = await guardedPage(load, state.commentPage, state.commentBoundary)
       for (const row of rows) {
         const item = reviewItem(
           platform,
@@ -309,7 +356,11 @@ export async function readReviewPage(
       ) {
         state.objects.shift()
         state.commentPage = 0
-      } else state.commentPage++
+        delete state.commentBoundary
+      } else {
+        state.commentBoundary = boundary
+        state.commentPage++
+      }
     }
   }
   return { items, hasMore: state.objects.length > 0 || state.lists.length > 0 }
