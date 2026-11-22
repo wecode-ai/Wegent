@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import { verifyIssueCreationColumns } from '../modules/independent-issue-draft.mjs'
 import { switchPersonalPluginAccount } from '../modules/plugin-personal-uninstall-flow.mjs'
@@ -722,6 +723,46 @@ export function createDesktopScenario({
       await captureScreenshot(control, '10b-task-share-earlier-pages.png')
       await click(control, selector('independent-issue-close'))
 
+      await wait(control, selector('independent-issue-discard-dialog'), { visible: true })
+      await click(control, selector('independent-issue-discard-confirm'))
+      await wait(control, dialog, { visible: false })
+
+      // A search page owns its selection even when that message is outside the pane window.
+      const historicalQuery = `Native search answer ${TERMINAL_HISTORY_TURN_COUNT - 100}`
+      const historicalFragment = historicalQuery.slice('Native '.length)
+      // Open the real search UI through its renderer key handler.
+      await control.command('press', composer, {
+        key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+      })
+      await wait(control, selector('conversation-find-input'), { visible: true })
+      await control.command('fill', selector('conversation-find-input'), { value: historicalQuery })
+      await wait(control, assistant, { text: historicalQuery })
+      await control.command('markElementWithText', assistant, {
+        text: historicalQuery,
+        value: 'share-history-search-source',
+      })
+      await control.command('selectText', '[data-e2e-anchor-id="share-history-search-source"]', {
+        value: historicalFragment,
+      })
+      await click(control, selector('share-selection-as-issue-button'))
+      await wait(control, selector('task-issue-share-highlight'), {
+        text: historicalFragment,
+        visible: true,
+      })
+      await control.command('fill', title, { value: 'Historical search excerpt' })
+      await click(control, save)
+      await wait(control, selector('independent-issue-edit'), { visible: true })
+      const searchIssue = (await request('/v1/personal-issues?scope=created')).items.find(
+        row => row.title === 'Historical search excerpt'
+      )
+      assert.ok(searchIssue)
+      const searchDetail = await request(`/v1/personal-issues/${searchIssue.id}`)
+      assert.ok(searchDetail.description.includes(historicalFragment))
+      assert.ok(!searchDetail.description.includes(historicalQuery))
+      await captureScreenshot(control, '10c-share-search-result.png')
+      await click(control, selector('independent-issue-close'))
+      await click(control, selector('conversation-find-close-button'))
+
       await switchPersonalPluginAccount(control, { ...cloud, authToken: colleagueToken })
       const badge = selector('workspace-tab-issue-assignment-count')
       await wait(control, badge, { text: '0' })
@@ -808,6 +849,7 @@ export function createDesktopScenario({
 
       // A selected fragment in a middle message retains context, order and explicit scope.
       await click(control, selector('independent-issue-close'))
+      await click(control, selector('workspace-tab-select-fixed-task'))
       await click(control, selector('runtime-chat-section-new-chat-button'))
       await wait(control, composer, { visible: true })
       await selectE2EModel(control)
@@ -873,6 +915,19 @@ export function createDesktopScenario({
       )
       assert.ok(!previewText.includes('.pierre-code-block'))
       assert.ok(!previewText.includes('复制代码'))
+      await wait(control, '[data-testid="task-issue-share-excerpt"][aria-pressed="mixed"]', {
+        visible: true,
+      })
+      const partialBounds = await metrics(selector('task-issue-share-excerpt-partial'))
+      assert.ok(
+        partialBounds.top >= listBounds.top && partialBounds.bottom <= listBounds.bottom,
+        'The partial-state indicator must stay inside the message viewport'
+      )
+      const rangeToggleBounds = await metrics(selector('task-issue-share-whole-message'))
+      assert.ok(
+        rangeToggleBounds.top >= listBounds.top && rangeToggleBounds.bottom <= listBounds.bottom,
+        'The range toggle must stay visible beside a long selected message'
+      )
       await captureScreenshot(control, '13-selection-story-partial.png')
       await click(control, partialRow)
       await wait(control, '[data-testid="task-issue-share-excerpt"][aria-pressed="true"]', {
@@ -891,11 +946,13 @@ export function createDesktopScenario({
       await control.command('fill', title, { value: 'Middle-message fragment with later context' })
       await click(control, save)
       await wait(control, selector('independent-issue-edit'), { visible: true })
-      const storyIssue = (await request('/v1/personal-issues?scope=created')).items.find(
-        row => row.title === 'Middle-message fragment with later context'
-      )
+      const storyIssue = (
+        await request('/v1/personal-issues?scope=created', { token: colleagueToken })
+      ).items.find(row => row.title === 'Middle-message fragment with later context')
       assert.ok(storyIssue)
-      const storyDetail = await request(`/v1/personal-issues/${storyIssue.id}`)
+      const storyDetail = await request(`/v1/personal-issues/${storyIssue.id}`, {
+        token: colleagueToken,
+      })
       assert.ok(storyDetail.description.includes(selectionStoryText))
       assert.ok(storyDetail.description.includes(selectionStoryLast))
       assert.ok(
@@ -905,6 +962,35 @@ export function createDesktopScenario({
       assert.ok(!storyDetail.description.includes('/Users/example/'))
       assert.ok(!storyDetail.description.includes('Context paragraph'))
       await captureScreenshot(control, '14-selection-story-saved.png')
+      await click(control, selector('independent-issue-close'))
+      await selectWorkbenchTheme(control, { mode: 'dark' })
+      await wait(control, assistant, { text: selectionStoryLast })
+      const userFragment = 'SELECTION_SHARE_FOLLOWUP'
+      await control.command('selectText', `${activePane} [data-testid="message-user"]`, {
+        value: userFragment,
+      })
+      await click(control, selector('share-selection-as-issue-button'))
+      await wait(control, selector('task-issue-share-highlight'), {
+        text: userFragment,
+        visible: true,
+      })
+      await wait(control, '[data-testid="task-issue-share-excerpt"][aria-pressed="mixed"]', {
+        visible: true,
+      })
+      await captureScreenshot(control, '15-selection-story-dark.png')
+      await control.command('fill', title, { value: 'User fragment in dark mode' })
+      await click(control, save)
+      await wait(control, selector('independent-issue-edit'), { visible: true })
+      const userIssue = (
+        await request('/v1/personal-issues?scope=created', { token: colleagueToken })
+      ).items.find(row => row.title === 'User fragment in dark mode')
+      assert.ok(userIssue)
+      const userDetail = await request(`/v1/personal-issues/${userIssue.id}`, {
+        token: colleagueToken,
+      })
+      assert.match(userDetail.description, /^(?:你|You) · SELECTION_SHARE_FOLLOWUP$/)
+      await captureScreenshot(control, '16-user-selection-saved-dark.png')
+      await click(control, selector('independent-issue-close'))
     },
   }
 }

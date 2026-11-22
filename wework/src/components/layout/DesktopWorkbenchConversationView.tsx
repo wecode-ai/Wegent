@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
@@ -47,6 +47,7 @@ export function DesktopWorkbenchConversationView({
   model: DesktopWorkbenchPaneRenderModel
 }) {
   const issueShareRef = useRef<TaskIssueShareHandle>(null)
+  const [issueShareToolbarHost, setIssueShareToolbarHost] = useState<HTMLDivElement | null>(null)
   const {
     workbenchVisible,
     presentation,
@@ -174,6 +175,7 @@ export function DesktopWorkbenchConversationView({
     clearCurrentGoal,
     showPageTopBar,
   } = model
+  const selectionSharingMounted = Boolean(currentRuntimeTask && paneVisible && workbenchVisible)
   return (
     <TaskDetailScrollArea
       viewportRef={workbenchScrollRef}
@@ -199,6 +201,33 @@ export function DesktopWorkbenchConversationView({
       }
     >
       <>
+        {selectionSharingMounted && currentRuntimeTask && (
+          <TaskIssueShare
+            toolbarContainer={issueShareToolbarHost}
+            shareRef={issueShareRef}
+            key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
+            title={workbenchTitle ?? ''}
+            messages={paneMessages}
+            turns={paneSession.turns}
+            address={{
+              ...currentRuntimeTask,
+              workspacePath: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath,
+            }}
+            readWorkspaceFileChunk={workspaceFileApi.readWorkspaceFileChunk}
+            readHistoryPage={
+              paneSession.transcriptHasMoreBefore && services?.runtimeWorkApi
+                ? (request, signal) =>
+                    services.runtimeWorkApi!.getRuntimeTranscript(
+                      {
+                        ...currentRuntimeTask,
+                        ...request,
+                      },
+                      { signal }
+                    )
+                : undefined
+            }
+          />
+        )}
         <div className="grid w-full flex-1 grid-cols-[minmax(0,1fr)_auto]">
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
@@ -520,33 +549,9 @@ export function DesktopWorkbenchConversationView({
                                           {currentRuntimeTask &&
                                             paneVisible &&
                                             workbenchVisible && (
-                                              <TaskIssueShare
-                                                shareRef={issueShareRef}
-                                                key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
-                                                title={workbenchTitle ?? ''}
-                                                messages={paneMessages}
-                                                address={{
-                                                  ...currentRuntimeTask,
-                                                  workspacePath:
-                                                    currentRuntimeTask.workspacePath ||
-                                                    runtimeTaskWorkspacePath,
-                                                }}
-                                                readWorkspaceFileChunk={
-                                                  workspaceFileApi.readWorkspaceFileChunk
-                                                }
-                                                readHistoryPage={
-                                                  paneSession.transcriptHasMoreBefore &&
-                                                  services?.runtimeWorkApi
-                                                    ? (request, signal) =>
-                                                        services.runtimeWorkApi!.getRuntimeTranscript(
-                                                          {
-                                                            ...currentRuntimeTask,
-                                                            ...request,
-                                                          },
-                                                          { signal }
-                                                        )
-                                                    : undefined
-                                                }
+                                              <div
+                                                ref={setIssueShareToolbarHost}
+                                                className="contents"
                                               />
                                             )}
                                         </div>
@@ -720,7 +725,7 @@ export function DesktopWorkbenchConversationView({
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
                 onShareSelectionAsIssue={
-                  currentRuntimeTask && paneVisible && workbenchVisible
+                  selectionSharingMounted
                     ? (text, context) => issueShareRef.current?.openSelection(text, context)
                     : undefined
                 }

@@ -194,7 +194,13 @@ export function TaskIssueShareExcerpts({
           const fade = !isSelection && !showAll && index === displayed.length - 1 && index > 0
           return (
             <Fragment key={excerpt.id}>
-              <div className={isSelection ? 'relative min-w-0' : 'contents'}>
+              <div
+                className={
+                  isSelection
+                    ? `relative min-w-0 ${fromUser ? 'max-w-[90%] justify-self-end' : ''}`
+                    : 'contents'
+                }
+              >
                 <Button
                   variant="unstyled"
                   showTooltip={false}
@@ -202,11 +208,11 @@ export function TaskIssueShareExcerpts({
                   aria-pressed={partiallyChecked ? 'mixed' : checked}
                   data-testid="task-issue-share-excerpt"
                   onClick={() => toggle(excerpt.id)}
-                  className={`group flex min-h-11 min-w-0 items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted md:min-h-8 ${checked ? 'bg-muted' : ''} ${fromUser ? 'max-w-[90%] justify-self-end bg-muted/60' : 'w-full'} ${isSelection ? 'pr-11' : ''}`}
+                  className={`group flex min-h-11 min-w-0 items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted md:min-h-8 ${checked ? 'bg-muted' : ''} ${fromUser ? (isSelection ? 'w-full bg-muted/60' : 'max-w-[90%] justify-self-end bg-muted/60') : 'w-full'} ${isSelection ? 'pr-11' : ''}`}
                 >
                   <span
                     aria-hidden="true"
-                    className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded border ${checked ? 'border-text-primary bg-text-primary text-background' : 'border-text-secondary group-hover:border-text-primary'}`}
+                    className={`${isSelection ? 'sticky top-2 self-start' : ''} mt-0.5 grid size-4 shrink-0 place-items-center rounded border ${checked ? 'border-text-primary bg-text-primary text-background' : 'border-text-secondary group-hover:border-text-primary'}`}
                   >
                     {checked &&
                       (partiallyChecked ? (
@@ -244,33 +250,35 @@ export function TaskIssueShareExcerpts({
                   </span>
                 </Button>
                 {isSelection && hasPartialRange && (
-                  <Button
-                    variant="unstyled"
-                    type="button"
-                    data-testid="task-issue-share-whole-message"
-                    aria-pressed={shareWholeMessage}
-                    aria-label={t(
-                      shareWholeMessage
-                        ? 'taskIssueShare.shareSelectionOnly'
-                        : 'taskIssueShare.shareWholeMessage'
-                    )}
-                    title={t(
-                      shareWholeMessage
-                        ? 'taskIssueShare.shareSelectionOnly'
-                        : 'taskIssueShare.shareWholeMessage'
-                    )}
-                    onClick={() => {
-                      onShareWholeMessage?.(!shareWholeMessage)
-                      if (!checked) onSelect([...selected, excerpt.id])
-                    }}
-                    className="absolute right-1 top-1 flex size-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary md:size-7"
-                  >
-                    {shareWholeMessage ? (
-                      <Shrink className="size-4" aria-hidden="true" />
-                    ) : (
-                      <Expand className="size-4" aria-hidden="true" />
-                    )}
-                  </Button>
+                  <div className="pointer-events-none absolute inset-y-1 right-1">
+                    <Button
+                      variant="unstyled"
+                      type="button"
+                      data-testid="task-issue-share-whole-message"
+                      aria-pressed={shareWholeMessage}
+                      aria-label={t(
+                        shareWholeMessage
+                          ? 'taskIssueShare.shareSelectionOnly'
+                          : 'taskIssueShare.shareWholeMessage'
+                      )}
+                      title={t(
+                        shareWholeMessage
+                          ? 'taskIssueShare.shareSelectionOnly'
+                          : 'taskIssueShare.shareWholeMessage'
+                      )}
+                      onClick={() => {
+                        onShareWholeMessage?.(!shareWholeMessage)
+                        if (!checked) onSelect([...selected, excerpt.id])
+                      }}
+                      className="pointer-events-auto sticky top-1 flex size-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary md:size-7"
+                    >
+                      {shareWholeMessage ? (
+                        <Shrink className="size-4" aria-hidden="true" />
+                      ) : (
+                        <Expand className="size-4" aria-hidden="true" />
+                      )}
+                    </Button>
+                  </div>
                 )}
               </div>
               {showHistoryGap && index === 0 && historyAction}

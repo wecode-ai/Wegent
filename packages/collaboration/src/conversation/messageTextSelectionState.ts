@@ -1,9 +1,18 @@
+import type {
+  WorkbenchMessage,
+  RuntimeConversationTurn,
+} from '@wegent/chat-core/runtime-conversation'
 import { readConversationSearchContent } from './conversationSearchHighlightBinding'
 
 export interface MessageSelectionContext {
   messageId: string
   content: string
   start: number
+}
+
+export interface ConversationShareSelectionContext extends MessageSelectionContext {
+  messages: WorkbenchMessage[]
+  turns: RuntimeConversationTurn[]
 }
 
 interface MessageTextSelection extends MessageSelectionContext {
@@ -87,13 +96,29 @@ export function createMessageTextSelectionState(
 
     const range = selection.getRangeAt(0)
     const selectedMessageBodies = selectableMessageBodiesForRange(root, range)
-    if (selectedMessageBodies.length !== 1) {
+    const owner = selectedMessageBodies[0]?.closest<HTMLElement>('[data-message-id]')
+    if (!owner || selectedMessageBodies.some(body => body.closest('[data-message-id]') !== owner)) {
       publish({ textSelection: null })
       return
     }
 
-    const body = selectedMessageBodies[0]
-    const projection = readConversationSearchContent(body)
+    const projection: ReturnType<typeof readConversationSearchContent> = { text: '', nodes: [] }
+    // MessageList owns one article; its prose segments appear in transcript order.
+    for (const body of owner.querySelectorAll<HTMLElement>('[data-message-selectable-text]')) {
+      if (body.closest('[data-message-id]') !== owner) continue
+      const part = readConversationSearchContent(body)
+      if (!part.text) continue
+      if (projection.text) projection.text += '\n\n'
+      const offset = projection.text.length
+      projection.nodes.push(
+        ...part.nodes.map(entry => ({
+          ...entry,
+          start: entry.start + offset,
+          end: entry.end + offset,
+        }))
+      )
+      projection.text += part.text
+    }
     let selectionStart: number | undefined
     let selectionEnd = 0
     for (const entry of projection.nodes) {
@@ -113,7 +138,7 @@ export function createMessageTextSelectionState(
     const rect = range.getBoundingClientRect()
     const nextSelection: MessageTextSelection = {
       text,
-      messageId: body.closest<HTMLElement>('[data-message-id]')?.dataset.messageId ?? '',
+      messageId: owner.dataset.messageId ?? '',
       content: projection.text,
       start,
       left: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 120),

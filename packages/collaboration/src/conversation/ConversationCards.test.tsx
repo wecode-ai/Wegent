@@ -11,6 +11,7 @@ import { RequestUserInputCard } from "./RequestUserInputCard";
 import { CodexReferenceList } from "./CodexTurnArtifacts";
 import { getAssistantReferences } from "./codexReferences";
 import { createMessageTextSelectionState } from "./messageTextSelectionState";
+import { selectedShareExcerpts } from "../platform/selectedShareExcerpts";
 import { TaskIssueShareExcerpts } from "../platform/TaskIssueShareExcerpts";
 import { SelectionActionsPopover } from "./SelectionActionsPopover";
 import { AssistantErrorCard } from "./AssistantErrorCard";
@@ -365,6 +366,38 @@ describe("shared conversation cards without Electron", () => {
       expect(captured.text).toBe("/axb/work");
       expect(captured.content.slice(captured.start, captured.start + captured.text.length)).toBe("/axb/work");
       expect(captured.content).not.toMatch(/pierre|plaintext|Copy code|color/);
+    } finally {
+      selection.removeAllRanges();
+      detach();
+    }
+  });
+
+  it("keeps selections before newly loaded successors using native transcript positions", () => {
+    const excerpt = (id: string, position: number) => ({ id, role: "assistant" as const, content: id, order: [position, 0] as [number, number] });
+    const source = excerpt("source", 2);
+    const selection = { excerpt: source, start: 0, end: 3, followingMessageIds: ["last"] };
+    expect(selectedShareExcerpts([excerpt("first", 1), excerpt("later-loaded", 3), excerpt("last", 4)], selection).map(value => value.id)).toEqual(["first", "source", "later-loaded", "last"]);
+    expect(selectedShareExcerpts([excerpt("first", 1), source, excerpt("last", 4)], selection).map(value => value.id)).toEqual(["first", "source", "last"]);
+  });
+
+  it("captures all prose segments of one message and retains hard breaks", () => {
+    container.innerHTML = '<article data-message-id="segments"><div data-message-selectable-text><p>alpha<br>beta</p></div><button>Tool details</button><div data-message-selectable-text><p>gamma beta</p></div></article>';
+    const body = container.querySelectorAll('[data-message-selectable-text]')[1];
+    const range = document.createRange();
+    range.setStart(body.firstChild!.firstChild!, 6);
+    range.setEnd(body.firstChild!.firstChild!, 10);
+    range.getBoundingClientRect = () => new DOMRect(100, 100, 40, 20);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const state = createMessageTextSelectionState("conversation", false, true);
+    const detach = state.attach(container);
+    try {
+      state.update();
+      expect(state.getSnapshot().textSelection).toMatchObject({ text: "beta", content: "alpha\nbeta\n\ngamma beta", start: 18 });
+      range.setStart(container.querySelector('[data-message-selectable-text]')!.firstChild!.firstChild!, 0);
+      state.update();
+      expect(state.getSnapshot().textSelection?.text).toBe("alpha\nbeta\n\ngamma beta");
     } finally {
       selection.removeAllRanges();
       detach();

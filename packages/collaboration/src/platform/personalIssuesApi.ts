@@ -44,9 +44,11 @@ export type TaskIssueShareDraft = {
   requestId: string
   source: SharedIssueSource
   conversationFiles: TaskIssueConversationFile[]
-  excerpts: Pick<WorkbenchMessage, 'id' | 'role' | 'content'>[]
+  excerpts: (Pick<WorkbenchMessage, 'id' | 'role' | 'content'> & {
+    order?: [turnPosition: number, itemPosition: number]
+  })[]
   selectedExcerpt?: {
-    excerpt: Pick<WorkbenchMessage, 'id' | 'role' | 'content'>
+    excerpt: TaskIssueShareDraft['excerpts'][number]
     start: number
     end: number
     followingMessageIds: string[]
