@@ -188,3 +188,44 @@ test('blocks the reported PoC on a real listening HTTP server before dispatch', 
   assert.equal(response.statusCode, 403)
   assert.equal(dispatched, 0)
 })
+
+test(
+  'closes unfinished RPCs even if the handler fails to write a response',
+  { timeout: 2000 },
+  async t => {
+    let handler
+    const server = createServer((req, res) => handler(req, res))
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    t.after(() => new Promise(resolve => server.close(resolve)))
+    const port = server.address().port
+    handler = securityFixture(port).security.wrap(
+      async (req, res) => {
+        for await (const chunk of req) void chunk
+        if (req.url === '/throws') throw new Error('Unexpected failure')
+        if (req.url === '/returns') return
+        if (req.url === '/partial') res.write('partial')
+        await new Promise(resolve => res.once('close', resolve))
+      },
+      { rpc: true, rpcTimeoutMs: 100 }
+    )
+    const run = path =>
+      fetch(`http://127.0.0.1:${port}${path}`, {
+        method: 'POST',
+        body: '{}',
+        headers: { cookie: 'session=authenticated' },
+      })
+    for (const [path, status, code] of [
+      ['/throws', 500, 'rpc_handler_failed'],
+      ['/returns', 500, 'response_not_finished'],
+      ['/hangs', 504, 'rpc_timeout'],
+    ]) {
+      const response = await run(path)
+      assert.equal(response.status, status)
+      assert.equal(response.headers.get('connection'), 'close')
+      assert.equal((await response.json()).error.code, code)
+    }
+    const partial = await run('/partial')
+    assert.equal(partial.status, 200)
+    await assert.rejects(partial.text())
+  }
+)
