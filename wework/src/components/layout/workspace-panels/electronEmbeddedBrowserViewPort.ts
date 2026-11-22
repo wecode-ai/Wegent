@@ -27,8 +27,9 @@ export function createElectronEmbeddedBrowserViewPort() {
   let ownership: symbol | null = null
   let cursorHost: HTMLDivElement | null = null
   let measurementFrame: number | null = null
+  // Metadata refs may rebind in one commit; ownership lasts until the native host is released.
   const ownsHost = () =>
-    lease !== null && placeholder?.isConnected === true && host?.owner === owner && !host.destroyed
+    placeholder?.isConnected === true && host?.owner === owner && !host.destroyed
   function publish() {
     const next = ownsHost() && host ? host.cursorHost : null
     if (cursorHost === next) return
