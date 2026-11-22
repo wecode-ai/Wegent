@@ -1079,10 +1079,12 @@ pub async fn handle(
     // `prepare_execution_session` on one SQLAlchemy session, so every
     // statement below is a member of one transaction whose first statement is
     // the users-by-id read (qs148).
+    let setup_started = std::time::Instant::now();
     let outcome = transaction_outcome::run(
         &state.mysql,
         async |transaction| {
             let sql: &mut MysqlTransactionService = transaction;
+            tracing::debug!(user_id, elapsed_ms = setup_started.elapsed().as_millis(), stage = "transaction_started", "chat send setup progress");
             let mut payload = payload.clone();
             let mut scope = match resolve_scope_on(
                 &mut *sql,
@@ -1102,6 +1104,7 @@ pub async fn handle(
                     ))));
                 }
             };
+            tracing::debug!(user_id, elapsed_ms = setup_started.elapsed().as_millis(), stage = "scope_resolved", "chat send setup progress");
             let confirming_pipeline = payload.action.as_deref() == Some("pipeline:confirm");
             if confirming_pipeline {
                 let Some(task_id) = payload.task_id.filter(|_| scope.task_owner_user_id == user_id)
@@ -1280,6 +1283,7 @@ pub async fn handle(
                     ))));
                 }
             };
+            tracing::debug!(user_id, elapsed_ms = setup_started.elapsed().as_millis(), stage = "bots_resolved", "chat send setup progress");
             if bots.bot_ids.is_empty() {
                 return Ok(Completion::Rollback(Err(error_ack(
                     "No valid bots found in team",
@@ -1407,6 +1411,7 @@ pub async fn handle(
                     }
                 };
 
+            tracing::debug!(user_id, elapsed_ms = setup_started.elapsed().as_millis(), stage = "session_created", "chat send setup progress");
             let attachment_ids = payload
                 .attachment_ids
                 .as_ref()
