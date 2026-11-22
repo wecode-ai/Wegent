@@ -11,6 +11,7 @@ import { findRuntimeWorkTask } from '../modules/runtime-task-evidence.mjs'
 import { DEFAULT_MODEL_ID } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readStoryTaskEvidence } from '../modules/stand-in-private-story-evidence.mjs'
+import { startRendererCpuProfile } from '../modules/renderer-cpu-profile.mjs'
 import { assertMarkdownPreviewAndSource } from '../modules/markdown-file-preview.mjs'
 import {
   STORY_CHAT,
@@ -749,21 +750,31 @@ export function createDesktopScenario(options) {
         const plan = await readFile(join(root, 'revenue-fixture/followup-plan.md'), 'utf8')
         assert.match(plan, /^1\. Review Cedar order O4: 30000 cents pending/)
         assert.match(plan, /No customer has been contacted/)
-        await writeFile(
-          join(root, 'revenue-fixture/orders.csv'),
-          ORDERS_V2.replace('Cedar,30000', 'Cedar,not-a-number')
+        const stopRevenueProfile = await startRendererCpuProfile(
+          options.resultDir,
+          'dots-revenue-revision-3.cpuprofile',
+          3000,
+          { captureControlDiagnostics: true }
         )
-        await start(
-          control,
-          'REVENUE',
-          3,
-          'The amount field is malformed. Validate input and report the error without overwriting a previously valid report.'
-        )
-        await outcome(control)
-        assert.equal(
-          await readFile(join(root, 'revenue-fixture/revenue-report.md'), 'utf8'),
-          report
-        )
+        try {
+          await writeFile(
+            join(root, 'revenue-fixture/orders.csv'),
+            ORDERS_V2.replace('Cedar,30000', 'Cedar,not-a-number')
+          )
+          await start(
+            control,
+            'REVENUE',
+            3,
+            'The amount field is malformed. Validate input and report the error without overwriting a previously valid report.'
+          )
+          await outcome(control)
+          assert.equal(
+            await readFile(join(root, 'revenue-fixture/revenue-report.md'), 'utf8'),
+            report
+          )
+        } finally {
+          await stopRevenueProfile()
+        }
         await writeFile(join(root, 'revenue-fixture/orders.csv'), ORDERS_V2)
         await start(
           control,

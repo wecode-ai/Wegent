@@ -4145,12 +4145,17 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
   }
 }
 
+function desktopControlPageState() {
+  return { visibility: document.visibilityState, hasFocus: document.hasFocus() }
+}
+
 async function postDesktopControlStarted(
   url: string,
   command: DesktopControlCommand,
   clientId: string
 ): Promise<void> {
   const startedAt = Date.now()
+  const startState = desktopControlPageState()
   let lastTick = startedAt
   let maxEventLoopLagMs = 0
   const probe = window.setInterval(() => {
@@ -4158,13 +4163,21 @@ async function postDesktopControlStarted(
     lastTick = Date.now()
   }, 100)
   let response: Response
+  let headersAt: number
+  let completedAt: number
+  let headersState: ReturnType<typeof desktopControlPageState>
+  let endState: ReturnType<typeof desktopControlPageState>
   try {
     response = await fetch(`${url}/started`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
       body: JSON.stringify({ id: command.id, clientId }),
     })
+    headersAt = Date.now()
+    headersState = desktopControlPageState()
     await response.arrayBuffer()
+    completedAt = Date.now()
+    endState = desktopControlPageState()
   } finally {
     window.clearInterval(probe)
     maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
@@ -4181,6 +4194,11 @@ async function postDesktopControlStarted(
         startedAt,
         elapsedMs: Date.now() - startedAt,
         maxEventLoopLagMs,
+        headersElapsedMs: headersAt - startedAt,
+        bodyElapsedMs: completedAt - headersAt,
+        startState,
+        headersState,
+        endState,
         serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
         visibility: document.visibilityState,
       },
