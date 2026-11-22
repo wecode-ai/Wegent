@@ -1,4 +1,4 @@
-import type { LocalCodexPluginApi, LocalPluginImportCompletion } from '@/api/local/codexPlugins'
+import type { LocalCodexPluginApi, LocalPluginInstallSource } from '@/api/local/codexPlugins'
 import { ApiError } from '@/api/http'
 import {
   getKnownLocalExecutorDeviceId,
@@ -26,7 +26,7 @@ interface PersonalPluginCloudScope {
   onInstalled(): void
 }
 
-type LocalPluginSource = InstalledPlugin | LocalPluginImportCompletion
+type LocalPluginSource = InstalledPlugin | LocalPluginInstallSource
 type AccountApi = ReturnType<typeof createDefaultPluginApi>
 
 interface BackgroundInstall {
@@ -69,7 +69,10 @@ function sourceKey(source: LocalPluginSource): string | undefined {
   return source.pluginName
 }
 
-async function readRelease(api: AccountApi, slug: string) {
+export async function readOwnedPersonalPluginRelease(
+  api: Pick<AccountApi, 'listMarketplacePlugins'>,
+  slug: string
+) {
   const { items } = await api.listMarketplacePlugins()
   const matches = items.filter(
     item => item.visibility === 'personal' && item.accessRole === 'owner' && item.name === slug
@@ -132,10 +135,7 @@ async function publishFirstRelease(
   return completed.plugin
 }
 
-async function findImportedInstall(
-  local: LocalCodexPluginApi,
-  source: LocalPluginImportCompletion
-) {
+async function findImportedInstall(local: LocalCodexPluginApi, source: LocalPluginInstallSource) {
   const { items } = await local.listInstalledPlugins({ refresh: true, requireComplete: true })
   return items.find(plugin => {
     const path = plugin.spec.sourcePayload?.marketplacePath
@@ -166,7 +166,7 @@ async function syncPersonalInstall(
   const plugin = 'spec' in source ? source : await findImportedInstall(local, source)
   if (!plugin) return
   requireCurrent()
-  let listing = await readRelease(api, slug)
+  let listing = await readOwnedPersonalPluginRelease(api, slug)
   const linkedId = linkedCloudPluginId(plugin)
   if (linkedId !== null && linkedId !== Number(listing?.id))
     throw new Error('Personal plugin is linked to a different cloud source')
@@ -179,7 +179,7 @@ async function syncPersonalInstall(
       if (!(error instanceof ApiError) || error.errorCode !== 'PRIVATE_FIRST_INSTALL_CONFLICT')
         throw error
       requireCurrent()
-      listing = await readRelease(api, slug)
+      listing = await readOwnedPersonalPluginRelease(api, slug)
       if (!listing?.latestReleaseId) throw error
     }
   }

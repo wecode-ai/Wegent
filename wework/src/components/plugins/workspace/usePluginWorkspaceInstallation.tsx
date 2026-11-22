@@ -1,4 +1,5 @@
 import { recordPluginInstallationAccepted } from '@/features/plugins/pluginInstallTelemetry'
+import type { LocalPluginInstallSource } from '@/api/local/codexPlugins'
 import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
 import {
   pluginDeviceReceiptPending,
@@ -490,6 +491,12 @@ export function usePluginWorkspaceInstallation({
     const installPersonalSource = isPersonalSourceInstall(item)
     const installFromLocal = localMarketplaceId !== null || installPersonalSource
     const isCurrent = capturePluginScope()
+    let committedPersonalSource: LocalPluginInstallSource | null = null
+    const onLocalCommit = syncPersonalPluginInBackground
+      ? (source: LocalPluginInstallSource) => {
+          committedPersonalSource = source
+        }
+      : undefined
     const requireCurrentScope = () => {
       if (!isCurrent()) throw new Error('Plugin account changed; retry with the current account')
       if (isMarketplacePluginUninstalling(item)) {
@@ -541,7 +548,11 @@ export function usePluginWorkspaceInstallation({
           if (String(owner.pluginId) !== String(preparedItem.id)) {
             throw new Error('Published plugin source ownership could not be confirmed')
           }
-          const plugin = await localPluginApi.installPersonalPluginSource(preparedItem, isCurrent)
+          const plugin = await localPluginApi.installPersonalPluginSource(
+            preparedItem,
+            isCurrent,
+            onLocalCommit
+          )
           requireCurrentScope()
           return {
             plugin,
@@ -550,7 +561,7 @@ export function usePluginWorkspaceInstallation({
           }
         }
         if (installFromLocal) {
-          const plugin = await localPluginApi.installAvailablePlugin(preparedItem)
+          const plugin = await localPluginApi.installAvailablePlugin(preparedItem, onLocalCommit)
           requireCurrentScope()
           return {
             plugin,
@@ -601,7 +612,10 @@ export function usePluginWorkspaceInstallation({
             await ensureMarketplaceConnectors(preparedItem, isCurrent)
             requireCurrentScope()
           } catch (error) {
-            if (isCurrent()) await rollbackInstalledPluginAfterAuthFailure(plugin, isCurrent)
+            if (isCurrent()) {
+              committedPersonalSource = null
+              await rollbackInstalledPluginAfterAuthFailure(plugin, isCurrent)
+            }
             throw error
           }
         }
@@ -726,6 +740,7 @@ export function usePluginWorkspaceInstallation({
                     defaultValue: `${item.displayName || item.name} 已安装`,
                   }),
         })
+        committedPersonalSource = null
         if (installFromLocal) syncPersonalPluginInBackground?.(plugin)
         if (
           promptAfterInstall &&
@@ -822,6 +837,8 @@ export function usePluginWorkspaceInstallation({
         })
       })
       .finally(() => {
+        if (committedPersonalSource && !isCurrent())
+          syncPersonalPluginInBackground?.(committedPersonalSource)
         if (!isCurrent()) return
         operations.finishInstall(item.id)
       })

@@ -443,6 +443,7 @@ export function usePluginsWorkspaceController({
     requestDeletePersonalPlugin,
     confirmDeletePersonalPlugin,
   } = usePluginWorkspaceDeletion({
+    cloudMarketplaceAvailable,
     publicationRequests,
     pluginApi,
     catalog,

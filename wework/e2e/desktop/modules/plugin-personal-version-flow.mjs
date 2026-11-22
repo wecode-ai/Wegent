@@ -174,11 +174,32 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
     await control.command('fill', testId('plugins-search-input'), { value: name })
     if (!alreadyShared) {
       await refreshPluginInventory(control)
-      await control.command(
-        'clickWhenEnabled',
-        `[data-testid^="plugin-marketplace-row-"]:has(> button[aria-label*="${name}"]) [data-testid^="plugin-marketplace-install-"]`
-      )
-      await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+      await control.command('clickWhenEnabled', detailRow(name))
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({
+          method: 'executor.plugins.personal.package',
+          phase: 'after-response',
+          maxHeldCount: 1,
+        }),
+      })
+      try {
+        await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-toggle-"]')
+        await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+        const held = JSON.parse(await control.command('awaitLocalExecutorRequestHold', 'body'))
+        assert.equal(held.heldCount, 1, 'First private installation did not reach real packaging')
+        await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[role="menuitem"][data-testid^="plugin-detail-delete-"]'
+        )
+        await control.command('waitFor', testId('delete-personal-plugin-dialog'))
+        assert.match(
+          await control.command('getText', testId('delete-personal-plugin-dialog')),
+          /本地插件源码|local source/i
+        )
+      } finally {
+        await control.command('releaseLocalExecutorRequestHold', 'body')
+      }
     } else {
       await control.command('clickWhenEnabled', testId('plugins-create-button'))
       await control.command('clickWhenEnabled', testId('plugins-import-plugin-option'))
@@ -187,8 +208,10 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
       await control.command('clickWhenEnabled', testId('plugin-import-confirm'))
       await control.command('waitFor', testId('plugin-import-dialog'), { visible: false })
     }
-    await control.command('clickWhenEnabled', detailRow(name))
-    await startChat()
+    if (alreadyShared) {
+      await control.command('clickWhenEnabled', detailRow(name))
+      await startChat()
+    }
 
     let install = await until(
       () => accountPlugin(cloud, name),
@@ -221,6 +244,20 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
     )
     await waitForAuthorCloudInstall(cloud, listing)
     await assertPersonalSourceUnchanged(source)
+    if (!alreadyShared) {
+      await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+      await waitForSnapshot(
+        control,
+        snapshot =>
+          snapshot.testIds.includes('delete-personal-plugin-dialog') &&
+          /将删除云端插件|Delete the cloud plugin/i.test(snapshot.text),
+        'A local-only preview did not refresh after background account installation'
+      )
+      assert.ok(await accountPlugin(cloud, name), 'The old delete preview removed account intent')
+      await assertPersonalSourceUnchanged(source)
+      await control.command('clickWhenEnabled', testId('plugin-delete-cancel-button'))
+      await startChat()
+    }
     await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
 
     if (!alreadyShared) {
@@ -255,6 +292,36 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
         )
       } finally {
         await fence.release()
+      }
+      install = await waitForAuthorCloudInstall(cloud, listing)
+      await assertPersonalSourceUnchanged(source)
+
+      await uninstallPersonalPluginInUi(control, listing)
+      await until(
+        () => accountPlugin(cloud, name),
+        plugin => !plugin,
+        'Navigation fixture did not remove the previous account install'
+      )
+      await control.command('clickIfPresent', testId('plugin-detail-back-button'))
+      await refreshPluginInventory(control)
+      await control.command('fill', testId('plugins-search-input'), { value: name })
+      await control.command('clickWhenEnabled', detailRow(name))
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({
+          method: 'runtime.codex.plugin.install_local_first',
+          phase: 'after-response',
+          maxHeldCount: 1,
+        }),
+      })
+      try {
+        await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-toggle-"]')
+        await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+        const held = JSON.parse(await control.command('awaitLocalExecutorRequestHold', 'body'))
+        assert.equal(held.heldCount, 1, 'Author reinstall did not commit before page departure')
+        await control.command('navigate', 'body', { value: '/' })
+        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+      } finally {
+        await control.command('releaseLocalExecutorRequestHold', 'body')
       }
       install = await waitForAuthorCloudInstall(cloud, listing)
       await assertPersonalSourceUnchanged(source)

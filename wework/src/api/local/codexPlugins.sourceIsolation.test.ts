@@ -102,10 +102,66 @@ describe('local plugin source isolation', () => {
       return original(method, params)
     })
 
-    await expect(api.installAvailablePlugin(diskItem!)).resolves.toMatchObject({
+    const onCommit = vi.fn()
+    await expect(api.installAvailablePlugin(diskItem!, onCommit)).resolves.toMatchObject({
       spec: { source: { pluginKey: 'personal-tool' } },
     })
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith({
+      pluginName: 'personal-tool',
+      marketplacePath: '/personal',
+    })
   })
+
+  test.each([false, true])(
+    'reports an author source commit after its observer leaves only when committed=%s',
+    async localCommitted => {
+      const api = createLocalCodexPluginApi()
+      const [diskItem] = await listPersonalMarketplacePluginsFromDisk()
+      const native = Promise.withResolvers<{ localCommitted: boolean }>()
+      const dispatched = vi.fn()
+      const onCommit = vi.fn()
+      let current = true
+      const original = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation((method, params) => {
+        if (method === 'executor.plugins.links.list')
+          return Promise.resolve([{ localPluginName: 'personal-tool', cloudPluginId: 17 }])
+        if (method === 'runtime.codex.plugin.install_local_first') {
+          dispatched()
+          return native.promise
+        }
+        return original(method, params)
+      })
+      const install = api.installPersonalPluginSource(
+        {
+          ...diskItem!,
+          id: 17,
+          accessRole: 'owner',
+          localPersonalSource: { pluginName: 'personal-tool', marketplacePath: '/personal' },
+        },
+        () => current,
+        onCommit
+      )
+      const rejected = expect(install).rejects.toThrow(
+        localCommitted ? 'Plugin account changed' : 'did not commit'
+      )
+      await vi.waitFor(() => expect(dispatched).toHaveBeenCalledOnce())
+      current = false
+      native.resolve({ localCommitted })
+      await rejected
+      expect(onCommit.mock.calls).toEqual(
+        localCommitted
+          ? [
+              [
+                expect.objectContaining({
+                  pluginName: 'personal-tool',
+                  marketplacePath: '/personal',
+                }),
+              ],
+            ]
+          : []
+      )
+    }
+  )
 
   test.each([false, true])(
     'passes the existing-release link guard to Native when device changed=%s',

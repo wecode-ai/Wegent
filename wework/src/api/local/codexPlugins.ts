@@ -233,6 +233,11 @@ export interface LocalPluginImportCompletion {
   marketplacePath: string
 }
 
+export type LocalPluginInstallSource = Pick<
+  LocalPluginImportCompletion,
+  'pluginName' | 'marketplacePath'
+>
+
 interface LocalPluginInstallCommitResult {
   pluginKey: string
   localCommitted: boolean
@@ -350,11 +355,15 @@ export interface LocalCodexPluginApi {
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
-  installAvailablePlugin(item: PluginMarketplaceItem): Promise<InstalledPlugin>
+  installAvailablePlugin(
+    item: PluginMarketplaceItem,
+    onLocalCommit?: (source: LocalPluginInstallSource) => void
+  ): Promise<InstalledPlugin>
   /** Reinstall an independently published source after the caller verifies the current owner. */
   installPersonalPluginSource(
     item: PluginMarketplaceItem,
-    isCurrent: () => boolean
+    isCurrent: () => boolean,
+    onLocalCommit?: (source: LocalPluginInstallSource) => void
   ): Promise<InstalledPlugin>
   updateInstalledPlugin(
     id: string | number,
@@ -3575,7 +3584,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       clearLocalCodexPluginsReadStateCache()
       return readState({ marketplaceId: response.marketplaceName, refresh: true })
     },
-    async installPersonalPluginSource(item, isCurrent) {
+    async installPersonalPluginSource(item, isCurrent, onLocalCommit) {
       const source = await resolvePersonalPluginSource(item, isCurrent)
       requireCurrentPluginSourceScope(isCurrent)
       const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
@@ -3585,9 +3594,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           pluginName: source.pluginName,
         }
       )
-      requireCurrentPluginSourceScope(isCurrent)
       if (!commit.localCommitted)
         throw new Error('Personal plugin source installation did not commit')
+      onLocalCommit?.(source)
+      requireCurrentPluginSourceScope(isCurrent)
       resumeBundledPluginUpdates(source.pluginName)
       clearLocalCodexPluginsReadStateCache()
       const state = await loadInstalledPluginsOnly({ requireComplete: true })
@@ -3608,7 +3618,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       requireCurrentPluginSourceScope(isCurrent)
       return detail
     },
-    async installAvailablePlugin(item) {
+    async installAvailablePlugin(item, onLocalCommit) {
       // Install the selected shared-catalog entry. A scoped readState cache may
       // omit remote rows even though remote discovery already painted this item.
       const pluginId = item.id
@@ -3656,6 +3666,11 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         }
       }
       if (installError) throw installError
+      if (localMarketplace && isPersonalMarketplaceId(marketplace.id))
+        onLocalCommit?.({
+          pluginName: acceptedPluginName,
+          marketplacePath: normalizeMarketplaceSource(marketplace.path),
+        })
       if (marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID) {
         resumeBundledPluginUpdates(acceptedPluginName)
       }
