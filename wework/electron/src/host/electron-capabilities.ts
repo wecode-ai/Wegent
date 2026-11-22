@@ -479,7 +479,9 @@ export function createElectronCapabilityRouter(
     context.deferUntilResponseSent(desktopServices.relaunchApplication)
   })
   router.register('desktop.events', params =>
-    desktopServices.events.read(integerParam(params, 'after') ?? 0)
+    params.wait === true
+      ? desktopServices.events.wait(integerParam(params, 'after') ?? 0)
+      : desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
   router.register('renderer.startupReady', params => {
     const source = optionalStringParam(params, 'source')

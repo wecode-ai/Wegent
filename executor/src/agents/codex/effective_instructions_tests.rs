@@ -76,6 +76,48 @@ fn execution_context_discards_stale_context_and_requires_complete_runtime_identi
 }
 
 #[test]
+fn connected_assistant_turns_receive_a_fresh_clock_separate_from_source_times() {
+    let launch = CodexLaunchConfig::default();
+    for kind in [
+        "stand_in_identity",
+        "stand_in_coordinator",
+        "connection_work",
+    ] {
+        let mut request = ExecutionRequest {
+            prompt: json!("At 2026-11-19T23:30:00+08:00: please finish tomorrow."),
+            ..Default::default()
+        };
+        request.extra.insert("origin".into(), json!({"type":kind}));
+        request.extra.insert(
+            "additionalContext".into(),
+            json!({"wework.execution":{"kind":"application","value":"An old turn clock"}}),
+        );
+
+        let before = chrono::Utc::now().timestamp();
+        let turn = turn_start_params(
+            "thread",
+            &request,
+            &launch,
+            vec![json!({"type":"text","text":request.prompt})],
+        );
+        let context = turn["additionalContext"]["wework.execution"]["value"]
+            .as_str()
+            .unwrap();
+        let timestamp = context
+            .lines()
+            .next()
+            .unwrap()
+            .strip_prefix("Wework local time at turn start: ")
+            .unwrap();
+        let clock = chrono::DateTime::parse_from_rfc3339(timestamp).unwrap();
+        assert!((before..=chrono::Utc::now().timestamp()).contains(&clock.timestamp()));
+        assert!(context.contains("from that message's send date and source timezone"));
+        assert!(!context.contains("An old turn clock"));
+        assert_eq!(turn["input"][0]["text"], request.prompt);
+    }
+}
+
+#[test]
 fn scheduled_delegation_retains_both_execution_facts_without_policy_authority() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(

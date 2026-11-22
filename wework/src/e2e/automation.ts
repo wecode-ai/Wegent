@@ -157,6 +157,9 @@ import {
   E2E_RUNTIME_EVENT_LISTENERS_KEY,
 } from '@/api/runtime/runtimeChatStream'
 
+const backgroundRequestProbe = new Map<number, string>()
+let backgroundRequestProbePending: Promise<unknown>[] = []
+
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
 
@@ -2392,6 +2395,29 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           JSON.parse(command.value ?? '{}')
         )
       )
+    case 'startBackgroundRequestProbe': {
+      const { requestDshExecutor } = await import('@/api/dsh/executorTransport')
+      backgroundRequestProbe.clear()
+      backgroundRequestProbePending = []
+      for (let index = 0; index < 4; index++) {
+        backgroundRequestProbe.set(index, 'pending')
+        backgroundRequestProbePending.push(
+          requestDshExecutor('runtime.tasks.list', { backgroundProbe: index }).then(
+            () => backgroundRequestProbe.set(index, 'done'),
+            error => backgroundRequestProbe.set(index, String(error))
+          )
+        )
+      }
+      return ''
+    }
+    case 'waitForBackgroundRequestProbe':
+      await Promise.all(backgroundRequestProbePending)
+      return JSON.stringify(Object.fromEntries(backgroundRequestProbe))
+    case 'readBackgroundRequestProbe':
+      return JSON.stringify({
+        requests: Object.fromEntries(backgroundRequestProbe),
+        locks: await navigator.locks.query(),
+      })
     case 'armRuntimeTransportGate':
       armRuntimeTransportGate(JSON.parse(command.value ?? '{}'))
       return ''
@@ -2406,6 +2432,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'readStandInTasksThroughColdDeviceRoute': {
+      const taskIds = JSON.parse(command.value ?? '[]') as string[]
+      const { createHybridWorkbenchServices } = await import('@/api/hybrid/hybridServices')
+      const { describeDshExecutor } = await import('@/api/dsh/executorTransport')
+      const { LOCAL_USER } = await import('@/api/local/localSession')
+      const { device_id: deviceId } = await describeDshExecutor()
+      const services = createHybridWorkbenchServices({
+        apiBaseUrl: window.location.origin,
+        socketBaseUrl: window.location.origin,
+        socketPath: '/socket.io',
+        token: '',
+        user: LOCAL_USER,
+      })
+      const reader = services.standInApi
+      if (!reader) throw new Error('Stand-in task reader is unavailable')
+      return JSON.stringify(
+        await Promise.all(taskIds.map(taskId => reader.readTask(deviceId, taskId)))
+      )
+    }
     case 'refreshRuntimeWork':
       window.dispatchEvent(
         new StorageEvent('storage', {
@@ -2950,6 +2995,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'blurMainWindow':
       await invokeDesktopHost('e2e.blurMainWindow')
       return ''
+    case 'minimizeMainWindow':
+      await invokeDesktopHost('window.minimize')
+      return ''
+    case 'getWorkbenchWindowActivity':
+      return String(await window.weworkElectronLifecycle?.getWorkbenchActivity?.())
     case 'pressWindowKey':
       await invokeDesktopHost('e2e.pressKey', {
         windowLabel: getDesktopWindowLabel(),

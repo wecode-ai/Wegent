@@ -505,6 +505,31 @@
       "cannot_demote_self": "Cannot demote yourself when you are the only admin"
     }
   },
+  "model_group_icons": {
+    "title": "Primary group icons",
+    "description": "Groups with the same name share an icon. Select Automatic to restore the generated icon.",
+    "group": "Primary group",
+    "icon": "Icon",
+    "automatic": "Automatic",
+    "save": "Save",
+    "saved": "Group icon saved",
+    "save_failed": "Could not save the group icon",
+    "load_failed": "Could not load group icons",
+    "loading": "Loading group icons…",
+    "retry": "Retry",
+    "choices": {
+      "globe": "Globe",
+      "map-pin": "Map pin",
+      "zap": "Lightning",
+      "brain": "Brain",
+      "code": "Code",
+      "cpu": "Chip",
+      "layers": "Layers",
+      "sparkles": "Sparkles",
+      "shield": "Shield",
+      "flask-conical": "Flask"
+    }
+  },
   "public_models": {
     "title": "Public Model Management",
     "description": "Manage public AI models available to all users",
