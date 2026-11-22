@@ -605,7 +605,8 @@ test('disconnects only the SSE stream when backpressure does not drain', async (
   )
 
   assert.equal(response.status, 200)
-  assert.equal(response.writableEnded, true)
+  assert.equal(response.destroyed, true)
+  assert.equal(response.writableEnded, false)
   assert.equal(stopped, true)
 })
 
@@ -729,6 +730,9 @@ function responseFixture(options = {}) {
   response.end = function (body = '') {
     this.body += body
     this.writableEnded = true
+  }
+  response.destroy = function () {
+    this.destroyed = true
   }
   return response
 }

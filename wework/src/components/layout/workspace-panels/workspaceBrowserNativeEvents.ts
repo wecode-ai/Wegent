@@ -16,7 +16,7 @@ import type { BrowserSessionModel } from './workspaceBrowserSessionTypes'
 export function observeBrowserNativeEvents(model: BrowserSessionModel) {
   let listening = true
   let pageStateFrame: number | null = null
-  let pendingPageState: EmbeddedBrowserPageState | null = null
+  let pendingPageState: { state: EmbeddedBrowserPageState; generation: number } | null = null
   const clearPendingPageState = () => {
     if (pageStateFrame !== null) window.cancelAnimationFrame(pageStateFrame)
     pageStateFrame = null
@@ -154,12 +154,14 @@ export function observeBrowserNativeEvents(model: BrowserSessionModel) {
   retain(
     listenEmbeddedBrowserPageStateChanges(pageState => {
       if (!ownsPageState(pageState)) return
-      pendingPageState = pageState
+      pendingPageState = { state: pageState, generation: model.runtime.pageStateRequestGeneration }
       if (pageStateFrame !== null) return
       pageStateFrame = window.requestAnimationFrame(() => {
         const latest = pendingPageState
         clearPendingPageState()
-        if (latest) applyPageState(latest)
+        if (latest?.generation === model.runtime.pageStateRequestGeneration) {
+          applyPageState(latest.state)
+        }
       })
     })
   )

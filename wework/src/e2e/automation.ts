@@ -2475,16 +2475,24 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           const response = await fetch('/wework/api/e2e-http-fault/body', options)
           const reader = response.body?.getReader()
           if (!reader) throw new Error('The proxy did not return a readable response')
-          const first = await reader.read()
+          const decoder = new TextDecoder()
+          let first = ''
+          while (first.length < 'partial'.length) {
+            const chunk = await reader.read()
+            if (chunk.done) throw new Error('The upstream response ended before the fixture marker')
+            first += decoder.decode(chunk.value, { stream: true })
+          }
           const release = await fetch('/wework/api/e2e-http-fault/release', options)
           if (release.status !== 204) throw new Error('The upstream socket was not dropped')
-          const readError = await reader.read().then(
-            () => '',
-            error => error.name as string
-          )
+          let readError = ''
+          try {
+            while (!(await reader.read()).done) continue
+          } catch (error) {
+            readError = error instanceof Error ? error.name : String(error)
+          }
           return JSON.stringify({
             status: response.status,
-            first: new TextDecoder().decode(first.value),
+            first,
             readError,
           })
         }

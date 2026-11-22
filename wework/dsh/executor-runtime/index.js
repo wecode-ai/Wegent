@@ -622,7 +622,6 @@ class SseResponseSink extends Writable {
 
   _destroy(error, callback) {
     this.clearDrainTimer()
-    if (!this.response.writableEnded && !this.response.destroyed) this.response.end()
     callback(error)
   }
 

@@ -457,7 +457,9 @@ function proxyHttpRequest(req, res, backendUrl, sourcePath, targetPath) {
   req.once('aborted', () => fail('downstream_request_aborted'))
   req.once('error', () => fail('downstream_request_failed'))
   res.once('error', () => fail('downstream_response_failed'))
-  res.once('finish', stop)
+  res.once('finish', () => {
+    if (stop() && !upstreamRequest.writableFinished) upstreamRequest.destroy()
+  })
   res.once('close', () => {
     if (!stop()) return
     upstreamResponse?.destroy()

@@ -3628,7 +3628,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
   const automationApi = createAutomationApiFromIpc(
     request,
-    (method, params) => request(method, params as Record<string, unknown>),
+    (method, params, options) =>
+      options
+        ? request(method, params as Record<string, unknown>, undefined, options)
+        : request(method, params as Record<string, unknown>),
     {
       cloudModelGateway: deps.cloudModelGateway,
       resolveProxy,

@@ -49,6 +49,16 @@ const desktopHostEventHistory: DesktopHostEvent[] = []
 const MAX_DESKTOP_HOST_EVENT_HISTORY = 1024
 const DESKTOP_HOST_EVENT_CURSOR_KEY = 'wework.desktopHostEventCursor'
 const ATTACHMENT_REQUEST_TIMEOUT_MS = 15_000
+// Leave time for the Electron host's 15-minute preparation deadline to return an error.
+const HOST_PREPARATION_TIMEOUT_MS = 15 * 60_000 + 10_000
+const HOST_PREPARATION_CAPABILITIES = new Set([
+  'smartApps.start',
+  'smartApps.verify',
+  'runtime.installCoreDshPlugin',
+  'runtime.updateCoreDshPlugin',
+  'runtime.setCoreDshPluginEnabled',
+  'runtime.uninstallCoreDshPlugin',
+])
 let desktopHostEventAfter = loadDesktopHostEventCursor()
 let disconnectDesktopHostEvents: (() => void) | null = null
 
@@ -103,9 +113,11 @@ async function performDesktopHostRequest<Result>(
     ? ATTACHMENT_REQUEST_TIMEOUT_MS
     : capability === 'modelConfiguration.requestRuntime'
       ? dshRpcTimeoutMs(String(params.method))
-      : background
-        ? 30_000
-        : 120_000
+      : HOST_PREPARATION_CAPABILITIES.has(capability)
+        ? HOST_PREPARATION_TIMEOUT_MS
+        : background
+          ? 30_000
+          : 125_000
   const deadline = new AbortController()
   const requestTimeout = setTimeout(() => deadline.abort(), timeoutMs)
   const signal = deadline.signal
@@ -114,7 +126,7 @@ async function performDesktopHostRequest<Result>(
     try {
       response = await fetch('/wework/electron-host/v1/invoke', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-request-id': requestId },
         body: JSON.stringify({ capability, params }),
         signal,
       })

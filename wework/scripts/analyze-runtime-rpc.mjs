@@ -49,6 +49,7 @@ if (values.help || positionals.length !== 1) {
       const {
         requestId,
         method,
+        route,
         command,
         stage,
         queueMs,
@@ -68,6 +69,7 @@ if (values.help || positionals.length !== 1) {
         at,
         requestId,
         method,
+        route,
         command,
         event: event.event ?? stage,
         stage,
@@ -101,7 +103,9 @@ if (values.help || positionals.length !== 1) {
     const outstanding = []
     for (const events of recent) {
       const method =
-        events.find(event => event.method && event.method !== '<invalid>')?.method ?? '<invalid>'
+        events.find(event => event.method && event.method !== '<invalid>')?.method ??
+        events.find(event => event.route)?.route ??
+        '<invalid>'
       const command = events.find(event => event.command)?.command
       const name = command ? method + ' ' + command : method
       const summary = methods.get(name) ?? {
@@ -117,7 +121,11 @@ if (values.help || positionals.length !== 1) {
       if (released) summary.released++
       if (
         events.some(
-          event => /timeout|deadline_exceeded/.test(event.event) || event.reason === 'timeout'
+          event =>
+            /timeout|deadline_exceeded/.test(event.event) ||
+            event.reason === 'timeout' ||
+            event.code === 'rpc_timeout' ||
+            event.code === 'body_timeout'
         )
       )
         summary.timeouts++
