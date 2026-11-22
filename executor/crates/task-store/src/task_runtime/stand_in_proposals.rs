@@ -10,6 +10,44 @@ fn proposal_key(user: i64, role: Option<&str>) -> String {
     )
 }
 
+pub(super) fn manual_proposal_on(
+    connection: &Connection,
+    user: i64,
+    role: Option<&str>,
+) -> Result<Value, TaskRuntimeError> {
+    let mut proposal = get_item_from(connection, &proposal_key(user, role), "stand_in_proposal")?
+        .map(|row| row.metadata)
+        .filter(|value| value["status"] == "pending")
+        .unwrap_or(Value::Null);
+    if proposal.is_object() {
+        super::personal_stand_in::migrate_personal_settings(&mut proposal["settings"])?;
+    }
+    Ok(proposal)
+}
+
+fn preserve_learning_choices(before: &Value, draft: &mut Value) {
+    fn preserve(before: &Value, draft: &mut Value) {
+        if let Some(fields) = draft.as_object_mut() {
+            if let Some(value) = before.get("selfLearningEnabled") {
+                fields.insert("selfLearningEnabled".into(), value.clone());
+            } else {
+                fields.remove("selfLearningEnabled");
+            }
+        }
+    }
+    if before["primary"].get("selfLearningEnabled").is_some() && !draft["primary"].is_object() {
+        draft["primary"] = before["primary"].clone();
+    } else if let Some(primary) = draft.get_mut("primary") {
+        preserve(&before["primary"], primary);
+    }
+    for role in draft["roles"].as_array_mut().into_iter().flatten() {
+        let previous = before["roles"]
+            .as_array()
+            .and_then(|roles| roles.iter().find(|row| row["id"] == role["id"]));
+        preserve(previous.unwrap_or(&Value::Null), role);
+    }
+}
+
 impl LocalTaskStore {
     /// Read a pending proposal with legacy settings normalized for owner review.
     pub fn stand_in_proposal(
@@ -18,15 +56,7 @@ impl LocalTaskStore {
         role: Option<&str>,
     ) -> Result<Value, TaskRuntimeError> {
         let connection = self.connection()?;
-        let mut proposal =
-            get_item_from(&connection, &proposal_key(user, role), "stand_in_proposal")?
-                .map(|row| row.metadata)
-                .filter(|value| value["status"] == "pending")
-                .unwrap_or(Value::Null);
-        if proposal.is_object() {
-            super::personal_stand_in::migrate_personal_settings(&mut proposal["settings"])?;
-        }
-        Ok(proposal)
+        manual_proposal_on(&connection, user, role)
     }
 
     pub fn propose_stand_in_settings(
@@ -74,6 +104,7 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let previous = read_personal(&connection, user, device)?;
+        preserve_learning_choices(&previous, &mut settings);
         if let Some(role) = role {
             let other_roles = |settings: &Value| {
                 settings["roles"].as_array().map(|rows| {
@@ -112,6 +143,9 @@ impl LocalTaskStore {
         accept: bool,
         prepared: Option<Value>,
     ) -> Result<Value, TaskRuntimeError> {
+        if id.starts_with("ghost:") {
+            return self.apply_ghost_decision(user, device, id, accept, None);
+        }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut statement = connection.prepare("SELECT id,metadata FROM loop_items WHERE resource_type='stand_in_proposal' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.id')=?2")?;
@@ -130,15 +164,13 @@ impl LocalTaskStore {
                 "Proposal belongs to another device".into(),
             ));
         }
+        let previous = read_personal(&connection, user, device)?;
         let saved = if accept {
-            self.save_personal_stand_in_on(
-                &connection,
-                user,
-                device,
-                prepared.unwrap_or_else(|| proposal["settings"].clone()),
-            )?
+            let mut next = prepared.unwrap_or_else(|| proposal["settings"].clone());
+            preserve_learning_choices(&previous, &mut next);
+            self.save_personal_stand_in_on(&connection, user, device, next)?
         } else {
-            read_personal(&connection, user, device)?
+            previous
         };
         proposal["status"] = json!(if accept { "accepted" } else { "rejected" });
         if accept && proposal["continuation"].is_object() {
@@ -182,6 +214,21 @@ impl LocalTaskStore {
         }
         self.connection()?.execute("UPDATE loop_items SET metadata=json_set(metadata,'$.status',?1),updated_at=?2 WHERE resource_type='stand_in_proposal_continuation' AND id=?3 AND json_extract(metadata,'$.status')='pending'",params![status,now(),format!("stand-in-proposal-continuation:{id}")])?;
         Ok(())
+    }
+
+    pub fn resolved_proposal_role(
+        &self,
+        user: i64,
+        device: &str,
+        id: &str,
+    ) -> Result<Option<String>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let sql = if id.starts_with("ghost:") {
+            "SELECT json_extract(metadata,'$.roleId') FROM loop_items WHERE id=?1 AND user_id=?2 AND device_id=?3 AND resource_type='ghost_evaluation'"
+        } else {
+            "SELECT json_extract(metadata,'$.roleId') FROM loop_items WHERE resource_type='stand_in_proposal' AND json_extract(metadata,'$.id')=?1 AND json_extract(metadata,'$.userId')=?2 AND json_extract(metadata,'$.settings.executionDeviceId')=?3"
+        };
+        Ok(connection.query_row(sql, params![id, user, device], |row| row.get(0))?)
     }
 
     pub fn stand_in_proposal_settings(
@@ -384,6 +431,28 @@ mod tests {
         assert_eq!(pending[0]["subscriptionId"], "receiver");
         assert_eq!(pending[0]["generation"], "old-device-generation");
         assert!(store.pending_git_disconnects(8).unwrap().is_empty());
+    }
+
+    #[test]
+    fn profile_proposals_carry_forward_the_owners_learning_choices() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["primary"] =
+            json!({"enabled":true,"selfLearningEnabled":true,"prompt":"","preferences":""});
+        let mut draft = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        draft["primary"]
+            .as_object_mut()
+            .unwrap()
+            .remove("selfLearningEnabled");
+        draft["roles"][0]["selfLearningEnabled"] = json!(true);
+        let proposal = store
+            .propose_stand_in_settings(7, "mac", None, "Edit role", draft)
+            .unwrap();
+        assert_eq!(proposal["settings"]["primary"]["selfLearningEnabled"], true);
+        assert!(proposal["settings"]["roles"][0]
+            .get("selfLearningEnabled")
+            .is_none());
     }
 
     #[test]

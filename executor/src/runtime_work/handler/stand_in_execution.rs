@@ -55,10 +55,24 @@ impl RuntimeWorkRpcHandler {
         role["executionDeviceId"]
             .as_str()
             .filter(|device| !device.is_empty())
-            .map_or(true, |device| {
-                device == self.device_id
-                    || self.cloud_device_id().is_ok_and(|route| route == device)
-            })
+            .map_or(true, |device| self.stand_in_device_runs_here(device))
+    }
+
+    pub(super) fn stand_in_device_runs_here(&self, device: &str) -> bool {
+        device == self.device_id || self.cloud_device_id().is_ok_and(|route| route == device)
+    }
+
+    /// Keep the configured route for atomic store checks. A backend route can identify
+    /// this executor while differing from the native id in a task origin.
+    pub(super) fn local_stand_in_role_device(
+        &self,
+        settings: &Value,
+        role: &str,
+    ) -> Option<String> {
+        crate::task_runtime::personal_stand_in::stand_in_identities(settings)
+            .into_iter()
+            .find(|identity| identity["id"] == role && self.stand_in_role_runs_here(identity))
+            .and_then(|identity| identity["executionDeviceId"].as_str().map(str::to_owned))
     }
 
     pub(super) fn stand_in_issue_runs_here(&self, config: &Value, issue: &Value) -> bool {
@@ -250,6 +264,12 @@ impl RuntimeWorkRpcHandler {
                 json!({"objective":prompt,"status":"active","tokenBudget":null});
         }
         let mut prepared = self.prepare_stand_in_execution(payload, config).await?;
+        if config["triggerMessage"].is_string() && config["triggerCommentId"].is_string() {
+            // A conversation can outlive the mention that started it. This request-only
+            // marker is intentionally absent from restored execution profiles.
+            prepared["executionRequest"]["standInMentionForReview"] =
+                config["triggerCommentId"].clone();
+        }
         let mut system = prepared["executionRequest"]["system_prompt"]
             .as_str()
             .unwrap_or_default()

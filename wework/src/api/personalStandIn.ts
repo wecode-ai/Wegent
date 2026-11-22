@@ -45,6 +45,7 @@ export interface StandInIdentity extends Partial<
   Pick<WorkspaceStandInSettings, 'model' | 'modelOptions' | 'workspace'>
 > {
   enabled: boolean
+  selfLearningEnabled?: boolean
   prompt: string
   preferences: string
   calendar?: { policy: StandInHandlingPolicy }
@@ -54,6 +55,7 @@ export interface StandInIdentity extends Partial<
 
 export interface StandInRole extends WorkspaceStandInSettings {
   id: string
+  selfLearningEnabled?: boolean
   name: string
   migrationSource?: string
   previousExecutionDevices?: string[]

@@ -31,6 +31,7 @@ import {
 import { createPortal } from 'react-dom'
 import { StandInConversation } from './StandInConversation'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
+import { StandInGhostRevisionEntry } from './StandInGhostRevisionEntry'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInOnboarding } from './StandInOnboarding'
 import { createStandInOverviewSource, standInOverviewSourceKey } from './standInOverviewSource'
@@ -356,6 +357,19 @@ export function StandInOverviewPage({
           onClick={() => leavePanel(() => openProfile('memory'))}
         />
       )}
+      {api &&
+        saved &&
+        (roleId ? saved.roles.find(role => role.id === roleId) : saved.primary)
+          ?.selfLearningEnabled !== undefined && (
+          <StandInGhostRevisionEntry
+            key={JSON.stringify([saved.userId, saved.executionDeviceId, saved.version, roleId])}
+            api={api}
+            userId={saved.userId}
+            deviceId={saved.executionDeviceId}
+            roleId={roleId}
+            requestLeave={leavePanel}
+          />
+        )}
     </section>
   )
   const content = (
@@ -801,6 +815,7 @@ export function StandInOverviewPage({
                   <StandInMemoryPanel
                     ref={panelRef}
                     key={saved.executionDeviceId}
+                    reviewRoleId={roleId ?? '@primary'}
                     api={api}
                     settings={saved}
                     projects={props.projects.filter(

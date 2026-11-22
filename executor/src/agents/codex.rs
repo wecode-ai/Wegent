@@ -2758,7 +2758,11 @@ async fn run_codex_app_server_turn_on_shared_client(
                 ),
             )
             .await?;
-            turn_start_response_id(&turn_start_response)
+            let native_turn = turn_start_response_id(&turn_start_response);
+            if let Some(id) = native_turn.as_deref().filter(|_| quota_resume.is_none()) {
+                crate::task_runtime::mcp::bind_stand_in_turn_context(request, id);
+            }
+            native_turn
         };
         if let Some(turn_id) = active_turn_id.as_ref() {
             if let Some(callback) = active_turn_started.as_ref() {

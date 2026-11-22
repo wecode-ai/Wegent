@@ -16,6 +16,46 @@ pub(super) fn memory_review_save_result(
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn stand_in_proposal_on_role_device(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        role: Option<&str>,
+        latest_revision: bool,
+    ) -> Result<Value, AppIpcError> {
+        self.verify_local_stand_in_owner(user)?;
+        let settings = store
+            .configured_personal_stand_in(user, &self.device_id)
+            .map_err(super::stand_in::settings_error)?;
+        let device = self.local_stand_in_role_device(&settings, role.unwrap_or("@primary"));
+        match (device, latest_revision) {
+            (Some(device), true) => store.latest_applied_ghost(user, &device, role),
+            (Some(device), false) => store.stand_in_proposal_for_device(user, &device, role),
+            (None, true) => return Ok(Value::Null),
+            (None, false) => store.stand_in_proposal(user, role),
+        }
+        .map_err(super::stand_in::settings_error)
+    }
+
+    pub(super) fn emit_pending_stand_in_ghost(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        role: Option<&str>,
+    ) {
+        let Some(events) = &self.event_tx else { return };
+        match self.stand_in_proposal_on_role_device(store, user, role, false) {
+            Ok(proposal) if proposal["training"].is_object() => {
+                let _ = events.send(json!({
+                    "type":"event","event":"runtime.stand_in.proposal.changed",
+                    "payload":{"deviceId":proposal["training"]["deviceId"],"userId":user,"roleId":role,"proposalId":proposal["id"]}
+                }));
+            }
+            Ok(_) => {}
+            Err(_) => log_executor_event("stand-in learning notification lookup failed", &[]),
+        }
+    }
+
     pub(super) fn memory_review_run_has_work(
         &self,
         store: &LocalTaskStore,
@@ -40,11 +80,7 @@ impl RuntimeWorkRpcHandler {
         )? {
             return Ok(true);
         }
-        self.automation_store
-            .settle_coordinated_run(&run.id, AutomationRunStatus::Succeeded, None, None)
-            .map_err(|error| AppIpcError::new("calendar_store_error", error))?;
-        self.emit_automation_runs_changed(&current.id, &run.id);
-        Ok(false)
+        self.connection_training_due(store, user, run)
     }
 
     pub(super) fn memory_review_has_pending_sources(
@@ -53,6 +89,9 @@ impl RuntimeWorkRpcHandler {
         through: i64,
         store: &LocalTaskStore,
     ) -> Result<bool, AppIpcError> {
+        let settings = store
+            .configured_personal_stand_in(user, &self.device_id)
+            .map_err(super::stand_in::settings_error)?;
         for link in self.local_task_links(true) {
             if !super::stand_in_history::history_owned(&link, user)
                 || link.runtime_handle["origin"]["memoryReview"] == true
@@ -65,8 +104,13 @@ impl RuntimeWorkRpcHandler {
             let progress = store
                 .memory_review_progress(user, &link.local_task_id)
                 .map_err(super::stand_in::settings_error)?;
+            let reviewed = progress["completedThrough"].as_i64().unwrap_or(0);
             if link.updated_at == 0
-                || link.updated_at >= progress["completedThrough"].as_i64().unwrap_or(0)
+                || link.updated_at >= reviewed
+                || (self.direct_learning_role(&link, &settings, user).is_some()
+                    && super::stand_in_identity_rework::identity_source_due(
+                        &link, reviewed, through,
+                    ))
             {
                 return Ok(true);
             }
@@ -83,7 +127,14 @@ impl RuntimeWorkRpcHandler {
         {
             if settings["executionDeviceId"] != self.device_id
                 || !settings["lifecycle"]["status"].is_null()
-                || settings["primary"]["enabled"] == false
+                || (settings["primary"]["enabled"] == false
+                    && !crate::task_runtime::personal_stand_in::stand_in_identities(&settings)
+                        .iter()
+                        .any(|role| {
+                            role["enabled"] == true
+                                && role["selfLearningEnabled"] == true
+                                && role["executionDeviceId"] == self.device_id
+                        }))
             {
                 continue;
             }

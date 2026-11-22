@@ -7,6 +7,12 @@ export type {
   ProjectTaskAssignedPayload,
 } from '@wegent/chat-core/runtime-stream-types'
 export interface ChatStreamHandlers extends RuntimeChatStreamHandlers {
+  onStandInLearningProposal?: (payload: {
+    deviceId: string
+    userId: number
+    roleId?: string
+    proposalId: string
+  }) => void
   onIssueAssignmentsChanged?: (userId: number) => void
   onIssueShared?: (payload: {
     id: string

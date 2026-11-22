@@ -6,6 +6,50 @@ const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
 const METHODS = ['check', 'listResources', 'validate', 'initialize', 'collect']
 const OPTIONAL_METHODS = ['readSource', 'executeAction']
 
+const reviewQuerySchema = {
+  type: 'object',
+  properties: {
+    since: { type: 'string', format: 'date-time' },
+    trainingUntil: { type: 'string', format: 'date-time' },
+    limit: { type: 'integer', minimum: 1, maximum: 20 },
+  },
+  required: ['since', 'trainingUntil'],
+  additionalProperties: false,
+}
+
+const reviewItemSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', minLength: 1 },
+    at: { type: 'string', format: 'date-time' },
+    text: { type: 'string' },
+    author: {
+      enum: [
+        'owner',
+        'participant',
+        'accountAutomation',
+        'authenticatedAccount',
+        'accountCandidate',
+        'unknown',
+      ],
+    },
+    conversationId: { type: 'string', minLength: 1 },
+    topicId: { type: ['string', 'null'] },
+    quotedMessageId: { type: ['string', 'null'] },
+    participantId: { type: ['string', 'null'] },
+    isSelfConversation: { type: 'boolean' },
+    truncated: { type: 'boolean' },
+  },
+  required: ['id', 'at', 'text', 'author', 'conversationId'],
+}
+
+function isReviewQuery(provider, input) {
+  return (
+    input.query?.trainingUntil !== undefined &&
+    provider.reviewHistory?.resourceKinds.includes(input.source?.kind)
+  )
+}
+
 export class ConnectionError extends Error {
   constructor(code, message, options = {}) {
     super(message)
@@ -142,6 +186,18 @@ export function parseConnections(manifest) {
       )
       compileSchema(provider.read.inputSchema, true)
       compileSchema(provider.read.itemSchema, true)
+    }
+    if (provider.reviewHistory !== undefined) {
+      const kinds = provider.reviewHistory?.resourceKinds
+      requireValue(
+        provider.read &&
+          record(provider.reviewHistory) &&
+          Array.isArray(kinds) &&
+          kinds.length > 0 &&
+          new Set(kinds).size === kinds.length &&
+          kinds.every(kind => provider.resourceKinds.includes(kind)),
+        'Review history requires a source reader and declared resource kinds'
+      )
     }
     if (provider.assistance !== undefined) {
       const fields = ['observe', 'prepare', 'notifyWhen', 'confirmBefore']
@@ -460,7 +516,9 @@ export class ConnectionRegistry {
       )
       if (params.cursor === undefined || params.query !== undefined)
         validateSchema(
-          entry.provider.read.inputSchema,
+          isReviewQuery(entry.provider, params)
+            ? reviewQuerySchema
+            : entry.provider.read.inputSchema,
           params.query ?? {},
           'Invalid source read query'
         )
@@ -590,8 +648,38 @@ function validateProviderResult(provider, method, result, input) {
         typeof result.hasMore === 'boolean',
       'Invalid source read result'
     )
+    const review =
+      isReviewQuery(provider, input) ||
+      (input.cursor !== undefined &&
+        input.query === undefined &&
+        result.reviewCoverage !== undefined &&
+        provider.reviewHistory?.resourceKinds.includes(input.source?.kind))
+    if (review) {
+      if (result.reviewUseCollectedEvents !== undefined) {
+        requireValue(
+          result.reviewUseCollectedEvents === true &&
+            result.reviewCoverage === 'partial' &&
+            result.items.length === 0 &&
+            !result.hasMore &&
+            result.nextCursor === undefined,
+          'Collected events require an empty terminal partial review page'
+        )
+      }
+      requireValue(
+        result.items.length <= (input.query?.limit ?? 20),
+        'Review page exceeds the requested limit'
+      )
+      requireValue(
+        ['partial', 'complete'].includes(result.reviewCoverage),
+        'A review page must declare its observation coverage'
+      )
+    }
     for (const item of result.items)
-      validateSchema(provider.read.itemSchema, item, 'Invalid source read item')
+      validateSchema(
+        review ? reviewItemSchema : provider.read.itemSchema,
+        item,
+        'Invalid source read item'
+      )
     requireValue(
       result.nextCursor === undefined ||
         (provider.read.pagination === 'cursor' &&

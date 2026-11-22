@@ -124,3 +124,131 @@ test('notification-only collection advances its checkpoint and still accepts the
   )
   assert.deepEqual(starts, [source.enabledAfter, until])
 })
+
+test('attributed history reads both sides of the exact peer without promoting automated or unknown senders to demonstrations', async () => {
+  const end = Date.now() - 1000
+  const start = end - 60000
+  const iso = value => new Date(value).toISOString()
+  const source = {
+    providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
+    profile: 'account',
+    kind: 'direct',
+    id: 'peer',
+  }
+  const query = { since: iso(start), trainingUntil: iso(end), limit: 10 }
+  let pages = 0
+  const ctx = {
+    cli: {
+      async callTool(_alias, input) {
+        switch (input.tool) {
+          case 'listProfiles':
+            return { profiles: [{ profile: 'account', userName: 'Me', userId: 'me' }] }
+          case 'searchUsers':
+            return { result: [{ userId: 'me', openDingTalkId: 'own' }] }
+          case 'listDirectConversation':
+            assert.equal(input.arguments.peer, 'peer')
+            return {
+              contractVersion: 'im.message-list.v1',
+              messages: [{ conversationId: 'chat' }],
+              hasMore: false,
+              paginationKnown: true,
+              failedCount: 0,
+            }
+          case 'searchMessages': {
+            assert.equal(input.arguments.conversationIds, 'chat')
+            assert.equal(input.arguments.senderIds, undefined)
+            const rows = [
+              message('peer', { senderOpenDingTalkId: 'peer', sendType: 'user' }),
+              message('owner', { senderOpenDingTalkId: 'own', sendType: 'user' }),
+              message('ai', {
+                senderOpenDingTalkId: 'own',
+                sendType: 'user',
+                messageAiSendFlag: 'DWS',
+              }),
+              message('bot', { senderOpenDingTalkId: 'peer', sendType: 'robot' }),
+              message('legacy', { senderOpenDingTalkId: 'own' }),
+            ].map(row => ({ ...row, createTime: iso(start + 10) }))
+            const result = page(rows)
+            pages++
+            if (pages === 1) {
+              result.result.hasMore = true
+              result.result.nextCursor = 'page-two'
+            } else {
+              assert.equal(input.arguments.cursor, 'page-two')
+              result.result.conversationMessagesList[0].openConversationId = 'unrelated'
+            }
+            return result
+          }
+          default:
+            assert.fail('History issued a non-read operation: ' + input.tool)
+        }
+      },
+    },
+  }
+  const provider = createProvider()
+  const first = await provider.readSource(ctx, { source, query })
+  assert.equal(first.reviewCoverage, 'complete')
+  assert.ok(first.items.every(row => row.isSelfConversation === false))
+  assert.deepEqual(
+    first.items.map(row => row.author),
+    ['participant', 'owner', 'accountAutomation', 'unknown', 'unknown']
+  )
+  assert.deepEqual(
+    first.items.map(row => row.participantId),
+    ['peer', undefined, undefined, undefined, undefined]
+  )
+  await assert.rejects(
+    provider.readSource(ctx, {
+      source,
+      query: { ...query, trainingUntil: iso(end - 500) },
+      cursor: first.nextCursor,
+    }),
+    { code: 'source_read_cursor_invalid' }
+  )
+  await assert.rejects(provider.readSource(ctx, { source, query, cursor: first.nextCursor }), {
+    code: 'dingtalk_response_invalid',
+  })
+})
+
+test('a mentions-only training grant uses only the native scoped mention read', async () => {
+  const source = {
+    providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
+    kind: 'group',
+    id: 'chat',
+    profile: 'account',
+  }
+  const end = Date.now() - 1000
+  const ctx = {
+    cli: {
+      async callTool(_alias, { tool, arguments: args }) {
+        if (tool === 'listProfiles')
+          return { profiles: [{ profile: 'account', userName: 'Me', userId: 'me' }] }
+        if (tool === 'searchUsers') return { result: [{ userId: 'me', openDingTalkId: 'own' }] }
+        assert.equal(tool, 'listMentions')
+        assert.equal(args.group, 'chat')
+        return page(
+          [
+            message('mention', {
+              sendType: 'user',
+              createTime: new Date(end - 1000).toISOString(),
+            }),
+          ],
+          false
+        )
+      },
+    },
+  }
+  const answer = await createProvider().readSource(ctx, {
+    source,
+    query: {
+      since: new Date(end - 60000).toISOString(),
+      trainingUntil: new Date(end).toISOString(),
+    },
+  })
+  assert.deepEqual(
+    answer.items.map(row => row.id),
+    ['mention']
+  )
+  assert.equal(answer.items[0].isSelfConversation, false)
+  assert.equal(answer.reviewCoverage, 'partial')
+})
