@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.6.12-beta.5",
+  "version": "0.6.12-beta.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -117,6 +117,7 @@
     "semver": "7.8.5",
     "tailwind-merge": "^3.6.0",
     "unified": "^11.0.5",
+    "ws": "8.23.0",
     "yauzl": "3.4.0"
   },
   "devDependencies": {

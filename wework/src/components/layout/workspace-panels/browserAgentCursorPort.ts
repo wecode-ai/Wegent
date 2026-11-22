@@ -2,6 +2,7 @@ import {
   notifyEmbeddedBrowserAgentCursorArrived,
   type EmbeddedBrowserAgentCursorEvent,
 } from '@/lib/embedded-browser'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 export const CURSOR_FADE_MS = 180
 const CURSOR_CURVE_THRESHOLD = 196
 const CURSOR_SPRING_DAMPING = 0.9
@@ -41,6 +42,17 @@ export function createBrowserAgentCursorPort() {
       const ownership = ownsView()
       const isCurrent = () =>
         lease === binding && element.isConnected && ownership !== null && ownsView() === ownership
+      const diagnostic = (stage: string, details: Record<string, unknown> = {}) => {
+        if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+        logRuntimeTaskCreateStage(`browser-cursor-${stage}`, {
+          label,
+          moveSequence: cursor?.moveSequence ?? null,
+          current: isCurrent(),
+          connected: element.isConnected,
+          ...details,
+        })
+      }
+      diagnostic('bind', { visible: cursor?.visible, hasOwnership: ownership !== null })
       if (currentLabel !== label) {
         currentLabel = label
         acknowledgedSequence = 0
@@ -49,6 +61,10 @@ export function createBrowserAgentCursorPort() {
       }
       const cleanup = () => {
         if (lease !== binding) return
+        diagnostic('unbind', {
+          animationPending: animationFrame !== null,
+          arrivalPending: arrivalTimer !== null,
+        })
         lease = null
         stop()
       }
@@ -59,14 +75,23 @@ export function createBrowserAgentCursorPort() {
         return cleanup
       }
       const scheduleArrival = (delayMs: number) => {
-        if (cursor.moveSequence <= acknowledgedSequence) return
+        if (cursor.moveSequence <= acknowledgedSequence) {
+          diagnostic('already-acknowledged', { acknowledgedSequence })
+          return
+        }
+        const scheduledAt = performance.now()
+        diagnostic('arrival-scheduled', { delayMs })
         arrivalTimer = window.setTimeout(() => {
           arrivalTimer = null
+          diagnostic('arrival-fired', { elapsedMs: performance.now() - scheduledAt })
           if (!isCurrent()) return
           acknowledgedSequence = cursor.moveSequence
-          void notifyEmbeddedBrowserAgentCursorArrived(label, cursor.moveSequence).catch(error => {
-            console.error('Failed to acknowledge embedded browser agent cursor:', error)
-          })
+          void notifyEmbeddedBrowserAgentCursorArrived(label, cursor.moveSequence)
+            .then(() => diagnostic('acknowledged', { elapsedMs: performance.now() - scheduledAt }))
+            .catch(error => {
+              diagnostic('acknowledgement-failed')
+              console.error('Failed to acknowledge embedded browser agent cursor:', error)
+            })
         }, delayMs)
       }
       const point: CursorPoint = {

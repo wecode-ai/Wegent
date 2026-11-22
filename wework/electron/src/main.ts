@@ -464,6 +464,9 @@ const pluginDevelopmentChildRuntime =
       })
     : null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
+let pendingTrayState:
+  | Parameters<ElectronTrayManager<Electron.Menu | null, Tray>['setState']>[0]
+  | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
 const startupTelemetry = new StartupTelemetryLifecycle({
@@ -2553,7 +2556,22 @@ async function configureDesktopRuntime(): Promise<void> {
     })
   }
   computerUse = new ComputerUseService(
-    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+    process.platform,
+    90_000,
+    currentTool => {
+      if (currentTool === 'list_windows' && process.env.VITE_WEWORK_E2E === 'true') {
+        console.info(
+          '[computer-use] Host window geometry ' +
+            JSON.stringify({
+              pid: process.pid,
+              bounds: mainWindow?.getBounds(),
+              focused: mainWindow?.isFocused(),
+            })
+        )
+      }
+      desktopHostEvents.publish('computerUse.changed', { currentTool })
+    }
   )
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
@@ -2794,6 +2812,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
+            pendingTrayState = state
             trayManager?.setState(state)
             syncDockBadge(app.dock, state.unreadCount, developmentDockIdentity?.badge)
             void trayNativeStatus?.refresh()
@@ -2836,6 +2855,7 @@ async function configureDesktopRuntime(): Promise<void> {
             const owner = presentationId ?? systemDragPresentationId
             if (owner !== systemDragPresentationId) return false
             pendingSystemDrops.push(payload)
+            desktopHostEvents.publish('systemDrag.pending', {})
             await showPopoutWindow()
             return owner === systemDragPresentationId
           },
@@ -3219,6 +3239,7 @@ if (hasSingleInstanceLock) {
           const manager = createTrayManager()
           manager.create()
           trayManager = manager
+          if (pendingTrayState) manager.setState(pendingTrayState)
         })
       }
       void startDesktopRuntime()

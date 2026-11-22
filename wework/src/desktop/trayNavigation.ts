@@ -6,6 +6,7 @@ import { openWeworkScheme } from '@/features/notifications/schemeEvents'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { EMPTY_TRAY_MENU_TASK_GROUPS, type TrayMenuTaskGroups } from './trayMenuState'
 import { parseTrayTaskMenuId } from './trayTaskMenuId'
+import { dequal } from 'dequal'
 
 export const WEWORK_TRAY_OPEN_SETTINGS_EVENT = 'wework-tray-open-settings'
 export const WEWORK_TRAY_OPEN_TASK_EVENT = 'wework-tray-open-task'
@@ -17,6 +18,7 @@ let latestTrayTaskGroups = EMPTY_TRAY_MENU_TASK_GROUPS
 let latestUsageTitle: string | null = null
 let latestUsageTooltip: string | null = null
 let latestNotificationUnreadCount = 0
+let lastRequestedState: ReturnType<typeof getTrayMenuState> | null = null
 
 function getTrayLanguage(language?: string): string {
   return language?.toLowerCase().startsWith('en') ? 'en' : 'zh-CN'
@@ -49,9 +51,13 @@ export function syncTrayMenuState(
     latestUsageTooltip = usage.tooltip
   }
 
+  const state = getTrayMenuState(language)
+  if (dequal(lastRequestedState, state)) return
+  lastRequestedState = state
   void invokeDesktopHost('tray.setState', {
-    state: getTrayMenuState(language),
+    state,
   }).catch(error => {
+    if (lastRequestedState === state) lastRequestedState = null
     console.error('[Wework] Failed to sync tray menu state', error)
   })
 }

@@ -17,6 +17,7 @@ import { getDesktopE2ERuntimeConfig } from './runtime-config'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { createInteractionDraftStore } from '@/features/notifications/useInteractionDrafts'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   localConnectorAuthHealth,
   localConnectorAuthLogout,
@@ -121,6 +122,18 @@ function clickAt(
     throw new Error(`Element at ${coordinates.x},${coordinates.y} is disabled`)
   }
 
+  logRuntimeTaskCreateStage('e2e-coordinate-click-target', {
+    ...coordinates,
+    hit: describeHitElement(clickable),
+    stack: document
+      .elementsFromPoint(coordinates.x!, coordinates.y!)
+      .slice(0, 12)
+      .map(describeHitElement),
+    topLayer: Array.from(document.querySelectorAll(':popover-open, dialog[open]')).map(
+      describeHitElement
+    ),
+    dialogs: Array.from(document.querySelectorAll('[role="dialog"]')).map(describeHitElement),
+  })
   clickable.dispatchEvent(
     new MouseEvent('click', {
       bubbles: true,
@@ -131,6 +144,22 @@ function clickAt(
     })
   )
   return clickable.textContent?.trim() ?? ''
+}
+
+function describeHitElement(element: Element) {
+  const style = getComputedStyle(element)
+  return {
+    tag: element.tagName,
+    testId: element.getAttribute('data-testid'),
+    slot: element.getAttribute('data-slot'),
+    role: element.getAttribute('role'),
+    pointerEvents: style.pointerEvents,
+    inert: element.closest('[inert]') !== null,
+    ariaHidden: element.closest('[aria-hidden="true"]') !== null,
+    zIndex: style.zIndex,
+    position: style.position,
+    bounds: element.getBoundingClientRect().toJSON(),
+  }
 }
 
 async function seedLocalProject(command: DesktopControlCommand): Promise<string> {

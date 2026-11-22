@@ -103,6 +103,39 @@ test('rebinds a replacement element even when the RefObject remains unchanged', 
   expect(snapshot()?.elements[0]?.left).toBe(130)
 })
 
+test('coalesces repeated commits without synchronously flushing layout', () => {
+  const frames = new Map<number, FrameRequestCallback>()
+  let sequence = 0
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+    frames.set(++sequence, callback)
+    return sequence
+  })
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => {
+    frames.delete(id)
+  })
+  const flush = () =>
+    act(() => {
+      const pending = [...frames.values()]
+      frames.clear()
+      pending.forEach(callback => callback(0))
+    })
+  act(() => root.render(<Probe />))
+  flush()
+  const measure = vi.mocked(HTMLElement.prototype.getBoundingClientRect)
+  measure.mockClear()
+  left = 80
+  for (const label of ['first', 'second', 'third']) {
+    act(() => root.render(<Probe label={label} />))
+  }
+  expect(measure).not.toHaveBeenCalled()
+  expect(frames.size).toBe(1)
+  flush()
+  expect(measure).toHaveBeenCalledOnce()
+  expect(snapshot()?.elements[0]?.left).toBe(80)
+  act(() => root.render(<Probe enabled={false} />))
+  expect(frames.size).toBe(0)
+})
+
 test('disconnects when disabled and reads current geometry when reenabled', () => {
   act(() => root.render(<Probe />))
   act(() => root.render(<Probe enabled={false} />))

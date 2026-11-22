@@ -158,6 +158,27 @@ describe('desktop localStorage persistence', () => {
       },
     })
   })
+
+  it('skips unchanged cache writes while retaining retries for an unchanged failed write', async () => {
+    mocks.isElectronRuntime.mockReturnValue(true)
+    mocks.invokeDesktopHost.mockResolvedValue({})
+    const { initializeDesktopLocalStoragePersistence, flushDesktopLocalStoragePersistence } =
+      await loadPersistence()
+    await initializeDesktopLocalStoragePersistence()
+    localStorage.setItem('pending-interactions', '[]')
+    await flushDesktopLocalStoragePersistence()
+    mocks.invokeDesktopHost.mockClear()
+    localStorage.setItem('pending-interactions', '[]')
+    await flushDesktopLocalStoragePersistence()
+    expect(mocks.invokeDesktopHost).not.toHaveBeenCalled()
+
+    mocks.invokeDesktopHost.mockRejectedValueOnce(new Error('disk unavailable'))
+    localStorage.setItem('pending-interactions', '[1]')
+    await expect(flushDesktopLocalStoragePersistence()).rejects.toThrow('disk unavailable')
+    localStorage.setItem('pending-interactions', '[1]')
+    await flushDesktopLocalStoragePersistence()
+    expect(mocks.invokeDesktopHost).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('committed localStorage commands', () => {

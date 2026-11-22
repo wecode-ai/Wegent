@@ -160,6 +160,9 @@ import {
   E2E_RUNTIME_EVENT_LISTENERS_KEY,
 } from '@/api/runtime/runtimeChatStream'
 
+const backgroundRequestProbe = new Map<number, string>()
+let backgroundRequestProbePending: Promise<unknown>[] = []
+
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
 
@@ -2395,6 +2398,29 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           JSON.parse(command.value ?? '{}')
         )
       )
+    case 'startBackgroundRequestProbe': {
+      const { requestDshExecutor } = await import('@/api/dsh/executorTransport')
+      backgroundRequestProbe.clear()
+      backgroundRequestProbePending = []
+      for (let index = 0; index < 4; index++) {
+        backgroundRequestProbe.set(index, 'pending')
+        backgroundRequestProbePending.push(
+          requestDshExecutor('runtime.tasks.list', { backgroundProbe: index }).then(
+            () => backgroundRequestProbe.set(index, 'done'),
+            error => backgroundRequestProbe.set(index, String(error))
+          )
+        )
+      }
+      return ''
+    }
+    case 'waitForBackgroundRequestProbe':
+      await Promise.all(backgroundRequestProbePending)
+      return JSON.stringify(Object.fromEntries(backgroundRequestProbe))
+    case 'readBackgroundRequestProbe':
+      return JSON.stringify({
+        requests: Object.fromEntries(backgroundRequestProbe),
+        locks: await navigator.locks.query(),
+      })
     case 'armRuntimeTransportGate':
       armRuntimeTransportGate(JSON.parse(command.value ?? '{}'))
       return ''

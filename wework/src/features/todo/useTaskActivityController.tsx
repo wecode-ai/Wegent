@@ -424,7 +424,11 @@ export function useTaskActivityController({
   const activityScope = `${project.project_store}:${project.id}:${task.id}`
   const executionBinding = useActivityExecutionBinding(messages, executionDetail?.messageId)
   const compact = rail || linear
-  const markActivityRead = activity.markRead
+  const visibleContentRevision = task.content_revision ?? task.version
+  const markActivityRead = useCallback(
+    (sequence: number) => activity.markRead(sequence, visibleContentRevision),
+    [activity, visibleContentRevision]
+  )
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({
       messages: threadMessages,
@@ -434,7 +438,7 @@ export function useTaskActivityController({
       unread: Boolean(task.is_unread),
       // Inbox notifications can arrive after the Issue content was already read.
       // A visible visit must still acknowledge them through the shared read API.
-      unreadRevision: task.content_revision ?? task.version,
+      unreadRevision: visibleContentRevision,
       readRequestKey: focusedCommentRequestKey,
       visibilityRevision: expandedActivityScope,
       onReadSequence: issueTimeline && projectDeliveryApi ? markActivityRead : undefined,
