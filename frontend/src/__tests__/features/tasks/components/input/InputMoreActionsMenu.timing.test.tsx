@@ -106,7 +106,13 @@ describe('InputMoreActionsMenu timing action', () => {
     expect(screen.getByTestId('task-timing-menu-action')).toBeDisabled()
   })
 
-  it('keeps the timing action trigger available while the composer is disabled', () => {
+  it('keeps the more-actions trigger available before a task exists', () => {
+    render(<MenuHarness taskId={null} hasMessages onSendMessage={jest.fn()} />)
+
+    expect(screen.getByTestId('desktop-input-more-actions-button')).toBeEnabled()
+  })
+
+  it('keeps the timing menu action available while the composer is disabled', () => {
     render(<MenuHarness taskId={42} hasMessages disabled onSendMessage={jest.fn()} />)
 
     fireEvent.click(screen.getByTestId('desktop-input-more-actions-button'))

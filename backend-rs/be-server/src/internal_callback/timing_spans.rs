@@ -532,6 +532,10 @@ fn push_boundary_span(
     if start_at_ms.is_none() && end_at_ms.is_none() {
         return;
     }
+    let terminal_status = match event.event_type.as_str() {
+        "error" | "cancelled" => "failed",
+        _ => "completed",
+    };
     spans.push(NewTimingSpan {
         span_id: format!("task-{}-subtask-{}-{kind}", event.task_id, event.subtask_id),
         kind,
@@ -540,7 +544,7 @@ fn push_boundary_span(
         actor_type: "runtime",
         actor_label: label.to_string(),
         status: if end_at_ms.is_some() {
-            "completed"
+            terminal_status
         } else {
             "running"
         },
@@ -622,6 +626,19 @@ mod tests {
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].start_at_ms, Some(10));
         assert_eq!(spans[0].end_at_ms, Some(17));
+    }
+
+    #[test]
+    fn terminal_failures_record_agent_spans_as_failed() {
+        let timing = json!({"agentStartedAt": 10, "agentFinishedAt": 20});
+        let event = block_event(
+            super::super::event::EventType::Error,
+            json!({"timing": timing}),
+        );
+        let spans = boundary_spans(&event, &timing);
+
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].status, "failed");
     }
 
     #[test]

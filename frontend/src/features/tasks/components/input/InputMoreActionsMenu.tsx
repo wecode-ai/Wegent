@@ -65,9 +65,8 @@ export function InputMoreActionsMenu({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const showSkillSelector = availableSkills.length > 0 && Boolean(onToggleSkill)
-  const timingEligible = taskId !== null && hasMessages
   const showTimingAnalysis = hasMessages
-  const timingDisabled = !timingEligible
+  const timingDisabled = taskId === null
   const selectedSkillCount = selectedSkillNames.length
 
   if (
@@ -88,7 +87,7 @@ export function InputMoreActionsMenu({
             <PopoverTrigger asChild>
               <div className="relative">
                 <ActionButton
-                  disabled={timingDisabled}
+                  disabled={disabled}
                   icon={<MoreHorizontal className="h-4 w-4" />}
                   title={t('common:teams.more_actions', '更多操作')}
                   data-testid="desktop-input-more-actions-button"
