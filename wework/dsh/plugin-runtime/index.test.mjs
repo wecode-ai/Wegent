@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import { apply, BASE_PATH, handleRpc } from './index.js'
@@ -131,14 +132,18 @@ async function invoke(handler, body) {
 }
 
 function createResponse() {
-  return {
+  return Object.assign(new EventEmitter(), {
     body: null,
     status: null,
     writeHead(status) {
       this.status = status
+      this.statusCode = status
+      this.headersSent = true
     },
     end(body) {
       this.body = body ? JSON.parse(body) : null
+      this.writableEnded = true
+      this.emit('finish')
     },
-  }
+  })
 }

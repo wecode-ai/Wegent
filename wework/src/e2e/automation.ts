@@ -2413,6 +2413,94 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return ''
     }
+    case 'runOversizedArchiveProbe': {
+      const { DshExecutorTransportError, requestDshExecutor } =
+        await import('@/api/dsh/executorTransport')
+      try {
+        await requestDshExecutor('runtime.tasks.archive', {
+          taskId: 'e2e-oversized-archive',
+          runtimeHandle: { messages: [{ content: 'x'.repeat(1024 * 1024) }] },
+          cleanupWorktree: true,
+        })
+      } catch (error) {
+        if (error instanceof DshExecutorTransportError) return error.code
+        throw error
+      }
+      throw new Error('DSH accepted the oversized archive probe')
+    }
+    case 'runDshHttpFailureProbe': {
+      const probe = command.value
+      const requestId = `e2e-http-${probe}`
+      const abort = new AbortController()
+      const options = {
+        headers: { 'x-request-id': requestId },
+        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15_000)]),
+      }
+      try {
+        const rpcPaths = {
+          electron: '/wework/electron-host/v1/invoke',
+          terminal: '/wework/terminal/v1/rpc',
+          plugins: '/wework/plugins/v1/rpc',
+        }
+        if (probe === 'electron' || probe === 'terminal' || probe === 'plugins') {
+          const maxBytes = (probe === 'electron' ? 64 : 1) * 1024 * 1024
+          const response = await fetch(rpcPaths[probe], {
+            ...options,
+            method: 'POST',
+            body: new Uint8Array(maxBytes + 1),
+          })
+          return JSON.stringify({
+            status: response.status,
+            connection: response.headers.get('connection'),
+            code: (await response.json()).error?.code,
+          })
+        }
+        if (probe === 'sse') {
+          const response = await fetch('/wework/executor/v1/events', options)
+          return JSON.stringify({
+            status: response.status,
+            contentType: response.headers.get('content-type'),
+            requestId: response.headers.get('x-request-id'),
+          })
+        }
+        if (probe === 'proxy-before') {
+          const response = await fetch('/wework/api/e2e-http-fault/before', options)
+          return JSON.stringify({
+            status: response.status,
+            connection: response.headers.get('connection'),
+            code: (await response.json()).code,
+          })
+        }
+        if (probe === 'proxy-body') {
+          const response = await fetch('/wework/api/e2e-http-fault/body', options)
+          const reader = response.body?.getReader()
+          if (!reader) throw new Error('The proxy did not return a readable response')
+          const decoder = new TextDecoder()
+          let first = ''
+          while (first.length < 'partial'.length) {
+            const chunk = await reader.read()
+            if (chunk.done) throw new Error('The upstream response ended before the fixture marker')
+            first += decoder.decode(chunk.value, { stream: true })
+          }
+          const release = await fetch('/wework/api/e2e-http-fault/release', options)
+          if (release.status !== 204) throw new Error('The upstream socket was not dropped')
+          let readError = ''
+          try {
+            while (!(await reader.read()).done) continue
+          } catch (error) {
+            readError = error instanceof Error ? error.name : String(error)
+          }
+          return JSON.stringify({
+            status: response.status,
+            first,
+            readError,
+          })
+        }
+        throw new Error('Unknown DSH HTTP failure probe')
+      } finally {
+        abort.abort()
+      }
+    }
     case 'waitForBackgroundRequestProbe':
       await Promise.all(backgroundRequestProbePending)
       return JSON.stringify(Object.fromEntries(backgroundRequestProbe))

@@ -219,19 +219,72 @@ describe('DSH executor transport', () => {
       { taskId: 'task' },
       { signal: controller.signal }
     )
-    expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal)
+    const readSignal = fetchMock.mock.calls[0][1]?.signal
+    expect(readSignal).toBeInstanceOf(AbortSignal)
     expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).params).toEqual({
       taskId: 'task',
     })
+    controller.abort()
+    expect(readSignal?.aborted).toBe(true)
     for (const method of [
       'runtime.tasks.send',
       'runtime.tasks.search',
       'runtime.tasks.transcript.search',
     ]) {
       await requestDshExecutor(method, { taskId: 'task' }, { signal: controller.signal })
-      expect(fetchMock.mock.lastCall?.[1]?.signal).toBeUndefined()
+      expect(fetchMock.mock.lastCall?.[1]?.signal?.aborted).toBe(false)
     }
   })
+
+  test.each(['response_headers', 'response_body'])(
+    'aborts and releases the slot at %s',
+    async phase => {
+      const deadline = new AbortController()
+      const originalTimeout = AbortSignal.timeout.bind(AbortSignal)
+      const timeout = vi
+        .spyOn(AbortSignal, 'timeout')
+        .mockImplementation(ms => (ms === 125_000 ? deadline.signal : originalTimeout(ms)))
+      const dispatched = Promise.withResolvers<void>()
+      const diagnostic = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input, init) => {
+          const stall = () => {
+            dispatched.resolve()
+            return new Promise((_resolve, reject) => {
+              init.signal.addEventListener('abort', () => reject(init.signal.reason), {
+                once: true,
+              })
+            })
+          }
+          return phase === 'response_headers' ? stall() : { status: 200, json: stall }
+        })
+      )
+      try {
+        const request = requestDshExecutor('runtime.tasks.list')
+        const rejected = expect(request).rejects.toMatchObject({ code: 'transport_timeout' })
+        await dispatched.promise
+        deadline.abort()
+        await rejected
+        expect(warning.mock.calls.some(([line]) => line.includes(`"phase":"${phase}"`))).toBe(true)
+        await vi.waitFor(() =>
+          expect(
+            diagnostic.mock.calls.some(([line]) => line.includes('"stage":"background_released"'))
+          ).toBe(true)
+        )
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => new Response('{"ok":true,"result":[]}'))
+        )
+        await expect(requestDshExecutor('runtime.tasks.list')).resolves.toEqual([])
+      } finally {
+        timeout.mockRestore()
+        diagnostic.mockRestore()
+        warning.mockRestore()
+      }
+    }
+  )
 
   test('records fetch failure correlation without logging tool arguments', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
