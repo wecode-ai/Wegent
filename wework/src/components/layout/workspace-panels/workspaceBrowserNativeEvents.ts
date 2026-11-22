@@ -13,9 +13,15 @@ import { subscribeEmbeddedBrowserDownloadEvents } from '@/lib/embedded-browser-d
 import { track } from '@/telemetry/client'
 import { resetElectronEmbeddedBrowserView } from './electronEmbeddedBrowserHost'
 import type { BrowserSessionModel } from './workspaceBrowserSessionTypes'
-import { getFallbackBrowserTitle, getFallbackFaviconUrl } from './workspaceBrowserSessionTypes'
 export function observeBrowserNativeEvents(model: BrowserSessionModel) {
   let listening = true
+  let pageStateFrame: number | null = null
+  let pendingPageState: EmbeddedBrowserPageState | null = null
+  const clearPendingPageState = () => {
+    if (pageStateFrame !== null) window.cancelAnimationFrame(pageStateFrame)
+    pageStateFrame = null
+    pendingPageState = null
+  }
   const stops: (() => void)[] = []
   const retain = (pending: Promise<() => void> | null | undefined) => {
     if (!pending) return
@@ -94,6 +100,7 @@ export function observeBrowserNativeEvents(model: BrowserSessionModel) {
       if (event.label !== model.options.label || event.nativeLabel !== model.runtime.nativeLabel) {
         return
       }
+      clearPendingPageState()
       console.info(
         '[Wework] Embedded browser close consumed',
         JSON.stringify({ label: event.label, nativeLabel: event.nativeLabel })
@@ -129,10 +136,12 @@ export function observeBrowserNativeEvents(model: BrowserSessionModel) {
       model.options.onFaviconChange?.(null)
     })
   )
+  const ownsPageState = (pageState: EmbeddedBrowserPageState) =>
+    model.observed &&
+    (!pageState.label || pageState.label === model.options.label) &&
+    (!model.runtime.nativeLabel || pageState.nativeLabel === model.runtime.nativeLabel)
   function applyPageState(pageState: EmbeddedBrowserPageState): void {
-    if (!model.observed) return
-    if (pageState.label && pageState.label !== model.options.label) return
-    if (model.runtime.nativeLabel && pageState.nativeLabel !== model.runtime.nativeLabel) return
+    if (!ownsPageState(pageState)) return
     model.actions.applyNativePageStatus(pageState)
     if (pageState.isLoading) return
     model.set('invalidTlsCertificate', pageState.invalidTlsCertificate ?? null)
@@ -140,15 +149,18 @@ export function observeBrowserNativeEvents(model: BrowserSessionModel) {
     if (nextUrl && model.runtime.pendingNavigationUrl === nextUrl) {
       model.runtime.pendingNavigationUrl = null
     }
-    model.actions.updatePageUrl(nextUrl)
-    if (nextUrl) {
-      model.options.onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
-      model.options.onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
-    }
+    model.actions.updatePageUrl(nextUrl, pageState.title)
   }
   retain(
     listenEmbeddedBrowserPageStateChanges(pageState => {
-      applyPageState(pageState)
+      if (!ownsPageState(pageState)) return
+      pendingPageState = pageState
+      if (pageStateFrame !== null) return
+      pageStateFrame = window.requestAnimationFrame(() => {
+        const latest = pendingPageState
+        clearPendingPageState()
+        if (latest) applyPageState(latest)
+      })
     })
   )
   retain(listenEmbeddedBrowserAnnotationState(model.actions.applyAnnotationState))
@@ -170,6 +182,7 @@ export function observeBrowserNativeEvents(model: BrowserSessionModel) {
   )
   return () => {
     listening = false
+    clearPendingPageState()
     stops.splice(0).forEach(stop => stop())
   }
 }
