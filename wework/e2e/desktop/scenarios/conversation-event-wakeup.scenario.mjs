@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cp, readFile, writeFile } from 'node:fs/promises'
+import { cp, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createDesktopScenario as createBridgeScenario } from './stand-in-plugin-bridge.scenario.mjs'
@@ -114,9 +114,11 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
       },
     },
   }
-  const saveEvents = () =>
-    writeFile(
-      recordsPath,
+  const saveEvents = async () => {
+    // Background MCP readers must see a complete snapshot during event publication.
+    const pendingPath = `${recordsPath}.pending`
+    await writeFile(
+      pendingPath,
       JSON.stringify([
         ...['archive-record', 'long-archive-record'].map(id => ({
           id,
@@ -125,6 +127,8 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
         { id: 'preexisting-checks-record', value: JSON.stringify([failedChecks]) },
       ])
     )
+    await rename(pendingPath, recordsPath)
+  }
   const event = (
     id,
     text,

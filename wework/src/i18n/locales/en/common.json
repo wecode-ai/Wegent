@@ -918,6 +918,7 @@
     "workspace_tab_files": "Files",
     "workspace_tab_chat": "Temporary chat",
     "workspace_tab_subagents": "Subagents",
+    "share_selection_as_issue": "Share with others",
     "add_selection_to_conversation": "Add to conversation",
     "ask_selection_in_sidebar": "Ask in sidebar",
     "workspace_tab_new": "Open new tab",

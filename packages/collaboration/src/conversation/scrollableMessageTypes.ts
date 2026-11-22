@@ -107,6 +107,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onShareSelectionAsIssue?: MessageListProps['onShareSelectionAsIssue']
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   onFillSelectionToAnswer?: (text: string) => void
