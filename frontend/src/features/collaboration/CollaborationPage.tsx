@@ -483,6 +483,17 @@ export function CollaborationPage({
           window.history.pushState(null, '', nextPath)
           return
         }
+        // Settings sections share a mounted page; a delayed route focus must not close its pickers.
+        if (
+          projectId &&
+          nextLocation.workspaceId === workspaceId &&
+          nextLocation.projectId === projectId &&
+          projectView === 'manage' &&
+          nextLocation.projectView === 'manage'
+        ) {
+          router.push(nextPath, { scroll: false })
+          return
+        }
         router.push(nextPath)
       },
       manageResource(kind, resourceId) {
