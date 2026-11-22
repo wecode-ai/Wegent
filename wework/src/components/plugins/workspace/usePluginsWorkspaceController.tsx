@@ -444,6 +444,7 @@ export function usePluginsWorkspaceController({
     confirmDeletePersonalPlugin,
   } = usePluginWorkspaceDeletion({
     cloudMarketplaceAvailable,
+    cloudToken,
     publicationRequests,
     pluginApi,
     catalog,

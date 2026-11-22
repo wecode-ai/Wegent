@@ -29,6 +29,7 @@ import type { PluginWorkspaceServices } from './pluginWorkspaceTypes'
 export function usePluginWorkspaceDeletion({
   publicationRequests,
   cloudMarketplaceAvailable,
+  cloudToken,
   pluginApi,
   catalog,
   t,
@@ -41,6 +42,7 @@ export function usePluginWorkspaceDeletion({
 }: Pick<
   PluginWorkspaceServices,
   | 'publicationRequests'
+  | 'cloudToken'
   | 'pluginApi'
   | 'catalog'
   | 't'
@@ -88,7 +90,8 @@ export function usePluginWorkspaceDeletion({
       marketplacePath: input.marketplacePath?.trim() || null,
       installedId: input.installedId ?? null,
       cloudPluginId: input.cloudPluginId ?? null,
-      verifyMarketplaceOwner: input.cloudPluginId === null && cloudMarketplaceAvailable,
+      verifyMarketplaceOwner:
+        input.cloudPluginId === null && cloudMarketplaceAvailable && Boolean(cloudToken),
       deleteLocalSource: input.deleteLocalSource ?? true,
       impact: null,
       publication: publication ?? null,

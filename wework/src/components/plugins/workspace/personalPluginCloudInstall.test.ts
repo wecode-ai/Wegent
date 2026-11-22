@@ -304,6 +304,7 @@ test.each([false, true])(
     const view = renderHook(() =>
       usePluginWorkspaceDeletion({
         cloudMarketplaceAvailable: true,
+        cloudToken: 'test-token',
         catalog: {
           captureScope: () => () => true,
           getSnapshot: () => ({ installedPlugins: [] }),
@@ -359,19 +360,26 @@ test.each([false, true])(
 )
 
 test.each([
-  { scenario: 'source-only deletion', available: true, cloudPluginId: undefined, failed: false },
-  { scenario: 'disconnected deletion', available: false, cloudPluginId: null, failed: false },
-  { scenario: 'no cloud version', available: true, cloudPluginId: null, failed: false },
-  { scenario: 'unavailable catalog', available: true, cloudPluginId: null, failed: true },
+  {
+    scenario: 'source-only deletion',
+    token: 'test-token',
+    cloudPluginId: undefined,
+    failed: false,
+  },
+  { scenario: 'signed-out deletion', token: null, cloudPluginId: null, failed: false },
+  { scenario: 'no cloud version', token: 'test-token', cloudPluginId: null, failed: false },
+  { scenario: 'unavailable catalog', token: 'test-token', cloudPluginId: null, failed: true },
 ])(
   'preserves existing deletion behavior for $scenario',
-  async ({ available, cloudPluginId, failed }) => {
+  async ({ token, cloudPluginId, failed }) => {
     mocks.list.mockResolvedValue({ items: [] })
+    if (!token) mocks.list.mockRejectedValue(new ApiError('Not authenticated', 401))
     if (failed) mocks.list.mockRejectedValue(new Error('Catalog unavailable'))
     const deleteSource = vi.fn()
     const view = renderHook(() =>
       usePluginWorkspaceDeletion({
-        cloudMarketplaceAvailable: available,
+        cloudMarketplaceAvailable: true,
+        cloudToken: token,
         catalog: { captureScope: () => () => true, showNotice: vi.fn() },
         localPluginApi: { deletePersonalPlugin: deleteSource },
         pluginApi: { listMarketplacePlugins: mocks.list },
@@ -395,7 +403,7 @@ test.each([
     await act(async () => view.result.current.confirmDeletePersonalPlugin())
     expect(deleteSource).toHaveBeenCalledTimes(failed ? 0 : 1)
     expect(errorLog).toHaveBeenCalledTimes(failed ? 1 : 0)
-    expect(mocks.list).toHaveBeenCalledTimes(available && cloudPluginId === null ? 1 : 0)
+    expect(mocks.list).toHaveBeenCalledTimes(token && cloudPluginId === null ? 1 : 0)
   }
 )
 
