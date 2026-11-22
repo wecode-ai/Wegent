@@ -1,3 +1,7 @@
+import { createServer } from 'node:http'
+import { once } from 'node:events'
+import { DesktopE2EServer } from '../../e2e/desktop/modules/desktop-server.mjs'
+import * as nativeRuntime from '../../electron/src/host/e2e-runtime-request'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
@@ -365,21 +369,147 @@ describe('Electron desktop E2E automation', () => {
     }
   )
 
+  test('delivers a Runtime result while Renderer ACK and IPC continuations are blocked', async () => {
+    const nativeFetch = globalThis.fetch
+    const control = new DesktopE2EServer('/workspace')
+    await control.start()
+    let runtimeRequests = 0
+    const runtime = createServer((request, response) => {
+      expect(request.headers.cookie).toBe('dsh-auth-test=fixture-session')
+      runtimeRequests += 1
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end('{"running":false}')
+    })
+    runtime.listen(0, '127.0.0.1')
+    await once(runtime, 'listening')
+    const address = runtime.address() as { port: number }
+    let releaseRendererAck!: () => void
+    let releaseIpcContinuation!: () => void
+    const rendererAck = new Promise<void>(resolve => {
+      releaseRendererAck = resolve
+    })
+    const ipcContinuation = new Promise<void>(resolve => {
+      releaseIpcContinuation = resolve
+    })
+    let closing = false
+    let ipcReturned = false
+    let rendererAcks = 0
+    const verificationWindow = window as Window & { weworkElectronVerification?: unknown }
+    verificationWindow.weworkElectronVerification = {
+      async requestRuntime(input: unknown) {
+        const result = await nativeRuntime.completeE2ERuntimeControl(
+          { VITE_WEWORK_E2E: 'true', WEWORK_E2E_CONTROL_URL: control.controlUrl },
+          input,
+          async () => [{ name: 'dsh-auth-test', value: 'fixture-session' }],
+          nativeFetch
+        )
+        await ipcContinuation
+        ipcReturned = true
+        return result
+      },
+    }
+    vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
+      if (closing && input.includes('/commands?')) return new Response(null, { status: 410 })
+      const response = await nativeFetch(input, init)
+      if (input.endsWith('/started')) {
+        rendererAcks += 1
+        const read = response.arrayBuffer.bind(response)
+        response.arrayBuffer = async () => {
+          await rendererAck
+          if (closing) throw new Error('Renderer fixture closed')
+          return read()
+        }
+      }
+      return response
+    })
+    const client = runDesktopControlClient(control.controlUrl, 'main')
+    let receipt: string | undefined
+    let commandError: unknown
+    let commandId: string | undefined
+    try {
+      await control.awaitReady()
+      void control
+        .command('fetchLocalRuntime', 'body', {
+          value: JSON.stringify({ url: `http://127.0.0.1:${address.port}/wework/transcript` }),
+          timeoutMs: 100,
+          preserveResultAcrossClientReplacement: true,
+        })
+        .then(
+          value => {
+            receipt = value
+          },
+          error => {
+            commandError = error
+          }
+        )
+      await vi.waitFor(() => expect(runtimeRequests).toBe(1), { timeout: 1000 })
+      await vi.waitFor(() => expect(receipt).toBeDefined(), { timeout: 1000 })
+      commandId = control.commandHistory[0].id
+      expect(JSON.parse(receipt!)).toMatchObject({ status: 200, body: '{"running":false}' })
+      expect(commandError).toBeUndefined()
+      expect(rendererAcks).toBe(0)
+      expect(ipcReturned).toBe(false)
+      expect(
+        control.controlTransportHistory.filter(
+          event => event.event === 'result-received' && event.commandId === commandId
+        )
+      ).toHaveLength(1)
+    } finally {
+      closing = true
+      releaseRendererAck()
+      releaseIpcContinuation()
+      const id = commandId ?? control.commandHistory[0]?.id
+      if (id && control.commandResults.has(id)) {
+        await nativeFetch(`${control.controlUrl}/results`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id,
+            clientId: control.activeControlClientId,
+            ok: false,
+            error: 'Fixture cleanup',
+          }),
+        })
+      }
+      for (const { response } of control.controlLongPolls.values()) {
+        response.writeHead(410)
+        response.end()
+      }
+      await client
+      delete verificationWindow.weworkElectronVerification
+      runtime.closeAllConnections()
+      await Promise.all([
+        control.close(),
+        new Promise<void>(resolve => runtime.close(() => resolve())),
+      ])
+    }
+  })
+
   test.each([false, true])(
     'allows an authenticated RPC to overlap later commands and reports its failure: %s',
     async failHeldRequest => {
-      let resolveHeld!: (value: unknown) => void
+      let resolveHeld!: (value: Response) => void
       let rejectHeld!: (error: Error) => void
-      const held = new Promise((resolve, reject) => {
+      const held = new Promise<Response>((resolve, reject) => {
         resolveHeld = resolve
         rejectHeld = reject
       })
-      const requestRuntime = vi.fn(async (input: { url: string }) => {
-        if (input.url.endsWith('/held')) return held
+      const nativeRequest: typeof fetch = async (input, options) => {
+        const url = String(input)
+        if (url.startsWith('http://127.0.0.1:43111/')) return fetch(url, options)
+        if (url.endsWith('/held')) return held
         if (failHeldRequest) rejectHeld(new Error('Held RPC failed'))
-        else resolveHeld({ status: 200, body: 'held result' })
-        return { status: 200, body: 'overlapping result' }
-      })
+        else resolveHeld(new Response('held result'))
+        return new Response('overlapping result')
+      }
+      const requestRuntime = vi.fn((input: unknown) =>
+        nativeRuntime.completeE2ERuntimeControl(
+          { VITE_WEWORK_E2E: 'true', WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:43111' },
+          input,
+          async () => [{ name: 'dsh-auth-test', value: 'fixture-session' }],
+          nativeRequest
+        )
+      )
       const verificationWindow = window as Window & { weworkElectronVerification?: unknown }
       verificationWindow.weworkElectronVerification = { requestRuntime }
       const command = (id: string): DesktopControlCommand => ({
@@ -411,12 +541,23 @@ describe('Electron desktop E2E automation', () => {
         expect(results[0]).toMatchObject({ id: 'origin', ok: true, value: window.location.origin })
         expect(results.find(result => result.id === 'overlapping')).toMatchObject({
           ok: true,
-          value: JSON.stringify({ status: 200, body: 'overlapping result' }),
+          value: JSON.stringify({
+            status: 200,
+            headers: { 'content-type': 'text/plain;charset=UTF-8' },
+            body: 'overlapping result',
+          }),
         })
         expect(results.find(result => result.id === 'held')).toMatchObject(
           failHeldRequest
             ? { ok: false, error: 'Held RPC failed' }
-            : { ok: true, value: JSON.stringify({ status: 200, body: 'held result' }) }
+            : {
+                ok: true,
+                value: JSON.stringify({
+                  status: 200,
+                  headers: { 'content-type': 'text/plain;charset=UTF-8' },
+                  body: 'held result',
+                }),
+              }
         )
       } finally {
         delete verificationWindow.weworkElectronVerification

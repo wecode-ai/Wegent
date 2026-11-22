@@ -97,7 +97,10 @@ import {
   readLocalExecutorLog,
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
-import { executeVerificationControlCommand } from './verification-control'
+import {
+  dispatchDesktopRuntimeControl,
+  executeVerificationControlCommand,
+} from './verification-control'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import {
@@ -4244,6 +4247,15 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       recordDesktopControlPhase('command-decoded', command)
       const diagnostic = { commandId: command.id, action: command.action, clientId }
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
+      if (command.action === 'fetchLocalRuntime') {
+        // Native owns admission and reporting, so Renderer scheduling cannot
+        // consume the Runtime action's budget or delay its completed result.
+        void dispatchDesktopRuntimeControl(command, clientId).catch(error => {
+          console.error('[Wework] Desktop E2E Runtime request failed:', error)
+        })
+        commandRequest = pollForCommand()
+        continue
+      }
       await postDesktopControlStarted(url, command, clientId)
       recordDesktopControlPhase('start-acknowledged', command)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
@@ -4262,15 +4274,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           recordDesktopControlPhase('result-acknowledged', command)
         }
       )
-      if (command.action === 'fetchLocalRuntime') {
-        // Runtime RPCs may wait on each other; keep polling so the controller
-        // can issue the overlapping request while each result retains its ID.
-        void completion.catch(error => {
-          console.error('[Wework] Desktop E2E Runtime request failed:', error)
-        })
-        commandRequest = pollForCommand()
-        continue
-      }
       const result = await completion
       if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {

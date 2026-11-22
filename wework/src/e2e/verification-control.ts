@@ -21,6 +21,17 @@ import {
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
 
+/** Keep authenticated Runtime control transport in the existing native IPC owner. */
+export function dispatchDesktopRuntimeControl(command: DesktopControlCommand, clientId: string) {
+  const bridge = (
+    window as Window & {
+      weworkElectronVerification?: { requestRuntime: (input: unknown) => Promise<unknown> }
+    }
+  ).weworkElectronVerification
+  if (!bridge) throw new Error('Runtime verification bridge is unavailable')
+  return bridge.requestRuntime({ command, clientId })
+}
+
 interface VerificationControlDependencies {
   elementEnabled: (element: HTMLElement) => boolean
 }
@@ -312,18 +323,6 @@ export async function executeVerificationControlCommand(
       const { ensureLocalModelCatalogReady } = await import('./local-model-catalog-readiness')
       await ensureLocalModelCatalogReady()
       return { handled: true, value: '' }
-    }
-    case 'fetchLocalRuntime': {
-      const bridge = (
-        window as Window & {
-          weworkElectronVerification?: { requestRuntime: (input: unknown) => Promise<unknown> }
-        }
-      ).weworkElectronVerification
-      if (!bridge) throw new Error('Runtime verification bridge is unavailable')
-      return {
-        handled: true,
-        value: JSON.stringify(await bridge.requestRuntime(JSON.parse(command.value ?? '{}'))),
-      }
     }
     case 'configurePluginNativeAuthorization': {
       const { configurePluginNativeAuthorization } =
