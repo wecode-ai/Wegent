@@ -1,5 +1,6 @@
 //! Native identity conversations use their own authorized transcript and review cursor.
 use super::*;
+use wegent_local_task_store::store::{DeliveryRole, IdentityReplyItem};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
@@ -88,13 +89,17 @@ impl RuntimeWorkRpcHandler {
                 return Ok(());
             }
             store.record_identity_training_reply(
-                user,
-                &self.device_id,
-                device,
-                role,
-                task,
-                &turn.turn_id,
-                item,
+                DeliveryRole {
+                    user,
+                    device: &self.device_id,
+                    role_device: device,
+                    role,
+                },
+                IdentityReplyItem {
+                    task,
+                    turn: &turn.turn_id,
+                    item,
+                },
                 at,
                 versions.as_ref().map(|(g, m)| (g.as_str(), m.as_str())),
             )

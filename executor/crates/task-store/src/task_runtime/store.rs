@@ -110,6 +110,9 @@ mod stand_in_rework_verification;
 #[path = "stand_in_training_connections.rs"]
 mod stand_in_training_connections;
 pub use stand_in_collected_observations::connection_message_millis;
+pub use stand_in_training_connections::{
+    AcceptedReply, DeliveryRole, IdentityReplyItem, ObservedReply,
+};
 
 #[path = "stand_in_processing.rs"]
 mod stand_in_processing;

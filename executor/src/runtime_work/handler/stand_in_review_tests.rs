@@ -1,4 +1,5 @@
 use super::*;
+use wegent_local_task_store::store::{AcceptedReply, DeliveryRole};
 
 fn assert_binding_denied(error: AppIpcError, reason: &str) {
     assert_eq!(error.code, "permission_denied");
@@ -664,8 +665,7 @@ async fn review_actual_replies(provider_id: &'static str, kind: &'static str, de
                 7,
                 "@primary",
                 &collected,
-                since.timestamp_millis(),
-                now.timestamp_millis(),
+                since.timestamp_millis()..now.timestamp_millis(),
                 None,
             )
         };
@@ -695,15 +695,19 @@ async fn review_actual_replies(provider_id: &'static str, kind: &'static str, de
     let delivered = |request, text, id, versions| {
         store
             .record_training_reply(
-                7,
-                "mac",
-                "mac",
-                "@primary",
+                DeliveryRole {
+                    user: 7,
+                    device: "mac",
+                    role_device: "mac",
+                    role: "@primary",
+                },
                 &source,
-                request,
-                text,
-                Some(id),
-                Some(versions),
+                AcceptedReply {
+                    request,
+                    text,
+                    native_id: Some(id),
+                    versions: Some(versions),
+                },
             )
             .unwrap();
     };
@@ -804,8 +808,7 @@ async fn review_actual_replies(provider_id: &'static str, kind: &'static str, de
                 7,
                 "@primary",
                 &source,
-                conditional_since,
-                now.timestamp_millis(),
+                conditional_since..now.timestamp_millis(),
                 None,
             )
             .await
@@ -825,8 +828,7 @@ async fn review_actual_replies(provider_id: &'static str, kind: &'static str, de
                 7,
                 "@primary",
                 &source,
-                conditional_since,
-                now.timestamp_millis(),
+                conditional_since..now.timestamp_millis(),
                 Some(cursor),
             )
             .await
@@ -840,8 +842,7 @@ async fn review_actual_replies(provider_id: &'static str, kind: &'static str, de
                 7,
                 "@primary",
                 &source,
-                conditional_since,
-                now.timestamp_millis(),
+                conditional_since..now.timestamp_millis(),
                 Some(native)
             )
             .await
@@ -852,8 +853,7 @@ async fn review_actual_replies(provider_id: &'static str, kind: &'static str, de
                 7,
                 "@primary",
                 &source,
-                conditional_since - 1000,
-                now.timestamp_millis(),
+                conditional_since - 1000..now.timestamp_millis(),
                 Some(cursor)
             )
             .await
@@ -864,8 +864,7 @@ async fn review_actual_replies(provider_id: &'static str, kind: &'static str, de
                 7,
                 "@primary",
                 &source,
-                since.timestamp_millis(),
-                now.timestamp_millis(),
+                since.timestamp_millis()..now.timestamp_millis(),
                 Some(cursor)
             )
             .await

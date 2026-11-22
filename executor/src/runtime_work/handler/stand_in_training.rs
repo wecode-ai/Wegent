@@ -2,6 +2,7 @@
 use super::*;
 use crate::task_runtime::mcp::StandInMcpIdentity;
 use sha2::{Digest, Sha256};
+use wegent_local_task_store::store::IdentityReplyItem;
 
 fn invalid(message: &str) -> AppIpcError {
     AppIpcError::new("invalid_training_case", message)
@@ -303,7 +304,12 @@ impl RuntimeWorkRpcHandler {
             (Some(final_item), _, _) => Some(final_item),
             (None, Some(turn), Some(item))
                 if store
-                    .identity_training_reply_seen(identity.user, role_id, task, turn, item, id)
+                    .identity_training_reply_seen(
+                        identity.user,
+                        role_id,
+                        IdentityReplyItem { task, turn, item },
+                        id,
+                    )
                     .map_err(super::stand_in::settings_error)? =>
             {
                 Some(item)

@@ -60,8 +60,7 @@ impl LocalTaskStore {
         device: &str,
         role: &str,
         source: &Value,
-        since: i64,
-        through: i64,
+        window: std::ops::Range<i64>,
         cursor: Option<&str>,
     ) -> Result<Value, TaskRuntimeError> {
         let denied =
@@ -78,9 +77,9 @@ impl LocalTaskStore {
         let settings = read_personal(&tx, user, device)?;
         if !settings["lifecycle"]["status"].is_null()
             || source["collectedObservations"] != true
-            || source["id"]
+            || !source["id"]
                 .as_str()
-                .is_none_or(|id| id.is_empty() || id == "*")
+                .is_some_and(|id| !id.is_empty() && id != "*")
         {
             return Err(denied());
         }
@@ -97,12 +96,11 @@ impl LocalTaskStore {
             .filter(|grant| source["enabledAfter"] == grant["enabledAfter"])
             .cloned()
             .ok_or_else(denied)?;
-        let since = since.max(
-            grant["enabledAfter"]
-                .as_str()
-                .and_then(connection_message_millis)
-                .ok_or_else(denied)?,
-        );
+        let enabled_after = grant["enabledAfter"]
+            .as_str()
+            .and_then(connection_message_millis)
+            .ok_or_else(denied)?;
+        let window = window.start.max(enabled_after)..window.end;
         grant["id"] = source["id"].clone();
         let mut query = tx.prepare_cached(RECORDS)?;
         let mut rows = query.query(params![
@@ -110,8 +108,8 @@ impl LocalTaskStore {
             role,
             grant.to_string(),
             after,
-            since,
-            through
+            window.start,
+            window.end
         ])?;
         let mut messages = Vec::new();
         let mut last = String::new();
@@ -119,7 +117,7 @@ impl LocalTaskStore {
             let Some(row) = rows.next()? else { break };
             last = row.get(0)?;
             let Some(at) = connection_message_millis(&row.get::<_, String>(1)?)
-                .filter(|at| since <= *at && *at < through)
+                .filter(|at| window.contains(at))
             else {
                 continue;
             };
@@ -223,8 +221,7 @@ mod tests {
                 "mac",
                 "@primary",
                 &source,
-                start - 10,
-                start + 2000,
+                start - 10..start + 2000,
                 cursor,
             )
         };

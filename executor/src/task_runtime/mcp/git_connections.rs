@@ -1,5 +1,6 @@
 //! Source-bound Git reads execute outside the model's network-denied sandbox.
 use super::*;
+use wegent_local_task_store::store::{AcceptedReply, DeliveryRole};
 
 pub(super) fn tool() -> Value {
     json!({"name":"git_read","description":"Read GitHub/GitLab using the work's exact bound CLI account and instance without shell network escalation. Supply operation identity, repository, object, comments, checks, api, or job_log. job_log reads a selected CI job (GitHub failed steps, GitLab job trace). repository is an explicit path; repository-source work cannot switch repositories. api uses a repository-relative GET path only. This tool cannot mutate remote state.","inputSchema":{"type":"object","properties":{"operation":{"type":"string","enum":["identity","repository","object","comments","checks","api","job_log"]},"repository":{"type":"string"},"number":{"type":"integer"},"entityKind":{"type":"string","enum":["issue","change_request"]},"sha":{"type":"string"},"jobId":{"type":"integer"},"path":{"type":"string"},"page":{"type":"integer"}},"required":["operation"]},"annotations":{"readOnlyHint":true,"openWorldHint":true}})
@@ -77,17 +78,21 @@ pub(super) async fn call(
     {
         if store
             .record_training_reply(
-                identity.user,
-                &identity.device,
-                delivery.map_or(&identity.device, |v| &v.role_device),
-                identity.role.as_deref().unwrap_or("@primary"),
+                DeliveryRole {
+                    user: identity.user,
+                    device: &identity.device,
+                    role_device: delivery.map_or(&identity.device, |v| &v.role_device),
+                    role: identity.role.as_deref().unwrap_or("@primary"),
+                },
                 &source,
-                &request,
-                "",
-                Some(native_id),
-                versions
-                    .as_ref()
-                    .map(|(ghost, memory)| (*ghost, memory.as_str())),
+                AcceptedReply {
+                    request: &request,
+                    text: "",
+                    native_id: Some(native_id),
+                    versions: versions
+                        .as_ref()
+                        .map(|(ghost, memory)| (*ghost, memory.as_str())),
+                },
             )
             .is_err()
         {

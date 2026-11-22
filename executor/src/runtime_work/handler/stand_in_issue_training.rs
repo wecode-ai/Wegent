@@ -7,6 +7,8 @@ use crate::task_runtime::personal_stand_in::{
 };
 use futures_util::{stream, StreamExt};
 use std::collections::BTreeMap;
+use std::ops::Range;
+use wegent_local_task_store::store::{AcceptedReply, DeliveryRole, ObservedReply};
 
 fn denied() -> AppIpcError {
     AppIpcError::new(
@@ -87,15 +89,19 @@ impl RuntimeWorkRpcHandler {
             .zip(delivery["memoryVersion"].as_str());
         if store
             .record_training_reply(
-                user,
-                &self.device_id,
-                device,
-                role,
+                DeliveryRole {
+                    user,
+                    device: &self.device_id,
+                    role_device: device,
+                    role,
+                },
                 &delivery["source"],
-                delivery["requestId"].as_str().unwrap_or_default(),
-                report["body"].as_str().unwrap_or_default(),
-                native_id,
-                versions,
+                AcceptedReply {
+                    request: delivery["requestId"].as_str().unwrap_or_default(),
+                    text: report["body"].as_str().unwrap_or_default(),
+                    native_id,
+                    versions,
+                },
             )
             .is_err()
         {
@@ -252,15 +258,15 @@ impl RuntimeWorkRpcHandler {
         user: i64,
         role: &str,
         source: &Value,
-        since: i64,
-        through: i64,
+        window: Range<i64>,
         cursor: Option<&str>,
     ) -> Result<Value, AppIpcError> {
         self.authorize_issue_training_source(store, user, role, source)
             .await?;
         let project = source["projectId"].as_str().ok_or_else(denied)?;
         let issue = source["id"].as_str().ok_or_else(denied)?;
-        let since = since.max(message_time(&source["enabledAfter"])?);
+        let since = window.start.max(message_time(&source["enabledAfter"])?);
+        let through = window.end;
         let (rows, more, gap) = if source["profile"] == "local" {
             let after = cursor
                 .map(str::parse::<i64>)
@@ -381,11 +387,13 @@ impl RuntimeWorkRpcHandler {
                         user,
                         role,
                         source,
-                        id,
-                        at,
-                        parent.unwrap_or_default(),
-                        body,
-                        root,
+                        ObservedReply {
+                            native_id: id,
+                            at,
+                            quoted: parent.unwrap_or_default(),
+                            text: body,
+                            thread: root,
+                        },
                     )
                     .map_err(settings_error)?
             {

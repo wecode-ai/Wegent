@@ -2,6 +2,34 @@
 use super::stand_in_inbox::stand_in_record_key;
 use super::*;
 
+pub struct DeliveryRole<'a> {
+    pub user: i64,
+    pub device: &'a str,
+    pub role_device: &'a str,
+    pub role: &'a str,
+}
+
+pub struct AcceptedReply<'a> {
+    pub request: &'a str,
+    pub text: &'a str,
+    pub native_id: Option<&'a str>,
+    pub versions: Option<(&'a str, &'a str)>,
+}
+
+pub struct ObservedReply<'a> {
+    pub native_id: &'a str,
+    pub at: i64,
+    pub quoted: &'a str,
+    pub text: &'a str,
+    pub thread: Option<&'a str>,
+}
+
+pub struct IdentityReplyItem<'a> {
+    pub task: &'a str,
+    pub turn: &'a str,
+    pub item: &'a str,
+}
+
 impl LocalTaskStore {
     /// Project only role/resource metadata; undispatched events and manually handled messages count alike.
     pub fn observed_training_resources(&self, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
@@ -41,76 +69,61 @@ impl LocalTaskStore {
     /// Source grants and role ownership are checked in the same transaction as the accepted receipt.
     pub fn record_training_reply(
         &self,
-        user: i64,
-        device: &str,
-        role_device: &str,
-        role: &str,
+        actor: DeliveryRole<'_>,
         source: &Value,
-        request: &str,
-        text: &str,
-        native_id: Option<&str>,
-        versions: Option<(&str, &str)>,
+        reply: AcceptedReply<'_>,
     ) -> Result<(), TaskRuntimeError> {
         if identity_task(source).is_some() || !source["enabledAfter"].is_string() {
             return Ok(());
         }
-        let source = delivery_source(source);
         self.record_delivery(
-            user,
-            device,
-            role_device,
-            role,
-            &source,
-            request,
-            text,
-            native_id,
+            actor,
+            &delivery_source(source),
+            reply,
             chrono::Utc::now().timestamp_millis(),
-            versions,
         )
     }
 
     /// Called by the owner- and identity-bound transcript handler after actual assistant output.
     pub fn record_identity_training_reply(
         &self,
-        user: i64,
-        device: &str,
-        role_device: &str,
-        role: &str,
-        task: &str,
-        request: &str,
-        item: &str,
+        actor: DeliveryRole<'_>,
+        IdentityReplyItem { task, turn, item }: IdentityReplyItem<'_>,
         at: i64,
         versions: Option<(&str, &str)>,
     ) -> Result<(), TaskRuntimeError> {
-        if [task, request, item].contains(&"") || at <= 0 {
+        if [task, turn, item].contains(&"") || at <= 0 {
             return Ok(());
         }
         self.record_delivery(
-            user,
-            device,
-            role_device,
-            role,
+            actor,
             &identity_source(task),
-            request,
-            "",
-            Some(item),
+            AcceptedReply {
+                request: turn,
+                text: "",
+                native_id: Some(item),
+                versions,
+            },
             at,
-            versions,
         )
     }
 
     fn record_delivery(
         &self,
-        user: i64,
-        device: &str,
-        role_device: &str,
-        role: &str,
+        DeliveryRole {
+            user,
+            device,
+            role_device,
+            role,
+        }: DeliveryRole<'_>,
         source: &Value,
-        request: &str,
-        text: &str,
-        native_id: Option<&str>,
+        AcceptedReply {
+            request,
+            text,
+            native_id,
+            versions,
+        }: AcceptedReply<'_>,
         at: i64,
-        versions: Option<(&str, &str)>,
     ) -> Result<(), TaskRuntimeError> {
         use super::personal_stand_in::{
             read_personal, stand_in_identities, training_source_granted,
@@ -196,11 +209,13 @@ impl LocalTaskStore {
         user: i64,
         role: &str,
         source: &Value,
-        native_id: &str,
-        at: i64,
-        quoted: &str,
-        text: &str,
-        thread: Option<&str>,
+        ObservedReply {
+            native_id,
+            at,
+            quoted,
+            text,
+            thread,
+        }: ObservedReply<'_>,
     ) -> Result<bool, TaskRuntimeError> {
         let source = delivery_source(source);
         let mut connection = self.connection()?;
@@ -262,9 +277,11 @@ impl LocalTaskStore {
         &self,
         user: i64,
         role: &str,
-        task: &str,
-        request: &str,
-        item: &str,
+        IdentityReplyItem {
+            task,
+            turn: request,
+            item,
+        }: IdentityReplyItem<'_>,
         projected: &str,
     ) -> Result<bool, TaskRuntimeError> {
         Ok(receipt(
@@ -283,9 +300,11 @@ impl LocalTaskStore {
         &self,
         user: i64,
         role: &str,
-        task: &str,
-        request: &str,
-        item: &str,
+        IdentityReplyItem {
+            task,
+            turn: request,
+            item,
+        }: IdentityReplyItem<'_>,
         projected_id: &str,
         observed_at: i64,
     ) -> Result<(), TaskRuntimeError> {
@@ -412,6 +431,13 @@ fn legacy_reply_key(user: i64, source: &Value, quoted: &str, text: &str) -> Stri
 mod tests {
     use super::*;
 
+    const PRIMARY: DeliveryRole<'static> = DeliveryRole {
+        user: 7,
+        device: "mac",
+        role_device: "mac",
+        role: "@primary",
+    };
+
     #[test]
     fn disabled_learning_never_records_replies_and_enabled_receipts_bind_role_source_target_and_text(
     ) {
@@ -424,23 +450,41 @@ mod tests {
             json!({"enabled":true,"prompt":"","preferences":"","connections":[source]});
         let mut saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
         let source = &saved["primary"]["connections"][0].clone();
-        let record = || {
+        let record = |native_id, versions| {
             store
                 .record_training_reply(
-                    7, "mac", "mac", "@primary", source, "original", "reply", None, None,
+                    PRIMARY,
+                    source,
+                    AcceptedReply {
+                        request: "original",
+                        text: "reply",
+                        native_id,
+                        versions,
+                    },
                 )
                 .unwrap()
         };
         let matched = |role, quoted, text| {
             store
-                .training_reply_matches(7, role, source, "opaque", 1000, quoted, text, None)
+                .training_reply_matches(
+                    7,
+                    role,
+                    source,
+                    ObservedReply {
+                        native_id: "opaque",
+                        at: 1000,
+                        quoted,
+                        text,
+                        thread: None,
+                    },
+                )
                 .unwrap()
         };
-        record();
+        record(None, None);
         assert!(!matched("@primary", "original", "reply"));
         saved["primary"]["selfLearningEnabled"] = json!(true);
         store.save_personal_stand_in(7, "mac", saved).unwrap();
-        record();
+        record(None, None);
         assert!(matched("@primary", "original", "reply"));
         assert!(!matched("other", "original", "reply"));
         assert!(!matched("@primary", "another", "reply"));
@@ -449,19 +493,7 @@ mod tests {
             ("ghost-before", "memory-before"),
             ("ghost-after", "memory-after"),
         ] {
-            store
-                .record_training_reply(
-                    7,
-                    "mac",
-                    "mac",
-                    "@primary",
-                    source,
-                    "original",
-                    "reply",
-                    Some("sent-id"),
-                    Some(versions),
-                )
-                .unwrap();
+            record(Some("sent-id"), Some(versions));
         }
         let read = || {
             receipt(
@@ -482,29 +514,28 @@ mod tests {
                 params![delivery_key(7, source, "sent-id"), LEGACY_DELIVERY],
             )
             .unwrap();
+        let observe = |role, at, quoted, text| {
+            store
+                .training_reply_matches(
+                    7,
+                    role,
+                    source,
+                    ObservedReply {
+                        native_id: "sent-id",
+                        at,
+                        quoted,
+                        text,
+                        thread: None,
+                    },
+                )
+                .unwrap()
+        };
         assert!(read()["historySeenAt"].is_null());
-        assert!(!store
-            .training_reply_matches(7, "other", source, "sent-id", 999, "original", "reply", None)
-            .unwrap());
+        assert!(!observe("other", 999, "original", "reply"));
         assert!(read()["historySeenAt"].is_null());
-        assert!(store
-            .training_reply_matches(
-                7,
-                "@primary",
-                source,
-                "sent-id",
-                1000,
-                "",
-                "rendered mention text",
-                None
-            )
-            .unwrap());
+        assert!(observe("@primary", 1000, "", "rendered mention text"));
         assert_eq!(read()["historySeenAt"], 1000);
-        assert!(store
-            .training_reply_matches(
-                7, "@primary", source, "sent-id", 1001, "original", "reply", None
-            )
-            .unwrap());
+        assert!(observe("@primary", 1001, "original", "reply"));
         assert_eq!(read()["historySeenAt"], 1000);
         let key = legacy_reply_key(7, source, "legacy-request", "legacy-reply");
         store.connection().unwrap().execute(
@@ -539,15 +570,14 @@ mod tests {
         for (i, source) in sources.iter().enumerate() {
             store
                 .record_training_reply(
-                    7,
-                    "mac",
-                    "mac",
-                    "@primary",
+                    PRIMARY,
                     source,
-                    "question",
-                    "answer",
-                    Some("same-id"),
-                    Some(("ghost", &i.to_string())),
+                    AcceptedReply {
+                        request: "question",
+                        text: "answer",
+                        native_id: Some("same-id"),
+                        versions: Some(("ghost", &i.to_string())),
+                    },
                 )
                 .unwrap();
         }
@@ -565,11 +595,13 @@ mod tests {
                     7,
                     "@primary",
                     source,
-                    "same-id",
-                    1000,
-                    quoted,
-                    text,
-                    Some("thread"),
+                    ObservedReply {
+                        native_id: "same-id",
+                        at: 1000,
+                        quoted,
+                        text,
+                        thread: Some("thread"),
+                    },
                 )
                 .unwrap()
         };
@@ -591,7 +623,16 @@ mod tests {
         rebound["enabledAfter"] = json!("2099-01-01T00:00:00Z");
         assert!(!store
             .training_reply_matches(
-                7, "@primary", &rebound, "same-id", 1000, "question", "answer", None
+                7,
+                "@primary",
+                &rebound,
+                ObservedReply {
+                    native_id: "same-id",
+                    at: 1000,
+                    quoted: "question",
+                    text: "answer",
+                    thread: None
+                }
             )
             .unwrap());
     }

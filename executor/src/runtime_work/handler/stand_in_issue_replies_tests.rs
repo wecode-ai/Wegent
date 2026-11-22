@@ -210,7 +210,7 @@ async fn issue_review_recovers_the_published_reply_and_stops_after_tag_revocatio
         "content":"Forwarded draft","metadata":{"assistant_source":{"taskId":"other"}},"reply_to_message_id":published.message_id
     })).unwrap()).unwrap();
     let page = handler
-        .issue_training_page(&store, 7, "default", &source, 0, i64::MAX, None)
+        .issue_training_page(&store, 7, "default", &source, 0..i64::MAX, None)
         .await
         .unwrap();
     let messages = page["messages"].as_array().unwrap();
@@ -256,7 +256,7 @@ async fn issue_review_recovers_the_published_reply_and_stops_after_tag_revocatio
         .unwrap()
         .is_empty());
     assert!(handler
-        .issue_training_page(&store, 7, "default", &source, 0, i64::MAX, None)
+        .issue_training_page(&store, 7, "default", &source, 0..i64::MAX, None)
         .await
         .is_err());
     assert!(store
@@ -348,7 +348,7 @@ async fn cloud_issue_review_rechecks_the_actor_and_keeps_only_correction_referen
         .unwrap()["source"]
         .clone();
     let page = handler
-        .issue_training_page(&store, 7, "default", &source, 0, i64::MAX, None)
+        .issue_training_page(&store, 7, "default", &source, 0..i64::MAX, None)
         .await
         .unwrap();
     assert_eq!(page["messages"].as_array().unwrap().len(), 100);
@@ -378,7 +378,7 @@ async fn cloud_issue_review_rechecks_the_actor_and_keeps_only_correction_referen
         .unwrap()
         .is_empty());
     assert!(handler
-        .issue_training_page(&store, 7, "default", &source, 0, i64::MAX, None)
+        .issue_training_page(&store, 7, "default", &source, 0..i64::MAX, None)
         .await
         .is_err());
     server.abort();

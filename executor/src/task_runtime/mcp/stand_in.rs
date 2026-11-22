@@ -1,6 +1,7 @@
 //! A context-bound surface for inspecting identities and proposing reviewed changes.
 use super::*;
 use crate::task_runtime::LocalTaskStore;
+use wegent_local_task_store::store::{AcceptedReply, DeliveryRole};
 
 #[path = "stand_in_processing.rs"]
 mod processing;
@@ -770,25 +771,30 @@ async fn reply_to_work(
             message["id"].as_str().unwrap_or_default(),
         )
     };
-    if accepted && role["selfLearningEnabled"] == true {
-        if store
+    if accepted
+        && role["selfLearningEnabled"] == true
+        && store
             .record_training_reply(
-                identity.user,
-                &identity.device,
-                delivery.map_or(&identity.device, |snapshot| &snapshot.role_device),
-                role["id"].as_str().unwrap_or_default(),
+                DeliveryRole {
+                    user: identity.user,
+                    device: &identity.device,
+                    role_device: delivery
+                        .map_or(&identity.device, |snapshot| &snapshot.role_device),
+                    role: role["id"].as_str().unwrap_or_default(),
+                },
                 &message["source"],
-                request,
-                text,
-                native_id,
-                versions
-                    .as_ref()
-                    .map(|(ghost, memory)| (*ghost, memory.as_str())),
+                AcceptedReply {
+                    request,
+                    text,
+                    native_id,
+                    versions: versions
+                        .as_ref()
+                        .map(|(ghost, memory)| (*ghost, memory.as_str())),
+                },
             )
             .is_err()
-        {
-            crate::logging::log_executor_event("Stand-in reply training receipt unavailable", &[]);
-        }
+    {
+        crate::logging::log_executor_event("Stand-in reply training receipt unavailable", &[]);
     }
     Ok(result)
 }

@@ -143,8 +143,7 @@ impl RuntimeWorkRpcHandler {
             user,
             role,
             &binding["source"],
-            since,
-            through,
+            since..through,
             cursor,
         )
         .await

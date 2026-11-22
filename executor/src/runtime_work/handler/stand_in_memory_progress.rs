@@ -1,6 +1,7 @@
 //! Deterministic page traversal separates completed evidence from the current attempt.
 use super::*;
 use crate::task_runtime::mcp::StandInMcpIdentity;
+use wegent_local_task_store::store::IdentityReplyItem;
 
 fn pending_reads(args: &Value, page: &Value) -> Result<Vec<Value>, AppIpcError> {
     let mut next = Vec::new();
@@ -201,9 +202,11 @@ impl RuntimeWorkRpcHandler {
                         .observe_identity_training_reply(
                             identity.user,
                             role,
-                            source,
-                            turn_id,
-                            item_id,
+                            IdentityReplyItem {
+                                task: source,
+                                turn: turn_id,
+                                item: item_id,
+                            },
                             projected,
                             at,
                         )

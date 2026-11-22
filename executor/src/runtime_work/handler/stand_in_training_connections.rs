@@ -9,6 +9,8 @@ use crate::task_runtime::personal_stand_in::{
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::ops::Range;
+use wegent_local_task_store::store::ObservedReply;
 
 fn denied() -> AppIpcError {
     AppIpcError::new(
@@ -184,8 +186,7 @@ impl RuntimeWorkRpcHandler {
         user: i64,
         role: &str,
         source: &Value,
-        since: i64,
-        through: i64,
+        window: Range<i64>,
         cursor: Option<&Value>,
     ) -> Result<Value, AppIpcError> {
         let native_cursor = cursor.and_then(Value::as_str);
@@ -200,7 +201,7 @@ impl RuntimeWorkRpcHandler {
                 return Err(invalid());
             }
             return self
-                .issue_training_page(store, user, role, source, since, through, native_cursor)
+                .issue_training_page(store, user, role, source, window, native_cursor)
                 .await;
         }
         let authorize = || {
@@ -231,7 +232,8 @@ impl RuntimeWorkRpcHandler {
             Ok((grant, device))
         };
         let (grant, device) = authorize()?;
-        let since = since.max(message_time(&source["enabledAfter"])?);
+        let since = window.start.max(message_time(&source["enabledAfter"])?);
+        let through = window.end;
         if source["collectedObservations"] == true {
             if collected_cursor.is_some() {
                 return Err(invalid());
@@ -242,8 +244,7 @@ impl RuntimeWorkRpcHandler {
                     &device,
                     role,
                     source,
-                    since,
-                    through,
+                    since..through,
                     native_cursor,
                 )
                 .map_err(settings_error);
@@ -288,8 +289,7 @@ impl RuntimeWorkRpcHandler {
                     &device,
                     role,
                     &collected_source,
-                    since,
-                    through,
+                    since..through,
                     collected_cursor,
                 )
                 .map_err(settings_error)?;
@@ -327,11 +327,13 @@ impl RuntimeWorkRpcHandler {
                             user,
                             role,
                             source,
-                            id,
-                            at,
-                            item["quotedMessageId"].as_str().unwrap_or_default(),
-                            content,
-                            item["conversationId"].as_str(),
+                            ObservedReply {
+                                native_id: id,
+                                at,
+                                quoted: item["quotedMessageId"].as_str().unwrap_or_default(),
+                                text: content,
+                                thread: item["conversationId"].as_str(),
+                            },
                         )
                         .map_err(settings_error)?;
                     if matches {
