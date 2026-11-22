@@ -264,7 +264,9 @@ for (const enabled of [true, false]) {
         release,
         () => subscriptionState(history, subscription.id, 'cleanup', taskId),
         async () => {
-          checked(await history.api.delete(subscriptionPath), 204)
+          const deleted = await history.api.delete(subscriptionPath)
+          expect(deleted.status).toBe(204)
+          expect(deleted.data).toBeNull()
         },
       ]) {
         try {
