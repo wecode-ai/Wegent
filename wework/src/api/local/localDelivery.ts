@@ -3,6 +3,7 @@ import type { IssueAttachmentContext } from '@wegent/collaboration'
 import type { IssueAssignmentReceipt } from '@/api/deliveries'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type {
   AgentExecutionPolicy,
   AgentModelPolicy,
@@ -1470,7 +1471,17 @@ export function createLocalDeliveryApi(
         ...(activitySequence == null ? {} : { activity_sequence: activitySequence }),
         ...(contentRevision == null ? {} : { content_revision: contentRevision }),
       })
-      return localTask(record)
+      const issue = localTask(record)
+      if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+        logRuntimeTaskCreateStage('issue-read-confirmed', {
+          itemId,
+          activitySequence: activitySequence ?? null,
+          contentRevision: contentRevision ?? null,
+          returnedVersion: record.version,
+          returnedUnread: issue.is_unread,
+        })
+      }
+      return issue
     },
     async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
       const executions = await request<LocalLoopItemExecution[]>('executions.list', {

@@ -26,6 +26,7 @@ test('authenticates the registered host routes before any capability dispatch', 
     },
     webServer: {
       port: 3000,
+      registerUpgrade: () => () => {},
       register: route => {
         routes.set(route.path, route.handler)
         return () => {}
@@ -95,6 +96,7 @@ test('denies secret reads, writes and deletes over HTTP even for authenticated s
     connection: { requestRejection: () => undefined },
     webServer: {
       port: 3000,
+      registerUpgrade: () => () => {},
       register: route => {
         routes.set(route.path, route.handler)
         return () => {}

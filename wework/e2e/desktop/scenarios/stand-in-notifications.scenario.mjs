@@ -318,6 +318,8 @@ export function createDesktopScenario({
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
           visible: false,
         })
+        // A clipped exit frame is invisible before the modal releases its route and inert scope.
+        await control.command('waitFor', `${CONTENT}:not(:has([data-testid="cloud-todo-detail"]))`)
       }
       await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {

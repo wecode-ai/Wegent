@@ -123,8 +123,10 @@ function installPersistence(localStorage: Storage): void {
   })
 
   prototype.setItem = function setItem(key: string, value: string): void {
+    const previous = this === localStorage ? this.getItem(String(key)) : null
     methods.setItem.call(this, key, value)
-    if (this === localStorage) queueChange(String(key), String(value))
+    if (this === localStorage && (previous !== String(value) || writeFailure !== null))
+      queueChange(String(key), String(value))
   }
   prototype.removeItem = function removeItem(key: string): void {
     methods.removeItem.call(this, key)
