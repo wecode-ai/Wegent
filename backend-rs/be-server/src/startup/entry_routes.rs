@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Common HTTP entry routes: health, chat history, and OIDC callback.
-use crate::chat_history;
 use crate::filters::source_cors;
 use crate::http_compat::FastApiError;
 #[cfg(test)]
@@ -13,6 +12,7 @@ use brz_redis::{Redis as _, SetExpiration, SetOptions};
 use serde::Serialize;
 #[cfg(test)]
 use std::sync::Arc;
+use wegent_chat_history::{self as chat_history, chat_repository::ChatHistoryRepository};
 
 /// Mirrors source `startup_check` in
 /// Wegent/backend/app/api/endpoints/health.py (registered under /api with no
@@ -226,7 +226,15 @@ async fn chat_history(
     #[auth] _service: crate::internal_auth::InternalService,
     query: brz_http_server::Query<chat_history::HistoryQuery>,
 ) -> Result<chat_history::HistoryResponse, FastApiError> {
-    chat_history::get_chat_history_value(state, session_id, &query).await
+    let repository = ChatHistoryRepository::new(&state.mysql, state.task_store.as_ref());
+    chat_history::get_chat_history_value(
+        &repository,
+        state.external_playback.as_ref(),
+        &state.internal_chat,
+        session_id,
+        &query,
+    )
+    .await
 }
 
 /// The source's 503 shutdown payload rendered with its field order.

@@ -471,16 +471,15 @@ mod tests {
     }
 
     fn registered(device_type: DeviceType) -> DeviceSessionState {
-        DeviceSessionState {
-            device_id: Some("app-record-271206".into()),
-            reported_device_id: Some("local-device".into()),
-            logical_device_id: Some("app-record-271206".into()),
-            runtime_instance_id: Some("runtime-ebd1102bbcde088793edb840".into()),
-            device_type: Some(device_type),
-            execution_target_id: Some("app-record-271206".into()),
-            registered: true,
-            ..DeviceSessionState::default()
-        }
+        let mut state = DeviceSessionState::default();
+        state.device_id = Some("app-record-271206".into());
+        state.reported_device_id = Some("local-device".into());
+        state.logical_device_id = Some("app-record-271206".into());
+        state.runtime_instance_id = Some("runtime-ebd1102bbcde088793edb840".into());
+        state.device_type = Some(device_type);
+        state.execution_target_id = Some("app-record-271206".into());
+        state.registered = true;
+        state
     }
 
     #[test]

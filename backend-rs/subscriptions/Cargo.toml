@@ -1,0 +1,30 @@
+[package]
+name = "wegent-subscriptions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Subscription configuration, monitoring and MCP reads"
+
+[dependencies]
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+chrono-tz = { workspace = true, features = ["std"] }
+getrandom = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-mcp-transport = { workspace = true }
+wegent-python-compat = { workspace = true }
+wegent-task-store = { workspace = true }
+
+[dev-dependencies]
+jsonwebtoken = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wegent-backend-test-support = { workspace = true }

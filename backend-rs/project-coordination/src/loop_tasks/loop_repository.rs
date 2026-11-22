@@ -11,7 +11,7 @@ use crate::board_snapshot::repository::ProjectRow as BoardProjectRow;
 use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow, WORKSPACE_ID_COLUMN};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
-use wegent_devices::device_identity::owned_device_identity_ids;
+use wegent_device_identity::owned_device_identity_ids;
 
 use super::loop_columns::CLOUD_CONTEXT_COLUMNS;
 

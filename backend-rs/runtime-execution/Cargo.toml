@@ -1,0 +1,29 @@
+[package]
+name = "wegent-runtime-execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Runtime execution reconciliation and durable project chat projection"
+
+[features]
+test-support = ["dep:anyhow"]
+
+[dependencies]
+anyhow = { workspace = true, optional = true }
+async-trait.workspace = true
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-device-identity.workspace = true
+wegent-devices.workspace = true
+wegent-project-coordination.workspace = true
+wegent-python-compat.workspace = true
+wegent-runtime-work.workspace = true
+
+[dev-dependencies]
+futures-util = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt"] }

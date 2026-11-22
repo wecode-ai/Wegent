@@ -80,7 +80,7 @@ pub(super) async fn dispatch_next(
             executor_manager: &state.executor_manager,
         };
         let persisted = super::completion::persist_completed_result(
-            &ctx,
+            &ctx.storage(),
             task_id,
             subtask_id,
             "FAILED",

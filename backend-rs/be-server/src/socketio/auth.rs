@@ -20,17 +20,7 @@ use crate::auth::USER_BY_NAME_QUERY;
 use crate::state::AppState;
 use crate::user_reader::USER_BY_ID_QUERY;
 
-/// Authenticated connection identity stored on the namespace socket.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Identity {
-    pub user_id: i64,
-    pub user_name: String,
-    /// `workspace_runner`, `api_key`, or `jwt`.
-    pub auth_type: &'static str,
-    /// `users.email`, stored on the source connect session and used when the
-    /// runtime relay binds the authenticated Wework identity.
-    pub email: Option<String>,
-}
+pub use wegent_device_lifecycle::session::Identity;
 
 /// `API_KEY_PREFIX` (`app/core/auth_utils.py`).
 pub(crate) const API_KEY_PREFIX: &str = "wg-";

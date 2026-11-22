@@ -11,15 +11,11 @@
 //! explicit session termination (not used in stateless mode). This module owns
 //! the shared transport framing and the per-server JSON-RPC behavior.
 
-pub mod connectors;
 pub mod interactive_form_question;
-mod knowledge;
-pub mod knowledge_external;
-mod knowledge_tools;
+#[cfg(test)]
+mod knowledge_external_route_tests;
 mod media_understanding;
 mod prompt_optimization;
-mod subscription;
-mod subscription_read;
 mod system;
 
 use wegent_mcp_transport::{protocol, tools, transport};

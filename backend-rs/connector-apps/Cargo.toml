@@ -1,0 +1,39 @@
+[package]
+name = "wegent-connector-apps"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Connector App catalog, OAuth grants, and tool execution"
+
+[features]
+test-support = []
+
+[dependencies]
+base64 = { workspace = true }
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+jsonschema = { workspace = true }
+jsonwebtoken = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["time"] }
+tracing = { workspace = true }
+url = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-crypto = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-mcp-transport = { workspace = true }
+wegent-protocol = { workspace = true }
+wegent-python-compat = { workspace = true }
+
+[dev-dependencies]
+hmac = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util"] }
+wegent-backend-test-support = { workspace = true }
+wegent-identity = { workspace = true, features = ["test-support"] }

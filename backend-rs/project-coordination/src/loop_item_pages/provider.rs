@@ -9,11 +9,35 @@
 //! external_provider`): fetch one page of issues from the provider API,
 //! mirroring the source URL construction, query serialization, and header
 //! setup.
+use brz_http_server::StatusCode;
+
 use crate::board_snapshot::external_provider;
 use crate::board_snapshot::repository::ProjectRow;
+use crate::http_compat::FastApiError;
 
 use super::page_cache;
 use super::{PARENT_MARKER, PageIssue, STATUS_PREFIX};
+
+/// Read one external issue with the same provider credentials as issue pages.
+pub async fn get_issue(
+    client: &brz_http::Client,
+    zinfo_key: &str,
+    project: &ProjectRow,
+    number: i64,
+) -> Result<PageIssue, FastApiError> {
+    let task_provider = project.task_provider();
+    let (config, token) = external_provider::resolve_provider_config(zinfo_key, project)
+        .map_err(|error| FastApiError::detail(StatusCode::CONFLICT, error))?;
+    let repository = external_provider::provider_repository(&config)
+        .map_err(|error| FastApiError::detail(StatusCode::CONFLICT, error))?;
+    let url = external_provider::issue_get_url(&task_provider, &config, &repository, number);
+    let value = external_provider::request_json(client, &token, &task_provider, &url)
+        .await
+        .map_err(external_provider::RequestError::into_fastapi)?;
+    serde_json::from_value(value).map_err(|_| {
+        FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+    })
+}
 
 /// `_request_issue_page` -> `_request`: fetch one page of issues from the
 /// provider API, through the source's 30-second issue-page cache

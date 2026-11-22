@@ -21,9 +21,7 @@
 //! lock so deletion cannot race the database-to-online transition; the record
 //! delete endpoint holds it across its transaction too.
 
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use brz_redis::{ErrorKind, Redis, RedisError, SetExpiration, SetOptions};
 
@@ -99,28 +97,7 @@ pub fn identity_lock_key(user_id: i64) -> String {
     format!("device:identity-lock:{user_id}")
 }
 
-/// The lock's owner token: 32 lowercase hex characters, like the
-/// `uuid.uuid1().hex` redis-py stores, so only the acquirer can release the
-/// key. The value is a per-acquisition random draw; nothing downstream reads
-/// it.
-pub fn lock_token() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos() as u64)
-        .unwrap_or(0);
-    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let mut token = String::with_capacity(32);
-    for half in 0..2u64 {
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write_u64(nanos);
-        hasher.write_u64(sequence);
-        hasher.write_u64(half);
-        token.push_str(&format!("{:016x}", hasher.finish()));
-    }
-    token
-}
+pub use wegent_backend_persistence::redis_lock::lock_token;
 
 /// redis-py raises `LockNotOwnedError` (`RedisError`) when the release script
 /// reports that another token now owns the key.

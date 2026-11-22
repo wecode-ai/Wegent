@@ -891,6 +891,9 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
 
       await page.getByTestId('collaboration-project-settings-members').click()
+      await expect(page).toHaveURL(url => url.searchParams.get('section') === 'members', {
+        timeout: 10_000,
+      })
       await page.getByTestId('cloud-project-members-toggle').click()
       await page.getByTestId('cloud-member-search').fill(REGULAR_USER.username)
       await chooseCollaborationOption(page, page.getByTestId('cloud-member-role'), {

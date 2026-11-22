@@ -98,7 +98,7 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
-import { requestE2ERuntime } from './host/e2e-runtime-request.js'
+import { completeE2ERuntimeControl } from './host/e2e-runtime-request.js'
 import {
   dshBrowserAuthenticationCookies,
   dshBrowserRequestHeaders,
@@ -2055,7 +2055,7 @@ function installIpc(): void {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')
       }
-      return requestE2ERuntime(process.env, input, url =>
+      return completeE2ERuntimeControl(process.env, input, url =>
         dshBrowserAuthenticationCookies(session.defaultSession, url)
       )
     })

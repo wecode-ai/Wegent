@@ -16,12 +16,26 @@
 //!   task-streaming status object).
 //! - [`python_dumps_utf8`] mirrors `json.dumps(value, ensure_ascii=False)`,
 //!   the CLI OIDC callback's `users.preferences` rendering.
-use serde_json::Value;
+use serde_json::{Number, Value};
 
 /// `json.dumps(value)` with CPython's default separators and ASCII escaping.
 pub fn python_dumps(value: &Value) -> String {
     let mut out = String::new();
-    write_python_with(&mut out, value, write_python_string, false);
+    write_python_with(&mut out, value, write_python_string, python_number, false);
+    out
+}
+
+/// Python-style ASCII escaping and spacing with serde_json's number spelling.
+/// The legacy subscription CRD writer and runtime notification signatures use this encoding.
+pub fn python_dumps_with_serde_numbers(value: &Value) -> String {
+    let mut out = String::new();
+    write_python_with(
+        &mut out,
+        value,
+        write_python_string,
+        Number::to_string,
+        false,
+    );
     out
 }
 
@@ -29,29 +43,30 @@ pub fn python_dumps(value: &Value) -> String {
 /// number rendering, with characters outside `!`..`~` kept as UTF-8.
 pub fn python_dumps_utf8(value: &Value) -> String {
     let mut out = String::new();
-    write_python_with(&mut out, value, write_compact_string, false);
+    write_python_with(&mut out, value, write_compact_string, python_number, false);
     out
 }
 
 /// `json.dumps(value, ensure_ascii=False, separators=(",", ":"))`.
 pub fn python_dumps_compact_utf8(value: &Value) -> String {
     let mut out = String::new();
-    write_python_with(&mut out, value, write_compact_string, true);
+    write_python_with(&mut out, value, write_compact_string, python_number, true);
     out
 }
 
-/// CPython's JSON encoder body: `write_string` selects the escaping mode.
+/// JSON writer shared by the Python formatting modes.
 fn write_python_with(
     out: &mut String,
     value: &Value,
     write_string: fn(&mut String, &str),
+    format_number: fn(&Number) -> String,
     compact: bool,
 ) {
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(true) => out.push_str("true"),
         Value::Bool(false) => out.push_str("false"),
-        Value::Number(number) => out.push_str(&python_number(number)),
+        Value::Number(number) => out.push_str(&format_number(number)),
         Value::String(text) => write_string(out, text),
         Value::Array(items) => {
             out.push('[');
@@ -59,7 +74,7 @@ fn write_python_with(
                 if index > 0 {
                     out.push_str(if compact { "," } else { ", " });
                 }
-                write_python_with(out, item, write_string, compact);
+                write_python_with(out, item, write_string, format_number, compact);
             }
             out.push(']');
         }
@@ -71,7 +86,7 @@ fn write_python_with(
                 }
                 write_string(out, key);
                 out.push_str(if compact { ":" } else { ": " });
-                write_python_with(out, item, write_string, compact);
+                write_python_with(out, item, write_string, format_number, compact);
             }
             out.push('}');
         }
@@ -232,6 +247,14 @@ mod tests {
     fn python_dumps_keeps_float_suffix() {
         assert_eq!(python_dumps(&json!(1.0)), "1.0");
         assert_eq!(python_dumps(&json!(2)), "2");
+    }
+
+    #[test]
+    fn signed_payloads_keep_serde_number_spelling_and_ascii_escapes() {
+        assert_eq!(
+            python_dumps_with_serde_numbers(&json!([1e-7, "é"])),
+            "[1e-7, \"\\u00e9\"]"
+        );
     }
 
     #[test]

@@ -24,6 +24,7 @@ use wegent_task_store::task_store_statements;
 pub mod auth;
 mod auth_error;
 mod cancel;
+pub mod continuation;
 mod create;
 pub use create::CreateResponse;
 mod delete;

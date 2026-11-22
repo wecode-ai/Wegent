@@ -24,8 +24,10 @@ use crate::socketio::device_lifecycle::publish_room_event;
 use crate::socketio::runtime::{CHAT_NAMESPACE, EXECUTOR_NAMESPACE, SocketRuntime};
 use crate::sql_support::StatementArg;
 use crate::state::AppState;
-use crate::task_detail_api::assembly::extract_display_prompt;
-use crate::task_detail_api::repository::{get_task_owner_for_caller, list_subtasks_by_task};
+use wegent_task_views::task_detail_api::assembly::extract_display_prompt;
+use wegent_task_views::task_detail_api::repository::{
+    get_task_owner_for_caller, list_subtasks_by_task,
+};
 
 use super::chat_support::{access_denied, error_ack, internal_error};
 
@@ -69,10 +71,11 @@ async fn history_messages(
     task_id: i64,
     after_message_id: i64,
 ) -> Result<Vec<Value>, String> {
-    let owner_id = get_task_owner_for_caller(state, task_id, user_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| format!("Task {task_id} not found while resolving fork history"))?;
+    let owner_id =
+        get_task_owner_for_caller(&state.mysql, state.task_store.as_ref(), task_id, user_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("Task {task_id} not found while resolving fork history"))?;
     let listing = list_subtasks_by_task(&*state.task_store, task_id, owner_id, true)
         .await
         .map_err(|error| error.to_string())?;
@@ -324,12 +327,16 @@ async fn device_info_for_close_session(
     let is_member = if is_owner {
         true
     } else {
-        crate::task_detail_api::repository::is_approved_member(&state.mysql, task_id, user_id)
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, task_id, "task:close-session membership read failed");
-                internal_error()
-            })?
+        wegent_task_views::task_detail_api::repository::is_approved_member(
+            &state.mysql,
+            task_id,
+            user_id,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, task_id, "task:close-session membership read failed");
+            internal_error()
+        })?
     };
     if !is_member {
         return Ok(Err(error_ack("Access denied")));

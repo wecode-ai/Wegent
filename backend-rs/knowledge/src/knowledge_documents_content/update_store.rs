@@ -15,7 +15,7 @@ use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlTransaction};
 use chrono::NaiveDateTime;
 
 use super::reader::{self, DocumentRow};
-use wegent_attachments::upload::{Param, Preflush};
+use wegent_backend_persistence::{request_sql::StatementArgs, sql_support::StatementArg};
 
 /// `_prepare_document_index_enqueue`'s row lock
 /// (`db.query(KnowledgeDocument).filter(id).with_for_update()
@@ -88,26 +88,30 @@ impl DocumentColumns {
 
     /// The `UPDATE` for this row's changed attributes, or `None` when nothing
     /// changed (SQLAlchemy emits no statement for a clean instance).
-    fn statement(&self, flushed: &Self, document_id: i64) -> Option<(String, Vec<Param>)> {
+    pub(crate) fn statement(
+        &self,
+        flushed: &Self,
+        document_id: i64,
+    ) -> Option<(String, StatementArgs)> {
         let mut assignments = String::new();
-        let mut params: Vec<Param> = Vec::new();
+        let mut params = StatementArgs::new();
         if self.file_size != flushed.file_size {
             assignments.push_str("file_size=?");
-            params.push(Param::Int(self.file_size));
+            params.push(StatementArg::Int(self.file_size));
         }
         if self.index_status != flushed.index_status {
             if !assignments.is_empty() {
                 assignments.push_str(", ");
             }
             assignments.push_str("index_status=?");
-            params.push(Param::Text(self.index_status.clone()));
+            params.push(StatementArg::Str(self.index_status.clone()));
         }
         if self.index_generation != flushed.index_generation {
             if !assignments.is_empty() {
                 assignments.push_str(", ");
             }
             assignments.push_str("index_generation=?");
-            params.push(Param::Int(self.index_generation));
+            params.push(StatementArg::Int(self.index_generation));
         }
         if params.is_empty() {
             return None;
@@ -116,7 +120,7 @@ impl DocumentColumns {
             "UPDATE knowledge_documents SET {assignments}, updated_at=now() \
              WHERE knowledge_documents.id = ?"
         );
-        params.push(Param::Int(document_id));
+        params.push(StatementArg::Int(document_id));
         Some((sql, params))
     }
 
@@ -133,15 +137,6 @@ impl DocumentColumns {
             *flushed = self.clone();
         }
         Ok(())
-    }
-
-    /// This row's changed attributes as a statement the caller hands to
-    /// `overwrite_attachment_internal`, so the write shares that transaction
-    /// (the source's `db.flush()` covers the whole session).
-    pub(crate) fn preflush(&self, flushed: &mut Self, document_id: i64) -> Option<Preflush> {
-        let (sql, params) = self.statement(flushed, document_id)?;
-        *flushed = self.clone();
-        Some(Preflush { sql, params })
     }
 }
 

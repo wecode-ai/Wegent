@@ -30,5 +30,7 @@ wegent-backend-persistence = { workspace = true }
 wegent-http-compat = { workspace = true }
 
 [dev-dependencies]
+aes = { workspace = true }
+cbc = { workspace = true, features = ["alloc", "block-padding"] }
 wegent-backend-test-support = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -6,13 +6,14 @@ use serde_json::Value;
 
 use crate::AppState;
 use crate::background_jobs::{
-    project::{due::permits_scheduled_run, store},
+    project::store,
     robot::{
         self,
         model::{Execution, unset},
     },
 };
 use wegent_backend_persistence::mysql_query::MysqlQuery;
+use wegent_project_scheduler::permits_scheduled_run;
 
 const NON_WORKDAY_NOTE: &str =
     "Scheduled execution cancelled: today is not a China statutory workday";

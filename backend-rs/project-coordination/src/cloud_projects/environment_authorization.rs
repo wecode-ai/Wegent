@@ -3,7 +3,7 @@
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use serde_json::Value;
 use std::collections::HashSet;
-use wegent_devices::device_identity::resolve_owned_device_alias;
+use wegent_device_identity::resolve_owned_device_alias;
 
 #[derive(FromMysqlRow)]
 struct Grant {

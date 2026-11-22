@@ -53,6 +53,43 @@ pub(super) async fn initialize(
     Ok(())
 }
 
+/// `initialize_redis_chat_history` (`task_manager.py:674-727`): when a reused
+/// Task has history but the Redis cache is empty, rebuild it from the completed
+/// USER prompts and ASSISTANT `result.value`s in `message_id` order.
+pub(crate) async fn initialize_from_subtasks<R: brz_redis::Redis>(
+    redis: &R,
+    task_id: i64,
+    mut entries: Vec<Entry>,
+) -> anyhow::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let key = format!("chat:history:{task_id}");
+    if let Some(cached) = redis.get::<_, RedisBytes>(&key).await?
+        && serde_json::from_slice::<Vec<Value>>(cached.as_ref())
+            .is_ok_and(|history| !history.is_empty())
+    {
+        return Ok(());
+    }
+    entries.sort_by_key(|entry| entry.0);
+    let messages = rebuild(
+        entries,
+        super::model::setting("CHAT_HISTORY_MAX_MESSAGES", 50) as usize,
+    );
+    if !messages.is_empty() {
+        redis
+            .set_with(
+                &key,
+                serde_json::to_string(&messages)?,
+                SetOptions::default().with_expiration(SetExpiration::Seconds(
+                    super::model::setting("CHAT_HISTORY_EXPIRE_SECONDS", 7200),
+                )),
+            )
+            .await?;
+    }
+    Ok(())
+}
+
 /// Read only the completed history window needed for a cold cache.
 pub(super) async fn load_entries(
     store: &dyn crate::task_store::TaskStore,
