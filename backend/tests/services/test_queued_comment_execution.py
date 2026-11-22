@@ -144,6 +144,55 @@ async def test_current_manual_approval_policy_is_not_bypassed_by_a_queued_reques
     assert execution.assignment_pending
 
 
+@pytest.mark.parametrize("environment", ["wegent", "cloud"])
+def test_device_queue_leaves_managed_continuation_for_managed_consumer(
+    test_db, test_user, assigned_mention_scope, environment
+):
+    project, _, item, agent, _ = assigned_mention_scope
+    original = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=project.id,
+        agent_id=agent.id,
+        executor_owner_user_id=test_user.id,
+        execution_environment=environment,
+        runtime_task_id="123",
+        status="completed",
+    )
+    test_db.add(original)
+    test_db.commit()
+    continuation = {"execution_id": original.id}
+    execution = loop_item_execution_service.enqueue_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=project.id,
+        agent=agent,
+        assigner_user_id=test_user.id,
+        environment=environment,
+        execution_device_id=None,
+        priority=None,
+        continuation=continuation,
+    )
+    test_db.commit()
+
+    prepared = loop_item_execution_service.prepare_queued_assignments(test_db)
+    assert prepared == (0 if environment == "wegent" else 1)
+    test_db.refresh(execution)
+    if environment == "wegent":
+        assert execution.status == "queued"
+        assert not execution.error_message
+        assert (
+            execution.runtime_selection["assignment_request"]["continuation"]
+            == continuation
+        )
+    else:
+        assert execution.status == "failed"
+        assert execution.error_message.startswith(
+            "ISSUE_RUNNER_CONFIGURATION_REQUIRED:"
+        )
+    assert execution.assignment_pending
+    assert original.runtime_task_id == "123"
+
+
 def test_pending_assignment_sql_matches_persisted_intent(test_db):
     payloads = [
         "",

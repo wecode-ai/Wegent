@@ -296,14 +296,21 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
     )
   )
   let timeoutId: ReturnType<typeof setTimeout> | undefined
-  const outcome = await Promise.race([
+  const lookup = Promise.race([
     Promise.all(requests).then(() => ({ kind: 'settled' as const })),
     userContextFound.then(context => ({ kind: 'user-context' as const, context })),
+  ])
+  let outcome = await Promise.race([
+    lookup,
     new Promise<void>(resolve => {
       timeoutId = setTimeout(resolve, timeoutMs)
     }).then(() => ({ kind: 'timeout' as const })),
   ])
   if (timeoutId !== undefined) clearTimeout(timeoutId)
+  // The selection window limits waiting for a better match when a usable
+  // context exists. An unanswered request cannot establish an absent binding.
+  if (outcome.kind === 'timeout' && !results.some(result => result?.status === 'fulfilled'))
+    outcome = await lookup
   if (outcome.kind === 'user-context') return outcome.context
   const settledResults = results.filter(result => result !== undefined)
   const sources = settledResults.flatMap(result =>
@@ -315,9 +322,6 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
   const errors = settledResults.flatMap(result =>
     result.status === 'rejected' ? [result.reason] : []
   )
-  if (settledResults.length < apis.length) {
-    errors.push(new Error(`Project-space context lookup timed out after ${timeoutMs}ms`))
-  }
   throw new AggregateError(errors, 'Task is not linked to a project space')
 }
 

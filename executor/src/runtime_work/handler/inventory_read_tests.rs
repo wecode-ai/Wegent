@@ -13,6 +13,34 @@ fn process_cpu_seconds() -> f64 {
         + (usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) as f64 / 1_000_000.0
 }
 
+#[test]
+fn cached_inventory_completes_while_startup_reconciliation_is_locked() {
+    let _env = crate::test_env::lock();
+    let codex_home = tempfile::tempdir().unwrap();
+    let _codex_home = ScalarEnv::set("CODEX_HOME", codex_home.path().to_str().unwrap());
+    let result = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (handler, root) = isolated_runtime_work_handler("inventory-during-recovery");
+            let reconciliation = handler.worktree_reconciliation_state.lock().await;
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                handler.dispatch("runtime.tasks.list", json!({"preferCached": true})),
+            )
+            .await;
+            drop(reconciliation);
+            let _ = fs::remove_dir_all(root);
+            result
+        });
+
+    let response = result
+        .expect("Task inventory must not wait for worktree reconciliation")
+        .unwrap();
+    assert!(response["workspaces"].is_array());
+}
+
 #[tokio::test]
 async fn cached_inventory_reads_do_not_write_issue_statuses() {
     let (handler, root) = isolated_runtime_work_handler("read-only-inventory");

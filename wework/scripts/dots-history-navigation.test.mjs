@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { revealDotsFollowupHistory } from '../e2e/desktop/scenarios/dots-closed-loops.scenario.mjs'
+import {
+  dotsSilentIntakeEvents,
+  revealDotsFollowupHistory,
+} from '../e2e/desktop/scenarios/dots-closed-loops.scenario.mjs'
 
 test('reveals the original delivered plan through the real request marker and distinct result message', async () => {
   const calls = []
@@ -43,4 +46,42 @@ test('rejects missing native turn indexes rather than guessing an index or sendi
     })
   )
   assert.deepEqual(calls, ['waitFor', 'getAttribute'])
+})
+
+test('closes silent intake cleanly when the coordinator batch is invalidated mid-turn', () => {
+  const events = dotsSilentIntakeEvents({
+    input: [
+      {
+        type: 'function_call_output',
+        call_id: 'dots-intake',
+        output: [
+          { type: 'input_text', text: 'Script completed\nWall time 0.1 seconds\nOutput:\n' },
+          { type: 'input_text', text: 'Coordinator batch or tool is no longer available' },
+        ],
+      },
+    ],
+  })
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, 'response.output_item.done')
+  assert.equal(events[0].item.type, 'message')
+  assert.match(events[0].item.content[0].text, /no longer available/i)
+})
+
+test('ignores batch events when read_intake returns a valid snapshot and rejects malformed output', () => {
+  const events = dotsSilentIntakeEvents({
+    tools: [{ type: 'function', name: 'mcp__wework_stand_in__ignore_events' }],
+    input: [
+      {
+        type: 'function_call_output',
+        call_id: 'dots-intake',
+        output: JSON.stringify({ snapshot: { events: [{ id: 'evt-1' }] } }),
+      },
+    ],
+  })
+  assert.ok(events.some(event => event.item?.name === 'mcp__wework_stand_in__ignore_events'))
+  assert.throws(() =>
+    dotsSilentIntakeEvents({
+      input: [{ type: 'function_call_output', call_id: 'dots-intake', output: 'unexpected error' }],
+    })
+  )
 })

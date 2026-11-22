@@ -1,4 +1,10 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import { CollaborationFilesAdapter } from '../web-adapter/CollaborationFilesAdapter'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationProject } from '../types'
 
 import { createCollaborationTranslator } from '../i18n'
 import { collaborationFileBrowserEntries } from './browser'
@@ -117,4 +123,65 @@ describe('CollaborationFilesView loading', () => {
     expect(state.taskAttachments).toEqual([taskAttachment])
     expect(api.listTaskAttachments).toHaveBeenCalledWith('project-1')
   })
+})
+
+it('retains the browsed folder on owner refresh and resets it when the API owner changes', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const source = {
+    files: {
+      list: async () => [],
+      listDeliveryFiles: async () => [
+        {
+          assetId: deliveryFile.asset_id,
+          deliveryId: deliveryFile.delivery_id,
+          issueId: deliveryFile.loop_item_id,
+          issueTitle: deliveryFile.loop_item_title,
+          relativePath: deliveryFile.relative_path,
+          displayName: deliveryFile.display_name,
+          contentType: deliveryFile.content_type,
+          sizeBytes: deliveryFile.size_bytes,
+          deliveredAt: deliveryFile.delivered_at,
+          issuePath: deliveryFile.loop_item_path,
+        },
+      ],
+    },
+  } as unknown as Pick<SharedWorkspaceApi, 'files' | 'attachments'>
+  const project = {
+    id: 'project-1',
+    project_store: 'local',
+  } as CollaborationProject
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const render = async (api = source) => {
+    await act(async () =>
+      root.render(
+        createElement(CollaborationFilesAdapter, {
+          api,
+          project: { ...project },
+          locale: 'en',
+        })
+      )
+    )
+  }
+  try {
+    await render()
+    for (const id of ['root:issues', 'delivery-item:TA-1', 'delivery-path:TA-1:reports']) {
+      const selector = '[data-testid="cloud-file-browser-entry-' + id + '"] button'
+      await vi.waitFor(() => expect(container.querySelector(selector)).not.toBeNull())
+      await act(async () => (container.querySelector(selector) as HTMLButtonElement).click())
+    }
+    const row = '[data-testid="delivery-file-asset-1"]'
+    expect(container.querySelector(row)?.textContent).toContain('result.pdf')
+    await render()
+    expect(container.querySelector(row)?.textContent).toContain('result.pdf')
+    await render({ ...source })
+    expect(container.querySelector(row)).toBeNull()
+    expect(
+      container.querySelector('[data-testid="cloud-file-browser-entry-root:issues"]')
+    ).not.toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
 })

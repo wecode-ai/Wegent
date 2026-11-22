@@ -464,6 +464,9 @@ const pluginDevelopmentChildRuntime =
       })
     : null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
+let pendingTrayState:
+  | Parameters<ElectronTrayManager<Electron.Menu | null, Tray>['setState']>[0]
+  | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
 const startupTelemetry = new StartupTelemetryLifecycle({
@@ -1158,6 +1161,32 @@ function scheduleCoreDshRestart(): void {
   }, 100)
 }
 
+const presentedWorkbenchWindows = new WeakSet<BrowserWindow>()
+
+function workbenchWindowActivity(window: BrowserWindow) {
+  // The macOS headless runner renders an initially unshown window for DOM assertions.
+  if (keepE2EWindowInBackground && window === mainWindow && !presentedWorkbenchWindows.has(window))
+    return 'foreground'
+  if (!window.isVisible() || window.isMinimized()) return 'hidden'
+  return window.isFocused() ? 'foreground' : 'background'
+}
+
+function observeWorkbenchWindowActivity(window: BrowserWindow) {
+  const notify = () => {
+    if (!window.webContents.isDestroyed())
+      window.webContents.send('window:workbench-activity', workbenchWindowActivity(window))
+  }
+  window.on('focus', notify)
+  window.on('blur', notify)
+  window.on('show', () => {
+    presentedWorkbenchWindows.add(window)
+    notify()
+  })
+  window.on('hide', notify)
+  window.on('minimize', notify)
+  window.on('restore', notify)
+}
+
 async function openWorkspaceWindow(input: {
   label: string
   route: string
@@ -1196,6 +1225,7 @@ async function openWorkspaceWindow(input: {
   workspaceWindows.set(input.label, workspaceWindow)
   secureDshContents(workspaceWindow.webContents, dshUrl)
   registerDshWindowLabel(workspaceWindow.webContents, input.label)
+  observeWorkbenchWindowActivity(workspaceWindow)
   workspaceWindow.on('closed', () => {
     if (workspaceWindows.get(input.label) === workspaceWindow) {
       workspaceWindows.delete(input.label)
@@ -1295,6 +1325,7 @@ async function createAuxiliaryWindow(
   secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
   if (!isSystemDrag) {
+    observeWorkbenchWindowActivity(auxiliaryWindow)
     auxiliaryWindow.webContents.on('before-input-event', (event, input) => {
       handlePopoutWindowInput(event, input, () => auxiliaryWindow.hide())
     })
@@ -1542,6 +1573,7 @@ async function createWindow(
     },
   })
   installE2ERendererCpuProfiling(mainWindow.webContents)
+  observeWorkbenchWindowActivity(mainWindow)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     ...startupLayout.bounds,
@@ -2010,6 +2042,12 @@ async function startupDiagnosticsText(): Promise<string> {
 }
 
 function installIpc(): void {
+  ipcMain.handle('window:get-workbench-activity', event => {
+    if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame)
+      throw new Error('Workbench activity requires a Wework main frame')
+    const window = BrowserWindow.fromWebContents(event.sender)
+    return window ? workbenchWindowActivity(window) : 'hidden'
+  })
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
     const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
     if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
@@ -2518,7 +2556,22 @@ async function configureDesktopRuntime(): Promise<void> {
     })
   }
   computerUse = new ComputerUseService(
-    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+    process.platform,
+    90_000,
+    currentTool => {
+      if (currentTool === 'list_windows' && process.env.VITE_WEWORK_E2E === 'true') {
+        console.info(
+          '[computer-use] Host window geometry ' +
+            JSON.stringify({
+              pid: process.pid,
+              bounds: mainWindow?.getBounds(),
+              focused: mainWindow?.isFocused(),
+            })
+        )
+      }
+      desktopHostEvents.publish('computerUse.changed', { currentTool })
+    }
   )
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
@@ -2759,6 +2812,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
+            pendingTrayState = state
             trayManager?.setState(state)
             syncDockBadge(app.dock, state.unreadCount, developmentDockIdentity?.badge)
             void trayNativeStatus?.refresh()
@@ -2801,6 +2855,7 @@ async function configureDesktopRuntime(): Promise<void> {
             const owner = presentationId ?? systemDragPresentationId
             if (owner !== systemDragPresentationId) return false
             pendingSystemDrops.push(payload)
+            desktopHostEvents.publish('systemDrag.pending', {})
             await showPopoutWindow()
             return owner === systemDragPresentationId
           },
@@ -3184,6 +3239,7 @@ if (hasSingleInstanceLock) {
           const manager = createTrayManager()
           manager.create()
           trayManager = manager
+          if (pendingTrayState) manager.setState(pendingTrayState)
         })
       }
       void startDesktopRuntime()

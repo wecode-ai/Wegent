@@ -1,0 +1,69 @@
+name: Compare Wework desktop CPU benchmark
+description: Compare one desktop checkpoint with the latest main baseline for this runner platform.
+inputs:
+  checkpoint:
+    description: Desktop checkpoint that produced the metrics
+    required: true
+  save-cache:
+    description: Whether this main run may publish a new baseline
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Restore the checkpoint baseline
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: .ci-cache/wework-cpu-benchmarks/${{ inputs.checkpoint }}.json
+        key: wework-cpu-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.checkpoint }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          wework-cpu-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.checkpoint }}-
+
+    - name: Report current sample and baseline availability
+      id: sample
+      shell: bash
+      env:
+        CHECKPOINT: ${{ inputs.checkpoint }}
+      run: |
+        sample=".ci-artifacts/wework-cpu-benchmarks/${CHECKPOINT}.json"
+        baseline=".ci-cache/wework-cpu-benchmarks/${CHECKPOINT}.json"
+        if [[ ! -s "$sample" ]]; then
+          if [[ -f "$baseline" ]]; then
+            echo "::error::Missing required CPU sample for ${CHECKPOINT}"
+            exit 1
+          fi
+          echo "::warning::No CPU sample or main baseline for ${CHECKPOINT}"
+          exit 0
+        fi
+        echo "available=true" >> "$GITHUB_OUTPUT"
+        {
+          echo "### Desktop CPU sample for ${CHECKPOINT}"
+          echo '~~~json'
+          cat "$sample"
+          echo '~~~'
+          if [[ ! -f "$baseline" ]]; then
+            echo "No main baseline is available for this checkpoint and platform."
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Check for CPU regressions
+      if: steps.sample.outputs.available == 'true'
+      uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
+      with:
+        name: Wework desktop CPU / ${{ inputs.checkpoint }}
+        tool: customSmallerIsBetter
+        github-token: ${{ github.event_name != 'pull_request' && github.token || '' }}
+        ref: ${{ github.sha }}
+        output-file-path: .ci-artifacts/wework-cpu-benchmarks/${{ inputs.checkpoint }}.json
+        external-data-json-path: .ci-cache/wework-cpu-benchmarks/${{ inputs.checkpoint }}.json
+        save-data-file: ${{ inputs.save-cache }}
+        max-items-in-chart: 30
+        summary-always: true
+        alert-threshold: "150%"
+        fail-on-alert: true
+
+    - name: Save the main baseline
+      if: inputs.save-cache == 'true' && github.ref == 'refs/heads/main' && steps.sample.outputs.available == 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: .ci-cache/wework-cpu-benchmarks/${{ inputs.checkpoint }}.json
+        key: wework-cpu-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.checkpoint }}-${{ github.run_id }}-${{ github.run_attempt }}

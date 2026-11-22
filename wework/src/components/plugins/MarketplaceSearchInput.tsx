@@ -16,10 +16,22 @@ export const MarketplaceSearchInput = forwardRef<
     label: string
     placeholder: string
     clearLabel: string
+    inputTestId?: string
+    clearTestId?: string
+    debounceMs?: number
     onQueryChange: (query: string) => void
   }
 >(function MarketplaceSearchInput(
-  { initialValue, label, placeholder, clearLabel, onQueryChange },
+  {
+    initialValue,
+    label,
+    placeholder,
+    clearLabel,
+    inputTestId = 'plugins-search-input',
+    clearTestId = 'plugins-search-clear-button',
+    debounceMs = MARKETPLACE_SEARCH_DEBOUNCE_MS,
+    onQueryChange,
+  },
   forwardedRef
 ) {
   const [inputValue, setInputValue] = useState(initialValue)
@@ -33,23 +45,27 @@ export const MarketplaceSearchInput = forwardRef<
     debounceTimeoutRef.current = null
   }, [])
 
-  const scheduleQuery = useCallback(
-    (nextQuery: string) => {
-      cancelPendingQuery()
-      debounceTimeoutRef.current = window.setTimeout(() => {
-        debounceTimeoutRef.current = null
-        onQueryChange(nextQuery)
-      }, MARKETPLACE_SEARCH_DEBOUNCE_MS)
-    },
-    [cancelPendingQuery, onQueryChange]
-  )
-
   const commitQuery = useCallback(
     (nextQuery: string) => {
       cancelPendingQuery()
       onQueryChange(nextQuery)
     },
     [cancelPendingQuery, onQueryChange]
+  )
+
+  const scheduleQuery = useCallback(
+    (nextQuery: string) => {
+      if (debounceMs <= 0) {
+        commitQuery(nextQuery)
+        return
+      }
+      cancelPendingQuery()
+      debounceTimeoutRef.current = window.setTimeout(() => {
+        debounceTimeoutRef.current = null
+        onQueryChange(nextQuery)
+      }, debounceMs)
+    },
+    [cancelPendingQuery, commitQuery, debounceMs, onQueryChange]
   )
 
   const clearQuery = useCallback(
@@ -102,14 +118,14 @@ export const MarketplaceSearchInput = forwardRef<
           }
         }}
         placeholder={placeholder}
-        data-testid="plugins-search-input"
+        data-testid={inputTestId}
         className="plugin-market-search-input"
       />
       {inputValue ? (
         <ControlButton
           variant="unstyled"
           type="button"
-          data-testid="plugins-search-clear-button"
+          data-testid={clearTestId}
           className="plugin-market-search-clear"
           aria-label={clearLabel}
           title={clearLabel}

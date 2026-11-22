@@ -3,6 +3,8 @@ declare global {
     weworkElectronLifecycle?: {
       onSystemResume(listener: () => void): () => void
       onWindowFocusChanged?(listener: (focused: boolean) => void): () => void
+      getWorkbenchActivity?(): Promise<unknown>
+      onWorkbenchActivityChanged?(listener: (activity: unknown) => void): () => void
     }
   }
 }

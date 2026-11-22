@@ -23,6 +23,12 @@ contextBridge.exposeInMainWorld('weworkElectronFiles', {
 })
 
 contextBridge.exposeInMainWorld('weworkElectronLifecycle', {
+  getWorkbenchActivity: () => ipcRenderer.invoke('window:get-workbench-activity'),
+  onWorkbenchActivityChanged: (listener: (activity: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, activity: unknown) => listener(activity)
+    ipcRenderer.on('window:workbench-activity', handler)
+    return () => ipcRenderer.off('window:workbench-activity', handler)
+  },
   onSystemResume: (listener: () => void) => {
     const handler = () => listener()
     ipcRenderer.on('system:resume', handler)

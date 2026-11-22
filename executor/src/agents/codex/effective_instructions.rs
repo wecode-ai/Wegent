@@ -115,6 +115,22 @@ pub(super) fn additional_context(
 
 fn execution_context(request: &ExecutionRequest) -> Option<String> {
     let mut facts = Vec::new();
+    let origin = request.extra.get("origin").unwrap_or(&Value::Null);
+    if matches!(
+        origin["type"].as_str(),
+        Some(
+            "stand_in_identity"
+                | "stand_in_task"
+                | "stand_in_coordinator"
+                | "connection_work"
+                | "dingtalk_work"
+        )
+    ) {
+        let now = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+        facts.push(format!(
+            "Wework local time at turn start: {now}\nUse this clock for the user's current date and time. For connected messages, use the source message's `at` as its send time. Interpret relative dates in a message, such as today or tomorrow, from that message's send date and source timezone. Compare the resulting date or deadline with the turn clock to assess freshness or urgency. A message can be collected or replayed long after it was sent. If the source time or timezone cannot be established and matters to the conclusion, state the uncertainty."
+        ));
+    }
     if let Some(info) = request.extra.get("automation_info") {
         if let (Some(automation), Some(run)) = (
             nonempty_string(&info["automationId"]),

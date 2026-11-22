@@ -17,6 +17,7 @@ export class DesktopHostEventBroker {
   private readonly readWaiters: Array<{ sequence: number; resolve: () => void }> = []
   private latestReadSequence = 0
   private sequence = 0
+  private readonly eventWaiters = new Set<() => void>()
 
   publish(type: string, payload: Record<string, unknown>): number {
     this.events.push({
@@ -25,7 +26,23 @@ export class DesktopHostEventBroker {
       payload,
     })
     if (this.events.length > MAX_EVENTS) this.events.shift()
+    for (const notify of this.eventWaiters) notify()
     return this.sequence
+  }
+
+  async wait(after: number): Promise<DesktopHostEventBatch> {
+    if (after === this.sequence) {
+      await new Promise<void>(resolve => {
+        const notify = () => {
+          clearTimeout(timer)
+          this.eventWaiters.delete(notify)
+          resolve()
+        }
+        const timer = setTimeout(notify, 25_000)
+        this.eventWaiters.add(notify)
+      })
+    }
+    return this.read(after)
   }
 
   read(after: number): DesktopHostEventBatch {
