@@ -118,6 +118,7 @@ test.describe('Agent conversation regression', () => {
   let claudeChatTeam: CreatedTeam
   let codeTeam: CreatedTeam
   let codexCodeTeam: CreatedTeam
+  let deviceCodexTeam: CreatedTeam
   let deviceTeam: CreatedTeam
   let manualPipelineTeam: CreatedPipelineTeam
   let automaticPipelineTeam: CreatedPipelineTeam
@@ -992,6 +993,58 @@ test.describe('Agent conversation regression', () => {
     await expect(page.getByTestId('messages-container')).toContainText(reply)
   })
 
+  test('device Codex preserves the native question across a reload and accepts an answer', async ({
+    page,
+    request,
+  }) => {
+    const prompt = makeContextToken('device_codex_form')
+    const questionId = 'device_codex_choice'
+    const question = 'Continue this device conversation?'
+    const reply = `Codex resumed device turn ${prompt}`
+    await configureToolScenario(request, prompt, [
+      {
+        toolCalls: [
+          {
+            toolName: 'request_user_input',
+            arguments: {
+              questions: [
+                {
+                  id: questionId,
+                  header: 'Device turn',
+                  question,
+                  options: [
+                    { label: 'Continue', description: 'Resume the current turn.' },
+                    { label: 'Stop', description: 'Finish without resuming.' },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { responseContent: reply },
+    ])
+    await openTaskPage(
+      page,
+      `/devices/chat?deviceId=${TRADITIONAL_DEVICE_ID}`,
+      deviceCodexTeam.id,
+      'task'
+    )
+    await expect(page.getByTestId('device-chat-target-select')).toHaveValue(TRADITIONAL_DEVICE_ID)
+    await sendMessage(page, prompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    const form = page.getByTestId('ask-user-form')
+    await expect(form).toContainText(question, { timeout: 30_000 })
+    await waitForBackendTerminal(request, taskId)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(form).toContainText(question, { timeout: 10_000 })
+    await page.getByTestId(`ask-user-option-${questionId}-0`).click()
+    await form.getByTestId('ask-user-submit').click()
+    await expect(page.getByTestId('messages-container')).toContainText(reply, { timeout: 30_000 })
+    await waitForBackendTerminal(request, taskId)
+  })
+
   test('traditional executor Responses stream completes and inherits its device', async ({
     request,
   }) => {
@@ -1787,6 +1840,13 @@ test.describe('Agent conversation regression', () => {
       bindMode: ['task'],
       modelName: DEVICE_CLAUDE_MODEL_NAME,
     })
+    deviceCodexTeam = await createTeam(request, {
+      teamName: `${TEST_PREFIX}-device-codex-team`,
+      botName: `${TEST_PREFIX}-device-codex-bot`,
+      shellName: CODEX_SHELL_NAME,
+      bindMode: ['task'],
+      modelName: CODEX_MODEL_NAME,
+    })
     manualPipelineTeam = await createPipelineTeam(request, {
       teamName: `${TEST_PREFIX}-manual-pipeline-team`,
       stageOneBotName: `${TEST_PREFIX}-manual-stage-one-bot`,
@@ -2050,6 +2110,7 @@ test.describe('Agent conversation regression', () => {
       automaticPipelineTeam,
       manualPipelineTeam,
       deviceTeam,
+      deviceCodexTeam,
       codexCodeTeam,
       codeTeam,
       claudeChatTeam,
