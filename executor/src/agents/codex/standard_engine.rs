@@ -8,10 +8,14 @@ use std::{
     future::{ready, Future, Ready},
     pin::Pin,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc};
+use tokio::{
+    sync::{broadcast, mpsc, oneshot},
+    time::{sleep_until, Instant},
+};
 
 use crate::{
     agent_session,
@@ -26,6 +30,7 @@ use crate::{
 };
 
 use super::{
+    elicitation::FORM_TIMEOUT,
     mcp_form::{deferred_form, form_item},
     resolve_codex_binary, run_codex_app_server_turn_with_cancel, CodexAppServerTurn,
     CodexAppServerTurnOptions, CodexNotification,
@@ -93,12 +98,15 @@ struct SuspendedTurn {
     request: ExecutionRequest,
     builder: ResponsesEventBuilder,
     interaction: Interaction,
+    _expiry_guard: oneshot::Sender<()>,
 }
 
 struct Interaction {
     tool_use_id: String,
     question_ids: Vec<String>,
     request_id: Value,
+    deadline: Instant,
+    expires_at_unix_ms: u64,
 }
 
 enum TurnProgress {
@@ -178,23 +186,66 @@ impl CodexAppServerEngine {
                     "codex task waiting for user input",
                     &task_fields(&request.task_id, &request.subtask_id),
                 );
-                self.pending
-                    .lock()
-                    .map_err(|_| "Codex interaction state unavailable")?
-                    .insert(
-                        request.task_id.clone(),
-                        PendingTurn::Native(SuspendedTurn {
-                            turn: Box::new(turn),
-                            request,
-                            builder,
-                            interaction,
-                        }),
-                    );
+                self.suspend(turn, request, builder, interaction)?;
                 Ok(ExecutionOutcome::WaitingForUserInput {
                     stop_reason: "tool_deferred".to_owned(),
                 })
             }
         }
+    }
+
+    fn suspend(
+        &self,
+        turn: LiveTurn,
+        request: ExecutionRequest,
+        builder: ResponsesEventBuilder,
+        interaction: Interaction,
+    ) -> Result<(), String> {
+        let task_id = request.task_id.clone();
+        let subtask_id = request.subtask_id.clone();
+        let tool_use_id = interaction.tool_use_id.clone();
+        let deadline = interaction.deadline;
+        let (expiry_guard, finished) = oneshot::channel();
+        self.pending
+            .lock()
+            .map_err(|_| "Codex interaction state unavailable")?
+            .insert(
+                task_id.clone(),
+                PendingTurn::Native(SuspendedTurn {
+                    turn: Box::new(turn),
+                    request,
+                    builder,
+                    interaction,
+                    _expiry_guard: expiry_guard,
+                }),
+            );
+
+        // A suspended future is not polled, so its own RPC timeouts cannot
+        // release the process or Home lease when nobody answers.
+        let pending = Arc::downgrade(&self.pending);
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = finished => return,
+                _ = sleep_until(deadline) => {}
+            }
+            let Some(pending) = pending.upgrade() else {
+                return;
+            };
+            let Ok(mut pending) = pending.lock() else {
+                return;
+            };
+            if matches!(pending.get(&task_id), Some(PendingTurn::Native(turn))
+                if turn.interaction.tool_use_id == tool_use_id)
+            {
+                pending.remove(&task_id);
+                drop(pending);
+                log_executor_event(
+                    "codex task user input expired",
+                    &task_fields(&task_id, &subtask_id),
+                );
+            }
+        });
+        Ok(())
     }
 
     fn start_or_resume(&self, request: &mut ExecutionRequest) -> Result<LiveTurn, String> {
@@ -207,6 +258,11 @@ impl CodexAppServerEngine {
             .pending
             .lock()
             .map_err(|_| "Codex interaction state unavailable")?;
+        if matches!(pending.get(&request.task_id), Some(PendingTurn::Native(turn))
+            if turn.interaction.deadline <= Instant::now())
+        {
+            pending.remove(&request.task_id);
+        }
         if let Some(answer) = answer {
             let suspended = pending
                 .get(&request.task_id)
@@ -429,10 +485,24 @@ impl LiveTurn {
                         &input,
                     ))
                     .await?;
-                    sink.send(builder.response_function_call_done(
-                        &pending.tool_use_id, "interactive_form_question", &input,
-                        Some(r#"{"__deferred_user_input__":true,"success":true,"status":"waiting_for_user_response"}"#), false,
-                    )).await?;
+                    sink.send(
+                        builder.response_function_call_done(
+                            &pending.tool_use_id,
+                            "interactive_form_question",
+                            &input,
+                            Some(
+                                &json!({
+                                    "__deferred_user_input__": true,
+                                    "success": true,
+                                    "status": "waiting_for_user_response",
+                                    "expires_at_unix_ms": pending.expires_at_unix_ms,
+                                })
+                                .to_string(),
+                            ),
+                            false,
+                        ),
+                    )
+                    .await?;
                     interaction = Some(pending);
                     continue;
                 }
@@ -505,11 +575,21 @@ impl Interaction {
             }));
             question_ids.push(id.to_owned());
         }
+        let now_ms = super::current_epoch_millis() as u64;
+        let expires_at_unix_ms = payload["expiresAtUnixMs"]
+            .as_u64()
+            .unwrap_or_else(|| now_ms + FORM_TIMEOUT.as_millis() as u64);
+        let remaining = Duration::from_millis(expires_at_unix_ms.saturating_sub(now_ms));
+        let deadline = Instant::now()
+            .checked_add(remaining)
+            .ok_or("Codex interaction deadline is out of range")?;
         Ok((
             Self {
                 tool_use_id: format!("codex-interaction-{}", uuid::Uuid::new_v4()),
                 question_ids,
                 request_id,
+                deadline,
+                expires_at_unix_ms,
             },
             json!({"questions": questions}),
         ))

@@ -2499,6 +2499,29 @@ test.describe('Agent conversation regression', () => {
     if (runtime === 'Codex') {
       const form = page.getByTestId('ask-user-form')
       await expect(form).toContainText(question, { timeout: RESPONSE_TIMEOUT_MS })
+      await expect
+        .poll(
+          async () => {
+            const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+              headers: authHeaders(),
+            })
+            expect(response.status()).toBe(200)
+            const { subtasks } = (await response.json()) as {
+              subtasks: Array<{
+                result?: { blocks?: Array<{ tool_name?: string; tool_output?: unknown }> }
+              }>
+            }
+            const output = subtasks
+              .at(-1)
+              ?.result?.blocks?.find(
+                block => block.tool_name === 'interactive_form_question'
+              )?.tool_output
+            const result = typeof output === 'string' ? JSON.parse(output) : output
+            return result?.expires_at_unix_ms ?? 0
+          },
+          { timeout: 8000, message: 'The Codex form must keep its deadline in task history' }
+        )
+        .toBeGreaterThan(Date.now())
       await page.getByTestId(`ask-user-option-${questionId}-0`).click()
       await page.getByTestId('ask-user-submit').click()
     }
