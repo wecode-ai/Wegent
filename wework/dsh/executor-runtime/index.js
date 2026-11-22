@@ -13,6 +13,15 @@ export const inject = ['webServer', 'sessions', 'weworkRequestSecurity']
 
 const BASE_PATH = '/wework/executor/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
+const RPC_BODY_TIMEOUT_MS = 15_000
+const HTTP_ERROR_STATUS = new Map([
+  ['invalid_json', 400],
+  ['invalid_params', 400],
+  ['body_timeout', 408],
+  ['event_history_lost', 409],
+  ['request_too_large', 413],
+])
+const archivesByClient = new WeakMap()
 const MAX_EVENT_FRAME_BYTES = 16 * 1024 * 1024
 const SLOW_CONSUMER_TIMEOUT_MS = 30_000
 const TRANSCRIPT_EXPORT_TIMEOUT_MS = 10 * 60 * 1000
@@ -285,6 +294,26 @@ export async function handleExecutorRpc(req, res, client) {
   const startedAt = Date.now()
   let requestId = requestIdFromRequest(req)
   let method = '<invalid>'
+  let stage = 'read_body'
+  const declaredBytes = Number(singleHeader(req.headers['content-length']))
+  const diagnostic = (event, details = {}) =>
+    console.info(
+      '[wework-executor-runtime] RPC diagnostic ' +
+        JSON.stringify({
+          requestId,
+          method,
+          stage,
+          event,
+          elapsedMs: Date.now() - startedAt,
+          ...(Number.isSafeInteger(declaredBytes) ? { bodyBytes: declaredBytes } : {}),
+          ...details,
+        })
+    )
+  const rejectHttp = error => {
+    const socket = res.socket ?? req.socket
+    socket?.once?.('close', hadError => diagnostic('connection_closed', { hadError }))
+    sendError(res, error, requestId)
+  }
   const controller = new AbortController()
   const disconnect = () => {
     if (!res.writableEnded) controller.abort()
@@ -292,22 +321,43 @@ export async function handleExecutorRpc(req, res, client) {
   req.once('aborted', disconnect)
   res.once('close', disconnect)
   res.once('error', disconnect)
+  const bodyTimer = setTimeout(() => {
+    diagnostic('body_timeout')
+    if (!res.headersSent && !res.destroyed) {
+      observeRpcResponse(res, requestId, method, startedAt, diagnostic)
+      rejectHttp(new ExecutorRuntimeError('body_timeout', 'Request body timed out'))
+    }
+  }, RPC_BODY_TIMEOUT_MS)
+  bodyTimer.unref()
+  diagnostic('received')
   try {
     const body = await readJsonBody(req)
+    clearTimeout(bodyTimer)
+    if (res.writableEnded || res.destroyed) return
+    if (controller.signal.aborted) {
+      res.destroy()
+      return
+    }
     if (!isRecord(body) || typeof body.method !== 'string' || !isRecord(body.params)) {
       throw new ExecutorRuntimeError('invalid_params', 'Request must contain method and params')
     }
     requestId = requestId ?? requestIdFromBody(body) ?? randomUUID()
     method = body.method
+    stage = 'executor'
     console.info('[wework-executor-runtime] RPC request started', {
       request_id: requestId,
       method,
     })
-    observeRpcResponse(res, requestId, method, startedAt)
+    observeRpcResponse(res, requestId, method, startedAt, diagnostic)
     if (req.aborted || res.destroyed) controller.abort()
-    const result = await client.request(body.method, body.params, undefined, requestId, {
-      ...(isCancellableRuntimeRead(method) ? { signal: controller.signal } : {}),
-    })
+    const execute = () =>
+      client.request(method, body.params, undefined, requestId, {
+        ...(isCancellableRuntimeRead(method) ? { signal: controller.signal } : {}),
+      })
+    const result =
+      method === 'runtime.tasks.archive'
+        ? await coalesceArchive(client, body.params, execute, diagnostic)
+        : await execute()
     console.info('[wework-executor-runtime] RPC request finished', {
       request_id: requestId,
       method,
@@ -316,6 +366,8 @@ export async function handleExecutorRpc(req, res, client) {
     })
     if (!res.destroyed && !controller.signal.aborted) {
       sendJson(res, 200, { ok: true, result: result ?? null }, false, requestId)
+    } else if (!res.destroyed && !res.writableEnded) {
+      res.destroy()
     }
   } catch (error) {
     requestId ??= randomUUID()
@@ -326,15 +378,58 @@ export async function handleExecutorRpc(req, res, client) {
       elapsed_ms: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
     })
-    if (!res.destroyed && !controller.signal.aborted) sendError(res, error, requestId)
+    diagnostic('failed', {
+      code: error instanceof ExecutorRuntimeError ? error.code : 'runtime_failed',
+      requestAborted: req.aborted === true,
+      responseDestroyed: res.destroyed === true,
+    })
+    if (!res.destroyed && !res.writableEnded) {
+      if (res.headersSent) res.destroy()
+      else {
+        if (stage === 'read_body') observeRpcResponse(res, requestId, method, startedAt, diagnostic)
+        rejectHttp(error)
+      }
+    }
   } finally {
+    clearTimeout(bodyTimer)
     req.off('aborted', disconnect)
     res.off('close', disconnect)
     res.off('error', disconnect)
   }
 }
 
-function observeRpcResponse(res, requestId, method, startedAt) {
+async function coalesceArchive(client, params, execute, diagnostic) {
+  const address = isRecord(params.address) ? params.address : params
+  const taskId = params.taskId ?? params.task_id ?? address.taskId ?? address.task_id
+  if (typeof taskId !== 'string' || !taskId) return execute()
+  let inFlight = archivesByClient.get(client)
+  if (!inFlight) {
+    inFlight = new Map()
+    archivesByClient.set(client, inFlight)
+  }
+  const key = JSON.stringify([
+    taskId,
+    params.workspacePath ??
+      params.workspace_path ??
+      address.workspacePath ??
+      address.workspace_path,
+    params.cleanupWorktree === true,
+  ])
+  const previous = inFlight.get(key)
+  if (previous) {
+    diagnostic('archive_coalesced')
+    return previous
+  }
+  const pending = Promise.resolve().then(execute)
+  inFlight.set(key, pending)
+  try {
+    return await pending
+  } finally {
+    inFlight.delete(key)
+  }
+}
+
+function observeRpcResponse(res, requestId, method, startedAt, diagnostic) {
   const finish = () => complete('finished')
   const close = () => complete('closed')
   function complete(event) {
@@ -350,6 +445,7 @@ function observeRpcResponse(res, requestId, method, startedAt) {
       writable_finished: res.writableFinished,
       destroyed: res.destroyed,
     })
+    diagnostic('response_' + event, { status: res.statusCode, headersSent: res.headersSent })
   }
   res.once('finish', finish)
   res.once('close', close)
@@ -364,7 +460,11 @@ export async function handleExecutorEvents(
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   const after = eventCursor(req)
   const replayExisting = shouldReplayExistingEvents(req)
+  const requestId = requestIdFromRequest(req) ?? randomUUID()
+  const startedAt = Date.now()
   let active = true
+  let termination = 'upstream_ended'
+  let errorCode
   let eventStream = null
   let source = null
   const disconnect = () => {
@@ -373,9 +473,13 @@ export async function handleExecutorEvents(
     source?.destroy()
     eventStream?.stop()
   }
-  req.once('aborted', disconnect)
-  res.once('close', disconnect)
-  res.once('error', disconnect)
+  const downstreamClosed = () => {
+    if (!res.writableEnded) termination = 'client_disconnected'
+    disconnect()
+  }
+  req.once('aborted', downstreamClosed)
+  res.once('close', downstreamClosed)
+  res.once('error', downstreamClosed)
   try {
     eventStream = createEventStream({
       afterSequence: after,
@@ -389,21 +493,42 @@ export async function handleExecutorEvents(
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-store',
       connection: 'keep-alive',
+      'x-request-id': requestId,
     })
+    res.flushHeaders?.()
     await pipeline(
       source,
       new NdjsonSseTransform(),
       new SseResponseSink(res, options.slowConsumerTimeoutMs ?? SLOW_CONSUMER_TIMEOUT_MS)
     )
   } catch (error) {
+    if (termination !== 'client_disconnected') {
+      termination = 'stream_failed'
+      errorCode =
+        typeof error?.code === 'string' && /^[a-zA-Z0-9_]{1,64}$/.test(error.code)
+          ? error.code
+          : 'event_stream_failed'
+    }
     disconnect()
-    if (!res.headersSent) sendError(res, error)
-    else if (!res.writableEnded && !res.destroyed) res.end()
+    if (!res.writableEnded && !res.destroyed) {
+      if (!res.headersSent) sendError(res, error, requestId)
+      else res.destroy()
+    }
   } finally {
     eventStream?.stop()
-    req.off('aborted', disconnect)
-    res.off('close', disconnect)
-    res.off('error', disconnect)
+    req.off('aborted', downstreamClosed)
+    res.off('close', downstreamClosed)
+    res.off('error', downstreamClosed)
+    console.info(
+      '[wework-executor-runtime] SSE disconnected ' +
+        JSON.stringify({
+          requestId,
+          reason: termination,
+          ...(errorCode ? { code: errorCode } : {}),
+          elapsedMs: Date.now() - startedAt,
+          headersSent: res.headersSent,
+        })
+    )
   }
 }
 
@@ -510,7 +635,7 @@ class SseResponseSink extends Writable {
 async function readJsonBody(req) {
   let bytes = 0
   const chunks = []
-  for await (const chunk of req) {
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     bytes += buffer.byteLength
     if (bytes > MAX_REQUEST_BODY_BYTES) {
@@ -527,14 +652,8 @@ async function readJsonBody(req) {
 
 function sendError(res, error, requestId) {
   const body = errorBody(error)
-  const status = ['invalid_json', 'invalid_params', 'request_too_large'].includes(body.error.code)
-    ? 400
-    : body.error.code === 'event_history_lost'
-      ? 409
-      : body.error.retryable
-        ? 503
-        : 500
-  sendJson(res, status, body, false, requestId)
+  const status = HTTP_ERROR_STATUS.get(body.error.code) ?? (body.error.retryable ? 503 : 500)
+  sendJson(res, status, body, false, requestId, { connection: 'close' })
 }
 
 function errorBody(error) {
@@ -557,13 +676,14 @@ function errorBody(error) {
   }
 }
 
-function sendJson(res, status, value, head = false, requestId) {
+function sendJson(res, status, value, head = false, requestId, headers = {}) {
   const body = JSON.stringify(value)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'content-length': Buffer.byteLength(body),
     ...(requestId ? { 'x-request-id': requestId } : {}),
+    ...headers,
   })
   res.end(head ? undefined : body)
 }

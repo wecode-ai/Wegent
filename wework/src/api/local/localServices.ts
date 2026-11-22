@@ -162,6 +162,7 @@ import type {
   AutomationSource,
 } from '@/types/automation'
 import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
+import type { DshExecutorRequestOptions } from '@/api/dsh/executorTransport'
 import {
   getLocalExecutorStatus,
   ensureLocalExecutorAvailable,
@@ -342,7 +343,7 @@ type LocalExecutorRequest = <T>(
   method: string,
   params?: Record<string, unknown>,
   deviceId?: string,
-  options?: { signal?: AbortSignal }
+  options?: DshExecutorRequestOptions
 ) => Promise<T>
 type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
@@ -1240,7 +1241,8 @@ async function buildLocalRuntimeExecutionRequest(
 
 type RequestWithLocalDevice = <TResponse, TRequest extends object>(
   method: string,
-  data: TRequest
+  data: TRequest,
+  options?: DshExecutorRequestOptions
 ) => Promise<TResponse>
 
 async function executeLocalDeviceCommand(
@@ -1253,11 +1255,13 @@ async function executeLocalDeviceCommand(
     timeout_seconds?: number
     max_output_bytes?: number
   },
-  fallback: string
+  fallback: string,
+  requestOptions?: DshExecutorRequestOptions
 ): Promise<DeviceCommandResponse> {
   const response = await requestWithLocalDevice<DeviceCommandResponse, typeof data>(
     'device.execute_command',
-    { deviceId: LOCAL_DEVICE_ID, ...data }
+    { deviceId: LOCAL_DEVICE_ID, ...data },
+    requestOptions
   )
   assertCommandSuccess(response, fallback)
   return response
@@ -1314,7 +1318,8 @@ async function prepareLocalRuntimeWorkspace(
       args: [sourceWorkspacePath],
       timeout_seconds: 15,
     },
-    'Project directory is not a Git repository'
+    'Project directory is not a Git repository',
+    { priority: 'foreground' }
   )
   if (commandText(gitCheck) !== 'true') {
     throw new Error('Project directory is not a Git repository')
@@ -1360,9 +1365,11 @@ async function resolveLocalRuntimeTaskWorkspace(
     Boolean(resolvedData.workspaceSourceTask)
   let runtimeWork: RuntimeWorkListResponse | null = null
   if (needsRuntimeWork) {
+    // Workspace resolution is on the critical path of a user-initiated execution.
     const response = await requestWithLocalDevice<unknown, Record<string, never>>(
       'runtime.tasks.list',
-      {}
+      {},
+      { priority: 'foreground' }
     )
     runtimeWork = adaptListResponse(response, localDeviceId)
   }
@@ -1969,12 +1976,7 @@ function adaptRuntimeWorkListResponse(
 }
 
 export function createRuntimeWorkApiFromIpc(
-  request: <T>(
-    method: string,
-    params?: Record<string, unknown>,
-    deviceId?: string,
-    options?: { signal?: AbortSignal }
-  ) => Promise<T>,
+  request: LocalExecutorRequest,
   getDefaultDeviceId: () => Promise<string>,
   options: RuntimeWorkIpcOptions = {}
 ) {
@@ -1988,6 +1990,7 @@ export function createRuntimeWorkApiFromIpc(
   const modelCatalogSyncInFlight = new Map<string, Promise<boolean>>()
   const modelCatalogSyncQueues = new Map<string, Promise<void>>()
   const creationProfileSyncs = new Map<string, Promise<void>>()
+  const archivesInFlight = new Map<string, Promise<RuntimeTaskArchiveResponse>>()
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
@@ -1999,7 +2002,7 @@ export function createRuntimeWorkApiFromIpc(
   const requestWithLocalDevice = async <TResponse, TRequest extends object>(
     method: string,
     data: TRequest,
-    requestOptions?: { signal?: AbortSignal }
+    requestOptions?: DshExecutorRequestOptions
   ): Promise<TResponse> => {
     const normalizedData = await normalizeRequest(data)
     const deviceId = await resolveDeviceId(normalizedData)
@@ -2246,6 +2249,24 @@ export function createRuntimeWorkApiFromIpc(
     }
   }
 
+  const archiveConversation = async ({
+    deviceId,
+    taskId,
+    workspacePath,
+    cleanupWorktree = false,
+  }: RuntimeTaskArchiveRequest): Promise<RuntimeTaskArchiveResponse> => {
+    // The executor uses its stored task link. A runtime handle may contain transcript history.
+    const owner = await resolveDeviceId({ deviceId })
+    const key = JSON.stringify([owner, taskId, cleanupWorktree])
+    const pending = archivesInFlight.get(key)
+    if (pending) return pending
+    const archive = requestWithLocalDevice<RuntimeTaskArchiveResponse, RuntimeTaskArchiveRequest>(
+      'runtime.tasks.archive',
+      { deviceId: owner, taskId, workspacePath, cleanupWorktree }
+    ).finally(() => archivesInFlight.delete(key))
+    archivesInFlight.set(key, archive)
+    return archive
+  }
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
     await options.prepareLocalModelCatalog?.()
     if (!(await prepareConfiguredRuntimeModel(data))) return false
@@ -2823,7 +2844,7 @@ export function createRuntimeWorkApiFromIpc(
       return Promise.resolve({ address, subscribed: false, sessionKeys: [] })
     },
     archiveRuntimeTask(data: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
-      return requestWithLocalDevice('runtime.tasks.archive', data)
+      return archiveConversation(data)
     },
     renameRuntimeTask(data: RuntimeTaskRenameRequest): Promise<RuntimeTaskArchiveResponse> {
       return requestWithLocalDevice('runtime.tasks.rename', data)
@@ -2833,9 +2854,7 @@ export function createRuntimeWorkApiFromIpc(
     ): Promise<ArchivedConversationsListResponse> {
       return requestWithLocalDevice('runtime.archived_conversations.list', data)
     },
-    archiveConversation(data: RuntimeTaskArchiveRequest): Promise<RuntimeTaskArchiveResponse> {
-      return requestWithLocalDevice('runtime.tasks.archive', data)
-    },
+    archiveConversation,
     archiveProjectConversations(
       data: RuntimeArchiveProjectConversationsRequest
     ): Promise<RuntimeArchivedConversationBulkResponse> {
@@ -3677,8 +3696,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return { models: catalog.models, catalog_error: catalog.errors?.join(', ') || null }
     }
   )
-  const assignmentRequestWithLocalDevice: RequestWithLocalDevice = (method, data) =>
-    request(method, data as Record<string, unknown>)
+  const assignmentRequestWithLocalDevice: RequestWithLocalDevice = (method, data, options) =>
+    options
+      ? request(method, data as Record<string, unknown>, undefined, options)
+      : request(method, data as Record<string, unknown>)
   const assignmentModels = (agent: LocalProjectChatAgent) => {
     const configured =
       (agent.allowedModels?.length ?? 0) > 0

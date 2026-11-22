@@ -1,4 +1,5 @@
-import { scheduleDshRequest, executorRequestPriority } from './backgroundRequests'
+import { dshRpcTimeoutMs, scheduleDshRequest, executorRequestPriority } from './backgroundRequests'
+import { createRequestId } from '@/lib/request-id'
 import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
 
 export interface DesktopHostErrorPayload {
@@ -61,19 +62,28 @@ export function invokeDesktopHost<Result>(
   capability: string,
   params: Record<string, unknown> = {}
 ): Promise<Result> {
-  return scheduleDshRequest(
+  const requestId = createRequestId('wework-host')
+  const priority =
     capability === 'modelConfiguration.requestRuntime'
       ? executorRequestPriority(String(params.method), {})
       : BACKGROUND_HOST_CAPABILITIES.has(capability)
         ? 'background'
-        : 'foreground',
-    () => performDesktopHostRequest<Result>(capability, params)
+        : 'foreground'
+  return scheduleDshRequest(
+    priority,
+    () =>
+      performDesktopHostRequest<Result>(capability, params, requestId, priority === 'background'),
+    undefined,
+    undefined,
+    { requestId, method: capability }
   )
 }
 
 async function performDesktopHostRequest<Result>(
   capability: string,
-  params: Record<string, unknown> = {}
+  params: Record<string, unknown>,
+  requestId: string,
+  background: boolean
 ): Promise<Result> {
   const startedAt = performance.now()
   const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
@@ -89,11 +99,16 @@ async function performDesktopHostRequest<Result>(
     )
   }
   const pendingDiagnostic = e2e ? setTimeout(() => diagnostic('pending'), 1_000) : undefined
-  const attachmentRequest = capability.startsWith('attachment.')
-  const abortController = attachmentRequest ? new AbortController() : undefined
-  const requestTimeout = abortController
-    ? setTimeout(() => abortController.abort(), ATTACHMENT_REQUEST_TIMEOUT_MS)
-    : undefined
+  const timeoutMs = capability.startsWith('attachment.')
+    ? ATTACHMENT_REQUEST_TIMEOUT_MS
+    : capability === 'modelConfiguration.requestRuntime'
+      ? dshRpcTimeoutMs(String(params.method))
+      : background
+        ? 30_000
+        : 120_000
+  const deadline = new AbortController()
+  const requestTimeout = setTimeout(() => deadline.abort(), timeoutMs)
+  const signal = deadline.signal
   try {
     let response: Response
     try {
@@ -101,7 +116,7 @@ async function performDesktopHostRequest<Result>(
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ capability, params }),
-        ...(abortController ? { signal: abortController.signal } : {}),
+        signal,
       })
     } catch (error) {
       throw new DesktopHostTransportError(
@@ -148,9 +163,17 @@ async function performDesktopHostRequest<Result>(
           () => new DesktopHostTransportError('Electron host response was interrupted')
         )
       : result
+  } catch (error) {
+    if (signal.aborted) {
+      console.warn(
+        '[Wework] Executor transport diagnostic ' +
+          JSON.stringify({ requestId, method: capability, stage: 'deadline_exceeded', timeoutMs })
+      )
+    }
+    throw error
   } finally {
     if (pendingDiagnostic !== undefined) clearTimeout(pendingDiagnostic)
-    if (requestTimeout !== undefined) clearTimeout(requestTimeout)
+    clearTimeout(requestTimeout)
   }
 }
 
