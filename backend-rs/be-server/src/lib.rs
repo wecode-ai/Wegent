@@ -78,23 +78,9 @@ pub use startup::redis::cache_client as build_cache_client;
 pub use state::AppState;
 pub use workspace_archive::archive_task_workspace;
 
-mod admin_connector_apps;
-mod admin_im_channels;
-mod admin_im_channels_status;
-mod admin_marketplace_tags;
-mod admin_public_ghosts;
-mod admin_public_models;
-mod admin_public_retrievers;
-mod admin_public_shells;
-mod admin_service_keys;
-mod admin_subscription_monitor_errors;
-mod admin_system_config_slogan_tips;
-mod api_keys;
 mod api_v1_wework_notifications_probe;
 mod application;
-mod apps_installed;
 use wegent_attachments as attachments;
-use wegent_attachments::attachment_block;
 mod attachment_access;
 #[cfg(test)]
 mod attachment_route_tests;
@@ -102,28 +88,23 @@ use wegent_attachments::attachments_task_all;
 pub use wegent_identity::auth;
 mod authenticate;
 pub mod background_jobs;
-mod board_snapshot;
 pub use wegent_celery as celery_broker;
-mod chat_attachment_text;
+pub(crate) use wegent_project_coordination::board_snapshot;
 mod chat_guidance;
 mod chat_guidance_consume;
-mod chat_history;
-mod chat_history_checkpoint;
-mod chat_history_window;
-mod chat_message_update;
-mod chat_repository;
-mod chat_subtask_record;
 mod ci_lint_probe;
 pub mod cloud_device_deletion;
 mod cloud_projects;
 mod collaboration_templates;
 pub use wegent_backend_config as config;
-mod connector_runtime;
 mod conversion_callback;
 pub(crate) use wegent_resource_store::crd;
-mod decisions;
+#[cfg(test)]
+mod decision_route_tests;
 mod delivery_update;
-mod device_artifacts;
+#[cfg(test)]
+mod device_artifact_route_tests;
+#[cfg(test)]
 mod device_command;
 pub use wegent_devices::{device_commands, device_identity, devices, executor_version};
 pub(crate) use wegent_devices::{
@@ -131,10 +112,9 @@ pub(crate) use wegent_devices::{
 };
 mod device_records;
 mod device_runtime_owner;
-mod device_upgrade;
-mod dingtalk_wikispace;
-mod dsh_plugin_storage;
 mod executor_binding;
+#[cfg(test)]
+mod knowledge_external_route_tests;
 mod runtime_observations;
 pub use wegent_directory::erp_provider;
 pub use wegent_directory::erp_types;
@@ -149,8 +129,8 @@ pub use wegent_network_policy::http_trust;
 mod hybrid;
 mod im_private_sessions;
 mod im_stand_in_bindings;
+#[cfg(test)]
 mod incoming_hooks;
-mod internal_api_keys;
 pub(crate) use wegent_identity::internal_auth;
 mod internal_callback;
 mod internal_conversion_callback;
@@ -164,33 +144,36 @@ pub use wegent_knowledge_access::download_policy as knowledge_download_policy;
 mod knowledge_dispatch;
 #[cfg(test)]
 mod knowledge_route_tests;
-pub mod llm_proxy;
+pub use wegent_llm_proxy as llm_proxy;
+#[cfg(test)]
+mod llm_proxy_cors_tests;
 mod local_project_import;
-mod loop_item_attachments;
 pub(crate) use wegent_project_coordination::{
     delivery_storage, loop_item_executions, loop_item_pages, loop_node_storage,
 };
 mod loop_tasks;
-mod market_subscriptions;
-mod marketplace_tags;
 mod mcp;
 mod milestones;
 mod personal_issues;
 mod project_coordination;
+mod project_group_roles;
+#[cfg(test)]
+mod project_read_route_ownership_tests;
 pub use wegent_task_store::task_store_background;
 pub use wegent_task_store::task_store_maintenance;
 
 pub use mcp::interactive_form_question::{
     InteractiveFormQuestionNormalizer, InteractiveFormRegistry,
 };
-pub use mcp::knowledge_external::auth::{
+pub use wegent_knowledge_access::auth::{
     ExternalKnowledgeAuth, ExternalKnowledgeUser, PersonalApiKeyAuth,
 };
 #[cfg(test)]
 mod app_test_support;
 mod mcp_identity;
+#[cfg(test)]
+pub(crate) use wegent_mcp_providers::user_mcp_oauth;
 pub use wegent_mcp_providers::{mcp_provider_registry, mcp_providers};
-pub(crate) use wegent_mcp_providers::{mcp_user_service, user_mcp_oauth};
 pub use wegent_media::media_policy;
 mod method_call_anon;
 mod method_login;
@@ -203,41 +186,23 @@ pub use wegent_access::permissions;
 pub use wegent_oidc::oidc_callback;
 pub use wegent_oidc::oidc_service;
 mod pet;
-mod plugin_account_auth;
 mod plugins_capabilities_probe;
-mod plugins_installed;
-use wegent_plugin_catalog::plugins_marketplace;
-mod projects;
-pub(crate) use wegent_execution_preparation::provider_guidance;
 mod quota;
 pub(crate) use wegent_git_repositories::repository_tokens;
 use wegent_remote_workspace::remote_workspace_status;
 use wegent_remote_workspace::remote_workspace_tree;
-mod resource_library_listings;
-mod resource_library_tags;
 mod resource_library_team_icons;
 pub(crate) use wegent_resource_store::resource_refs;
 mod responses;
 use wegent_runtime_check as runtime_check;
 mod runtime_model_auth;
-mod runtime_profiles;
-mod runtime_transcript_search;
 mod runtime_work;
-mod runtime_work_im_notification_sessions;
-mod runtime_work_im_notifications;
-mod runtime_work_projection;
-mod runtime_work_transcript;
-mod runtime_work_transcript_access;
-mod runtime_work_transcript_request;
-mod runtime_work_transcript_response;
 mod sessions;
-mod shells_unified;
 mod shutdown_state;
 pub(crate) use wegent_sites::sites;
-pub mod skill_market;
-mod skills;
-mod smart_apps_download;
-mod smart_apps_marketplace;
+pub use wegent_skill_market as skill_market;
+#[cfg(test)]
+mod skill_market_route_tests;
 mod snapshots;
 pub mod socketio;
 pub(crate) use wegent_backend_persistence::sql_support;
@@ -248,33 +213,27 @@ pub use wegent_socket_events::socketio_rpc;
 mod startup;
 mod state;
 mod stripe_webhook_probe;
-mod subscription_developer_settings;
-mod subscription_executions;
-mod subscriptions_item;
 
-pub use subscriptions_item::crypto::decrypt_sensitive_data;
-mod subscriptions_list;
-pub use subscriptions_item::random_token_urlsafe;
-pub use subscriptions_list::workspaces as subscription_workspaces;
 /// Caller-owned SQL handle for one request-scoped transaction.
 pub use wegent_backend_persistence::request_sql;
-mod share_access;
-mod subtasks;
+pub use wegent_identity::random_token_urlsafe;
+pub use wegent_identity::sensitive_data::decrypt_sensitive_data;
+pub use wegent_task_store::subscription_workspaces;
+#[cfg(test)]
+mod subscription_route_ownership_tests;
 mod system_execute_sql_for_single;
-mod tables;
-pub use wegent_task_store::task_creation;
-mod task_detail_api;
 pub use wegent_task_export_docx as task_export_docx;
-mod task_mutation_api;
+pub use wegent_task_store::task_creation;
+#[cfg(test)]
+mod task_mutation_route_ownership_tests;
 mod task_pipeline_stage_info;
 #[path = "task_pipeline_stage_info_repo.rs"]
 mod task_pipeline_stage_info_repo;
 pub mod task_routing;
-pub(crate) use wegent_protocol::chat_errors;
-mod chat_metrics;
-pub(crate) use wegent_execution_runtime::{task_run_metric_hooks, task_run_metrics};
-mod task_share_api;
+mod task_view_state;
 use wegent_capabilities::task_skills;
+pub(crate) use wegent_execution_runtime::task_run_metrics;
+pub(crate) use wegent_protocol::chat_errors;
 mod task_source_group;
 use wegent_identity::task_token;
 pub use wegent_task_store::message_pair;
@@ -300,33 +259,22 @@ pub use wegent_task_store::task_store_subtask_content;
 pub use wegent_task_store::task_store_subtask_writes;
 pub use wegent_task_store::task_store_tables;
 pub use wegent_task_store::task_store_traits;
-mod admin_marketplace_resources;
-mod admin_templates;
-mod git_connection_inbox;
 pub mod token_issuers;
 mod tokens_probe;
 pub(crate) use wegent_backend_persistence::transaction_outcome;
-mod url_metadata;
-mod url_metadata_extract;
-pub(crate) use wegent_network_policy::url_ssrf;
 mod user_git_accounts_sync_summary;
 mod user_login_probe;
 pub use wegent_backend_users::user_profile;
 use wegent_backend_users::users_features;
 use wegent_backend_users::users_me_proxy_config;
-pub use wegent_identity::user_reader;
-mod users_me_subscription_invitations;
 use wegent_backend_users::users_runtime_configs;
-mod v1_resources;
+pub use wegent_identity::user_reader;
 pub use wegent_media::video_result_urls;
-mod web_scraper;
-mod web_scraper_create_document;
+#[cfg(test)]
+mod web_content_route_tests;
 use wegent_identity::wework_auth_tokens;
 mod stand_in_issue_events;
-mod wework_notification_preferences;
-mod wework_notifications;
 mod wework_runtime_downloads;
-mod wiki_connections;
 mod work_queues;
 mod workspace_archive;
 
@@ -354,5 +302,7 @@ mod git_route_ownership_tests;
 mod plugin_publication_route_tests;
 #[cfg(test)]
 mod plugin_release_route_tests;
+#[cfg(test)]
+mod plugin_runtime_gateway_tests;
 #[cfg(test)]
 mod plugins_installed_download_route_tests;

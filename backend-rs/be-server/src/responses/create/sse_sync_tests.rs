@@ -15,6 +15,7 @@
 
 use std::time::Duration;
 
+use brz_http::Client as HttpClient;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -23,6 +24,11 @@ use super::*;
 use crate::executor_manager::ExecutorManager;
 use crate::internal_callback::completion::Tables;
 use crate::responses::create::dispatch::ExecutionRequest;
+use wegent_responses_streaming::{
+    sse_protocol::CANCEL_POLL_INTERVAL,
+    test_support::{poll_cancellation, poll_once},
+    transport::stream_request,
+};
 
 use crate::responses::test_mysql::{Gate, RecordingMysql, SUBTASK_ID, TASK_ID};
 

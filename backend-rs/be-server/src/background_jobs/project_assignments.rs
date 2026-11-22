@@ -4,6 +4,7 @@
 //! Assignment activity, legacy assignee projection and execution admission
 //! commit together. Repeated assignments retain the same active activity.
 
+use super::issues::{assignment_status_history, attribute_history, automation_actor};
 use super::{
     agents, authority, issues, notifications, profile,
     queue::{self, Admission},
@@ -20,12 +21,7 @@ use anyhow::{Context, Result};
 use brz_mysql::{FromMysqlRow, Json, MysqlTransaction};
 use chrono::Utc;
 use serde_json::{Value, json};
-
-pub(super) enum Target {
-    Human(i64),
-    Agent(Box<Node>),
-    Team(i64),
-}
+use wegent_project_scheduler::AssignmentTarget;
 
 pub(crate) async fn agent_admission(
     state: &AppState,
@@ -36,7 +32,7 @@ pub(crate) async fn agent_admission(
     instruction: &str,
     session_environment_id: Option<&str>,
 ) -> Result<Admission> {
-    authority::require(state, &issue.cloud_project_id, assigner).await?;
+    authority::require(&state.mysql, &issue.cloud_project_id, assigner).await?;
     let source = context["runtime_source"]
         .as_str()
         .unwrap_or("agent_default")
@@ -123,7 +119,7 @@ pub(crate) async fn agent_admission(
     let environment = if runtime == "wegent" {
         "wegent".into()
     } else if !device.is_empty() && !config["execution_policy"].is_object() {
-        profile::environment(state, owner, &device).await?
+        profile::environment(&state.mysql, owner, &device).await?
     } else {
         config["execution_environment"]
             .as_str()
@@ -180,18 +176,18 @@ pub(super) async fn assign(
     project: &Node,
     rule: &Node,
     run: &Node,
-    target: Target,
+    target: AssignmentTarget,
     mut context: Value,
     instruction: &str,
 ) -> Result<()> {
     let owner = rule.created_by_user_id;
     let automation = automation_actor(&context);
-    authority::require(state, &project.id, owner).await?;
-    let issue = issues::load(state, project, &run.task_id, owner).await?;
-    authority::require_issue(state, project, &issue, owner).await?;
+    authority::require(&state.mysql, &project.id, owner).await?;
+    let issue = issues::load(&state.project_issues(), project, &run.task_id, owner).await?;
+    authority::require_issue(&state.mysql, project, &issue, owner).await?;
     let (kind, id, name, admission, wake_user) = match target {
-        Target::Human(user) => {
-            authority::require(state, &project.id, user)
+        AssignmentTarget::Human(user) => {
+            authority::require(&state.mysql, &project.id, user)
                 .await
                 .context("Assignee is not a member of this Project")?;
             #[derive(FromMysqlRow)]
@@ -207,8 +203,8 @@ pub(super) async fn assign(
                 .await?;
             ("human", user.to_string(), row.user_name, None, 0)
         }
-        Target::Team(team_id) => {
-            let team = authority::team(state, &project.id, team_id).await?;
+        AssignmentTarget::Team(team_id) => {
+            let team = authority::team(&state.mysql, &project.id, team_id).await?;
             let mut admission = Admission {
                 owner,
                 assigner: owner,
@@ -225,8 +221,9 @@ pub(super) async fn assign(
             queue::prepare(state, &issue, &mut admission).await?;
             ("team", team_id.to_string(), team.name, Some(admission), 0)
         }
-        Target::Agent(agent) => {
-            let agent = authority::agent(state, &project.id, &agent.id, owner, false).await?;
+        AssignmentTarget::Agent(agent) => {
+            let agent =
+                authority::agent(&state.mysql, &project.id, &agent.id, owner, false).await?;
             if context.get("workspace_binding").is_none() {
                 context["runtime_source"] = json!("agent_default");
                 context["runtime_profile_id"] = Value::Null;
@@ -258,7 +255,16 @@ pub(super) async fn assign(
         project.metadata.0["task_provider"].as_str(),
         Some("github" | "gitlab")
     ) {
-        issues::assign_external(state, project, &issue, kind, &id, &name, owner).await?;
+        issues::assign_external(
+            &state.project_issues(),
+            project,
+            &issue,
+            kind,
+            &id,
+            &name,
+            owner,
+        )
+        .await?;
     }
     let notify = true;
     let trigger = if kind == "agent" {
@@ -278,17 +284,17 @@ pub(super) async fn assign(
         if !metadata["read_revisions"].is_object(){metadata["read_revisions"]=json!({})}metadata["read_revisions"][owner.to_string()]=json!(revision);
         let user=if kind=="human"{id.parse::<i64>().unwrap_or(0)}else{0};let team=if kind=="team"{id.parse::<i64>().unwrap_or(0)}else{0};let agent=if kind=="agent"{id.as_str()}else{""};
         let status=if kind!="human"&&issue.status!="completed"&&issue.status!="in_progress"&&has_status(project,"in_progress"){
-            status_history(&mut metadata,project,&issue.status,"in_progress",owner);attribute_history(&mut metadata, "status_history", &automation);"in_progress".to_owned()
+            assignment_status_history(&mut metadata,project,&issue.status,"in_progress",owner);attribute_history(&mut metadata, "status_history", &automation);"in_progress".to_owned()
         }else{issue.status.clone()};
         tx.execute("UPDATE loop_items SET assignee_user_id=?,assignee_team_id=?,assignee_agent_id=?,status=?,metadata=?,version=version+1,updated_by_user_id=?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",(user,team,agent,status.as_str(),Json(metadata.clone()),owner,issue.id.as_str())).await?;
         issue.status=status;issue.metadata=Json(metadata);issue.assignee_user_id=user;issue.assignee_team_id=team;issue.assignee_agent_id=agent.to_owned();
         let execution=if created&&issue.status!="completed" {if let Some(admission)=admission.as_ref(){
             let execution=queue::enqueue_on(tx,state,&issue,run,admission).await?;
-            match notifications::execution_on(tx,state,project,&issue,execution.id,admission.owner,&execution.status,"").await{Ok(Some(pending))=>notifications.push(pending),Ok(None)=>{},Err(error)=>tracing::error!(%error,"supplementary execution notification failed")}
+            match notifications::execution_on(tx,&state.mysql,project,&issue,execution.id,admission.owner,&execution.status,"").await{Ok(Some(pending))=>notifications.push(pending),Ok(None)=>{},Err(error)=>tracing::error!(%error,"supplementary execution notification failed")}
             Some(execution)
         }else{None}}else{None};
         if kind=="human" {
-            if notify&&created&&previous_user!=user && let Some(pending)=notifications::direct_human_on(tx,state,project,&issue,user,owner,&name,&assignment_id).await?{notifications.push(pending);}
+            if notify&&created&&previous_user!=user && let Some(pending)=notifications::direct_human_on(tx,&state.mysql,project,&issue,user,owner,&name,&assignment_id).await?{notifications.push(pending);}
             tx.execute("UPDATE loop_items SET status='succeeded',completed_at=UTC_TIMESTAMP(6),version=version+1,updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",(run.id.as_str(),)).await?;
         }else{
             let device_id=if let Some(execution)=execution{execution.device_id}else{
@@ -402,39 +408,6 @@ pub(crate) fn has_status(project: &Node, status: &str) -> bool {
             |values| values.iter().any(|value| value["id"] == status),
         )
 }
-pub(super) fn status_history(
-    metadata: &mut Value,
-    project: &Node,
-    previous: &str,
-    current: &str,
-    user: i64,
-) {
-    let mut history = metadata["status_history"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    history.push(json!({"from_status":previous,"from_status_name":issues::status_name(project,previous),"to_status":current,"to_status_name":issues::status_name(project,current),"trigger":"assignment","by_user_id":user,"at":Utc::now().to_rfc3339()}));
-    metadata["status_history"] = json!(history);
-}
-
-/// Keep the automation source distinct from the user used for authorization.
-pub(super) fn automation_actor(context: &Value) -> Value {
-    if !context["rule_id"].is_string() || !context["run_id"].is_string() {
-        return Value::Null;
-    }
-    json!({"rule_id":context["rule_id"],"rule_name":context.get("rule_name").filter(|v|v.as_str().is_some_and(|s|!s.is_empty())).unwrap_or(&context["rule_id"]),"run_id":context["run_id"]})
-}
-
-pub(super) fn attribute_history(metadata: &mut Value, key: &str, automation: &Value) {
-    if automation.is_object()
-        && let Some(last) = metadata[key]
-            .as_array_mut()
-            .and_then(|rows| rows.last_mut())
-    {
-        last["automation"] = automation.clone();
-    }
-}
-
 #[cfg(test)]
 mod attribution_tests {
     use super::*;

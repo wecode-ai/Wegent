@@ -523,7 +523,6 @@ async fn send_message(
                 pending.push(
                     notifications::create_on(
                         tx,
-                        state,
                         recipient,
                         user_id,
                         "mention",

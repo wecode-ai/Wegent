@@ -48,7 +48,7 @@ async fn loop_item_tasks(
         .await
         .map_err(HttpError::internal)?
         .ok_or_else(HttpError::todo_not_found)?;
-    super::item_access::require_item_access(state, &item, user_id).await?;
+    super::item_access::require_item_access(&state.mysql, &item, user_id).await?;
 
     // `list_task_bindings` rows.
     let bindings = LoopItemRepository::new(&state.mysql)

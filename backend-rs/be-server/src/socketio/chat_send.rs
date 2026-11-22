@@ -979,7 +979,8 @@ pub async fn handle(
     } else {
         "web"
     };
-    let mut observation = crate::chat_metrics::RequestObservation::new(entrypoint);
+    let mut observation =
+        wegent_execution_completion::chat_metrics::RequestObservation::new(entrypoint);
     let mut payload = match ChatSendPayload::parse(&data) {
         Ok(payload) => payload,
         Err(error) => {
@@ -1018,9 +1019,14 @@ pub async fn handle(
             Ok(refs) => refs,
             Err(message) => return Ok(Reply::payload(error_ack(message))),
         };
+    let knowledge_acl = wegent_execution_knowledge::knowledge::AclContextSource::new(
+        &state.mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
+    );
     let knowledge_contexts =
-        match crate::responses::create::kb_context_creation::resolve_chat_contexts(
-            state,
+        match wegent_execution_knowledge::kb_context_creation::resolve_chat_contexts(
+            &knowledge_acl,
             user_id,
             payload.context_items(),
         )
@@ -1053,8 +1059,8 @@ pub async fn handle(
     let row_ts = row_timestamp(now);
     let crd_ts = crd_timestamp(now);
     let initial_knowledge_base_refs =
-        match crate::responses::create::kb_context_creation::build_initial_task_knowledge_base_refs(
-            state,
+        match wegent_execution_knowledge::kb_context_creation::build_initial_task_knowledge_base_refs(
+            &knowledge_acl,
             (user_id, session.user_name()),
             payload
                 .knowledge_base_id
@@ -1435,8 +1441,8 @@ pub async fn handle(
             }
 
             if !knowledge_contexts.is_empty() {
-                crate::responses::create::kb_context_creation::link_chat_contexts(
-                    &mut *sql, state.task_store.as_ref(), &mut setup,
+                setup.task_json = wegent_execution_knowledge::kb_context_creation::link_chat_contexts(
+                    &mut *sql, state.task_store.as_ref(), (setup.task_id, setup.user_subtask_id),
                     (user_id, session.user_name()), scope.task_owner_user_id, &row_ts,
                     &knowledge_contexts,
                 ).await.map_err(|error| {
@@ -1449,7 +1455,7 @@ pub async fn handle(
                 crate::responses::create::contexts::link_chat_external_refs(
                     &mut *sql,
                     state.task_store.as_ref(),
-                    &mut setup,
+                    (setup.task_id, setup.user_subtask_id, &mut setup.task_json),
                     user_id,
                     scope.task_owner_user_id,
                     &row_ts,
@@ -1791,12 +1797,13 @@ pub async fn handle(
             // `initialize_redis_chat_history`: a reused Task with history but an
             // empty cache rebuilds it before the turn is broadcast/triggered.
             if let Some(redis) = state.redis.as_ref()
-                && let Err(error) = crate::chat_history::initialize_from_subtasks(
-                    redis,
-                    turn.task_id,
-                    turn.existing_history.clone(),
-                )
-                .await
+                && let Err(error) =
+                    crate::background_jobs::subscription::history::initialize_from_subtasks(
+                        redis,
+                        turn.task_id,
+                        turn.existing_history.clone(),
+                    )
+                    .await
             {
                 tracing::warn!(%error, task_id = turn.task_id, "chat history init failed");
             }

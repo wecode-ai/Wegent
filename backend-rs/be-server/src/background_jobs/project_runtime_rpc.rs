@@ -135,7 +135,7 @@ pub(crate) async fn direct_execution(
     message: &str,
     selection: Option<&Value>,
 ) -> Result<Value> {
-    let auth = tokens::create_task_token(state, 0, 0, i64::from(user.id), &user.user_name)
+    let auth = tokens::create_task_token(&state.auth, 0, 0, i64::from(user.id), &user.user_name)
         .map_err(|error| anyhow::anyhow!("Task identity creation failed: {error:?}"))?;
     let now = chrono::Utc::now().timestamp();
     let ttl = crate::config::env_or_dotenv("SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES")
@@ -216,7 +216,7 @@ pub(crate) async fn runtime_model_config(
             .filter(|value| *value >= 0)
             .ok_or(IncompleteCloudModelIdentity)?;
         let config = crate::llm_proxy::resolve_model_config(
-            state,
+            &state.llm_model_lookup(),
             user,
             model,
             kind.unwrap(),
@@ -235,7 +235,7 @@ pub(crate) async fn runtime_model_config(
             }
             crate::llm_proxy::model_config::Protocol::AnthropicMessages => "anthropic-messages",
         };
-        let base = crate::attachments::public_link::public_base_url();
+        let base = wegent_attachment_links::public_base_url();
         if base.trim().is_empty() {
             bail!("Cloud model gateway is not configured");
         }

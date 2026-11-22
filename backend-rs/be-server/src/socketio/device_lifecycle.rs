@@ -2,63 +2,96 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `/local-executor` registration and disconnect behavior.
-//!
-//! Source: `app/api/ws/device_namespace.py::on_device_register` /
-//! `_register_device_session` and `on_disconnect`, over
-//! `app/services/device_service.py` and
-//! `app/services/device/local_provider.py`.
-//!
-//! Ported here: payload validation, the `workspace_runner` scope rejection,
-//! cloud-device matching, the registration upsert plus its reconnect debounce,
-//! session/room identity, the Redis online document, the `device:online`
-//! broadcast, and the post-ACK capability-sync and execution-reconcile
-//! hand-offs.
-//!
-//! The disconnect uses the strict `get_or_raise` online read, so a read or
-//! document-type failure stops the cleanup before any explicit offline delete.
+//! Gateway effects for the device connection lifecycle.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use brz_socket_io::{ClientError, Reply};
-use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
+use wegent_device_lifecycle::device_lifecycle;
+use wegent_device_lifecycle::{DeviceEvent, LifecycleEffects, LifecycleServices};
 
-use crate::device_identity_lock::{IDENTITY_LOCK_BODY_TIMEOUT, IdentityLock};
-use crate::json_compat::python_json_value;
-use crate::socketio::device::{self, DeviceType, RegisterPayload};
-use crate::socketio::runtime::{DeviceJob, SocketEmitters, SocketRuntime};
-use crate::socketio::session::{DeviceSession, RegistrationSession};
+use super::device_reconcile::ReconcileJob;
+use super::runtime::{DeviceJob, SocketRuntime};
+use super::session::{DeviceSession, RegistrationFingerprint};
 use crate::state::AppState;
 
-/// `DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS`.
-const DISCONNECT_GRACE: Duration = Duration::from_secs(2);
-
-/// The source's raw registration ACK (`_register_device_session`'s return).
-///
-/// Source `device_namespace.py:1840-1844` returns the reported `device_id` and
-/// the canonical record-scoped `device_route_id` (`route_id`) alongside
-/// `success`; recording `20261105033227` ACKs all ten successful registrations
-/// with that third field.
-#[derive(Serialize)]
-struct RegisterAck<'a> {
-    success: bool,
-    device_id: &'a str,
-    device_route_id: &'a str,
+pub(super) fn services(state: &AppState) -> LifecycleServices<'_> {
+    LifecycleServices {
+        mysql: &state.mysql,
+        redis: state.redis.as_ref(),
+        socketio_rpc: state.socketio_rpc.as_deref(),
+        task_store: state.task_store.as_ref(),
+        unique_app_device_names: state.unique_app_device_names,
+    }
 }
 
-/// The source's business rejection ACK (`{"error": str}`).
-#[derive(Serialize)]
-struct ErrorAck<'a> {
-    error: &'a str,
+#[async_trait::async_trait]
+impl LifecycleEffects for SocketRuntime {
+    async fn emit_local(
+        &self,
+        event: DeviceEvent,
+        user_id: i64,
+        payload: &Value,
+    ) -> Result<(), String> {
+        let emitters = self.emitters();
+        match event {
+            DeviceEvent::Online => emitters.device_online(user_id, payload).await,
+            DeviceEvent::Offline => emitters.device_offline(user_id, payload).await,
+            DeviceEvent::Status => emitters.device_status(user_id, payload).await,
+            DeviceEvent::UpgradeStatus => emitters.device_upgrade_status(user_id, payload).await,
+            DeviceEvent::SlotUpdate => emitters.device_slot_update(user_id, payload).await,
+        }
+        .map_err(|error| error.to_string())
+    }
+
+    fn recent_display_name(
+        &self,
+        user_id: i64,
+        device_id: &str,
+        fingerprint: &RegistrationFingerprint,
+    ) -> Option<String> {
+        self.recent_display_name(user_id, device_id, fingerprint)
+    }
+
+    fn remember_registration(
+        &self,
+        user_id: i64,
+        device_id: &str,
+        fingerprint: RegistrationFingerprint,
+        display_name: String,
+    ) {
+        self.remember_registration(user_id, device_id, fingerprint, display_name);
+    }
+
+    fn registered(&self, user_id: i64, route_id: &str) {
+        self.enqueue(DeviceJob::RegisterSync {
+            user_id,
+            device_id: route_id.to_owned(),
+        });
+        self.enqueue_reconcile(ReconcileJob {
+            user_id,
+            device_id: route_id.to_owned(),
+            needs_confirmation_only: false,
+        });
+    }
+
+    fn enqueue_plugin_removal(&self, user_id: i64, route_id: &str) {
+        self.enqueue_plugin_removal(user_id, route_id);
+    }
+
+    fn heartbeat_completed(&self, user_id: i64, route_id: String, runtime_auth_missing: bool) {
+        if runtime_auth_missing {
+            self.enqueue_runtime_auth_sync(user_id, &route_id);
+        }
+        self.enqueue_reconcile(ReconcileJob {
+            user_id,
+            device_id: route_id,
+            needs_confirmation_only: true,
+        });
+    }
 }
 
-fn error_ack(message: &str) -> Value {
-    serde_json::to_value(ErrorAck { error: message }).expect("a string serializes")
-}
-
-/// `on_device_register` -> `_register_device_session`.
 pub async fn register(
     state: &AppState,
     runtime: &Arc<SocketRuntime>,
@@ -66,394 +99,29 @@ pub async fn register(
     socket_id: &str,
     data: Value,
 ) -> Result<Reply<Value>, ClientError> {
-    let Some(_online_write) = session.online_write().await else {
-        return Ok(Reply::payload(error_ack("Device connection is closed")));
-    };
-    let payload = match RegisterPayload::parse(&data) {
-        Ok(payload) => payload,
-        Err(error) => {
-            return Ok(Reply::payload(error_ack(&format!(
-                "Invalid payload: {error}"
-            ))));
-        }
-    };
-    let snapshot = session.snapshot();
-    if snapshot.auth_type == "workspace_runner"
-        && (payload.device_id != snapshot.user_name || payload.device_type != DeviceType::Local)
-    {
-        return Ok(Reply::payload(error_ack(
-            "Runner credential is scoped to its registered device",
-        )));
-    }
-    let Some(redis) = state.redis.as_ref() else {
-        tracing::error!("device identity lock unavailable: no Redis service");
-        return Ok(identity_lock_unavailable());
-    };
-    with_identity_lock(redis, snapshot.user_id, || {
-        register_session(state, runtime, session, socket_id, payload)
-    })
-    .await
+    device_lifecycle::register(&services(state), runtime.as_ref(), session, socket_id, data).await
 }
 
-/// The source's unavailable ACK when the lock cannot be taken or released.
-pub(super) fn identity_lock_unavailable() -> Reply<Value> {
-    Reply::payload(error_ack(
-        "Device identity operation is temporarily unavailable; reconnect to retry",
-    ))
-}
-
-/// Hold the shared identity lock across registration and online publication.
-///
-/// The body's error ACK is still produced under the lock, and the release
-/// happens before the ACK is returned. Acquisition
-/// exhaustion, a Redis failure, the 20 s body timeout and a failed release all
-/// take the source's "temporarily unavailable" branch.
-async fn with_identity_lock<R, F, Fut>(
-    redis: &R,
-    user_id: i64,
-    body: F,
-) -> Result<Reply<Value>, ClientError>
-where
-    R: brz_redis::Redis,
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<Reply<Value>, ClientError>>,
-{
-    match with_device_identity_lock(redis, user_id, body).await {
-        Ok(reply) => reply,
-        Err(()) => Ok(identity_lock_unavailable()),
-    }
-}
-
-pub(super) async fn with_device_identity_lock<R, F, Fut, T>(
-    redis: &R,
-    user_id: i64,
-    body: F,
-) -> Result<T, ()>
-where
-    R: brz_redis::Redis,
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = T>,
-{
-    let lock = match IdentityLock::acquire(redis, user_id).await {
-        Ok(Some(lock)) => lock,
-        // `Lock.__aenter__` raises `LockError` (a `RedisError`) when the
-        // blocking budget expires; `acquire` propagates a request failure.
-        Ok(None) => {
-            tracing::warn!(user_id, "device identity lock is held by another worker");
-            return Err(());
-        }
-        Err(error) => {
-            tracing::error!(%error, user_id, "device identity lock acquisition failed");
-            return Err(());
-        }
-    };
-    // `async with asyncio.timeout(20):` wraps only the session handler body.
-    let outcome = tokio::time::timeout(IDENTITY_LOCK_BODY_TIMEOUT, body()).await;
-    // `Lock.__aexit__` releases before the body's outcome escapes; a release
-    // failure is a `RedisError` and takes the source's unavailable branch.
-    if let Err(error) = lock.release().await {
-        tracing::warn!(%error, user_id, "device identity lock release failed");
-        return Err(());
-    }
-    match outcome {
-        Ok(result) => Ok(result),
-        Err(_) => {
-            tracing::warn!(user_id, "device identity operation timed out");
-            Err(())
-        }
-    }
-}
-
-/// `_register_device_session`: the registration body (no identity lock).
-async fn register_session(
+pub async fn disconnect(
     state: &AppState,
     runtime: &Arc<SocketRuntime>,
     session: &DeviceSession,
     socket_id: &str,
-    mut payload: RegisterPayload,
-) -> Result<Reply<Value>, ClientError> {
-    let snapshot = session.snapshot();
-    let user_id = snapshot.user_id;
-    let client_ip = snapshot.client_ip.clone();
-    let runtime_transfer_host = device::normalize_runtime_transfer_host(
-        payload
-            .runtime_transfer_host
-            .as_deref()
-            .or(payload.client_ip.as_deref()),
-    );
-    let runtime_transfer_port = payload.effective_transfer_port();
-
-    let mut is_cloud_device = false;
-    let mut route_id = payload.device_id.clone();
-    let mut logical_device_id = None;
-    let mut persisted_display_name = None;
-    // Resolve server provisioning and restore soft-deleted managed rows before
-    // a local reconnect can reuse its cache.
-    match device::match_cloud_device(
-        state,
-        user_id,
-        &payload,
-        runtime_transfer_host.as_deref(),
-        snapshot.auth_type != "workspace_runner",
-    )
-    .await
-    {
-        Ok(Some(row)) => {
-            is_cloud_device = true;
-            if payload.device_type != DeviceType::Cloud {
-                tracing::warn!(
-                    user_id,
-                    device_id = %payload.device_id,
-                    reported_type = payload.device_type.value(),
-                    "preserving managed cloud type for its pinned Runtime"
-                );
-                payload.device_type = DeviceType::Cloud;
-            }
-            // Cloud registrations route by the executor's validated id.
-            // Keep the Kind name for reads and writes to the owned record.
-            let registered = device::registered(&row, &payload, true);
-            route_id = registered.route_id;
-            logical_device_id = Some(row.name);
-            persisted_display_name = Some(registered.display_name);
-        }
-        Ok(None) => {}
-        Err(mismatch) => {
-            return Ok(Reply::payload(error_ack(&format!(
-                "Registration failed: {mismatch}"
-            ))));
-        }
-    }
-
-    if !is_cloud_device {
-        let fingerprint = registration_fingerprint(
-            &payload,
-            client_ip.as_deref(),
-            runtime_transfer_host.as_deref(),
-            runtime_transfer_port,
-        );
-        persisted_display_name =
-            runtime.recent_display_name(user_id, &payload.device_id, &fingerprint);
-        let requires_identity_check = matches!(
-            payload.device_type,
-            DeviceType::App | DeviceType::Cloud | DeviceType::Remote
-        );
-        if persisted_display_name.is_none()
-            || requires_identity_check
-            || device::get_online(state, user_id, &payload.device_id)
-                .await
-                .is_none()
-        {
-            match device::upsert_device(
-                state,
-                user_id,
-                &payload,
-                runtime_transfer_host.as_deref(),
-                client_ip.as_deref(),
-            )
-            .await
-            {
-                Ok(row) => {
-                    // `upsert_device_crd` refreshes the committed row; the
-                    // caller reads the fresh `displayName` (or name) and
-                    // derives the route from it.
-                    let registered = device::registered(&row, &payload, false);
-                    route_id = registered.route_id.clone();
-                    // `spec.displayName or payload.name`, without rewriting a
-                    // non-empty stored value.
-                    let display_name = row
-                        .json
-                        .get("spec")
-                        .and_then(|spec| spec.get("displayName"))
-                        .and_then(Value::as_str)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| payload.name.clone());
-                    persisted_display_name = Some(display_name.clone());
-                    runtime.remember_registration(
-                        user_id,
-                        &payload.device_id,
-                        fingerprint,
-                        display_name,
-                    );
-                }
-                Err(error) => {
-                    return Ok(Reply::payload(error_ack(&format!(
-                        "Registration failed: {error}"
-                    ))));
-                }
-            }
-        }
-    }
-
-    let effective_device_name = persisted_display_name.unwrap_or_else(|| payload.name.clone());
-    let execution_target_id = if payload.device_type == DeviceType::App {
-        route_id.clone()
-    } else {
-        payload
-            .app_device_id
-            .clone()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| payload.device_id.clone())
-    };
-    let logical_device_id = logical_device_id.unwrap_or_else(|| route_id.clone());
-    session.apply_registration(RegistrationSession {
-        reported_device_id: payload.device_id.clone(),
-        route_id: route_id.clone(),
-        logical_device_id,
-        device_name: effective_device_name.clone(),
-        runtime_transfer_host: runtime_transfer_host.clone(),
-        runtime_transfer_port,
-        runtime_instance_id: payload.runtime_instance_id.clone(),
-        device_type: payload.device_type,
-        execution_target_id: execution_target_id.clone(),
-    });
-
-    let last_heartbeat = device::local_isoformat();
-    let online = device::online_payload(
+) {
+    device_lifecycle::disconnect(
+        &services(state),
+        runtime.as_ref(),
+        session,
         socket_id,
-        &effective_device_name,
-        snapshot.client_ip.as_deref(),
-        &payload,
-        &device::RuntimeTransfer {
-            host: runtime_transfer_host.as_deref(),
-            port: runtime_transfer_port,
-            instance_id: payload.runtime_instance_id.as_deref(),
-            features: payload.runtime_features.as_ref(),
+        async |user_id, device_id: String| {
+            let failed =
+                super::device_disconnect::fail_running_subtasks(state, user_id, &device_id).await;
+            super::device_disconnect::emit_chat_errors(state, runtime, &failed).await;
         },
-        &last_heartbeat,
-    );
-    // The source ignores this write's result; a stale online document is
-    // repaired by the next heartbeat.
-    device::set_online(state, user_id, &route_id, &online).await;
-
-    broadcast_online(
-        runtime.emitters(),
-        state,
-        user_id,
-        &route_id,
-        &effective_device_name,
     )
     .await;
-    let ack = serde_json::to_value(RegisterAck {
-        success: true,
-        device_id: &payload.device_id,
-        // `_register_device_session` returns the canonical record-scoped route
-        // so the Runtime can address this exact installation even when
-        // historical records share its name.
-        device_route_id: &route_id,
-    })
-    .expect("a registration acknowledgement serializes");
-    // Source `_schedule_background_task` runs the capability sync and then the
-    // execution reconciliation before the handler returns its ACK
-    // (`device_namespace.py:1815-1826`); `asyncio.create_task` does not depend
-    // on ACK delivery. Scheduling them here, on the handler's guaranteed path,
-    // reproduces that. Hanging them on `after_reply` instead would silently
-    // drop them when the reply is applied after the socket closed, because
-    // `complete_event` only runs those continuations for a completed reply
-    // (`brz-socket-io business.rs:352-385`).
-    enqueue_registration_follow_ups(runtime, user_id, &route_id);
-    Ok(Reply::payload(ack)
-        .join(format!("device:{user_id}:{route_id}"))
-        .join(format!("execution-target:{user_id}:{execution_target_id}")))
 }
 
-/// `_schedule_background_task` after a successful registration: one capability
-/// sync and one execution reconciliation, each on its own bounded queue.
-///
-/// The enqueue happens on the handler's guaranteed path rather than in
-/// `after_reply`, because `brz-socket-io` only runs those continuations for a
-/// reply that applied to a live session (`business.rs:352-385`), while Source
-/// schedules them before the ACK is sent.
-fn enqueue_registration_follow_ups(runtime: &Arc<SocketRuntime>, user_id: i64, route_id: &str) {
-    runtime.enqueue(DeviceJob::RegisterSync {
-        user_id,
-        device_id: route_id.to_owned(),
-    });
-    // `reconcile_device_executions(...)` with the registration path's
-    // `needs_confirmation_only=false`.
-    runtime.enqueue_reconcile(super::device_reconcile::ReconcileJob {
-        user_id,
-        device_id: route_id.to_owned(),
-        needs_confirmation_only: false,
-    });
-}
-
-/// `DeviceRegistrationFingerprint` for the reconnect debounce.
-fn registration_fingerprint(
-    payload: &RegisterPayload,
-    client_ip: Option<&str>,
-    runtime_transfer_host: Option<&str>,
-    runtime_transfer_port: Option<i64>,
-) -> super::session::RegistrationFingerprint {
-    super::session::RegistrationFingerprint {
-        display_name: payload.name.trim().to_owned(),
-        client_ip: client_ip.unwrap_or_default().trim().to_owned(),
-        device_type: payload.device_type.value(),
-        bind_shell: payload.bind_shell.value(),
-        runtime_transfer_host: runtime_transfer_host.unwrap_or_default().trim().to_owned(),
-        runtime_transfer_port,
-        runtime_instance_id: payload
-            .runtime_instance_id
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .to_owned(),
-        app_device_id: payload
-            .app_device_id
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .to_owned(),
-    }
-}
-
-/// `_broadcast_device_online`: local delivery plus the adapter publish for
-/// every other worker subscribed to the user's chat rooms.
-pub async fn broadcast_online(
-    emitters: &SocketEmitters,
-    state: &AppState,
-    user_id: i64,
-    device_id: &str,
-    name: &str,
-) {
-    let payload = json!({
-        "device_id": device_id,
-        "name": name,
-        "status": "online",
-    });
-    if let Err(error) = emitters.device_online(user_id, &payload).await {
-        tracing::warn!(%error, user_id, "device:online local delivery failed");
-    }
-    publish_chat_event(state, "device:online", &payload, user_id).await;
-}
-
-/// `_broadcast_device_offline`.
-async fn broadcast_offline(
-    emitters: &SocketEmitters,
-    state: &AppState,
-    user_id: i64,
-    device_id: &str,
-) {
-    let payload = json!({ "device_id": device_id });
-    if let Err(error) = emitters.device_offline(user_id, &payload).await {
-        tracing::warn!(%error, user_id, "device:offline local delivery failed");
-    }
-    publish_chat_event(state, "device:offline", &payload, user_id).await;
-}
-
-/// `emit_chat_user_event`'s Redis-adapter half (`AsyncPubSubManager.emit` after
-/// the local `_handle_emit`).
-///
-/// The local emit sends the payload as the event's single argument, while the
-/// adapter message carries python-socketio's positional argument list
-/// (`[payload]`).
-pub async fn publish_chat_event(state: &AppState, event: &str, payload: &Value, user_id: i64) {
-    for room in [format!("user:{user_id}"), format!("wework:user:{user_id}")] {
-        publish_room_event(state, event, payload, super::runtime::CHAT_NAMESPACE, &room).await;
-    }
-}
-
-/// `AsyncPubSubManager.emit`'s Redis half for one namespace room or socket id.
 pub async fn publish_room_event(
     state: &AppState,
     event: &str,
@@ -461,211 +129,45 @@ pub async fn publish_room_event(
     namespace: &str,
     room: &str,
 ) {
-    let Some(redis) = state.redis.as_ref() else {
-        return;
-    };
-    use brz_redis::Redis as _;
-    let data = python_json_value(&Value::Array(vec![payload.clone()]));
-    let message = crate::socketio_emit::emit_message(event, &data, namespace, room);
-    if let Err(error) = redis
-        .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message)
-        .await
-    {
-        tracing::error!(%error, event, namespace, room, "Socket.IO adapter publish failed");
-    }
-}
-
-/// `on_disconnect`'s online-state gate.
-///
-/// The source reads `get_device_online_info` (a strict
-/// `cache_manager.get_or_raise`) twice around
-/// `DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS`. `get_or_raise` raises on a
-/// transport or decode failure, and a truthy non-dict document raises on its
-/// `.get(...)`; `on_disconnect` catches both at its outer boundary, so they
-/// skip the rest of the cleanup: no grace sleep and no explicit offline
-/// delete. A missing or falsy document is a normal cache miss and keeps the
-/// original flow.
-async fn online_cleanup_permitted<R: brz_redis::Redis + ?Sized>(
-    redis: &R,
-    user_id: i64,
-    device_id: &str,
-    socket_id: &str,
-    grace: Duration,
-) -> bool {
-    match crate::device_online_state::read_online_state_with(redis, user_id, device_id).await {
-        Ok(online) => match stale_online_state(online, socket_id) {
-            Ok(true) => return false,
-            Ok(false) => {}
-            Err(()) => {
-                tracing::error!(
-                    user_id,
-                    device_id,
-                    "device online state is not a dict; disconnect cleanup skipped"
-                );
-                return false;
-            }
-        },
-        Err(_) => {
-            tracing::error!(
-                user_id,
-                device_id,
-                "device online state read failed; disconnect cleanup skipped"
-            );
-            return false;
-        }
-    }
-    tokio::time::sleep(grace).await;
-    match crate::device_online_state::read_online_state_with(redis, user_id, device_id).await {
-        Ok(online) => match stale_online_state(online, socket_id) {
-            Ok(stale) => !stale,
-            Err(()) => {
-                tracing::error!(
-                    user_id,
-                    device_id,
-                    "device online state re-read is not a dict; disconnect cleanup skipped"
-                );
-                false
-            }
-        },
-        Err(_) => {
-            tracing::error!(
-                user_id,
-                device_id,
-                "device online state re-read failed; disconnect cleanup skipped"
-            );
-            false
-        }
-    }
-}
-
-/// `online_socket_id = online_info.get("socket_id") if online_info else None`
-/// followed by `if online_socket_id and online_socket_id != sid: return`.
-///
-/// `Err(())` is the source's `AttributeError` for a truthy non-dict document.
-/// A falsy document, a missing/falsy `socket_id`, or a stored string equal to
-/// the disconnecting session is not stale; any truthy value that is not the
-/// same string (including a non-string) is.
-fn stale_online_state(online: Option<Value>, socket_id: &str) -> Result<bool, ()> {
-    let Some(online) = online else {
-        return Ok(false);
-    };
-    if !crate::json_compat::python_truthy(&online) {
-        return Ok(false);
-    }
-    let Value::Object(document) = online else {
-        return Err(());
-    };
-    let Some(online_socket_id) = document.get("socket_id") else {
-        return Ok(false);
-    };
-    if !crate::json_compat::python_truthy(online_socket_id) {
-        return Ok(false);
-    }
-    Ok(match online_socket_id {
-        Value::String(value) => value != socket_id,
-        // A truthy non-string never equals the socket-id string.
-        _ => true,
-    })
-}
-
-/// `on_disconnect`.
-pub async fn disconnect(
-    state: &AppState,
-    runtime: &Arc<SocketRuntime>,
-    session: &DeviceSession,
-    socket_id: &str,
-) {
-    // The transport is gone even if its stable route already points to a new SID.
-    let close = session.close_online_writes();
-    publish_peer_closed(state, socket_id).await;
-    let _closed = close.await;
-    // Start retention after the last permitted heartbeat or registration write.
-    publish_peer_closed(state, socket_id).await;
-    disconnect_projection(state, runtime, session, socket_id).await;
-}
-
-async fn publish_peer_closed(state: &AppState, socket_id: &str) {
-    use brz_redis::Redis as _;
-    if let Some(rpc) = state.socketio_rpc.as_ref() {
-        rpc.disconnect(
-            socket_id,
-            "/local-executor",
-            Duration::from_secs(device::ONLINE_TTL_SECONDS),
-        );
-    }
-    if let Some(redis) = state.redis.as_ref() {
-        let message = serde_json::json!({"method":"runtime_peer_closed","sid":socket_id,"namespace":"/local-executor","retain_ms":device::ONLINE_TTL_SECONDS * 1000,"host_id":crate::socketio_emit::host_id()});
-        if redis
-            .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message.to_string())
-            .await
-            .is_err()
-        {
-            tracing::warn!(
-                code = "runtime_peer_close_publish_failed",
-                "Device RPC disconnect notification deferred"
-            );
-        }
-    }
-}
-
-async fn disconnect_projection(
-    state: &AppState,
-    runtime: &Arc<SocketRuntime>,
-    session: &DeviceSession,
-    socket_id: &str,
-) {
-    let snapshot = session.snapshot();
-    let user_id = snapshot.user_id;
-    let Some(device_id) = snapshot.device.device_id.clone() else {
-        return;
-    };
-
-    let Some(redis) = state.redis.as_ref() else {
-        // The source's `get_or_raise` raises without a cache client, so the
-        // disconnect cleanup never reaches the delete.
-        tracing::error!(
-            user_id,
-            device_id,
-            "device online state unavailable: disconnect cleanup skipped"
-        );
-        return;
-    };
-    if !online_cleanup_permitted(redis, user_id, &device_id, socket_id, DISCONNECT_GRACE).await {
-        return;
-    }
-    if let Some(online) = device::get_online(state, user_id, &device_id).await
-        && online["socket_id"] == socket_id
-        && let Some(observed) = online["last_heartbeat"]
-            .as_str()
-            .and_then(crate::device_presence::parse_observed_time)
-    {
-        super::device_upsert::persist_observation(
-            state,
-            user_id,
-            snapshot
-                .device
-                .logical_device_id
-                .as_deref()
-                .unwrap_or(&device_id),
-            snapshot.device.runtime_instance_id.as_deref(),
-            observed,
-            true,
-        )
+    device_lifecycle::publish_room_event(state.redis.as_ref(), event, payload, namespace, room)
         .await;
-    }
-    if !device::clear_online(state, user_id, &device_id).await {
-        // `delete_or_raise` surfaces the failure to `on_disconnect`'s outer
-        // handler, which skips the rest of the cleanup.
-        return;
-    }
-    // `_handle_device_disconnect` fails the device's RUNNING subtasks and
-    // their parent tasks; the per-subtask `chat:error` emissions follow the
-    // committed database work, exactly like the source.
-    let failed = super::device_disconnect::fail_running_subtasks(state, user_id, &device_id).await;
-    super::device_disconnect::emit_chat_errors(state, runtime, &failed).await;
-    broadcast_offline(runtime.emitters(), state, user_id, &device_id).await;
 }
 
 #[cfg(test)]
-#[path = "device_lifecycle_tests.rs"]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::socketio::runtime::SocketRuntimeWorkers;
+    #[tokio::test]
+    async fn the_registration_follow_ups_are_queued_once_on_the_handler_path() {
+        let (runtime, workers) = SocketRuntime::new();
+        let SocketRuntimeWorkers {
+            jobs: mut register_jobs,
+            mut reconcile_jobs,
+            ..
+        } = workers;
+
+        runtime.registered(42, "app-record-7");
+
+        let sync = register_jobs
+            .try_recv()
+            .expect("the capability sync is queued");
+        assert!(matches!(
+            sync,
+            DeviceJob::RegisterSync { user_id: 42, ref device_id } if device_id == "app-record-7"
+        ));
+        let reconcile = reconcile_jobs
+            .try_recv()
+            .expect("the execution reconciliation is queued");
+        assert_eq!(reconcile.user_id, 42);
+        assert_eq!(reconcile.device_id, "app-record-7");
+        assert!(!reconcile.needs_confirmation_only);
+        assert!(
+            register_jobs.try_recv().is_err(),
+            "the registration sync is queued exactly once"
+        );
+        assert!(
+            reconcile_jobs.try_recv().is_err(),
+            "the reconciliation is queued exactly once"
+        );
+    }
+}

@@ -12,7 +12,6 @@ use chrono::NaiveDateTime;
 use crate::ProjectState;
 use crate::http_compat::FastApiError;
 use brz_json::{JsonProjection, OpaqueJson};
-use wegent_devices::devices;
 
 /// Resolve the project's effective read permission and unique active parent,
 /// then expose its bound devices with current space/project consent. Revoked or
@@ -279,30 +278,20 @@ async fn execution_environment_statuses(
     state: &ProjectState,
     rows: &[ExecutionEnvironmentRow],
 ) -> Vec<(i64, String)> {
-    let keys: Vec<String> = rows
+    let devices: Vec<_> = rows
         .iter()
-        .map(|row| {
-            devices::online_key(i64::from(row.device_user_id), &runtime_device_route_id(row))
-        })
+        .map(|row| (row.device_user_id, runtime_device_route_id(row)))
         .collect();
-    let online: Vec<Option<devices::OnlineStateInput>> =
-        devices::cache_manager_mget(state.redis.as_ref(), keys).await;
+    let online = state.device_presence.online_statuses(&devices).await;
     rows.iter()
         .zip(online)
-        .map(|(row, online)| {
-            let status = online
-                .as_ref()
-                .and_then(|info| info.status_value())
-                .unwrap_or("offline")
-                .to_string();
-            (
-                row.id,
-                if matches!(status.as_str(), "online" | "busy") {
-                    "online".to_string()
-                } else {
-                    "offline".to_string()
-                },
-            )
+        .map(|(row, status)| {
+            let status = if matches!(status.as_deref(), Some("online" | "busy")) {
+                "online"
+            } else {
+                "offline"
+            };
+            (row.id, status.to_string())
         })
         .collect()
 }

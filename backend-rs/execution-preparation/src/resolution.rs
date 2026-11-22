@@ -26,8 +26,7 @@ use serde_json::Value;
 use crate::permissions::{EntityResolvers, user_groups};
 use crate::request_sql::{RequestSql, RouteKey, fetch_optional_as};
 use crate::task_skills::kinds::KindCacheStore;
-use crate::task_store_statements::StatementArg;
-use wegent_backend_persistence::sql_support::placeholders;
+use wegent_backend_persistence::sql_support::{StatementArg, placeholders};
 
 pub use wegent_resource_store::kind_rows::*;
 

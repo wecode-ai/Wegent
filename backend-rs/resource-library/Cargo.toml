@@ -1,0 +1,34 @@
+[package]
+name = "wegent-resource-library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Resource library listings, marketplace tags, and skill bindings and downloads"
+
+[dependencies]
+base64.workspace = true
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["serde"] }
+jsonwebtoken.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+tracing.workspace = true
+wegent-access.workspace = true
+wegent-backend-config.workspace = true
+wegent-capabilities.workspace = true
+wegent-directory.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-python-compat.workspace = true
+wegent-resource-store.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
+wegent-backend-test-support.workspace = true
+wegent-identity = { workspace = true, features = ["test-support"] }

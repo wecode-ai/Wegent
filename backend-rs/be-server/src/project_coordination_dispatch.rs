@@ -190,9 +190,14 @@ async fn put_command(
     if project.version != body["projectVersion"] {
         return Err(conflict("Project changed before coordination dispatch"));
     }
-    let issue = issues::load(state, &project, body["issueId"].as_str().unwrap(), actor_id)
-        .await
-        .map_err(group_error)?;
+    let issue = issues::load(
+        &state.project_issues(),
+        &project,
+        body["issueId"].as_str().unwrap(),
+        actor_id,
+    )
+    .await
+    .map_err(group_error)?;
     validate_unassigned_issue(&issue, &body)?;
     let assignment = groups::prepare_assignment(
         state,

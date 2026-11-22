@@ -9,8 +9,8 @@
 //! `task_detail_helpers.get_bots_for_subtasks`'s per-bot tail).
 use super::error::ApiError;
 use super::kinds::KindStore;
-use super::user_cache;
 use crate::crd::{CrdDocument, reference_parts};
+use wegent_capabilities::user_cache;
 
 /// `team_kinds_service._convert_to_team_dict`: per member, resolve the bot
 /// through the reader the Team resolution uses — the member bot of a

@@ -182,6 +182,65 @@ pub fn session_auth_detail(failure: brz_http_server::AuthFailure) -> &'static st
     }
 }
 
+/// The admin principal: a valid session user whose role is `admin`.
+///
+/// The source `get_admin_user` runs after `get_current_user`; a session that
+/// is not an administrator is rejected with `403`. Authentication failures
+/// keep the standard session 401 mapping.
+pub struct AdminUser(pub UserRow);
+
+/// The challenge marker that distinguishes the admin rejection from a session
+/// authentication failure inside `reject`.
+const ADMIN_REQUIRED: &str = "Wegent-Admin-Required";
+
+impl brz_http_server::Authenticator<AdminUser> for AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<AdminUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        let user = get_current_user(&self.state().auth, &self.state().mysql, authorization)
+            .await
+            .map_err(session_auth_failure)?;
+        if user.role != "admin" {
+            return Err(brz_http_server::AuthFailure::invalid_credentials(
+                ADMIN_REQUIRED,
+            ));
+        }
+        Ok(AdminUser(user))
+    }
+
+    fn api_log_id<'a>(&'a self, principal: &'a AdminUser) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        use wegent_http_compat::FastApiError;
+
+        // `get_admin_user` raises `403 {"detail": "Permission denied. Admin
+        // access required."}`; every session-level failure keeps the standard
+        // 401 detail.
+        if matches!(
+            failure,
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: ADMIN_REQUIRED
+            }
+        ) {
+            return FastApiError::forbidden("Permission denied. Admin access required.")
+                .into_http_error(arena);
+        }
+        FastApiError::unauthorized(session_auth_detail(failure)).into_http_error(arena)
+    }
+}
+
 /// Map a `get_current_user` failure to the SDK failure that carries it.
 pub fn session_auth_failure(failure: AuthFailure) -> brz_http_server::AuthFailure {
     match failure {

@@ -19,10 +19,10 @@ use serde_json::Value;
 use super::error::{ApiError, database_query_failed as internal_mysql};
 use super::kind_refs::{SummaryCaches, convert_team_dict, get_bot_summary_for_subtask};
 use super::kinds::KindStore;
-use super::user_cache;
 use crate::crd::{CrdDocument, reference_parts};
 use crate::py_set_order::SetOrder;
 use brz_json::{JsonProjection, OpaqueJson};
+use wegent_capabilities::user_cache;
 
 /// `add_group_chat_info_to_task` (`task_detail_helpers`): the approved
 /// `resource_members` read for the task, in source filter order

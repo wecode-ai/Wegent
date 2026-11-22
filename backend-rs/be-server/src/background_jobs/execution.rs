@@ -14,22 +14,19 @@ use crate::{
     task_store_background::BackgroundRecords,
 };
 
-pub struct BackgroundChat<'a> {
-    pub user_id: i64,
-    pub title: &'a str,
-    pub task_type: &'a str,
-    pub summary_type: &'a str,
-    pub document_id: Option<i64>,
-    pub knowledge_base_id: Option<i64>,
-    pub system_prompt: &'a str,
-    pub prompt: &'a str,
-    pub model_config: Value,
-}
+pub use wegent_execution_runtime::background_chat::{BackgroundChat, ChatResult};
 
-pub struct ChatResult {
-    pub task_id: i64,
-    pub content: String,
-    pub parsed: Option<Value>,
+pub(super) struct AppBackgroundChat(pub(super) std::sync::Arc<AppState>);
+
+#[async_trait::async_trait]
+impl wegent_execution_runtime::background_chat::BackgroundChatExecutor for AppBackgroundChat {
+    async fn execute(&self, input: BackgroundChat<'_>) -> Result<ChatResult> {
+        execute(&self.0, input).await
+    }
+
+    async fn model_config(&self, spec: &Value, user_id: i64, user_name: &str) -> Result<Value> {
+        model_config(spec, user_id, user_name)
+    }
 }
 
 pub async fn execute(state: &AppState, input: BackgroundChat<'_>) -> Result<ChatResult> {
@@ -123,12 +120,7 @@ pub fn parse_json(text: &str) -> Option<Value> {
     None
 }
 
-pub async fn model_config(
-    _state: &AppState,
-    spec: &Value,
-    user_id: i64,
-    user_name: &str,
-) -> Result<Value> {
+pub(super) fn model_config(spec: &Value, user_id: i64, user_name: &str) -> Result<Value> {
     let mut full = crate::responses::create::model_config::extract_model_config(spec)
         .map_err(|_| anyhow::anyhow!("Summary model configuration is invalid"))?;
     let processed =

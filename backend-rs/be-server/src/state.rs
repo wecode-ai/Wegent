@@ -54,7 +54,7 @@ pub struct AppState {
     /// construction.
     pub task_store: Arc<dyn crate::task_store::TaskStore>,
     /// Lookup strategy for Workspace resources referenced by subscriptions.
-    pub workspace_repository: Arc<dyn crate::subscriptions_list::workspaces::WorkspaceRepository>,
+    pub workspace_repository: Arc<dyn crate::subscription_workspaces::WorkspaceRepository>,
     pub auth: AuthConfig,
     pub internal_chat: InternalChatConfig,
     /// JWT decode keys for the plugins-installed endpoint (active first,
@@ -160,11 +160,29 @@ pub struct AppState {
     /// caller resolution. The public default resolves a personal API key; an
     /// internal deployment registers a handler that also accepts its gateway
     /// employee header.
-    pub external_knowledge_auth:
-        Arc<dyn crate::mcp::knowledge_external::auth::ExternalKnowledgeAuth>,
+    pub external_knowledge_auth: Arc<dyn crate::ExternalKnowledgeAuth>,
 }
 
 impl AppState {
+    pub(crate) fn llm_model_lookup(&self) -> crate::llm_proxy::ModelLookup<'_> {
+        crate::llm_proxy::ModelLookup {
+            mysql: &self.mysql,
+            redis: self.redis.as_ref(),
+            entity_resolvers: &self.entity_resolvers,
+        }
+    }
+
+    pub(crate) fn plugin_runtime_state(&self) -> wegent_plugin_runtime::PluginState {
+        wegent_plugin_runtime::PluginState {
+            mysql: self.mysql.clone(),
+            redis: self.redis.clone(),
+            auth: self.auth.clone(),
+            attachment_http: self.attachment_http.clone(),
+            entity_resolvers: self.entity_resolvers.clone(),
+            socketio_rpc: self.socketio_rpc.clone(),
+        }
+    }
+
     pub(crate) fn devices_state(&self) -> wegent_devices::DevicesState {
         wegent_devices::DevicesState {
             mysql: self.mysql.clone(),
@@ -172,6 +190,7 @@ impl AppState {
             task_store: Arc::clone(&self.task_store),
             cloud_runtime_features: Arc::clone(&self.cloud_runtime_features),
             executor_version: self.executor_version.clone(),
+            socketio_rpc: self.socketio_rpc.clone(),
         }
     }
 

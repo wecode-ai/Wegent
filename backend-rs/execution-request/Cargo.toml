@@ -1,0 +1,47 @@
+[package]
+name = "wegent-execution-request"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Agent execution request assembly and context projection"
+
+[dependencies]
+anyhow.workspace = true
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server.workspace = true
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+jsonwebtoken.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing.workspace = true
+wegent-access.workspace = true
+wegent-attachment-links.workspace = true
+wegent-backend-config.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-backend-users.workspace = true
+wegent-capabilities.workspace = true
+wegent-connector-apps.workspace = true
+wegent-devices.workspace = true
+wegent-directory.workspace = true
+wegent-execution-knowledge.workspace = true
+wegent-execution-preparation.workspace = true
+wegent-git-repositories.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-llm-proxy.workspace = true
+wegent-mcp-providers.workspace = true
+wegent-protocol.workspace = true
+wegent-python-compat.workspace = true
+wegent-task-store.workspace = true
+wegent-task-views.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+futures-util = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
+wegent-backend-test-support.workspace = true
+wegent-connector-apps = { workspace = true, features = ["test-support"] }

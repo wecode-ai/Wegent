@@ -299,13 +299,12 @@ async fn issue_token(
         return Err(validation_error("Signing key is disabled"));
     }
     let signing_key = project_spec::<SigningKeyKindDocument>(&signing_key_row.json)?.spec;
-    let private_key_pem = crate::subscriptions_item::crypto::decrypt_sensitive_data(
-        &signing_key.private_key_encrypted,
-    )
-    .map_err(|error| {
-        tracing::error!(%error, "signing key decryption configuration failure");
-        FastApiError::unhandled()
-    })?;
+    let private_key_pem =
+        wegent_identity::sensitive_data::decrypt_sensitive_data(&signing_key.private_key_encrypted)
+            .map_err(|error| {
+                tracing::error!(%error, "signing key decryption configuration failure");
+                FastApiError::unhandled()
+            })?;
     if private_key_pem.is_empty() {
         return Err(validation_error("Signing key private key is unavailable"));
     }

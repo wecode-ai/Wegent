@@ -172,7 +172,7 @@ fn public_links(app: &AppState, text: &str) -> Result<String> {
         let m = captures.get(0).unwrap();
         result.push_str(&text[offset..m.start()]);
         let id = captures[1].parse::<i64>()?;
-        let token = crate::attachments::public_link::generate_public_attachment_token(
+        let token = wegent_attachment_links::generate_public_attachment_token(
             &app.auth,
             id,
             chrono::Duration::days(7),
@@ -207,7 +207,7 @@ fn secret(value: &Value, key: &str) -> Result<String> {
     let Some(raw) = value[key].as_str().filter(|v| !v.is_empty()) else {
         return Ok(String::new());
     };
-    crate::subscriptions_item::crypto::decrypt_sensitive_data(raw)
+    wegent_identity::sensitive_data::decrypt_sensitive_data(raw)
         .map_err(|_| anyhow::anyhow!("Notification credential decryption failed"))
 }
 async fn post(

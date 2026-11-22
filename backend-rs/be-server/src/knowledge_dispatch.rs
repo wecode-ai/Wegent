@@ -2,12 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Bind the application's index transport and compensation to knowledge routes.
+//! Bind attachment writes and indexing to the knowledge routes.
 
 use std::sync::Arc;
 
-use serde_json::Value;
-use wegent_knowledge::{IndexDispatcher, KnowledgeState};
+use serde_json::{Map, Value};
+use wegent_attachments::UploadServices;
+use wegent_attachments::upload::{
+    AttachmentUploadBackend, OverwriteError, Preflush, overwrite_attachment_internal,
+};
+use wegent_backend_persistence::request_sql::StatementArgs;
+use wegent_knowledge::{DocumentAttachmentWriter, IndexDispatcher, KnowledgeState};
 use wegent_knowledge_access::open_auth::ApiFailure;
 
 use crate::state::AppState;
@@ -17,9 +22,61 @@ pub(crate) fn build_state(app: &Arc<AppState>) -> KnowledgeState {
         mysql: app.mysql.clone(),
         redis: app.redis.clone(),
         entity_resolvers: app.entity_resolvers.clone(),
-        attachment_upload: Arc::clone(&app.attachment_upload),
+        erp: app.erp.clone(),
+        attachment_writer: Arc::new(AppAttachmentWriter {
+            mysql: app.mysql.clone(),
+            backend: Arc::clone(&app.attachment_upload),
+        }),
         document_download_policy: Arc::clone(&app.document_download_policy),
         index_dispatcher: Arc::new(AppIndexDispatcher(Arc::clone(app))),
+    }
+}
+
+struct AppAttachmentWriter {
+    mysql: brz_mysql::MysqlService,
+    backend: Arc<dyn AttachmentUploadBackend>,
+}
+
+#[async_trait::async_trait]
+impl DocumentAttachmentWriter for AppAttachmentWriter {
+    async fn overwrite(
+        &self,
+        attachment_id: i64,
+        filename: &str,
+        content: &[u8],
+        caller_flush: Option<(String, StatementArgs)>,
+    ) -> Result<(), ApiFailure> {
+        overwrite_attachment_internal(
+            UploadServices {
+                mysql: &self.mysql,
+                attachment_upload: &self.backend,
+            },
+            // Knowledge has already enforced its document-scoped manage check.
+            None,
+            attachment_id,
+            filename,
+            content,
+            &Map::new(),
+            caller_flush.map(|(sql, params)| Preflush { sql, params }),
+        )
+        .await
+        .map(|_| ())
+        .map_err(overwrite_failure)
+    }
+}
+
+/// The knowledge path catches the attachment's status/detail errors. Parse
+/// errors fall through to the application's generic 500 handler.
+fn overwrite_failure(error: OverwriteError) -> ApiFailure {
+    match error.into_detail() {
+        Some(error) => ApiFailure::new(
+            error.status(),
+            error
+                .detail_message()
+                .unwrap_or("Internal Server Error")
+                .to_string(),
+        ),
+        None => internal_failure("document parsing failed"),
     }
 }
 
@@ -34,7 +91,7 @@ impl IndexDispatcher for AppIndexDispatcher {
         payload: Value,
     ) -> Result<(), ApiFailure> {
         let state = &self.0;
-        let name = crate::background_jobs::knowledge::index::NAME;
+        let name = wegent_knowledge_jobs::INDEX_JOB;
         let task_id = crate::wework_auth_tokens::uuid4_hex()
             .map_err(|_| internal_failure("task id generation failed"))?;
         let dispatch: Result<(), ApiFailure> = async {
@@ -68,8 +125,8 @@ impl IndexDispatcher for AppIndexDispatcher {
         }
         .await;
         if let Err(error) = dispatch {
-            crate::background_jobs::knowledge::index::dispatch_failed(
-                state,
+            wegent_knowledge_jobs::dispatch_failed(
+                &crate::attachment_access::upload_services(state),
                 document_id,
                 generation,
             )

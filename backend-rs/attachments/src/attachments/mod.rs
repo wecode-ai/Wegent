@@ -44,7 +44,7 @@
 //! parameter replaces user authentication and ownership checks entirely.
 
 pub mod auth;
-pub mod content_type;
+pub use wegent_http_compat::content_type;
 pub mod context_store;
 pub(crate) mod crypto;
 mod delete;
@@ -57,7 +57,6 @@ pub mod external_media;
 pub mod handler;
 pub use wegent_storage::minio_client;
 pub mod playback;
-pub mod public_link;
 pub use wegent_storage::s3_signing;
 pub mod share_token;
 pub mod shared_download;

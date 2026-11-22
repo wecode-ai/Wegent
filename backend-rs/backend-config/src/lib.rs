@@ -86,6 +86,9 @@ fn dotenv_value(raw: &str) -> String {
 /// the container's `/app`) resolves it without configuration.
 const DEFAULT_ENV_FILE: &str = "config/example.env";
 
+/// The default local Python backend used by the hybrid gateway and packaged runtime.
+pub const DEFAULT_PYTHON_UPSTREAM: &str = "http://127.0.0.1:8004";
+
 /// The dotenv path chosen at startup by [`init_env_file`]; unset until then.
 static ENV_FILE: OnceLock<String> = OnceLock::new();
 

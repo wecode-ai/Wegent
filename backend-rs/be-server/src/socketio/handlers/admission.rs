@@ -12,10 +12,10 @@ use serde_json::Value;
 use crate::socketio::auth::{self, Identity};
 use crate::socketio::chat_session::{CLIENT_ORIGIN_WEWORK, ChatSession};
 use crate::socketio::device_lifecycle;
-use crate::socketio::mcp_app_ownership::Ownership;
 use crate::socketio::runtime::SocketRuntime;
 use crate::socketio::session::DeviceSession;
 use crate::state::AppState;
+use wegent_runtime_work::Ownership;
 
 #[derive(Debug)]
 pub(super) struct AuthenticatedUser {
@@ -123,10 +123,8 @@ async fn terminal(
 
 #[brz_socket_io::namespace("/wework-runtime", middleware = authorize_jwt)]
 async fn runtime(#[auth] user: &AuthenticatedUser) -> Result<Accept<Ownership>, ClientError> {
-    Ok(
-        Accept::new(Ownership::new())
-            .join(format!("wework-runtime:user:{}", user.identity.user_id)),
-    )
+    Ok(Accept::new(Ownership::default())
+        .join(format!("wework-runtime:user:{}", user.identity.user_id)))
 }
 
 #[brz_socket_io::disconnect(namespace = "/wework-runtime")]
@@ -135,7 +133,12 @@ async fn runtime_disconnected(
     #[auth] user: &AuthenticatedUser,
     #[inject(app)] app: &AppState,
 ) -> Result<(), ClientError> {
-    session.disconnect(app, user.identity.user_id).await;
+    session
+        .disconnect(
+            &crate::runtime_work::request_services(app),
+            user.identity.user_id,
+        )
+        .await;
     Ok(())
 }
 

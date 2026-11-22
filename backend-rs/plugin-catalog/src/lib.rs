@@ -11,7 +11,6 @@ use std::sync::Arc;
 use wegent_access::permissions;
 use wegent_backend_config as config;
 use wegent_backend_persistence::transaction_outcome;
-use wegent_devices::device_identity;
 use wegent_http_compat as http_compat;
 use wegent_identity::{auth, jwt_compat};
 use wegent_python_compat::json_compat;
