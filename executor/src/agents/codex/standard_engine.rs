@@ -36,6 +36,8 @@ use super::{
     CodexAppServerTurnOptions, CodexNotification,
 };
 
+const INTERACTION_CLOCK_CHECK_INTERVAL: Duration = Duration::from_secs(15);
+
 type TurnFuture = Pin<Box<dyn Future<Output = Result<CodexAppServerTurn, String>> + Send>>;
 
 #[path = "standard_projection.rs"]
@@ -205,6 +207,7 @@ impl CodexAppServerEngine {
         let subtask_id = request.subtask_id.clone();
         let tool_use_id = interaction.tool_use_id.clone();
         let deadline = interaction.deadline;
+        let expires_at_unix_ms = interaction.expires_at_unix_ms;
         let (expiry_guard, finished) = oneshot::channel();
         self.pending
             .lock()
@@ -224,9 +227,15 @@ impl CodexAppServerEngine {
         // release the process or Home lease when nobody answers.
         let pending = Arc::downgrade(&self.pending);
         tokio::spawn(async move {
-            tokio::select! {
-                _ = finished => return,
-                _ = sleep_until(deadline) => {}
+            let mut finished = finished;
+            while !interaction_expired(deadline, expires_at_unix_ms) {
+                // On hosts where the monotonic clock stops during sleep,
+                // periodically check the deadline displayed to the user.
+                let next_check = deadline.min(Instant::now() + INTERACTION_CLOCK_CHECK_INTERVAL);
+                tokio::select! {
+                    _ = &mut finished => return,
+                    _ = sleep_until(next_check) => {}
+                }
             }
             let Some(pending) = pending.upgrade() else {
                 return;
@@ -259,7 +268,7 @@ impl CodexAppServerEngine {
             .lock()
             .map_err(|_| "Codex interaction state unavailable")?;
         if matches!(pending.get(&request.task_id), Some(PendingTurn::Native(turn))
-            if turn.interaction.deadline <= Instant::now())
+            if interaction_expired(turn.interaction.deadline, turn.interaction.expires_at_unix_ms))
         {
             pending.remove(&request.task_id);
         }
@@ -327,6 +336,10 @@ impl CodexAppServerEngine {
             file_changes,
         })
     }
+}
+
+fn interaction_expired(deadline: Instant, expires_at_unix_ms: u64) -> bool {
+    Instant::now() >= deadline || super::current_epoch_millis() as u64 >= expires_at_unix_ms
 }
 
 impl AgentEngine for CodexAppServerEngine {

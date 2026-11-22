@@ -2517,11 +2517,11 @@ test.describe('Agent conversation regression', () => {
                 block => block.tool_name === 'interactive_form_question'
               )?.tool_output
             const result = typeof output === 'string' ? JSON.parse(output) : output
-            return result?.expires_at_unix_ms ?? 0
+            return (result?.expires_at_unix_ms ?? 0) - Date.now()
           },
           { timeout: 8000, message: 'The Codex form must keep its deadline in task history' }
         )
-        .toBeGreaterThan(Date.now())
+        .toBeGreaterThan(0)
       await page.getByTestId(`ask-user-option-${questionId}-0`).click()
       await page.getByTestId('ask-user-submit').click()
     }
