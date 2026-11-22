@@ -1,3 +1,4 @@
+import { matchesRuntimeControlCommand } from '../../../scripts/desktop-control-queue.mjs'
 import {
   handleRiskyCommandApproval,
   RISKY_COMMAND_APPROVAL_SCENARIOS,
@@ -1279,6 +1280,7 @@ class DesktopE2EServer {
         clientId,
         queuedAt: new Date().toISOString(),
         action,
+        value: command.value,
         resolve: resolvePromise,
         reject,
         resolveDelivery,
@@ -2185,6 +2187,12 @@ class DesktopE2EServer {
       if (started.clientId !== pending.clientId) {
         json(response, 409, {
           error: `Command ${started.id} belongs to a different desktop control client`,
+        })
+        return true
+      }
+      if (!matchesRuntimeControlCommand(pending, started)) {
+        json(response, 409, {
+          error: `Command ${started.id} does not match the queued Runtime request`,
         })
         return true
       }

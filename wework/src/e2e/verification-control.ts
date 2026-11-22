@@ -1,4 +1,8 @@
 import type {
+  RuntimeControlInput,
+  RuntimeControlReceipt,
+} from '../../electron/src/host/e2e-runtime-request'
+import type {
   DesktopControlCommand,
   DesktopControlExtensionResult,
 } from '@/extensions/desktop-control-contract'
@@ -21,6 +25,25 @@ import {
   localConnectorAuthPoll,
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
+
+/** Keep authenticated Runtime control transport in the existing native IPC owner. */
+export function dispatchDesktopRuntimeControl(command: DesktopControlCommand, clientId: string) {
+  const bridge = (
+    window as Window & {
+      weworkElectronVerification?: {
+        requestRuntime: (input: RuntimeControlInput) => Promise<RuntimeControlReceipt>
+      }
+    }
+  ).weworkElectronVerification
+  if (!bridge) throw new Error('Runtime verification bridge is unavailable')
+  if (command.action !== 'fetchLocalRuntime' || typeof command.value !== 'string') {
+    throw new Error('Expected an authenticated Runtime control command')
+  }
+  return bridge.requestRuntime({
+    command: { id: command.id, action: command.action, value: command.value },
+    clientId,
+  })
+}
 
 interface VerificationControlDependencies {
   elementEnabled: (element: HTMLElement) => boolean
@@ -341,18 +364,6 @@ export async function executeVerificationControlCommand(
       const { ensureLocalModelCatalogReady } = await import('./local-model-catalog-readiness')
       await ensureLocalModelCatalogReady()
       return { handled: true, value: '' }
-    }
-    case 'fetchLocalRuntime': {
-      const bridge = (
-        window as Window & {
-          weworkElectronVerification?: { requestRuntime: (input: unknown) => Promise<unknown> }
-        }
-      ).weworkElectronVerification
-      if (!bridge) throw new Error('Runtime verification bridge is unavailable')
-      return {
-        handled: true,
-        value: JSON.stringify(await bridge.requestRuntime(JSON.parse(command.value ?? '{}'))),
-      }
     }
     case 'configurePluginNativeAuthorization': {
       const { configurePluginNativeAuthorization } =

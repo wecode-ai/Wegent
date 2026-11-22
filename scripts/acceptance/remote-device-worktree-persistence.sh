@@ -179,9 +179,21 @@ assert_volume_mount() {
 
 assert_image_binary_refreshed() {
     local name="$1"
-    run_docker exec "$name" \
-        bash -lc 'cmp -s /app/executor "$WEGENT_EXECUTOR_HOME/bin/wegent-executor"' \
-        || fail "persisted Executor binary was not refreshed from the current image"
+    local deadline=$((SECONDS + 10))
+    local state
+    # Docker reports Running before the entrypoint finishes refreshing the volume.
+    while ((SECONDS < deadline)); do
+        if run_docker exec "$name" \
+            bash -lc 'cmp -s /app/executor "$WEGENT_EXECUTOR_HOME/bin/wegent-executor"'; then
+            return
+        fi
+        state="$(run_docker inspect --format '{{.State.Status}}' "$name")"
+        [ "$state" = "running" ] || {
+            fail "container stopped before the image binary was refreshed: $name ($state)"
+        }
+        sleep 0.2
+    done
+    fail "persisted Executor binary did not match the current image within 10 seconds: $name"
 }
 
 initialize_runtime_identity() {

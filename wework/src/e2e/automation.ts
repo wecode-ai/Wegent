@@ -97,7 +97,10 @@ import {
   readLocalExecutorLog,
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
-import { executeVerificationControlCommand } from './verification-control'
+import {
+  dispatchDesktopRuntimeControl,
+  executeVerificationControlCommand,
+} from './verification-control'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import {
@@ -4171,12 +4174,17 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
   }
 }
 
+function desktopControlPageState() {
+  return { visibility: document.visibilityState, hasFocus: document.hasFocus() }
+}
+
 async function postDesktopControlStarted(
   url: string,
   command: DesktopControlCommand,
   clientId: string
 ): Promise<void> {
   const startedAt = Date.now()
+  const startState = desktopControlPageState()
   let lastTick = startedAt
   let maxEventLoopLagMs = 0
   const probe = window.setInterval(() => {
@@ -4184,13 +4192,21 @@ async function postDesktopControlStarted(
     lastTick = Date.now()
   }, 100)
   let response: Response
+  let headersAt: number
+  let completedAt: number
+  let headersState: ReturnType<typeof desktopControlPageState>
+  let endState: ReturnType<typeof desktopControlPageState>
   try {
     response = await fetch(`${url}/started`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
       body: JSON.stringify({ id: command.id, clientId }),
     })
+    headersAt = Date.now()
+    headersState = desktopControlPageState()
     await response.arrayBuffer()
+    completedAt = Date.now()
+    endState = desktopControlPageState()
   } finally {
     window.clearInterval(probe)
     maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
@@ -4207,6 +4223,11 @@ async function postDesktopControlStarted(
         startedAt,
         elapsedMs: Date.now() - startedAt,
         maxEventLoopLagMs,
+        headersElapsedMs: headersAt - startedAt,
+        bodyElapsedMs: completedAt - headersAt,
+        startState,
+        headersState,
+        endState,
         serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
         visibility: document.visibilityState,
       },
@@ -4252,6 +4273,15 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       recordDesktopControlPhase('command-decoded', command)
       const diagnostic = { commandId: command.id, action: command.action, clientId }
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
+      if (command.action === 'fetchLocalRuntime') {
+        // Native owns admission and reporting, so Renderer scheduling cannot
+        // consume the Runtime action's budget or delay its completed result.
+        void dispatchDesktopRuntimeControl(command, clientId).catch(error => {
+          console.error('[Wework] Desktop E2E Runtime request failed:', error)
+        })
+        commandRequest = pollForCommand()
+        continue
+      }
       await postDesktopControlStarted(url, command, clientId)
       recordDesktopControlPhase('start-acknowledged', command)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
@@ -4270,15 +4300,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           recordDesktopControlPhase('result-acknowledged', command)
         }
       )
-      if (command.action === 'fetchLocalRuntime') {
-        // Runtime RPCs may wait on each other; keep polling so the controller
-        // can issue the overlapping request while each result retains its ID.
-        void completion.catch(error => {
-          console.error('[Wework] Desktop E2E Runtime request failed:', error)
-        })
-        commandRequest = pollForCommand()
-        continue
-      }
       const result = await completion
       if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {
