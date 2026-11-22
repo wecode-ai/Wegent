@@ -39,11 +39,15 @@ def snapshot(data: dict[str, Any], task_id: int) -> dict[str, Any]:
 
     with SessionLocal() as db:
         subscription = owned_subscription(db, data)
-        db.query(BackgroundExecution).filter_by(
-            subscription_id=subscription.id,
-            user_id=subscription.user_id,
-            task_id=task_id,
-        ).one()
+        execution = (
+            db.query(BackgroundExecution)
+            .filter_by(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                task_id=task_id,
+            )
+            .one()
+        )
         task = (
             db.query(TaskResource)
             .filter_by(
@@ -64,6 +68,7 @@ def snapshot(data: dict[str, Any], task_id: int) -> dict[str, Any]:
             "task_id": task_id,
             "is_active": task.is_active,
             "status": task.json["status"]["status"],
+            "execution_status": execution.status,
             "schedule": {
                 "enabled": subscription.json["_internal"]["enabled"],
                 "trigger": subscription.json["spec"]["trigger"],
@@ -101,14 +106,14 @@ def prepare(data: dict[str, Any]) -> dict[str, Any]:
     deadline = time.monotonic() + 15
     while True:
         state = snapshot(data, result["task_id"])
-        if state["status"] in {"COMPLETED", "FAILED", "CANCELLED", "COMPLETED_SILENT"}:
-            if state["status"] != "COMPLETED":
-                raise RuntimeError(
-                    f"Subscription prerequisite did not complete: {state}"
-                )
+        if state["status"] in {"FAILED", "CANCELLED", "COMPLETED_SILENT"}:
+            raise RuntimeError(f"Subscription prerequisite did not complete: {state}")
+        if state["status"] == state["execution_status"] == "COMPLETED":
             return state
         if time.monotonic() >= deadline:
-            raise TimeoutError("Subscription prerequisite did not persist COMPLETED")
+            raise TimeoutError(
+                f"Subscription task and execution did not both persist COMPLETED: {state}"
+            )
         time.sleep(0.1)
 
 

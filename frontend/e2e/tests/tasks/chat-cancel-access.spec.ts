@@ -26,6 +26,7 @@ type Subscription = {
 type PersistedTask = TaskDetail & {
   task_id: number
   is_active: number
+  execution_status: string
   schedule: Record<string, unknown>
 }
 
@@ -217,7 +218,11 @@ for (const enabled of [true, false]) {
     try {
       const seeded = await subscriptionState(history, subscription.id, 'prepare')
       taskId = seeded.task_id
-      expect(seeded).toMatchObject({ status: 'COMPLETED', is_active: 2 })
+      expect(seeded).toMatchObject({
+        status: 'COMPLETED',
+        execution_status: 'COMPLETED',
+        is_active: 2,
+      })
       const before = schedule(checked(await history.api.get<Subscription>(subscriptionPath)))
       expect(before.enabled).toBe(enabled)
       const taskPath = `/api/tasks/${seeded.task_id}`
