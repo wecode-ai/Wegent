@@ -154,7 +154,7 @@ export function createDesktopScenario(options) {
             task.executionState.outcome === 'succeeded' &&
             (!previousTurnId || task.executionState.latestTurnId !== previousTurnId),
           'Mobile worktree execution did not complete',
-          options.uiTimeoutMs
+          options.modelResponseTimeoutMs
         )
       const initial = await complete()
       assert.ok(initial.threadId)

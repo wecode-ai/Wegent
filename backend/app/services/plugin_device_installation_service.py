@@ -34,6 +34,7 @@ from app.services.plugin_write_coordination import (
 )
 from app.services.plugin_write_errors import PluginWriteError, is_mysql_deadlock
 from app.services.plugin_write_operations import run_plugin_operation
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +230,7 @@ class PluginDeviceInstallationService:
             )
         db.commit()
 
+    @trace_sync("plugin_sync.record_receipts", "backend.plugins")
     def record_sync_response(
         self,
         db: Session,
@@ -236,6 +238,19 @@ class PluginDeviceInstallationService:
         user_id: int,
         response: DeviceCapabilitySyncResponse,
         installed_ids: list[int] | None = None,
+    ) -> None:
+        scopes = self._response_scopes(db, user_id, response, installed_ids)
+        # Device receipts are independent materializations. A blocked row must
+        # retain only its installation's lease, not every plugin in a snapshot.
+        for scope in ([item] for item in scopes) if scopes else [[]]:
+            self._record_sync_scope(db, user_id, response, scope)
+
+    def _record_sync_scope(
+        self,
+        db: Session,
+        user_id: int,
+        response: DeviceCapabilitySyncResponse,
+        installed_ids: list[int],
     ) -> None:
         for attempt in range(1, DEVICE_SYNC_WRITE_ATTEMPTS + 1):
             try:
@@ -788,16 +803,14 @@ class PluginDeviceInstallationService:
     ) -> list[int]:
         if not response.results:
             return []
-        owned = {
-            row.id
-            for row in db.query(Kind.id)
-            .filter_by(
-                user_id=user_id,
-                kind="InstalledPlugin",
-                namespace="default",
-            )
-            .all()
-        }
+        query = db.query(Kind.id).filter_by(
+            user_id=user_id,
+            kind="InstalledPlugin",
+            namespace="default",
+        )
+        if installed_ids is not None:
+            query = query.filter(Kind.id.in_(installed_ids))
+        owned = {row.id for row in query.all()}
         if installed_ids is not None:
             return sorted(owned.intersection(installed_ids))
         selected: set[int] = set()
