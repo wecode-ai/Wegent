@@ -47,6 +47,7 @@ export interface ComposerAutocompleteInputProps<
   testId?: string
   predictionStatusTarget?: HTMLElement | null
   skillMenuClassName?: string
+  slashMenuClassName?: string
   disableAutocomplete?: boolean
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceMentionTarget | null
