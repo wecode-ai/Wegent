@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
@@ -34,7 +35,7 @@ import {
 } from './requestUserInputOverlay'
 import { TaskDetailScrollArea } from './TaskDetailScrollArea'
 import { SupervisorSuggestionCards } from './TaskSupervisorControl'
-import { TaskIssueShare } from '@/features/todo/TaskIssueShare'
+import { TaskIssueShare, type TaskIssueShareHandle } from '@/features/todo/TaskIssueShare'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
@@ -45,6 +46,7 @@ export function DesktopWorkbenchConversationView({
 }: {
   model: DesktopWorkbenchPaneRenderModel
 }) {
+  const issueShareRef = useRef<TaskIssueShareHandle>(null)
   const {
     workbenchVisible,
     presentation,
@@ -519,6 +521,7 @@ export function DesktopWorkbenchConversationView({
                                             paneVisible &&
                                             workbenchVisible && (
                                               <TaskIssueShare
+                                                shareRef={issueShareRef}
                                                 key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
                                                 title={workbenchTitle ?? ''}
                                                 messages={paneMessages}
@@ -716,6 +719,11 @@ export function DesktopWorkbenchConversationView({
                 }
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+                onShareSelectionAsIssue={
+                  currentRuntimeTask && paneVisible && workbenchVisible
+                    ? (text, context) => issueShareRef.current?.openSelection(text, context)
+                    : undefined
+                }
                 onAddSelectionToConversation={addSelectionToConversation}
                 onAskSelectionInSidebar={askSelectionInSidebar}
                 onOpenSubagent={openSubagentConversation}

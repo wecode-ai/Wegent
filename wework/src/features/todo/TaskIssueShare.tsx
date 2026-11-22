@@ -1,10 +1,11 @@
 import { Button } from '@wegent/collaboration/markdown/Button'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { usePanelData, type TaskIssueShareDraft } from '@wegent/collaboration/platform'
 import type { SharedIssueTarget } from '@/api/personalIssues'
 import { Link2, Share2 } from 'lucide-react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import {
+  type MessageSelectionContext,
   getAssistantRenderProjection,
   getUserMessageTextProjection,
 } from '@wegent/collaboration/conversation'
@@ -82,13 +83,19 @@ function openIssue(issue: SharedIssueTarget) {
   )
 }
 
+export interface TaskIssueShareHandle {
+  openSelection(text: string, context: MessageSelectionContext): void
+}
+
 export function TaskIssueShare({
+  shareRef,
   title,
   messages,
   address,
   readWorkspaceFileChunk,
   readHistoryPage,
 }: {
+  shareRef?: Ref<TaskIssueShareHandle>
   title: string
   messages: WorkbenchMessage[]
   address: { deviceId: string; taskId: string; workspacePath?: string | null }
@@ -126,6 +133,59 @@ export function TaskIssueShare({
     historyRequest.current = null
     setDraft(null)
   }
+  const openShare = (selection?: string, context?: MessageSelectionContext) => {
+    setLinksOpen(false)
+    setProjectIssue(null)
+    const sourceTitle = Array.from(title.trim()).slice(0, 255).join('')
+    const excerpts = shareExcerpts(messages)
+    const sourceMessage = context && messages.find(message => message.id === context.messageId)
+    const selectedExcerpt =
+      selection && context && sourceMessage
+        ? {
+            excerpt: { id: sourceMessage.id, role: sourceMessage.role, content: context.content },
+            start: context.start,
+            end: context.start + selection.length,
+            followingMessageIds: messages
+              .slice(messages.indexOf(sourceMessage) + 1)
+              .map(message => message.id),
+          }
+        : undefined
+    historyRequest.current?.abort()
+    const requestId = crypto.randomUUID()
+    const controller = new AbortController()
+    historyRequest.current = controller
+    const history = readHistoryPage
+      ? readShareHistory(request => readHistoryPage(request, controller.signal))
+      : undefined
+    const last = excerpts.slice(-1)
+    setDraft({
+      requestId,
+      source: { device_id: address.deviceId, task_id: address.taskId, title: sourceTitle },
+      title: sourceTitle,
+      conversationFiles: taskIssueConversationFiles(
+        messages,
+        address,
+        readWorkspaceFileChunk,
+        fetchAttachment
+      ),
+      excerpts: history ? last : excerpts,
+      history,
+      selectedExcerpt,
+    })
+    void history?.first().then(
+      first =>
+        setDraft(current =>
+          current?.requestId === requestId && first && first.id !== last[0]?.id
+            ? { ...current, excerpts: [first, ...last] }
+            : current
+        ),
+      () =>
+        setDraft(current =>
+          current?.requestId === requestId ? { ...current, historyUnavailable: true } : current
+        )
+    )
+  }
+  useImperativeHandle(shareRef, () => ({ openSelection: openShare }))
   const label = t('taskIssueShare.action')
 
   return (
@@ -209,45 +269,7 @@ export function TaskIssueShare({
         title={label}
         className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:h-7"
         onClick={() => {
-          setLinksOpen(false)
-          setProjectIssue(null)
-          const sourceTitle = Array.from(title.trim()).slice(0, 255).join('')
-          const excerpts = shareExcerpts(messages)
-          historyRequest.current?.abort()
-          const requestId = crypto.randomUUID()
-          const controller = new AbortController()
-          historyRequest.current = controller
-          const history = readHistoryPage
-            ? readShareHistory(request => readHistoryPage(request, controller.signal))
-            : undefined
-          const last = excerpts.slice(-1)
-          setDraft({
-            requestId,
-            source: { device_id: address.deviceId, task_id: address.taskId, title: sourceTitle },
-            title: sourceTitle,
-            conversationFiles: taskIssueConversationFiles(
-              messages,
-              address,
-              readWorkspaceFileChunk,
-              fetchAttachment
-            ),
-            excerpts: history ? last : excerpts,
-            history,
-          })
-          void history?.first().then(
-            first =>
-              setDraft(current =>
-                current?.requestId === requestId && first && first.id !== last[0]?.id
-                  ? { ...current, excerpts: [first, ...last] }
-                  : current
-              ),
-            () =>
-              setDraft(current =>
-                current?.requestId === requestId
-                  ? { ...current, historyUnavailable: true }
-                  : current
-              )
-          )
+          openShare()
         }}
       >
         <Share2 className="h-4 w-4" aria-hidden="true" />

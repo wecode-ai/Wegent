@@ -72,6 +72,7 @@ function ScrollableMessagePaneContent({
   onForkMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onShareSelectionAsIssue,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   onFillSelectionToAnswer,
@@ -323,6 +324,7 @@ function ScrollableMessagePaneContent({
                 onForkMessage={onForkMessage}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                onShareSelectionAsIssue={onShareSelectionAsIssue}
                 onAddSelectionToConversation={onAddSelectionToConversation}
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
                 onFillSelectionToAnswer={onFillSelectionToAnswer}
