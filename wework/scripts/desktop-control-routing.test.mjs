@@ -241,7 +241,12 @@ test('accepts an in-flight runtime result after the control client reconnects', 
   })
   const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
   const command = await response.json()
-  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  await post(control, 'started', {
+    id: command.id,
+    clientId: 'main-1',
+    action: command.action,
+    value: command.value,
+  })
 
   await register(control, 'main', 'main-2')
   assert.equal(control.commandResults.has(command.id), true)

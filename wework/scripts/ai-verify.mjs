@@ -22,7 +22,7 @@ import {
 } from './ai-verify-auth-cleanup.mjs'
 import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
 import { VerifyVideoRecorder } from './ai-verify-video.mjs'
-import { WindowCommandQueue } from './desktop-control-queue.mjs'
+import { matchesRuntimeControlCommand, WindowCommandQueue } from './desktop-control-queue.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { processIsAlive, windowsTaskkillArguments } from '../e2e/desktop/process-lifecycle.mjs'
 import {
@@ -319,6 +319,12 @@ function authorized(request, token) {
 export function acknowledgeStartedCommand(pending, started) {
   if (!pending.has(started.id)) {
     return { status: 404, value: { error: `Unknown command ${started.id}` } }
+  }
+  if (!matchesRuntimeControlCommand(pending.get(started.id), started)) {
+    return {
+      status: 409,
+      value: { error: `Command ${started.id} does not match the queued Runtime request` },
+    }
   }
   return { status: 200, value: { ok: true } }
 }
@@ -623,7 +629,12 @@ async function runServer(sessionPath, token) {
         const id = randomUUID()
         const timeoutMs = Number(command.timeoutMs) || defaultTimeoutMs
         const result = new Promise((resolvePromise, reject) =>
-          pending.set(id, { resolve: resolvePromise, reject })
+          pending.set(id, {
+            resolve: resolvePromise,
+            reject,
+            action: command.action,
+            value: command.value,
+          })
         )
         const nextCommand = { id, windowLabel: 'main', ...command }
         queue.enqueue(nextCommand)

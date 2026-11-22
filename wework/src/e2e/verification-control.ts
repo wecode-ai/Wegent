@@ -1,4 +1,8 @@
 import type {
+  RuntimeControlInput,
+  RuntimeControlReceipt,
+} from '../../electron/src/host/e2e-runtime-request'
+import type {
   DesktopControlCommand,
   DesktopControlExtensionResult,
 } from '@/extensions/desktop-control-contract'
@@ -25,11 +29,19 @@ import {
 export function dispatchDesktopRuntimeControl(command: DesktopControlCommand, clientId: string) {
   const bridge = (
     window as Window & {
-      weworkElectronVerification?: { requestRuntime: (input: unknown) => Promise<unknown> }
+      weworkElectronVerification?: {
+        requestRuntime: (input: RuntimeControlInput) => Promise<RuntimeControlReceipt>
+      }
     }
   ).weworkElectronVerification
   if (!bridge) throw new Error('Runtime verification bridge is unavailable')
-  return bridge.requestRuntime({ command, clientId })
+  if (command.action !== 'fetchLocalRuntime' || typeof command.value !== 'string') {
+    throw new Error('Expected an authenticated Runtime control command')
+  }
+  return bridge.requestRuntime({
+    command: { id: command.id, action: command.action, value: command.value },
+    clientId,
+  })
 }
 
 interface VerificationControlDependencies {

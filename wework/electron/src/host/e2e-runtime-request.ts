@@ -92,14 +92,20 @@ export async function requestE2ERuntime(
   }
 }
 
-interface RuntimeControlInput {
-  command: { id: string; action: string; value?: string }
+export interface RuntimeControlInput {
+  command: { id: string; action: 'fetchLocalRuntime'; value: string }
+  clientId: string
+}
+
+export interface RuntimeControlReceipt {
+  id: string
   clientId: string
 }
 
 type AuthenticationCookies = (url: string) => Promise<Array<{ name: string; value: string }>>
 
-const runtimeControlRequests = new Map<string, Promise<{ id: string; clientId: string }>>()
+const RUNTIME_CONTROL_REPORT_TIMEOUT_MS = 10_000
+const runtimeControlRequests = new Map<string, Promise<RuntimeControlReceipt>>()
 
 function runtimeControlInput(input: unknown): RuntimeControlInput {
   const candidate = input as Partial<RuntimeControlInput> | null
@@ -113,7 +119,14 @@ function runtimeControlInput(input: unknown): RuntimeControlInput {
     typeof candidate.command.value !== 'string'
   )
     throw new Error('Expected an authenticated Runtime control command')
-  return candidate as RuntimeControlInput
+  return {
+    command: {
+      id: candidate.command.id,
+      action: 'fetchLocalRuntime',
+      value: candidate.command.value,
+    },
+    clientId: candidate.clientId,
+  }
 }
 
 async function reportRuntimeControl(
@@ -135,6 +148,7 @@ async function reportRuntimeControl(
         },
         body: JSON.stringify(body),
         redirect: 'error',
+        signal: AbortSignal.timeout(RUNTIME_CONTROL_REPORT_TIMEOUT_MS),
       }
     )
     responseStatus = response.status
@@ -166,13 +180,18 @@ async function runRuntimeControl(
     stages.push({ stage, elapsedMs: Math.round(performance.now() - startedAt) })
   try {
     // Admission must succeed before reading cookies or making any Runtime request.
-    await reportRuntimeControl(environment, 'started', identity, request)
+    await reportRuntimeControl(
+      environment,
+      'started',
+      { ...identity, action: command.action, value: command.value },
+      request
+    )
     mark('admitted')
     let result: { ok: boolean; value?: string; error?: string }
     try {
       const response = await requestE2ERuntime(
         environment,
-        JSON.parse(command.value!),
+        JSON.parse(command.value),
         authenticationCookies,
         request
       )
@@ -196,7 +215,7 @@ export function completeE2ERuntimeControl(
   input: unknown,
   authenticationCookies: AuthenticationCookies,
   request: typeof fetch = fetch
-): Promise<{ id: string; clientId: string }> {
+): Promise<RuntimeControlReceipt> {
   if (environment.VITE_WEWORK_E2E !== 'true' || !environment.WEWORK_E2E_CONTROL_URL) {
     throw new Error('An isolated E2E controller is required')
   }

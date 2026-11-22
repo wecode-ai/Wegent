@@ -374,8 +374,9 @@ describe('Electron desktop E2E automation', () => {
     const control = new DesktopE2EServer('/workspace')
     await control.start()
     let runtimeRequests = 0
+    const runtimeCookies: Array<string | undefined> = []
     const runtime = createServer((request, response) => {
-      expect(request.headers.cookie).toBe('dsh-auth-test=fixture-session')
+      runtimeCookies.push(request.headers.cookie)
       runtimeRequests += 1
       response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end('{"running":false}')
@@ -447,6 +448,7 @@ describe('Electron desktop E2E automation', () => {
       commandId = control.commandHistory[0].id
       expect(JSON.parse(receipt!)).toMatchObject({ status: 200, body: '{"running":false}' })
       expect(commandError).toBeUndefined()
+      expect(runtimeCookies).toEqual(['dsh-auth-test=fixture-session'])
       expect(rendererAcks).toBe(0)
       expect(ipcReturned).toBe(false)
       expect(
@@ -471,10 +473,16 @@ describe('Electron desktop E2E automation', () => {
           }),
         })
       }
-      for (const { response } of control.controlLongPolls.values()) {
-        response.writeHead(410)
-        response.end()
-      }
+      // Retire the client at the server so already-issued polls also receive 410.
+      await nativeFetch(`${control.controlUrl}/ready`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: 'cleanup-client',
+          windowLabel: 'main',
+          location: 'http://localhost/',
+        }),
+      })
       await client
       delete verificationWindow.weworkElectronVerification
       runtime.closeAllConnections()

@@ -157,8 +157,13 @@ async function runtimeControlFixture(
     settings,
     cookies,
     register,
-    async queue(path: string, preserveResultAcrossClientReplacement = true, timeoutMs = 1000) {
-      const result = control.command('fetchLocalRuntime', 'body', {
+    async queue(
+      path: string,
+      preserveResultAcrossClientReplacement = true,
+      timeoutMs = 1000,
+      action = 'fetchLocalRuntime'
+    ) {
+      const result = control.command(action, 'body', {
         value: JSON.stringify({
           url: `http://127.0.0.1:${address.port}/wework/${path}`,
           timeoutMs,
@@ -181,6 +186,65 @@ async function runtimeControlFixture(
   }
 }
 
+async function stalledControlProxy(target: string, stage: string, mode: 'headers' | 'body') {
+  let notify!: () => void
+  const arrived = new Promise<void>(resolve => {
+    notify = resolve
+  })
+  let stalled = false
+  let failure: unknown
+  const paths: string[] = []
+  const held: ServerResponse[] = []
+  async function forward(request: IncomingMessage, response: ServerResponse) {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    paths.push(request.url!)
+    const result = await fetch(`${target}${request.url}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(request.headers.authorization ? { Authorization: request.headers.authorization } : {}),
+      },
+      body: Buffer.concat(chunks),
+    })
+    const bytes = Buffer.from(await result.arrayBuffer())
+    if (!stalled && request.url === `/${stage}`) {
+      stalled = true
+      held.push(response)
+      if (mode === 'body') {
+        response.writeHead(result.status)
+        response.write(' ')
+      }
+      notify()
+      return
+    }
+    response.writeHead(result.status)
+    response.end(bytes)
+  }
+  const server = createServer((request, response) => {
+    void forward(request, response).catch(error => {
+      failure = error
+      response.destroy()
+    })
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const port = (server.address() as { port: number }).port
+  return {
+    url: `http://127.0.0.1:${port}`,
+    arrived,
+    paths,
+    get failure() {
+      return failure
+    },
+    async close() {
+      for (const response of held) response.destroy()
+      server.closeAllConnections()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    },
+  }
+}
+
 describe('Native-owned Runtime control over real HTTP', () => {
   test('does not follow an admission redirect or disclose the controller token', async () => {
     let redirectedRequests = 0
@@ -191,9 +255,12 @@ describe('Native-owned Runtime control over real HTTP', () => {
     destination.listen(0, '127.0.0.1')
     await once(destination, 'listening')
     const destinationPort = (destination.address() as { port: number }).port
+    const controllerHeaders: Array<{ authorization?: string; cookie?: string }> = []
     const controller = createServer((request, response) => {
-      expect(request.headers.authorization).toBe('Bearer controller-only-token')
-      expect(request.headers.cookie).toBeUndefined()
+      controllerHeaders.push({
+        authorization: request.headers.authorization,
+        cookie: request.headers.cookie,
+      })
       response.writeHead(302, { Location: `http://127.0.0.1:${destinationPort}/collect` })
       response.end()
     })
@@ -220,6 +287,9 @@ describe('Native-owned Runtime control over real HTTP', () => {
           cookies
         )
       ).rejects.toThrow()
+      expect(controllerHeaders).toEqual([
+        { authorization: 'Bearer controller-only-token', cookie: undefined },
+      ])
       expect(redirectedRequests).toBe(0)
       expect(cookies).not.toHaveBeenCalled()
     } finally {
@@ -254,6 +324,33 @@ describe('Native-owned Runtime control over real HTTP', () => {
           fixture.cookies
         )
       ).rejects.toThrow('404')
+      await expect(
+        completeE2ERuntimeControl(
+          fixture.settings,
+          {
+            ...queued.input,
+            command: {
+              ...queued.input.command,
+              value: JSON.stringify({ url: 'http://127.0.0.1:3000/wework/other' }),
+            },
+          },
+          fixture.cookies
+        )
+      ).rejects.toThrow('409')
+      const wrongAction = await fetch(`${fixture.control.controlUrl}/started`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer controller-fixture-token',
+        },
+        body: JSON.stringify({
+          id: queued.input.command.id,
+          clientId: 'main-1',
+          action: 'getText',
+          value: queued.input.command.value,
+        }),
+      })
+      expect(wrongAction.status).toBe(409)
       expect(fixture.cookies).not.toHaveBeenCalled()
       expect(requests).toBe(0)
       expect(
@@ -262,6 +359,34 @@ describe('Native-owned Runtime control over real HTTP', () => {
       await completeE2ERuntimeControl(fixture.settings, queued.input, fixture.cookies)
       expect(JSON.parse(await queued.result)).toMatchObject({ status: 200, body: 'runtime-result' })
       expect(requests).toBe(1)
+      const ui = await fixture.queue('ui', true, 1000, 'getText')
+      await expect(
+        completeE2ERuntimeControl(
+          fixture.settings,
+          {
+            ...ui.input,
+            command: { ...ui.input.command, action: 'fetchLocalRuntime' },
+          },
+          fixture.cookies
+        )
+      ).rejects.toThrow('409')
+      expect(requests).toBe(1)
+      expect(fixture.cookies).toHaveBeenCalledTimes(1)
+      for (const [stage, payload] of [
+        ['started', { id: ui.input.command.id, clientId: 'main-1' }],
+        ['results', { id: ui.input.command.id, clientId: 'main-1', ok: true, value: 'ui-result' }],
+      ] as const) {
+        const response = await fetch(`${fixture.control.controlUrl}/${stage}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer controller-fixture-token',
+          },
+          body: JSON.stringify(payload),
+        })
+        expect(response.status).toBe(200)
+      }
+      expect(await ui.result).toBe('ui-result')
       expect(
         fixture.controlHeaders.every(
           headers => headers.authorization === 'Bearer controller-fixture-token' && !headers.cookie
@@ -278,9 +403,12 @@ describe('Native-owned Runtime control over real HTTP', () => {
       releaseHeld = resolve
     })
     const paths: string[] = []
+    const runtimeHeaders: Array<{ authorization?: string; cookie?: string }> = []
     const fixture = await runtimeControlFixture((request, response) => {
-      expect(request.headers.cookie).toBe('dsh-auth-test=runtime-fixture-cookie')
-      expect(request.headers.authorization).toBeUndefined()
+      runtimeHeaders.push({
+        authorization: request.headers.authorization,
+        cookie: request.headers.cookie,
+      })
       paths.push(request.url!)
       if (request.url?.endsWith('/held')) void held.then(() => response.end('held-result'))
       else response.end('fast-result')
@@ -303,6 +431,9 @@ describe('Native-owned Runtime control over real HTTP', () => {
       expect(receipts).toEqual(Array(2).fill({ id: first.input.command.id, clientId: 'main-1' }))
       expect(JSON.parse(await first.result)).toMatchObject({ body: 'held-result' })
       expect(paths).toEqual(['/wework/held', '/wework/fast'])
+      expect(runtimeHeaders).toEqual(
+        Array(2).fill({ cookie: 'dsh-auth-test=runtime-fixture-cookie', authorization: undefined })
+      )
       expect(fixture.cookies).toHaveBeenCalledTimes(2)
       expect(
         fixture.control.controlTransportHistory.filter(event => event.event === 'result-received')
@@ -424,4 +555,70 @@ describe('Native-owned Runtime control over real HTTP', () => {
       await fixture.close()
     }
   })
+
+  test.each([
+    ['started', 'headers'],
+    ['started', 'body'],
+    ['results', 'headers'],
+    ['results', 'body'],
+  ] as const)(
+    'bounds the %s report through stalled %s and releases duplicate ownership',
+    async (stage, mode) => {
+      const realTimeout = AbortSignal.timeout.bind(AbortSignal)
+      const reportClocks: AbortController[] = []
+      const clock = vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+        if (milliseconds !== 10_000) return realTimeout(milliseconds)
+        const controller = new AbortController()
+        reportClocks.push(controller)
+        return controller.signal
+      })
+      let requests = 0
+      const fixture = await runtimeControlFixture((_request, response) => {
+        requests += 1
+        response.end('bounded-result')
+      })
+      const proxy = await stalledControlProxy(fixture.control.controlUrl, stage, mode)
+      const settings = { ...fixture.settings, WEWORK_E2E_CONTROL_URL: proxy.url }
+      let native: Promise<unknown> | undefined
+      try {
+        const queued = await fixture.queue('report-deadline')
+        native = completeE2ERuntimeControl(settings, queued.input, fixture.cookies)
+        void native.catch(() => {})
+        await proxy.arrived
+        const diagnostic = fixture.control.commandHistory.find(
+          command => command.id === queued.input.command.id
+        )
+        const startedAt = diagnostic.startedAt
+        expect(reportClocks).toHaveLength(stage === 'started' ? 1 : 2)
+        if (stage === 'results')
+          expect(JSON.parse(await queued.result)).toMatchObject({ body: 'bounded-result' })
+        reportClocks
+          .at(-1)!
+          .abort(new DOMException('Control report deadline exceeded', 'TimeoutError'))
+        await expect(native).rejects.toMatchObject({
+          name: expect.stringMatching(/AbortError|TimeoutError/),
+        })
+        // A new call with the same identity must reach real admission again;
+        // an accepted earlier result must never be executed a second time.
+        if (stage === 'started') {
+          await completeE2ERuntimeControl(settings, queued.input, fixture.cookies)
+          expect(JSON.parse(await queued.result)).toMatchObject({ body: 'bounded-result' })
+        } else {
+          await expect(
+            completeE2ERuntimeControl(settings, queued.input, fixture.cookies)
+          ).rejects.toThrow('404')
+        }
+        expect(proxy.paths.filter(path => path === '/started')).toHaveLength(2)
+        expect(requests).toBe(1)
+        expect(fixture.cookies).toHaveBeenCalledTimes(1)
+        expect(diagnostic.startedAt).toBe(startedAt)
+        expect(proxy.failure).toBeUndefined()
+      } finally {
+        clock.mockRestore()
+        await proxy.close()
+        await native?.catch(() => {})
+        await fixture.close()
+      }
+    }
+  )
 })
