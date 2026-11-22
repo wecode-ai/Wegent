@@ -34,7 +34,7 @@ import {
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from '../pluginDistribution'
 import { isCodexCatalogItem } from '../workspace/marketplaceWorkspaceHelpers'
 import type { PluginWorkspaceServices } from './pluginWorkspaceTypes'
-import { ownedPersonalPluginSourceKey } from './personalPluginInstallSource'
+import { ownedPersonalPluginSourceKey } from './personalPluginCloudInstall'
 
 export function usePluginInstalledOperations({
   installedPlugins,

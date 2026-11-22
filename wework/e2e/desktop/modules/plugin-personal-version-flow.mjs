@@ -2,12 +2,17 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { CLOUD_DEVICE_ID, fetchJson, resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
+import {
+  ACTIVE_COMPOSER_SELECTOR,
+  CLOUD_DEVICE_ID,
+  fetchJson,
+  resultDir,
+  WORKBENCH_READY_TIMEOUT_MS,
+} from './shared.mjs'
 import {
   accountPlugin,
   inventory,
   materializedPlugin,
-  pathExists,
   pluginApi,
   testId,
   until,
@@ -113,55 +118,29 @@ async function importPersonalSource(
   return archivePath
 }
 
-async function verifyUninstallDuringImport(cloud, control, name) {
-  const method = 'executor.plugins.import_package.finalize'
-  await control.command('holdLocalExecutorRequests', 'body', {
-    value: JSON.stringify({ method, phase: 'after-response', maxHeldCount: 1 }),
-  })
-  try {
-    await control.command('clickWhenEnabled', testId('plugin-import-confirm'))
-    const hold = JSON.parse(await control.command('awaitLocalExecutorRequestHold', 'body'))
-    assert.equal(hold.heldCount, 1, 'The real ZIP import did not reach finalization')
-    await control.command('navigate', 'body', { value: '/plugins/manage' })
-    const actions = `button[data-testid^="installed-plugin-actions-"][aria-label$=" ${name}"]`
-    await control.command('clickWhenEnabled', actions)
-    await control.command(
-      'clickWhenEnabled',
-      '[role="menuitem"][data-testid^="installed-plugin-uninstall-"]'
-    )
-    await control.command('clickWhenEnabled', testId('plugin-uninstall-confirm-button'))
-    const notice = `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
-    await control.command('waitFor', notice)
-    assert.match(
-      await control.command('getText', notice),
-      /正在检查安装状态|installation state is being checked/i
-    )
-    assert.equal(await accountPlugin(cloud, name), undefined)
-  } finally {
-    await control.command('releaseLocalExecutorRequestHold', 'body')
-  }
-  await control.command('navigate', 'body', { value: '/plugins' })
-  await control.command('waitFor', testId('plugins-search-input'))
-}
-
 async function verifyAuthorCloudInstall({ cloud, control, request, recipient, root }) {
   const device = await cloud.device(CLOUD_DEVICE_ID)
-  assert.equal(
-    device?.device_type,
-    'cloud',
-    'A real cloud device is required for author installation'
-  )
-  const home = cloud.remoteExecutorEnv.WEGENT_EXECUTOR_HOME
-  const target = 'button[data-testid^="plugin-detail-toggle-"]'
+  assert.equal(device?.device_type, 'cloud', 'Author installation requires a real cloud device')
   const getListing = async name =>
     (await request('/plugins/marketplace')).items.find(
       item => item.name === name && item.accessRole === 'owner'
+    )
+  const detailRow = name =>
+    `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
+  const startChat = async () =>
+    waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('plugin-detail-actions-bar') &&
+        snapshot.text.split('\n').some(text => /^(立即对话|Start chat)$/i.test(text)),
+      'Installed author source did not expose the existing Start chat action'
     )
 
   for (const alreadyShared of [false, true]) {
     const name = alreadyShared ? 'author-install-shared-e2e' : 'author-install-private-e2e'
     const fixtureRoot = join(root, name)
     await mkdir(fixtureRoot, { recursive: true })
+    const sourceVersion = alreadyShared ? nextVersion : '1.2.0'
     if (alreadyShared) {
       const initialized = await uploadVersionFixture({
         request,
@@ -176,272 +155,112 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
           .submission.status,
         'approved'
       )
+      await createPackage(fixtureRoot, sourceVersion, name, name, authorPluginImportPath)
+    } else {
+      await importPersonalSource(control, fixtureRoot, sourceVersion, false, name, name)
+      await control.command('uninstallInstalledPlugin', 'body', {
+        value: `${name}@wework-personal`,
+      })
     }
     const previous = await getListing(name)
     const accessPath = item => `/plugins/marketplace/${item.id}/access`
     const previousAccess = previous ? await request(accessPath(previous)) : null
     assert.equal(Boolean(previous?.latestReleaseId), alreadyShared)
-    const sourceVersion = alreadyShared ? nextVersion : '1.2.0'
-    await createPackage(fixtureRoot, sourceVersion, name, name, authorPluginImportPath)
-    const { marketplace } = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
-    const manifest = join(marketplace.path, 'plugins', name, '.codex-plugin', 'plugin.json')
-    try {
-      assert.equal(
-        await accountPlugin(cloud, name),
-        undefined,
-        'Fixture already has an account install'
+    assert.equal(await accountPlugin(cloud, name), undefined, 'Unexpected initial account install')
+
+    await control.command('navigate', 'body', { value: '/plugins' })
+    await control.command('waitFor', testId('plugins-search-input'))
+    await control.command('click', testId('plugins-distribution-tab-personal'))
+    await control.command('fill', testId('plugins-search-input'), { value: name })
+    if (!alreadyShared) {
+      await refreshPluginInventory(control)
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid^="plugin-marketplace-row-"]:has(> button[aria-label*="${name}"]) [data-testid^="plugin-marketplace-install-"]`
       )
-      await control.command('navigate', 'body', { value: '/plugins' })
-      await control.command('waitFor', testId('plugins-search-input'))
-      await control.command('click', testId('plugins-distribution-tab-personal'))
-      const row = `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
+      await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+    } else {
       await control.command('clickWhenEnabled', testId('plugins-create-button'))
       await control.command('clickWhenEnabled', testId('plugins-import-plugin-option'))
       await control.command('clickWhenEnabled', testId('plugin-import-select'))
       await control.command('waitFor', testId('plugin-import-preview'), { text: name })
-      if (alreadyShared) {
-        await verifyUninstallDuringImport(cloud, control, name)
-      } else {
-        await control.command('clickWhenEnabled', testId('plugin-import-confirm'))
-      }
+      await control.command('clickWhenEnabled', testId('plugin-import-confirm'))
       await control.command('waitFor', testId('plugin-import-dialog'), { visible: false })
-      const originalManifest = await readFile(manifest)
-      assert.equal(JSON.parse(originalManifest).version, sourceVersion)
+    }
+    await control.command('clickWhenEnabled', detailRow(name))
+    await startChat()
+
+    let install = await until(
+      () => accountPlugin(cloud, name),
+      Boolean,
+      `The author did not get an account installation for ${name}`
+    )
+    const listing = await getListing(name)
+    assert.equal(install.spec.pluginId, Number(listing.id))
+    assert.equal(install.spec.releaseId, listing.latestReleaseId)
+    assert.equal(listing.visibility, 'personal')
+    const access = await request(accessPath(listing))
+    if (alreadyShared) {
+      assert.equal(listing.latestReleaseId, previous.latestReleaseId)
+      assert.deepEqual(access, previousAccess)
+    } else {
+      assert.equal(access.scope, 'private')
+      assert.deepEqual(access.targets, [])
+      assert.equal(access.allowCopy, false)
+    }
+    const source = await snapshotPersonalSource(control, listing)
+    const manifest = JSON.parse(
+      await readFile(join(source.sourcePath, '.codex-plugin', 'plugin.json'), 'utf8')
+    )
+    assert.equal(manifest.version, sourceVersion)
+    const home = cloud.remoteExecutorEnv.WEGENT_EXECUTOR_HOME
+    await until(
+      () => materializedPlugin(home, install.metadata.labels.id),
+      plugin => plugin?.version === (alreadyShared ? currentVersion : sourceVersion),
+      `The cloud device did not install the selected release of ${name}`
+    )
+    await waitForAuthorCloudInstall(cloud, listing)
+    await assertPersonalSourceUnchanged(source)
+    await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
+
+    if (!alreadyShared) {
+      await uninstallPersonalPluginInUi(control, listing)
+      await until(
+        () => accountPlugin(cloud, name),
+        plugin => !plugin,
+        'Uninstall did not remove the account installation'
+      )
+      await until(
+        () => materializedPlugin(home, install.metadata.labels.id),
+        plugin => !plugin,
+        'Uninstall did not remove the cloud package'
+      )
+      await assertPersonalSourceUnchanged(source)
+      await control.command('clickIfPresent', testId('plugin-detail-back-button'))
+      await refreshPluginInventory(control)
       await control.command('fill', testId('plugins-search-input'), { value: name })
-      if (!alreadyShared) {
-        await control.command('waitFor', testId('personal-plugin-install-private-dialog'), {
-          text: sourceVersion,
-        })
-        await control.command('click', testId('personal-plugin-install-private-cancel'))
-        assert.equal(await getListing(name), undefined, 'Cancelling uploaded a private release')
-        assert.equal(await accountPlugin(cloud, name), undefined, 'Cancelling installed the plugin')
-        await control.command(
-          'waitFor',
-          `[data-testid^="plugin-marketplace-row-"]:has(> button[aria-label*="${name}"]) [data-testid^="plugin-marketplace-actions-"]`
-        )
-        await control.command('clickWhenEnabled', row)
+      await control.command('clickWhenEnabled', detailRow(name))
+      const fence = await holdInstalledPluginRow(cloud, install.metadata.labels.id)
+      try {
+        await control.command('clickWhenEnabled', testId('plugin-prompt-0'))
+        await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+        await fence.waitFor('blocked')
+        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
         await waitForSnapshot(
           control,
           snapshot =>
-            snapshot.testIds.includes('plugin-detail-actions-bar') &&
-            snapshot.text.split('\n').some(text => /^(立即对话|Start chat)$/i.test(text)),
-          'Cancelling private upload did not preserve the local Start chat action'
+            snapshot.testIds.includes('plugin-trial-template-strip') &&
+            snapshot.text.includes('Check the personal plugin release.'),
+          'A pending account install blocked the existing example flow'
         )
-        await control.command('waitFor', target, { enabled: true })
-        await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
-        await control.command('uninstallInstalledPlugin', 'body', {
-          value: `${name}@wework-personal`,
-        })
-        await refreshPluginInventory(control)
-        await control.command('clickWhenEnabled', row)
-        await control.command('clickWhenEnabled', target)
-        await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
-        await control.command('clickWhenEnabled', testId('personal-plugin-install-private-confirm'))
+      } finally {
+        await fence.release()
       }
-      const install = await until(
-        () => accountPlugin(cloud, name),
-        Boolean,
-        `The author did not get an account installation for ${name}`
-      )
-      const listing = await getListing(name)
-      assert.equal(install.spec.pluginId, Number(listing.id))
-      assert.equal(install.spec.releaseId, listing.latestReleaseId)
-      assert.equal(listing.visibility, 'personal')
-      if (alreadyShared) {
-        await control.command('fill', testId('plugins-search-input'), { value: name })
-        assert.equal(listing.latestReleaseId, previous.latestReleaseId)
-        assert.deepEqual(await request(accessPath(listing)), previousAccess)
-      } else {
-        const access = await request(accessPath(listing))
-        assert.equal(access.scope, 'private')
-        assert.deepEqual(access.targets, [])
-        assert.equal(access.allowCopy, false)
-      }
-      await until(
-        () => materializedPlugin(home, install.metadata.labels.id),
-        plugin => plugin?.version === (alreadyShared ? currentVersion : sourceVersion),
-        `The cloud device did not install the selected release of ${name}`
-      )
-      assert.deepEqual(
-        await readFile(manifest),
-        originalManifest,
-        'Cloud install changed the source'
-      )
-      await waitForAuthorCloudInstall(cloud, listing)
-      if (alreadyShared) {
-        await control.command('waitFor', testId(`plugin-marketplace-actions-${previous.id}`))
-        await control.command('clickWhenEnabled', row)
-      }
-      await waitForSnapshot(
-        control,
-        snapshot =>
-          snapshot.testIds.includes('plugin-detail-actions-bar') &&
-          snapshot.text.includes(name) &&
-          snapshot.text.split('\n').some(text => text === '立即对话' || text === 'Start chat') &&
-          !snapshot.testIds.includes('plugin-detail-account-install') &&
-          !snapshot.testIds.includes('personal-plugin-install-private-dialog'),
-        'The author detail still offers install after account installation'
-      )
-      await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
-      if (!alreadyShared) {
-        const source = await snapshotPersonalSource(control, listing)
-        await uninstallPersonalPluginInUi(control, listing)
-        await until(
-          () => accountPlugin(cloud, name),
-          plugin => !plugin,
-          'Uninstalling the imported private plugin left an account installation'
-        )
-        await until(
-          () => materializedPlugin(home, install.metadata.labels.id),
-          plugin => !plugin,
-          'Uninstalling the imported private plugin left its package on the cloud device'
-        )
-        await assertPersonalSourceUnchanged(source)
-        await control.command('clickIfPresent', testId('plugin-detail-back-button'))
-        await refreshPluginInventory(control)
-        await control.command('fill', testId('plugins-search-input'), { value: name })
-        assert.equal(
-          (await inventory(control)).sharedInventory.installedPlugins.some(
-            plugin => plugin.pluginKey === name
-          ),
-          false,
-          'The card must exercise a real local reinstall'
-        )
-        const installFence = await holdInstalledPluginRow(cloud, install.metadata.labels.id)
-        try {
-          await control.command(
-            'clickWhenEnabled',
-            testId(`plugin-marketplace-install-${listing.id}`)
-          )
-          await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
-          await installFence.waitFor('blocked')
-          await uninstallPersonalPluginInUi(control, listing, { expectInstallInProgress: true })
-          await control.command('clickWhenEnabled', testId('plugin-operation-notice-dismiss'))
-          await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
-          await control.command(
-            'clickWhenEnabled',
-            '[role="menuitem"][data-testid^="plugin-detail-delete-"]'
-          )
-          const notice = `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
-          await control.command('waitFor', notice)
-          assert.equal(
-            Number(
-              await control.command('getElementCount', testId('delete-personal-plugin-dialog'))
-            ),
-            0,
-            'The delete preview opened while the author account installation was still blocked'
-          )
-          assert.match(
-            await control.command('getText', notice),
-            /正在检查安装状态|installation state is being checked/i
-          )
-          assert.equal(
-            await accountPlugin(cloud, name),
-            undefined,
-            'Uninstall confirmed while the author account installation was still blocked'
-          )
-        } finally {
-          await installFence.release()
-        }
-        await waitForAuthorCloudInstall(cloud, listing)
-        await assertPersonalSourceUnchanged(source)
-        await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
-      }
-    } finally {
-      const installed = await accountPlugin(cloud, name)
-      if (installed) {
-        await pluginApi(cloud, `/plugins/installed/${installed.metadata.labels.id}`, 'DELETE')
-      }
+      install = await waitForAuthorCloudInstall(cloud, listing)
+      await assertPersonalSourceUnchanged(source)
     }
+    await pluginApi(cloud, `/plugins/installed/${install.metadata.labels.id}`, 'DELETE')
   }
-}
-
-async function verifyStalePersonalDeletePreview({ cloud, control, request, root }) {
-  const name = 'author-delete-preview-e2e'
-  const fixtureRoot = join(root, name)
-  await mkdir(fixtureRoot, { recursive: true })
-  const archivePath = await importPersonalSource(
-    control,
-    fixtureRoot,
-    currentVersion,
-    false,
-    name,
-    name
-  )
-  const { marketplace } = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
-  const manifest = join(marketplace.path, 'plugins', name, '.codex-plugin', 'plugin.json')
-  const original = await readFile(manifest)
-  await control.command('uninstallInstalledPlugin', 'body', {
-    value: `${name}@wework-personal`,
-  })
-  assert.deepEqual(await readFile(manifest), original, 'Fixture uninstall changed the local source')
-
-  await control.command('navigate', 'body', { value: '/plugins' })
-  await control.command('waitFor', testId('plugins-search-input'))
-  await control.command('click', testId('plugins-distribution-tab-personal'))
-  await refreshPluginInventory(control)
-  assert.equal(
-    (await inventory(control)).sharedInventory.installedPlugins.some(
-      plugin => plugin.pluginKey === name
-    ),
-    false,
-    'The deletion preview must start from a source with no local installation'
-  )
-  await control.command('fill', testId('plugins-search-input'), { value: name })
-  await control.command(
-    'clickWhenEnabled',
-    `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
-  )
-  await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
-  await control.command(
-    'clickWhenEnabled',
-    '[role="menuitem"][data-testid^="plugin-detail-delete-"]'
-  )
-  const dialog = testId('delete-personal-plugin-dialog')
-  await control.command('waitFor', dialog)
-  assert.match(
-    await control.command('getText', dialog),
-    /将永久删除.*本地插件源码|Permanently delete the local source/i
-  )
-
-  const published = await uploadVersionFixture({
-    request,
-    backendUrl: cloud.backendUrl,
-    packageBytes: await readFile(archivePath),
-    version: currentVersion,
-    pluginSlug: name,
-    targets: [],
-  })
-  assert.equal(
-    (await request(`/plugins/submissions/${published.submissionId}/complete`, 'POST')).submission
-      .status,
-    'approved'
-  )
-  await pluginApi(cloud, `/plugins/marketplace/${published.pluginId}/install`, 'POST')
-  assert.ok(await accountPlugin(cloud, name), 'The fixture must have an account installation')
-
-  await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('delete-personal-plugin-dialog') &&
-      /将删除云端插件|Delete the cloud plugin/i.test(snapshot.text),
-    'The local-only delete confirmation did not refresh to the current cloud impact'
-  )
-  assert.deepEqual(await readFile(manifest), original, 'The old confirmation deleted the source')
-  assert.ok(await accountPlugin(cloud, name), 'The old confirmation removed the account install')
-
-  await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
-  await until(
-    () => accountPlugin(cloud, name),
-    installed => !installed,
-    'The updated confirmation did not remove the account installation'
-  )
-  await until(
-    () => pathExists(manifest),
-    exists => !exists,
-    'The updated confirmation did not delete the local source'
-  )
 }
 
 export async function verifyPersonalPluginVersionSubmission({
@@ -510,7 +329,6 @@ export async function verifyPersonalPluginVersionSubmission({
     auth_source: 'password',
   })
   await verifyAuthorCloudInstall({ cloud: cloudEnvironment, control, request, recipient, root })
-  await verifyStalePersonalDeletePreview({ cloud: cloudEnvironment, control, request, root })
   const packageBytes = await readFile(
     await createPackage(root, currentVersion, initialManifestName, initialDisplayName)
   )

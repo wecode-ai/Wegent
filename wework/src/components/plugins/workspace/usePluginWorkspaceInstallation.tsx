@@ -44,9 +44,8 @@ import {
   toInstalledPluginItem,
   withMarketplaceDetailComponents,
 } from '../workspace/marketplaceWorkspaceHelpers'
+import type { PersonalPluginCloudInstall } from './personalPluginCloudInstall'
 import type { PluginWorkspaceServices, PendingMarketplaceInstall } from './pluginWorkspaceTypes'
-import { personalPluginInstallSource } from './personalPluginInstallSource'
-import type { usePersonalPluginAccountInstall } from './usePersonalPluginAccountInstall'
 
 export function usePluginWorkspaceInstallation({
   selectedMarketplacePlugin,
@@ -67,7 +66,7 @@ export function usePluginWorkspaceInstallation({
   ensureMarketplaceConnectors,
   rollbackInstalledPluginAfterAuthFailure,
   ensureLocalConnectorsAfterInstall,
-  personalInstallation,
+  syncPersonalPluginInBackground,
   requestConfirmation,
 }: Pick<
   PluginWorkspaceServices,
@@ -90,11 +89,8 @@ export function usePluginWorkspaceInstallation({
   | 'rollbackInstalledPluginAfterAuthFailure'
   | 'ensureLocalConnectorsAfterInstall'
 > & {
-  personalInstallation: Pick<
-    ReturnType<typeof usePersonalPluginAccountInstall>,
-    'reserveInstallRequest'
-  >
   requestConfirmation(message: string): Promise<boolean>
+  syncPersonalPluginInBackground: PersonalPluginCloudInstall
 }) {
   const isPersonalSourceInstall = (item: PluginMarketplaceItem) =>
     item.accessRole === 'owner' && Boolean(item.localPersonalSource)
@@ -494,20 +490,6 @@ export function usePluginWorkspaceInstallation({
     const installPersonalSource = isPersonalSourceInstall(item)
     const installFromLocal = localMarketplaceId !== null || installPersonalSource
     const isCurrent = capturePluginScope()
-    const personalSourceBeforeInstall = installFromLocal
-      ? personalPluginInstallSource(installedPlugins, item)
-      : null
-    const accountInstall = personalSourceBeforeInstall
-      ? personalInstallation.reserveInstallRequest(personalSourceBeforeInstall.key)
-      : undefined
-    setPendingInstall(null)
-    if (accountInstall === null) return
-    let localInstallCommitted = false
-    const onLocalCommit = accountInstall
-      ? () => {
-          localInstallCommitted = true
-        }
-      : undefined
     const requireCurrentScope = () => {
       if (!isCurrent()) throw new Error('Plugin account changed; retry with the current account')
       if (isMarketplacePluginUninstalling(item)) {
@@ -515,6 +497,7 @@ export function usePluginWorkspaceInstallation({
       }
     }
 
+    setPendingInstall(null)
     operations.beginInstall(item.id)
     catalog.reportError(null)
     // Always re-prepare before connector auth + install. The confirm dialog opens
@@ -558,11 +541,7 @@ export function usePluginWorkspaceInstallation({
           if (String(owner.pluginId) !== String(preparedItem.id)) {
             throw new Error('Published plugin source ownership could not be confirmed')
           }
-          const plugin = await localPluginApi.installPersonalPluginSource(
-            preparedItem,
-            isCurrent,
-            onLocalCommit
-          )
+          const plugin = await localPluginApi.installPersonalPluginSource(preparedItem, isCurrent)
           requireCurrentScope()
           return {
             plugin,
@@ -571,7 +550,7 @@ export function usePluginWorkspaceInstallation({
           }
         }
         if (installFromLocal) {
-          const plugin = await localPluginApi.installAvailablePlugin(preparedItem, onLocalCommit)
+          const plugin = await localPluginApi.installAvailablePlugin(preparedItem)
           requireCurrentScope()
           return {
             plugin,
@@ -622,10 +601,7 @@ export function usePluginWorkspaceInstallation({
             await ensureMarketplaceConnectors(preparedItem, isCurrent)
             requireCurrentScope()
           } catch (error) {
-            if (isCurrent()) {
-              localInstallCommitted = false
-              await rollbackInstalledPluginAfterAuthFailure(plugin, isCurrent)
-            }
+            if (isCurrent()) await rollbackInstalledPluginAfterAuthFailure(plugin, isCurrent)
             throw error
           }
         }
@@ -750,21 +726,14 @@ export function usePluginWorkspaceInstallation({
                     defaultValue: `${item.displayName || item.name} 已安装`,
                   }),
         })
-        const startTrial = () => {
-          if (
-            isCurrent() &&
-            promptAfterInstall &&
-            !authorizationPending &&
-            queuePluginPromptTrial(installed.raw, promptAfterInstall, { openInNewChat: true })
-          ) {
-            navigateTo('/')
-          }
+        if (installFromLocal) syncPersonalPluginInBackground?.(plugin)
+        if (
+          promptAfterInstall &&
+          !authorizationPending &&
+          queuePluginPromptTrial(installed.raw, promptAfterInstall, { openInNewChat: true })
+        ) {
+          navigateTo('/')
         }
-        const personalSource = installFromLocal
-          ? personalPluginInstallSource([installed], item)
-          : null
-        localInstallCommitted = false
-        if (!accountInstall?.submit(personalSource, startTrial)) startTrial()
       })
       .catch((error: unknown) => {
         installRequestAttempt?.fail('request')
@@ -853,13 +822,8 @@ export function usePluginWorkspaceInstallation({
         })
       })
       .finally(() => {
-        if (isCurrent()) {
-          operations.finishInstall(item.id)
-        } else if (localInstallCommitted) {
-          // Native installation committed before the workspace stopped observing it.
-          accountInstall?.submit(personalSourceBeforeInstall)
-        }
-        accountInstall?.release()
+        if (!isCurrent()) return
+        operations.finishInstall(item.id)
       })
   }
 

@@ -2570,7 +2570,10 @@ class PluginMarketplaceService:
         user_id: int,
         request: PluginAccessUpdateRequest,
     ) -> tuple[PluginAccessResponse, list[tuple[int, int]]]:
-        plugin = self._owned_plugin(db, plugin_id=plugin_id, user_id=user_id)
+        # Keep access validation and grant writes in the same catalog lifecycle.
+        plugin = self._owned_plugin(
+            db, plugin_id=plugin_id, user_id=user_id, for_update=True
+        )
         requested_targets = request.targets if request.scope == "restricted" else []
         targets = self._validated_access_targets(
             db,
@@ -2644,7 +2647,9 @@ class PluginMarketplaceService:
         revoke_and_delete: bool,
     ) -> list[tuple[int, int]]:
         """Remove an owned personal listing and deactivate every installation."""
-        plugin = self._owned_plugin(db, plugin_id=plugin_id, user_id=user_id)
+        plugin = self._owned_plugin(
+            db, plugin_id=plugin_id, user_id=user_id, for_update=True
+        )
         from app.services.plugin_publication_service import (
             plugin_publication_service,
         )
@@ -2807,8 +2812,14 @@ class PluginMarketplaceService:
             .first()
         )
 
-    def _owned_plugin(self, db: Session, *, plugin_id: int, user_id: int) -> Plugin:
-        plugin = db.get(Plugin, plugin_id)
+    def _owned_plugin(
+        self, db: Session, *, plugin_id: int, user_id: int, for_update: bool = False
+    ) -> Plugin:
+        plugin = (
+            self._lock_plugin(db, plugin_id)
+            if for_update
+            else db.get(Plugin, plugin_id)
+        )
         if not plugin or plugin.owner_user_id != user_id:
             raise HTTPException(status_code=404, detail="Owned plugin not found")
         if plugin.status != "published" or plugin.visibility != "personal":

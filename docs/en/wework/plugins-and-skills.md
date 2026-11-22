@@ -91,11 +91,7 @@ On the **Plugins** page, choose **Create → Import plugin** to import a standar
 
 If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
 
-<a id="use-a-plugin-you-created-on-cloud-devices"></a>
-
-### Use a plugin you created on cloud devices
-
-Connect to your organization server and choose **Install** on a card or its detail page under **Plugins → Personal creations**, or choose **Import and install** in the ZIP import dialog. After installing locally, Wework installs the plugin for your account. Wework reuses an existing cloud version. For the first upload, confirm that the version is available only to you. If account installation fails, follow the notice to retry or update the version. **Start chat** is available as soon as the plugin is installed locally. To start account installation for a plugin you already installed locally, uninstall it and install it again. Cloud devices on your account sync in the background, and offline devices catch up after reconnecting.
+When connected to your organization server, installing or importing a plugin you created first completes the local installation. Wework then installs it for your account in the background so your cloud devices can sync it. The first sync uploads a version available only to you if the plugin has no cloud version. You can keep using the local plugin if cloud sync fails.
 
 ## Managed local Python
 

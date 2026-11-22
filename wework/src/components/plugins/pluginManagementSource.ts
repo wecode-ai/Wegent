@@ -45,7 +45,7 @@ import {
 import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
-import { ownedPersonalPluginSourceKey } from './workspace/personalPluginInstallSource'
+import { ownedPersonalPluginSourceKey } from './workspace/personalPluginCloudInstall'
 
 export type PluginManagementTab = 'codex' | 'core-dsh'
 interface SourceOptions {

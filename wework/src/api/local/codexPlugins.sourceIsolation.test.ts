@@ -102,11 +102,9 @@ describe('local plugin source isolation', () => {
       return original(method, params)
     })
 
-    const onLocalCommit = vi.fn()
-    await expect(api.installAvailablePlugin(diskItem!, onLocalCommit)).resolves.toMatchObject({
+    await expect(api.installAvailablePlugin(diskItem!)).resolves.toMatchObject({
       spec: { source: { pluginKey: 'personal-tool' } },
     })
-    expect(onLocalCommit).toHaveBeenCalledTimes(1)
   })
 
   test.each([false, true])(
@@ -120,15 +118,8 @@ describe('local plugin source isolation', () => {
         if (method === 'executor.plugins.links.link') return null
         return originalRequest(method, params)
       })
-      vi.spyOn(api, 'ensureCreatedPluginInWeworkPersonal').mockImplementation(async () => {
-        if (deviceChanged) mocks.deviceId = 'device-b'
-        return {
-          pluginName: 'personal-tool',
-          marketplacePath: '/personal',
-          pluginPath: '/personal/plugins/personal-tool',
-          migrated: false,
-        }
-      })
+      const migrate = vi.spyOn(api, 'ensureCreatedPluginInWeworkPersonal')
+      if (deviceChanged) mocks.deviceId = 'device-b'
       const link = api.linkPersonalPluginRelease(plugin, 17, 42, {
         isCurrent: () => mocks.deviceId === 'device-a',
         accountInstall: 'keepRelease',
@@ -138,6 +129,7 @@ describe('local plugin source isolation', () => {
       } else {
         await link
       }
+      expect(migrate).not.toHaveBeenCalled()
       const writes = mocks.request.mock.calls.filter(
         ([method]) => method === 'executor.plugins.links.link'
       )

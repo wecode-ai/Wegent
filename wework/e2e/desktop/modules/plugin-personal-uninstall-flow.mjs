@@ -128,14 +128,13 @@ export async function uninstallPersonalPluginInUi(control, plugin, options) {
   )
   await control.command('waitFor', testId('uninstall-plugin-dialog'))
   await control.command('clickWhenEnabled', testId('plugin-uninstall-confirm-button'))
-  const busy = options?.expectInstallInProgress === true
   await control.command(
     'waitFor',
-    `${testId('plugin-operation-notice')}[data-notice-kind="${busy ? 'error' : 'success'}"]`
+    `${testId('plugin-operation-notice')}[data-notice-kind="success"]`
   )
   assert.match(
     await control.command('getText', testId('plugin-operation-notice')),
-    busy ? /正在检查安装状态|installation state is being checked/i : /已卸载|uninstalled/i
+    /已卸载|uninstalled/i
   )
 }
 

@@ -4,7 +4,7 @@ import { useInstalledPluginDetail } from '../hooks/useInstalledPluginDetail'
 import { useMarketplacePluginDetail } from '../hooks/useMarketplacePluginDetail'
 import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
 import type { FormEvent } from 'react'
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import type { PluginsWorkspaceProps } from './pluginWorkspaceTypes'
 import { createPluginMarketplaceRowLabels } from './pluginMarketplaceLabels'
@@ -21,6 +21,8 @@ import { usePluginWorkspaceInstallation } from '../workspace/usePluginWorkspaceI
 import { usePluginWorkspaceDeletion } from '../workspace/usePluginWorkspaceDeletion'
 import { usePluginInstalledOperations } from './usePluginInstalledOperations'
 import { usePluginWorkspaceCatalog } from './usePluginWorkspaceCatalog'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { capturePersonalPluginCloudInstall } from './personalPluginCloudInstall'
 import {
   matchingPublicationRequests,
   selectPrimaryPublication,
@@ -80,6 +82,7 @@ export function usePluginsWorkspaceController({
   pluginReference = null,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
+  const cloudSession = useContext(CloudConnectionContext)
   const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
     (key, fallback) => t(key, fallback)
   )
@@ -122,8 +125,6 @@ export function usePluginsWorkspaceController({
   const [isAddingMarket, setIsAddingMarket] = useState(false)
   const {
     pluginApi,
-    accountPluginApi,
-    canInstallForAccount,
     localSyncResource,
     localSyncAvailable,
     deviceCloudConnected,
@@ -229,21 +230,6 @@ export function usePluginsWorkspaceController({
   const marketplaceRowLabels = useMemo(() => createPluginMarketplaceRowLabels(t), [t])
 
   const {
-    selectedPlugin: selectedPluginSummary,
-    selectedMarketplacePlugin,
-    dismissPluginReferenceDetail,
-  } = usePluginDetailSelection({
-    scopeKey: JSON.stringify([marketplaceCacheKeyValue, currentDeviceId]),
-    pluginReference,
-    pluginMarketplaceState,
-    installedPlugins,
-    selectedPluginId,
-    selectedMarketplacePluginId,
-    setSelectedPluginId,
-    setSelectedMarketplacePluginId,
-  })
-
-  const {
     isUploadingPlugin,
     pluginShareState,
     setPluginShareState,
@@ -276,7 +262,6 @@ export function usePluginsWorkspaceController({
     recoverPublishToShare,
     savePluginShare,
     versionSubmission,
-    personalInstallation,
     copyMarketplacePlugin,
     searchPluginShareUsers,
     searchPluginShareGroups,
@@ -285,9 +270,6 @@ export function usePluginsWorkspaceController({
     setSelectedMarketplacePluginId,
     setSelectedPluginId,
     pluginApi,
-    accountPluginApi,
-    accountIdentity: { apiBaseUrl: cloudApiBaseUrl, userId: cloudUserId },
-    canInstallForAccount,
     localPluginApi,
     t,
     installedPlugins,
@@ -463,7 +445,6 @@ export function usePluginsWorkspaceController({
   } = usePluginWorkspaceDeletion({
     publicationRequests,
     pluginApi,
-    accountPluginApi: canInstallForAccount ? accountPluginApi : null,
     catalog,
     t,
     publications,
@@ -473,6 +454,21 @@ export function usePluginsWorkspaceController({
     setSelectedMarketplacePluginId,
     refreshLocalMarketplace: options => refreshLocalMarketplace(options),
   })
+  const {
+    selectedPlugin: selectedPluginSummary,
+    selectedMarketplacePlugin,
+    dismissPluginReferenceDetail,
+  } = usePluginDetailSelection({
+    scopeKey: JSON.stringify([marketplaceCacheKeyValue, currentDeviceId]),
+    pluginReference,
+    pluginMarketplaceState,
+    installedPlugins,
+    selectedPluginId,
+    selectedMarketplacePluginId,
+    setSelectedPluginId,
+    setSelectedMarketplacePluginId,
+  })
+
   const selectedMarketplaceDetailKey = selectedMarketplacePlugin
     ? JSON.stringify([
         marketplaceCacheKeyValue,
@@ -618,6 +614,18 @@ export function usePluginsWorkspaceController({
     localConnectorAuthBySlug,
   })
 
+  const syncPersonalPluginInBackground = cloudMarketplaceAvailable
+    ? capturePersonalPluginCloudInstall(localPluginApi, {
+        apiBaseUrl: cloudApiBaseUrl,
+        userId: cloudUserId,
+        getToken: () =>
+          cloudSession?.getTokenForAccount
+            ? cloudSession.getTokenForAccount(cloudApiBaseUrl, cloudUserId ?? undefined)
+            : cloudToken,
+        onInstalled: () => catalog.refresh(false),
+      })
+    : undefined
+
   const {
     pendingInstall,
     setPendingInstall,
@@ -627,6 +635,7 @@ export function usePluginsWorkspaceController({
     installMarketplacePlugin,
     executeMarketplaceInstall,
   } = usePluginWorkspaceInstallation({
+    syncPersonalPluginInBackground,
     requestConfirmation,
     selectedMarketplacePlugin,
     selectedMarketplacePluginDetail,
@@ -646,7 +655,6 @@ export function usePluginsWorkspaceController({
     ensureMarketplaceConnectors,
     rollbackInstalledPluginAfterAuthFailure,
     ensureLocalConnectorsAfterInstall,
-    personalInstallation,
   })
   const requiredConnections = useMemo(
     () =>
@@ -864,7 +872,7 @@ export function usePluginsWorkspaceController({
     openPublicationProgress,
     openPublicationRevision,
     versionSubmission,
-    personalInstallation,
+    syncPersonalPluginInBackground,
     closePluginDetail,
     setSelectedPluginId,
     requestDeletePersonalPlugin,

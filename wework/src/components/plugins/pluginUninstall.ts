@@ -1,8 +1,9 @@
 import type { InstalledPlugin, InstalledPluginListResponse } from '@/types/api'
 import { isLocalPluginUninstallCleanupError } from '@/api/local/pluginUninstallError'
-import { toInstalledPluginItem } from './installedPluginPresentation'
-import { isPersonalPluginInstallSource } from './workspace/personalPluginInstallSource'
-import { reservePersonalPluginMutation } from './workspace/pluginWorkspaceOperations'
+import {
+  cancelPersonalPluginCloudInstall,
+  isLocalPersonalPlugin,
+} from './workspace/personalPluginCloudInstall'
 import {
   isCloudManagedInstalledPlugin,
   isIndependentPublishedSource,
@@ -122,16 +123,8 @@ export async function uninstallAccountPlugin(
   deviceId: string | undefined,
   operations: AccountUninstallOperations
 ): Promise<void> {
-  return runPersonalPluginUninstall(operations.personalSourceKey, () =>
-    uninstallAccountPluginById(cloudPluginId, deviceId, operations)
-  )
-}
-
-async function uninstallAccountPluginById(
-  cloudPluginId: string | number,
-  deviceId: string | undefined,
-  operations: AccountUninstallOperations
-) {
+  if (operations.personalSourceKey)
+    await cancelPersonalPluginCloudInstall(operations.personalSourceKey)
   assertCurrent(operations)
   const pluginId =
     typeof cloudPluginId === 'string' && /^[1-9]\d*$/.test(cloudPluginId)
@@ -147,20 +140,6 @@ async function uninstallAccountPluginById(
     await operations.uninstallCloud(currentId, deviceId)
   } finally {
     assertCurrent(operations)
-  }
-}
-
-async function runPersonalPluginUninstall<T>(
-  sourceKey: string | undefined,
-  uninstall: () => Promise<T>
-): Promise<T> {
-  if (!sourceKey) return uninstall()
-  const finish = reservePersonalPluginMutation(sourceKey)
-  if (!finish) throw new Error('PLUGIN_PERSONAL_MUTATION_IN_PROGRESS')
-  try {
-    return await uninstall()
-  } finally {
-    finish()
   }
 }
 
@@ -232,20 +211,10 @@ export async function uninstallPluginIdentities(
   operations: PluginUninstallOperations
 ): Promise<PluginUninstallOutcome> {
   const sourceKey =
-    plugin && isPersonalPluginInstallSource(toInstalledPluginItem(plugin))
+    plugin && isLocalPersonalPlugin(plugin)
       ? plugin.spec.source.pluginKey
       : operations.personalSourceKey
-  return runPersonalPluginUninstall(sourceKey, () =>
-    uninstallResolvedPluginIdentities(plugin, id, deviceId, operations)
-  )
-}
-
-async function uninstallResolvedPluginIdentities(
-  plugin: InstalledPlugin | null,
-  id: string | number,
-  deviceId: string | undefined,
-  operations: PluginUninstallOperations
-): Promise<PluginUninstallOutcome> {
+  if (sourceKey) await cancelPersonalPluginCloudInstall(sourceKey)
   assertCurrent(operations)
   if (
     !plugin ||

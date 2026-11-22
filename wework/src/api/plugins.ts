@@ -357,9 +357,11 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         | 'allowCopy'
         | 'releaseNotes'
         | 'privateFirstInstall'
-      >
+      >,
+      requireCurrent?: () => void
     ): Promise<PluginSubmissionCompleteResponse> {
       const sha256 = await sha256Hex(file)
+      requireCurrent?.()
       const initialized = await initSubmission({
         ...metadata,
         filename: file.name,
@@ -367,6 +369,7 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         sizeBytes: file.size,
       })
       try {
+        requireCurrent?.()
         if (metadata.privateFirstInstall && initialized.privateFirstInstall !== true) {
           throw new ApiError(
             'The server did not confirm first private plugin publication',
@@ -381,6 +384,7 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
           body: file,
         })
         if (!upload.ok) throw new Error(`Plugin upload failed with HTTP ${upload.status}`)
+        requireCurrent?.()
         return await client.post<PluginSubmissionCompleteResponse>(
           `/plugins/submissions/${initialized.submissionId}/complete`
         )

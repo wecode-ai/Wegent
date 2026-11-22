@@ -64,18 +64,14 @@ export function usePluginWorkspaceCatalog({
     pluginRuntimeProfile.apiBaseUrl,
     pluginRuntimeProfile.token
   )
-  const accountPluginApi = useMemo(
-    () => createDefaultPluginApi(pluginRuntimeProfile.apiBaseUrl, cloudToken),
-    [cloudToken, pluginRuntimeProfile.apiBaseUrl]
-  )
   const pluginApi = useMemo(
     () =>
       createLocalDevicePluginApi(
-        accountPluginApi,
+        createDefaultPluginApi(pluginRuntimeProfile.apiBaseUrl, cloudToken),
         deviceId => resolveLocalPluginDeviceRouteId(deviceId, pluginRuntimeProfile),
         pluginRuntimeProfile
       ),
-    [accountPluginApi, pluginRuntimeProfile]
+    [cloudToken, pluginRuntimeProfile]
   )
   const localSyncResource = useMemo(
     () => createAsyncResource('local-plugin-sync', () => pluginApi.supportsLocalSync()),
@@ -239,8 +235,6 @@ export function usePluginWorkspaceCatalog({
 
   return {
     pluginApi,
-    accountPluginApi,
-    canInstallForAccount: Boolean(cloudMarketplaceAvailable && pluginRuntimeProfile.token),
     localSyncResource,
     localSyncAvailable,
     deviceCloudConnected,

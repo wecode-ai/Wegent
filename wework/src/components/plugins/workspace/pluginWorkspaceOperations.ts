@@ -1,26 +1,4 @@
-import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
 import type { LocalConnectorAuthTarget } from '@/api/local/localConnectorAuth'
-import { createdPluginSlugFromKey } from '../pluginOwnerLocalPackage'
-
-// Account installation can finish after a workspace unmounts. The lock belongs
-// to the local source, which is shared by the catalog and management views.
-const personalPluginMutations = new Set<string>()
-
-const personalPluginMutationKey = (pluginKey: string) =>
-  JSON.stringify([getKnownLocalExecutorDeviceId(), createdPluginSlugFromKey(pluginKey)])
-
-export function isPersonalPluginMutationInProgress(pluginKey: string): boolean {
-  return personalPluginMutations.has(personalPluginMutationKey(pluginKey))
-}
-
-export function reservePersonalPluginMutation(pluginKey: string): (() => void) | null {
-  const key = personalPluginMutationKey(pluginKey)
-  if (personalPluginMutations.has(key)) return null
-  personalPluginMutations.add(key)
-  return () => {
-    personalPluginMutations.delete(key)
-  }
-}
 
 interface PendingLocalAuth {
   target: LocalConnectorAuthTarget

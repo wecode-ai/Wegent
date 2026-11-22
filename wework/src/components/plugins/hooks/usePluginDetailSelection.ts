@@ -11,17 +11,11 @@ import {
 } from '../pluginOwnerLocalPackage'
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
 import { isLocalMarketplaceItem, localMarketplaceDedupeKey } from '../marketplaceCatalogMerge'
-import {
-  isPersonalPluginInstallSource,
-  personalPluginInstallSource,
-} from '../workspace/personalPluginInstallSource'
 
 function localSourceIdentity(item: PluginMarketplaceItem): string | undefined {
   if (isLocalMarketplaceItem(item)) return localMarketplaceDedupeKey(item)
-  if (item.visibility === 'personal' && item.accessRole === 'owner' && item.localPersonalSource) {
+  if (item.visibility === 'personal' && item.accessRole === 'owner' && item.localPersonalSource)
     return `personal:${item.localPersonalSource.pluginName.trim().toLowerCase()}`
-  }
-  return undefined
 }
 
 export function findMarketplaceItemForPluginReference(
@@ -34,11 +28,6 @@ export function findMarketplaceItemForPluginReference(
 
   const normalizedMarketplaceName = marketplaceName.toLowerCase()
   const referencesPersonalMarketplace = isPersonalMarketplaceId(normalizedMarketplaceName)
-  if (referencesPersonalMarketplace) {
-    const sourceIdentity = `personal:${pluginName.toLowerCase()}`
-    const source = items.find(item => localSourceIdentity(item) === sourceIdentity)
-    if (source) return source
-  }
   return (
     items.find(item => {
       if (item.name !== pluginName) return false
@@ -103,7 +92,7 @@ export function usePluginDetailSelection({
       item => item.id === selectedMarketplacePluginId
     )
     if (direct) return direct
-    // Publication can replace the disk-only row with its owned cloud listing.
+    // Background publication can replace the same author source's disk-only row.
     const matches = localIdentity
       ? pluginMarketplaceState.items.filter(item => localSourceIdentity(item) === localIdentity)
       : []
@@ -173,12 +162,7 @@ export function openMarketplacePluginDetailSelection({
         installed?.name,
       ])
     : null
-  const mismatchedPersonalSource =
-    item.visibility === 'personal' &&
-    packableCreated &&
-    isPersonalPluginInstallSource(packableCreated) &&
-    personalPluginInstallSource([packableCreated], item)?.installed?.id !== packableCreated.id
-  if (packableCreated && !mismatchedPersonalSource) {
+  if (packableCreated) {
     setSelectedMarketplacePluginId(null)
     setSelectedPluginId(packableCreated.id)
     return

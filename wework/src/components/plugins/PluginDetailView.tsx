@@ -355,8 +355,7 @@ export function PluginDetailView({
       ]}
     />
   ) : null
-  const actionDisabled =
-    primaryActionDisabled || (primaryActionIcon !== 'install' && isInstalled && !plugin.enabled)
+  const actionDisabled = primaryActionDisabled || (isInstalled && !plugin.enabled)
   const primaryActionButton = (
     <ControlButton
       variant="unstyled"

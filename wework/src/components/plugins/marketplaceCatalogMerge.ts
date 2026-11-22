@@ -1,6 +1,5 @@
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugins'
-import { getInitializedBundledPluginMarketplace } from '@/desktop/localExecutor'
 import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { marketplaceItemMarketplaceId } from './pluginDistribution'
@@ -165,7 +164,6 @@ export function mergeMarketplaceCatalog(
       ownedPersonalCloudKeysByName.set(normalizedName, cloudKey)
     }
   }
-  const bundledNames = getInitializedBundledPluginMarketplace()?.defaultPluginNames
   for (const item of localItems) {
     const marketplaceId = marketplaceItemMarketplaceId(item)
     if (marketplaceId && !isBuiltInMarketplaceId(marketplaceId)) {
@@ -212,16 +210,9 @@ export function mergeMarketplaceCatalog(
               pluginName: item.name,
             },
           })
-          continue
         }
       }
-      // A different cloud plugin with the same name cannot replace editable personal source.
-      if (
-        !marketplaceId ||
-        !isPersonalMarketplaceId(marketplaceId) ||
-        bundledNames?.includes(item.name)
-      )
-        continue
+      continue
     }
     // Personal aliases (wework-personal / personal) share one catalog slot.
     const key =
