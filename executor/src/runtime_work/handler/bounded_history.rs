@@ -271,7 +271,11 @@ impl RuntimeWorkRpcHandler {
         let snapshot = Snapshot {
             binding: binding(identity, &current),
             task: current.local_task_id.clone(),
-            messages: visible_messages(&value),
+            messages: visible_messages(
+                &value,
+                identity.memory_review
+                    && current.runtime_handle["origin"]["type"] == "stand_in_identity",
+            ),
             before: (value["hasMoreBefore"] == true)
                 .then(|| value["beforeCursor"].as_str().map(str::to_owned))
                 .flatten(),
@@ -296,7 +300,26 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn visible_messages(page: &Value) -> Vec<Value> {
+fn historical_claude_final<'a>(page: &Value, message: &'a Value) -> Option<&'a str> {
+    // The host saves only nonempty completed answers at this address. Waiting requests
+    // have empty content and stopped/failed turns carry their terminal status.
+    let task = page["taskId"].as_str()?;
+    let turn = message["turnId"].as_str()?;
+    let id = message["id"].as_str()?;
+    (page["runtime"] == "claude_code"
+        && message["role"] == "assistant"
+        && message["status"] == "done"
+        && message["runtimeStatus"] == "done"
+        && timestamp_ms_field(message, "completedAt").is_some_and(|at| at > 0)
+        && message["content"]
+            .as_str()
+            .is_some_and(|s| !s.trim().is_empty())
+        && !turn.is_empty()
+        && id == format!("{task}:assistant:{turn}"))
+    .then_some(id)
+}
+
+fn visible_messages(page: &Value, identity_review: bool) -> Vec<Value> {
     const KEYS: &[&str] = &[
         "id",
         "clientUserMessageId",
@@ -318,9 +341,37 @@ fn visible_messages(page: &Value) -> Vec<Value> {
             if !matches!(message["role"].as_str(), Some("user" | "assistant")) {
                 return None;
             }
-            let mut message = message.as_object()?.clone();
-            message.retain(|key, _| KEYS.contains(&key.as_str()));
-            Some(Value::Object(message))
+            let mut projected = message.as_object()?.clone();
+            projected.retain(|key, _| KEYS.contains(&key.as_str()));
+            if !identity_review {
+                return Some(Value::Object(projected));
+            }
+            if message["role"] == "user"
+                && message["source"].is_null()
+                && message["sourcedUserInput"] != true
+            {
+                projected.insert("trainingOwnerMessage".into(), json!(true));
+                // Older Claude cached user messages encode the subtask only in their native id.
+                if page["runtime"] == "claude_code" && message["turnId"].is_null() {
+                    let turn = page["taskId"]
+                        .as_str()
+                        .zip(message["id"].as_str())
+                        .and_then(|(task, id)| id.strip_prefix(&format!("{task}:user:")));
+                    if let Some(turn) = turn.filter(|id| !id.is_empty()) {
+                        projected.insert("turnId".into(), json!(turn));
+                    }
+                }
+            }
+            if let Some(id) = message["nativeReplyItemId"].as_str() {
+                projected.insert("nativeReplyItemId".into(), json!(id));
+            }
+            if let Some(id) = message["nativeFinalReplyItemId"]
+                .as_str()
+                .or_else(|| historical_claude_final(page, message))
+            {
+                projected.insert("nativeFinalReplyItemId".into(), json!(id));
+            }
+            Some(Value::Object(projected))
         })
         .collect()
 }
@@ -434,9 +485,20 @@ fn content(
         .ok_or_else(|| invalid("Unknown history message"))?;
     let text = message["content"].as_str().unwrap_or_default();
     let (chunk, end) = text_chunk(text, offset)?;
-    let result = json!({"success":true,"taskId":snapshot.task,"messageId":message["id"],"role":message["role"],"createdAt":message["createdAt"],"content":chunk,
+    let mut result = json!({"success":true,"taskId":snapshot.task,"messageId":message["id"],"role":message["role"],"createdAt":message["createdAt"],"content":chunk,
         "contentOffset":offset,"totalContentBytes":text.len(),"contentComplete":end==text.len(),
         "messageContentCursor":(end<text.len()).then(||encode(snapshot,id,Position::Content{message:index,offset:end}))});
+    for key in [
+        "trainingOwnerMessage",
+        "turnId",
+        "completedAt",
+        "nativeReplyItemId",
+        "nativeFinalReplyItemId",
+    ] {
+        if let Some(value) = message.get(key) {
+            result[key] = value.clone();
+        }
+    }
     if result.to_string().len() > PAGE_BYTES {
         return Err(invalid("History content metadata exceeds its byte budget"));
     }
@@ -446,6 +508,40 @@ fn content(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn historical_identity_proof_requires_a_visible_native_final() {
+        let thread = json!({"id":"thread","turns":[
+            {"id":"turn","status":"completed","completedAt":1800000000000_i64,"items":[
+                {"id":"request","type":"userMessage","content":[{"type":"inputText","text":"Which link?"}]},
+                {"id":"progress","type":"agentMessage","phase":"commentary","text":"Checking"},
+                {"id":"final","type":"agentMessage","phase":"final_answer","text":"Link A"}]}]});
+        let mut messages =
+            crate::runtime_work::transcript::project_transcript(&thread, "mac", true).messages;
+        project_conversation_context_messages(&mut messages);
+        let codex = visible_messages(&json!({"runtime":"codex","messages":messages}), true);
+        let finals: Vec<_> = codex
+            .iter()
+            .filter(|m| m["nativeFinalReplyItemId"].is_string())
+            .collect();
+        assert_eq!(finals.len(), 1);
+        assert_eq!(finals[0]["content"], "Link A");
+        assert_eq!(finals[0]["nativeFinalReplyItemId"], "final");
+        let mut page = json!({"runtime":"claude_code","taskId":"t","messages":[{
+            "id":"t:assistant:turn","turnId":"turn","role":"assistant","content":"Link B",
+            "completedAt":1800000000000_i64,"status":"done","runtimeStatus":"done"}]});
+        assert_eq!(
+            visible_messages(&page, true)[0]["nativeFinalReplyItemId"],
+            "t:assistant:turn"
+        );
+        page["messages"][0]["id"] = json!("intermediate");
+        assert!(visible_messages(&page, true)[0]["nativeFinalReplyItemId"].is_null());
+        page["messages"][0]["id"] = json!("t:assistant:turn");
+        page["messages"][0]["status"] = json!("failed");
+        assert!(visible_messages(&page, true)[0]["nativeFinalReplyItemId"].is_null());
+        page["messages"] = json!([{"id":"t:user:turn","role":"user","content":"Which link?"}]);
+        assert_eq!(visible_messages(&page, true)[0]["turnId"], "turn");
+    }
 
     fn fixture(
         messages: Vec<Value>,

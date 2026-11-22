@@ -41,6 +41,7 @@ import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInProjectSetup } from './StandInProjectSetup'
 import { StandInRequirements } from './StandInRequirements'
+import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import { createStandInRoleDraft } from './standInRoleDraft'
 import {
   StandInSettingsActions,
@@ -588,6 +589,16 @@ function StandInSettingsEditor({
               )}
               {(view === 'main' || (view === 'create' && !initialProject)) && (
                 <>
+                  <StandInSelfLearningSetting
+                    enabled={role.selfLearningEnabled}
+                    savedEnabled={
+                      saved?.roles.find(item => item.id === role.id)?.selfLearningEnabled
+                    }
+                    disabled={saving}
+                    onChange={selfLearningEnabled =>
+                      updateRole(role.id, current => ({ ...current, selfLearningEnabled }))
+                    }
+                  />
                   <div>
                     <StandInSettingsEntry
                       label={t('standIn.workspace.connections')}

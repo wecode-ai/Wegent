@@ -200,6 +200,7 @@ test('confirmed email is sent once; unknown delivery stays blocked and definite 
   const { id } = await f.accounts.save(config)
   const outbox = storage()
   let deliveries = 0
+  let sentId
   let failure
   const sender = createEmailSender(f.accounts, outbox, {
     imapSession: async (_account, action) =>
@@ -218,6 +219,7 @@ test('confirmed email is sent once; unknown delivery stays blocked and definite 
       close() {},
       sendMail: async mail => {
         deliveries++
+        sentId = mail.messageId
         assert.equal(mail.inReplyTo, '<original@example.com>')
         if (failure) throw failure
         return { accepted: ['sender@example.com'], rejected: [] }
@@ -238,8 +240,14 @@ test('confirmed email is sent once; unknown delivery stays blocked and definite 
     { code: 'email_confirmation_required' }
   )
   assert.equal(deliveries, 0)
-  assert.deepEqual(await sender(input), { status: 'sent' })
-  assert.deepEqual(await sender(input), { status: 'sent', duplicate: true })
+  const receipt = await sender(input)
+  assert.match(sentId, /^<[0-9a-f]{64}@wework\.local>$/)
+  assert.deepEqual(receipt, {
+    status: 'sent',
+    messageId: sentId,
+    inReplyTo: '<original@example.com>',
+  })
+  assert.deepEqual(await sender(input), { status: 'sent', messageId: sentId, duplicate: true })
   assert.equal(deliveries, 1)
   failure = Object.assign(new Error('private'), { command: 'DATA' })
   const unknown = { ...input, text: 'Unknown delivery' }
@@ -304,8 +312,13 @@ async function continuousReplyFixture() {
 
 test('continuous source authorization replies only inside the verified original mail thread', async () => {
   const { sender, input, deliveries, reads } = await continuousReplyFixture()
-  assert.deepEqual(await sender(input), { status: 'sent' })
+  const receipt = await sender(input)
   assert.deepEqual(reads, [7])
+  assert.deepEqual(receipt, {
+    status: 'sent',
+    messageId: deliveries[0].messageId,
+    inReplyTo: '<bound-message@example.com>',
+  })
   assert.equal(deliveries.length, 1)
   assert.equal(deliveries[0].from, config.email)
   assert.equal(deliveries[0].to, 'original-sender@example.com')

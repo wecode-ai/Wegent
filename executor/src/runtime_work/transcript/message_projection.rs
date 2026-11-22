@@ -50,6 +50,7 @@ struct AssistantTextPart {
     id: String,
     content: String,
     created_at: i64,
+    explicit_final: bool,
 }
 
 enum AssistantItemIdentity {
@@ -173,12 +174,16 @@ impl AssistantTurnAccumulation {
                 }
                 AssistantItemIdentity::Text(index) => {
                     self.assistant_parts.get(*index).map(|part| {
-                        json!({
+                        let mut item = json!({
                             "id": part.id,
                             "type": "assistant_text",
                             "content": part.content,
                             "createdAt": part.created_at,
-                        })
+                        });
+                        if part.explicit_final {
+                            item["phase"] = json!("final_answer");
+                        }
+                        item
                     })
                 }
             })
@@ -636,6 +641,9 @@ pub(super) fn collect_assistant_message(
                         id: item_id(item, "assistant-text"),
                         content,
                         created_at: item_timestamp(item).unwrap_or(fallback_timestamp),
+                        explicit_final: assistant_message_phase_name(item).as_deref()
+                            == Some("finalanswer")
+                            && item["id"].as_str().is_some_and(|id| !id.trim().is_empty()),
                     });
                 }
             }

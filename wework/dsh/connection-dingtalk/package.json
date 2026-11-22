@@ -251,6 +251,11 @@
                   "maximum": 20,
                   "default": 20
                 },
+                "trainingUntil": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Read attributed native messages in the exact conversation before this exclusive cutoff for retrospective review."
+                },
                 "includeImages": {
                   "type": "boolean",
                   "default": false,
@@ -309,6 +314,12 @@
               ]
             },
             "pagination": "cursor"
+          },
+          "reviewHistory": {
+            "resourceKinds": [
+              "direct",
+              "group"
+            ]
           }
         }
       ]

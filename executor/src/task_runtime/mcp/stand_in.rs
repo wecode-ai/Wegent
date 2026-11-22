@@ -18,6 +18,100 @@ fn batch_fingerprint(batch: &str) -> String {
     format!("{:x}", Sha256::digest(batch.as_bytes()))
 }
 
+/// The request prepared for this turn, together with memory pages returned on its MCP handle.
+#[derive(Debug, Clone)]
+pub(super) struct DeliveryContext {
+    ghost: Option<String>,
+    pub(super) role_device: String,
+    injected: String,
+    reads: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+}
+
+impl DeliveryContext {
+    fn from_request(request: &ExecutionRequest) -> Option<Self> {
+        let context = request.extra.get("standInDeliveryContext")?;
+        let ghost = context["ghostVersion"].as_str().map(str::to_owned);
+        let role_device = context["roleDeviceId"].as_str()?.to_owned();
+        let memory = request.extra.get("additionalContext")?["wework.stand-in.memories"]["value"]
+            .as_str()?;
+        Some(Self {
+            ghost,
+            role_device,
+            injected: batch_fingerprint(memory),
+            reads: Default::default(),
+        })
+    }
+
+    fn remember_page(&self, page: &Value) {
+        if page["items"].as_array().map_or(true, Vec::is_empty) && page["itemChunk"].is_null() {
+            return;
+        }
+        if let Ok(mut reads) = self.reads.lock() {
+            reads.insert(batch_fingerprint(
+                &json!([page["items"], page["itemChunk"]]).to_string(),
+            ));
+        }
+    }
+
+    pub(super) fn versions(&self) -> Option<(&str, String)> {
+        let reads = self.reads.lock().ok()?;
+        let memory = if reads.is_empty() {
+            self.injected.clone()
+        } else {
+            batch_fingerprint(&json!([self.injected, *reads]).to_string())
+        };
+        Some((self.ghost.as_deref()?, memory))
+    }
+}
+
+// A native completion and the MCP server it used need the very same memory-read set.
+// The opaque registration lives only for the executing worker; a restored request
+// cannot borrow a previous turn's witness.
+fn deliveries() -> &'static std::sync::Mutex<BTreeMap<String, DeliveryContext>> {
+    static REGISTRY: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, DeliveryContext>>> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(Default::default)
+}
+
+pub(crate) struct StandInTurnWitness(String);
+
+impl Drop for StandInTurnWitness {
+    fn drop(&mut self) {
+        if let Ok(mut live) = deliveries().lock() {
+            live.remove(&self.0);
+        }
+    }
+}
+
+pub(crate) fn begin_stand_in_turn_witness(
+    request: &mut ExecutionRequest,
+) -> Option<StandInTurnWitness> {
+    if !matches!(
+        request.extra.get("origin")?["type"].as_str(),
+        Some("stand_in_identity" | "issue_dispatch")
+    ) {
+        return None;
+    }
+    let context = DeliveryContext::from_request(request)?;
+    let key = uuid::Uuid::new_v4().to_string();
+    deliveries().lock().ok()?.insert(key.clone(), context);
+    request
+        .extra
+        .insert("standInTurnWitness".into(), json!(key));
+    Some(StandInTurnWitness(key))
+}
+
+fn active_delivery(request: &ExecutionRequest) -> Option<DeliveryContext> {
+    let key = request.extra.get("standInTurnWitness")?.as_str()?;
+    deliveries().lock().ok()?.get(key).cloned()
+}
+
+pub(crate) fn stand_in_turn_versions(request: &ExecutionRequest) -> Option<(String, String)> {
+    let delivery = active_delivery(request)?;
+    let (ghost, memory) = delivery.versions()?;
+    Some((ghost.to_owned(), memory))
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct StandInMcpIdentity {
     pub task_id: String,
@@ -99,6 +193,8 @@ pub(crate) fn stand_in_mcp_client_config(
     context.surface = WeworkMcpSurface::StandIn;
     context.current_device_id = Some(identity.device.clone());
     context.principal_id = Some(identity.user.to_string());
+    context.stand_in_delivery =
+        active_delivery(request).or_else(|| DeliveryContext::from_request(request));
     context.stand_in = Some(identity);
     let origin = &request.extra["origin"];
     context.stand_in_role_delegation = (origin["type"] == "stand_in_identity"
@@ -369,7 +465,16 @@ pub(super) async fn call(
     }
     let result = match name {
         "configure_git_webhook"|"git_webhook_plan"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,
-        "search_memories" | "remember" | "forget_memory" | "list_memory_forgetting_rules" => memory_call(store, identity, name, arguments),
+        "search_memories" | "remember" | "forget_memory" | "list_memory_forgetting_rules" => {
+            let role_device = context.stand_in_delivery.as_ref().map(|turn| turn.role_device.as_str());
+            let result = memory_call(role_device, store, identity, name, arguments);
+            if name == "search_memories" {
+                if let (Some(delivery), Ok(page)) = (&context.stand_in_delivery, &result) {
+                    delivery.remember_page(page);
+                }
+            }
+            result
+        },
         "connect_source" => connections::connect_source(arguments).await,
         "read_source" => connections::read_source(runtime, identity, arguments).await,
         "get_profile" => store
@@ -378,8 +483,8 @@ pub(super) async fn call(
         "propose_profile" => super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await,
         "list_work" => store.list_stand_in_work(identity.user,identity.role.as_deref()).map(|items| json!({"items":items,"runtime":crate::runtime_work::dingtalk::runtime_work_summaries(identity.user,identity.role.as_deref())})).map_err(|e|e.to_string()),
         "read_work" => read_connected_work(runtime, identity, &arguments).await,
-        "reply" | "send_email" => reply_to_work(runtime,identity,&arguments, name == "send_email").await,
-        "git_read" | "git_write" => super::git_connections::call(runtime, identity, arguments, name=="git_write").await,
+        "reply" | "send_email" => reply_to_work(runtime,identity,&arguments, name == "send_email", context.stand_in_delivery.as_ref()).await,
+        "git_read" | "git_write" => super::git_connections::call(runtime, identity, arguments, name=="git_write",context.stand_in_delivery.as_ref()).await,
         "prepare_git_workspace"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,
         "list_connection_providers" => connections::list_providers(identity).await,
         "search_connections" => crate::runtime_work::connection_host::call("listResources", arguments["providerId"].as_str(), arguments.clone())
@@ -461,6 +566,7 @@ fn read_connected_work_store(
 }
 
 fn memory_call(
+    read_device: Option<&str>,
     store: &LocalTaskStore,
     identity: &StandInMcpIdentity,
     name: &str,
@@ -482,15 +588,11 @@ fn memory_call(
         None
     };
     if matches!(name, "search_memories" | "list_memory_forgetting_rules") {
+        let device = read_device.unwrap_or(&identity.device);
         let memories = if name == "list_memory_forgetting_rules" {
-            store.recall_stand_in_memory_rules(
-                identity.user,
-                &identity.device,
-                role,
-                source.as_ref(),
-            )
+            store.recall_stand_in_memory_rules(identity.user, device, role, source.as_ref())
         } else {
-            store.recall_stand_in_memories(identity.user, &identity.device, role, source.as_ref())
+            store.recall_stand_in_memories(identity.user, device, role, source.as_ref())
         }
         .map_err(|error| error.to_string())?;
         return LocalTaskStore::page_stand_in_memories(
@@ -567,6 +669,7 @@ async fn reply_to_work(
     identity: &StandInMcpIdentity,
     arguments: &Value,
     email: bool,
+    delivery: Option<&DeliveryContext>,
 ) -> Result<Value, String> {
     let store = runtime.stand_in_store();
     let work = identity.work.as_deref().ok_or("No work is bound")?;
@@ -586,7 +689,7 @@ async fn reply_to_work(
             .ok_or("messageId is required")?,
     )?;
     let settings = store
-        .personal_stand_in(identity.user, &identity.device)
+        .configured_personal_stand_in(identity.user, &identity.device)
         .map_err(|e| e.to_string())?;
     let identities = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
     let role = identities
@@ -601,7 +704,9 @@ async fn reply_to_work(
     {
         return Err("Automatic reply authorization was revoked; reply was not sent".into());
     }
-    if email {
+    let text = arguments["text"].as_str().unwrap_or_default();
+    let versions = delivery.and_then(DeliveryContext::versions);
+    let result = if email {
         if crate::task_runtime::personal_stand_in::source_provider(source)
             != crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
             || (source["policy"]["askBeforeAct"] == true && !identity.ask_before_act)
@@ -621,31 +726,71 @@ async fn reply_to_work(
             "continuous_reply"
         });
         input["action"] = json!("send_email");
-        return crate::runtime_work::connection_host::call(
+        crate::runtime_work::connection_host::call(
             "executeAction",
             Some(crate::task_runtime::personal_stand_in::EMAIL_PROVIDER),
             input,
         )
         .await
-        .map_err(|e| format!("{}: {}", e.code, e.message));
+        .map_err(|e| format!("{}: {}", e.code, e.message))?
+    } else {
+        if crate::task_runtime::personal_stand_in::source_provider(source)
+            != crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+        {
+            return Err("This connection does not support the DingTalk reply operation".into());
+        }
+        if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
+            return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
+        }
+        crate::runtime_work::dingtalk::reply(
+            source,
+            message,
+            work,
+            text,
+            &arguments["mentionOpenDingTalkIds"],
+        )
+        .await
+        .map_err(|e| format!("{}: {}", e.code, e.message))?
+    };
+    let (accepted, native_id, request) = if email {
+        (
+            result["status"] == "sent"
+                && result["duplicate"] != true
+                && arguments["reply"] != false,
+            result["messageId"].as_str(),
+            result["inReplyTo"]
+                .as_str()
+                .or(message["id"].as_str())
+                .unwrap_or_default(),
+        )
+    } else {
+        (
+            result["success"] == true,
+            result["result"]["openMessageId"].as_str(),
+            message["id"].as_str().unwrap_or_default(),
+        )
+    };
+    if accepted && role["selfLearningEnabled"] == true {
+        if store
+            .record_training_reply(
+                identity.user,
+                &identity.device,
+                delivery.map_or(&identity.device, |snapshot| &snapshot.role_device),
+                role["id"].as_str().unwrap_or_default(),
+                &message["source"],
+                request,
+                text,
+                native_id,
+                versions
+                    .as_ref()
+                    .map(|(ghost, memory)| (*ghost, memory.as_str())),
+            )
+            .is_err()
+        {
+            crate::logging::log_executor_event("Stand-in reply training receipt unavailable", &[]);
+        }
     }
-    if crate::task_runtime::personal_stand_in::source_provider(source)
-        != crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
-    {
-        return Err("This connection does not support the DingTalk reply operation".into());
-    }
-    if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
-        return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
-    }
-    crate::runtime_work::dingtalk::reply(
-        source,
-        message,
-        work,
-        arguments["text"].as_str().unwrap_or_default(),
-        &arguments["mentionOpenDingTalkIds"],
-    )
-    .await
-    .map_err(|e| format!("{}: {}", e.code, e.message))
+    Ok(result)
 }
 
 #[cfg(test)]

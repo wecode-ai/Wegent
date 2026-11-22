@@ -676,6 +676,15 @@ fn project_conversation_context_messages(messages: &mut Vec<Value>) {
         "messageIndex",
     ];
 
+    let owner_turns: HashSet<String> = messages
+        .iter()
+        .filter(|message| {
+            message["role"] == "user"
+                && message["source"].is_null()
+                && message["sourcedUserInput"] != true
+        })
+        .filter_map(|message| message["turnId"].as_str().map(str::to_owned))
+        .collect();
     messages.retain_mut(|message| {
         let Some(object) = message.as_object_mut() else {
             return false;
@@ -689,7 +698,49 @@ fn project_conversation_context_messages(messages: &mut Vec<Value>) {
         if !visible_role {
             return false;
         }
+        let sourced_input = object.get("role").and_then(Value::as_str) == Some("user")
+            && (object.get("source").is_some_and(|value| !value.is_null())
+                || object.get("sourcedUserInput") == Some(&Value::Bool(true)));
+        let reply_item = object
+            .get("runtimeItems")
+            .and_then(Value::as_array)
+            .and_then(|items| {
+                items
+                    .iter()
+                    .rev()
+                    .find(|item| item["type"] == "assistant_text")
+            })
+            .filter(|item| {
+                item.get("content") == object.get("content")
+                    && item["content"]
+                        .as_str()
+                        .is_some_and(|v| !v.trim().is_empty())
+            })
+            .and_then(|item| {
+                Some((
+                    item["id"].as_str()?.to_owned(),
+                    item["phase"] == "final_answer",
+                ))
+            });
         object.retain(|key, _| KEYS.contains(&key.as_str()));
+        if sourced_input {
+            object.insert("sourcedUserInput".into(), json!(true));
+        }
+        if object
+            .get("turnId")
+            .and_then(Value::as_str)
+            .is_some_and(|turn| owner_turns.contains(turn))
+        {
+            if let Some((id, explicit_final)) = reply_item {
+                if explicit_final
+                    && object.get("status").and_then(Value::as_str) == Some("done")
+                    && object.get("completedAt").is_some_and(|at| !at.is_null())
+                {
+                    object.insert("nativeFinalReplyItemId".into(), json!(id));
+                }
+                object.insert("nativeReplyItemId".into(), json!(id));
+            }
+        }
         true
     });
 }

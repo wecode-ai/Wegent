@@ -92,6 +92,43 @@ pub(crate) fn provider_guidance() -> Vec<Value> {
         .unwrap_or_default()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ReviewReader {
+    Native,
+    Collected,
+}
+
+/// The live plugin declaration only selects a reader. The role's current source grant
+/// must still authorize the concrete resource on every page.
+pub(crate) fn review_reader(provider: &str, kind: &str) -> Option<ReviewReader> {
+    let guard = HOST.get()?.lock().ok()?;
+    live_review_reader(guard.as_ref()?, provider, kind)
+}
+
+fn live_review_reader(host: &Value, provider: &str, kind: &str) -> Option<ReviewReader> {
+    if !host_is_live(host) {
+        return None;
+    }
+    let supports = |field: &str| {
+        host[field].as_array().is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry["providerId"] == provider
+                    && entry["resourceKinds"]
+                        .as_array()
+                        .is_some_and(|kinds| kinds.iter().any(|value| value == kind))
+            })
+        })
+    };
+    match (
+        supports("reviewHistoryProviders"),
+        supports("observationOnlyProviders"),
+    ) {
+        (true, false) => Some(ReviewReader::Native),
+        (false, true) => Some(ReviewReader::Collected),
+        _ => None,
+    }
+}
+
 fn live_provider_guidance(host: &Value) -> Vec<Value> {
     if !host_is_live(host) {
         return Vec::new();
@@ -230,6 +267,29 @@ fn response_error(method: &str, error: &Value) -> AppIpcError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_readers_are_current_and_exclusive_per_provider_and_kind() {
+        let mut host = json!({
+            "registeredAt":chrono::Utc::now().timestamp(),
+            "reviewHistoryProviders":[{"providerId":"mail","resourceKinds":["thread"]}],
+            "observationOnlyProviders":[{"providerId":"mail","resourceKinds":["inbox"]}]
+        });
+        assert_eq!(
+            live_review_reader(&host, "mail", "thread"),
+            Some(ReviewReader::Native)
+        );
+        assert_eq!(
+            live_review_reader(&host, "mail", "inbox"),
+            Some(ReviewReader::Collected)
+        );
+        assert_eq!(live_review_reader(&host, "other", "thread"), None);
+        assert_eq!(live_review_reader(&host, "mail", "other"), None);
+        host["observationOnlyProviders"][0]["resourceKinds"] = json!(["thread", "inbox"]);
+        assert_eq!(live_review_reader(&host, "mail", "thread"), None);
+        host["registeredAt"] = json!(chrono::Utc::now().timestamp() - 30);
+        assert_eq!(live_review_reader(&host, "mail", "inbox"), None);
+    }
 
     #[test]
     fn connection_guidance_expires_with_the_registered_host() {

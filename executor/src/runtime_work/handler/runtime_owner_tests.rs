@@ -118,8 +118,10 @@ async fn standalone_session_initializes_an_owner_for_offline_event_processing() 
 #[tokio::test]
 async fn stand_in_device_identity_rpc_distinguishes_local_alias_and_owned_route() {
     let slot = Arc::new(Mutex::new(None));
-    let handler = RuntimeWorkRpcHandler::new("electron-desktop", "unused")
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("electron-desktop", "unused")
         .with_backend_device_route(slot.clone());
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     let identity = || handler.dispatch_method("runtime.stand_in.device_identity", json!({}));
     assert_eq!(identity().await.unwrap_err().code, "cloud_unavailable");
     *slot.lock().unwrap() = Some("app-record-42".into());
@@ -130,8 +132,25 @@ async fn stand_in_device_identity_rpc_distinguishes_local_alias_and_owned_route(
     assert!(handler.stand_in_role_runs_here(&json!({"executionDeviceId":"electron-desktop"})));
     assert!(handler.stand_in_role_runs_here(&json!({"executionDeviceId":"app-record-42"})));
     assert!(!handler.stand_in_role_runs_here(&json!({"executionDeviceId":"app-record-71"})));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut settings = store.personal_stand_in(7, &handler.device_id).unwrap();
+    let role = &mut settings["roles"][0];
+    role["executionDeviceId"] = json!("app-record-42");
+    role["enabled"] = json!(true);
+    role["selfLearningEnabled"] = json!(true);
+    store
+        .save_personal_stand_in(7, &handler.device_id, settings)
+        .unwrap();
+    let report = || {
+        handler.dispatch_method(
+            "runtime.stand_in.memory.rework_report",
+            json!({"userId":7,"roleId":"default"}),
+        )
+    };
+    assert_eq!(report().await.unwrap()["roleId"], "default");
     *slot.lock().unwrap() = Some("app-record-71".into());
     assert!(!handler.stand_in_role_runs_here(&json!({"executionDeviceId":"app-record-42"})));
+    assert_eq!(report().await.unwrap_err().code, "permission_denied");
 }
 
 #[tokio::test]

@@ -64,9 +64,17 @@ impl RuntimeWorkRpcHandler {
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
         if name == "list_memory_sources" {
+            if Self::is_training_list_cursor(args) {
+                return self
+                    .append_training_sources(&store, identity, args, json!({}))
+                    .await;
+            }
             let mut page = self
                 .read_stand_in_conversations(identity, "list_tasks", args)
                 .await?;
+            let settings = store
+                .configured_personal_stand_in(identity.user, &self.device_id)
+                .map_err(super::stand_in::settings_error)?;
             let mut pending = Vec::new();
             for item in page["items"].as_array().into_iter().flatten() {
                 let source = item["taskId"].as_str().unwrap_or_default();
@@ -74,16 +82,46 @@ impl RuntimeWorkRpcHandler {
                     .memory_review_progress(identity.user, source)
                     .map_err(super::stand_in::settings_error)?;
                 let updated = item["updatedAt"].as_i64().unwrap_or(0);
-                if updated == 0 || updated >= state["completedThrough"].as_i64().unwrap_or(0) {
-                    pending.push(item.clone());
+                let reviewed = state["completedThrough"].as_i64().unwrap_or(0);
+                let link = (item["kind"] == "identity")
+                    .then(|| self.local_task_link(source))
+                    .flatten();
+                let observe = link.as_ref().is_some_and(|link| {
+                    self.direct_learning_role(link, &settings, identity.user)
+                        .is_some()
+                        && timestamp_ms_field(&page, "windowEnd").is_some_and(|end| {
+                            super::stand_in_identity_rework::identity_source_due(
+                                link, reviewed, end,
+                            )
+                        })
+                });
+                if updated == 0 || updated >= reviewed || observe {
+                    let mut item = item.clone();
+                    if item["kind"] == "identity" {
+                        item["trainingEligible"] =
+                            json!(self.local_task_link(source).is_some_and(|link| {
+                                super::stand_in_training::identity_learning_role(
+                                    self, &link, &settings,
+                                )
+                                .is_some()
+                            }));
+                    }
+                    pending.push(item);
                 }
             }
             page["items"] = json!(pending);
-            return Ok(page);
+            return self
+                .append_training_sources(&store, identity, args, page)
+                .await;
         }
         let source = super::stand_in_tasks::required(args, "taskId")?;
         let gate = self.task_send_gate(&format!("memory-source:{}:{source}", identity.user));
         let _guard = gate.lock().await;
+        if source.starts_with(super::stand_in_training_progress::SOURCE_PREFIX) {
+            return self
+                .training_progress_operation(&store, identity, name, args, source)
+                .await;
+        }
         let actor = self
             .local_task_link(&identity.task_id)
             .ok_or_else(|| AppIpcError::new("permission_denied", "Memory review is unavailable"))?;
@@ -97,6 +135,13 @@ impl RuntimeWorkRpcHandler {
             .memory_review_progress(identity.user, source)
             .map_err(super::stand_in::settings_error)?;
         let version = state["version"].as_i64().unwrap_or(0);
+        let settings = store
+            .configured_personal_stand_in(identity.user, &self.device_id)
+            .map_err(super::stand_in::settings_error)?;
+        let link = self.local_task_link(source);
+        let role = link
+            .as_ref()
+            .and_then(|link| self.direct_learning_role(link, &settings, identity.user));
         if name == "complete_memory_source" {
             // Revalidate the current source grant even when all earlier reads succeeded.
             self.read_stand_in_conversations(
@@ -106,7 +151,13 @@ impl RuntimeWorkRpcHandler {
             )
             .await?;
             return store
-                .complete_memory_review_source(identity.user, source, run, version)
+                .complete_memory_review_source(
+                    identity.user,
+                    source,
+                    run,
+                    version,
+                    role.is_some() && args["reworkReviewComplete"] == true,
+                )
                 .map_err(super::stand_in::settings_error);
         }
         let continuing =
@@ -127,8 +178,9 @@ impl RuntimeWorkRpcHandler {
             );
         };
         read["taskId"] = json!(source);
+        let since = state["completedThrough"].as_i64().unwrap_or(0);
         read["since"] = json!(chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
-            state["completedThrough"].as_i64().unwrap_or(0)
+            since
         ));
         read["until"] = json!(chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
             through
@@ -137,8 +189,40 @@ impl RuntimeWorkRpcHandler {
             .read_stand_in_conversations(identity, "read_task", &read)
             .await?;
         pending.extend(pending_reads(&read, &page)?);
+        if let Some(role) = role {
+            for message in page["messages"].as_array().into_iter().flatten() {
+                if let (Some(turn_id), Some(item_id), Some(projected), Some(at)) = (
+                    message["turnId"].as_str(),
+                    message["nativeReplyItemId"].as_str(),
+                    message["id"].as_str(),
+                    timestamp_ms_field(message, "completedAt"),
+                ) {
+                    store
+                        .observe_identity_training_reply(
+                            identity.user,
+                            role,
+                            source,
+                            turn_id,
+                            item_id,
+                            projected,
+                            at,
+                        )
+                        .map_err(super::stand_in::settings_error)?;
+                }
+            }
+        }
+        let coverage = (role.is_some() && since < through && page["unknownTimestamps"] != true)
+            .then_some(since);
         let state = store
-            .record_memory_review_page(identity.user, source, run, through, version, json!(pending))
+            .record_memory_review_page(
+                identity.user,
+                source,
+                run,
+                through,
+                version,
+                json!(pending),
+                coverage,
+            )
             .map_err(super::stand_in::settings_error)?;
         let writes = state["pendingWrites"].as_array().map_or(0, Vec::len);
         Ok(

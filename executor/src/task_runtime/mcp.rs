@@ -51,6 +51,7 @@ use context::space_context_grant;
 pub(crate) use stand_in::stand_in_identity;
 pub(crate) use stand_in::stand_in_mcp_client_config;
 pub(crate) use stand_in::StandInMcpIdentity;
+pub(crate) use stand_in::{begin_stand_in_turn_witness, stand_in_turn_versions};
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";
@@ -137,6 +138,7 @@ pub(crate) struct SpaceMcpRequestContext {
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
+    stand_in_delivery: Option<stand_in::DeliveryContext>,
     stand_in_role_delegation: bool,
     control: Option<crate::workbench_control::ControlContext>,
     current_device_id: Option<String>,
@@ -211,6 +213,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_delivery: None,
             stand_in_role_delegation: false,
             control: None,
             current_device_id: None,
@@ -228,6 +231,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_delivery: None,
             stand_in_role_delegation: false,
             control: None,
             current_device_id: None,

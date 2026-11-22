@@ -1,0 +1,23 @@
+{
+  "order": 35600,
+  "scenario": "./scenarios/stand-in-self-learning.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/e2e/desktop/modules/stand-in-self-learning-model.mjs",
+    "wework/dsh/connection-dingtalk/provider.js",
+    "executor/src/runtime_work/handler/stand_in_training*.rs",
+    "executor/src/runtime_work/handler/stand_in_ghost_evaluation.rs",
+    "executor/crates/task-store/src/task_runtime/stand_in_ghost_proposals.rs",
+    "executor/crates/task-store/src/task_runtime/stand_in_training_cases.rs",
+    "wework/src/features/todo/StandInSelfLearningSetting.tsx",
+    "wework/src/features/todo/StandInRecentReview.tsx",
+    "wework/src/features/todo/StandInGhostEvidence.tsx"
+  ],
+  "ci": {
+    "core": {
+      "order": 40600,
+      "shard": 3,
+      "position": 11600
+    }
+  }
+}

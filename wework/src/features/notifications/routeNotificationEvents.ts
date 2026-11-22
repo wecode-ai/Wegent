@@ -5,6 +5,7 @@ import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNo
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { parseWeworkScheme, weworkIssueScheme } from './scheme'
 import { ISSUE_ASSIGNMENTS_CHANGED } from '@/features/todo/issueAssignmentEvents'
+import { standInConversationTaskId } from '@/api/personalStandIn'
 
 export interface RouteNotificationInput {
   chatStream: WorkbenchServices['chatStream']
@@ -22,6 +23,7 @@ interface StreamBinding {
 export function createRouteNotificationEvents() {
   const deliveredShares = new Set<string>()
   const deliveredAssignments = new Set<string>()
+  const deliveredProposals = new Set<string>()
   let observing = false
   let input: RouteNotificationInput | undefined
   let binding: StreamBinding | undefined
@@ -81,6 +83,18 @@ export function createRouteNotificationEvents() {
       binding = current
       const ownsStream = () => observing && binding === current && current.active
       const release = current.stream.subscribe({
+        onStandInLearningProposal: ({ deviceId, userId, roleId, proposalId }) => {
+          if (!ownsStream() || !input || getDesktopWindowLabel() !== 'main') return
+          if (userId !== input.currentUserId && userId !== input.localUserId) return
+          const key = JSON.stringify([deviceId, userId, proposalId])
+          if (deliveredProposals.has(key)) return
+          deliveredProposals.add(key)
+          void sendSystemNotification({
+            title: input.t('standIn.workspace.self_learning'),
+            body: input.t('standIn.workspace.self_learning_proposal_ready'),
+            address: { deviceId, taskId: standInConversationTaskId(userId, roleId) },
+          })
+        },
         onIssueAssignmentsChanged: userId => {
           if (ownsStream() && userId === input?.currentUserId)
             window.dispatchEvent(new Event(ISSUE_ASSIGNMENTS_CHANGED))

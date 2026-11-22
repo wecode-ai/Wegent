@@ -89,6 +89,8 @@ pub mod personal_stand_in;
 #[path = "stand_in_lifecycle.rs"]
 mod stand_in_lifecycle;
 
+#[path = "stand_in_ghost_proposals.rs"]
+mod stand_in_ghost_proposals;
 #[path = "stand_in_proposals.rs"]
 mod stand_in_proposals;
 
@@ -97,8 +99,17 @@ mod stand_in_memories;
 #[path = "stand_in_memory_progress.rs"]
 mod stand_in_memory_progress;
 
+#[path = "stand_in_collected_observations.rs"]
+mod stand_in_collected_observations;
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
+#[path = "stand_in_rework.rs"]
+mod stand_in_rework;
+#[path = "stand_in_rework_verification.rs"]
+mod stand_in_rework_verification;
+#[path = "stand_in_training_connections.rs"]
+mod stand_in_training_connections;
+pub use stand_in_collected_observations::connection_message_millis;
 
 #[path = "stand_in_processing.rs"]
 mod stand_in_processing;
