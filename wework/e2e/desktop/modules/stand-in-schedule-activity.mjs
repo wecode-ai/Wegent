@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict'
+import { until } from './plugin-regression-fixture.mjs'
 import { openStandInDetails } from './stand-in-profile-navigation.mjs'
 
 /** Clone only the isolated scenario's schedule; never run this disabled hourly fixture. */
 export async function verifyStandInScheduleActivity(control, rpc, schedule, captureScreenshot) {
   const id = `${schedule.id}-hourly-profile`
-  const row = `[data-testid="stand-in-details-schedule-${id}"]`
+  const rowId = `stand-in-details-schedule-${id}`
+  const row = `[data-testid="${rowId}"]`
   const dialog = '[data-testid="stand-in-schedule-dialog"]'
   const waitForTriggerFocus = async () => {
     try {
-      await control.command('waitFor', `${row}:focus`)
+      // The dialog restores document focus even if the native window is in the background.
+      await until(
+        () => control.command('getActiveElementTestId', 'body'),
+        active => active === rowId,
+        `The schedule dialog did not restore focus to ${rowId}`,
+        5_000
+      )
     } catch (error) {
       console.error('[stand-in-schedule-focus]', {
         activeElement: await control.command('getActiveElementTestId', 'body'),
