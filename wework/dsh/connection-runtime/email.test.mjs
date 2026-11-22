@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { constants as osConstants } from 'node:os'
+import { ConnectionRegistry } from '../plugin-runtime/connections.js'
 import { createEmailAccounts } from './email-accounts.js'
 import { createEmailProvider, EMAIL_PROVIDER } from './email-provider.js'
 import { initializeObservation } from '../plugin-runtime/connection-observations.js'
@@ -202,7 +203,7 @@ test('confirmed email is sent once; unknown delivery stays blocked and definite 
   let deliveries = 0
   let sentId
   let failure
-  const sender = createEmailSender(f.accounts, outbox, {
+  const sendEmail = createEmailSender(f.accounts, outbox, {
     imapSession: async (_account, action) =>
       action({
         mailboxOpen: async () => {},
@@ -226,8 +227,23 @@ test('confirmed email is sent once; unknown delivery stays blocked and definite 
       },
     }),
   })
+  const registry = new ConnectionRegistry({ context: value => value })
+  await registry.register({ effect() {} }, new URL('./package.json', import.meta.url), {
+    email: {
+      ...createEmailProvider(f.accounts),
+      executeAction: (_context, input) => sendEmail(input),
+    },
+  })
+  const sender = input =>
+    registry.call(EMAIL_PROVIDER, 'executeAction', { ...input, action: 'send_email' })
   const input = {
-    source: { id: 'INBOX', kind: 'inbox', profile: id, policy: { askBeforeAct: true } },
+    source: {
+      providerId: EMAIL_PROVIDER,
+      id: 'INBOX',
+      kind: 'inbox',
+      profile: id,
+      policy: { askBeforeAct: true },
+    },
     messageId: '123:2',
     workId: 'work',
     from: config.email,

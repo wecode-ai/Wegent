@@ -140,6 +140,10 @@ export function StandInPrimaryProfile({
     tagDraft.getDirtySnapshot
   )
   const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
+  const preserveLegacyInstructions =
+    !separatePrompt &&
+    draft.selfLearningEnabled === true &&
+    draft.preferences === original.preferences
 
   const role = {
     ...defaultRole,
@@ -406,7 +410,7 @@ export function StandInPrimaryProfile({
               ...settings,
               primary: {
                 ...draft,
-                ...(!separatePrompt && draft.preferences === original.preferences
+                ...(preserveLegacyInstructions
                   ? { prompt: saved.prompt, preferences: saved.preferences }
                   : {}),
                 collaboration:
