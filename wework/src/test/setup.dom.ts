@@ -2,6 +2,7 @@ import '../../../packages/collaboration/src/test/setup'
 import * as matchers from '@testing-library/jest-dom/matchers'
 import { afterAll, beforeEach, expect, vi } from 'vitest'
 import { setTimeout as yieldToTimers } from 'node:timers/promises'
+import { createTestWebLocks } from './web-locks'
 import {
   WEWORK_DSH_SLOTS,
   type WeworkDshSlotEntry,
@@ -10,6 +11,8 @@ import {
 import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 
 expect.extend(matchers)
+
+Object.defineProperty(navigator, 'locks', { configurable: true, value: createTestWebLocks() })
 
 afterAll(async () => {
   // Radix schedules focus restoration after unmount. Finish those callbacks in

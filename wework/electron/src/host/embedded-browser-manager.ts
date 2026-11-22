@@ -886,6 +886,16 @@ export class EmbeddedBrowserManager {
     }
     this.clearAgentCursorHide(normalizedLabel)
     const moveSequence = ++this.agentCursorSequence
+    if (process.env.VITE_WEWORK_E2E === 'true')
+      console.info(
+        '[browser-cursor] ' +
+          JSON.stringify({
+            stage: 'emitted',
+            label: normalizedLabel,
+            moveSequence,
+            timestamp: Date.now(),
+          })
+      )
     this.agentCursorStates.set(normalizedLabel, { x, y, moveSequence })
     this.emit('agent-cursor', {
       label: normalizedLabel,
@@ -917,6 +927,16 @@ export class EmbeddedBrowserManager {
 
   notifyAgentCursorArrived(label: string, moveSequence: number): void {
     const normalizedLabel = requiredLabel(label)
+    if (process.env.VITE_WEWORK_E2E === 'true')
+      console.info(
+        '[browser-cursor] ' +
+          JSON.stringify({
+            stage: 'acknowledged',
+            label: normalizedLabel,
+            moveSequence,
+            timestamp: Date.now(),
+          })
+      )
     if (!Number.isInteger(moveSequence) || moveSequence < 1) {
       throw new Error('Browser agent cursor sequence is invalid')
     }
@@ -944,6 +964,17 @@ export class EmbeddedBrowserManager {
     }
     return new Promise(resolve => {
       const timeout = setTimeout(() => {
+        if (process.env.VITE_WEWORK_E2E === 'true')
+          console.info(
+            '[browser-cursor] ' +
+              JSON.stringify({
+                stage: 'timed-out',
+                label: normalizedLabel,
+                moveSequence,
+                latestArrival: this.agentCursorArrivals.get(normalizedLabel) ?? null,
+                timestamp: Date.now(),
+              })
+          )
         const waiters = this.agentCursorArrivalWaiters.get(normalizedLabel)
         if (waiters) {
           for (const waiter of waiters) {

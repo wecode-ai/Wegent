@@ -290,7 +290,7 @@ async fn api(
     endpoint: &str,
     body: Option<&Value>,
 ) -> Result<ApiReply, AppIpcError> {
-    api_request(platform, instance, method, endpoint, body)
+    api_request(platform, instance, method, endpoint, body, None)
         .await
         .map_err(|failure| failure.error)
 }
@@ -413,6 +413,7 @@ async fn api_request(
     method: &str,
     endpoint: &str,
     body: Option<&Value>,
+    pr_number: Option<u64>,
 ) -> Result<ApiReply, GitRequestError> {
     let hostname = instance
         .strip_prefix("https://")
@@ -438,6 +439,10 @@ async fn api_request(
         return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
     }
     let mut command = git_cli_command(platform, std::env::vars().collect());
+    if pr_number.is_some() {
+        // gh HTTP debug output can contain request and response bodies.
+        command.env_remove("GH_DEBUG").env_remove("DEBUG");
+    }
     command.args([
         "api",
         "--include",
@@ -478,7 +483,14 @@ async fn api_request(
         }
         let (out,err)=tokio::try_join!(bounded_output(&mut stdout,2*1024*1024),bounded_output(&mut stderr,8192))?;
         let status=child.wait().await.map_err(|_|invalid("Git CLI failed"))?;
-        let DecodedReply { status: http_status, poll_interval, retry_at: retry, body: response_body } = decode_reply(&out)?;
+        let decoded = decode_reply(&out);
+        if let Some(number) = pr_number.filter(|_| !status.success() || decoded.is_err()) {
+            let http_status = decoded.as_ref().ok()
+                .filter(|_| out.starts_with(b"HTTP/"))
+                .map(|reply| reply.status);
+            status::log_cli_failure(number, http_status, status.code(), &err);
+        }
+        let DecodedReply { status: http_status, poll_interval, retry_at: retry, body: response_body } = decoded?;
         if http_status==429 || (http_status==403 && retry.is_some()) {
             if let Ok(mut limits)=rate_limits().lock(){limits.insert(instance.to_owned(),retry.unwrap_or_else(||chrono::Utc::now().timestamp_millis()+60000));}
             return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
@@ -673,9 +685,16 @@ pub(crate) async fn write(input: Value) -> Result<Value, GitRequestError> {
     check["operation"] = json!("identity");
     read(check).await.map_err(GitRequestError::not_sent)?;
     let (method, path) = write_target(&input).map_err(GitRequestError::not_sent)?;
-    let mut result = api_request(platform, &instance, method, &path, Some(&input["body"]))
-        .await?
-        .data;
+    let mut result = api_request(
+        platform,
+        &instance,
+        method,
+        &path,
+        Some(&input["body"]),
+        None,
+    )
+    .await?
+    .data;
     let parts: Vec<_> = input["path"].as_str().unwrap_or("").split('/').collect();
     if parts
         .iter()
@@ -844,6 +863,7 @@ mod tests {
             "POST",
             "repos/org/repo/issues",
             Some(&oversized),
+            None,
         )
         .await
         .err()
@@ -854,8 +874,15 @@ mod tests {
             .lock()
             .unwrap()
             .insert(host.into(), chrono::Utc::now().timestamp_millis() + 60000);
-        let result =
-            api_request("gitlab", host, "POST", "projects/1/hooks", Some(&json!({}))).await;
+        let result = api_request(
+            "gitlab",
+            host,
+            "POST",
+            "projects/1/hooks",
+            Some(&json!({})),
+            None,
+        )
+        .await;
         rate_limits().lock().unwrap().remove(host);
         let failure = result.err().unwrap();
         assert_eq!(failure.error.code, "git_rate_limited");

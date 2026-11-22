@@ -2359,14 +2359,14 @@ export function createRuntimeWorkApiFromIpc(
         )
         const elapsedMs = Math.round(nowMs() - loadStartedAt)
         if (elapsedMs > 5000) {
-          console.info(
-            `[Wework] Slow local runtime inventory ${JSON.stringify({
-              elapsedMs,
-              identityMs: Math.round(identityReadyAt - loadStartedAt),
-              listMs: Math.round(responseReceivedAt - startedAt),
-              ownerRecheckMs: Math.round(ownerVerifiedAt - responseReceivedAt),
-            })}`
-          )
+          logModelLoading(createModelLoadingTrace(), 'runtime.inventory.slow', {
+            elapsedMs,
+            identityMs: Math.round(identityReadyAt - loadStartedAt),
+            listMs: Math.round(responseReceivedAt - startedAt),
+            ownerRecheckMs: Math.round(ownerVerifiedAt - responseReceivedAt),
+            preferCached: requestOptions?.preferCached === true,
+            pendingOnly: requestOptions?.pendingOnly === true,
+          })
         }
         const e2eConfig = getDesktopE2ERuntimeConfig()
         if (e2eConfig.controlUrl && !e2eConfig.disabled) {

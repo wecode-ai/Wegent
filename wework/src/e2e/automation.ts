@@ -97,7 +97,10 @@ import {
   readLocalExecutorLog,
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
-import { executeVerificationControlCommand } from './verification-control'
+import {
+  dispatchDesktopRuntimeControl,
+  executeVerificationControlCommand,
+} from './verification-control'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import {
@@ -156,6 +159,9 @@ import {
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
   E2E_RUNTIME_EVENT_LISTENERS_KEY,
 } from '@/api/runtime/runtimeChatStream'
+
+const backgroundRequestProbe = new Map<number, string>()
+let backgroundRequestProbePending: Promise<unknown>[] = []
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -2392,6 +2398,29 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           JSON.parse(command.value ?? '{}')
         )
       )
+    case 'startBackgroundRequestProbe': {
+      const { requestDshExecutor } = await import('@/api/dsh/executorTransport')
+      backgroundRequestProbe.clear()
+      backgroundRequestProbePending = []
+      for (let index = 0; index < 4; index++) {
+        backgroundRequestProbe.set(index, 'pending')
+        backgroundRequestProbePending.push(
+          requestDshExecutor('runtime.tasks.list', { backgroundProbe: index }).then(
+            () => backgroundRequestProbe.set(index, 'done'),
+            error => backgroundRequestProbe.set(index, String(error))
+          )
+        )
+      }
+      return ''
+    }
+    case 'waitForBackgroundRequestProbe':
+      await Promise.all(backgroundRequestProbePending)
+      return JSON.stringify(Object.fromEntries(backgroundRequestProbe))
+    case 'readBackgroundRequestProbe':
+      return JSON.stringify({
+        requests: Object.fromEntries(backgroundRequestProbe),
+        locks: await navigator.locks.query(),
+      })
     case 'armRuntimeTransportGate':
       armRuntimeTransportGate(JSON.parse(command.value ?? '{}'))
       return ''
@@ -2406,6 +2435,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'readStandInTasksThroughColdDeviceRoute': {
+      const taskIds = JSON.parse(command.value ?? '[]') as string[]
+      const { createHybridWorkbenchServices } = await import('@/api/hybrid/hybridServices')
+      const { describeDshExecutor } = await import('@/api/dsh/executorTransport')
+      const { LOCAL_USER } = await import('@/api/local/localSession')
+      const { device_id: deviceId } = await describeDshExecutor()
+      const services = createHybridWorkbenchServices({
+        apiBaseUrl: window.location.origin,
+        socketBaseUrl: window.location.origin,
+        socketPath: '/socket.io',
+        token: '',
+        user: LOCAL_USER,
+      })
+      const reader = services.standInApi
+      if (!reader) throw new Error('Stand-in task reader is unavailable')
+      return JSON.stringify(
+        await Promise.all(taskIds.map(taskId => reader.readTask(deviceId, taskId)))
+      )
+    }
     case 'refreshRuntimeWork':
       window.dispatchEvent(
         new StorageEvent('storage', {
@@ -2950,6 +2998,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'blurMainWindow':
       await invokeDesktopHost('e2e.blurMainWindow')
       return ''
+    case 'minimizeMainWindow':
+      await invokeDesktopHost('window.minimize')
+      return ''
+    case 'getWorkbenchWindowActivity':
+      return String(await window.weworkElectronLifecycle?.getWorkbenchActivity?.())
     case 'pressWindowKey':
       await invokeDesktopHost('e2e.pressKey', {
         windowLabel: getDesktopWindowLabel(),
@@ -4121,12 +4174,17 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
   }
 }
 
+function desktopControlPageState() {
+  return { visibility: document.visibilityState, hasFocus: document.hasFocus() }
+}
+
 async function postDesktopControlStarted(
   url: string,
   command: DesktopControlCommand,
   clientId: string
 ): Promise<void> {
   const startedAt = Date.now()
+  const startState = desktopControlPageState()
   let lastTick = startedAt
   let maxEventLoopLagMs = 0
   const probe = window.setInterval(() => {
@@ -4134,13 +4192,21 @@ async function postDesktopControlStarted(
     lastTick = Date.now()
   }, 100)
   let response: Response
+  let headersAt: number
+  let completedAt: number
+  let headersState: ReturnType<typeof desktopControlPageState>
+  let endState: ReturnType<typeof desktopControlPageState>
   try {
     response = await fetch(`${url}/started`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
       body: JSON.stringify({ id: command.id, clientId }),
     })
+    headersAt = Date.now()
+    headersState = desktopControlPageState()
     await response.arrayBuffer()
+    completedAt = Date.now()
+    endState = desktopControlPageState()
   } finally {
     window.clearInterval(probe)
     maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
@@ -4157,6 +4223,11 @@ async function postDesktopControlStarted(
         startedAt,
         elapsedMs: Date.now() - startedAt,
         maxEventLoopLagMs,
+        headersElapsedMs: headersAt - startedAt,
+        bodyElapsedMs: completedAt - headersAt,
+        startState,
+        headersState,
+        endState,
         serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
         visibility: document.visibilityState,
       },
@@ -4202,6 +4273,15 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       recordDesktopControlPhase('command-decoded', command)
       const diagnostic = { commandId: command.id, action: command.action, clientId }
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
+      if (command.action === 'fetchLocalRuntime') {
+        // Native owns admission and reporting, so Renderer scheduling cannot
+        // consume the Runtime action's budget or delay its completed result.
+        void dispatchDesktopRuntimeControl(command, clientId).catch(error => {
+          console.error('[Wework] Desktop E2E Runtime request failed:', error)
+        })
+        commandRequest = pollForCommand()
+        continue
+      }
       await postDesktopControlStarted(url, command, clientId)
       recordDesktopControlPhase('start-acknowledged', command)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
@@ -4220,15 +4300,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           recordDesktopControlPhase('result-acknowledged', command)
         }
       )
-      if (command.action === 'fetchLocalRuntime') {
-        // Runtime RPCs may wait on each other; keep polling so the controller
-        // can issue the overlapping request while each result retains its ID.
-        void completion.catch(error => {
-          console.error('[Wework] Desktop E2E Runtime request failed:', error)
-        })
-        commandRequest = pollForCommand()
-        continue
-      }
       const result = await completion
       if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {

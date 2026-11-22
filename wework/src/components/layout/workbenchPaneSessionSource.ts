@@ -1,4 +1,8 @@
 import { createWorkbenchDeviceReconnect } from '@/features/workbench/workbenchDeviceReconnect'
+import {
+  subscribeWorkbenchWindowActivity,
+  type WorkbenchWindowActivity,
+} from '@/desktop/workbenchWindowActivity'
 import { createPaneSessionDiagnostics } from './workbenchPaneSessionDiagnostics'
 import type { SetStateAction } from 'react'
 import type { RuntimeTranscriptLoader } from '@/types/workbench'
@@ -61,6 +65,9 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   let unsubscribeConversation: (() => void) | undefined
   let unsubscribeLifecycle: (() => void) | undefined
   let unsubscribeSearch: (() => void) | undefined
+  let stopWindowActivity: (() => void) | undefined
+  let windowActivity: WorkbenchWindowActivity = 'foreground'
+  let pendingStreamPresentation = false
   let conversationFrame: number | undefined
   let conversationTimer: ReturnType<typeof setTimeout> | undefined
   const cancelConversationPublication = () => {
@@ -69,22 +76,22 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     conversationFrame = undefined
     conversationTimer = undefined
   }
-  const publishConversation = (coalesced = false) => {
-    if (!isActive()) return
-    if (coalesced) {
-      cancelConversationPublication()
-      publish()
-      return
-    }
+  const flushConversation = () => {
+    cancelConversationPublication()
+    pendingStreamPresentation = false
+    if (isActive()) publish()
+  }
+  const presentStreamingProgress = () => {
+    pendingStreamPresentation = true
+    if (windowActivity === 'foreground') flushConversation()
+    else if (windowActivity === 'background' && conversationTimer === undefined)
+      conversationTimer = setTimeout(flushConversation, 500)
+  }
+  const publishConversation = () => {
     if (conversationFrame !== undefined || conversationTimer !== undefined) return
-    const flush = () => {
-      conversationFrame = undefined
-      conversationTimer = undefined
-      if (isActive()) publish()
-    }
     if (typeof requestAnimationFrame === 'function')
-      conversationFrame = requestAnimationFrame(flush)
-    else conversationTimer = setTimeout(flush, 16)
+      conversationFrame = requestAnimationFrame(flushConversation)
+    else conversationTimer = setTimeout(flushConversation, 16)
   }
   let publishing = false
   let publishAgain = false
@@ -500,15 +507,20 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       if (conversationKey !== nextConversationKey) {
         conversationKey = nextConversationKey
         unsubscribeConversation?.()
+        cancelConversationPublication()
+        pendingStreamPresentation = false
         unsubscribeConversation = observedTarget
           ? subscribeRuntimeConversation(
               observedTarget.address,
               (action, coalesced) => {
                 if (!isActive()) return
-                if (!action) {
+                if (coalesced) presentStreamingProgress()
+                else if (!action) {
                   reconcile()
-                  publishConversation(true)
-                } else publishConversation(coalesced)
+                  flushConversation()
+                } else if (windowActivity !== 'foreground' || action.type === 'user_added')
+                  flushConversation()
+                else publishConversation()
               },
               { retainWhileSubscribed: !current.ownerArchived }
             )
@@ -594,6 +606,15 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       const resuming = !started
       if (!started) {
         started = true
+        stopWindowActivity = subscribeWorkbenchWindowActivity(activity => {
+          const resumed = activity === 'foreground' && windowActivity !== 'foreground'
+          windowActivity = activity
+          if (resumed) flushConversation()
+          else if (pendingStreamPresentation) {
+            cancelConversationPublication()
+            presentStreamingProgress()
+          }
+        })
         let revision = lifecycleStore.getTaskRevision(frame().lifecycleAddress)
         unsubscribeLifecycle = lifecycleStore.subscribe(() => {
           const nextRevision = lifecycleStore.getTaskRevision(frame().lifecycleAddress)
@@ -613,6 +634,10 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
           goalReaderController.abort()
           goalReadScope = undefined
           cancelConversationPublication()
+          pendingStreamPresentation = false
+          stopWindowActivity?.()
+          stopWindowActivity = undefined
+          windowActivity = 'foreground'
           readScope = undefined
           releaseQueue?.()
           releaseQueue = undefined

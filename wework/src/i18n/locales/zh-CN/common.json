@@ -6210,6 +6210,7 @@
       "connection_cli_request_unavailable": "来源插件的 CLI 请求暂时失败。请稍后重试；若仍失败，请重新授权连接。",
       "connection_response_invalid": "连接返回的数据无效，请检查来源后重试。",
       "stand_in_dispatch_unknown": "无法确认助理任务的启动结果，请先检查任务列表。",
+      "stand_in_dispatch_retry_limit": "这条输入已派发失败三次，请在工作记录中查看失败原因。",
       "stand_in_grouping_failed": "助理未能整理工作归属，请重试。",
       "work_busy": "该工作正在处理中，请稍后重试。",
       "failed": "暂时无法完成此操作。请保留当前修改，重新加载后再试。",

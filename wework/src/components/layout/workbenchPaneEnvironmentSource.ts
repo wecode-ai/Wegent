@@ -1,4 +1,5 @@
 import { createWorkbenchDeviceReconnect } from '@/features/workbench/workbenchDeviceReconnect'
+import { pollWorkbenchPresentation } from '@/desktop/workbenchWindowActivity'
 import type { WorkbenchPaneContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -54,7 +55,7 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
   let resolutionRevision = 0
   let started = false
   let refreshActive = false
-  let timer: ReturnType<typeof setInterval> | undefined
+  let stopPolling: (() => void) | undefined
   const isCurrent = () => started && listeners.size > 0
   function publish(change: Partial<EnvironmentSnapshot>) {
     if (!isCurrent()) return
@@ -284,9 +285,14 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
       const wasRefreshActive = refreshActive
       refreshActive = active
       if (!started || wasRefreshActive !== active) {
-        clearInterval(timer)
-        if (active)
-          timer = setInterval(() => void load({ force: true, showLoading: false }), 30_000)
+        stopPolling?.()
+        stopPolling = active
+          ? pollWorkbenchPresentation(
+              () => void load({ force: true, showLoading: false }),
+              30_000,
+              120_000
+            )
+          : undefined
       }
       if (!started) {
         started = true
@@ -305,7 +311,8 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
           started = false
           generation += 1
           requestSequence += 1
-          clearInterval(timer)
+          stopPolling?.()
+          stopPolling = undefined
         })
       }
     },

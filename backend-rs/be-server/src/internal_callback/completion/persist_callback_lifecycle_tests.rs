@@ -28,6 +28,7 @@ pub(super) async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::
     std::sync::Arc::get_mut(&mut app).unwrap().redis = Some(redis);
 
     verify_device_dispatch_persists_failure_without_redis(writer).await?;
+    verify_subscription_cancel_lifecycle(writer, &app).await?;
     verify_cancel_access_and_device_routing(writer, &app).await?;
     verify_live_chat_cancel_preserves_registration(writer, &app).await?;
     verify_non_chat_cancel_liveness(writer, &app).await?;
@@ -38,6 +39,54 @@ pub(super) async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::
     verify_device_dispatch_retries_failed_terminal_read(writer, &app).await?;
     verify_device_dispatch_retries_failed_recovery_index(writer, &app).await?;
     verify_terminal_callback_retry(writer, &app).await
+}
+
+async fn verify_subscription_cancel_lifecycle(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    for (active, namespace, expected) in [
+        (0, "default", "RUNNING"),
+        (-1, "default", "RUNNING"),
+        (3, "default", "RUNNING"),
+        (2, "system", "RUNNING"),
+        (2, "default", "CANCELLED"),
+    ] {
+        reset_callback_state(writer, "RUNNING").await?;
+        writer
+            .execute(
+                "UPDATE tasks SET is_active = ?, namespace = ? WHERE id = 12",
+                (active, namespace),
+            )
+            .await?;
+        cancel_as(app, 999, serde_json::json!({"subtask_id": 43})).await?;
+        assert_eq!(
+            callback_statuses(writer).await?,
+            ("RUNNING".into(), "RUNNING".into())
+        );
+        cancel_as(
+            app,
+            7,
+            serde_json::json!({"subtask_id": 43, "shell_type": "Codex"}),
+        )
+        .await?;
+        assert_eq!(
+            callback_statuses(writer).await?,
+            (expected.into(), expected.into()),
+            "cancel state={active} namespace={namespace}"
+        );
+    }
+    terminal_callback(app, "done", "late subscription result")
+        .await
+        .expect("late callback after subscription cancellation");
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
+    );
+    writer
+        .execute("UPDATE tasks SET is_active = 1 WHERE id = 12", ())
+        .await?;
+    Ok(())
 }
 
 async fn verify_device_dispatch_persists_failure_without_redis(

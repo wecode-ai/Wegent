@@ -490,6 +490,7 @@ export function createHybridWorkbenchServices(
   let rememberedAppDeviceRegistrations: DeviceInfo[] = []
   let rememberedCloudDevicesRevision = 0
   let nextCloudDevicesRevision = 1
+  let unscopedLocalDevicesRequest: Promise<DeviceInfo[]> | null = null
   let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
   const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
   const localModels = createModelCatalog('local', async (signal, forceRefresh) => {
@@ -735,12 +736,20 @@ export function createHybridWorkbenchServices(
     isLocalDeviceId(deviceId) ? localServices.deviceApi : cloudServices.deviceApi
   const routeByAddress = (address: RuntimeTaskAddress) => runtimeApi(address.deviceId)
 
-  const listLocalDevices = async (signal?: AbortSignal) => {
+  const fetchLocalDevices = async (signal?: AbortSignal) => {
     const devices = signal
       ? await localServices.deviceApi.listDevices({ signal })
       : await localServices.deviceApi.listDevices()
     rememberLocalDevices(devices)
     return devices
+  }
+  const listLocalDevices = (signal?: AbortSignal) => {
+    if (signal) return fetchLocalDevices(signal)
+    // Concurrent route misses should share the live device and capability read.
+    unscopedLocalDevicesRequest ??= fetchLocalDevices().finally(() => {
+      unscopedLocalDevicesRequest = null
+    })
+    return unscopedLocalDevicesRequest
   }
   const fetchCloudDevices = async (signal?: AbortSignal) => {
     const revision = nextCloudDevicesRevision

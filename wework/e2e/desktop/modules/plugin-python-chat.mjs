@@ -155,10 +155,12 @@ export function createPluginPythonChat({
       if (requestsShellCommand) shellCommandRequested.resolve()
       return true
     },
-    async start(control) {
+    async prepareConversation(control) {
       await control.command('navigate', 'body', { value: '/' })
       await createSingleRootLocalProject(control, workspacePath, 'python-plugin-chat', uiTimeoutMs)
       await selectE2EModel(control)
+    },
+    async start(control) {
       active = true
       await control.command(
         'fill',

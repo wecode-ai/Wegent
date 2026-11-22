@@ -2503,10 +2503,12 @@ function RuntimeModelSelectionProbe() {
       <button
         type="button"
         onClick={() => {
-          if (mimoModel) {
-            workbench.projectChat.setSelectedModelAndOptions?.(mimoModel, {
-              reasoning: 'high',
-            })
+          if (mimoModel && workbench.state.currentRuntimeTask) {
+            workbench.projectChat.setRuntimeTaskSelectedModelAndOptions(
+              workbench.state.currentRuntimeTask,
+              mimoModel,
+              { reasoning: 'high' }
+            )
           }
         }}
       >
@@ -6277,92 +6279,105 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('switches providers in the original conversation without rewriting its draft', async () => {
-    const models: UnifiedModel[] = [
-      {
-        name: 'gpt-5.6-sol',
-        type: 'runtime',
-        provider: 'local',
-        config: {
-          weworkModelKind: 'codex-official',
-          codexAuthConfigured: true,
-          ui: { family: 'codex-official' },
+  test.each([false, true])(
+    'switches providers in the original conversation without rewriting its draft (cloud owner: %s)',
+    async connected => {
+      const models: UnifiedModel[] = [
+        {
+          name: 'gpt-5.6-sol',
+          type: 'runtime',
+          provider: 'local',
+          config: {
+            weworkModelKind: 'codex-official',
+            codexAuthConfigured: true,
+            ui: { family: 'codex-official' },
+          },
         },
-      },
-      {
-        name: 'local-model:mimo',
-        type: 'runtime',
-        provider: 'local',
-        config: {
-          weworkModelKind: 'codex-provider',
-          codexProviderId: 'wecode-openai',
-          ui: { family: 'codex-provider' },
+        {
+          name: 'local-model:mimo',
+          type: 'runtime',
+          provider: 'local',
+          config: {
+            weworkModelKind: 'codex-provider',
+            codexProviderId: 'wecode-openai',
+            ui: { family: 'codex-provider' },
+          },
         },
-      },
-    ]
-    const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(
-        createRuntimeWork({
-          projects: [
-            {
-              project: { id: 7, name: 'Wegent' },
-              deviceWorkspaces: [
-                {
-                  id: 22,
-                  projectId: 7,
-                  deviceId: 'device-1',
-                  deviceName: 'Project Device',
-                  deviceStatus: 'online',
-                  workspacePath: '/workspace/project-alpha',
-                  mapped: true,
-                  available: true,
-                  tasks: [
-                    {
-                      taskId: 'runtime-a',
-                      workspacePath: '/workspace/project-alpha',
-                      title: 'Runtime A',
-                      runtime: 'codex',
-                      modelSelection: {
-                        modelName: 'gpt-5.6-sol',
-                        modelType: 'runtime',
-                        options: {},
+      ]
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockResolvedValue(
+          createRuntimeWork({
+            projects: [
+              {
+                project: { id: 7, name: 'Wegent' },
+                deviceWorkspaces: [
+                  {
+                    id: 22,
+                    projectId: 7,
+                    deviceId: 'device-1',
+                    deviceName: 'Project Device',
+                    deviceStatus: 'online',
+                    workspacePath: '/workspace/project-alpha',
+                    mapped: true,
+                    available: true,
+                    tasks: [
+                      {
+                        taskId: 'runtime-a',
+                        workspacePath: '/workspace/project-alpha',
+                        title: 'Runtime A',
+                        runtime: 'codex',
+                        modelSelection: {
+                          modelName: 'gpt-5.6-sol',
+                          modelType: 'runtime',
+                          options: {},
+                        },
                       },
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-          totalTasks: 1,
-        })
-      ),
-    })
-    const services = createWorkbenchServices({
-      modelApi: {
-        listModels: vi.fn().mockResolvedValue({ data: models }),
-      },
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
-    } as Partial<WorkbenchServices>)
+                    ],
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          })
+        ),
+      })
+      const services = createWorkbenchServices({
+        modelApi: {
+          listModels: vi.fn().mockResolvedValue({ data: models }),
+        },
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      } as Partial<WorkbenchServices>)
 
-    renderWorkbench(<RuntimeModelSelectionProbe />, services)
+      renderWorkbench(
+        <RuntimeModelSelectionProbe />,
+        services,
+        connected
+          ? {
+              user: { id: 9001, user_name: 'cloud-owner', email: 'cloud@example.com' },
+              isConnected: true,
+              serviceKey: 'cloud-owner',
+            }
+          : {}
+      )
 
-    await userEvent.click(await screen.findByText('open runtime a'))
-    await waitFor(() => {
-      expect(screen.getByTestId('runtime-model-task')).toHaveTextContent('runtime-a')
-      expect(screen.getByTestId('active-model')).toHaveTextContent('gpt-5.6-sol')
-    })
+      await userEvent.click(await screen.findByText('open runtime a'))
+      await waitFor(() => {
+        expect(screen.getByTestId('runtime-model-task')).toHaveTextContent('runtime-a')
+        expect(screen.getByTestId('active-model')).toHaveTextContent('gpt-5.6-sol')
+      })
 
-    await userEvent.click(screen.getByText('set runtime draft'))
-    await userEvent.click(screen.getByText('switch to mimo with options'))
+      await userEvent.click(screen.getByText('set runtime draft'))
+      await userEvent.click(screen.getByText('switch to mimo with options'))
 
-    await waitFor(() => {
-      expect(screen.getByTestId('runtime-model-task')).toHaveTextContent('runtime-a')
-      expect(screen.getByTestId('selected-model')).toHaveTextContent('local-model:mimo')
-      expect(screen.getByTestId('selected-reasoning')).toHaveTextContent('high')
-      expect(screen.getByTestId('runtime-model-draft')).not.toHaveTextContent('[$Runtime A]')
-      expect(screen.getByTestId('runtime-model-draft')).toHaveTextContent('继续排查失败原因')
-    })
-  })
+      await waitFor(() => {
+        expect(screen.getByTestId('runtime-model-task')).toHaveTextContent('runtime-a')
+        expect(screen.getByTestId('selected-model')).toHaveTextContent('local-model:mimo')
+        expect(screen.getByTestId('selected-reasoning')).toHaveTextContent('high')
+        expect(screen.getByTestId('runtime-model-draft')).not.toHaveTextContent('[$Runtime A]')
+        expect(screen.getByTestId('runtime-model-draft')).toHaveTextContent('继续排查失败原因')
+      })
+    }
+  )
 
   test('republishes the context when a background task model option changes', async () => {
     const models: UnifiedModel[] = [

@@ -663,6 +663,10 @@ export function createDesktopScenario({
   let cacheResourceRequests = 0
 
   return {
+    appEnvironment: {
+      WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
+      WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS: '5000',
+    },
     setExecutorBinary(path) {
       desktopScenarioExecutorBinary = path
     },

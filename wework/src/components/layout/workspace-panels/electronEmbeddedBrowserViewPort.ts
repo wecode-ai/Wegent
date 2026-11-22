@@ -26,6 +26,7 @@ export function createElectronEmbeddedBrowserViewPort() {
   let lease: symbol | null = null
   let ownership: symbol | null = null
   let cursorHost: HTMLDivElement | null = null
+  let measurementFrame: number | null = null
   const ownsHost = () =>
     lease !== null && placeholder?.isConnected === true && host?.owner === owner && !host.destroyed
   function publish() {
@@ -45,6 +46,13 @@ export function createElectronEmbeddedBrowserViewPort() {
       width: Math.max(0, rect.width),
     })
   }
+  function scheduleMeasurement() {
+    if (measurementFrame !== null) return
+    measurementFrame = window.requestAnimationFrame(() => {
+      measurementFrame = null
+      measure()
+    })
+  }
   return {
     getOwnership: () => (ownsHost() ? ownership : null),
     measure,
@@ -58,7 +66,9 @@ export function createElectronEmbeddedBrowserViewPort() {
     bind(element: HTMLDivElement, metadata: ViewMetadata) {
       const binding = Symbol('native-view-binding')
       lease = binding
+      let needsInitialBounds = placeholder !== element
       if (!host || host.destroyed) {
+        needsInitialBounds = true
         host = claimElectronEmbeddedBrowserView(metadata.label, owner, metadata.transferFromLabel)
         stopHost?.()
         stopHost = subscribeElectronEmbeddedBrowserView(host, publish)
@@ -71,7 +81,8 @@ export function createElectronEmbeddedBrowserViewPort() {
       }
       relabelElectronEmbeddedBrowserView(host, owner, metadata.label)
       syncElectronEmbeddedBrowserView(host, owner, metadata.active, metadata.interactionBlocked)
-      measure()
+      if (needsInitialBounds) measure()
+      else scheduleMeasurement()
       publish()
       return () => {
         if (lease !== binding) return
@@ -79,6 +90,8 @@ export function createElectronEmbeddedBrowserViewPort() {
         // A same-commit callback replacement takes over the same native frame.
         queueMicrotask(() => {
           if (lease !== null) return
+          if (measurementFrame !== null) window.cancelAnimationFrame(measurementFrame)
+          measurementFrame = null
           observer?.disconnect()
           observer = null
           placeholder = null

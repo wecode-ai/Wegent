@@ -40,6 +40,14 @@ Ordinary desktop E2E synchronously writes redacted `[shutdown-step]` and `[appli
 
 ## Running Tests
 
+On macOS, use the existing streaming conversation checkpoint to compare multi-window renderer CPU:
+
+```bash
+WEWORK_E2E_SAMPLE_BACKGROUND_CPU=1 pnpm --filter wework e2e:desktop --segment streaming-conversation-switching
+```
+
+Keep a second window open and measure cumulative renderer CPU time with the task window focused, visible but unfocused, and minimized. Each phase sends the same number of model deltas at the same cadence to one task. The `[background-window-cpu]` log entry records elapsed time, process count, and CPU time. Ordinary CI checks that the minimized task receives progress, restores its view on focus, and records unread completion.
+
 Install the Playwright browser before the first run:
 
 ```bash

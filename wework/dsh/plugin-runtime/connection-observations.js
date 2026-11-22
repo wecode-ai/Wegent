@@ -61,7 +61,13 @@ export async function collectObservation(registry, providerId, input, { signal }
     checkpoint = result.nextCheckpoint
     resourceStates = result.resourceStates ?? resourceStates
     if (!result.hasMore || events.length >= 1000)
-      return { events, nextCheckpoint: checkpoint, hasMore: result.hasMore, resourceStates }
+      return {
+        events,
+        nextCheckpoint: checkpoint,
+        hasMore: result.hasMore,
+        resourceStates,
+        ...(Number.isSafeInteger(result.nextPollAt) ? { nextPollAt: result.nextPollAt } : {}),
+      }
   }
   return { events, nextCheckpoint: checkpoint, hasMore: true, resourceStates }
 }
