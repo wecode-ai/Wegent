@@ -267,6 +267,21 @@ function classifyByMessage(
   backendType?: string
 ): ErrorType {
   const lowerMessage = errorMessage.toLowerCase()
+
+  // SQL statements and parameters can contain runtime error words as data.
+  // Classify only the driver wrapper, preserving explicit user-code failures.
+  const sqlMarkerIndex = lowerMessage.indexOf('[sql:')
+  const outerMessage = sqlMarkerIndex >= 0 ? lowerMessage.slice(0, sqlMarkerIndex) : lowerMessage
+  const hasDatabaseDriverMarker =
+    sqlMarkerIndex >= 0 || outerMessage.includes('sqlalchemy') || outerMessage.includes('pymysql')
+  const hasExecutorExitMarker =
+    /\bexit code\s*:?\s*-?\d+/.test(outerMessage) ||
+    /\bexited(?: immediately)? with (?:code|status)\s*:?\s*-?\d+/.test(outerMessage)
+  if (hasDatabaseDriverMarker) {
+    return outerMessage.includes('traceback (most recent call last):') && hasExecutorExitMarker
+      ? 'container_error'
+      : 'generic_error'
+  }
   for (const [type, patterns] of MESSAGE_RULES) {
     if (
       patterns.some(pattern =>
