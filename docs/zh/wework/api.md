@@ -63,7 +63,7 @@ PC、手机版和 API 启动的 Codex 会话，每轮都会通过 `additionalCon
 
 桌面、移动端和云端编译的 Codex 请求使用同一约定：用户正文保留在 `prompt`，由执行器转换为 `turn/start` 或 `turn/steer` 的 `input`；应用补充信息单独通过 `additionalContext` 传递。项目引用、终端状态和其他应用上下文不再拼接到用户正文。
 
-`kind: application` 表示应用上下文，`kind: untrusted` 表示外部来源内容；传递时保留原有类型，不把外部内容提升为应用指令。项目详情仍由模型调用授权工具读取。上下文字段不授予权限。仓库锁定的 Codex 0.169.1 会把 `application` 渲染为 developer 消息，把 `untrusted` 渲染为 `namespace: agent` 的独立 `function_call_output`；二者都不拼入用户正文。
+`kind: application` 表示应用上下文，`kind: untrusted` 表示外部来源内容；传递时保留原有类型，不把外部内容提升为应用指令。项目详情仍由模型调用授权工具读取。上下文字段不授予权限。仓库锁定的 Codex 0.171.0 会把 `application` 渲染为 developer 消息，把 `untrusted` 渲染为 `namespace: agent` 的独立 `function_call_output`；二者都不拼入用户正文。
 
 ```mermaid
 sequenceDiagram
