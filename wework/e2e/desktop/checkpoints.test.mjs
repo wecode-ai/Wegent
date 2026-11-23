@@ -47,9 +47,12 @@ test('source diagnostics use the shared package runner without certifying upgrad
 })
 
 test('the CI profile checkpoint includes shared layout and model catalog regressions', () => {
+  assert.equal(
+    DESKTOP_CHECKPOINT_CI_HOSTS.get('stand-in-shared-settings'),
+    'stand-in-profile-settings'
+  )
   assert.deepEqual(expandDesktopCheckpoints(['stand-in-profile']), [
     'stand-in-profile-settings',
-    'stand-in-shared-settings',
     'stand-in-model-catalog',
     'stand-in-processing',
     'coordination-runtime',
@@ -64,7 +67,6 @@ test('group expansion preserves ordering and runs each checkpoint once', () => {
     expandDesktopCheckpoints(['stand-in-profile', 'stand-in-model-catalog', 'stand-in-controls']),
     [
       'stand-in-profile-settings',
-      'stand-in-shared-settings',
       'stand-in-model-catalog',
       'stand-in-processing',
       'coordination-runtime',

@@ -3,7 +3,6 @@
   "groupOrder": 3000,
   "members": [
     "stand-in-profile-settings",
-    "stand-in-shared-settings",
     "stand-in-model-catalog",
     "stand-in-processing",
     "coordination-runtime",

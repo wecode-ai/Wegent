@@ -15,15 +15,21 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       const wait = (selector, options = {}) =>
         control.command('waitFor', selector, { timeoutMs: 5_000, ...options })
       const initial = await readSettings()
-      const primary = { enabled: true, prompt: '跟进工作进展', preferences: '' }
-      await requestExecutor(
-        control,
-        'runtime.stand_in.personal.save',
-        { userId: USER, settings: { ...initial, primary } },
-        uiTimeoutMs
-      )
+      if (!initial.primary) {
+        const primary = { enabled: true, prompt: '跟进工作进展', preferences: '' }
+        await requestExecutor(
+          control,
+          'runtime.stand_in.personal.save',
+          { userId: USER, settings: { ...initial, primary } },
+          uiTimeoutMs
+        )
+      }
       const baseline = await readSettings()
+      const roleId = baseline.roles[0]?.id
+      assert.ok(roleId, 'The settings fixture must have a scenario role')
+      await click('workspace-tab-select-fixed-task')
       await click('personal-stand-in-button')
+      await click('stand-in-primary-open')
       await openStandInSettings(control)
       await wait(`${panel} header h2`, { text: '设置', visible: true })
       await wait(testId('stand-in-primary-execution-toggle'), { text: '运行环境' })
@@ -32,7 +38,6 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await click('stand-in-primary-profile-close')
       await wait(panel, { visible: false })
 
-      const roleId = 'default'
       const openRole = async () => {
         await click(`stand-in-overview-role-${roleId}`)
         await openStandInSettings(control)
