@@ -52,15 +52,19 @@ async function assertInboxReady(control) {
   )
 }
 
-export async function openNotificationInboxAfterReload(control, content, issueId) {
-  // Reload restores the Issue in the board route before the inbox can receive pointer hits.
+export async function prepareNotificationHitTesting(control, content, issueId, notificationRow) {
+  // Establish the Issue explicitly; reload may restore it or leave the board without one.
+  await control.command('clickWhenEnabled', notificationRow)
+  // Dismissal follows this row's mark-read and local Issue navigation, even if an Issue was open.
+  await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
+    visible: false,
+  })
   const issue = `${content} [data-testid="cloud-todo-detail"]`
   await control.command('waitFor', issue, { text: issueId })
   await control.command('clickWhenEnabled', `${content} [data-testid="cloud-todo-detail-close"]`)
   await control.command('waitFor', issue, { visible: false })
   // The clipped exit frame can be invisible while its modal layer still owns hit testing.
   await control.command('waitFor', `${content}:not(:has([data-testid="cloud-todo-detail"]))`)
-  await openCollaborationNotifications(control)
 }
 
 export function createDesktopScenario({
@@ -245,7 +249,7 @@ export function createDesktopScenario({
       )
 
       await reloadMainWindow(control, 'The stand-in notifications renderer did not reconnect')
-      await openNotificationInboxAfterReload(control, CONTENT, issue.id)
+      await openCollaborationNotifications(control)
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
       })
@@ -273,10 +277,7 @@ export function createDesktopScenario({
 
       // Exercise hit testing across the row after the duplicate inline form was retired.
       const row = `${selector(`notification-processing-${id}`)} [data-testid$="-container"]`
-      await control.command('click', '[data-testid="wework-notifications-button"]')
-      await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
-        visible: false,
-      })
+      await prepareNotificationHitTesting(control, CONTENT, issue.id, notificationRow)
       for (const target of ['icon', 'edge', 'bottom', 'processing-space']) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await openCollaborationNotifications(control)
