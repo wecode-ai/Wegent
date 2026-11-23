@@ -70,6 +70,7 @@ struct TopSuspect {
     span_id: String,
     label: String,
     category: String,
+    turn_id: String,
     duration_ms: i64,
     status: String,
     suggestion: String,
@@ -509,6 +510,7 @@ fn top_suspects(spans: &[SpanView], window: Option<(i64, i64)>) -> Vec<TopSuspec
             span_id: span.span_id.clone(),
             label: suspect_label(span),
             category: span.kind.clone(),
+            turn_id: span.turn_id.clone(),
             duration_ms: effective_duration(span),
             status: span.status.clone(),
             suggestion: suggestion(span),
@@ -747,6 +749,7 @@ mod tests {
         let response = aggregate(1, 7, session(Some(10), None), rows, 1_000);
 
         assert_eq!(response.top_suspects[0].category, "agent");
+        assert_eq!(response.top_suspects[0].turn_id, "");
         assert_eq!(response.top_suspects[0].duration_ms, 980);
         assert_eq!(response.top_suspects[1].duration_ms, 10);
     }

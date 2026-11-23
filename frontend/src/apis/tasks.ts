@@ -232,6 +232,7 @@ export interface TaskTimingTopSuspect {
   span_id: string
   label: string
   category: string
+  turn_id: string
   duration_ms?: number | null
   status: string
   suggestion: string

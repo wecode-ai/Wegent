@@ -1,25 +1,51 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  AlertTriangle,
-  BarChart3,
-  ChevronDown,
-  Clock,
-  Loader2,
-  RotateCcw,
-  Timer,
-  X,
-} from 'lucide-react'
+import { AlertTriangle, BarChart3, Loader2, RotateCcw, Timer, X } from 'lucide-react'
 import { taskApis, type TaskTimingResponse } from '@/apis/tasks'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   openTaskRightPanel,
   registerTaskRightPanel,
   type TaskRightPanelComponentProps,
 } from '@/features/tasks/components/right-panel'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { TimelineBounds } from './timing-types'
+import {
+  buildMarkdownReport,
+  buildTimelineTracks,
+  categoryBackground,
+  categoryDot,
+  categoryTotal,
+  formatDuration,
+  formatTimestamp,
+  intervalPosition,
+  isOpenSpan,
+  percentValue,
+  spanDuration,
+  spanInterval,
+  spanTooltip,
+  statusVariant,
+  timelineBounds,
+  timelineCategory,
+  unobservedBackground,
+  unobservedIntervals,
+  useTimelineBounds,
+} from './timeline-utils'
+
+const LEGEND_CATEGORY_ORDER = [
+  'agent',
+  'subagent',
+  'tool',
+  'waiting_user',
+  'runtime',
+  'other',
+  'gap',
+]
+const DEFAULT_VISIBLE_SPANS = 20
+
+let timingPanelRegistered = false
 
 export const TASK_TIMING_PANEL_TYPE = 'task-timing'
 
@@ -30,16 +56,6 @@ type FetchState =
   | { status: 'error'; message: string }
 
 type TaskTimingPanelProps = TaskRightPanelComponentProps<{ taskId: number }>
-
-interface TimelineBounds {
-  start?: number
-  end?: number
-  observedStart?: number
-  observedEnd?: number
-}
-
-let timingPanelRegistered = false
-
 /** Register the panel when its user-triggered entry point is first used. */
 export function registerTaskTimingPanel(): void {
   if (timingPanelRegistered) return
@@ -89,6 +105,41 @@ export function TaskTimingPanel({ panelProps, onClose }: TaskTimingPanelProps) {
     void loadTiming(panelProps.taskId)
   }, [loadTiming, panelProps.taskId])
 
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const reportRef = useRef<HTMLTextAreaElement | null>(null)
+  const copyReport = useCallback(async () => {
+    const data = state.status === 'success' ? state.data : null
+    if (!data) return
+    const bounds = timelineBounds(data)
+    const gaps = unobservedIntervals(data, bounds)
+    const report = buildMarkdownReport(data, bounds, gaps)
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(report)
+        setCopyState('copied')
+        return
+      }
+      throw new Error('Clipboard API unavailable')
+    } catch {
+      const input = reportRef.current
+      if (!input) {
+        setCopyState('failed')
+        return
+      }
+      input.value = report
+      input.select()
+      const copied = document.execCommand('copy')
+      input.value = ''
+      setCopyState(copied ? 'copied' : 'failed')
+    }
+  }, [state])
+
+  useEffect(() => {
+    if (copyState === 'idle') return
+    const timer = window.setTimeout(() => setCopyState('idle'), 2000)
+    return () => window.clearTimeout(timer)
+  }, [copyState])
+
   return (
     <section
       className="flex h-full min-h-0 flex-col bg-base text-text-primary"
@@ -98,21 +149,48 @@ export function TaskTimingPanel({ panelProps, onClose }: TaskTimingPanelProps) {
         <div className="flex min-w-0 items-center gap-2">
           <Timer className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">{t('timing.title')}</h2>
-            <p className="truncate text-xs text-text-muted">{t('timing.subtitle')}</p>
+            <h2 className="truncate text-base font-semibold">{t('timing.title')}</h2>
           </div>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          aria-label={t('timing.close')}
-          className="h-11 w-11 shrink-0 text-text-muted hover:text-text-primary"
-          data-testid="task-timing-close"
-        >
-          <X className="h-4 w-4" aria-hidden="true" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 px-2 text-xs"
+            onClick={() => void copyReport()}
+            disabled={state.status !== 'success'}
+            data-testid="task-timing-copy-report"
+          >
+            {copyState === 'copied'
+              ? t('timing.report.copied')
+              : copyState === 'failed'
+                ? t('timing.report.copy_failed')
+                : t('timing.report.copy')}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => void loadTiming(panelProps.taskId)}
+            aria-label={t('timing.refresh')}
+            className="h-11 w-11 text-text-muted hover:text-text-primary"
+            data-testid="task-timing-refresh"
+          >
+            <RotateCcw className="h-4 w-4" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label={t('timing.close')}
+            className="h-11 w-11 shrink-0 text-text-muted hover:text-text-primary"
+            data-testid="task-timing-close"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -161,248 +239,403 @@ export function TaskTimingPanel({ panelProps, onClose }: TaskTimingPanelProps) {
 
         {state.status === 'success' ? <TimingContent data={state.data} /> : null}
       </div>
+      <textarea ref={reportRef} className="sr-only" aria-hidden="true" readOnly tabIndex={-1} />
     </section>
   )
 }
 
 function TimingContent({ data }: { data: TaskTimingResponse }) {
   const { t } = useTranslation('tasks')
-  const hasTimeline = data.spans.length > 0
+  const bounds = useTimelineBounds(data)
+  const gaps = useMemo(() => unobservedIntervals(data, bounds), [data, bounds])
+  const wallTime = data.wall_time_ms ?? categoryTotal(data.triage)
+  const observedMs = data.observed_ms ?? Math.max(wallTime - (data.unobserved_ms ?? 0), 0)
+  const coverage = percentValue(observedMs, wallTime)
+  const legendCategories = LEGEND_CATEGORY_ORDER.map(kind => {
+    const category = data.triage.find(candidate => candidate.kind === kind)
+    return category ?? { kind, duration_ms: 0, sample_count: 0, observed: false }
+  })
+  const attributionCategories = legendCategories.filter(
+    category => category.kind !== 'gap' && category.observed && category.duration_ms > 0
+  )
+  const gapCategory = legendCategories.find(category => category.kind === 'gap')
 
   return (
-    <div className="space-y-4">
-      <section aria-labelledby="task-timing-summary-title" data-testid="task-timing-summary">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3
-            id="task-timing-summary-title"
-            className="flex items-center gap-2 text-sm font-semibold"
-          >
-            <Clock className="h-4 w-4 text-text-muted" aria-hidden="true" />
-            {t('timing.summary.title')}
-          </h3>
-          <span
-            className="rounded bg-primary/10 px-2 py-1 text-xs font-medium text-primary"
-            data-testid="task-timing-wall-time"
-          >
-            {t('timing.summary.wall_time', {
-              duration: formatDuration(data.wall_time_ms),
-            })}
-          </span>
+    <div className="space-y-6">
+      <section
+        className="rounded-lg border border-border bg-surface p-3"
+        aria-labelledby="task-timing-summary-title"
+        data-testid="task-timing-summary"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            <h3
+              id="task-timing-summary-title"
+              className="border-l-2 border-primary pl-2 text-xs font-semibold uppercase tracking-wide text-text-primary"
+            >
+              {t('timing.summary.title')}
+            </h3>
+            <p className="mt-1 text-xs text-text-muted" data-testid="task-timing-window">
+              {formatTimestamp(data.session_start_at_ms)} →{' '}
+              {formatTimestamp(data.session_end_at_ms)}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span
+              className="rounded bg-primary/10 px-2 py-1 text-xs font-medium tabular-nums text-primary"
+              data-testid="task-timing-wall-time"
+            >
+              {formatDuration(wallTime)}
+            </span>
+            <Badge variant="secondary" size="sm" data-testid="task-timing-status">
+              {t(`timing.status.${data.task_status}`, { defaultValue: data.task_status })}
+            </Badge>
+          </div>
         </div>
 
-        <ul className="mt-3 space-y-2" data-testid="task-timing-triage">
-          {data.triage.map(category => (
-            <li key={category.kind} data-testid="task-timing-triage-item">
-              <div className="flex min-w-0 items-center justify-between gap-3">
-                <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-                  {t(`timing.summary.${category.kind}`)}
+        <div
+          className="mt-3 flex h-2 w-full overflow-hidden bg-muted"
+          data-testid="task-timing-attribution-bar"
+          role="presentation"
+        >
+          {attributionCategories.map(category => (
+            <span
+              key={category.kind}
+              className={categoryBackground(category.kind)}
+              style={{ width: `${percentValue(category.duration_ms, wallTime)}%` }}
+              data-testid="task-timing-attribution-segment"
+              data-kind={category.kind}
+            />
+          ))}
+          {gapCategory && gapCategory.duration_ms > 0 ? (
+            <span
+              className={`h-full ${unobservedBackground()}`}
+              style={{ width: `${percentValue(gapCategory.duration_ms, wallTime)}%` }}
+              data-testid="task-timing-attribution-segment"
+              data-kind="gap"
+            />
+          ) : null}
+        </div>
+
+        <div className="mt-3 space-y-1.5" data-testid="task-timing-legend">
+          {legendCategories
+            .filter(
+              category =>
+                (category.observed && category.duration_ms > 0) ||
+                (category.kind === 'gap' && category.duration_ms > 0)
+            )
+            .map(category => (
+              <div
+                key={category.kind}
+                className="flex items-center gap-2 text-xs"
+                data-testid="task-timing-legend-item"
+                data-kind={category.kind}
+                title={t(`timing.categories.${category.kind}.description`, {
+                  defaultValue: category.kind,
+                })}
+              >
+                <span className={`h-2 w-2 shrink-0 rounded-full ${categoryDot(category.kind)}`} />
+                <span className="w-24 shrink-0 truncate font-medium text-text-primary">
+                  {t(`timing.summary.${category.kind}`, { defaultValue: category.kind })}
                 </span>
-                <span className="shrink-0 text-xs font-medium tabular-nums text-text-primary">
+                <span className="min-w-0 flex-1 truncate text-text-muted">
+                  {t(`timing.categories.${category.kind}.example`, { defaultValue: '' })}
+                </span>
+                <span className="w-16 shrink-0 text-right font-mono tabular-nums text-text-primary">
                   {formatDuration(category.duration_ms)}
                 </span>
+                <span className="w-10 shrink-0 text-right font-mono tabular-nums text-text-muted">
+                  {Math.round(percentValue(category.duration_ms, wallTime))}%
+                </span>
+                <span className="w-8 shrink-0 text-right font-mono tabular-nums text-text-muted">
+                  {category.kind === 'gap' ? '--' : `×${category.sample_count}`}
+                </span>
               </div>
-              <DurationBar
-                durationMs={category.duration_ms}
-                totalMs={data.wall_time_ms ?? categoryTotal(data.triage)}
-              />
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section aria-labelledby="task-timing-suspects-title" data-testid="task-timing-suspects">
-        <h3 id="task-timing-suspects-title" className="text-sm font-semibold">
-          {t('timing.suspects.title')}
-        </h3>
-        <div className="mt-3 space-y-3">
-          {data.top_suspects.length === 0 ? (
-            <p className="rounded-lg border border-border bg-surface p-3 text-xs text-text-muted">
-              {t('timing.suspects.empty')}
-            </p>
-          ) : (
-            data.top_suspects.slice(0, 5).map(suspect => (
-              <article
-                key={suspect.span_id}
-                className="rounded-lg border border-border bg-surface p-3"
-                data-testid="task-timing-suspect"
-              >
-                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-text-primary">
-                      {suspect.label}
-                    </p>
-                    <p className="mt-0.5 text-xs text-text-muted">
-                      {t('timing.suspects.meta', {
-                        category: suspect.category,
-                        status: suspect.status,
-                      })}
-                    </p>
-                  </div>
-                  <span className="shrink-0 self-start rounded bg-primary/10 px-2 py-1 text-xs font-medium tabular-nums text-primary">
-                    {formatDuration(suspect.duration_ms)}
-                  </span>
-                </div>
-                <p className="mt-2 break-words text-xs text-text-secondary">
-                  {t(`timing.suggestions.${suspect.suggestion}`, {
-                    defaultValue: suspect.suggestion,
-                  })}
-                </p>
-              </article>
-            ))
-          )}
+            ))}
         </div>
+
+        <p className="mt-2 text-xs text-text-muted" data-testid="task-timing-coverage">
+          {t('timing.summary.coverage', {
+            observed: formatDuration(observedMs),
+            percent: `${coverage.toFixed(0)}%`,
+          })}
+        </p>
+        <p className="mt-1 text-[11px] leading-4 text-text-muted" data-testid="task-timing-hint">
+          {t('timing.summary.hint')}
+        </p>
       </section>
 
       <section aria-labelledby="task-timing-timeline-title" data-testid="task-timing-timeline">
-        <Collapsible disabled={!hasTimeline}>
-          <CollapsibleTrigger
-            className="flex h-11 w-full items-center justify-between rounded-lg px-2 text-left text-sm font-medium text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
-            data-testid="task-timing-timeline-toggle"
+        <div className="rounded-lg border border-border bg-surface p-3">
+          <h3
+            id="task-timing-timeline-title"
+            className="border-l-2 border-primary pl-2 text-xs font-semibold uppercase tracking-wide text-text-primary"
           >
-            <span className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-text-muted" aria-hidden="true" />
-              {t('timing.timeline.title')}
-            </span>
-            {hasTimeline ? (
-              <ChevronDown
-                className="h-4 w-4 shrink-0 text-text-muted transition-transform data-[state=closed]:-rotate-90"
-                aria-hidden="true"
-              />
-            ) : (
-              <span className="text-xs font-normal text-text-muted">
-                {t('timing.timeline.empty')}
-              </span>
-            )}
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <TimelineDetails data={data} />
-          </CollapsibleContent>
-        </Collapsible>
+            {t('timing.timeline.title')}
+          </h3>
+          <p className="mb-1 mt-1 text-[11px] leading-4 text-text-muted">
+            {t('timing.timeline.inclusive_note')}
+          </p>
+          <TimelineTrace data={data} bounds={bounds} gaps={gaps} />
+        </div>
+      </section>
+
+      <section aria-labelledby="task-timing-spans-title" data-testid="task-timing-spans">
+        <div className="rounded-lg border border-border bg-surface p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3
+              id="task-timing-spans-title"
+              className="border-l-2 border-primary pl-2 text-xs font-semibold uppercase tracking-wide text-text-primary"
+            >
+              {t('timing.spans.title')}
+            </h3>
+          </div>
+          <SpanTable data={data} bounds={bounds} />
+        </div>
       </section>
     </div>
   )
 }
 
-function TimelineDetails({ data }: { data: TaskTimingResponse }) {
+function TimelineTrace({
+  data,
+  bounds,
+  gaps,
+}: {
+  data: TaskTimingResponse
+  bounds: TimelineBounds
+  gaps: Array<{ start: number; end: number }>
+}) {
   const { t } = useTranslation('tasks')
-  const { spans } = data
-  const bounds = useTimelineBounds(data)
-  const gaps = useMemo(() => unobservedIntervals(data, bounds), [data, bounds])
-  const leadingGap =
-    bounds.start !== undefined && gaps[0]?.start === bounds.start ? gaps[0].end - gaps[0].start : 0
-  const trailingGap =
-    bounds.end !== undefined && gaps.length > 0 && gaps.at(-1)?.end === bounds.end
-      ? gaps.at(-1)!.end - gaps.at(-1)!.start
-      : 0
-  const interiorGaps = gaps.filter(
-    (gap, index) =>
-      !(bounds.start !== undefined && index === 0 && gap.start === bounds.start) &&
-      !(bounds.end !== undefined && gap.end === bounds.end)
-  )
+  const tracks = useMemo(() => buildTimelineTracks(data.spans, bounds), [bounds, data.spans])
+  const scale = Math.max((bounds.end ?? 0) - (bounds.start ?? 0), 1)
+  const ticks = [0, 0.25, 0.5, 0.75, 1]
+
+  if (tracks.length === 0) {
+    return <p className="mt-2 text-xs text-text-muted">{t('timing.timeline.empty')}</p>
+  }
 
   return (
-    <div className="mt-2 space-y-3" data-testid="task-timing-timeline-details">
-      <div className="flex items-center gap-2 text-xs text-text-muted">
-        <span className="truncate">{formatTimestamp(bounds.start)}</span>
-        <span className="h-px min-w-4 flex-1 bg-border" />
-        <span className="truncate">{formatTimestamp(bounds.end)}</span>
-      </div>
-      <div
-        className="relative h-3 w-full overflow-hidden rounded-full bg-muted"
-        data-testid="task-timing-session-track"
-        role="presentation"
-      >
-        <span
-          className="absolute inset-y-0 left-0 bg-border"
-          style={{ width: percent(leadingGap, bounds) }}
-          data-testid="task-timing-leading-gap"
-        />
-        <span
-          className="absolute inset-y-0 right-0 bg-border"
-          style={{ width: percent(trailingGap, bounds) }}
-          data-testid="task-timing-trailing-gap"
-        />
-        {interiorGaps.map(gap => (
-          <span
-            key={`gap-${gap.start}-${gap.end}`}
-            className="absolute inset-y-0 bg-border"
-            style={gapPosition(gap, bounds)}
-            data-testid="task-timing-interior-gap"
-          />
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {leadingGap > 0 ? (
-          <span
-            className="rounded bg-surface px-2 py-1 text-xs text-text-muted"
-            data-testid="task-timing-leading-gap-label"
-          >
-            {t('timing.timeline.leading_gap', { duration: formatDuration(leadingGap) })}
-          </span>
-        ) : null}
-        {trailingGap > 0 ? (
-          <span
-            className="rounded bg-surface px-2 py-1 text-xs text-text-muted"
-            data-testid="task-timing-trailing-gap-label"
-          >
-            {t('timing.timeline.trailing_gap', { duration: formatDuration(trailingGap) })}
-          </span>
-        ) : null}
-        {interiorGaps.map(gap => (
-          <span
-            key={`gap-label-${gap.start}-${gap.end}`}
-            className="rounded bg-surface px-2 py-1 text-xs text-text-muted"
-            data-testid="task-timing-interior-gap-label"
-          >
-            {t('timing.timeline.interior_gap', { duration: formatDuration(gap.end - gap.start) })}
-          </span>
-        ))}
+    <div className="mt-2" data-testid="task-timing-timeline-details">
+      <div className="flex gap-2">
+        <span className="w-20 shrink-0" />
+        <div className="relative min-w-0 flex-1">
+          <div className="flex h-4 items-end border-b border-border text-[10px] text-text-muted">
+            {ticks.map(tick => (
+              <span key={tick} className="flex-1 tabular-nums">
+                {formatDuration(scale * tick)}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
 
-      {spans.map(span => (
-        <article
-          key={span.id}
-          className="rounded-lg border border-border bg-surface p-3"
-          data-testid="task-timing-span"
+      <div className="mt-1 space-y-0.5">
+        <div
+          className="flex items-center gap-2"
+          data-testid="task-timing-track"
+          data-kind="coverage"
         >
-          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="min-w-0 truncate text-sm font-medium text-text-primary">
-                  {span.actor_label || span.kind}
-                </p>
-                <span
-                  className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase text-text-muted"
-                  data-testid="task-timing-span-status"
-                >
-                  {t(`timing.status.${span.status}`, { defaultValue: span.status })}
-                </span>
-              </div>
-              <p className="mt-0.5 truncate text-xs text-text-muted">
-                {t('timing.timeline.span_meta', {
-                  kind: span.kind,
-                  turn: span.turn_id,
-                  duration: formatDuration(span.duration_ms),
+          <span
+            className="w-20 shrink-0 truncate text-xs text-text-secondary"
+            title={t('timing.categories.gap.description')}
+          >
+            {t('timing.timeline.coverage')}
+          </span>
+          <div className="relative h-4 min-w-0 flex-1 overflow-hidden rounded bg-surface dark:bg-white/5">
+            {gaps.map(gap => (
+              <span
+                key={`coverage-gap-${gap.start}-${gap.end}`}
+                className={`absolute inset-0 cursor-help ${unobservedBackground()}`}
+                style={intervalPosition(gap.start, gap.end, bounds)}
+                data-testid="task-timing-interior-gap"
+                title={t('timing.timeline.gap_meta', {
+                  start: formatTimestamp(gap.start),
+                  end: formatTimestamp(gap.end),
+                  duration: formatDuration(gap.end - gap.start),
                 })}
-              </p>
-            </div>
-            <span className="shrink-0 text-xs text-text-muted sm:text-right">
-              {formatTimestamp(span.start_at_ms)} → {formatTimestamp(span.end_at_ms)}
-            </span>
+                aria-label={t('timing.timeline.gap_meta', {
+                  start: formatTimestamp(gap.start),
+                  end: formatTimestamp(gap.end),
+                  duration: formatDuration(gap.end - gap.start),
+                })}
+              />
+            ))}
           </div>
+        </div>
+
+        {tracks.map(track => (
           <div
-            className="relative mt-3 h-2 w-full overflow-hidden rounded-full bg-muted"
-            data-testid="task-timing-span-bar-track"
-            role="presentation"
+            key={track.category}
+            className="flex items-center gap-2"
+            data-testid="task-timing-track"
+            data-kind={track.category}
           >
             <span
-              className="absolute inset-y-0 rounded-full bg-primary/70"
-              style={barPosition(span, bounds)}
-              data-testid="task-timing-span-bar"
-            />
+              className="w-20 shrink-0 truncate text-xs text-text-secondary"
+              title={t(`timing.categories.${track.category}.description`, {
+                defaultValue: track.category,
+              })}
+            >
+              {t(`timing.summary.${track.category}`, { defaultValue: track.category })}
+            </span>
+            <div className="min-w-0 flex-1 space-y-1">
+              {track.lanes.map((lane, laneIndex) => (
+                <div
+                  key={`lane-${track.category}-${laneIndex}`}
+                  className="relative h-4 min-w-0 overflow-hidden rounded bg-surface dark:bg-white/5"
+                >
+                  {lane.map(span => {
+                    const interval = spanInterval(span, bounds)
+                    if (!interval) return null
+                    const duration = interval.end - interval.start
+                    const position = intervalPosition(interval.start, interval.end, bounds)
+                    return (
+                      <span
+                        key={span.id}
+                        className={`absolute inset-y-0.5 cursor-help rounded-sm ${categoryBackground(span.kind)}`}
+                        style={{
+                          ...position,
+                          minWidth: duration > 0 ? '2px' : '1px',
+                        }}
+                        title={spanTooltip(span, bounds, t)}
+                        aria-label={spanTooltip(span, bounds, t)}
+                        data-testid="task-timing-span-bar"
+                        data-kind={span.kind}
+                      />
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
           </div>
-        </article>
-      ))}
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SpanTable({ data, bounds }: { data: TaskTimingResponse; bounds: TimelineBounds }) {
+  const { t } = useTranslation('tasks')
+  const [sortBy, setSortBy] = useState<'start' | 'duration'>('start')
+  const [showAll, setShowAll] = useState(false)
+
+  const sortedSpans = useMemo(() => {
+    const spans = [...data.spans]
+    if (sortBy === 'duration') {
+      spans.sort((left, right) => spanDuration(right) - spanDuration(left))
+    } else {
+      spans.sort((left, right) => {
+        const leftStart = left.start_at_ms ?? Number.POSITIVE_INFINITY
+        const rightStart = right.start_at_ms ?? Number.POSITIVE_INFINITY
+        return leftStart - rightStart || left.id - right.id
+      })
+    }
+    return spans
+  }, [data.spans, sortBy])
+
+  const visibleSpans = showAll ? sortedSpans : sortedSpans.slice(0, DEFAULT_VISIBLE_SPANS)
+  const hasMoreSpans = sortedSpans.length > DEFAULT_VISIBLE_SPANS
+
+  return (
+    <div className="mt-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="min-h-11"
+          onClick={() => setSortBy(sortBy === 'start' ? 'duration' : 'start')}
+          data-testid="task-timing-sort-spans"
+        >
+          {sortBy === 'start'
+            ? t('timing.spans.sort_by_duration')
+            : t('timing.spans.sort_by_start')}
+        </Button>
+        {hasMoreSpans ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="min-h-11"
+            onClick={() => setShowAll(!showAll)}
+            data-testid="task-timing-toggle-spans"
+          >
+            {showAll
+              ? t('timing.spans.show_less')
+              : t('timing.spans.show_all', { count: sortedSpans.length })}
+          </Button>
+        ) : null}
+      </div>
+
+      <div className="overflow-x-auto" data-testid="task-timing-span-table">
+        <table className="w-full min-w-[560px] border-collapse text-xs">
+          <thead>
+            <tr className="text-left text-text-muted">
+              <th className="border-b border-border px-2 py-1.5 font-medium">
+                {t('timing.spans.subtask')}
+              </th>
+              <th className="border-b border-border px-2 py-1.5 font-medium">
+                {t('timing.spans.kind')}
+              </th>
+              <th className="border-b border-border px-2 py-1.5 font-medium">
+                {t('timing.spans.label')}
+              </th>
+              <th className="border-b border-border px-2 py-1.5 font-medium">
+                {t('timing.spans.interval')}
+              </th>
+              <th className="border-b border-border px-2 py-1.5 text-right font-medium">
+                {t('timing.spans.duration')}
+              </th>
+              <th className="border-b border-border px-2 py-1.5 font-medium">
+                {t('timing.spans.status')}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleSpans.map(span => {
+              const interval = spanInterval(span, bounds)
+              const offsetStart = interval && bounds.start ? interval.start - bounds.start : 0
+              const offsetEnd = interval && bounds.start ? interval.end - bounds.start : 0
+              return (
+                <tr
+                  key={span.id}
+                  className="hover:bg-surface-hover/50"
+                  data-testid="task-timing-span-row"
+                  title={spanTooltip(span, bounds, t)}
+                >
+                  <td className="border-b border-border px-2 py-1.5 tabular-nums">
+                    {span.subtask_id}
+                  </td>
+                  <td className="border-b border-border px-2 py-1.5">
+                    {t(`timing.summary.${timelineCategory(span.kind)}`, {
+                      defaultValue: span.kind,
+                    })}
+                  </td>
+                  <td className="max-w-[180px] truncate border-b border-border px-2 py-1.5">
+                    {span.actor_label || span.kind}
+                  </td>
+                  <td className="whitespace-nowrap border-b border-border px-2 py-1.5 tabular-nums text-text-secondary">
+                    {interval
+                      ? `${formatDuration(offsetStart)} → ${formatDuration(offsetEnd)}`
+                      : '--'}
+                  </td>
+                  <td className="border-b border-border px-2 py-1.5 text-right tabular-nums">
+                    {isOpenSpan(span)
+                      ? t('timing.spans.running')
+                      : formatDuration(spanDuration(span))}
+                  </td>
+                  <td className="border-b border-border px-2 py-1.5">
+                    <Badge variant={statusVariant(span.status)} size="sm">
+                      {t(`timing.status.${span.status}`, { defaultValue: span.status })}
+                    </Badge>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -428,156 +661,4 @@ function TimingState({
       <p className="mt-1 text-xs text-text-muted">{description}</p>
     </div>
   )
-}
-
-function DurationBar({ durationMs, totalMs }: { durationMs: number; totalMs: number }) {
-  const width = Math.max((durationMs / Math.max(totalMs, 1)) * 100, 1)
-  return (
-    <span
-      className="mt-1.5 block h-1.5 w-full overflow-hidden rounded-full bg-muted"
-      role="presentation"
-    >
-      <span className="block h-full rounded-full bg-primary/70" style={{ width: `${width}%` }} />
-    </span>
-  )
-}
-
-export function categoryTotal(categories: TaskTimingResponse['triage']): number {
-  return categories.reduce((total, category) => total + category.duration_ms, 0)
-}
-
-function useTimelineBounds(data: TaskTimingResponse): TimelineBounds {
-  return useMemo(() => {
-    const sessionStart = validTimestamp(data.session_start_at_ms)
-    const sessionEnd = validTimestamp(data.session_end_at_ms)
-    let observedStart = Number.POSITIVE_INFINITY
-    let observedEnd = Number.NEGATIVE_INFINITY
-
-    for (const span of data.spans) {
-      if (span.start_at_ms === null || span.start_at_ms === undefined) continue
-      const spanEnd =
-        span.end_at_ms ??
-        (span.duration_ms === null || span.duration_ms === undefined
-          ? span.start_at_ms
-          : span.start_at_ms + span.duration_ms)
-      observedStart = Math.min(observedStart, span.start_at_ms)
-      observedEnd = Math.max(observedEnd, spanEnd)
-    }
-
-    const hasObservedSpans = Number.isFinite(observedStart) && Number.isFinite(observedEnd)
-    const fallbackStart = hasObservedSpans ? observedStart : undefined
-    const fallbackEnd = hasObservedSpans ? observedEnd : undefined
-    const start = sessionStart ?? fallbackStart
-    const end = sessionEnd ?? fallbackEnd
-
-    if (start === undefined || end === undefined || end < start) {
-      return { start, end: start, observedStart: undefined, observedEnd: undefined }
-    }
-    return {
-      start,
-      end,
-      observedStart: hasObservedSpans ? observedStart : undefined,
-      observedEnd: hasObservedSpans ? observedEnd : undefined,
-    }
-  }, [data])
-}
-
-function unobservedIntervals(
-  data: TaskTimingResponse,
-  bounds: TimelineBounds
-): Array<{ start: number; end: number }> {
-  if (bounds.start === undefined || bounds.end === undefined) return []
-  const intervals = data.spans
-    .map(span => {
-      if (span.start_at_ms === null || span.start_at_ms === undefined) return undefined
-      const fallbackEnd = spanEffectiveEnd(span, bounds)
-      return [span.start_at_ms, span.end_at_ms ?? fallbackEnd] as const
-    })
-    .filter((interval): interval is readonly [number, number] => interval !== undefined)
-    .filter(([start, end]) => end > start)
-    .map(([start, end]) => [Math.max(start, bounds.start!), Math.min(end, bounds.end!)])
-    .filter(([start, end]) => end > start)
-    .sort((left, right) => left[0] - right[0])
-
-  const gaps: Array<{ start: number; end: number }> = []
-  let cursor = bounds.start
-  for (const [start, end] of intervals) {
-    if (start > cursor) gaps.push({ start: cursor, end: start })
-    cursor = Math.max(cursor, end)
-  }
-  if (cursor < bounds.end) gaps.push({ start: cursor, end: bounds.end })
-  return gaps
-}
-
-function barPosition(
-  span: TaskTimingResponse['spans'][number],
-  bounds: TimelineBounds
-): { left: string; width: string } {
-  if (bounds.start === undefined || bounds.end === undefined || span.start_at_ms == null) {
-    return { left: '0%', width: '0%' }
-  }
-  const start = span.start_at_ms ?? bounds.start
-  const fallbackEnd = spanEffectiveEnd(span, bounds)
-  const end = span.end_at_ms ?? fallbackEnd
-  const scale = bounds.end - bounds.start
-  const left = Math.max(start - bounds.start, 0)
-  const width = Math.max(Math.min(end - start, scale - left), end === start ? 0 : 1)
-  return {
-    left: `${(left / Math.max(scale, 1)) * 100}%`,
-    width: `${(width / Math.max(scale, 1)) * 100}%`,
-  }
-}
-
-function spanEffectiveEnd(
-  span: TaskTimingResponse['spans'][number],
-  bounds: TimelineBounds
-): number {
-  if (span.end_at_ms !== null && span.end_at_ms !== undefined) return span.end_at_ms
-  const startAtMs = span.start_at_ms ?? bounds.start
-  if (startAtMs === undefined) return 0
-  if (span.duration_ms !== null && span.duration_ms !== undefined) {
-    return startAtMs + span.duration_ms
-  }
-  return bounds.end ?? startAtMs
-}
-
-function percent(durationMs: number, bounds: TimelineBounds): string {
-  if (bounds.start === undefined || bounds.end === undefined) return '0%'
-  const scale = Math.max(bounds.end - bounds.start, 1)
-  return `${Math.max(Math.min(durationMs / scale, 1), 0) * 100}%`
-}
-
-function gapPosition(gap: { start: number; end: number }, bounds: TimelineBounds) {
-  if (bounds.start === undefined || bounds.end === undefined) return { left: '0%', width: '0%' }
-  const scale = Math.max(bounds.end - bounds.start, 1)
-  return {
-    left: `${((gap.start - bounds.start) / scale) * 100}%`,
-    width: `${((gap.end - gap.start) / scale) * 100}%`,
-  }
-}
-
-function validTimestamp(timestampMs?: number | null): number | undefined {
-  return timestampMs === null || timestampMs === undefined ? undefined : timestampMs
-}
-
-function formatDuration(durationMs?: number | null): string {
-  if (durationMs === null || durationMs === undefined) return '--'
-  if (durationMs < 1000) return `${Math.max(durationMs, 0)}ms`
-  const seconds = Math.floor(durationMs / 1000)
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) {
-    const minutes = Math.floor(seconds / 60)
-    return `${minutes}m ${seconds % 60}s`
-  }
-  const hours = Math.floor(seconds / 3600)
-  return `${hours}h ${Math.floor((seconds % 3600) / 60)}m`
-}
-
-function formatTimestamp(timestampMs?: number | null): string {
-  if (timestampMs === null || timestampMs === undefined) return '--'
-  return new Intl.DateTimeFormat(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(new Date(timestampMs))
 }

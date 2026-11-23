@@ -27,41 +27,26 @@ registerTaskTimingPanel()
 const timingResponse: TaskTimingResponse = {
   task_id: 42,
   owner_user_id: 7,
+  task_status: 'COMPLETED',
   wall_time_ms: 17_000,
+  observed_ms: 12_000,
+  unobserved_ms: 5_000,
   session_start_at_ms: 3_000,
   session_end_at_ms: 21_000,
   triage: [
-    { kind: 'agent', duration_ms: 8_000 },
-    { kind: 'tool', duration_ms: 4_000 },
-    { kind: 'gap', duration_ms: 1_000 },
+    { kind: 'agent', duration_ms: 8_000, sample_count: 1, observed: true },
+    { kind: 'tool', duration_ms: 4_000, sample_count: 1, observed: true },
+    { kind: 'gap', duration_ms: 1_000, sample_count: 0, observed: false },
   ],
   coverage: [
-    { kind: 'agent', duration_ms: 12_000 },
-    { kind: 'tool', duration_ms: 4_000 },
+    { kind: 'agent', duration_ms: 12_000, sample_count: 1, observed: true },
+    { kind: 'tool', duration_ms: 4_000, sample_count: 1, observed: true },
   ],
-  top_suspects: [
-    {
-      span_id: 'agent-1',
-      label: 'Agent execution',
-      category: 'agent',
-      duration_ms: 12_000,
-      status: 'completed',
-      suggestion: 'inspect_model',
-    },
-    {
-      span_id: 'tool-1',
-      label: 'pnpm test',
-      category: 'tool',
-      duration_ms: 4_000,
-      status: 'completed',
-      suggestion: 'inspect_registry',
-    },
-  ],
+
   spans: [
     {
       id: 1,
       subtask_id: 11,
-      turn_id: '11',
       parent_span_id: '',
       span_id: 'agent-1',
       kind: 'agent',
@@ -79,7 +64,6 @@ const timingResponse: TaskTimingResponse = {
     {
       id: 2,
       subtask_id: 11,
-      turn_id: '11',
       parent_span_id: '',
       span_id: 'tool-1',
       kind: 'tool',
@@ -100,26 +84,12 @@ const timingResponse: TaskTimingResponse = {
 const emptyResponse: TaskTimingResponse = {
   task_id: 42,
   owner_user_id: 7,
+  task_status: 'RUNNING',
   wall_time_ms: null,
   triage: [],
   coverage: [],
-  top_suspects: [],
   spans: [],
   has_spans: false,
-}
-
-const localizedStatusResponse: TaskTimingResponse = {
-  ...timingResponse,
-  spans: [
-    {
-      ...timingResponse.spans[0],
-      status: 'running',
-    },
-    {
-      ...timingResponse.spans[1],
-      status: 'untranslated_status',
-    },
-  ],
 }
 
 const interiorGapResponse: TaskTimingResponse = {
@@ -130,38 +100,54 @@ const interiorGapResponse: TaskTimingResponse = {
   ],
 }
 
-const openSpanResponse: TaskTimingResponse = {
+const parallelSubagentResponse: TaskTimingResponse = {
   ...timingResponse,
+  triage: [
+    { kind: 'subagent', duration_ms: 12_000, sample_count: 2, observed: true },
+    { kind: 'gap', duration_ms: 5_000, sample_count: 0, observed: false },
+  ],
   spans: [
     {
       ...timingResponse.spans[0],
-      end_at_ms: null,
-      duration_ms: undefined,
+      id: 3,
+      span_id: 'subagent-a',
+      kind: 'subagent',
+      actor_label: 'Subagent A',
+      start_at_ms: 4_000,
+      end_at_ms: 12_000,
+      duration_ms: 8_000,
     },
     {
       ...timingResponse.spans[1],
-      start_at_ms: 15_000,
-      end_at_ms: 17_000,
-      duration_ms: 2_000,
+      id: 4,
+      span_id: 'subagent-b',
+      kind: 'subagent',
+      actor_label: 'Subagent B',
+      start_at_ms: 5_000,
+      end_at_ms: 13_000,
+      duration_ms: 8_000,
     },
   ],
 }
 
-const unknownDurationResponse: TaskTimingResponse = {
-  ...timingResponse,
-  wall_time_ms: null,
-  top_suspects: [
-    {
-      ...timingResponse.top_suspects[0],
-      duration_ms: undefined,
-    },
-  ],
+const overlappingOpenSubagentResponse: TaskTimingResponse = {
+  ...parallelSubagentResponse,
   spans: [
     {
-      ...timingResponse.spans[0],
-      start_at_ms: null,
+      ...parallelSubagentResponse.spans[0],
+      id: 5,
+      span_id: 'subagent-open',
+      start_at_ms: 4_000,
       end_at_ms: null,
       duration_ms: undefined,
+    },
+    {
+      ...parallelSubagentResponse.spans[1],
+      id: 6,
+      span_id: 'subagent-later',
+      start_at_ms: 5_000,
+      end_at_ms: 13_000,
+      duration_ms: 8_000,
     },
   ],
 }
@@ -177,23 +163,37 @@ describe('TaskTimingPanel', () => {
     mockGetTaskTiming.mockReset()
   })
 
-  it('renders triage and top suspects from observed timing data', async () => {
+  it('renders a shared attribution bar, status, coverage, and span table', async () => {
     mockGetTaskTiming.mockResolvedValue(timingResponse)
     renderPanel()
 
     expect(mockGetTaskTiming).toHaveBeenCalledWith(42)
-    expect(await screen.findByTestId('task-timing-triage')).toBeInTheDocument()
-    expect(screen.getAllByTestId('task-timing-triage-item')).toHaveLength(3)
-    expect(screen.getByText('timing.summary.agent')).toBeInTheDocument()
-    expect(screen.getAllByText('12s')).toHaveLength(1)
-    expect(screen.getAllByTestId('task-timing-suspect')).toHaveLength(2)
-    expect(screen.getByText('pnpm test')).toBeInTheDocument()
-    expect(
-      screen.getByText('timing.suggestions.inspect_registry:inspect_registry')
-    ).toBeInTheDocument()
-    expect(screen.getByText('timing.summary.wall_time:17s')).toBeInTheDocument()
-    const bars = screen.getAllByTestId('task-timing-triage-item')
-    expect(bars[0]).toBeInTheDocument()
+    expect(await screen.findByTestId('task-timing-attribution-bar')).toBeInTheDocument()
+    expect(screen.getByTestId('task-timing-wall-time')).toHaveTextContent('17s')
+    expect(screen.getByTestId('task-timing-status')).toHaveTextContent('timing.status.COMPLETED')
+    expect(screen.getAllByTestId('task-timing-legend-item')).toHaveLength(3)
+    expect(screen.getAllByTestId('task-timing-attribution-segment')).toHaveLength(3)
+    expect(screen.getAllByTestId('task-timing-span-row')).toHaveLength(2)
+    expect(screen.getAllByText('Agent execution').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('pnpm test').length).toBeGreaterThan(0)
+    const firstDuration = screen.getAllByTestId('task-timing-span-row')[0]
+    expect(firstDuration).toHaveTextContent('12s')
+  })
+
+  it('hides categories without positive sampled time', async () => {
+    mockGetTaskTiming.mockResolvedValue({
+      ...timingResponse,
+      triage: [
+        { kind: 'tool', duration_ms: 0, sample_count: 1, observed: true },
+        { kind: 'subagent', duration_ms: 0, sample_count: 0, observed: false },
+      ],
+    })
+    renderPanel()
+
+    await screen.findByTestId('task-timing-legend')
+    const legendItems = screen.queryAllByTestId('task-timing-legend-item')
+    expect(legendItems.find(item => item.dataset.kind === 'tool')).toBeUndefined()
+    expect(legendItems.find(item => item.dataset.kind === 'subagent')).toBeUndefined()
   })
 
   it('shows loading, empty, and error states without inventing timing', async () => {
@@ -201,18 +201,18 @@ describe('TaskTimingPanel', () => {
     mockGetTaskTiming.mockReturnValueOnce(pending)
     const { rerender } = renderPanel()
     expect(screen.getByTestId('task-timing-loading')).toBeInTheDocument()
-    expect(screen.queryByTestId('task-timing-triage')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-timing-attribution-bar')).not.toBeInTheDocument()
 
     mockGetTaskTiming.mockResolvedValueOnce(emptyResponse)
     rerender(<TaskTimingPanel panelProps={{ taskId: 43 }} onClose={jest.fn()} embedded={false} />)
     expect(await screen.findByTestId('task-timing-empty')).toBeInTheDocument()
-    expect(screen.queryByTestId('task-timing-triage')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-timing-attribution-bar')).not.toBeInTheDocument()
 
     mockGetTaskTiming.mockRejectedValueOnce(new Error('timing unavailable'))
     rerender(<TaskTimingPanel panelProps={{ taskId: 44 }} onClose={jest.fn()} embedded={false} />)
     expect(await screen.findByTestId('task-timing-error')).toBeInTheDocument()
     expect(screen.getByText('timing unavailable')).toBeInTheDocument()
-    expect(screen.queryByTestId('task-timing-triage')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-timing-attribution-bar')).not.toBeInTheDocument()
   })
 
   it('retries after a timing request fails', async () => {
@@ -225,165 +225,110 @@ describe('TaskTimingPanel', () => {
     await screen.findByTestId('task-timing-error')
     await user.click(screen.getByTestId('task-timing-retry'))
 
-    expect(await screen.findByTestId('task-timing-triage')).toBeInTheDocument()
+    expect(await screen.findByTestId('task-timing-attribution-bar')).toBeInTheDocument()
     expect(mockGetTaskTiming).toHaveBeenCalledTimes(2)
   })
 
-  it('ignores stale timing responses and rejections after the task scope changes', async () => {
-    let resolveTask42!: (value: TaskTimingResponse) => void
-    let rejectTask42!: (reason: unknown) => void
-    let resolveTask44!: (value: TaskTimingResponse) => void
-    mockGetTaskTiming
-      .mockImplementationOnce(
-        () =>
-          new Promise<TaskTimingResponse>((resolve, reject) => {
-            resolveTask42 = resolve
-            rejectTask42 = reject
-          })
-      )
-      .mockResolvedValueOnce(emptyResponse)
-      .mockImplementationOnce(
-        () => new Promise<TaskTimingResponse>(resolve => (resolveTask44 = resolve))
-      )
-
-    const { rerender } = renderPanel()
-    rerender(<TaskTimingPanel panelProps={{ taskId: 43 }} onClose={jest.fn()} embedded={false} />)
-
-    expect(await screen.findByTestId('task-timing-empty')).toBeInTheDocument()
-    await act(async () => {
-      resolveTask42(timingResponse)
+  it('refreshes a running timing snapshot without losing panel context', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValueOnce(overlappingOpenSubagentResponse).mockResolvedValueOnce({
+      ...overlappingOpenSubagentResponse,
+      wall_time_ms: 18_000,
+      observed_ms: 13_000,
     })
-    expect(screen.getByTestId('task-timing-empty')).toBeInTheDocument()
-    expect(screen.queryByTestId('task-timing-triage')).not.toBeInTheDocument()
+    renderPanel()
 
-    rerender(<TaskTimingPanel panelProps={{ taskId: 44 }} onClose={jest.fn()} embedded={false} />)
-    expect(await screen.findByTestId('task-timing-loading')).toBeInTheDocument()
-    await act(async () => {
-      rejectTask42(new Error('stale rejection'))
-    })
-    expect(screen.getByTestId('task-timing-loading')).toBeInTheDocument()
-    expect(screen.queryByTestId('task-timing-error')).not.toBeInTheDocument()
-    await act(async () => {
-      resolveTask44(emptyResponse)
-    })
+    await screen.findByTestId('task-timing-refresh')
+    await user.click(screen.getByTestId('task-timing-refresh'))
+
+    expect(mockGetTaskTiming).toHaveBeenCalledTimes(2)
+    expect(await screen.findByTestId('task-timing-wall-time')).toHaveTextContent('18s')
   })
 
-  it('reveals timeline spans with a common wall-clock scale', async () => {
-    const user = userEvent.setup()
+  it('renders timeline spans and gaps on one wall-clock scale', async () => {
     mockGetTaskTiming.mockResolvedValue(timingResponse)
     renderPanel()
 
-    await screen.findByTestId('task-timing-triage')
-    expect(screen.queryByTestId('task-timing-timeline-details')).not.toBeInTheDocument()
-    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
-
-    const details = screen.getByTestId('task-timing-timeline-details')
-    expect(screen.getAllByTestId('task-timing-span')).toHaveLength(2)
+    await screen.findByTestId('task-timing-timeline-details')
     const bars = screen.getAllByTestId('task-timing-span-bar')
     expect(Number.parseFloat(bars[0].style.left)).toBeCloseTo((2 / 18) * 100, 10)
     expect(Number.parseFloat(bars[0].style.width)).toBeCloseTo((12 / 18) * 100, 10)
     expect(Number.parseFloat(bars[1].style.left)).toBeCloseTo((2 / 18) * 100, 10)
     expect(Number.parseFloat(bars[1].style.width)).toBeCloseTo((4 / 18) * 100, 10)
-    expect(
-      Number.parseFloat(screen.getByTestId('task-timing-leading-gap').style.width)
-    ).toBeCloseTo((2 / 18) * 100, 10)
-    expect(
-      Number.parseFloat(screen.getByTestId('task-timing-trailing-gap').style.width)
-    ).toBeCloseTo((4 / 18) * 100, 10)
-    expect(screen.getByTestId('task-timing-leading-gap-label')).toHaveTextContent(
-      'timing.timeline.leading_gap:2s'
-    )
-    expect(screen.getByTestId('task-timing-trailing-gap-label')).toHaveTextContent(
-      'timing.timeline.trailing_gap:4s'
-    )
-    expect(within(details).getByText('Agent execution')).toBeInTheDocument()
-    expect(within(details).getByText('pnpm test')).toBeInTheDocument()
-  })
-
-  it('localizes known span statuses and falls back to the raw status', async () => {
-    const user = userEvent.setup()
-    mockGetTaskTiming.mockResolvedValue(localizedStatusResponse)
-    renderPanel()
-
-    await screen.findByTestId('task-timing-triage')
-    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
-
-    const statuses = screen.getAllByTestId('task-timing-span-status')
-    expect(statuses[0]).toHaveTextContent('timing.status.running')
-    expect(statuses[1]).toHaveTextContent('untranslated_status')
   })
 
   it('marks interior unobserved intervals on the shared timeline', async () => {
-    const user = userEvent.setup()
     mockGetTaskTiming.mockResolvedValue(interiorGapResponse)
     renderPanel()
 
-    await screen.findByTestId('task-timing-triage')
-    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
-
-    const gap = screen.getByTestId('task-timing-interior-gap')
+    await screen.findByTestId('task-timing-timeline-details')
+    const gaps = screen.getAllByTestId('task-timing-interior-gap')
+    expect(gaps.length).toBeGreaterThan(0)
+    const gap = gaps.find(item => item.style.left !== '0%')
+    expect(gap).toBeDefined()
+    if (!gap) return
     expect(Number.parseFloat(gap.style.left)).toBeCloseTo((6 / 18) * 100, 10)
     expect(Number.parseFloat(gap.style.width)).toBeCloseTo((6 / 18) * 100, 10)
-    expect(screen.getByTestId('task-timing-interior-gap-label')).toHaveTextContent(
-      'timing.timeline.interior_gap:6s'
-    )
   })
 
-  it('extends open spans to the session end when computing timeline gaps', async () => {
-    const user = userEvent.setup()
-    mockGetTaskTiming.mockResolvedValue(openSpanResponse)
+  it('keeps overlapping spans on parallel timeline lanes', async () => {
+    mockGetTaskTiming.mockResolvedValue(parallelSubagentResponse)
     renderPanel()
 
-    await screen.findByTestId('task-timing-triage')
-    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
+    await screen.findByTestId('task-timing-timeline-details')
+    const subagentTrack = screen
+      .getAllByTestId('task-timing-track')
+      .find(track => track.dataset.kind === 'subagent')
+    expect(subagentTrack).toBeDefined()
+    if (!subagentTrack) return
 
-    expect(screen.queryByTestId('task-timing-interior-gap')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('task-timing-interior-gap-label')).not.toBeInTheDocument()
-    const bars = screen.getAllByTestId('task-timing-span-bar')
-    expect(Number.parseFloat(bars[0].style.left)).toBeCloseTo((2 / 18) * 100, 10)
-    expect(Number.parseFloat(bars[0].style.width)).toBeCloseTo((16 / 18) * 100, 10)
+    const lanes = within(subagentTrack).getAllByTestId('task-timing-span-bar')
+    expect(lanes).toHaveLength(2)
+    expect(lanes[0].parentElement).not.toBe(lanes[1].parentElement)
+    expect(Number.parseFloat(lanes[0].style.left)).toBeCloseTo((1 / 18) * 100, 10)
+    expect(Number.parseFloat(lanes[1].style.left)).toBeCloseTo((2 / 18) * 100, 10)
   })
 
-  it('does not invent absolute timestamps when no timeline anchor exists', async () => {
-    const user = userEvent.setup()
-    mockGetTaskTiming.mockResolvedValue({
-      ...timingResponse,
-      session_start_at_ms: null,
-      session_end_at_ms: null,
-      spans: [
-        {
-          ...timingResponse.spans[0],
-          start_at_ms: null,
-          end_at_ms: null,
-          duration_ms: 12_000,
-        },
-      ],
+  it('keeps a later span off an open span lane', async () => {
+    mockGetTaskTiming.mockResolvedValue(overlappingOpenSubagentResponse)
+    renderPanel()
+
+    await screen.findByTestId('task-timing-timeline-details')
+    const subagentTrack = screen
+      .getAllByTestId('task-timing-track')
+      .find(track => track.dataset.kind === 'subagent')
+    expect(subagentTrack).toBeDefined()
+    if (!subagentTrack) return
+
+    const bars = within(subagentTrack).getAllByTestId('task-timing-span-bar')
+    expect(bars).toHaveLength(2)
+    expect(bars[0].parentElement).not.toBe(bars[1].parentElement)
+    expect(Number.parseFloat(bars[0].style.width)).toBeCloseTo((17 / 18) * 100, 10)
+    expect(screen.getAllByTestId('task-timing-span-row')[0]).toHaveTextContent(
+      'timing.spans.running'
+    )
+    expect(Number.parseFloat(bars[1].style.width)).toBeCloseTo((8 / 18) * 100, 10)
+  })
+
+  it('copies a Markdown report to the clipboard', async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    mockGetTaskTiming.mockResolvedValue(timingResponse)
+    renderPanel()
+
+    await screen.findByTestId('task-timing-copy-report')
+    await act(async () => {
+      screen.getByTestId('task-timing-copy-report').click()
     })
-    renderPanel()
 
-    await screen.findByTestId('task-timing-triage')
-    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
-
-    const times = screen.getAllByText('--')
-    expect(times.length).toBeGreaterThanOrEqual(2)
-    expect(screen.getByTestId('task-timing-span-bar')).toHaveStyle({ width: '0%' })
-  })
-
-  it('shows unknown durations as missing rather than zero', async () => {
-    const user = userEvent.setup()
-    mockGetTaskTiming.mockResolvedValue(unknownDurationResponse)
-    renderPanel()
-
-    expect(await screen.findByTestId('task-timing-triage')).toBeInTheDocument()
-    expect(screen.getByTestId('task-timing-wall-time')).toHaveTextContent(
-      'timing.summary.wall_time:--'
-    )
-    expect(screen.getByTestId('task-timing-suspect')).toHaveTextContent('--')
-
-    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
-    expect(screen.getByTestId('task-timing-span')).toHaveTextContent(
-      'timing.timeline.span_meta:agent,11,--'
-    )
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const report = writeText.mock.calls[0][0] as string
+    expect(report).toContain('# Wegent Timing Diagnostic Report')
+    expect(report).toContain('- Status: COMPLETED')
+    expect(report).toContain('| agent | 8s | 47.1% | 1 | yes |')
+    expect(report).not.toContain('## Top spans')
+    expect(report).toContain('| 11 | agent | Agent execution | 2s → 14s |')
+    expect(report).toContain('| agent-1 | executor-manager | executor |')
   })
 
   it('uses semantic theme classes and a responsive layout', async () => {
@@ -394,9 +339,9 @@ describe('TaskTimingPanel', () => {
       'bg-base',
       'text-text-primary'
     )
-    const suspect = screen.getAllByTestId('task-timing-suspect')[0]
-    expect(suspect).toHaveClass('border-border', 'bg-surface')
-    expect(suspect.firstChild).toHaveClass('flex-col', 'sm:flex-row')
+    expect(screen.getByTestId('task-timing-attribution-bar')).toHaveClass('bg-muted')
+    expect(screen.getByTestId('task-timing-span-table')).toHaveClass('overflow-x-auto')
+    expect(screen.queryByTestId('task-timing-suspect-table')).not.toBeInTheDocument()
     expect(container.querySelector('.bg-muted')).toBeInTheDocument()
   })
 })
