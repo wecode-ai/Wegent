@@ -915,13 +915,40 @@ async fn move_to_project(
         (sequence + 1, body.project_id.as_str()),
     )
     .await?;
-    tx.execute("UPDATE loop_items SET cloud_project_id=?,sequence_number=?,status=?,due_at=?,metadata=?,assignee_team_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(body.project_id.as_str(),sequence,target_status,row.metadata.0.due_at.as_ref().map(|date|format!("{date} 00:00:00")),Json(metadata),assignee_team,issue_id)).await?;
+    let required = crate::loop_node_storage::required_columns(tx).await?;
+    let unset_due_at = if required.contains("due_at") {
+        crate::loop_node_storage::MYSQL_UNSET_DATETIME_SQL
+    } else {
+        "NULL"
+    };
+    let due_at = row
+        .metadata
+        .0
+        .due_at
+        .as_ref()
+        .map(|date| format!("{date} 00:00:00"));
+    tx.execute(
+        format!(
+            "UPDATE loop_items SET cloud_project_id=?,sequence_number=?,status=?,\
+             due_at=COALESCE(?,{unset_due_at}),metadata=?,assignee_team_id=?,\
+             version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?"
+        ),
+        (
+            body.project_id.as_str(),
+            sequence,
+            target_status,
+            due_at,
+            Json(metadata),
+            assignee_team,
+            issue_id,
+        ),
+    )
+    .await?;
     tx.execute(
         "UPDATE loop_items SET cloud_project_id=? WHERE loop_item_id=? AND resource_type='comment'",
         (body.project_id.as_str(), issue_id),
     )
     .await?;
-    let required = crate::loop_node_storage::required_columns(tx).await?;
     if let Some(share) = &row.metadata.0.share {
         share::insert_project_attachments(tx, &required, issue_id, user_id, &share.files).await?;
     }
