@@ -107,6 +107,7 @@ export function createProvider() {
           ? { ...readWindow(input.query ?? {}), issuedAt: Date.now() }
           : readCursors.decode(source, { ...input.query, cursor: input.cursor })
       const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
+      if (state.training) return trainingHistory(ctx, source, state, selfId, readCursors)
       const page = await readTool(
         ctx,
         source.kind === 'group' ? 'listConversation' : 'listDirectConversation',
@@ -181,9 +182,13 @@ export function createProvider() {
   }
 }
 
-function nativeMessage(message, source, ownId, limit) {
+function messageSentAt(message) {
   const at = required(message, 'createTime')
-  if (!Number.isFinite(Date.parse(at))) throw invalid('Invalid native message time')
+  if (!Number.isFinite(Date.parse(at))) throw invalid('Invalid DingTalk message send time')
+  return at
+}
+
+function nativeMessage(message, source, ownId, limit) {
   const text = required(message, 'text')
   const budget = Math.min(20000, Math.floor(24000 / limit))
   const conversationId = required(message, 'conversationId')
@@ -192,7 +197,7 @@ function nativeMessage(message, source, ownId, limit) {
   return {
     id: required(message, 'messageId'),
     eventType: 'message.received',
-    at,
+    at: messageSentAt(message),
     text: text.slice(0, budget),
     truncated: text.length > budget,
     senderId: message.senderId ?? null,
@@ -219,14 +224,133 @@ function readWindow(input) {
   if (
     typeof includeImages !== 'boolean' ||
     !Number.isFinite(since) ||
-    since < now - 7 * 86400000 ||
+    (input.trainingUntil === undefined && since < now - 7 * 86400000) ||
     since > now ||
     !Number.isSafeInteger(limit) ||
     limit < 1 ||
     limit > 20
   )
     throw invalid('Read at most twenty messages from the past seven days')
+  if (input.trainingUntil !== undefined) {
+    const end = Date.parse(input.trainingUntil)
+    if (!Number.isFinite(end) || end <= since || end > now || includeImages)
+      throw invalid('Invalid training window')
+    const earliest = now - 7 * 86400000
+    return {
+      start: new Date(Math.max(since, earliest)).toISOString(),
+      requestedStart: start,
+      end: input.trainingUntil,
+      limit,
+      training: true,
+      ...(since < earliest ? { coverageGap: { since, through: Math.min(earliest, end) } } : {}),
+    }
+  }
   return { start, end: new Date(now).toISOString(), limit, includeImages }
+}
+
+// Read exact, attributed native records separately from the incoming-work collector.
+async function trainingHistory(ctx, source, state, ownId, readCursors) {
+  const mentions = source.kind === 'group' && source.collectionKey !== 'all-messages'
+  const coverage = {
+    reviewCoverage: mentions || state.coverageGap ? 'partial' : 'complete',
+    ...(state.coverageGap ? { coverageGap: state.coverageGap } : {}),
+  }
+  if (Date.parse(state.start) >= Date.parse(state.end))
+    return { items: [], hasMore: false, ...coverage }
+  let conversationId = state.conversationId
+  if (!conversationId && source.kind === 'direct') {
+    const page = await readTool(ctx, 'listDirectConversation', {
+      profile: source.profile,
+      peer: source.id,
+      time: state.end,
+      limit: '1',
+    })
+    validateNativePage(page, 1)
+    if (!page.messages.length) {
+      if (page.hasMore) throw invalid('Missing peer conversation identity')
+      return { items: [], hasMore: false, ...coverage }
+    }
+    conversationId = page.messages[0].conversationId
+  }
+  if (source.kind === 'group') conversationId = source.id
+  if (typeof conversationId !== 'string' || !conversationId || /[,\r\n]/.test(conversationId))
+    throw invalid('Invalid training conversation identity')
+  const response = await readTool(ctx, mentions ? 'listMentions' : 'searchMessages', {
+    profile: source.profile,
+    [mentions ? 'group' : 'conversationIds']: conversationId,
+    start: state.start,
+    end: state.end,
+    limit: String(state.limit),
+    cursor: state.nativeCursor ?? '0',
+  })
+  const { conversationMessagesList, hasMore, nextCursor } = response.result ?? {}
+  if (
+    conversationMessagesList === undefined &&
+    response.success === true &&
+    hasMore === false &&
+    typeof nextCursor === 'string'
+  )
+    return { items: [], hasMore: false, ...coverage }
+  if (
+    typeof hasMore !== 'boolean' ||
+    !Array.isArray(conversationMessagesList) ||
+    (hasMore &&
+      (!nextCursor || typeof nextCursor !== 'string' || nextCursor === state.nativeCursor))
+  )
+    throw invalid('Incomplete attributed history')
+  const items = []
+  for (const conversation of conversationMessagesList) {
+    if (
+      conversation.openConversationId !== conversationId ||
+      conversation.singleChat !== (source.kind === 'direct') ||
+      !Array.isArray(conversation.messages)
+    )
+      throw invalid('Attributed history belongs to another conversation')
+    for (const message of conversation.messages) {
+      const at = Date.parse(message.createTime)
+      if (
+        !Number.isFinite(at) ||
+        typeof message.openMessageId !== 'string' ||
+        typeof message.content !== 'string'
+      )
+        throw invalid('Invalid training message')
+      if (at < Date.parse(state.start) || at >= Date.parse(state.end)) continue
+      const own = message.senderOpenDingTalkId === ownId
+      const tagged = message.messageAiSendFlag !== undefined
+      let author = 'unknown'
+      if (own && tagged) author = 'accountAutomation'
+      else if (!tagged && message.sendType === 'user' && message.senderOpenDingTalkId)
+        author = own ? 'owner' : 'participant'
+      const budget = Math.min(20000, Math.floor(24000 / state.limit))
+      items.push({
+        id: message.openMessageId,
+        at: message.createTime,
+        text: message.content.slice(0, budget),
+        truncated: message.content.length > budget,
+        author,
+        ...(author === 'participant' ? { participantId: message.senderOpenDingTalkId } : {}),
+        conversationId,
+        isSelfConversation: source.kind === 'direct' && source.id === ownId,
+        quotedMessageId: message.quotedMessage?.openMessageId ?? null,
+        topicId: message.openConvThreadId ?? null,
+      })
+    }
+  }
+  if (items.length > state.limit) throw invalid('Training page exceeds its declared limit')
+  return {
+    items,
+    hasMore,
+    ...coverage,
+    ...(hasMore
+      ? {
+          nextCursor: readCursors.encode(source, {
+            ...state,
+            conversationId,
+            nativeCursor: nextCursor,
+          }),
+        }
+      : {}),
+  }
 }
 
 async function readMessagePage(ctx, source, window, ownId) {
@@ -333,7 +457,7 @@ export function normalizeMessages(source, response, ownId, selfConversationId) {
         senderName: message.sender ?? null,
         isOwn: sender === ownId,
         isSelfConversation: direct && manualSelfMessage && sender === ownId,
-        at: required(message, 'createTime'),
+        at: messageSentAt(message),
         conversationId,
         quotedMessageId: message.quotedMessage?.openMessageId ?? null,
         topicId: message.openConvThreadId ?? null,

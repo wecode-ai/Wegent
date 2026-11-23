@@ -661,6 +661,41 @@ describe('createLocalAppServices', () => {
     ).toThrow('Cloud runtime user identity is required')
   })
 
+  test('coalesces concurrent archive calls and only sends the task identity and cleanup intent', async () => {
+    const started = Promise.withResolvers<void>()
+    const response = Promise.withResolvers<{ accepted: boolean }>()
+    const request = vi.fn(() => {
+      started.resolve()
+      return response.promise
+    })
+    const api = createRuntimeWorkApiFromIpc(request, async () => 'device-1')
+    const address = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      workspacePath: '/project',
+      runtimeHandle: { messages: [{ content: 'x'.repeat(1024 * 1024) }] },
+      cleanupWorktree: true,
+    }
+    const first = api.archiveConversation(address)
+    await started.promise
+    const duplicate = api.archiveConversation(address)
+    response.resolve({ accepted: true })
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      { accepted: true },
+      { accepted: true },
+    ])
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      'runtime.tasks.archive',
+      {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+        workspacePath: '/project',
+        cleanupWorktree: true,
+      },
+      'device-1'
+    )
+  })
+
   test.each([undefined, 'completed-turn'])(
     'sends fork IPC with the selected model at %s',
     async lastTurnId => {
@@ -3255,12 +3290,17 @@ describe('createLocalAppServices', () => {
         modelType: 'runtime',
       },
     })
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
-      deviceId: 'device-uuid',
-      command_key: 'git_is_worktree',
-      args: ['/Users/me/project'],
-      timeout_seconds: 15,
-    })
+    expect(request).toHaveBeenCalledWith(
+      'device.execute_command',
+      {
+        deviceId: 'device-uuid',
+        command_key: 'git_is_worktree',
+        args: ['/Users/me/project'],
+        timeout_seconds: 15,
+      },
+      undefined,
+      { priority: 'foreground' }
+    )
     expect(request).not.toHaveBeenCalledWith('runtime.worktrees.prepare', expect.anything())
     expect(createPayload).toEqual(
       expect.objectContaining({

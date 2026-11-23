@@ -361,11 +361,10 @@ export function createTaskActivityState(
     taskUpdated(updated: CloudLoopItem) {
       if (active()) input?.onTaskUpdated?.(updated)
     },
-    async markRead(sequence: number) {
+    async markRead(sequence: number, revision: number) {
       if (!api) return
       if (!active() || !input) throw new DOMException('Activity read scope changed', 'AbortError')
       const epoch = generation
-      const revision = input.task.content_revision
       try {
         const updated = await api.markLoopItemRead(issueId, sequence, revision)
         if (!active() || generation !== epoch)

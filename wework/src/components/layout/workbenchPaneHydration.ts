@@ -40,6 +40,8 @@ export function hydrateRuntimePaneGoal(context: PaneCommandContext, signal: Abor
     )
   }
 
+  if (context.frame.paneStatus.isCreatingTask) return
+
   const snapshotVersion = beginRuntimeGoalSnapshot(runtimeTaskLoadTarget.address)
   void getRuntimeGoal(runtimeTaskLoadTarget.address)
     .then(response => {

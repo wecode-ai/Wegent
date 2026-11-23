@@ -5,7 +5,9 @@ use wegent_backend_config as config;
 use wegent_http_compat as http_compat;
 use wegent_identity::auth;
 
+mod api_keys;
 pub mod auth_login;
+mod internal_api_keys;
 pub mod state;
 pub mod wework_auth;
 pub mod wework_auth_refresh;

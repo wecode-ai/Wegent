@@ -84,7 +84,6 @@ export function startPluginAutoUpdatePass({
       updateBatch: () => cloudPluginApi.autoUpdateInstalledPlugins(),
       syncPlugin: (deviceId, installedPluginId) =>
         cloudPluginApi.syncInstalledPluginToDevice(installedPluginId, deviceId),
-      syncDevice: deviceId => cloudPluginApi.syncInstalledPluginsToDevice(deviceId),
     })
     if (
       disposed ||

@@ -337,8 +337,7 @@ async fn lock_cancel_task(
         )
         .await?;
     let Some(task) = task else { return Ok(None) };
-    if task_column::<i64>(&task, "is_active") != Some(1)
-        || task_column::<String>(&task, "kind").as_deref() != Some("Task")
+    if !crate::internal_callback::completion::is_active_task(&task)
         || task_column::<String>(&task, "namespace").as_deref() == Some("system")
     {
         return Ok(None);

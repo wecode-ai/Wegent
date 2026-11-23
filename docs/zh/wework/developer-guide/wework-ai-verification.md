@@ -20,6 +20,12 @@ pnpm --filter wework e2e:desktop --segment idle-executor-requests
 
 检查点注册在现有 Core CI 分片，独立运行不依赖前序场景。本地 macOS arm64 验证含启动与清理耗时约 52 秒，共享构建另计。结果目录的 `idle-executor-requests.json` 只保存方法名、时间、状态和必要布尔标志，不保存请求参数、头或查询字符串；日志和截图不得提交。
 
+## 桌面 CPU 回归检查
+
+现有 Linux Core CI 对 `idle-executor-requests`、`streaming-conversation-switching` 和 `executor-stream-recovery` 记录 CPU。测量覆盖场景验证函数的完整运行区间，包含场景内的准备和重载。例如空闲场景的数值包含重载和后续验证，不能当成纯空闲 CPU 占用。CPU 时间以毫秒分别记录 Electron Renderer 进程和 Executor 主进程。Executor 子进程的 CPU 单独留待后续覆盖。采样窗口两端必须是同一批被测进程，采集失败或进程变化时，日志会标记样本不可用。
+
+[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) 维护每个检查点和 runner 平台的基线。现有 `main` 夜间任务或在 `main` 手动运行的 Wework E2E 更新基线，PR 和合并队列只读取基线。CI 在已有分片运行相应检查点时显示当前值、基线和比值。已有基线时，任一进程的 CPU 时间超过基线的 150%，或检查点未产出 CPU 样本，都会让 CI 失败。首次无基线时，CI 仍可通过并显示可用的样本。
+
 ## 插件周期恢复 E2E
 
 `plugin-periodic-reconcile` checkpoint 使用真实 Electron、Executor、Socket.IO、数据库和插件包存储，丢弃一次真实插件变更通知后，验证定时对账恢复状态、持久化 ACK、设备身份以及未受影响插件的内容。测试实例设置 `LOCAL_PLUGIN_RECONCILE_INTERVAL=90`、`LOCAL_PLUGIN_RECONCILE_JITTER=18`（单位为秒），并用已有的 `LOCAL_HEARTBEAT_INTERVAL=1` 保留至少 10 次心跳的活性断言。检查点根据真实对账 tick 对齐故障注入；准备流程跨过某个 tick 时等待当前定时器窗口，而不是因负载延长周期。
@@ -246,6 +252,6 @@ BOMBADIL_BIN=/absolute/path/bombadil pnpm --filter wework ai:verify bombadil --s
 
 每个规格使用独立的真实 Electron 与 Executor，自动获取临时 loopback 调试端口，拒绝已有 Executor Home 和多页面目标。执行前处理隔离实例的首次隐私弹窗，再建立规格前置条件。每个规格预算 1—600 秒；多个规格串行执行，结束或失败均清理实例。默认不执行模型请求或云端授权。
 
-结果保存在 wework/test-results/bombadil/<时间>/，包括 summary.json、日志和 Bombadil 原生轨迹。失败或清理失败返回非零；零操作不能通过。轨迹可能含界面截图和内容，只用于本地诊断，不提交仓库，也不上传包含 session.json、认证文件或整个 ai-verify 目录的产物。仅做定向、预算受控的 CI 接入；随机通过不替代确定性回归、权限验证或发布门禁。
+结果保存在 `wework/test-results/bombadil/<时间>/`，包括 summary.json、日志和 Bombadil 原生轨迹。失败或清理失败返回非零；零操作不能通过。轨迹可能含界面截图和内容，只用于本地诊断，不提交仓库，也不上传包含 session.json、认证文件或整个 ai-verify 目录的产物。仅做定向、预算受控的 CI 接入；随机通过不替代确定性回归、权限验证或发布门禁。
 
 GitHub Actions 的 Wework Bombadil exploration 工作流仅支持手动触发：选择 PR 分支，填写 base（默认 origin/main）和每个规格的秒数。普通 PR 不增加自动探索。工作流下载固定版本并校验 SHA-256，只把 summary.json 写入步骤摘要，不上传原始轨迹或认证目录。

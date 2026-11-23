@@ -187,7 +187,7 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     }
     let team_id = authority::integer(&config["wegent_team_id"])
         .context("Project Agent has an invalid Team binding")?;
-    let team = authority::team(state, &agent.cloud_project_id, team_id).await?;
+    let team = authority::team(&state.mysql, &agent.cloud_project_id, team_id).await?;
     readiness(state, &team, execution_user).await?;
     let members = team.json.0["spec"]["members"]
         .as_array()

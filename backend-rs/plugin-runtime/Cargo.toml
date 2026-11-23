@@ -1,0 +1,51 @@
+[package]
+name = "wegent-plugin-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Installed plugin synchronization and device account authorization"
+
+[features]
+test-support = []
+
+[dependencies]
+aes-gcm = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+futures-util = { workspace = true, features = ["std"] }
+getrandom = { workspace = true }
+hmac = { workspace = true }
+jsonwebtoken = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tracing = { workspace = true }
+wegent-access = { workspace = true }
+wegent-authentication = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-backend-persistence = { workspace = true }
+wegent-device-identity = { workspace = true }
+wegent-devices = { workspace = true }
+wegent-execution-preparation = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-plugin-catalog = { workspace = true }
+wegent-plugin-store = { workspace = true }
+wegent-python-compat = { workspace = true }
+wegent-socket-events = { workspace = true }
+wegent-storage = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+sha1 = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "test-util"] }
+wegent-backend-test-support = { workspace = true }
+wegent-identity = { workspace = true, features = ["test-support"] }

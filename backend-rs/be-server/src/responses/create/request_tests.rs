@@ -9,6 +9,7 @@ use super::{BuildExecutionRequestInput, KindRow, build_chat_execution_request};
 use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
 use brz_mysql::Json;
 use serde_json::{Value, json};
+use wegent_execution_preparation::skills;
 
 #[test]
 fn a_bot_without_a_model_is_a_400_with_the_source_message() {
@@ -460,10 +461,10 @@ async fn coordinate_member_skills_resolve_in_the_team_owner_and_group_scope() {
         "skills": ["personal-tool", "group-tool"],
         "skill_refs": {"group-tool": {"namespace": "reviews"}}
     })];
-    let mut skills = super::super::skills::BotSkills::default();
+    let mut skills = skills::BotSkills::default();
     let tokens = crate::user_mcp_oauth::token_service(7, &fixture.mysql);
 
-    super::super::skills::extend_resolved_skills_from_bot_configs(
+    skills::extend_resolved_skills_from_bot_configs(
         &cache,
         &members,
         &mut skills,
@@ -474,14 +475,14 @@ async fn coordinate_member_skills_resolve_in_the_team_owner_and_group_scope() {
     )
     .await
     .unwrap();
-    super::super::skills::sync_bot_skill_refs(&mut members[0], &skills.skill_refs);
+    skills::sync_bot_skill_refs(&mut members[0], &skills.skill_refs);
 
     assert_eq!(skills.skills[0]["skill_user_id"], 42);
     assert_eq!(skills.skills[1]["skill_user_id"], 43);
     assert_eq!(members[0]["skill_refs"]["personal-tool"]["skill_id"], 21);
     assert_eq!(members[0]["skill_refs"]["group-tool"]["skill_id"], 22);
     let mut servers = Vec::new();
-    super::super::skills::append_coding_mcp(&mut servers, &skills, "ClaudeCode");
+    skills::append_coding_mcp(&mut servers, &skills, "ClaudeCode");
     assert_eq!(servers[0]["url"], "https://personal.invalid");
     assert_eq!(servers[1]["url"], "https://group.invalid");
 }
@@ -594,7 +595,7 @@ async fn a_new_git_chat_without_a_repository_url_fails_before_dispatch() {
 /// Shell call, so a failed flat config never issues a Shell query.
 #[test]
 fn the_flat_model_config_precedes_the_shell_read() {
-    let source = include_str!("request.rs");
+    let source = include_str!("../../../../execution-request/src/request.rs");
     let no_model = source
         .find("None => return Err(flat_model_config_error(None, &input.bot.name)),")
         .expect("bot-without-model raise");
@@ -619,12 +620,12 @@ fn the_flat_model_config_precedes_the_shell_read() {
 /// resolved and the builder must not issue the identical second `kinds` read.
 #[test]
 fn a_resolved_subtask_bot_skips_the_builder_reread() {
-    let source = include_str!("request.rs");
+    let source = include_str!("../../../../execution-request/src/request.rs");
     let guard = source
         .find("let subtask_bot = if input.subtask_bot_resolved {")
         .expect("the resolved-bot guard");
     let read = source
-        .find("super::subtask_bot::bot_by_id(&state.mysql, input.bot_ids.first().copied())")
+        .find("super::subtask_bot::bot_by_id(state.mysql, input.bot_ids.first().copied())")
         .expect("the bot-by-id read");
     assert!(
         guard < read,

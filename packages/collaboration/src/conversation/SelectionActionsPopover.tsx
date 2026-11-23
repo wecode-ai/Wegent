@@ -11,6 +11,7 @@ export interface SelectionActionsPosition {
 interface SelectionActionsPopoverProps {
   position: SelectionActionsPosition;
   onClose?: () => void;
+  onShareAsIssue?: () => void;
   onAddToConversation?: () => void;
   onFillAnswer?: () => void;
   onAskInSidebar?: () => void;
@@ -22,6 +23,7 @@ interface SelectionActionsPopoverProps {
 export function SelectionActionsPopover({
   position,
   onClose,
+  onShareAsIssue,
   onAddToConversation,
   onAskInSidebar,
   onFillAnswer,
@@ -63,6 +65,17 @@ export function SelectionActionsPopover({
             onClick={onAddToConversation}
           >
             {t("workbench.add_selection_to_conversation")}
+          </ControlButton>
+        )}
+        {onShareAsIssue && (
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid="share-selection-as-issue-button"
+            className="min-h-11 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:min-h-8"
+            onClick={onShareAsIssue}
+          >
+            {t("workbench.share_selection_as_issue")}
           </ControlButton>
         )}
         {onFillAnswer && (

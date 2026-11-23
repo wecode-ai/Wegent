@@ -1,4 +1,5 @@
 import { deviceSurfaceExtension } from '@extensions/device-surface'
+import { pollWorkbenchPresentation } from '@/desktop/workbenchWindowActivity'
 import {
   canUseEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
@@ -43,7 +44,7 @@ export function createWorkspaceBrowserSession(
   let stopEvents: (() => void) | null = null
   let overlayObserver: MutationObserver | null = null
   let overlayFrame: number | null = null
-  let pollTimer: number | null = null
+  let stopPagePolling: (() => void) | undefined
   let peekTimer: number | null = null
   let findTimer: number | null = null
   let observationGeneration = 0
@@ -317,15 +318,16 @@ export function createWorkspaceBrowserSession(
     }
     const polling =
       options.active && model.embeddedBrowserAvailable && model.runtime.nativeBrowserOpen
-    if (!polling && pollTimer !== null) {
-      window.clearInterval(pollTimer)
-      pollTimer = null
-    }
-    if (polling && pollTimer === null)
-      pollTimer = window.setInterval(
+    if (!polling) {
+      stopPagePolling?.()
+      stopPagePolling = undefined
+    } else if (!stopPagePolling) {
+      stopPagePolling = pollWorkbenchPresentation(
         () => void model.actions.refreshPageState(),
-        EMBEDDED_BROWSER_STATE_INTERVAL_MS
+        EMBEDDED_BROWSER_STATE_INTERVAL_MS,
+        5_000
       )
+    }
   }
 
   function stopObservation() {
@@ -335,10 +337,11 @@ export function createWorkspaceBrowserSession(
     overlayObserver = null
     if (overlayFrame !== null) window.cancelAnimationFrame(overlayFrame)
     overlayFrame = null
-    if (pollTimer !== null) window.clearInterval(pollTimer)
+    stopPagePolling?.()
+    stopPagePolling = undefined
     if (peekTimer !== null) window.clearTimeout(peekTimer)
     if (findTimer !== null) window.clearTimeout(findTimer)
-    pollTimer = peekTimer = findTimer = null
+    peekTimer = findTimer = null
     model.actions.clearScheduledBoundsSync()
     model.runtime.pageStateRequestGeneration += 1
     model.runtime.findRequestSequence += 1

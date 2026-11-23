@@ -37,7 +37,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use brz_redis::{Cmd, Redis, RedisError, RedisPipe, RedisResult, cmd};
@@ -76,11 +76,12 @@ pub struct CeleryTask<'a> {
 /// (`celery/backends/redis.py:Start` calls `backend.client.pubsub()`); keeping
 /// it separate means `SUBSCRIBE`/`UNSUBSCRIBE` never share the producer
 /// session. `declarations` is kombu's per-channel declaration cache.
+#[derive(Clone)]
 pub struct CeleryBroker {
     origin: String,
     reply_to: String,
     subscriber: Option<brz_redis::RedisService>,
-    declarations: Mutex<BTreeSet<String>>,
+    declarations: Arc<Mutex<BTreeSet<String>>>,
 }
 
 impl CeleryBroker {
@@ -93,7 +94,7 @@ impl CeleryBroker {
             origin: process_origin(),
             reply_to: process_reply_to(),
             subscriber,
-            declarations: Mutex::new(BTreeSet::new()),
+            declarations: Arc::default(),
         }
     }
 
@@ -396,7 +397,7 @@ mod tests {
             origin: "gen53@example-host".to_owned(),
             reply_to: "22222222-2222-3222-8222-222222222222".to_owned(),
             subscriber: None,
-            declarations: Mutex::new(BTreeSet::new()),
+            declarations: Arc::default(),
         }
     }
 
@@ -488,7 +489,7 @@ mod tests {
     fn the_declaration_is_taken_once_per_process() {
         let broker = test_broker();
         assert!(broker.take_declaration("wegent_online"));
-        assert!(!broker.take_declaration("wegent_online"));
+        assert!(!broker.clone().take_declaration("wegent_online"));
         assert!(broker.take_declaration("another_queue"));
     }
 

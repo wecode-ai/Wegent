@@ -1,19 +1,18 @@
-import {
-  CollapsiblePanel,
-  CollapsibleRoot,
-  CollapsibleTrigger,
-} from '../controls/Collapsible'
-import {
-  SelectContent,
-  SelectItem,
-  SelectRoot,
-  SelectTrigger,
-} from '../controls/SelectParts'
+import { selectedShareExcerpts } from './selectedShareExcerpts'
+import { CollapsiblePanel, CollapsibleRoot, CollapsibleTrigger } from '../controls/Collapsible'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
 import { normalizeSelectValue } from '../controls/selectValue'
 import { Textarea as ControlTextarea } from '../controls/Textarea'
 import { TextField as ControlInput } from '../controls/TextField'
 import { Button as ControlButton } from '../markdown/Button'
-import { useCallback, useId, useState, useSyncExternalStore, type ReactNode, type ComponentType } from 'react'
+import {
+  useCallback,
+  useId,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type ComponentType,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { createIndependentIssueDraft } from './independentIssueDraft'
 import { Folder } from 'lucide-react'
@@ -77,7 +76,11 @@ export function IndependentIssueEditor({
 }) {
   const t = usePersonalIssueTranslation()
   const formId = useId()
-  const [selectedExcerpts, setSelectedExcerpts] = useState<string[]>([])
+  const selection = shareDraft?.selectedExcerpt
+  const [shareWholeMessage, setShareWholeMessage] = useState(false)
+  const [selectedExcerpts, setSelectedExcerpts] = useState<string[]>(
+    selection ? [selection.excerpt.id] : []
+  )
   const [olderExcerpts, setOlderExcerpts] = useState<TaskIssueShareDraft['excerpts']>([])
   const [beforeCursor, setBeforeCursor] = useState<string | null>()
   const [localPageSize, setLocalPageSize] = useState(1)
@@ -85,13 +88,14 @@ export function IndependentIssueEditor({
   const history = shareDraft?.history
   const firstExcerpt = history && preview.length < 2 ? undefined : preview[0]
   const loadedTail = history ? olderExcerpts : preview.slice(-localPageSize)
-  const availableExcerpts = [
+  const conversationExcerpts = [
     ...new Map(
       [firstExcerpt, ...loadedTail, preview.at(-1)].flatMap(excerpt =>
         excerpt ? [[excerpt.id, excerpt] as const] : []
       )
     ).values(),
   ]
+  const availableExcerpts = selectedShareExcerpts(conversationExcerpts, selection)
   const hasEarlier = history ? beforeCursor !== null : preview.length > localPageSize + 1
   const loadEarlier = async () => {
     if (!history) {
@@ -271,7 +275,13 @@ export function IndependentIssueEditor({
         if (busy || !draft.title.trim()) return
         const excerpts = availableExcerpts
           .filter(excerpt => selectedExcerpts.includes(excerpt.id))
-          .map(excerpt => `${t(`taskIssueShare.${excerpt.role}`)} · ${excerpt.content}`)
+          .map(excerpt => {
+            const content =
+              selection?.excerpt.id === excerpt.id && !shareWholeMessage
+                ? excerpt.content.slice(selection.start, selection.end)
+                : excerpt.content
+            return `${t(`taskIssueShare.${excerpt.role}`)} · ${content}`
+          })
         void onSave(
           {
             ...draft,
@@ -364,7 +374,10 @@ export function IndependentIssueEditor({
                 )}
                 {(availableExcerpts.length > 0 || hasEarlier) && (
                   <TaskIssueShareExcerpts
-                    excerpts={availableExcerpts}
+                    excerpts={conversationExcerpts}
+                    selection={selection}
+                    shareWholeMessage={shareWholeMessage}
+                    onShareWholeMessage={setShareWholeMessage}
                     firstAvailable={Boolean(firstExcerpt)}
                     loadEarlier={hasEarlier ? loadEarlier : undefined}
                     selected={selectedExcerpts}

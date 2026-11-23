@@ -18,45 +18,83 @@ wegent-backend-users = { workspace = true }
 wegent-remote-workspace = { workspace = true }
 wegent-workspace-archive = { workspace = true }
 wegent-execution-preparation = { workspace = true }
+wegent-execution-request = { workspace = true }
+wegent-execution-knowledge = { workspace = true }
 wegent-execution-events = { workspace = true }
+wegent-execution-completion = { workspace = true }
+wegent-execution-emission = { workspace = true }
 wegent-execution-runtime = { workspace = true }
 wegent-executor-manager = { workspace = true }
 wegent-mcp-transport = { workspace = true }
 wegent-mcp-providers = { workspace = true }
 wegent-knowledge = { workspace = true }
 wegent-knowledge-access = { workspace = true }
+wegent-knowledge-jobs = { workspace = true }
+wegent-knowledge-mcp = { workspace = true }
+wegent-legacy-projects = { workspace = true }
+wegent-llm-proxy = { workspace = true }
 wegent-teams = { workspace = true }
 wegent-devices = { workspace = true }
+wegent-device-lifecycle = { workspace = true }
+wegent-device-artifacts = { workspace = true }
+wegent-database-migrations = { workspace = true }
+wegent-connector-apps = { workspace = true }
 wegent-plugin-catalog = { workspace = true }
+wegent-plugin-package = { workspace = true }
+wegent-plugin-runtime = { workspace = true }
 wegent-plugin-store = { workspace = true }
 wegent-project-coordination = { workspace = true }
+wegent-project-notifications = { workspace = true }
+wegent-project-participation = { workspace = true }
+wegent-project-polling = { workspace = true }
+wegent-project-scheduler = { workspace = true }
+wegent-attachment-links = { workspace = true }
 wegent-attachments = { workspace = true }
+wegent-chat-history = { workspace = true }
 wegent-responses-api = { workspace = true }
+wegent-responses-streaming = { workspace = true }
 wegent-media = { workspace = true }
 wegent-capabilities = { workspace = true }
 wegent-models = { workspace = true }
+wegent-model-decisions = { workspace = true }
 wegent-runtime-check = { workspace = true }
+wegent-runtime-execution = { workspace = true }
+wegent-runtime-observations = { workspace = true }
+wegent-runtime-work = { workspace = true }
 wegent-task-store = { workspace = true }
+wegent-task-mutations = { workspace = true }
+wegent-task-views = { workspace = true }
+wegent-video-jobs = { workspace = true }
+wegent-web-content = { workspace = true }
+wegent-subscriptions = { workspace = true }
 wegent-terminal = { workspace = true }
+wegent-resource-library = { workspace = true }
+wegent-resource-readiness = { workspace = true }
 wegent-resource-store = { workspace = true }
 wegent-job-runtime = { workspace = true }
 wegent-socket-events = { workspace = true }
 wegent-git-repositories = { workspace = true }
+wegent-git-inbox = { workspace = true }
 wegent-network-policy = { workspace = true }
+wegent-notification-inbox = { workspace = true }
 wegent-sites = { workspace = true }
+wegent-skill-market = { workspace = true }
+wegent-smart-apps = { workspace = true }
+wegent-socket-adapter = { workspace = true }
 wegent-access = { workspace = true }
+wegent-admin-api = { workspace = true }
 wegent-directory = { workspace = true }
 wegent-identity = { workspace = true }
 wegent-backend-config = { workspace = true }
 wegent-backend-persistence = { workspace = true }
 wegent-celery = { workspace = true }
+wegent-channel-streaming = { workspace = true }
 wegent-python-compat = { workspace = true }
 wegent-http-compat = { workspace = true }
 wegent-storage = { workspace = true }
 wegent-protocol = { workspace = true }
 wegent-crypto = { workspace = true }
 aes = { workspace = true }
-aes-gcm = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
@@ -75,20 +113,13 @@ brz-schedule-redis = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["clock", "serde"] }
 chrono-tz = { workspace = true, features = ["std"] }
-chardetng = { workspace = true }
-csv = { workspace = true }
-encoding_rs = { workspace = true }
 erased-serde = { workspace = true }
-flate2 = { workspace = true, features = ["zlib"] }
 futures-util = { workspace = true, features = ["std"] }
 getrandom = { workspace = true }
 hmac = { workspace = true }
 htmd = { workspace = true }
 lettre = { workspace = true, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 pep440_rs = { workspace = true }
-rustpython-parser = { workspace = true, features = ["num-bigint"] }
-rustpython-ast = { workspace = true, features = ["num-bigint", "fold"] }
-unicode-normalization = { workspace = true }
 pulldown-cmark = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
@@ -96,7 +127,6 @@ hyper = { workspace = true, features = ["http1", "server"] }
 jsonwebtoken = { workspace = true }
 # `md5` for the repository-token digest and the URL-metadata cache key
 # (`hashlib.md5`).
-md-5 = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 brz-json = { workspace = true }
@@ -108,21 +138,22 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "
 toml = { workspace = true }
 tokio-util = { workspace = true, features = ["io"] }
 tracing = { workspace = true }
-turbojpeg = { workspace = true, features = ["cmake"] }
 url = { workspace = true }
 yaml-rust2 = { workspace = true }
-# Pillow's PNG encoder compresses with `deflateInit2(level 9, windowBits 15,
-# memLevel 9, Z_FILTERED)`. `flate2` fixes memLevel at 8 and `zlib-rs` does not
-# reproduce zlib's deflate stream byte-for-byte, so the attachment PNG encoder
-# calls the already-linked zlib through this FFI surface.
-libz-sys = { workspace = true }
-brotli = { workspace = true, features = ["std"] }
-zstd = { workspace = true, features = ["arrays"] }
 zip = { workspace = true, features = ["deflate"] }
-jsonschema = { workspace = true }
 
 [dev-dependencies]
+aes-gcm = { workspace = true }
+wegent-connector-apps = { workspace = true, features = ["test-support"] }
+wegent-plugin-runtime = { workspace = true, features = ["test-support"] }
+wegent-runtime-observations = { workspace = true, features = ["test-support"] }
 wegent-project-coordination = { workspace = true, features = ["test-support"] }
+wegent-project-participation = { workspace = true, features = ["test-support"] }
+wegent-database-migrations = { workspace = true, features = ["test-support"] }
+wegent-runtime-execution = { workspace = true, features = ["test-support"] }
+wegent-socket-adapter = { workspace = true, features = ["test-support"] }
+wegent-responses-streaming = { workspace = true, features = ["test-support"] }
+wegent-execution-emission = { workspace = true, features = ["test-support"] }
 wegent-socket-events = { workspace = true, features = ["test-support"] }
 wegent-identity = { workspace = true, features = ["test-support"] }
 wegent-task-store = { workspace = true, features = ["test-support"] }

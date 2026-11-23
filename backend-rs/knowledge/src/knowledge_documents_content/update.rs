@@ -24,14 +24,13 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use super::reader::{self, DocumentRow};
 use super::update_store::{self, DocumentColumns};
 use super::{ApiFailure, KnowledgeError, access};
 use crate::KnowledgeState;
 use crate::http_compat::FastApiError;
-use wegent_attachments::upload::{OverwriteError, overwrite_attachment_internal};
 
 /// `content_scope.GENERATED_CONTENT_READ_ONLY_MESSAGE`.
 const GENERATED_CONTENT_READ_ONLY_MESSAGE: &str = "Generated Code Wiki content is read-only";
@@ -361,45 +360,27 @@ async fn write_document_content(
 
     // `doc.file_size = len(binary_content)`: the source's first `db.flush()`
     // writes it with the attachment reset, in one transaction.
-    let mut flushed = DocumentColumns::of(&document);
+    let flushed = DocumentColumns::of(&document);
     let mut columns = flushed.clone();
     columns.file_size = binary_content.len() as i64;
 
     // `context_service.overwrite_attachment_internal` (trusted internal path:
     // no owner filter; the manage check above already authorized the write).
-    overwrite_attachment_internal(
-        state.upload_services(),
-        None,
-        document.knowledge_documents_attachment_id,
-        &filename,
-        binary_content,
-        &Map::new(),
-        columns.preflush(&mut flushed, document_id),
-    )
-    .await
-    .map_err(overwrite_failure)?;
+    state
+        .attachment_writer
+        .overwrite(
+            document.knowledge_documents_attachment_id,
+            &filename,
+            binary_content,
+            columns.statement(&flushed, document_id),
+        )
+        .await?;
 
     // `db.refresh(doc)`.
     reader::refresh_document(&state.mysql, document_id)
         .await
         .map_err(internal_failure)?;
     Ok(Some(document))
-}
-
-/// The overwrite stage's `ValueError` classes reach the endpoint's
-/// `except ValueError`; the knowledge path does not catch
-/// `DocumentParseError`, so it falls through to the application's generic 500.
-fn overwrite_failure(error: OverwriteError) -> ApiFailure {
-    match error.into_detail() {
-        Some(error) => ApiFailure::new(
-            error.status(),
-            error
-                .detail_message()
-                .unwrap_or("Internal Server Error")
-                .to_string(),
-        ),
-        None => internal_failure("document parsing failed"),
-    }
 }
 
 /// Drop the stale converted-attachment reference

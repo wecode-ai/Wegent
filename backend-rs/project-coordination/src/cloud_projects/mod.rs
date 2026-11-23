@@ -10,6 +10,9 @@ use chrono::NaiveDateTime;
 
 mod access;
 pub mod collaboration_access;
+mod collaboration_metrics;
+#[cfg(feature = "test-support")]
+pub use collaboration_metrics::test_support as metrics_test_support;
 pub mod environment_authorization;
 pub mod members;
 mod read;

@@ -82,7 +82,7 @@ esac
         let observed = reads.clone();
         let expected_request = expected.clone();
         let app = Router::new().route(
-            "/mcp/wework-space/sse",
+            "/api/mcp/wework-space/sse",
             post(move |headers: HeaderMap, Json(request): Json<Value>| {
                 let reads = observed.clone();
                 let expected = expected_request.clone();

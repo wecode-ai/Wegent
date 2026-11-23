@@ -30,6 +30,7 @@ use crate::internal_callback::channel;
 use crate::internal_callback::completion;
 use crate::internal_callback::emitter::{self, StatusUpdatingEmitter};
 use crate::internal_callback::parser;
+use crate::internal_callback::prepare_interactive_form_event;
 use crate::internal_callback::session::publish_callback_event;
 use crate::socketio::device_heartbeat;
 use crate::socketio::runtime::SocketRuntime;
@@ -227,6 +228,7 @@ async fn process_remote_event(
         .await;
     }
 
+    prepare_interactive_form_event(&state.interactive_form, &mut event).await;
     let mut emitter = StatusUpdatingEmitter::new(redis.clone(), task_id, subtask_id);
     let result = emitter.emit(&mut event).await;
     emitter.close().await;
@@ -337,7 +339,7 @@ async fn deliver_remote_terminal(
     crate::internal_callback::publish_terminal_callback(redis, event)
         .await
         .map_err(|error| error.to_string())?;
-    completion::acknowledge_delivery(&ctx, task_id, subtask_id, delivery)
+    completion::acknowledge_delivery(&ctx.storage(), task_id, subtask_id, delivery)
         .await
         .map_err(|error| error.to_string())
 }
@@ -736,7 +738,7 @@ pub(super) async fn forward_local_task_callbacks(
     source: Option<&Value>,
     event: &crate::internal_callback::event::ExecutionEvent,
 ) {
-    let card = crate::internal_callback::dingtalk_card::DingTalkCardTransport::from_process(state);
+    let card = crate::internal_callback::dingtalk_card::from_process(&state.mysql);
     forward_local_task_callbacks_with_transport(
         state,
         device_id,
@@ -782,8 +784,9 @@ async fn forward_local_task_callbacks_with_transport(
         tracing::info!(task_key, "skipping stale IM runtime event");
         return;
     }
+    let telegram = crate::internal_callback::dingtalk_card::ChannelCredentials(&state.mysql);
     let delivery = channel::RuntimeChannelDelivery {
-        state,
+        telegram: &telegram,
         redis,
         card,
         source_message_id: source

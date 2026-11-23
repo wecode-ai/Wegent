@@ -107,8 +107,10 @@ You'll see a unified model list showing both public (system) and your personal m
 | **Model Type** | Yes | Select: LLM, Embedding, or Rerank |
 | **Model ID** | Yes | Unique identifier (lowercase, hyphens allowed) |
 | **Display Name** | No | Human-readable name for the UI |
-| **Primary Group** | No | First-level grouping used by model selectors |
+| **Primary Group** | No | First-level grouping used by model selectors. The chat composer shows the group icon after the selected model name. |
 | **Secondary Group** | No | Second-level grouping inside the primary group |
+
+Administrators can open **Admin → Public Models → Primary group icons**, select or enter a group name, choose an icon, and save. Primary groups with the same name share the icon. Select **Automatic** and save to restore the generated icon.
 
 #### Provider Configuration
 

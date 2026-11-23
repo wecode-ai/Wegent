@@ -68,9 +68,9 @@ pub async fn build_with_clients(
         }
     }
     let attachment_http = attachments::minio_client::build_client()?;
-    let decision_http = crate::decisions::provider::build_client()?;
+    let decision_http = wegent_model_decisions::build_client()?;
     let url_metadata_http =
-        crate::url_metadata::build_client().context("failed to build the url-metadata client")?;
+        wegent_web_content::build_client().context("failed to build the url-metadata client")?;
     // `terminal_session_service.start()` runs at process startup: the
     // `terminal_session:invalidations` subscription must be ready before
     // terminal traffic, and losing it fails terminal authorization closed.
@@ -141,9 +141,7 @@ pub async fn build_with_clients(
             crate::knowledge_download_policy::DefaultDocumentDownloadPolicy,
         ),
         task_store: Arc::new(crate::task_store::DefaultTaskStore::new(mysql.clone())),
-        workspace_repository: Arc::new(
-            crate::subscriptions_list::workspaces::BaseWorkspaceRepository,
-        ),
+        workspace_repository: Arc::new(crate::subscription_workspaces::BaseWorkspaceRepository),
         user_reader: Arc::new(PublicUserReader::new(mysql.clone())),
         auth,
         internal_chat,
@@ -183,7 +181,7 @@ pub async fn build_with_clients(
         // The outbound token issuer's `_collect_extra_claims` seam: the
         // open-source core contributes no extra claims.
         token_issuer_extra_claims: Arc::new(crate::token_issuers::NoExtraClaims),
-        external_knowledge_auth: Arc::new(crate::mcp::knowledge_external::auth::PersonalApiKeyAuth),
+        external_knowledge_auth: Arc::new(crate::PersonalApiKeyAuth),
         // `create_response`'s background dispatch worker is spawned here so the
         // fire-and-forget executor/chat-shell dispatch is initialization-owned.
         responses_dispatch: Arc::new(crate::responses::dispatch::spawn()),

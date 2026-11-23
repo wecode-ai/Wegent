@@ -796,10 +796,12 @@ async fn collection_partitions_isolate_role_intake_and_durable_cursors_without_c
     let source = json!({"providerId":"example/events","profile":"account","kind":"resource","id":"shared","name":"Shared resource","enabledAfter":"2026-11-04T00:00:00Z","policy":{"automatic":true,"askBeforeAct":true}});
     let mut selected = source.clone();
     selected["collectionKey"] = json!("selection:v1:one");
+    let mut later = selected.clone();
+    later["enabledAfter"] = json!("2026-11-04T04:00:00Z");
     let roles = vec![
         json!({"id":"selected-a","enabled":true,"connections":[selected]}),
         json!({"id":"all","enabled":true,"connections":[source]}),
-        json!({"id":"selected-b","enabled":true,"connections":[selected]}),
+        json!({"id":"selected-b","enabled":true,"connections":[later]}),
     ];
     let groups = collection_sources(&roles);
     assert_eq!(groups.len(), 2);
@@ -835,6 +837,14 @@ async fn collection_partitions_isolate_role_intake_and_durable_cursors_without_c
     assert_eq!(events.len(), 3);
     for event in &events {
         let selected_role = event["roleIds"][0] != "all";
+        let matching = roles
+            .iter()
+            .find(|role| role["id"] == event["roleIds"][0])
+            .unwrap();
+        assert_eq!(
+            event["roleEnabledAfter"],
+            matching["connections"][0]["enabledAfter"]
+        );
         assert_eq!(
             event["source"].get("collectionKey").is_some(),
             selected_role

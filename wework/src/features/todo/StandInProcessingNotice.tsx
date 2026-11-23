@@ -7,6 +7,7 @@ import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { CircleAlert, Clock } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
+import { standInProcessingFailure } from './standInProcessingFailure'
 import { useStandInProcessingStatus } from './useStandInProcessingStatus'
 
 export function StandInProcessingNotice({
@@ -14,6 +15,7 @@ export function StandInProcessingNotice({
   userId,
   deviceId,
   onOpen,
+  onOpenConnectionSettings,
   onOpenTask,
   snapshot,
 }: {
@@ -21,6 +23,7 @@ export function StandInProcessingNotice({
   userId: number
   deviceId: string
   onOpen(): void
+  onOpenConnectionSettings(): void
   onOpenTask?(taskId: string): void
   snapshot?: ReturnType<typeof useStandInProcessingStatus>
 }) {
@@ -62,15 +65,7 @@ export function StandInProcessingNotice({
       setChecking(false)
     }
   }
-  const failure =
-    error ??
-    (status?.error
-      ? backgroundModelUnavailable
-        ? t('standIn.processing.background_model_unavailable')
-        : recovery
-          ? t('runtimeCommandRecovery.notice')
-          : getStandInErrorMessage(status.error)
-      : undefined)
+  const { message: failure, ownerMismatch } = standInProcessingFailure(status, error, userId, t)
   if (!failure && !status?.awaitingUser && !currentReview) return null
   return (
     <div
@@ -92,6 +87,18 @@ export function StandInProcessingNotice({
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {ownerMismatch && (
+          <ControlButton
+            variant="outline"
+            size="sm"
+            type="button"
+            data-testid="stand-in-processing-open-connection-settings"
+            className="min-h-11 rounded-md border border-border bg-background px-3 hover:bg-muted md:min-h-8"
+            onClick={onOpenConnectionSettings}
+          >
+            {t('standIn.processing.check_cloud_connection')}
+          </ControlButton>
+        )}
         {recovery && api?.taskCommands && status?.error?.commandId && status.taskId && (
           <Button
             ref={attachRecoveryButton}

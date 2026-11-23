@@ -10,88 +10,26 @@
 //! `app/api/ws/wework_runtime_namespace.py`.
 
 use brz_mysql::{Json, MysqlTransaction as _};
-use chrono::Utc;
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
 use super::project_chat_events::ack_error;
 use crate::json_compat::python_json_value;
 use crate::sql_support::StatementArg;
 use crate::state::AppState;
 
+#[cfg(test)]
+pub(crate) use wegent_project_coordination::project_chat_message::utc_isoformat;
+pub(crate) use wegent_project_coordination::project_chat_message::{
+    INSERT_MESSAGE_SQL, InsertMessage, MESSAGE_COLUMNS, MessageRow, database_timestamp,
+    insert_message_args, insert_message_on, message_view, metadata_map, runtime_activity_key,
+    runtime_source, utc_isoformat_micros, utc_timestamp,
+};
+
 use super::project_chat_events::{AgentFailureRequest, AgentStartRequest};
 
 #[path = "project_chat_authorship.rs"]
 mod authorship;
 pub(crate) use authorship::{message_view_with_actor, shared_message_payload};
-
-/// One `project_chat_messages` row used by the view.
-#[derive(Clone, Debug, brz_mysql::FromMysqlRow)]
-pub(crate) struct MessageRow {
-    #[mysql(rename = "id")]
-    pub(crate) id: i64,
-    #[mysql(rename = "message_id")]
-    pub(crate) message_id: String,
-    #[mysql(rename = "client_message_id")]
-    pub(crate) client_message_id: String,
-    #[mysql(rename = "project_id")]
-    pub(crate) project_id: String,
-    #[mysql(rename = "task_id")]
-    pub(crate) task_id: String,
-    #[mysql(rename = "sender_type")]
-    pub(crate) sender_type: String,
-    #[mysql(rename = "sender_id")]
-    pub(crate) sender_id: String,
-    #[mysql(rename = "sender_name")]
-    pub(crate) sender_name: String,
-    #[mysql(rename = "message_type")]
-    pub(crate) message_type: String,
-    #[mysql(rename = "content")]
-    pub(crate) content: String,
-    #[mysql(rename = "metadata")]
-    pub(crate) metadata: Option<Json<Value>>,
-    #[mysql(rename = "trigger_message_id")]
-    pub(crate) trigger_message_id: String,
-    #[mysql(rename = "reply_to_message_id")]
-    pub(crate) reply_to_message_id: String,
-    #[mysql(rename = "thread_root_message_id")]
-    pub(crate) thread_root_message_id: String,
-    #[mysql(rename = "agent_id")]
-    pub(crate) agent_id: String,
-    #[mysql(rename = "runtime_device_id")]
-    pub(crate) runtime_device_id: String,
-    #[mysql(rename = "runtime_task_id")]
-    pub(crate) runtime_task_id: String,
-    #[mysql(rename = "status")]
-    pub(crate) status: String,
-    #[mysql(rename = "created_at")]
-    pub(crate) created_at: chrono::NaiveDateTime,
-    #[mysql(rename = "updated_at")]
-    pub(crate) updated_at: chrono::NaiveDateTime,
-}
-
-impl MessageRow {
-    pub(crate) fn metadata(&self) -> Value {
-        self.metadata
-            .as_ref()
-            .map(|json| json.0.clone())
-            .unwrap_or_else(|| json!({}))
-    }
-}
-
-/// `row.metadata_json` as an object map (the source default is `{}`).
-pub(crate) fn metadata_map(row: &MessageRow) -> Map<String, Value> {
-    match row.metadata() {
-        Value::Object(map) => map,
-        _ => Map::new(),
-    }
-}
-
-/// The `project_chat_messages` projection shared by every read.
-pub(super) const MESSAGE_COLUMNS: &str = "id, message_id, client_message_id, project_id, task_id, \
-     sender_type, sender_id, sender_name, message_type, content, metadata, \
-     trigger_message_id, reply_to_message_id, thread_root_message_id, agent_id, \
-     runtime_device_id, runtime_task_id, status, created_at, updated_at";
 
 /// `subscribe`'s message query (`after_sequence` order, limit, task filter).
 pub(crate) async fn load_messages(
@@ -463,28 +401,6 @@ pub(crate) fn validate_agent(
     Ok(())
 }
 
-/// One deferred `project_chat_messages` INSERT.
-pub(crate) struct InsertMessage<'a> {
-    pub(crate) message_id: &'a str,
-    pub(crate) client_message_id: &'a str,
-    pub(crate) project_id: &'a str,
-    pub(crate) task_id: &'a str,
-    pub(crate) sender_type: &'a str,
-    pub(crate) sender_id: &'a str,
-    pub(crate) sender_name: &'a str,
-    pub(crate) message_type: &'a str,
-    pub(crate) content: &'a str,
-    pub(crate) metadata: Value,
-    pub(crate) trigger_message_id: &'a str,
-    pub(crate) reply_to_message_id: &'a str,
-    pub(crate) thread_root_message_id: &'a str,
-    pub(crate) agent_id: &'a str,
-    pub(crate) runtime_device_id: &'a str,
-    pub(crate) runtime_task_id: &'a str,
-    pub(crate) runtime_activity_key: &'a str,
-    pub(crate) status: &'a str,
-}
-
 /// `db.add` + flush: insert one message and return its generated id.
 pub(crate) async fn insert_message(
     state: &AppState,
@@ -499,52 +415,6 @@ pub(crate) async fn insert_message(
             tracing::error!(%error, "project chat message insert failed");
             ack_error("INVALID_MESSAGE", "database query failed")
         })
-}
-
-pub(crate) async fn insert_message_on(
-    tx: &mut impl brz_mysql::MysqlTransaction,
-    message: &InsertMessage<'_>,
-) -> brz_mysql::MysqlResult<i64> {
-    tx.execute(INSERT_MESSAGE_SQL, insert_message_args(message))
-        .await
-        .map(|execution| execution.last_insert_id as i64)
-}
-
-pub(super) const INSERT_MESSAGE_SQL: &str = "INSERT INTO project_chat_messages (message_id, client_message_id, project_id, \
-               task_id, sender_type, sender_id, sender_name, message_type, content, metadata, \
-               trigger_message_id, reply_to_message_id, thread_root_message_id, agent_id, \
-               runtime_device_id, runtime_task_id, runtime_activity_key, status) \
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
-pub(super) fn insert_message_args(message: &InsertMessage<'_>) -> Vec<StatementArg> {
-    vec![
-        StatementArg::Str(message.message_id.to_string()),
-        StatementArg::Str(message.client_message_id.to_string()),
-        StatementArg::Str(message.project_id.to_string()),
-        StatementArg::Str(message.task_id.to_string()),
-        StatementArg::Str(message.sender_type.to_string()),
-        StatementArg::Str(message.sender_id.to_string()),
-        StatementArg::Str(message.sender_name.to_string()),
-        StatementArg::Str(message.message_type.to_string()),
-        StatementArg::Str(message.content.to_string()),
-        StatementArg::Str(python_json_value(&message.metadata)),
-        StatementArg::Str(message.trigger_message_id.to_string()),
-        StatementArg::Str(message.reply_to_message_id.to_string()),
-        StatementArg::Str(message.thread_root_message_id.to_string()),
-        StatementArg::Str(message.agent_id.to_string()),
-        StatementArg::Str(message.runtime_device_id.to_string()),
-        StatementArg::Str(message.runtime_task_id.to_string()),
-        StatementArg::Str(if message.runtime_activity_key.is_empty() {
-            use sha2::{Digest as _, Sha256};
-            format!(
-                "{:x}",
-                Sha256::digest(format!("message\0{}", message.message_id))
-            )
-        } else {
-            message.runtime_activity_key.to_string()
-        }),
-        StatementArg::Str(message.status.to_string()),
-    ]
 }
 
 /// `_finish_activity`'s message update.
@@ -582,183 +452,6 @@ pub(crate) async fn update_message(
             tracing::error!(%error, "project chat message update failed");
             ack_error("INVALID_MESSAGE", "database query failed")
         })
-}
-
-/// Resolve a complete persisted source pair; never combine unrelated sources.
-pub(super) fn runtime_source(row: &MessageRow) -> (String, String) {
-    if !row.runtime_device_id.is_empty() && !row.runtime_task_id.is_empty() {
-        return (row.runtime_device_id.clone(), row.runtime_task_id.clone());
-    }
-    let metadata = row.metadata();
-    let stand_in = &metadata["stand_in"];
-    if row.sender_type == "agent"
-        && stand_in["binding_id"]
-            .as_str()
-            .is_some_and(|id| !id.is_empty())
-        && stand_in["user_id"].as_i64().is_some_and(|id| id > 0)
-        && let (Some(device), Some(task)) =
-            (stand_in["device_id"].as_str(), stand_in["task_id"].as_str())
-        && !device.is_empty()
-        && !task.is_empty()
-    {
-        return (device.into(), task.into());
-    }
-    let publication = &metadata["assistant_publication"];
-    if publication["verified"] != true && publication["source_verified"] != true {
-        return (String::new(), String::new());
-    }
-    (
-        publication["device_id"].as_str().unwrap_or_default().into(),
-        publication["task_id"].as_str().unwrap_or_default().into(),
-    )
-}
-
-/// `ProjectChatMessageView`.
-pub(crate) fn message_view(row: &MessageRow) -> Value {
-    let metadata = row.metadata();
-    let (device_id, task_id) = runtime_source(row);
-    let trace_ref = (!device_id.is_empty() && !task_id.is_empty()).then(|| {
-        let identity = format!(
-            "{}\0{}\0{}\0{}",
-            row.project_id, row.task_id, device_id, task_id
-        );
-        format!("{:x}", Sha256::digest(identity.as_bytes()))
-    });
-    let historical = metadata
-        .get("history_import")
-        .is_some_and(|value| !value.is_null())
-        || metadata
-            .get("imported_from")
-            .is_some_and(|value| !value.is_null());
-    let verified_publication = metadata
-        .get("assistant_publication")
-        .and_then(|value| value.get("verified"))
-        .and_then(Value::as_bool)
-        == Some(true);
-    let verified_source = metadata["assistant_publication"]["source_verified"] == true;
-    let published_by = metadata
-        .get("assistant_publication")
-        .filter(|_| verified_publication)
-        .and_then(|value| value.get("published_by"))
-        .and_then(Value::as_str);
-    let source = if historical {
-        "human"
-    } else if verified_publication || verified_source {
-        "ai"
-    } else {
-        match row.sender_type.as_str() {
-            "user" => "human",
-            "agent" => "ai",
-            _ => "system",
-        }
-    };
-    json!({
-        "actorUserId": if source == "human" { optional_text(&row.sender_id) } else { Value::Null },
-        "actorDisplayName": if source == "human" { optional_text(&row.sender_name) } else { Value::Null },
-        "generationSource": source,
-        "publicationSource": if published_by == Some("ai") {
-            "ai"
-        } else if verified_publication {
-            "human"
-        } else {
-            source
-        },
-        "confirmationState": if historical {
-            "unknown"
-        } else if published_by == Some("ai") {
-            "not_required"
-        } else if verified_publication {
-            "authorized"
-        } else if source == "ai" {
-            "pending"
-        } else {
-            "not_required"
-        },
-        "sequenceNumber": row.id,
-        "messageId": row.message_id,
-        "clientMessageId": optional_text(&row.client_message_id),
-        "projectId": row.project_id,
-        "taskId": optional_text(&row.task_id),
-        "sender": {
-            "type": row.sender_type,
-            "id": row.sender_id,
-            "name": row.sender_name,
-        },
-        "type": row.message_type,
-        "content": row.content,
-        "metadata": row.metadata(),
-        "triggerMessageId": optional_text(&row.trigger_message_id),
-        "replyToMessageId": optional_text(&row.reply_to_message_id),
-        "rootMessageId": optional_text(&row.thread_root_message_id),
-        "agentId": optional_text(&row.agent_id),
-        "runtimeAddress": Value::Null,
-        "traceState": if trace_ref.is_some() { "restricted" } else { "history-unavailable" },
-        "traceRef": trace_ref,
-        "status": row.status,
-        "createdAt": utc_isoformat(row.created_at),
-        "updatedAt": utc_isoformat(row.updated_at),
-    })
-}
-
-/// An empty text column renders as JSON null.
-pub(crate) fn optional_text(value: &str) -> Value {
-    if value.is_empty() {
-        Value::Null
-    } else {
-        Value::String(value.to_string())
-    }
-}
-
-/// `database_datetime_as_utc(...).isoformat()`: naive columns are stored in the
-/// deployment's UTC+8 timezone.
-pub(crate) fn utc_isoformat(value: chrono::NaiveDateTime) -> String {
-    let utc = utc_timestamp(value).and_utc();
-    if utc.timestamp_subsec_nanos() == 0 {
-        utc.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
-    } else {
-        utc.format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string()
-    }
-}
-
-const DATABASE_OFFSET: chrono::Duration = chrono::Duration::hours(8);
-
-/// Encode a UTC instant using the same database-session convention as reads.
-pub(crate) fn database_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
-    value + DATABASE_OFFSET
-}
-
-pub(crate) fn utc_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
-    value - DATABASE_OFFSET
-}
-
-/// `datetime.now(UTC).isoformat()`.
-pub(crate) fn utc_isoformat_micros() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string()
-}
-
-/// `_runtime_activity_key`: sha256 of `device\0task\0trigger`.
-pub(crate) fn runtime_activity_key(
-    runtime_device_id: &str,
-    runtime_task_id: &str,
-    trigger_message_id: &str,
-) -> Option<String> {
-    if runtime_device_id.is_empty() || runtime_task_id.is_empty() {
-        return None;
-    }
-    use sha2::{Digest as _, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(runtime_device_id.as_bytes());
-    hasher.update([0u8]);
-    hasher.update(runtime_task_id.as_bytes());
-    hasher.update([0u8]);
-    hasher.update(trigger_message_id.as_bytes());
-    Some(
-        hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect(),
-    )
 }
 
 /// `uuid.uuid4()`.

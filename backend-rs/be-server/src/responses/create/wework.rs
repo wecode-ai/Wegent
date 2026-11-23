@@ -988,7 +988,7 @@ async fn existing_conversation_response(
     user_id: i64,
     body: &WeworkResponseCreate,
     selection: &ModelSelection,
-    observation: &mut crate::chat_metrics::RequestObservation,
+    observation: &mut wegent_execution_completion::chat_metrics::RequestObservation,
 ) -> Result<brz_http_server::HttpResponse<BodyStream>, FastApiError> {
     let (device_id, task_id) = match (&body.conversation, &body.previous_response_id) {
         (Some(conversation), _) => conversation_address(conversation)?,
@@ -1126,7 +1126,8 @@ pub(crate) async fn create_response(
     limit: RateLimit,
     limit_key: &str,
 ) -> Result<brz_http_server::HttpResponse<BodyStream>, FastApiError> {
-    let mut observation = crate::chat_metrics::RequestObservation::new("wework");
+    let mut observation =
+        wegent_execution_completion::chat_metrics::RequestObservation::new("wework");
     // The body is parsed only after the discriminator selected this branch.
     let body: WeworkResponseCreate = serde_json::from_value(body).map_err(|error| {
         FastApiError::detail(

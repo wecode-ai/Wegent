@@ -26,7 +26,7 @@ pub use routes::load_routes_config;
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 8000;
-pub(crate) const DEFAULT_PYTHON_UPSTREAM: &str = "http://127.0.0.1:8004";
+use wegent_backend_config::DEFAULT_PYTHON_UPSTREAM;
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 // The locked OriginService uses hyper-util's 90s idle connection pool. Keep
 // loopback connections alive beyond that lease; the independent public gateway

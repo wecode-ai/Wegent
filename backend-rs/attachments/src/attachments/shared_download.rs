@@ -36,21 +36,15 @@ use std::sync::Arc;
 
 use brz_http_server::StatusCode;
 use brz_http_server::{Binary, HttpResponse};
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use serde::Deserialize;
+use wegent_attachment_links::verify_public_share_token;
 
 use super::context_store;
 use super::minio_client::MinioConfig;
 use super::storage;
 use crate::AttachmentState;
-use crate::config::AuthConfig;
 
 /// `ContextType.ATTACHMENT`.
 const CONTEXT_TYPE_ATTACHMENT: &str = "attachment";
-
-/// `PUBLIC_ATTACHMENT_PURPOSE` (`app/services/attachment/public_link.py`):
-/// the single purpose value a public share token may carry.
-const PUBLIC_ATTACHMENT_PURPOSE: &str = "public_attachment_download";
 
 /// 403 `{"detail": "Invalid or expired share link"}`: the endpoint's error
 /// for every token failure (invalid signature, expired, wrong purpose,
@@ -77,57 +71,6 @@ fn storage_failure() -> crate::http_compat::FastApiError {
 
 fn internal_error() -> crate::http_compat::FastApiError {
     error_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
-}
-
-/// Claims of a public attachment share token
-/// (`verify_public_attachment_token`'s payload contract).
-#[derive(Debug, Deserialize)]
-struct ShareClaims {
-    attachment_id: Option<i64>,
-    purpose: Option<String>,
-    nonce: Option<String>,
-}
-
-impl ShareClaims {
-    /// The verified `attachment_id`: `payload.get("attachment_id")` must be
-    /// an `int` in the source and `payload.get("nonce")` must be present
-    /// (`not None`, not empty in practice for a `token_urlsafe` nonce).
-    fn verified_attachment_id(&self) -> Option<i64> {
-        if self.purpose.as_deref() != Some(PUBLIC_ATTACHMENT_PURPOSE) {
-            return None;
-        }
-        let id = self.attachment_id?;
-        if self.nonce.as_deref().unwrap_or_default().is_empty() {
-            return None;
-        }
-        Some(id)
-    }
-}
-
-fn algorithm(config: &AuthConfig) -> Algorithm {
-    match config.algorithm.as_str() {
-        "HS384" => Algorithm::HS384,
-        "HS512" => Algorithm::HS512,
-        _ => Algorithm::HS256,
-    }
-}
-
-/// `verify_public_attachment_token`: decode with the active
-/// `SECRET_KEY` only (`jwt.decode(token, settings.SECRET_KEY,
-/// algorithms=[settings.ALGORITHM])`; unlike `decode_jose_jwt`, no legacy
-/// key rotation). `exp` is validated when present (python-jose default) and
-/// no audience is required. Returns the verified `attachment_id`.
-fn verify_public_share_token(config: &AuthConfig, token: &str) -> Option<i64> {
-    let mut validation = Validation::new(algorithm(config));
-    // python-jose: `verify_aud` passes when the claim is absent; the token
-    // carries no audience, so no audience is required.
-    validation.validate_aud = false;
-    // `exp`/`iat`/`nbf` are validated only when present in the source.
-    validation.required_spec_claims.clear();
-    let key = DecodingKey::from_secret(config.jwt_key.as_bytes());
-    decode::<ShareClaims>(token, &key, &validation)
-        .ok()
-        .and_then(|token| token.claims.verified_attachment_id())
 }
 
 /// `_build_content_disposition` (shared with the download handler): ASCII
@@ -319,79 +262,6 @@ fn minio_config_from_env() -> Option<MinioConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jsonwebtoken::EncodingKey;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn config() -> AuthConfig {
-        AuthConfig {
-            jwt_key: "share-test-key".to_string(),
-            legacy_jwt_keys: vec!["legacy-key".to_string()],
-            algorithm: "HS256".to_string(),
-        }
-    }
-
-    fn share_token(claims: serde_json::Value) -> String {
-        let header = jsonwebtoken::Header::new(Algorithm::HS256);
-        let key = EncodingKey::from_secret(b"share-test-key");
-        jsonwebtoken::encode(&header, &claims, &key).unwrap()
-    }
-
-    #[test]
-    fn verifies_a_well_formed_share_token() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock after Unix epoch")
-            .as_secs();
-        let token = share_token(serde_json::json!({
-            "attachment_id": 1287754,
-            "purpose": "public_attachment_download",
-            "nonce": "aNAPDSW01gmFxIJgWdEnqg",
-            "iat": now,
-            "exp": now + 7 * 24 * 60 * 60,
-        }));
-        assert_eq!(verify_public_share_token(&config(), &token), Some(1287754));
-    }
-
-    #[test]
-    fn rejects_tokens_signed_with_legacy_keys() {
-        let header = jsonwebtoken::Header::new(Algorithm::HS256);
-        let key = EncodingKey::from_secret(b"legacy-key");
-        let token = jsonwebtoken::encode(
-            &header,
-            &serde_json::json!({
-                "attachment_id": 1,
-                "purpose": "public_attachment_download",
-                "nonce": "n",
-            }),
-            &key,
-        )
-        .unwrap();
-        assert_eq!(verify_public_share_token(&config(), &token), None);
-    }
-
-    #[test]
-    fn rejects_wrong_purpose_missing_nonce_and_garbage() {
-        let claims = serde_json::json!({
-            "attachment_id": 1,
-            "purpose": "public_attachment_download",
-            "nonce": "n",
-        });
-        let mut wrong_purpose = claims.clone();
-        wrong_purpose["purpose"] = serde_json::json!("attachment_download");
-        assert_eq!(
-            verify_public_share_token(&config(), &share_token(wrong_purpose)),
-            None
-        );
-
-        let mut missing_nonce = claims;
-        missing_nonce.as_object_mut().unwrap().remove("nonce");
-        assert_eq!(
-            verify_public_share_token(&config(), &share_token(missing_nonce)),
-            None
-        );
-
-        assert_eq!(verify_public_share_token(&config(), "not-a-jwt"), None);
-    }
 
     #[test]
     fn ascii_filenames_use_quoted_disposition() {

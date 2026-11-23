@@ -22,7 +22,7 @@ use serde::Serialize;
 use crate::socketio::device_lifecycle::publish_room_event;
 use crate::socketio::runtime::{CHAT_NAMESPACE, SocketRuntime};
 use crate::state::AppState;
-use crate::task_mutation_api::{TaskUpdateBody, update_task};
+use wegent_task_mutations::{TaskUpdateBody, update_task};
 
 /// `executor_name` of one device's work (`f"device-{device_id}"`).
 const DEVICE_EXECUTOR_PREFIX: &str = "device-";
@@ -113,7 +113,15 @@ pub async fn fail_running_subtasks(
     for task_id in task_ids {
         let mut body = TaskUpdateBody::default();
         body.status.set("FAILED".to_owned());
-        if let Err(error) = update_task(state, user_id, task_id, None, &body).await {
+        if let Err(error) = update_task(
+            &crate::task_view_state::mutations(state),
+            user_id,
+            task_id,
+            None,
+            &body,
+        )
+        .await
+        {
             tracing::error!(
                 ?error,
                 user_id,

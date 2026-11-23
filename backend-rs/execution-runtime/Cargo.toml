@@ -7,6 +7,8 @@ license.workspace = true
 description = "Execution stream, cancellation, and task metrics lifecycle"
 
 [dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
 brz-http = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 wegent-execution-events = { workspace = true }

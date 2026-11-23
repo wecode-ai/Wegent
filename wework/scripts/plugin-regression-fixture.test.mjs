@@ -16,43 +16,62 @@ const plugin = { slug: 'uninstall-e2e-restart-pending', installedId: 71 }
 test.each([200, 401, 403, 500])(
   'uses the Electron session for plugin RPC and preserves HTTP %s',
   async status => {
-    const origin = 'http://127.0.0.1:3000'
-    const payload =
-      status === 200 ? { ok: true, result: [] } : { ok: false, error: { code: 'probe' } }
-    const command = vi.fn(async (action, selector, options) => {
-      assert.equal(selector, 'body')
-      if (action === 'getLocationOrigin') return origin
-      assert.equal(action, 'fetchLocalRuntime')
-      assert.equal(options.timeoutMs, 10_000)
-      assert.deepEqual(JSON.parse(options.value), {
-        url: `${origin}/wework/executor/v1/rpc`,
-        method: 'POST',
-        headers: { accept: 'application/json', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          id: 'plugin-regression',
-          method: 'executor.plugins.store.list',
-          params: {},
-        }),
-        timeoutMs: 10_000,
-      })
-      return JSON.stringify({ status, headers: {}, body: JSON.stringify(payload) })
+    await assertPluginExecutorRequest(status, 'executor.plugins.store.list', {
+      expectedTimeoutMs: 10_000,
     })
-    const fetch = vi.fn(() => {
-      throw new Error('Plugin RPC must use the authenticated session')
-    })
-    vi.stubGlobal('fetch', fetch)
-    try {
-      assert.deepEqual(await requestPluginExecutor({ command }, 'executor.plugins.store.list'), {
-        status,
-        payload,
-      })
-      assert.equal(command.mock.calls.length, 2)
-      assert.equal(fetch.mock.calls.length, 0)
-    } finally {
-      vi.unstubAllGlobals()
-    }
   }
 )
+
+test('uses the product local-sync deadline for plugin local sync', async () => {
+  await assertPluginExecutorRequest(200, 'executor.plugins.local_sync', {
+    expectedTimeoutMs: 305_000,
+  })
+})
+
+test('preserves an explicit plugin executor timeout', async () => {
+  await assertPluginExecutorRequest(200, 'executor.plugins.local_sync', {
+    expectedTimeoutMs: 123,
+    timeoutMs: 123,
+  })
+})
+
+async function assertPluginExecutorRequest(status, method, { expectedTimeoutMs, timeoutMs }) {
+  const origin = 'http://127.0.0.1:3000'
+  const payload =
+    status === 200 ? { ok: true, result: [] } : { ok: false, error: { code: 'probe' } }
+  const command = vi.fn(async (action, selector, options) => {
+    assert.equal(selector, 'body')
+    if (action === 'getLocationOrigin') return origin
+    assert.equal(action, 'fetchLocalRuntime')
+    assert.equal(options.timeoutMs, expectedTimeoutMs)
+    assert.deepEqual(JSON.parse(options.value), {
+      url: `${origin}/wework/executor/v1/rpc`,
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'plugin-regression',
+        method,
+        params: {},
+      }),
+      timeoutMs: expectedTimeoutMs,
+    })
+    return JSON.stringify({ status, headers: {}, body: JSON.stringify(payload) })
+  })
+  const fetch = vi.fn(() => {
+    throw new Error('Plugin RPC must use the authenticated session')
+  })
+  vi.stubGlobal('fetch', fetch)
+  try {
+    assert.deepEqual(await requestPluginExecutor({ command }, method, {}, { timeoutMs }), {
+      status,
+      payload,
+    })
+    assert.equal(command.mock.calls.length, 2)
+    assert.equal(fetch.mock.calls.length, 0)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+}
 
 test.each(['home', 'marketplace', 'detail'])(
   'opens the requested marketplace row from %s without retaining an earlier detail',

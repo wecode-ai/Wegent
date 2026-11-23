@@ -69,8 +69,8 @@ pub(super) async fn execution_request(
     // own user row (`_get_user(db, user_id)`), independent of the endpoint's
     // earlier principal read.
     let user = user_row(state, user_id).await?;
-    let auth_token =
-        tokens::create_task_token(state, 0, 0, user_id, &user.user_name).map_err(|error| {
+    let auth_token = tokens::create_task_token(&state.auth, 0, 0, user_id, &user.user_name)
+        .map_err(|error| {
             tracing::error!(?error, "wework task token creation failed");
             FastApiError::internal()
         })?;

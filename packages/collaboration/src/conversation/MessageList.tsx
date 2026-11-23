@@ -8,7 +8,10 @@ import {
 } from './assistantMessagePresentation'
 import { Fragment, memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useDocumentEvent, useWindowEvent, useElementTypography } from '../dom-events'
-import { createMessageTextSelectionState } from './messageTextSelectionState'
+import {
+  createMessageTextSelectionState,
+  type ConversationShareSelectionContext,
+} from './messageTextSelectionState'
 import { createMessageListViewportPort } from './messageListViewportPort'
 import { defaultRangeExtractor, type Range as VirtualRange } from '@tanstack/react-virtual'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
@@ -107,6 +110,7 @@ export interface MessageListProps {
   onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onShareSelectionAsIssue?: (text: string, context: ConversationShareSelectionContext) => void
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   onFillSelectionToAnswer?: (text: string) => void
@@ -177,6 +181,7 @@ export const MessageList = memo(function MessageList({
   onForkMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onShareSelectionAsIssue,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   onFillSelectionToAnswer,
@@ -416,7 +421,10 @@ export const MessageList = memo(function MessageList({
   useMarkdownWindowingViewport(markdownWindowingState.scope)
 
   const hasSelectionActions = Boolean(
-    onAddSelectionToConversation || onAskSelectionInSidebar || onFillSelectionToAnswer
+    onShareSelectionAsIssue ||
+    onAddSelectionToConversation ||
+    onAskSelectionInSidebar ||
+    onFillSelectionToAnswer
   )
   const selectionState = useMemo(
     () =>
@@ -518,6 +526,18 @@ export const MessageList = memo(function MessageList({
         textSelection.conversationKey === conversationKey && (
           <SelectionActionsPopover
             position={{ left: textSelection.left, top: textSelection.top }}
+            onShareAsIssue={
+              onShareSelectionAsIssue
+                ? () =>
+                    applySelectionAction(text =>
+                      onShareSelectionAsIssue(text, {
+                        ...textSelection,
+                        messages,
+                        turns,
+                      })
+                    )
+                : undefined
+            }
             onAddToConversation={
               onAddSelectionToConversation
                 ? () => applySelectionAction(onAddSelectionToConversation)

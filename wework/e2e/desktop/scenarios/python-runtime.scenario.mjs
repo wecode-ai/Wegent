@@ -158,6 +158,9 @@ export async function createDesktopScenario({
         !(await readFile(appLog, 'utf8')).includes('python-runtime-uv-download-started'),
         'Login downloaded Python after its last plugin was uninstalled'
       )
+      // Chromium times out a paused proxy CONNECT independently of the download
+      // timeout. Finish workspace and model setup before restoring Python demand.
+      await chat.prepareConversation(control)
       const demandOffset = (await readFile(appLog, 'utf8')).length
       try {
         await mcp.install(control, cloudEnvironment)

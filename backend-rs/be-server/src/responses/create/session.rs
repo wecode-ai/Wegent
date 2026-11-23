@@ -543,6 +543,16 @@ mod tests {
     }
 
     #[test]
+    fn memory_metadata_uses_the_project_column_even_when_resume_uses_the_label() {
+        let labelled = serde_json::json!({"metadata": {"labels": {"projectId": "2584"}}});
+        assert_eq!(resumed_project_id(Some(0), &labelled), 2584);
+        assert_eq!(
+            wegent_execution_request::memory_context::metadata_project_id(Some(0)),
+            None
+        );
+    }
+
+    #[test]
     fn resumed_project_id_prefers_the_column_then_digit_labels() {
         // `_merge_project_workspace` (`request_builder.py:3119-3143`): the
         // physical `project_id` wins; otherwise `metadata.labels.projectId`

@@ -435,7 +435,7 @@ async fn dispatch_inner(
             {
                 return Ok(());
             }
-            crate::background_jobs::video::create::dispatch(state, request).await?
+            crate::background_jobs::video::dispatch(state, request).await?
         }
         other => bail!("managed project execution cannot route {other:?}"),
     }

@@ -12,20 +12,8 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use wegent_backend_persistence::mysql_query::MysqlQuery;
 
-#[derive(Clone)]
-pub(crate) struct Admission {
-    pub owner: i64,
-    pub assigner: i64,
-    pub agent_id: String,
-    pub team_id: i64,
-    pub environment: String,
-    pub device_id: String,
-    pub context: Value,
-    pub runtime_selection: Value,
-    pub config: Value,
-    pub requires_approval: bool,
-    pub waiting_runtime: bool,
-}
+pub(crate) use profile::Admission;
+
 pub(crate) struct Execution {
     pub runtime_task_id: String,
     pub id: i64,
@@ -121,7 +109,7 @@ pub(crate) async fn enqueue_on(
         && !input.device_id.is_empty()
         && input.runtime_selection["executor_kind"] != "collaboration_group_dispatch"
     {
-        let request = profile::build(state, issue, execution.id, input)
+        let request = profile::build(&state.mysql, issue, execution.id, input)
             .await
             .map_err(|error| brz_mysql::MysqlError::InvalidQuery {
                 reason: error.to_string(),

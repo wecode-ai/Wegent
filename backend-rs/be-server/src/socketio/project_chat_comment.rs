@@ -112,7 +112,7 @@ pub(super) async fn enqueue_root(
                     let project_id = trigger.project_id.parse().map_err(|_| MysqlError::InvalidQuery {
                         reason: "Invalid project identifier".to_owned(),
                     })?;
-                    let result = crate::runtime_work_transcript_access::comment_manager_dispatch(
+                    let result = wegent_runtime_work::comment_manager_dispatch(
                         &state.mysql, project_id, &trigger.task_id, &bound.agent_id, &metadata,
                     ).await;
                     let Ok(Some((id, device))) = result else {
@@ -130,7 +130,7 @@ pub(super) async fn enqueue_root(
                     let project_id = trigger.project_id.parse().map_err(|_| MysqlError::InvalidQuery {
                         reason: "Invalid project identifier".to_owned(),
                     })?;
-                    let result = crate::runtime_work_transcript_access::comment_member_assignment(
+                    let result = wegent_runtime_work::comment_member_assignment(
                         &state.mysql, project_id, &trigger.task_id, &bound.agent_id,
                         &bound.runtime_device_id, &bound.runtime_task_id, &metadata,
                     ).await;
@@ -358,8 +358,8 @@ async fn guide_active_comment(
     if active.is_none() || bound.runtime_device_id.is_empty() {
         return Ok(Ok(None));
     }
-    let result = super::runtime_rpc::call(
-        state, execution.executor_owner_user_id, &bound.runtime_device_id,
+    let result = wegent_runtime_work::call_owned_runtime(
+        &crate::runtime_work::request_services(state), execution.executor_owner_user_id, &bound.runtime_device_id,
         "runtime.tasks.guidance",
         json!({
             "taskId": bound.runtime_task_id,
@@ -383,7 +383,7 @@ async fn guide_active_comment(
         {
             return Ok(Ok(None));
         }
-        Err(super::runtime_rpc::CallFailure::Rpc(error))
+        Err(wegent_runtime_work::CallFailure::Rpc(error))
             if error.code == "remote_control_disabled" =>
         {
             return Ok(Ok(None));
@@ -505,48 +505,6 @@ async fn load_comment_attachments(
             })
         })
         .collect())
-}
-
-pub(super) async fn settle_human_reply(
-    tx: &mut impl MysqlTransaction,
-    mut issue: store::Node,
-    request_id: &str,
-    message_id: &str,
-) -> Result<bool, MysqlError> {
-    let Some(target) = issue.metadata.0["human_requests"]
-        .as_array_mut()
-        .and_then(|requests| {
-            requests
-                .iter_mut()
-                .find(|request| request["id"] == request_id)
-        })
-        .filter(|request| {
-            request["status"] == "answering" && request["answer_message_id"] == message_id
-        })
-    else {
-        return Ok(false);
-    };
-    let now = chrono::Utc::now().to_rfc3339();
-    target
-        .as_object_mut()
-        .expect("matched request object")
-        .remove("delivery_error");
-    target["status"] = json!("resolved");
-    target["version"] = json!(target["version"].as_i64().unwrap_or(1) + 1);
-    target["updated_at"] = json!(now);
-    let mut events = target["events"].as_array().cloned().unwrap_or_default();
-    events.push(json!({"type":"accepted","at":now,"message_id":message_id}));
-    target["events"] = json!(events);
-    let recipient = target["recipient_user_id"].as_i64().unwrap_or(0);
-    let responsible = target["responsible_user_id"].as_i64().unwrap_or(0);
-    tx.execute("UPDATE loop_items SET metadata=?, version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
-        (issue.metadata, issue.id.as_str())).await?;
-    tx.execute("DELETE FROM loop_items WHERE resource_type='human_request_index' AND parent_id=? AND name=?",
-        (issue.id.as_str(), request_id)).await?;
-    tx.execute("UPDATE wework_notifications SET is_read=true, read_status_changed_at=UTC_TIMESTAMP(6)
-        WHERE user_id IN (?,?) AND is_read=false AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.humanRequestId'))=?",
-        (recipient, responsible, request_id)).await?;
-    Ok(true)
 }
 
 fn claim_human_reply(

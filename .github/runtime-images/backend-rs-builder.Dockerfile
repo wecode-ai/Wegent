@@ -21,7 +21,7 @@ FROM toolchain AS dependency-sources
 COPY shared/rust /workspace/shared/rust
 COPY shared/assets/calendars /workspace/shared/assets/calendars
 COPY --exclude=be-server/src --exclude=be-server/examples --exclude=be-server/tests \
-    --exclude=config --exclude=docs --exclude=init_data --exclude=migrations --exclude=scripts backend-rs/ ./
+    --exclude=config --exclude=docs --exclude=init_data --exclude=migrations/reference --exclude=scripts backend-rs/ ./
 
 FROM dependency-sources AS dependencies
 RUN mkdir -p be-server/src be-server/examples \
@@ -36,7 +36,6 @@ FROM ${DEPS_IMAGE} AS build
 COPY shared/assets/codex-models /workspace/shared/assets/codex-models
 COPY backend-rs/be-server/src ./be-server/src
 COPY backend-rs/be-server/examples ./be-server/examples
-COPY backend-rs/migrations ./migrations
 COPY shared/data/builtin-connector-apps.json ../shared/data/builtin-connector-apps.json
 RUN find be-server/src be-server/examples -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs \

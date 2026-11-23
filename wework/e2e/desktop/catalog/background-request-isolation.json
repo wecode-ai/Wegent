@@ -1,0 +1,6 @@
+{
+  "order": 156600,
+  "scenario": "./scenarios/background-request-isolation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 103100, "shard": 6, "position": 8100 } }
+}

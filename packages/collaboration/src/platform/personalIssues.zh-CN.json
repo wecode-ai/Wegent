@@ -149,6 +149,8 @@
     "do_myself": "我"
   },
   "taskIssueShare": {
+    "shareWholeMessage": "分享整条消息",
+    "shareSelectionOnly": "仅分享选中文字",
     "noLinkedIssues": "暂无关联事项",
     "fileUnavailable": "无法读取「{{name}}」。可以移除这个文件，或恢复文件后重试。",
     "participantsOptional": "参与人（可选）",

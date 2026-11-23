@@ -100,12 +100,21 @@
                   "status": {
                     "const": "sent"
                   },
+                  "messageId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "inReplyTo": {
+                    "type": "string",
+                    "minLength": 1
+                  },
                   "duplicate": {
                     "type": "boolean"
                   }
                 },
                 "required": [
-                  "status"
+                  "status",
+                  "messageId"
                 ],
                 "additionalProperties": false
               }
@@ -168,6 +177,11 @@
               ]
             },
             "pagination": "cursor"
+          },
+          "reviewHistory": {
+            "resourceKinds": [
+              "inbox"
+            ]
           }
         }
       ]

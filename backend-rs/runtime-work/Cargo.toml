@@ -1,0 +1,37 @@
+[package]
+name = "wegent-runtime-work"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Runtime workbench, transcript access, and notification settings"
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-socket-io.workspace = true
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+flate2 = { workspace = true, features = ["zlib"] }
+futures-util = { workspace = true, features = ["std"] }
+getrandom.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+wegent-device-identity.workspace = true
+wegent-devices.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-project-coordination.workspace = true
+wegent-python-compat.workspace = true
+wegent-socket-events.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+wegent-backend-test-support.workspace = true

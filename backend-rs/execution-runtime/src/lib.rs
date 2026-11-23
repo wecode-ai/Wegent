@@ -8,6 +8,7 @@
 
 use wegent_backend_config as config;
 
+pub mod background_chat;
 #[cfg(test)]
 mod block_read_tests;
 pub mod delivery;
