@@ -81,7 +81,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       setQueuedMessages,
     } = sessionOwner.commands
 
-    const { attachments: draftAttachments, captureAttachments, removeAttachment } = attachmentState
+    const { attachments: draftAttachments, captureAttachments, releaseAttachment } = attachmentState
     const { getDraftEditVersion } = sessionOwner.commands
 
     const standalone = options.standaloneAttachments !== undefined
@@ -92,7 +92,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
     const submittedAttachmentSourceId = standalone ? options.draftAttachmentSourceId : undefined
     const cleanupSubmittedAttachmentSource = () => {
       if (submittedAttachmentSourceId === undefined) return
-      void removeAttachment(submittedAttachmentSourceId).catch(() => {})
+      releaseAttachment(submittedAttachmentSourceId)
     }
     const restoreAttachments = (
       scope: string,

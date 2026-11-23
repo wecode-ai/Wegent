@@ -159,6 +159,61 @@ test('resolves the live image editor and retains saved preview state across File
   }
 })
 
+test('updates a remounted preview when an in-flight save completes', async () => {
+  const load = vi.fn(async () => new Blob(['original'], { type: 'image/png' }))
+  const lateSave = pending<{
+    attachmentId: number
+    file: File
+    comments: Array<{ x: number; y: number; text: string }>
+  }>()
+  const submit = vi.fn().mockResolvedValue(true)
+  const saveMarkup = vi.fn(() => lateSave.promise)
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:late-save')
+      static revokeObjectURL = vi.fn()
+    }
+  )
+  const attachment = {
+    ...source('late.png', load),
+    image: { draftAttachmentId: -1, editorScope: 'late-save' },
+  }
+  const panel = () => (
+    <ImageEditProvider actions={{ submit, saveMarkup, scope: 'late-save' }}>
+      <WorkspaceAttachmentPreview source={attachment} />
+    </ImageEditProvider>
+  )
+  const first = render(panel())
+  try {
+    await screen.findByTestId('attachment-image-side-viewer')
+    fireEvent.click(screen.getByTestId('attachment-image-tool-markup'))
+    fireEvent.click(screen.getByTestId('attachment-image-markup-comment'))
+    fireEvent.click(screen.getByTestId('attachment-image-edit-surface'), { detail: 0 })
+    fireEvent.change(screen.getByTestId('attachment-image-comment-input'), {
+      target: { value: 'Save late' },
+    })
+    fireEvent.click(screen.getByTestId('attachment-image-markup-comment'))
+    fireEvent.click(screen.getByTestId('attachment-image-edit-save'))
+    expect(saveMarkup).toHaveBeenCalledOnce()
+
+    first.unmount()
+    const second = render(panel())
+    await screen.findByTestId('attachment-image-side-viewer')
+    await act(async () =>
+      lateSave.resolve({
+        attachmentId: -2,
+        file: new File(['saved late'], 'saved-late.png', { type: 'image/png' }),
+        comments: [{ x: 25, y: 30, text: 'Late comment' }],
+      })
+    )
+    expect(await screen.findByRole('region', { name: 'saved-late.png' })).toBeInTheDocument()
+    second.unmount()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
 test('keeps download errors local to their preview and clears them on retry', async () => {
   const download = pending<string>()
   vi.mocked(saveBlobToDownloads).mockReturnValueOnce(download.promise)

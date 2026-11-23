@@ -7,7 +7,7 @@ import type {
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Download } from 'lucide-react'
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { InlineDesktopImagePreview } from '@/components/chat/image-preview/DesktopImagePreview'
 import {
   useScopedImageEditor,
@@ -18,6 +18,25 @@ import { workspaceFilePreviewKind } from './workspaceFileTypes'
 
 const consumedImageSources = new WeakSet<WorkspaceAttachmentPreviewSource>()
 const savedImageBySource = new WeakMap<WorkspaceAttachmentPreviewSource, SavedImageMarkup>()
+const savedImageListeners = new WeakMap<WorkspaceAttachmentPreviewSource, Set<() => void>>()
+
+function subscribeSavedImage(source: WorkspaceAttachmentPreviewSource, listener: () => void) {
+  let listeners = savedImageListeners.get(source)
+  if (!listeners) {
+    listeners = new Set()
+    savedImageListeners.set(source, listeners)
+  }
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) savedImageListeners.delete(source)
+  }
+}
+
+function storeSavedImage(source: WorkspaceAttachmentPreviewSource, saved: SavedImageMarkup) {
+  savedImageBySource.set(source, saved)
+  for (const listener of savedImageListeners.get(source) ?? []) listener()
+}
 
 export function WorkspaceAttachmentPreview({
   source,
@@ -28,11 +47,15 @@ export function WorkspaceAttachmentPreview({
   const [revision, setRevision] = useState(0)
   const [failedImage, setFailedImage] = useState<File | null>(null)
   const [, setConsumedRevision] = useState(0)
-  const [savedImage, setSavedImage] = useState<
-    (SavedImageMarkup & { source: WorkspaceAttachmentPreviewSource }) | null
-  >(null)
-  const saved =
-    savedImage?.source === source ? savedImage : (savedImageBySource.get(source) ?? null)
+  const subscribeSaved = useCallback(
+    (listener: () => void) => subscribeSavedImage(source, listener),
+    [source]
+  )
+  const saved = useSyncExternalStore(
+    subscribeSaved,
+    () => savedImageBySource.get(source) ?? null,
+    () => null
+  )
   const resource = useMemo(
     () =>
       createAsyncResource(
@@ -91,8 +114,7 @@ export function WorkspaceAttachmentPreview({
           editorScope={editor?.scope}
           onMarkupSaved={result => {
             const savedResult = { ...result, source }
-            savedImageBySource.set(source, savedResult)
-            setSavedImage(savedResult)
+            storeSavedImage(source, savedResult)
           }}
           onComposerAttachmentConsumed={() => {
             consumedImageSources.add(source)

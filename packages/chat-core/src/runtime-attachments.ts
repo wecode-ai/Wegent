@@ -60,9 +60,11 @@ function pendingAttachment(
 ): PreparingAttachment {
   const { name, type, size } = metadata
   let ready: Promise<Attachment> | undefined
+  const retryable = typeof prepare === 'function'
   const start = () => {
     if (ready) return ready
-    ready = typeof prepare === 'function' ? Promise.resolve().then(prepare) : prepare
+    attachment.status = 'uploading'
+    ready = retryable ? Promise.resolve().then(prepare) : prepare
     void ready.then(
       result => {
         delete attachment[preparationFile]
@@ -75,6 +77,7 @@ function pendingAttachment(
       },
       () => {
         attachment.status = 'failed'
+        if (retryable) ready = undefined
       }
     )
     return ready

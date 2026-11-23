@@ -19,6 +19,7 @@ export function useScopedComposerAttachments(
     handleFileSelectForScope,
     addExistingAttachmentForScope,
     removeAttachmentForScope,
+    releaseAttachmentForScope,
     dismissAttachmentErrorForScope,
     resetAttachmentsForScope,
   } = owner
@@ -38,6 +39,10 @@ export function useScopedComposerAttachments(
     (id: number) => removeAttachmentForScope(scope, id),
     [removeAttachmentForScope, scope]
   )
+  const releaseAttachment = useCallback(
+    (id: number) => releaseAttachmentForScope(scope, id),
+    [releaseAttachmentForScope, scope]
+  )
   const dismissAttachmentError = useCallback(
     (filename: string) => dismissAttachmentErrorForScope(scope, filename),
     [dismissAttachmentErrorForScope, scope]
@@ -55,6 +60,7 @@ export function useScopedComposerAttachments(
     handleFileSelect,
     addExistingAttachment,
     removeAttachment,
+    releaseAttachment,
     dismissAttachmentError,
     resetAttachments,
   }

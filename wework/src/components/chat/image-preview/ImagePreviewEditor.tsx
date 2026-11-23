@@ -136,10 +136,19 @@ export function useImagePreviewEditor(
     clearEraseGesture()
   }
 
+  const commentsChanged =
+    comments.length !== initialComments.length ||
+    comments.some(
+      (comment, index) =>
+        comment.x !== initialComments[index]?.x ||
+        comment.y !== initialComments[index]?.y ||
+        comment.text !== initialComments[index]?.text
+    )
   const canSendMarkup =
     markup.marks.length > 0 ||
     markup.pendingText ||
     comments.length > 0 ||
+    (saveMarkup && commentsChanged) ||
     comment?.text.trim() ||
     instructions.trim()
 
@@ -155,7 +164,9 @@ export function useImagePreviewEditor(
       kind: 'markup',
       marks,
       instructions,
-      ...(currentComments.length ? { comments: currentComments } : {}),
+      ...(currentComments.length || (saveMarkup && commentsChanged)
+        ? { comments: currentComments }
+        : {}),
     })
   }
 

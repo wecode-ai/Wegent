@@ -579,14 +579,14 @@ test('places an unnumbered draft, numbers saved comments and sends Codex-formatt
   const submit = vi.fn().mockResolvedValue(true)
   const close = vi.fn()
   const submitComposer = vi.fn()
-  const removeDraftAttachment = vi.fn().mockResolvedValue(undefined)
+  const releaseDraftAttachment = vi.fn()
   function Preview() {
     const editor = useImageEditSubmission({
       enabled: true,
       scope: 'comment-draft',
       upload,
       submit,
-      removeDraftAttachment,
+      releaseDraftAttachment,
     })
     return (
       <ImageEditContext.Provider value={editor}>
@@ -663,7 +663,7 @@ test('places an unnumbered draft, numbers saved comments and sends Codex-formatt
     expect(screen.getByTestId('attachment-image-edit-send')).toHaveFocus()
     expect(submit).not.toHaveBeenCalled()
     expect(submitComposer).not.toHaveBeenCalled()
-    expect(removeDraftAttachment).not.toHaveBeenCalled()
+    expect(releaseDraftAttachment).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByTestId('attachment-image-comment-pin'))
     const savedCommentEditor = screen.getByTestId('attachment-image-comment-input')
@@ -692,7 +692,7 @@ test('places an unnumbered draft, numbers saved comments and sends Codex-formatt
     )
     expect(submitComposer).not.toHaveBeenCalled()
     await waitFor(() => expect(close).toHaveBeenCalledOnce())
-    expect(removeDraftAttachment).toHaveBeenCalledExactlyOnceWith('comment-draft', attachment.id)
+    expect(releaseDraftAttachment).toHaveBeenCalledExactlyOnceWith('comment-draft', attachment.id)
     expect(upload).not.toHaveBeenCalled()
     await resolvePreparingAttachments(submit.mock.calls[0]![1].standaloneAttachments)
     expect(upload).toHaveBeenCalledExactlyOnceWith(source)
@@ -989,6 +989,26 @@ test('saves initial and newly added comments exactly once with markup', async ()
       { x: 50, y: 50, text: 'New pin' },
     ],
   })
+})
+
+test('allows saving after deleting the last existing comment', async () => {
+  const saveMarkup = vi.fn().mockResolvedValue(null)
+  renderImageEditor(vi.fn(), saveMarkup, {
+    attachment: imageAttachment({
+      id: 42,
+      image_markup_comments: [{ x: 10, y: 20, text: 'Remove me' }],
+    }),
+    fromComposer: true,
+  })
+  fireEvent.click(screen.getByTestId('attachment-image-tool-markup'))
+  fireEvent.click(screen.getByTestId('attachment-image-markup-comment'))
+  fireEvent.click(screen.getByTestId('attachment-image-comment-pin'))
+  fireEvent.click(screen.getByTestId('attachment-image-comment-delete'))
+  const save = screen.getByTestId('attachment-image-edit-save')
+  expect(save).toBeEnabled()
+  fireEvent.click(save)
+  await waitFor(() => expect(saveMarkup).toHaveBeenCalledOnce())
+  expect(saveMarkup.mock.calls[0]?.[2]).toMatchObject({ kind: 'markup', comments: [] })
 })
 
 test('cancels an active edit before closing or opening the side panel', () => {

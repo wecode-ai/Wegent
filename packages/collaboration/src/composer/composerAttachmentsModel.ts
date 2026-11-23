@@ -477,20 +477,32 @@ export function createComposerAttachmentsModel(
     return replacement
   }
 
-  const removeAttachmentForScope = async (targetScopeKey: string, attachmentId: number) => {
+  const attachmentsForScope = (targetScopeKey: string, attachmentId: number) => {
     const scopedState = stateByScope[targetScopeKey] ?? emptyAttachmentState()
     const attachment = scopedState.attachments.find(item => item.id === attachmentId)
-    const attachmentsToRemove = attachment?.ui_group_id
+    return attachment?.ui_group_id
       ? scopedState.attachments.filter(item => item.ui_group_id === attachment.ui_group_id)
       : attachment
         ? [attachment]
         : []
-    attachmentsToRemove.forEach(releaseAttachmentPreview)
-    const idsToRemove = new Set(attachmentsToRemove.map(item => item.id))
+  }
+
+  const discardAttachments = (targetScopeKey: string, attachments: Attachment[]) => {
+    attachments.forEach(releaseAttachmentPreview)
+    const ids = new Set(attachments.map(item => item.id))
     updateScopeState(targetScopeKey, current => ({
       ...current,
-      attachments: current.attachments.filter(attachment => !idsToRemove.has(attachment.id)),
+      attachments: current.attachments.filter(attachment => !ids.has(attachment.id)),
     }))
+  }
+
+  const releaseAttachmentForScope = (targetScopeKey: string, attachmentId: number) => {
+    discardAttachments(targetScopeKey, attachmentsForScope(targetScopeKey, attachmentId))
+  }
+
+  const removeAttachmentForScope = async (targetScopeKey: string, attachmentId: number) => {
+    const attachmentsToRemove = attachmentsForScope(targetScopeKey, attachmentId)
+    discardAttachments(targetScopeKey, attachmentsToRemove)
     try {
       await Promise.all(
         attachmentsToRemove.filter(item => item.id > 0).map(item => deleteAttachment(item.id))
@@ -548,6 +560,8 @@ export function createComposerAttachmentsModel(
       attachmentSourcesByScope.get(scopeKey)?.get(attachmentId)?.file
     const removeAttachment = (attachmentId: number) =>
       removeAttachmentForScope(scopeKey, attachmentId)
+    const releaseAttachment = (attachmentId: number) =>
+      releaseAttachmentForScope(scopeKey, attachmentId)
     const resetAttachments = () => resetAttachmentsForScope(scopeKey)
     const dismissAttachmentError = (filename: string) =>
       dismissAttachmentErrorForScope(scopeKey, filename)
@@ -573,6 +587,8 @@ export function createComposerAttachmentsModel(
       replaceImageAttachmentForScope,
       removeAttachment,
       removeAttachmentForScope,
+      releaseAttachment,
+      releaseAttachmentForScope,
       resetAttachments,
       resetAttachmentsForScope,
     }

@@ -235,7 +235,7 @@ test('sends an appshot image and hidden companion for a draft image comment', as
   const { resolvePreparingAttachments } = await import('@/lib/runtime-attachments')
   const existingComments = [{ x: 25, y: 40, text: 'Existing pin' }]
   const appshot: Attachment = {
-    id: -10,
+    id: 10,
     filename: 'appshot.png',
     file_size: 10,
     mime_type: 'image/png',
@@ -250,7 +250,7 @@ test('sends an appshot image and hidden companion for a draft image comment', as
   }
   const companion: Attachment = {
     ...appshot,
-    id: -11,
+    id: 11,
     filename: 'appshot-context.txt',
     mime_type: 'text/plain',
     file_extension: '.txt',
@@ -295,7 +295,7 @@ test('sends an appshot image and hidden companion for a draft image comment', as
       attachmentScope: 'appshot-comment',
       upload,
       submit: send,
-      removeDraftAttachment: attachments.current.removeAttachmentForScope,
+      releaseDraftAttachment: attachments.current.releaseAttachmentForScope,
     })
   )
   const source = new File(['appshot'], appshot.filename, { type: appshot.mime_type })
@@ -398,7 +398,7 @@ test.each([true, false])(
   'sends the appshot group from a main pane image comment and cleans it only after acceptance: %s',
   async accepted => {
     const appshot: Attachment = {
-      id: -10,
+      id: 10,
       filename: 'appshot.png',
       file_size: 10,
       mime_type: 'image/png',
@@ -412,7 +412,7 @@ test.each([true, false])(
     }
     const companion: Attachment = {
       ...appshot,
-      id: -11,
+      id: 11,
       filename: 'appshot-context.txt',
       mime_type: 'text/plain',
       file_extension: '.txt',
@@ -434,8 +434,9 @@ test.each([true, false])(
       filename: 'appshot-comment.png',
       local_path: '/tmp/appshot-comment.png',
     }
+    const remove = vi.fn().mockResolvedValue(undefined)
     const { result: attachments } = renderHook(() =>
-      useWorkbenchAttachments({ scopeKey: 'main-appshot' })
+      useWorkbenchAttachments({ scopeKey: 'main-appshot', deleteAttachment: remove })
     )
     act(() => {
       attachments.current.addExistingAttachment(appshot)
@@ -450,7 +451,7 @@ test.each([true, false])(
         attachmentState: {
           ...attachments.current,
           captureAttachments: attachments.current.captureAttachments,
-          removeAttachment: attachments.current.removeAttachment,
+          releaseAttachment: attachments.current.releaseAttachment,
         },
         codeCommentContexts: [],
         currentRuntimeTask: { deviceId: 'device', taskId: 'task' },
@@ -503,6 +504,7 @@ test.each([true, false])(
         accepted ? ['newer-draft.png'] : ['appshot.png', 'appshot-context.txt', 'newer-draft.png']
       )
     )
+    expect(remove).not.toHaveBeenCalled()
   }
 )
 
@@ -1362,6 +1364,28 @@ describe('prepareRuntimeAttachmentsForDevice', () => {
       prepareRuntimeAttachmentsForDevice('local-device', [], [], localRuntimeAttachments([pending]))
     ).rejects.toThrow('staging failed')
     expect(failedPreparationFile(pending)).toBe(source)
+  })
+
+  test('retries a deferred attachment when reading its source fails', async () => {
+    const { prepareAttachmentFile, resolvePreparingAttachments } =
+      await import('@/lib/runtime-attachments')
+    const source = new File(['image'], 'retry.png', { type: 'image/png' })
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('read failed'))
+      .mockResolvedValueOnce(source)
+    const upload = vi
+      .fn()
+      .mockResolvedValue({ ...attachment, id: 42, filename: 'retry.png', status: 'ready' })
+    const pending = prepareAttachmentFile(source.name, source.type, load, upload)
+
+    await expect(resolvePreparingAttachments([pending])).rejects.toThrow('read failed')
+    expect(pending.status).toBe('failed')
+    const [prepared] = await resolvePreparingAttachments([pending])
+
+    expect(prepared).toMatchObject({ id: 42, status: 'ready' })
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(upload).toHaveBeenCalledOnce()
   })
 
   test('reports how to recover an unfinished attachment after its in-memory preparation is lost', async () => {

@@ -87,7 +87,7 @@ export function DesktopWorkbenchPaneView({
     upload: model.services.attachmentApi?.uploadAttachment,
     submit: model.submitPaneInput,
     replaceImageAttachment: model.projectChat.replaceImageAttachmentForScope,
-    removeDraftAttachment: model.projectChat.removeAttachmentForScope,
+    releaseDraftAttachment: model.projectChat.releaseAttachmentForScope,
   })
   const {
     workbenchVisible,

@@ -17,13 +17,13 @@ export function useImageEditSubmission({
   upload,
   submit,
   replaceImageAttachment,
-  removeDraftAttachment,
+  releaseDraftAttachment,
 }: {
   enabled: boolean
   scope?: string
   attachmentScope?: string
   upload?: (file: File) => Promise<Attachment>
-  removeDraftAttachment?: (scope: string, attachmentId: number) => Promise<void>
+  releaseDraftAttachment?: (scope: string, attachmentId: number) => void
   replaceImageAttachment?: (
     scope: string,
     id: number,
@@ -96,11 +96,11 @@ export function useImageEditSubmission({
           edit.kind === 'comment' &&
           attachmentScope &&
           source.draftAttachmentId !== undefined &&
-          removeDraftAttachment
+          releaseDraftAttachment
         ) {
           // The message owns its separately prepared image. Retire only the draft source.
           const id = source.draftAttachmentId
-          void snapshot.then(() => removeDraftAttachment(attachmentScope, id)).catch(() => {})
+          releaseDraftAttachment(attachmentScope, id)
         } else {
           void snapshot.catch(() => {})
         }
@@ -114,7 +114,7 @@ export function useImageEditSubmission({
     submit,
     upload,
     replaceImageAttachment,
-    removeDraftAttachment,
+    releaseDraftAttachment,
     t,
     locale,
   ])

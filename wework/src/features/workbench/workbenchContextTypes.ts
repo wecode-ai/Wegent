@@ -299,6 +299,8 @@ export interface WorkbenchContextValue {
     ) => Promise<Attachment | null>
     removeAttachment: (attachmentId: number) => Promise<void>
     removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
+    releaseAttachment: (attachmentId: number) => void
+    releaseAttachmentForScope: (scopeKey: string, attachmentId: number) => void
     dismissAttachmentError: (filename: string) => void
     dismissAttachmentErrorForScope: (scopeKey: string, filename: string) => void
     resetAttachments: () => void
