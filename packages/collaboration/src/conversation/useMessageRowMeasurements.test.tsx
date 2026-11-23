@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, useRef } from 'react'
+import { act, useLayoutEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
 import { useConversationVirtualizer } from './useConversationVirtualizer'
@@ -9,7 +9,7 @@ const rowSelector = '[data-message-row]'
 const rowHeight = 10
 const viewportHeight = 2000
 
-function Conversation() {
+function Conversation({ onFirstLayout }: { onFirstLayout: (size?: number) => void }) {
   const listRef = useRef<HTMLDivElement>(null)
   const scrollElementRef = useRef<HTMLDivElement>(null)
   const measureElement = useMessageRowMeasure()
@@ -25,6 +25,10 @@ function Conversation() {
   })
   const rows = virtualizer.getVirtualItems()
   useMessageRowMeasurements(listRef, virtualizer, true)
+  useLayoutEffect(() => {
+    const first = rows[0]
+    if (first) onFirstLayout(virtualizer.itemSizeCache.get(first.key))
+  }, [onFirstLayout, virtualizer, rows])
   return (
     <div ref={scrollElementRef} data-viewport>
       <div ref={listRef}>
@@ -65,7 +69,9 @@ test('converges when measured rows expose more rows than their estimates', async
     return new DOMRect(0, 0, 640, this.matches(rowSelector) ? rowHeight : this.clientHeight)
   })
   try {
-    await act(async () => root.render(<Conversation />))
+    const onFirstLayout = vi.fn()
+    await act(async () => root.render(<Conversation onFirstLayout={onFirstLayout} />))
+    expect(onFirstLayout.mock.calls[0]).toEqual([rowHeight])
     expect(container.querySelectorAll(rowSelector)).toHaveLength(viewportHeight / rowHeight + 2)
   } finally {
     act(() => root.unmount())

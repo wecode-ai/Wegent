@@ -69,6 +69,7 @@ export function useMessageRowMeasurements(
   enabled: boolean
 ) {
   const pending = useRef<Set<HTMLElement> | null>(null)
+  const initializedList = useRef<HTMLDivElement | null>(null)
   const measureRows = useCallback(
     (rows: HTMLElement[]) => {
       if (!enabled) return
@@ -87,7 +88,7 @@ export function useMessageRowMeasurements(
         const list = listRef.current
         if (!list?.isConnected || !virtualizer.options.enabled) return
         const attached = [...batch].filter(row => list.contains(row))
-        if (attached.length) measureAttachedRows(attached, list, virtualizer)
+        if (attached.length) flushSync(() => measureAttachedRows(attached, list, virtualizer))
       })
     },
     [enabled, listRef, virtualizer]
@@ -111,7 +112,16 @@ export function useMessageRowMeasurements(
         virtualizer.elementsCache.get(virtualizer.options.getItemKey(Number(row.dataset.index))) !==
         row
     )
-    if (changed.length) measureRows(changed)
+    if (changed.length === 0) return
+    const list = listRef.current
+    if (!list || initializedList.current === list) {
+      measureRows(changed)
+      return
+    }
+    initializedList.current = list
+    // Restore with actual sizes in the first visible commit. Measuring subsequent
+    // ranges outside the commit lets newly exposed rows converge without recursion.
+    measureAttachedRows(changed, list, virtualizer)
   })
   const measureRow = useCallback((row: HTMLElement) => measureRows([row]), [measureRows])
   return { measureRow, measureRows }
@@ -125,18 +135,16 @@ function measureAttachedRows(
   // Read layout once for the batch before updating any virtual positions.
   rows.forEach(row => initialBounds.set(row, row.getBoundingClientRect()))
   try {
-    flushSync(() => {
-      for (const row of rows) {
-        if (!row.isConnected || !list.contains(row)) continue
-        // TanStack skips synchronous measurement during native scrolling. Commit
-        // the current DOM size before registering it for ongoing observation.
-        const index = Number(row.dataset.index)
-        const size = virtualizer.options.measureElement(row, undefined, virtualizer)
-        const item = virtualizer.getVirtualItems().find(item => item.index === index)
-        if (item && item.size !== size) virtualizer.resizeItem(index, size)
-        if (row.isConnected && list.contains(row)) virtualizer.measureElement(row)
-      }
-    })
+    for (const row of rows) {
+      if (!row.isConnected || !list.contains(row)) continue
+      // TanStack skips synchronous measurement during native scrolling. Commit
+      // the current DOM size before registering it for ongoing observation.
+      const index = Number(row.dataset.index)
+      const size = virtualizer.options.measureElement(row, undefined, virtualizer)
+      const item = virtualizer.getVirtualItems().find(item => item.index === index)
+      if (item && item.size !== size) virtualizer.resizeItem(index, size)
+      if (row.isConnected && list.contains(row)) virtualizer.measureElement(row)
+    }
   } finally {
     rows.forEach(row => initialBounds.delete(row))
   }
