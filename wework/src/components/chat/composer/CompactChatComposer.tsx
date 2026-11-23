@@ -121,6 +121,7 @@ interface CompactChatComposerProps {
   modelSelectorOverride?: ReactNode
   isModelSelectionReady?: boolean
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   projectPhrases?: QuickPhrase[]
   sendKey?: 'enter' | 'cmd_enter'
@@ -178,6 +179,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       modelSelectorOverride,
       isModelSelectionReady = true,
       isStreaming = false,
+      showPauseButton = true,
       onPause,
       projectPhrases = [],
       sendKey = 'enter',
@@ -518,7 +520,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               </ControlButton>
             )}
             {showSubmitButton &&
-              (isStreaming && !canSend ? (
+              (showPauseButton && isStreaming && !canSend ? (
                 <ControlButton
                   variant="primary"
                   size="sm"

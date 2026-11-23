@@ -22,7 +22,10 @@ import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributi
 import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
-interface ComposerToolbarProps {
+interface ComposerToolbarProps extends Pick<
+  ComponentProps<typeof SharedComposerToolbar>,
+  'isStreaming' | 'showPauseButton' | 'onPause'
+> {
   composerScopeKey?: string
   captureInsertion?(): { insertText(text: string): boolean } | null
   className?: string
@@ -56,8 +59,6 @@ interface ComposerToolbarProps {
   onCompactContext?: () => void
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
-  isStreaming?: boolean
-  onPause?: () => void
   showWorkspaceMenu?: boolean
   projectWorkMenuContext?: Omit<ComponentProps<typeof PopoutWorkspaceMenu>, 'disabled'>
   projectPhrases?: QuickPhrase[]

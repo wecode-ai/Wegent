@@ -116,6 +116,7 @@ interface ProjectChatComposerProps {
   showModelSelector?: boolean
   showExecutionTools?: boolean
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
   collapseWhenIdle?: boolean
@@ -207,6 +208,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       showExecutionTools = true,
       showModelSelector,
       isStreaming = false,
+      showPauseButton,
       onPause,
       showWorkspaceMenu,
       collapseWhenIdle = false,
@@ -466,6 +468,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               goalDraftActive={goalDraftActive}
               onCancelGoalDraft={onCancelGoalDraft}
               isStreaming={isStreaming}
+              showPauseButton={showPauseButton}
               onPause={onPause}
               showWorkspaceMenu={showWorkspaceMenu}
               projectWorkMenuContext={
