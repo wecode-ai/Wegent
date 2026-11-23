@@ -76,26 +76,19 @@ it('follows the measured transcript end without scrolling into temporary Markdow
   dispose()
 })
 
-it('keeps the scroll button hidden during controller-owned follow steps', () => {
+it('retargets native follow on layout changes and ignores earlier scrollend events', () => {
   const requestFrame = vi.fn((_callback: FrameRequestCallback) => 1)
   vi.stubGlobal('requestAnimationFrame', requestFrame)
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
   const viewport = document.createElement('div')
   let scrollHeight = 640
-  let rangeReads = 0
+  const scrollTo = vi.fn(({ top, behavior }: ScrollToOptions) => {
+    if (behavior !== 'smooth') viewport.scrollTop = top ?? 0
+  })
   Object.defineProperties(viewport, {
     clientHeight: { value: 640 },
-    scrollHeight: {
-      get: () => {
-        rangeReads++
-        return scrollHeight
-      },
-    },
-    scrollTo: {
-      value: ({ top }: ScrollToOptions) => {
-        viewport.scrollTop = top ?? 0
-      },
-    },
+    scrollHeight: { get: () => scrollHeight },
+    scrollTo: { value: scrollTo },
   })
   const message = {
     id: 'reply',
@@ -122,17 +115,25 @@ it('keeps the scroll button hidden during controller-owned follow steps', () => 
     ports
   )
   state.handleContentLayoutChange()
-  expect(requestFrame).toHaveBeenCalled()
+  expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 1360, behavior: 'smooth' })
   expect(state.getSnapshot().virtualAnchorToEnd).toBe(false)
-  const readsBeforeFrame = rangeReads
-  requestFrame.mock.lastCall?.[0](16)
-  expect(rangeReads).toBe(readsBeforeFrame)
 
   scrollHeight += 100
   state.handleVirtualLayoutChange()
   requestFrame.mock.lastCall?.[0](32)
-  expect(rangeReads).toBe(readsBeforeFrame + 1)
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 1460, behavior: 'smooth' })
+  viewport.scrollTop = 1360
   state.endInput()
   expect(state.getSnapshot().showScrollButton).toBe(false)
+  viewport.scrollTop = 1460
+  state.endInput()
+  expect(state.getSnapshot().showScrollButton).toBe(false)
+
+  scrollHeight += 200
+  state.handleContentLayoutChange()
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 1660, behavior: 'smooth' })
+  state.markInput(new WheelEvent('wheel', { deltaY: -40 }))
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 1460, behavior: 'instant' })
+  expect(state.getSnapshot().mode).toBe('read')
   dispose()
 })

@@ -1,6 +1,5 @@
 import type { RefObject } from 'react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import { computeStreamingScrollStep, STREAM_FOLLOW_SETTLE_PX } from './streamingScrollFollow'
 import {
   getConversationScrollSnapshot,
   type ConversationScrollSnapshot,
@@ -119,7 +118,7 @@ export function createConversationScrollState(
     // A streaming viewport already disables TanStack follow. Starting and
     // stopping spring frames inside that period does not change React's policy.
     next.virtualAnchorToEnd =
-      next.mode === 'follow' && !streaming && !autoScrollSuspended && motion.position === null
+      next.mode === 'follow' && !streaming && !autoScrollSuspended && nativeFollow === null
     if (
       Object.keys(next).every(
         key => next[key as keyof ScrollSnapshot] === state[key as keyof ScrollSnapshot]
@@ -181,13 +180,7 @@ export function createConversationScrollState(
   let restoreNeedsDistance = false
   let inputActive = false
   let inputDirection: 'backward' | 'forward' | null = null
-  const motion: {
-    frame: SafeAnimationFrameHandle | null
-    end: number | null
-    position: number | null
-    velocity: number
-    at: number | null
-  } = { frame: null, end: null, position: null, velocity: 0, at: null }
+  let nativeFollow: { viewport: HTMLDivElement; end: number } | null = null
   let layoutFrame: SafeAnimationFrameHandle | null = null
   let followBehavior: 'auto' | 'smooth' = 'auto'
   let initializedKey: string | null | undefined
@@ -197,15 +190,17 @@ export function createConversationScrollState(
     readerState.selfScrollOffset = 0
     readerState.lastMeasuredLayout = null
   }
+  const cancelNativeFollow = () => {
+    const active = nativeFollow
+    nativeFollow = null
+    if (!active || !owned()) return
+    const { viewport } = active
+    viewport.scrollTo({ top: viewport.scrollTop, behavior: 'instant' })
+  }
   const cancelMotion = () => {
     if (layoutFrame) cancelSafeAnimationFrame(layoutFrame)
     layoutFrame = null
-    if (motion.frame !== null) cancelSafeAnimationFrame(motion.frame)
-    motion.frame = null
-    motion.end = null
-    motion.position = null
-    motion.velocity = 0
-    motion.at = null
+    cancelNativeFollow()
     publish()
     readVirtualizer()?.cancelScroll()
   }
@@ -301,28 +296,26 @@ export function createConversationScrollState(
       return
     const viewport = scrollRef.current
     if (!viewport) return
-    if (motion.frame !== null) {
-      motion.end = null
-      return
-    }
     const end = followEnd(viewport)
-    const distanceFromBottom =
-      motion.position === null ? Math.max(0, end - viewport.scrollTop) : null
-    if (distanceFromBottom !== null && distanceFromBottom < 1) {
+    const distanceFromBottom = Math.max(0, end - viewport.scrollTop)
+    if (distanceFromBottom < 1) {
       cancelMotion()
       save(distanceFromBottom)
       return
     }
-    const animate = smooth || followBehavior === 'smooth'
-    const reducedMotion = animate ? window.matchMedia?.('(prefers-reduced-motion: reduce)') : null
-    if (!animate || reducedMotion?.matches) {
+    const animate = nativeFollow !== null || smooth || followBehavior === 'smooth'
+    if (
+      !animate ||
+      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ||
+      typeof viewport.scrollTo !== 'function'
+    ) {
       cancelMotion()
       writeOffset(end)
       save(Math.max(0, end - (readerState.lastScrollPosition ?? viewport.scrollTop)))
       return
     }
-    motion.position ??= viewport.scrollTop
-    motion.end = end
+    if (nativeFollow?.viewport === viewport && nativeFollow.end === end) return
+    nativeFollow = { viewport, end }
     const engine = readVirtualizer()
     if (engine) {
       engine.cancelScroll()
@@ -333,46 +326,8 @@ export function createConversationScrollState(
       })
     }
     publish()
-    const advance = (now: number) => {
-      motion.frame = null
-      if (
-        !owned() ||
-        state.mode !== 'follow' ||
-        autoScrollSuspended ||
-        state.turnNavigationLoading ||
-        state.turnNavigationTargetMessageId
-      ) {
-        cancelMotion()
-        return
-      }
-      // Keep subpixel progress even when the browser quantizes scrollTop writes.
-      const current = motion.position ?? viewport.scrollTop
-      const immediate = reducedMotion?.matches === true
-      // Layout invalidates the range. Recheck it before a final snap.
-      let end = motion.end
-      if (end === null || immediate || end - current <= STREAM_FOLLOW_SETTLE_PX)
-        end = motion.end = followEnd(viewport)
-      const position = Math.min(end, current)
-      const lag = Math.max(0, end - position)
-      if (lag <= STREAM_FOLLOW_SETTLE_PX || immediate) {
-        writeOffset(end)
-        cancelMotion()
-        save(Math.max(0, end - (readerState.lastScrollPosition ?? viewport.scrollTop)))
-        return
-      }
-      const step = computeStreamingScrollStep(
-        lag,
-        motion.velocity,
-        motion.at === null ? 16 : now - motion.at
-      )
-      motion.at = now
-      motion.velocity = step.velocityPxPerSecond
-      motion.position = Math.min(end, position + step.advancePx)
-      writeOffset(motion.position)
-      if (state.showScrollButton) publish({ showScrollButton: false })
-      motion.frame = requestSafeAnimationFrame(advance)
-    }
-    motion.frame = requestSafeAnimationFrame(advance)
+    viewport.scrollTo({ top: end, behavior: 'smooth' })
+    if (state.showScrollButton) publish({ showScrollButton: false })
   }
   const handleContentLayoutChange = () => {
     if (!owned()) return
@@ -396,10 +351,6 @@ export function createConversationScrollState(
     if (autoScrollSuspended) return
     if (state.mode !== 'follow' || !streaming || followBehavior !== 'smooth') {
       handleContentLayoutChange()
-      return
-    }
-    if (motion.frame) {
-      motion.end = null
       return
     }
     if (layoutFrame) return
@@ -708,16 +659,19 @@ export function createConversationScrollState(
       save()
       pointerStepObserved = true
     } else if (state.mode === 'read') handleContentLayoutChange()
-    else if (motion.frame === null) follow()
+    else if (nativeFollow === null) follow()
+    else readerState.lastScrollPosition = viewport.scrollTop
   }
   const endInput = () => {
     if (!owned()) return
     const viewport = scrollRef.current
     if (!viewport) return
     if (state.mode === 'drag') return
-    // Each instant step of our smooth follow emits a native scrollend. Only the
-    // final step saves its position; intermediate lag must not show the button.
-    if (!inputActive && state.mode === 'follow' && motion.frame !== null) return
+    if (!inputActive && state.mode === 'follow' && nativeFollow?.viewport === viewport) {
+      if (Math.abs(nativeFollow.end - viewport.scrollTop) > 1) return
+      nativeFollow = null
+      publish()
+    }
     inputActive = false
     save()
   }
@@ -837,6 +791,8 @@ export function createConversationScrollState(
       )
       return () => {
         if (contentLease !== lease) return
+        // Cancel the native animation while this content still owns the viewport.
+        cancelNativeFollow()
         contentLease = null
         stopObservingLayout()
         if (ports.owner.lease === lease) {
