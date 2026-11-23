@@ -1261,6 +1261,19 @@ class DesktopE2EServer {
       this.controlWindowsByClient.has(clientId),
       `Desktop control client ${clientId} is not registered`
     )
+    let usesLegacyRuntimeAcknowledgement = false
+    if (action === 'fetchLocalRuntime' && this.desktopScenario?.usesLegacyRuntimeAcknowledgement) {
+      const installed = JSON.parse(
+        await this.commandForClient(clientId, 'getInstalledAppVersion', 'body')
+      )
+      usesLegacyRuntimeAcknowledgement = this.desktopScenario.usesLegacyRuntimeAcknowledgement(
+        installed.version
+      )
+      assert.ok(
+        this.controlWindowsByClient.has(clientId),
+        `Desktop control client ${clientId} was replaced during package identification`
+      )
+    }
     const id = randomUUID()
     const command = {
       id,
@@ -1281,6 +1294,7 @@ class DesktopE2EServer {
         queuedAt: new Date().toISOString(),
         action,
         value: command.value,
+        usesLegacyRuntimeAcknowledgement,
         resolve: resolvePromise,
         reject,
         resolveDelivery,
@@ -2190,7 +2204,11 @@ class DesktopE2EServer {
         })
         return true
       }
-      if (!matchesRuntimeControlCommand(pending, started)) {
+      const legacyAcknowledgement =
+        pending.usesLegacyRuntimeAcknowledgement &&
+        !Object.hasOwn(started, 'action') &&
+        !Object.hasOwn(started, 'value')
+      if (!legacyAcknowledgement && !matchesRuntimeControlCommand(pending, started)) {
         json(response, 409, {
           error: `Command ${started.id} does not match the queued Runtime request`,
         })

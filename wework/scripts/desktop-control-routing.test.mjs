@@ -14,19 +14,52 @@ async function startControl(t) {
   return control
 }
 
-async function post(control, route, body) {
+async function post(control, route, body, expectedStatus = 200) {
   const response = await fetch(`${control.controlUrl}/${route}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  assert.equal(response.status, 200)
+  assert.equal(response.status, expectedStatus)
   return response.json()
 }
 
 async function register(control, windowLabel, clientId) {
   await post(control, 'ready', { windowLabel, clientId, location: 'http://localhost/' })
 }
+
+test('only the identified historical package can acknowledge Runtime commands without a payload', async t => {
+  const control = await startControl(t)
+  control.setDesktopScenario({ usesLegacyRuntimeAcknowledgement: version => version === 'source' })
+
+  for (const version of ['source', 'target']) {
+    await register(control, 'main', version)
+    const result = control.command('fetchLocalRuntime', 'body', { value: 'queued-payload' })
+    const nextCommand = async () => {
+      const response = await fetch(`${control.controlUrl}/commands?clientId=${version}&wait=1`)
+      return response.json()
+    }
+    const identify = await nextCommand()
+    assert.equal(identify.action, 'getInstalledAppVersion')
+    const identity = { id: identify.id, clientId: version }
+    await post(control, 'started', identity)
+    await post(control, 'results', { ...identity, ok: true, value: JSON.stringify({ version }) })
+
+    const { id, action, value } = await nextCommand()
+    assert.equal(action, 'fetchLocalRuntime')
+    const started = { id, clientId: version }
+    await post(control, 'started', { ...started, clientId: 'other' }, 409)
+    await post(control, 'started', { ...started, action, value: 'different-payload' }, 409)
+    if (version === 'target') {
+      await post(control, 'started', started, 409)
+      await post(control, 'started', { ...started, action, value })
+    } else {
+      await post(control, 'started', started)
+    }
+    await post(control, 'results', { ...started, ok: true, value: version })
+    assert.equal(await result, version)
+  }
+})
 
 test('quit completes on the real process exit when the renderer cannot send its result', async t => {
   const control = await startControl(t)
