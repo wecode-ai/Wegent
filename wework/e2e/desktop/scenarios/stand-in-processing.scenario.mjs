@@ -9,6 +9,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForTaskRowByText } from '../modules/task-state-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { isDetachedResponsesContext } from '../modules/model-tool-output.mjs'
 import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
 import {
   assistantMessage,
@@ -31,6 +32,7 @@ const FOLLOWUP = 'SILENT_PROGRESS_CHECK'
 function processingInput(body) {
   const input = Array.isArray(body.input) ? body.input : [body.input]
   return input.filter(item => {
+    if (isDetachedResponsesContext(item)) return false
     if (
       item?.type === 'function_call_output' &&
       item.namespace === 'agent' &&
