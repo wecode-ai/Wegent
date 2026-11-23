@@ -21,7 +21,6 @@ interface GitProjectWorkContext {
   onExecutionModeChange: (mode: string) => void
   onGenerateBranchName?: (sourceText: string) => Promise<string>
   onListBranches?: () => Promise<string[]>
-  onRefreshBranch?: () => Promise<void>
   onWorktreeBranchChange?: (branchName: string | null) => void
   worktreeAvailability?: ProjectWorktreeAvailability
   worktreeBranch?: string | null
@@ -128,7 +127,6 @@ export default function GitProjectWorkSection({ context }: GitProjectWorkSection
           mobileSheet
           currentBranch={context.branchName}
           loading={context.branchLoading}
-          onRefresh={context.onRefreshBranch}
           onListBranches={context.onListBranches}
           onCheckoutBranch={context.onCheckoutBranch}
           onCreateBranch={context.onCreateBranch}

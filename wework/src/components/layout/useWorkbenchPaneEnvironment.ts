@@ -547,7 +547,6 @@ export function useWorkbenchPaneEnvironment({
       worktreeAvailability,
       branchName: environmentInfo.branchName,
       branchLoading: environmentInfo.branchLoading ?? environmentInfo.loading,
-      onRefreshBranch: undefined,
       onListBranches:
         activeWorkspaceTarget && contributionActionsAvailable
           ? listPaneEnvironmentBranches
