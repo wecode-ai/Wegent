@@ -92,7 +92,7 @@ function SourceReferenceItem({
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-text-secondary hover:text-primary hover:underline inline-flex items-center gap-1 max-w-md"
+        className="text-text-secondary hover:text-primary hover:underline inline-flex min-h-11 min-w-11 max-w-md items-center gap-1 md:min-h-0 md:min-w-0"
         title={sourceUri || label}
         data-testid={href === internalHref ? 'knowledge-source-reference' : undefined}
         aria-label={`${openLabel}: ${label}`}
