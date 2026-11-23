@@ -39,7 +39,11 @@ export function resolveRuntimeTaskRoute(input: RouteInput): RuntimeTaskAddress |
     isSameRuntimeTaskAddress(currentAddress, route)
   )
     return null
-  return task?.workspacePath ? { ...route, workspacePath: task.workspacePath } : route
+  return {
+    ...route,
+    ...(task?.workspacePath ? { workspacePath: task.workspacePath } : {}),
+    ...(task?.threadId ? { threadId: task.threadId } : {}),
+  }
 }
 /** The committed Workbench owner drives native restoration and owns its navigation receipt. */
 export function createRuntimeTaskRouteCoordinator(read: () => RouteInput) {
