@@ -29,18 +29,24 @@ pub(super) fn migrate_personal_settings(value: &mut Value) -> Result<bool, TaskR
         .into_iter()
         .flatten()
     {
-        changed |= migrate_agent_binding(identity)?;
-        changed |= migrate_identity_connections(identity)?;
-        changed |= migrate_connection_timing(identity, immediate);
+        changed |= normalize_stand_in_identity(identity, immediate)?;
     }
     if value["primary"].is_object() {
-        changed |= migrate_agent_binding(&mut value["primary"])?;
-        changed |= migrate_identity_connections(&mut value["primary"])?;
-        changed |= migrate_connection_timing(&mut value["primary"], immediate);
+        changed |= normalize_stand_in_identity(&mut value["primary"], immediate)?;
     }
     changed |= value
         .as_object_mut()
         .is_some_and(|fields| fields.remove("processing").is_some());
+    Ok(changed)
+}
+
+pub(super) fn normalize_stand_in_identity(
+    identity: &mut Value,
+    immediate: bool,
+) -> Result<bool, TaskRuntimeError> {
+    let mut changed = migrate_agent_binding(identity)?;
+    changed |= migrate_identity_connections(identity)?;
+    changed |= migrate_connection_timing(identity, immediate);
     Ok(changed)
 }
 
