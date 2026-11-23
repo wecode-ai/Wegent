@@ -217,7 +217,7 @@ function StandInMemoryPanelContent({
             : undefined
         }
       />
-      <p className="mb-5 text-sm text-text-muted">{t('standIn.memory.help')}</p>
+      <p className="mb-4 text-sm text-text-secondary">{t('standIn.memory.help')}</p>
       {visibleError && (
         <div role="alert" className="mb-4 text-sm text-error">
           <p>{visibleError}</p>
@@ -291,18 +291,24 @@ function StandInMemoryPanelContent({
       {items !== null && !reviewing && (
         <>
           {!editing && (
-            <ControlButton
-              variant="outline"
-              size="sm"
-              type="button"
-              data-testid="stand-in-memory-add"
-              disabled={busy}
-              onClick={() => setEditing({ content: '', scope: fixedScope ?? { kind: 'personal' } })}
-              className="mb-4 inline-flex min-h-8 items-center gap-2 self-start rounded-md border border-border px-3 text-sm hover:bg-muted"
-            >
-              <Plus className="h-4 w-4" />
-              {t('standIn.memory.add')}
-            </ControlButton>
+            <div className="mb-3 space-y-3">
+              {!items.length && (
+                <p className="text-sm text-text-secondary">{t('standIn.memory.empty')}</p>
+              )}
+              <ControlButton
+                variant={items.length ? 'outline' : 'primary'}
+                size="sm"
+                type="button"
+                data-testid="stand-in-memory-add"
+                disabled={busy}
+                onClick={() =>
+                  setEditing({ content: '', scope: fixedScope ?? { kind: 'personal' } })
+                }
+              >
+                <Plus aria-hidden="true" className="size-4" />
+                {t('standIn.memory.add')}
+              </ControlButton>
+            </div>
           )}
           {editing && (
             <form
@@ -397,9 +403,6 @@ function StandInMemoryPanelContent({
                 </ControlButton>
               </div>
             </form>
-          )}
-          {!items.length && !editing && (
-            <p className="py-8 text-sm text-text-muted">{t('standIn.memory.empty')}</p>
           )}
           <ul className="divide-y divide-border">
             {items.map(row => (

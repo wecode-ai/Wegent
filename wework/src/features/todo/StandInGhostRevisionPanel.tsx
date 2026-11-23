@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { StandInExecutorApi, StandInGhostRevision } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { Button } from '@wegent/collaboration/markdown/Button'
-import { StandInSettingsEntry, StandInSettingsError } from './StandInSettingsLayout'
+import { StandInSettingsError } from './StandInSettingsLayout'
 
 /** Read revisions on demand and bind reversal to the exact settings the owner reviewed. */
-export function StandInGhostRevisionEntry({
+export function StandInGhostRevisionPanel({
   api,
   userId,
   deviceId,
@@ -20,49 +21,50 @@ export function StandInGhostRevisionEntry({
   requestLeave(action: () => void): void
 }) {
   const { t } = useTranslation('common')
-  const [revision, setRevision] = useState<StandInGhostRevision | null>()
+  const resource = useMemo(
+    () =>
+      createAsyncResource(JSON.stringify([userId, deviceId, roleId]), () =>
+        api.latestAppliedGhost(userId, deviceId, roleId)
+      ),
+    [api, userId, deviceId, roleId]
+  )
+  const {
+    data: revision,
+    status,
+    error: loadError,
+  } = useSyncExternalStore(resource.subscribe, resource.getSnapshot, resource.getSnapshot)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const load = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      setRevision(await api.latestAppliedGhost(userId, deviceId, roleId))
-    } catch (cause) {
-      setError(getStandInErrorMessage(cause))
-      setRevision(undefined)
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [undoError, setUndoError] = useState<string | null>(null)
   const undo = async (reviewed: StandInGhostRevision) => {
     setBusy(true)
-    setError(null)
+    setUndoError(null)
     try {
       await api.resolveProposal(userId, deviceId, reviewed.id, true, reviewed.version)
-      setRevision(null)
+      resource.update(() => null)
     } catch (cause) {
-      setError(getStandInErrorMessage(cause))
-      setRevision(undefined)
+      setUndoError(getStandInErrorMessage(cause))
     } finally {
       setBusy(false)
     }
   }
   return (
     <div className="mt-2">
-      <StandInSettingsEntry
-        testId="stand-in-ghost-revision-open"
-        label={t('standIn.workspace.ghost_revision')}
-        disabled={busy}
-        onClick={() => (revision === undefined ? void load() : setRevision(undefined))}
+      {(status === 'idle' || status === 'loading') && (
+        <p role="status" className="text-sm text-text-secondary">
+          {t('standIn.loading')}
+        </p>
+      )}
+      <StandInSettingsError
+        error={loadError === undefined ? null : getStandInErrorMessage(loadError)}
+        retry={{ testId: 'stand-in-ghost-revision-retry', onClick: () => void resource.reload() }}
       />
-      <StandInSettingsError error={error} />
+      <StandInSettingsError error={undoError} />
       {revision === null && (
         <p className="py-2 text-sm text-text-secondary">
           {t('standIn.workspace.ghost_no_revision')}
         </p>
       )}
-      {revision && (
+      {status === 'ready' && revision && (
         <div className="space-y-2 py-2 text-sm" data-testid="stand-in-ghost-revision">
           <p className="text-xs text-text-muted">{t('standIn.workspace.ghost_current')}</p>
           <p className="whitespace-pre-wrap break-words">{revision.after}</p>

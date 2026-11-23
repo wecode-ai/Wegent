@@ -15,7 +15,6 @@ export function createStandInImConnectionSource(
     : null
   let ui = {
     channel: null as string | null,
-    menuOpen: false,
     saving: null as string | null,
     saveFailed: false,
   }
@@ -26,7 +25,6 @@ export function createStandInImConnectionSource(
   let cachedUi: unknown
   let snapshot: {
     channel: string | null
-    menuOpen: boolean
     saving: string | null
     sessions: IMPrivateSession[]
     loading: boolean
@@ -39,7 +37,6 @@ export function createStandInImConnectionSource(
       cachedUi = ui
       snapshot = {
         channel: ui.channel,
-        menuOpen: ui.menuOpen,
         saving: ui.saving,
         sessions: read?.data ?? [],
         loading: Boolean(resource && (!read?.settled || read.status === 'loading')),
@@ -60,9 +57,6 @@ export function createStandInImConnectionSource(
     getSnapshot,
     setChannel(channel: string | null) {
       patch({ channel, saveFailed: false })
-    },
-    setMenuOpen(menuOpen: boolean) {
-      patch({ menuOpen })
     },
     refresh() {
       patch({ saveFailed: false })

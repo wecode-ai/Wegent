@@ -18,11 +18,12 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import {
   StandInSettingsActions,
-  StandInSettingsDisclosure,
   StandInSettingsEntry,
   StandInSettingsError,
   StandInSettingsHeader,
   StandInSettingsPanel,
+  StandInSettingsShortcuts,
+  type StandInSettingsShortcut,
 } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
@@ -47,7 +48,7 @@ export function StandInPrimaryProfile({
   initialCalendar = false,
   onCalendarViewChange,
   onReload,
-  management,
+  shortcuts,
   footerLeading,
 }: {
   settings: PersonalStandInSettings
@@ -67,7 +68,7 @@ export function StandInPrimaryProfile({
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
-  management?: ReactNode
+  shortcuts?: StandInSettingsShortcut[]
   footerLeading?: ReactNode
 }) {
   const { t } = useTranslation('common')
@@ -96,7 +97,11 @@ export function StandInPrimaryProfile({
     setBaseline(original)
     if (dequal(draft, baseline)) setDraft(original)
   }
-  const [connections, setConnections] = useState(initialCalendar)
+  const [view, setView] = useState<
+    'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
+  >(initialCalendar ? 'connections' : 'main')
+  const connections = view === 'connections'
+  const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
   const [calendarEntry, setCalendarEntry] = useState(initialCalendar)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
@@ -111,7 +116,8 @@ export function StandInPrimaryProfile({
   const [discard, setDiscard] = useState(false)
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
-    settings.executionDeviceId
+    settings.executionDeviceId,
+    view === 'advanced'
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const [tagOwner, setTagOwner] = useState(() => ({
@@ -162,11 +168,23 @@ export function StandInPrimaryProfile({
     else navigation.requestLeave(action)
   }
   const close = () => requestLeave(onClose)
+  const backToSettings = () => {
+    const back = () => {
+      setCalendarEntry(false)
+      setView('main')
+    }
+    if (connectionRef.current) connectionRef.current.requestLeave(back)
+    else back()
+  }
+  const back = () => {
+    if (connections && connectionDetailOpen) connectionRef.current?.back()
+    else backToSettings()
+  }
   useImperativeHandle(ref, () => ({ requestClose: close, requestLeave }))
   return (
     <StandInSettingsPanel
       testId="stand-in-primary-profile"
-      onClose={close}
+      onClose={view === 'main' ? close : back}
       suspended={discard}
       calendarOpen={calendarOpen}
     >
@@ -175,16 +193,7 @@ export function StandInPrimaryProfile({
           {
             label: t('standIn.workspace.primary_profile'),
             testId: 'stand-in-path-settings',
-            onClick: connections
-              ? () => {
-                  const back = () => {
-                    setCalendarEntry(false)
-                    setConnections(false)
-                  }
-                  if (connectionRef.current) connectionRef.current.requestLeave(back)
-                  else back()
-                }
-              : undefined,
+            onClick: view === 'main' ? undefined : backToSettings,
           },
           ...(connections
             ? [
@@ -194,7 +203,16 @@ export function StandInPrimaryProfile({
                   onClick: connectionDetailOpen ? () => connectionRef.current?.back() : undefined,
                 },
               ]
-            : []),
+            : view === 'advanced'
+              ? [
+                  {
+                    label: t('standIn.workspace.execution_settings'),
+                    testId: 'stand-in-path-advanced',
+                  },
+                ]
+              : shortcutPage
+                ? [{ label: shortcutPage.label, testId: 'stand-in-path-tool' }]
+                : []),
           ...(connections && connectionTitle
             ? [{ label: connectionTitle, testId: 'stand-in-path-source' }]
             : []),
@@ -204,25 +222,19 @@ export function StandInPrimaryProfile({
         )}
         disabled={blocked}
         back={
-          connections
-            ? {
-                testId: connectionDetailOpen
-                  ? 'stand-in-connections-back'
-                  : 'stand-in-primary-back-to-settings',
-                onClick: () => {
-                  if (connectionDetailOpen) {
-                    connectionRef.current?.back()
-                    return
-                  }
-                  setCalendarEntry(false)
-                  setConnections(false)
-                },
+          view === 'main'
+            ? { testId: 'stand-in-primary-back', onClick: close }
+            : {
+                testId:
+                  connections && connectionDetailOpen
+                    ? 'stand-in-connections-back'
+                    : 'stand-in-primary-back-to-settings',
+                onClick: back,
               }
-            : { testId: 'stand-in-primary-back', onClick: close }
         }
         close={{ testId: 'stand-in-primary-profile-close', onClick: close }}
       />
-      {!connections && (
+      {view === 'main' && (
         <>
           {separatePrompt && (
             <label className="mb-4 grid gap-2">
@@ -277,7 +289,7 @@ export function StandInPrimaryProfile({
               description={t('standIn.workspace.connections_help')}
               testId="stand-in-primary-connections-open"
               disabled={blocked}
-              onClick={() => setConnections(true)}
+              onClick={() => setView('connections')}
             />
           </div>
         </>
@@ -321,55 +333,60 @@ export function StandInPrimaryProfile({
           />
         </div>
       )}
-      {!connections && (
-        <div className="mt-4">
-          <StandInSettingsDisclosure
-            testId="stand-in-primary-execution"
+      {view === 'main' && (
+        <div className="mt-4" data-testid="stand-in-primary-execution">
+          <StandInSettingsEntry
+            testId="stand-in-primary-execution-toggle"
             label={t('standIn.workspace.execution_settings')}
             description={t('standIn.workspace.execution_settings_help')}
-          >
-            <StandInComposer
-              draft={role}
-              showPrompt={false}
-              onChange={update => {
-                setDraft(current => {
-                  const next =
-                    typeof update === 'function' ? update({ ...role, ...current }) : update
-                  return {
-                    ...current,
-                    model: next.model,
-                    modelOptions: next.modelOptions,
-                    workspace: next.workspace,
-                  }
-                })
-              }}
-              onSave={async () => {}}
-              disabled={blocked}
-              submitDisabled={blocked}
-              services={services}
-              devices={devices}
-              runtimeWork={runtimeWork}
-              deviceControl={
-                <StandInDeviceSelect
-                  readOnly={deviceReadOnly}
-                  value={settings.executionDeviceId}
-                  currentDeviceId={localDeviceId}
-                  devices={devices}
-                  disabled={blocked || dirty}
-                  onChange={onSelectDevice}
-                />
-              }
-            />
-            <p className="text-xs text-text-secondary">
-              {t('standIn.workspace.execution_device_help')}
-            </p>
-            <StandInSettingsError
-              error={runtimeError}
-              retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
-            />
-          </StandInSettingsDisclosure>
+            disabled={blocked}
+            onClick={() => setView('advanced')}
+          />
         </div>
       )}
+      {view === 'advanced' && (
+        <div data-testid="stand-in-primary-execution" className="space-y-3">
+          <StandInComposer
+            draft={role}
+            showPrompt={false}
+            onChange={update => {
+              setDraft(current => {
+                const next = typeof update === 'function' ? update({ ...role, ...current }) : update
+                return {
+                  ...current,
+                  model: next.model,
+                  modelOptions: next.modelOptions,
+                  workspace: next.workspace,
+                }
+              })
+            }}
+            onSave={async () => {}}
+            disabled={blocked}
+            submitDisabled={blocked}
+            services={services}
+            devices={devices}
+            runtimeWork={runtimeWork}
+            deviceControl={
+              <StandInDeviceSelect
+                readOnly={deviceReadOnly}
+                value={settings.executionDeviceId}
+                currentDeviceId={localDeviceId}
+                devices={devices}
+                disabled={blocked || dirty}
+                onChange={onSelectDevice}
+              />
+            }
+          />
+          <p className="text-xs text-text-secondary">
+            {t('standIn.workspace.execution_device_help')}
+          </p>
+          <StandInSettingsError
+            error={runtimeError}
+            retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
+          />
+        </div>
+      )}
+      {shortcutPage?.content}
       <ConfirmDialog
         open={discard}
         destructive
@@ -388,8 +405,10 @@ export function StandInPrimaryProfile({
           navigation.confirmLeave(onClose)
         }}
       />
-      {!connections && management}
-      {!scheduleDirty && (
+      {view === 'main' && (
+        <StandInSettingsShortcuts shortcuts={shortcuts} disabled={blocked} onOpen={setView} />
+      )}
+      {!scheduleDirty && !shortcutPage && (
         <StandInSettingsActions
           prefix="stand-in-primary"
           leading={footerLeading}
