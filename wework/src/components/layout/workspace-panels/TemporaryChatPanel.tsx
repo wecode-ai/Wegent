@@ -1,6 +1,6 @@
 import { sendTemporaryConversationMessage } from './temporaryChatConversationSend'
 import { sendTemporaryChatMessage } from './temporaryChatSend'
-import { ImageEditContext } from '@/components/chat/image-preview/ImageEditContext'
+import { ImageEditProvider } from '@/components/chat/image-preview/ImageEditContext'
 import { hasImageMarkupComments } from '@/components/chat/image-preview/imageEdit'
 import { useImageEditSubmission } from '../useImageEditSubmission'
 import type { RuntimePaneSendOptions } from '../workbenchPaneSessionTypes'
@@ -1026,5 +1026,5 @@ export function TemporaryChatPanel({
       />
     </TemporaryConversationLayout>
   )
-  return <ImageEditContext.Provider value={imageEditSubmission}>{layout}</ImageEditContext.Provider>
+  return <ImageEditProvider actions={imageEditSubmission}>{layout}</ImageEditProvider>
 }

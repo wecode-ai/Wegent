@@ -1,5 +1,6 @@
 import { Input } from '@ui-sdk/react/input'
-import { Button } from '@wegent/collaboration/markdown/Button'
+import { Button } from '@ui-sdk/react/button'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { SelectTrigger } from '@ui-sdk/react/select'
 import { SelectContent, SelectItem, SelectRoot } from '@wegent/collaboration/controls/SelectParts'
 import { useId, useRef, useState, type PointerEvent } from 'react'
@@ -334,7 +335,7 @@ export function useMarkupEditor(
             value={textDraft.text}
             onChange={event => setTextDraft({ ...textDraft, text: event.target.value })}
           />
-          <Button
+          <ControlButton
             type="submit"
             variant="primary"
             className="rounded-md px-1.5"
@@ -342,7 +343,7 @@ export function useMarkupEditor(
             disabled={!textDraft.text.trim() || busy}
           >
             {t('image_preview.save')}
-          </Button>
+          </ControlButton>
         </form>
       )}
     </>

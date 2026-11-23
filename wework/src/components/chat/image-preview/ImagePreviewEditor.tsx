@@ -1,5 +1,6 @@
 import { Input } from '@ui-sdk/react/input'
-import { Button } from '@wegent/collaboration/markdown/Button'
+import { Button } from '@ui-sdk/react/button'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useRef, useState, type PointerEvent } from 'react'
 import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import {
@@ -361,7 +362,7 @@ export function useImagePreviewEditor(
                 ? t('image_preview.comment_count', { count: comments.length })
                 : t('image_preview.comment_hint')}
             </span>
-            <Button
+            <ControlButton
               type="button"
               variant="primary"
               className={cn(actionClass, 'rounded-xl')}
@@ -371,7 +372,7 @@ export function useImagePreviewEditor(
               onClick={() => onSubmit({ kind: 'comment', comments: currentComments })}
             >
               {t('image_preview.send')}
-            </Button>
+            </ControlButton>
             <Button
               type="button"
               className={actionClass}
@@ -456,9 +457,9 @@ export function useImagePreviewEditor(
             >
               {t('image_preview.redo')}
             </Button>
-            <Button
+            <ControlButton
               type="button"
-              variant={mode === 'markup' && saveMarkup ? 'primary' : undefined}
+              variant={mode === 'markup' && saveMarkup ? 'primary' : 'unstyled'}
               className={cn(actionClass, mode === 'markup' && saveMarkup && 'rounded-xl')}
               data-testid={
                 mode === 'markup' && saveMarkup
@@ -471,7 +472,7 @@ export function useImagePreviewEditor(
               }
             >
               {t(mode === 'markup' && saveMarkup ? 'image_preview.save' : 'image_preview.send')}
-            </Button>
+            </ControlButton>
           </>
         ) : (
           <>

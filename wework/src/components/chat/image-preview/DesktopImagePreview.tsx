@@ -28,7 +28,7 @@ import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { AttachmentPreviewContext } from '../AttachmentPreviewContext'
-import { ImageEditContext, type ImageEditActions, type SavedImageMarkup } from './ImageEditContext'
+import { ImageEditContext, useScopedImageEditor, type SavedImageMarkup } from './ImageEditContext'
 import { useImagePreviewEditor } from './ImagePreviewEditor'
 import type { ImageEdit } from './imageEdit'
 
@@ -49,8 +49,9 @@ export function DesktopImagePreview(
 }
 
 interface InlineImageEditorProps {
-  imageEditor?: ImageEditActions | null
+  editorScope?: string
   onMarkupSaved?: (saved: SavedImageMarkup) => void
+  onComposerAttachmentConsumed?: () => void
 }
 
 export function InlineDesktopImagePreview(
@@ -61,8 +62,9 @@ export function InlineDesktopImagePreview(
 
 function ImagePreviewDialog({
   inline = false,
-  imageEditor,
+  editorScope,
   onMarkupSaved,
+  onComposerAttachmentConsumed,
   attachment,
   fromComposer,
   url,
@@ -83,7 +85,8 @@ function ImagePreviewDialog({
   const { t } = useTranslation('common')
   const openPanel = useContext(AttachmentPreviewContext)
   const submissionContext = useContext(ImageEditContext)
-  const editSubmission = inline ? (imageEditor ?? null) : submissionContext
+  const inlineEditor = useScopedImageEditor(inline ? editorScope : undefined)
+  const editSubmission = inline ? inlineEditor : submissionContext
   const composerAttachmentId = fromComposer ? attachment.id : undefined
   const [zoom, setZoom] = useState<number | null>(null)
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
@@ -179,6 +182,8 @@ function ImagePreviewDialog({
       if (result) {
         if (inline) {
           if (typeof result !== 'boolean') onMarkupSaved?.(result)
+          if (composerAttachmentId !== undefined && edit.kind === 'comment')
+            onComposerAttachmentConsumed?.()
           resetEditor()
         } else onClose?.()
       } else setError(errorMessage)
@@ -366,7 +371,7 @@ function ImagePreviewDialog({
                   image: {
                     localPath,
                     draftAttachmentId: composerAttachmentId,
-                    editor: editSubmission ?? undefined,
+                    editorScope: editSubmission?.scope,
                     comments: attachment.image_markup_comments ?? [],
                   },
                 })

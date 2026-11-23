@@ -9,10 +9,14 @@ import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Download } from 'lucide-react'
 import { useMemo, useState, useSyncExternalStore } from 'react'
 import { InlineDesktopImagePreview } from '@/components/chat/image-preview/DesktopImagePreview'
-import type { SavedImageMarkup } from '@/components/chat/image-preview/ImageEditContext'
+import {
+  useScopedImageEditor,
+  type SavedImageMarkup,
+} from '@/components/chat/image-preview/ImageEditContext'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { workspaceFilePreviewKind } from './workspaceFileTypes'
 
+const consumedImageSources = new WeakSet<WorkspaceAttachmentPreviewSource>()
 const savedImageBySource = new WeakMap<WorkspaceAttachmentPreviewSource, SavedImageMarkup>()
 
 export function WorkspaceAttachmentPreview({
@@ -23,6 +27,7 @@ export function WorkspaceAttachmentPreview({
   const { t } = useTranslation('common')
   const [revision, setRevision] = useState(0)
   const [failedImage, setFailedImage] = useState<File | null>(null)
+  const [, setConsumedRevision] = useState(0)
   const [savedImage, setSavedImage] = useState<
     (SavedImageMarkup & { source: WorkspaceAttachmentPreviewSource }) | null
   >(null)
@@ -56,7 +61,8 @@ export function WorkspaceAttachmentPreview({
   )
   const file = snapshot.data?.file ?? null
   const draftAttachmentId = saved?.attachmentId ?? source.image?.draftAttachmentId
-  const editor = source.image?.editor
+  const scopedEditor = useScopedImageEditor(source.image?.editorScope)
+  const editor = consumedImageSources.has(source) ? null : scopedEditor
   const text = snapshot.data?.text ?? null
   const error =
     snapshot.status === 'error'
@@ -82,11 +88,15 @@ export function WorkspaceAttachmentPreview({
           fromComposer={draftAttachmentId !== undefined}
           filename={file.name}
           localPath={saved ? null : source.image?.localPath}
-          imageEditor={editor}
+          editorScope={editor?.scope}
           onMarkupSaved={result => {
             const savedResult = { ...result, source }
             savedImageBySource.set(source, savedResult)
             setSavedImage(savedResult)
+          }}
+          onComposerAttachmentConsumed={() => {
+            consumedImageSources.add(source)
+            setConsumedRevision(value => value + 1)
           }}
           url={snapshot.data.imageUrl}
           loading={false}

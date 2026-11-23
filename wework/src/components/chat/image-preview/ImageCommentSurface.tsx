@@ -1,6 +1,7 @@
 import { Textarea } from '@ui-sdk/react/textarea'
 import { Input } from '@ui-sdk/react/input'
-import { Button } from '@wegent/collaboration/markdown/Button'
+import { Button } from '@ui-sdk/react/button'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useRef, useState, type PointerEvent } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -188,7 +189,7 @@ export function ImageCommentSurface({
                   </Button>
                 </>
               )}
-              <Button
+              <ControlButton
                 type="submit"
                 variant="primary"
                 className="min-h-7 rounded-full px-2 text-sm disabled:opacity-40"
@@ -196,7 +197,7 @@ export function ImageCommentSurface({
                 disabled={busy || !draft.text.trim()}
               >
                 {t('image_preview.save_comment')}
-              </Button>
+              </ControlButton>
             </div>
           </form>
         </>

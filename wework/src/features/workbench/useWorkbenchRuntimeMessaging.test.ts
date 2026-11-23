@@ -52,7 +52,7 @@ test('queues saved image comments in a temporary chat and restores them as attac
     sideChatProjectChat: { attachments: [image], resetAttachments: vi.fn() },
     captureAttachmentsForScope: () => [image],
     canSendWithCurrentModel: () => true,
-    sessionCommands: { isCurrent: () => true },
+    sessionCommands: { isCurrent: () => true, getDraftEditVersion: () => 0 },
     setError: vi.fn(),
     setInput: vi.fn(),
     setTrialGuide: vi.fn(),
@@ -136,7 +136,11 @@ function temporarySendContext({
     setAddress: vi.fn(),
     setGoalDraftActive: vi.fn(),
     setAcceptedSourceMessageIds: vi.fn(),
-    sessionCommands: { isCurrent: () => true, nativeSubmissionPending: () => false },
+    sessionCommands: {
+      isCurrent: () => true,
+      nativeSubmissionPending: () => false,
+      getDraftEditVersion: () => 0,
+    },
   } as unknown as TemporarySendContext
 }
 
@@ -190,6 +194,42 @@ test.each([
   expect(sendRuntimePaneMessage).toHaveBeenCalledOnce()
   expect(result.current.attachments).toEqual([newer])
 })
+
+test.each([
+  ['unchanged', false, true],
+  ['newer', true, false],
+] as const)(
+  'restores a native non-transactional draft only while revision is %s',
+  async (_label, newer, restored) => {
+    const { result } = renderHook(() =>
+      useWorkbenchAttachments({ scopeKey: `native-restore-${newer}` })
+    )
+    let draftEditVersion = 0
+    const setInput = vi.fn()
+    const context = temporarySendContext({
+      instanceId: `native-restore-${newer}`,
+      attachments: result.current.attachments,
+      captureAttachmentsForScope: result.current.captureAttachmentsForScope,
+      resetAttachments: result.current.resetAttachments,
+      addExistingAttachment: result.current.addExistingAttachment,
+      sendRuntimePaneMessage: vi.fn(),
+    })
+    context.nativeConversation = true
+    context.address = null
+    context.setInput = setInput
+    context.sessionCommands.getDraftEditVersion = () => draftEditVersion
+    context.createTask = vi.fn(async () => {
+      if (newer) draftEditVersion += 1
+      return false
+    })
+
+    await expect(sendTemporaryChatMessage(context, 'Keep this native draft')).resolves.toBe(false)
+
+    expect(setInput).toHaveBeenCalledWith('')
+    if (restored) expect(setInput).toHaveBeenLastCalledWith('Keep this native draft')
+    else expect(setInput).toHaveBeenCalledOnce()
+  }
+)
 
 test('sends an appshot image and hidden companion for a draft image comment', async () => {
   const { resolvePreparingAttachments } = await import('@/lib/runtime-attachments')

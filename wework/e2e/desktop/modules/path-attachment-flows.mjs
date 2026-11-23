@@ -364,10 +364,15 @@ async function verifyImageEditSubmissions(control, composerSelector) {
     'The user message did not display the saved image comment with its coordinates'
   )
   assert.equal(await control.command('getValue', composerSelector), draft)
-  await control.command('waitFor', commentTool, {
+  await control.command('waitFor', panel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    await control.command('getElementCount', commentTool),
+    '0',
+    'A comment-only submission must retire editing for the removed draft attachment'
+  )
   await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
   await control.command('waitFor', thumbnail, {
     visible: false,

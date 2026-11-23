@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 import type { WorkspaceAttachmentPreviewSource } from '@/types/workspace-files'
+import { ImageEditProvider } from '@/components/chat/image-preview/ImageEditContext'
 import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
 
 vi.mock('@/lib/blobDownload', () => ({ saveBlobToDownloads: vi.fn() }))
@@ -53,7 +54,7 @@ test('isolates a late attachment read from the new preview source', async () => 
   expect(nextLoad).toHaveBeenCalledOnce()
 })
 
-test('keeps an explicit image editor and saved preview across Files remounts', async () => {
+test('resolves the live image editor and retains saved preview state across Files remounts', async () => {
   const load = vi.fn(async () => new Blob(['image'], { type: 'image/png' }))
   const submit = vi.fn().mockResolvedValue(true)
   const comments = [{ x: 50, y: 50, text: 'Keep with the draft' }]
@@ -74,16 +75,17 @@ test('keeps an explicit image editor and saved preview across Files remounts', a
     ...source('image.png', load),
     image: {
       draftAttachmentId: -1,
-      editor: { submit, saveMarkup, scope: 'nested-side-chat' },
+      editorScope: 'nested-side-chat',
     },
   }
-  const panel = () => (
-    <>
+  const editor = { submit, saveMarkup, scope: 'nested-side-chat' }
+  const panel = (actions: typeof editor | null = editor) => (
+    <ImageEditProvider actions={actions}>
       <button type="button" data-testid="composer-action">
         Composer
       </button>
       <WorkspaceAttachmentPreview source={attachment} />
-    </>
+    </ImageEditProvider>
   )
   const view = render(panel())
   try {
@@ -124,19 +126,31 @@ test('keeps an explicit image editor and saved preview across Files remounts', a
       'Keep with the draft'
     )
     fireEvent.click(screen.getByTestId('attachment-image-edit-cancel'))
+    view.rerender(panel(null))
+    await waitFor(() =>
+      expect(screen.queryByTestId('attachment-image-tool-background')).not.toBeInTheDocument()
+    )
     view.rerender(panel())
-    expect(screen.getByTestId('attachment-image-tool-background')).toBeInTheDocument()
+    expect(await screen.findByTestId('attachment-image-tool-background')).toBeInTheDocument()
     expect(screen.getByTestId('attachment-image-side-viewer')).toBe(savedViewer)
     expect(load).toHaveBeenCalledOnce()
+
+    fireEvent.click(screen.getByTestId('attachment-image-tool-comment'))
+    fireEvent.click(screen.getByTestId('attachment-image-edit-surface'))
+    fireEvent.change(screen.getByTestId('attachment-image-comment-input'), {
+      target: { value: 'Send this comment' },
+    })
+    fireEvent.click(screen.getByTestId('attachment-image-comment-save'))
+    fireEvent.click(screen.getByTestId('attachment-image-edit-send'))
+    expect(submit).toHaveBeenCalledTimes(2)
+    await waitFor(() =>
+      expect(screen.queryByTestId('attachment-image-tool-background')).not.toBeInTheDocument()
+    )
 
     view.unmount()
     const remounted = render(panel())
     expect(await screen.findByRole('region', { name: 'marked.png' })).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('attachment-image-tool-comment'))
-    expect(screen.getByTestId('attachment-image-comment-pin')).toHaveAttribute(
-      'title',
-      'Keep with the draft'
-    )
+    expect(screen.queryByTestId('attachment-image-tool-background')).not.toBeInTheDocument()
     expect(load).toHaveBeenCalledOnce()
     remounted.unmount()
     expect(revoke).toHaveBeenCalledTimes(3)

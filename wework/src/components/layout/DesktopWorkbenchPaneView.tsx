@@ -1,7 +1,7 @@
 import { createDesktopWorkbenchPaneChrome } from './desktopWorkbenchPaneChrome'
 import { DesktopWorkbenchConversationView } from './DesktopWorkbenchConversationView'
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
-import { ImageEditContext } from '@/components/chat/image-preview/ImageEditContext'
+import { ImageEditProvider } from '@/components/chat/image-preview/ImageEditContext'
 import { useImageEditSubmission } from './useImageEditSubmission'
 import { memo, useCallback } from 'react'
 import {
@@ -595,7 +595,7 @@ export function DesktopWorkbenchPaneView({
         openRightPanelTab('files')
       }}
     >
-      <ImageEditContext.Provider value={imageEditSubmission}>{content}</ImageEditContext.Provider>
+      <ImageEditProvider actions={imageEditSubmission}>{content}</ImageEditProvider>
       {model.panelActionDialogs}
     </AttachmentPreviewContext.Provider>
   )
