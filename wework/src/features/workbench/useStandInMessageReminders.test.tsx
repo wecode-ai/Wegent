@@ -1,37 +1,35 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
+import type { RuntimeConversationTurn } from '@/types/workbench'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { useStandInMessageReminders } from './useStandInMessageReminders'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 
 const mock = vi.hoisted(() => ({
-  messages: [] as WorkbenchMessage[],
   turns: [] as RuntimeConversationTurn[],
   listeners: new Set<() => void>(),
   send: vi.fn(),
 }))
 vi.mock('./runtimeConversationCache', () => ({
   getRuntimeConversationTurns: () => mock.turns,
-  getRuntimeConversationMessages: () => mock.messages,
   subscribeRuntimeConversation: (_address: unknown, callback: () => void) => {
     mock.listeners.add(callback)
     return () => mock.listeners.delete(callback)
   },
 }))
 vi.mock('./runtimeTaskSystemNotifications', () => ({ sendSystemNotification: mock.send }))
+vi.mock('@/i18n', () => ({ default: { t: () => '我的助理' } }))
 afterEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
-  mock.messages = []
   mock.turns = []
   mock.listeners.clear()
   mock.send.mockClear()
 })
 
 describe('stand-in message notification source', () => {
-  it('counts two messages in the same running conversation and sends each notification once', () => {
+  it('sends one notification for each independent completed turn in the same conversation', () => {
     vi.spyOn(Date, 'now').mockReturnValue(1000)
     const store = new RuntimeTaskLifecycleStore('notification-test')
     const address = { deviceId: 'device', taskId: 'stand-in-chat-7-primary' }
@@ -54,12 +52,18 @@ describe('stand-in message notification source', () => {
       useStandInMessageReminders(items, store, defaultNotificationPreferences)
     )
     act(() => {
-      mock.messages = ['first', 'second'].map((id, index) => ({
+      mock.turns = ['first', 'second'].map((id, index) => ({
         id,
-        role: 'assistant',
-        content: `${id} outcome`,
         status: 'done',
-        createdAt: new Date(1100 + index).toISOString(),
+        completedAt: 1200 + index,
+        items: [
+          {
+            id: `${id}-message`,
+            type: 'assistant_text',
+            content: `${id} outcome`,
+            createdAt: new Date(1100 + index).toISOString(),
+          },
+        ],
       }))
       mock.listeners.forEach(listener => listener())
     })
@@ -74,7 +78,7 @@ describe('stand-in message notification source', () => {
   })
 
   it.each(['streaming', 'running'] as const)(
-    'counts a settled acknowledgement while %s, but not its streaming tail or child block',
+    'counts an acknowledgement while %s and only notifies the final reply as the assistant',
     status => {
       vi.spyOn(Date, 'now').mockReturnValue(1000)
       const store = new RuntimeTaskLifecycleStore('native-wait-test')
@@ -88,7 +92,7 @@ describe('stand-in message notification source', () => {
           workspace: { deviceId: 'device', available: true, workspacePath: '', tasks: [] },
           task: {
             taskId: address.taskId,
-            title: '我的助理',
+            title: '我的分身',
             runtime: 'codex',
             workspacePath: '',
             runtimeHandle: { origin: { type: 'stand_in_identity' } },
@@ -125,7 +129,7 @@ describe('stand-in message notification source', () => {
         mock.listeners.forEach(listener => listener())
       })
       expect(hook.result.current.get(key)).toBe(1)
-      expect(mock.send).toHaveBeenCalledTimes(1)
+      expect(mock.send).not.toHaveBeenCalled()
       act(() => {
         mock.turns[0].items.push({
           ...acknowledgement,
@@ -137,12 +141,33 @@ describe('stand-in message notification source', () => {
       })
       expect(hook.result.current.get(key)).toBe(1)
       act(() => {
+        const child = mock.turns[0].items[1]
+        mock.turns[0].items.push({ ...child, id: 'child-follow-up' })
+        mock.listeners.forEach(listener => listener())
+      })
+      expect(hook.result.current.get(key)).toBe(2)
+      expect(mock.send).not.toHaveBeenCalled()
+      act(() => {
         mock.turns[0].status = 'done'
         mock.turns[0].completedAt = 1400
         mock.listeners.forEach(listener => listener())
       })
       expect(hook.result.current.get(key)).toBe(2)
-      expect(mock.send).toHaveBeenCalledTimes(2)
+      expect(mock.send).toHaveBeenCalledExactlyOnceWith({
+        title: '我的助理',
+        body: '检查完成',
+        address,
+      })
+      act(() => {
+        mock.turns[0].items.push({
+          ...acknowledgement,
+          id: 'late-transcript-text',
+          content: '补充说明',
+          createdAt: new Date(1400).toISOString(),
+        })
+        mock.listeners.forEach(listener => listener())
+      })
+      expect(mock.send).toHaveBeenCalledTimes(1)
     }
   )
 })
