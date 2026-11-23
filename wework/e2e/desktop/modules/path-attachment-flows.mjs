@@ -272,39 +272,8 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
   await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  control.setScenario('image_erase')
-  const eraseRequest = control.awaitNextScenarioRequest('image_erase')
-  await control.command('dragBy', '[data-testid="attachment-image-edit-surface"]', {
-    value: JSON.stringify({ x: 24, y: 12 }),
-  })
-  await control.command('waitFor', '[data-testid="attachment-image-edit-undo"]', {
-    enabled: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="attachment-image-edit-send"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const eraseImages = readModelImages((await eraseRequest).body, 'Image erase')
-  assert.equal(eraseImages.length, 2, 'Image erase must forward the original and selection mask')
-  assert.equal(
-    eraseImages[0].bytes.equals(ORIGINAL_IMAGE_BYTES),
-    true,
-    'Image erase must forward the original image unchanged'
-  )
-  assert.equal(
-    eraseImages[1].bytes.equals(ORIGINAL_IMAGE_BYTES),
-    false,
-    'Image erase must forward a generated selection mask'
-  )
-  assert.deepEqual(
-    eraseImages.map(image => ({ width: image.width, height: image.height })),
-    [ORIGINAL_IMAGE_SIZE, ORIGINAL_IMAGE_SIZE],
-    'Image erase must preserve both source dimensions'
-  )
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: 'Image erase received',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await control.command('click', '[data-testid="attachment-image-edit-cancel"]')
+  await control.command('click', '[data-testid="attachment-image-lightbox-close"]')
   await verifyComposerEditorScroll({ composerSelector, control })
   await control.command('hover', imageTileSelector)
   await control.command('click', `${imageTileSelector} [data-testid="remove-attachment-button"]`)
@@ -350,6 +319,47 @@ async function verifyImageEditSubmissions(control, composerSelector) {
   )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: 'Image resize received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  await control.command('waitFor', thumbnail, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  control.setScenario('image_erase')
+  const eraseRequest = control.awaitNextScenarioRequest('image_erase')
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-tool-erase"]')
+  await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('dragBy', '[data-testid="attachment-image-edit-surface"]', {
+    value: JSON.stringify({ x: 24, y: 12 }),
+  })
+  await control.command('waitFor', '[data-testid="attachment-image-edit-undo"]', {
+    enabled: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="attachment-image-edit-send"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const eraseImages = readModelImages((await eraseRequest).body, 'Image erase')
+  assert.equal(eraseImages.length, 2, 'Image erase must forward the original and selection mask')
+  assert.equal(
+    eraseImages[0].bytes.equals(ORIGINAL_IMAGE_BYTES),
+    true,
+    'Image erase must forward the original image unchanged'
+  )
+  assert.equal(
+    eraseImages[1].bytes.equals(ORIGINAL_IMAGE_BYTES),
+    false,
+    'Image erase must forward a generated selection mask'
+  )
+  assert.deepEqual(
+    eraseImages.map(image => ({ width: image.width, height: image.height })),
+    [ORIGINAL_IMAGE_SIZE, ORIGINAL_IMAGE_SIZE],
+    'Image erase must preserve both source dimensions'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'Image erase received',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.equal(await control.command('getValue', composerSelector), draft)
