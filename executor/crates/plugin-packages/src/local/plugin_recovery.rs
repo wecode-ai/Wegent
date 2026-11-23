@@ -23,12 +23,13 @@ pub fn default_plugin_store() -> GlobalCapabilityStore {
 }
 
 pub(super) fn desktop_managed_mcp_python() -> Option<PathBuf> {
+    // The host launcher waits for Python readiness before replacing itself with MCP.
     std::env::var_os("WEWORK_PYTHON_RUNTIME_URL")
         .filter(|url| !url.is_empty())
         .and_then(|_| std::env::var_os("WEWORK_PYTHON_RUNTIME_TOKEN"))
         .filter(|token| !token.is_empty())
         .and_then(|_| std::env::var_os("WEGENT_PYTHON_PATH"))
-        .map(PathBuf::from)
+        .and_then(|_| std::env::current_exe().ok())
 }
 
 fn plugin_store(

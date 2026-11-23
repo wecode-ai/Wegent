@@ -117,9 +117,32 @@ fn update_config(config: &mut Value, root: &Path, python: &Path) -> bool {
         for server in servers.values_mut() {
             if is_plugin_python_stdio(server, root) {
                 let args = server["args"].as_array_mut().expect("validated MCP args");
-                // Keep package-relative imports and avoid user site packages and bytecode.
-                args.splice(0..0, [json!("-E"), json!("-s"), json!("-B")]);
+                // The plugin launcher joins host preparation before opening MCP stdio.
+                args.splice(0..0, [json!("plugin-python"), json!("--mcp")]);
                 server["command"] = json!(python);
+                // Native MCP children receive these host capabilities by name.
+                // The launcher removes them before starting plugin code.
+                let environment = server
+                    .as_object_mut()
+                    .unwrap()
+                    .entry("env_vars")
+                    .or_insert_with(|| json!([]));
+                if let Some(environment) = environment.as_array_mut() {
+                    environment.extend([
+                        json!("WEWORK_PYTHON_RUNTIME_URL"),
+                        json!("WEWORK_PYTHON_RUNTIME_TOKEN"),
+                        json!("WEGENT_PYTHON_PATH"),
+                    ]);
+                }
+                // Scope the download budget to this managed connector, including
+                // configurations that express the native timeout in milliseconds.
+                let timeout = server["startup_timeout_sec"]
+                    .as_f64()
+                    .or_else(|| server["startup_timeout_ms"].as_f64().map(|ms| ms / 1000.0))
+                    .unwrap_or_default()
+                    .max(16.0 * 60.0 + 10.0);
+                server.as_object_mut().unwrap().remove("startup_timeout_ms");
+                server["startup_timeout_sec"] = json!(timeout);
                 changed = true;
             }
         }

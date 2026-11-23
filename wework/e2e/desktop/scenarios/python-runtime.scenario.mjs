@@ -190,8 +190,25 @@ export async function createDesktopScenario({
         })
         await captureScreenshot(control, 'python-runtime-preparing.png', 'body')
 
-        downloadGate.release()
-        await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
+        const chatLocation = new URL(JSON.parse(await control.command('snapshot', 'body')).location)
+        const chatRoute = `${await control.command('getRoute', 'body')}${chatLocation.search}${chatLocation.hash}`
+        const executorLog = join(resultDir, 'executor.log')
+        const mcpLogOffset = (await readFile(executorLog, 'utf8')).length
+        await mcp.verify(control, async () => {
+          await waitForPythonRuntimeEvent(
+            executorLog,
+            'server_name=python_stdio_probe status=starting',
+            mcpLogOffset,
+            Date.now() + uiTimeoutMs
+          )
+          await assertPathMissing(pythonPath, 'The first MCP request must begin during download')
+          observations.push({ phase: 'mcp-first-call-during-download' })
+          downloadGate.release()
+          await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
+        })
+        observations.push({ phase: 'mcp-first-call-completed' })
+        console.log('[desktop-e2e] First Python MCP call completed after the blocked download')
+        await control.command('navigate', 'body', { value: chatRoute })
         await chat.verify(control)
       } catch (error) {
         try {

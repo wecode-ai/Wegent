@@ -90,10 +90,12 @@ async fn desktop_recovery_projects_only_package_owned_python_mcp_commands() {
     let codex_manifest = json!({"name":"demo","version":"1.0"});
     let claude_manifest = json!({"name":"demo","version":"1.0","mcpServers":"./claude-mcp.json"});
     let claude_config = json!({
-        "claude":{"cwd":"./","command":"python3","args":["scripts/server.py"]}
+        "claude":{"cwd":"./","command":"python3","args":["scripts/server.py"],
+            "startup_timeout_sec":1200.0}
     });
     let config = json!({"mcpServers":{
-        "managed":{"cwd":"./","command":"python3","args":["scripts/server.py","two words"]},
+        "managed":{"cwd":"./","command":"python3","args":["scripts/server.py","two words"],
+            "startup_timeout_ms":250,"env_vars":["PLUGIN_OPTION"]},
         "workspace":{"command":"python3","args":["scripts/server.py"]},
         "escape":{"cwd":"../outside","command":"python3","args":["scripts/server.py"]},
         "custom":{"cwd":"./","command":"python3","args":["scripts/server.py"],
@@ -146,11 +148,19 @@ async fn desktop_recovery_projects_only_package_owned_python_mcp_commands() {
     let mut expected = config.clone();
     expected["mcpServers"]["managed"]["command"] = json!(python);
     expected["mcpServers"]["managed"]["args"] =
-        json!(["-E", "-s", "-B", "scripts/server.py", "two words"]);
+        json!(["plugin-python", "--mcp", "scripts/server.py", "two words"]);
+    expected["mcpServers"]["managed"]["startup_timeout_sec"] = json!(970.0);
+    expected["mcpServers"]["managed"].as_object_mut().unwrap().remove("startup_timeout_ms");
+    expected["mcpServers"]["managed"]["env_vars"] = json!([
+        "PLUGIN_OPTION", "WEWORK_PYTHON_RUNTIME_URL", "WEWORK_PYTHON_RUNTIME_TOKEN", "WEGENT_PYTHON_PATH"
+    ]);
     assert_eq!(projected, expected);
     let mut expected_claude = claude_config.clone();
     expected_claude["claude"]["command"] = json!(python);
-    expected_claude["claude"]["args"] = json!(["-E", "-s", "-B", "scripts/server.py"]);
+    expected_claude["claude"]["args"] = json!(["plugin-python", "--mcp", "scripts/server.py"]);
+    expected_claude["claude"]["env_vars"] = json!([
+        "WEWORK_PYTHON_RUNTIME_URL", "WEWORK_PYTHON_RUNTIME_TOKEN", "WEGENT_PYTHON_PATH"
+    ]);
     let projected_claude: Value =
         serde_json::from_slice(&fs::read(runtime.join("claude-mcp.json")).unwrap()).unwrap();
     assert_eq!(projected_claude, expected_claude);

@@ -185,7 +185,8 @@ export function createPluginPythonMcp({
       assert.equal(await readFile(join(installed.store_path, '.mcp.json'), 'utf8'), definition)
     },
 
-    async verify(control) {
+    async verify(control, beforeCompletion = async () => {}) {
+      observed = undefined
       await control.command('navigate', 'body', { value: '/' })
       await control.command('clickWhenEnabled', testId('new-chat-button'))
       await selectE2EModel(control)
@@ -211,6 +212,7 @@ export function createPluginPythonMcp({
             timeoutMs: uiTimeoutMs,
           }
         )
+        await beforeCompletion()
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
