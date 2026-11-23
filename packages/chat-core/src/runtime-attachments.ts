@@ -81,7 +81,7 @@ function pendingAttachment(
             ? result.local_path
             : result.local_preview_url,
         })
-        onPrepared?.(prepared)
+        if (prepared.status === 'ready') onPrepared?.(prepared)
         return prepared
       },
       () => {

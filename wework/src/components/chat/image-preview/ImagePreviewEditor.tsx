@@ -376,7 +376,7 @@ export function useImagePreviewEditor(
             <ControlButton
               type="button"
               variant="primary"
-              className={cn(actionClass, 'rounded-xl')}
+              className={cn(actionClass, 'rounded-xl hover:bg-text-primary/90')}
               data-testid="attachment-image-edit-send"
               ref={sendCommentsButton}
               disabled={busy || !currentComments.length}
@@ -471,7 +471,10 @@ export function useImagePreviewEditor(
             <ControlButton
               type="button"
               variant={mode === 'markup' && saveMarkup ? 'primary' : 'unstyled'}
-              className={cn(actionClass, mode === 'markup' && saveMarkup && 'rounded-xl')}
+              className={cn(
+                actionClass,
+                mode === 'markup' && saveMarkup && 'rounded-xl hover:bg-text-primary/90'
+              )}
               data-testid={
                 mode === 'markup' && saveMarkup
                   ? 'attachment-image-edit-save'
