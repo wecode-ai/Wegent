@@ -34,6 +34,7 @@ export interface CloudSubmissionContext {
 export interface UseWorkbenchCloudProjectContextOptions {
   active: boolean
   currentRuntimeTask: RuntimeTaskAddress | null
+  runtimeTaskCreationPending?: boolean
   devices?: DeviceInfo[]
   currentProjectId?: number
   defaultProjectSpace: RuntimeProjectSpaceRef | null

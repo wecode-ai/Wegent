@@ -11,6 +11,33 @@ import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import { cloudRuntimePort, loopItem, project } from './workbenchCloudProjectContextTestFixtures'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
 
+test('defers project context lookup until optimistic task creation is accepted', async () => {
+  const board = project('creation-board')
+  const item = loopItem(board.id)
+  const findCloudContextForTask = vi.fn(async () => ({ project: board, loop_item: item }))
+  const services = { workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask }) }
+  const address = { deviceId: 'creation-device', taskId: 'creation-task' }
+  const { result, rerender } = renderHook(
+    ({ creating }) =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: address,
+        runtimeTaskCreationPending: creating,
+        defaultProjectSpace: null,
+        paneKey: 'runtime:creation-device:creation-task',
+        runtimeTaskTitle: 'New task',
+        services,
+        userId: 1,
+      }),
+    { initialProps: { creating: true } }
+  )
+
+  expect(findCloudContextForTask).not.toHaveBeenCalled()
+  rerender({ creating: false })
+  await waitFor(() => expect(result.current.boundCloudItem?.id).toBe(item.id))
+  expect(findCloudContextForTask).toHaveBeenCalledTimes(1)
+})
+
 test('resolves an Issue binding that returns after the project selection window', async () => {
   vi.useFakeTimers()
   try {
