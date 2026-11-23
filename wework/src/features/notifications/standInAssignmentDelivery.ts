@@ -8,6 +8,10 @@ import type { TaskSource } from './NotificationTaskSourceContext'
 // Leave room on the shared local HTTP transport for interactive requests.
 const MAX_CONCURRENT_ASSIGNMENT_DELIVERIES = 2
 
+function retryDelay(failures: number) {
+  return Math.min(5_000 * 2 ** Math.min(failures - 1, 6), 300_000)
+}
+
 interface AssignmentObservation {
   inbox: WeworkInbox | null
   source: TaskSource | null
@@ -39,6 +43,8 @@ export function createStandInAssignmentDelivery(accountKey: string) {
   let activeDeliveries = 0
   let readRevision = 0
   let pendingIdentity: object | undefined
+  let identityFailures = 0
+  let identityRetryAt = 0
   let retryAfterIdentity = false
   let releasePersonal: (() => void) | undefined
   let releaseProject: (() => void) | undefined
@@ -93,12 +99,19 @@ export function createStandInAssignmentDelivery(accountKey: string) {
       return
     const assignments = assignmentNotifications(current?.inbox)
     if (!assignments.length) return
+    if (identityRetryAt > Date.now()) {
+      wakeAt(identityRetryAt)
+      return
+    }
     const request = {}
     const revision = readRevision
     pendingIdentity = request
     void identity()
       .then(local => {
-        if (pendingIdentity !== request || revision !== readRevision || !observing || !local) return
+        if (pendingIdentity !== request || revision !== readRevision || !observing) return
+        if (!local) throw new Error('Local Executor identity is unavailable')
+        identityFailures = 0
+        identityRetryAt = 0
         // Observer metadata can take over an in-flight identity read in the same commit.
         const latest = input
         if (
@@ -177,8 +190,7 @@ export function createStandInAssignmentDelivery(accountKey: string) {
                 }
                 receipt.status = 'failed'
                 receipt.failures++
-                receipt.retryAt =
-                  Date.now() + Math.min(5_000 * 2 ** Math.min(receipt.failures - 1, 6), 300_000)
+                receipt.retryAt = Date.now() + retryDelay(receipt.failures)
                 if (observing && input?.userId === userId) wakeAt(receipt.retryAt)
               })
               .finally(() => {
@@ -189,8 +201,10 @@ export function createStandInAssignmentDelivery(accountKey: string) {
           }
       })
       .catch(error => {
-        if (observing && revision === readRevision)
-          console.error('[Stand-in] Executor identity unavailable', error)
+        if (!observing || revision !== readRevision || pendingIdentity !== request) return
+        console.error('[Stand-in] Executor identity unavailable', error)
+        identityRetryAt = Date.now() + retryDelay(++identityFailures)
+        wakeAt(identityRetryAt)
       })
       .finally(() => {
         if (pendingIdentity !== request) return
@@ -214,6 +228,8 @@ export function createStandInAssignmentDelivery(accountKey: string) {
         readRevision++
         retryAfterIdentity = false
         pendingIdentity = undefined
+        identityFailures = 0
+        identityRetryAt = 0
         clearTimeout(retryTimer)
         retryTimer = undefined
         retryDeadline = undefined
@@ -232,6 +248,8 @@ export function createStandInAssignmentDelivery(accountKey: string) {
       readRevision++
       retryAfterIdentity = false
       pendingIdentity = undefined
+      identityFailures = 0
+      identityRetryAt = 0
       clearTimeout(retryTimer)
       retryTimer = undefined
       retryDeadline = undefined

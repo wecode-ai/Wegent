@@ -7,15 +7,21 @@ import { assignment } from './standInNotifications.fixtures'
 
 vi.mock('@/lib/runtime-environment', () => ({ getDesktopWindowLabel: () => 'main' }))
 
-test('replaying an inbox leaves transport capacity for foreground requests and drains all assignments', async () => {
-  const requests = Array.from({ length: 8 }, () => Promise.withResolvers<void>())
+function setupAssignmentBacklog(count: number) {
+  const requests = Array.from({ length: count }, () => Promise.withResolvers<void>())
   let index = 0
   const notifyAssignment = vi.fn<NonNullable<WorkbenchServices['standInApi']>['notifyAssignment']>(
     () => requests[index++].promise
   )
+  const readIdentity = vi.fn<NonNullable<WorkbenchServices['getLocalRuntimeSidebarIdentity']>>()
+  readIdentity.mockResolvedValue({
+    deviceId: 'local',
+    runtimeInstanceId: 'runtime',
+    provenance: 'local-ipc',
+  })
   const services = {
     standInApi: { notifyAssignment },
-    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+    getLocalRuntimeSidebarIdentity: readIdentity,
   } as unknown as WorkbenchServices
   const delivery = createStandInAssignmentDelivery('account')
   const input = {
@@ -31,7 +37,11 @@ test('replaying an inbox leaves transport capacity for foreground requests and d
       next_offset: null,
     },
   }
+  return { requests, notifyAssignment, readIdentity, delivery, input }
+}
 
+test('replaying an inbox leaves transport capacity for foreground requests and drains all assignments', async () => {
+  const { requests, notifyAssignment, delivery, input } = setupAssignmentBacklog(8)
   try {
     delivery.observe(input)
     await vi.waitFor(() => expect(notifyAssignment).toHaveBeenCalled())
@@ -47,5 +57,28 @@ test('replaying an inbox leaves transport capacity for foreground requests and d
     )
   } finally {
     delivery.release()
+  }
+})
+
+test('delivery resumes after a transient Executor identity failure between batches', async () => {
+  vi.useFakeTimers()
+  const { requests, notifyAssignment, readIdentity, delivery, input } = setupAssignmentBacklog(3)
+  try {
+    delivery.observe(input)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(notifyAssignment).toHaveBeenCalledTimes(2)
+
+    readIdentity.mockRejectedValueOnce(new Error('Executor restarting'))
+    requests[0].resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(readIdentity).toHaveBeenCalledTimes(2)
+    expect(notifyAssignment).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(notifyAssignment).toHaveBeenNthCalledWith(3, '12', 'ISSUE-1', 'assignment-2', 7, 'local')
+  } finally {
+    delivery.release()
+    for (const request of requests) request.resolve()
+    vi.useRealTimers()
   }
 })

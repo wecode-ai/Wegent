@@ -1516,8 +1516,6 @@ async function verifySideChatAttachmentIsolation({
   )
   await captureVerificationScreenshot(control, '07-side-chat-restored-two-composers.png')
   await verifyMarkupInstructionsSubmission(control, sideChatSelector)
-  const editRequest = control.awaitNextScenarioRequest('side_chat_image_preview_resize')
-  control.setScenario('side_chat_image_preview_resize')
   await control.command(
     'scrollToRatioAsUser',
     `${sideChatSelector} [data-testid="right-workspace-chat-scroll-area"]`,
@@ -1530,8 +1528,11 @@ async function verifySideChatAttachmentIsolation({
   })
   await control.command('click', sideChatImage)
   await control.command('click', '[data-testid="attachment-image-tool-resize"]')
-  await control.command('click', '[data-testid="attachment-image-resize-16:9"]')
-  await editRequest
+  control.setScenario('side_chat_image_preview_resize')
+  await Promise.all([
+    control.awaitNextScenarioRequest('side_chat_image_preview_resize'),
+    control.command('click', '[data-testid="attachment-image-resize-16:9"]'),
+  ])
   await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
     text: 'Image resize received',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
