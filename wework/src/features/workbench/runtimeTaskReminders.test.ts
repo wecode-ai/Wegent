@@ -90,7 +90,7 @@ function notificationItem(deviceId: string): RuntimeTaskReminderItem {
   }
 }
 
-test.each(['task list', 'executor snapshot'])(
+test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
   'keeps memory review results silent when the origin is available in the %s',
   async originSource => {
     const send = vi.mocked(sendSystemNotification)
@@ -121,8 +121,31 @@ test.each(['task list', 'executor snapshot'])(
     }
     const items = collectRuntimeTaskReminderItems(work)
     store.syncRuntimeWork(work)
-    if (originSource === 'executor snapshot') store.syncRuntimeTask(items[0].address, review)
-    for (const { address } of items) {
+    if (originSource === 'earlier running snapshot') {
+      store.syncRuntimeTask(items[0].address, { ...review, running: true, updatedAt: 1000 })
+      store.syncRuntimeWork({
+        ...work,
+        chats: [
+          {
+            ...work.chats[0],
+            tasks: [
+              {
+                ...items[0].task,
+                running: false,
+                status: 'completed',
+                completedAt: 2000,
+                updatedAt: 2000,
+              },
+              scheduled,
+            ],
+          },
+        ],
+      })
+    } else if (originSource === 'executor snapshot') {
+      store.syncRuntimeTask(items[0].address, review)
+    }
+    const settlingItems = originSource === 'earlier running snapshot' ? items.slice(1) : items
+    for (const { address } of settlingItems) {
       store.executorStarted(address)
       store.turnStarted(address, 'turn-1')
       store.turnSettled(address, 'turn-1', 'succeeded')
