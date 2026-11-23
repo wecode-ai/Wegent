@@ -57,7 +57,8 @@ it('follows the measured transcript end without scrolling into temporary Markdow
     virtualizerRef: { current: virtualizer },
     owner: { lease: null },
   }
-  const dispose = state.subscribe(() => {}, input, ports)
+  const dispose = state.subscribe(() => {})
+  state.update(input, ports)
   const releaseContent = state.bindContent(content, ports)
 
   // An unmeasured overscan row temporarily contributes a tall Markdown placeholder.
@@ -76,14 +77,25 @@ it('follows the measured transcript end without scrolling into temporary Markdow
 })
 
 it('keeps the scroll button hidden during controller-owned follow steps', () => {
-  const requestFrame = vi.fn(() => 1)
+  const requestFrame = vi.fn((_callback: FrameRequestCallback) => 1)
   vi.stubGlobal('requestAnimationFrame', requestFrame)
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
   const viewport = document.createElement('div')
   let scrollHeight = 640
+  let rangeReads = 0
   Object.defineProperties(viewport, {
     clientHeight: { value: 640 },
-    scrollHeight: { get: () => scrollHeight },
+    scrollHeight: {
+      get: () => {
+        rangeReads++
+        return scrollHeight
+      },
+    },
+    scrollTo: {
+      value: ({ top }: ScrollToOptions) => {
+        viewport.scrollTop = top ?? 0
+      },
+    },
   })
   const message = {
     id: 'reply',
@@ -102,18 +114,25 @@ it('keeps the scroll button hidden during controller-owned follow steps', () => 
   }
   const state = createConversationScrollState(null, input)
   const notify = () => {}
-  const dispose = state.subscribe(notify, input, ports)
+  const dispose = state.subscribe(notify)
+  state.update(input, ports)
   scrollHeight = 2000
-  const releaseStream = state.subscribe(
-    notify,
+  state.update(
     { ...input, messages: [{ ...message, content: 'Start and continue', status: 'streaming' }] },
     ports
   )
   state.handleContentLayoutChange()
   expect(requestFrame).toHaveBeenCalled()
   expect(state.getSnapshot().virtualAnchorToEnd).toBe(false)
+  const readsBeforeFrame = rangeReads
+  requestFrame.mock.lastCall?.[0](16)
+  expect(rangeReads).toBe(readsBeforeFrame)
+
+  scrollHeight += 100
+  state.handleVirtualLayoutChange()
+  requestFrame.mock.lastCall?.[0](32)
+  expect(rangeReads).toBe(readsBeforeFrame + 1)
   state.endInput()
   expect(state.getSnapshot().showScrollButton).toBe(false)
-  releaseStream()
   dispose()
 })

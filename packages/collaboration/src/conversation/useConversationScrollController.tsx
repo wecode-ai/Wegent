@@ -1,4 +1,11 @@
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { useDOMEvent, useWindowEvent } from '../dom-events'
 import type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
@@ -100,11 +107,14 @@ export function useConversationScrollController(options: Options) {
     resource = createConversationScrollState(currentScrollKey, initialConfiguration)
     setOwner({ key: currentScrollKey, resource })
   }
-  const subscribe = useCallback(
-    (listener: () => void) => resource.subscribe(listener, input, ports),
-    [resource, input, ports]
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
   )
-  const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
+  useLayoutEffect(() => {
+    resource.update(input, ports)
+  }, [input, ports, resource])
   const contentRef = contentNode
   const bindContentRef = useCallback(
     (node: HTMLDivElement | null) => {

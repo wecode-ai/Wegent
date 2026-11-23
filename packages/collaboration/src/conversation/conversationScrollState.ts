@@ -183,10 +183,11 @@ export function createConversationScrollState(
   let inputDirection: 'backward' | 'forward' | null = null
   const motion: {
     frame: SafeAnimationFrameHandle | null
+    end: number | null
     position: number | null
     velocity: number
     at: number | null
-  } = { frame: null, position: null, velocity: 0, at: null }
+  } = { frame: null, end: null, position: null, velocity: 0, at: null }
   let layoutFrame: SafeAnimationFrameHandle | null = null
   let followBehavior: 'auto' | 'smooth' = 'auto'
   let initializedKey: string | null | undefined
@@ -201,6 +202,7 @@ export function createConversationScrollState(
     layoutFrame = null
     if (motion.frame !== null) cancelSafeAnimationFrame(motion.frame)
     motion.frame = null
+    motion.end = null
     motion.position = null
     motion.velocity = 0
     motion.at = null
@@ -235,10 +237,6 @@ export function createConversationScrollState(
       readerState.lastScrollPosition = currentOffset
       return
     }
-    // The follow controller already owns the frame loop and clamps its target
-    // against the measured virtual and native ranges. Avoid starting a second
-    // reconciliation loop in TanStack for each step of that same motion.
-    readVirtualizer()?.cancelScroll()
     command = true
     try {
       recordConversationScrollWrite(
@@ -303,7 +301,10 @@ export function createConversationScrollState(
       return
     const viewport = scrollRef.current
     if (!viewport) return
-    if (motion.frame !== null) return
+    if (motion.frame !== null) {
+      motion.end = null
+      return
+    }
     const end = followEnd(viewport)
     const distanceFromBottom =
       motion.position === null ? Math.max(0, end - viewport.scrollTop) : null
@@ -321,6 +322,7 @@ export function createConversationScrollState(
       return
     }
     motion.position ??= viewport.scrollTop
+    motion.end = end
     const engine = readVirtualizer()
     if (engine) {
       engine.cancelScroll()
@@ -343,11 +345,16 @@ export function createConversationScrollState(
         cancelMotion()
         return
       }
-      const end = followEnd(viewport)
       // Keep subpixel progress even when the browser quantizes scrollTop writes.
-      const position = Math.min(end, motion.position ?? viewport.scrollTop)
+      const current = motion.position ?? viewport.scrollTop
+      const immediate = reducedMotion?.matches === true
+      // Layout invalidates the range. Recheck it before a final snap.
+      let end = motion.end
+      if (end === null || immediate || end - current <= STREAM_FOLLOW_SETTLE_PX)
+        end = motion.end = followEnd(viewport)
+      const position = Math.min(end, current)
       const lag = Math.max(0, end - position)
-      if (lag <= STREAM_FOLLOW_SETTLE_PX || reducedMotion?.matches) {
+      if (lag <= STREAM_FOLLOW_SETTLE_PX || immediate) {
         writeOffset(end)
         cancelMotion()
         save(Math.max(0, end - (readerState.lastScrollPosition ?? viewport.scrollTop)))
@@ -391,7 +398,11 @@ export function createConversationScrollState(
       handleContentLayoutChange()
       return
     }
-    if (motion.frame || layoutFrame) return
+    if (motion.frame) {
+      motion.end = null
+      return
+    }
+    if (layoutFrame) return
     layoutFrame = requestSafeAnimationFrame(() => {
       layoutFrame = null
       handleContentLayoutChange()
@@ -790,11 +801,13 @@ export function createConversationScrollState(
   }
   return {
     getSnapshot: () => state,
-    subscribe(listener: () => void, next: ConversationScrollInput, ports: ScrollPorts) {
+    update(next: ConversationScrollInput, ports: ScrollPorts) {
       ;({ contentRef, virtualizerRef } = ports)
+      commit(next)
+    },
+    subscribe(listener: () => void) {
       stopped = false
       listeners.add(listener)
-      commit(next)
       return () => {
         listeners.delete(listener)
         queueMicrotask(() => {
