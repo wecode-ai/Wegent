@@ -57,7 +57,7 @@ Choose **Cancel branch** to stop one branch and its subtasks while the other bra
 ## Individual role-profile operations
 
 1. Open **My Stand-in** from the left sidebar, select the primary identity or a scenario role, click **Stand-in details** at the top right, then **Manage stand-in** at the bottom of the popover.
-2. Edit responsibilities and preferences. Select **Execution device** directly in the scenario role settings, then expand **More settings (device, model, workspace)** to choose that device's model and working directory. Different roles can use different devices without changing the primary identity's binding.
+2. In **Settings**, edit the role's name and handling instructions. Select an execution device below **Execution environment**, or open **Execution environment** to choose the model and working directory for that device. Different roles can use different devices without changing the primary identity's binding.
 3. Install/authorize source apps, choose scope and handling mode, then save to enable changes. Calendar/scheduled delegation belongs to this role's connection page, not global cloud connection settings.
 4. **Recent activity** shows execution records with their status and time. Work opens as a read-only preview inside the same popover; Back restores the list position. Use **Open conversation in workspace** to reply, approve or use the full workspace. Human questions remain in **Needs your input** and the original work.
 5. To delete a scenario role, use its settings action and confirm the target. Deleting differs from pausing a source; adjust source reception if you want to keep the role but temporarily stop intake.

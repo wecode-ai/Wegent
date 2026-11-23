@@ -1,8 +1,50 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowLeft, ChevronDown, ChevronRight, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useId, useState } from 'react'
+
+export function StandInSettingsPanel({
+  testId,
+  contentTestId,
+  onClose,
+  active,
+  suspended,
+  embedded = false,
+  calendarOpen,
+  children,
+}: {
+  testId: string
+  contentTestId?: string
+  onClose(): void
+  active?: boolean
+  suspended?: boolean
+  embedded?: boolean
+  calendarOpen: boolean
+  children: ReactNode
+}) {
+  return (
+    <DialogSurface
+      onClose={onClose}
+      active={active}
+      suspended={suspended}
+      render={
+        <section
+          className={`min-h-0 px-5 text-base text-text-primary ${embedded ? '' : 'h-full'} ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
+          data-testid={testId}
+        />
+      }
+    >
+      <div
+        className={`flex w-full flex-col ${calendarOpen ? 'h-full min-h-0' : 'min-h-full'}`}
+        data-testid={contentTestId}
+      >
+        {children}
+      </div>
+    </DialogSurface>
+  )
+}
 
 export function StandInSettingsError({
   error,
@@ -38,7 +80,6 @@ export function StandInSettingsHeader({
   disabled,
   back,
   close,
-  actions,
   path,
 }: {
   title: ReactNode
@@ -46,7 +87,6 @@ export function StandInSettingsHeader({
   disabled: boolean
   back?: { testId: string; onClick(): void }
   close?: { testId: string; onClick(): void }
-  actions?: ReactNode
   path?: Array<{ label: string; testId: string; onClick?: () => void }>
 }) {
   const { t } = useTranslation('common')
@@ -100,7 +140,6 @@ export function StandInSettingsHeader({
         )}
         {description && <p className="mt-1 text-sm text-text-secondary">{description}</p>}
       </div>
-      {actions}
       {close && (
         <ControlButton
           variant="unstyled"
@@ -144,7 +183,10 @@ export function StandInSettingsActions({
     <footer className="sticky bottom-0 z-10 mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border bg-background py-4">
       {children}
       {leading && (
-        <div data-testid={`${prefix}-footer-leading`} className="mr-auto flex items-center">
+        <div
+          data-testid={`${prefix}-footer-leading`}
+          className="mr-auto flex max-w-full flex-wrap items-center gap-2"
+        >
           {leading}
         </div>
       )}
