@@ -33,6 +33,19 @@ async function respond(input, { tools = [], kind } = {}) {
 }
 
 describe('stand-in processing model fixture', () => {
+  test('continues the existing task when the primary history contains an earlier create request', async () => {
+    const output = await respond(
+      [
+        { role: 'user', content: 'PRIMARY_ORCHESTRATE_TASK_CREATE' },
+        { role: 'assistant', content: '已创建独立处理任务。' },
+        { role: 'user', content: 'PRIMARY_ORCHESTRATE_TASK_CONTINUE' },
+      ],
+      { tools: [{ type: 'custom', name: 'exec' }] }
+    )
+    expect(output).toContain('wework_stand_in__continue_task')
+    expect(output).not.toContain('wework_stand_in__create_task')
+  })
+
   test.each(['string', 'parts', 'agent-output', 'detached-responses-context'])(
     'quoted parent recall (%s) cannot route a read-only worker to create another task',
     async format => {
