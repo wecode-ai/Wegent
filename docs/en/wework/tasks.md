@@ -8,6 +8,8 @@ sidebar_position: 4
 
 ## Individual composer controls
 
+When a red error notice appears above the task composer, select **Dismiss notice** on its right. Dismissing it leaves the draft and task run in place. If a plugin login check fails, the notice identifies the plugin to check.
+
 | Feature                          | UI steps                                                                         | Conditions and result                                                                                                      |
 | -------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | Photos and files                 | Composer + → add photos/files → choose → review attachments                      | Removing an attachment does not delete its source file                                                                     |

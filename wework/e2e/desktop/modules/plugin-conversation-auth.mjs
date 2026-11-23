@@ -23,6 +23,7 @@ export function createConversationAuthModelFixture({ slug, qrPrompt, ghResumePro
         release = resolve
       })
       const state = {
+        name,
         prompt: `${qrPrompt} ${name}`,
         connectorSlug,
         requests: 0,
@@ -66,6 +67,13 @@ export function createConversationAuthModelFixture({ slug, qrPrompt, ghResumePro
       }
       state.requests += 1
       await state.responseReady
+      if (state.name === 'authorization-code-discussion') {
+        return [
+          assistantMessage(
+            'Authorization code discussion completed. The parser reads `connector_auth_required`, `pluginKey`: `hint.pluginKey` and `connectorSlug`: `conversation-qr`.'
+          ),
+        ]
+      }
       return [
         assistantMessage(
           `connector_auth_required\npluginKey=${slug}\nconnectorSlug=${state.connectorSlug}`
@@ -242,6 +250,16 @@ export async function verifyConversationQrAuthorization({
     await control.command('click', testId('connector-auth-cancel'))
     await sendOrdinary()
 
+    const discussion = await beginOnUse('authorization-code-discussion')
+    discussion.release()
+    await control.command('waitFor', 'body', {
+      text: 'Authorization code discussion completed.',
+      stableMs: 1000,
+    })
+    await assertNoCard('Discussing the authorization parser opened a login card')
+    await control.command('waitForHidden', testId('chat-input-error'))
+    assertNoContinuation()
+
     await writeFile(healthFailure, 'fail')
     const failedHealth = await beginOnUse('health-failure')
     failedHealth.release()
@@ -251,6 +269,10 @@ export async function verifyConversationQrAuthorization({
     assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
     await assertNoCard('Health errors were treated as logout')
     assertNoContinuation()
+    await control.command('waitFor', testId('chat-input-error'), { text: slug })
+    await control.command('clickWhenEnabled', testId('dismiss-chat-input-error'))
+    await control.command('waitForHidden', testId('chat-input-error'))
+    assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
     await rm(healthFailure)
     await sendOrdinary()
     await captureScreenshot(control, 'plugin-auth-failure-navigation-recovery.png', 'body')
