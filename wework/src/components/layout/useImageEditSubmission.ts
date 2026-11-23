@@ -90,8 +90,8 @@ export function useImageEditSubmission({
             : {}),
         })
         if (!accepted) return false
-        // Keep the admitted image available while a queued turn waits for transport.
-        const snapshot = loadImage()
+        // Start reading the admitted source while a queued turn waits for transport.
+        void loadImage().catch(() => {})
         if (
           edit.kind === 'comment' &&
           attachmentScope &&
@@ -99,10 +99,7 @@ export function useImageEditSubmission({
           releaseDraftAttachment
         ) {
           // The message owns its separately prepared image. Retire only the draft source.
-          const id = source.draftAttachmentId
-          releaseDraftAttachment(attachmentScope, id)
-        } else {
-          void snapshot.catch(() => {})
+          releaseDraftAttachment(attachmentScope, source.draftAttachmentId)
         }
         return true
       },
