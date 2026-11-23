@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
 import type { RuntimeConversationClient } from '@wegent/chat-core'
 import { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
@@ -27,14 +27,18 @@ export function useRuntimeConversationSession(
       }),
     [scope, runtime, deviceId, taskId, projectId, issueId]
   )
-  const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot)
-  useEffect(() => {
-    if (scope) {
-      scope.activate(session)
-      return
-    }
-    session.start()
-    return session.stop
-  }, [scope, session])
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (scope) return scope.observeSession(session, listener, true)
+      const unsubscribe = session.subscribe(listener)
+      session.start()
+      return () => {
+        unsubscribe()
+        session.stop()
+      }
+    },
+    [scope, session]
+  )
+  const state = useSyncExternalStore(subscribe, session.getSnapshot, session.getSnapshot)
   return { session, state }
 }

@@ -1,8 +1,8 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   getImNotificationPresenceClientId,
-  useAwayImNotificationPresence,
+  startAwayImNotificationPresence,
 } from './awayImNotificationPresence'
 
 const focusState = vi.hoisted(() => ({
@@ -35,6 +35,8 @@ vi.mock('@/desktop/systemLock', () => ({
   },
 }))
 
+const stops: (() => void)[] = []
+
 describe('away IM notification presence', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -46,6 +48,8 @@ describe('away IM notification presence', () => {
   })
 
   afterEach(() => {
+    for (const stop of stops) stop()
+    stops.length = 0
     vi.restoreAllMocks()
   })
 
@@ -55,12 +59,7 @@ describe('away IM notification presence', () => {
 
   test('reports foreground initially and away after focus is lost', async () => {
     const updatePresence = vi.fn().mockResolvedValue({ away: false, ttlSeconds: 90 })
-    renderHook(() =>
-      useAwayImNotificationPresence({
-        enabled: true,
-        updatePresence,
-      })
-    )
+    stops.push(startAwayImNotificationPresence('fixture-account', updatePresence))
 
     await waitFor(() => expect(updatePresence).toHaveBeenCalledTimes(1))
     expect(updatePresence.mock.calls[0][0]).toMatchObject({ away: false })

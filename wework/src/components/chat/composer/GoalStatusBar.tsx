@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
-import { CircleDot, Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { RuntimeGoal, RuntimeGoalExecutionStatus, RuntimeGoalStatus } from '@/types/api'
 import type { ConnectionGoalWaitState } from '@/lib/runtime-connection-events'
+import type { RuntimeGoal, RuntimeGoalExecutionStatus, RuntimeGoalStatus } from '@/types/api'
+import { useClock } from '@wegent/collaboration/clock'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CircleDot, Pause, Pencil, Play, Target } from 'lucide-react'
+import { useState } from 'react'
 
 interface GoalStatusBarProps {
   goal: RuntimeGoal
@@ -51,14 +54,7 @@ export function GoalStatusBar({
           : continuing
             ? { key: 'workbench.goal_status_compact_continuing', fallback: '正在开始下一轮' }
             : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
-  const timerKey = goalTimerKey(goal)
-  const [timerState, setTimerState] = useState(() => createTimerState(timerKey, Date.now()))
   const [actionsRevealed, setActionsRevealed] = useState(false)
-  const elapsedSeconds = useMemo(
-    () => getLiveElapsedSeconds(goal, timerState, timerKey),
-    [goal, timerKey, timerState]
-  )
-  const elapsed = formatGoalElapsed(elapsedSeconds)
   const resumable =
     goal.status === 'paused' ||
     (goal.status === 'blocked' && !waitingForEvent) ||
@@ -77,18 +73,6 @@ export function GoalStatusBar({
     ? t('workbench.goal_start', '开始目标')
     : t('workbench.goal_pause', '暂停目标')
   const toggleAction = resumable ? onResumeGoal : onPauseGoal
-
-  useEffect(() => {
-    if (goal.status !== 'active') return
-
-    const interval = window.setInterval(() => {
-      const nowMs = Date.now()
-      setTimerState(current =>
-        current.key === timerKey ? { ...current, nowMs } : createTimerState(timerKey, nowMs)
-      )
-    }, 1000)
-    return () => window.clearInterval(interval)
-  }, [goal.status, timerKey])
 
   return (
     <div
@@ -125,13 +109,14 @@ export function GoalStatusBar({
       {showStatus && (
         <span className="shrink-0 text-text-muted">{t(statusLabel.key, statusLabel.fallback)}</span>
       )}
-      {elapsed && <span className="shrink-0 text-text-muted">{elapsed}</span>}
+      <GoalElapsedTime key={goalTimerKey(goal)} goal={goal} />
       <div
         id="goal-status-details"
         data-testid="goal-status-details"
         className="flex max-w-0 shrink-0 items-center gap-1 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 group-hover:max-w-80 group-hover:opacity-100 group-focus-within:max-w-80 group-focus-within:opacity-100"
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="edit-goal-button"
           onClick={onEditGoal}
@@ -141,21 +126,20 @@ export function GoalStatusBar({
           title={t('workbench.goal_edit', '编辑目标')}
         >
           <Pencil className="h-3.5 w-3.5" />
-        </button>
-        <button
+        </ControlButton>
+        <DeleteIconButton
           type="button"
           data-testid="clear-goal-button"
           onClick={onClearGoal}
           disabled={!onClearGoal}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={t('workbench.goal_clear', '删除目标')}
           title={t('workbench.goal_clear', '删除目标')}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+          density="compact"
+        />
       </div>
       {canToggle && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={resumable ? 'resume-goal-button' : 'pause-goal-button'}
           onClick={toggleAction}
@@ -184,43 +168,29 @@ export function GoalStatusBar({
               />
             </span>
           )}
-        </button>
+        </ControlButton>
       )}
     </div>
   )
 }
 
-interface GoalTimerState {
-  key: string
-  startedAtMs: number
-  nowMs: number
-}
-
-function createTimerState(key: string, nowMs: number): GoalTimerState {
-  return {
-    key,
-    startedAtMs: nowMs,
-    nowMs,
-  }
+function GoalElapsedTime({ goal }: { goal: RuntimeGoal }) {
+  const [startedAtMs] = useState(() => Date.now())
+  const nowMs = useClock(goal.status === 'active')
+  const baseSeconds = Number.isFinite(goal.timeUsedSeconds)
+    ? Math.max(0, Math.floor(goal.timeUsedSeconds))
+    : 0
+  const liveSeconds =
+    goal.status === 'active' ? Math.max(0, Math.floor((nowMs - startedAtMs) / 1000)) : 0
+  return (
+    <span className="shrink-0 text-text-muted">{formatGoalElapsed(baseSeconds + liveSeconds)}</span>
+  )
 }
 
 function goalTimerKey(goal: RuntimeGoal): string {
   return [goal.threadId, goal.status, goal.timeUsedSeconds, goal.createdAt, goal.updatedAt].join(
     ':'
   )
-}
-
-function getLiveElapsedSeconds(
-  goal: RuntimeGoal,
-  timerState: GoalTimerState,
-  timerKey: string
-): number {
-  const baseSeconds = Number.isFinite(goal.timeUsedSeconds)
-    ? Math.max(0, Math.floor(goal.timeUsedSeconds))
-    : 0
-  if (goal.status !== 'active' || timerState.key !== timerKey) return baseSeconds
-
-  return baseSeconds + Math.max(0, Math.floor((timerState.nowMs - timerState.startedAtMs) / 1000))
 }
 
 function formatGoalElapsed(seconds: number): string {

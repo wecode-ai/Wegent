@@ -763,11 +763,40 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
   }
 }
 
+function discoveryCallIdAfterCatalogUpdate(request, searchCallId, directToolName) {
+  if (!searchCallId || !directToolName?.startsWith('mcp__')) return searchCallId
+  const namespace = directToolName.slice(5, directToolName.lastIndexOf('__'))
+  const input = Array.isArray(request.input) ? request.input : []
+  const outputIndex = input.findLastIndex(
+    item => item.type?.endsWith('_call_output') && item.call_id === searchCallId
+  )
+  if (outputIndex < 0) return searchCallId
+  let catalogIndex = -1
+  for (let index = outputIndex + 1; index < input.length; index += 1) {
+    const item = input[index]
+    if (item.type !== 'message' || item.role !== 'developer') continue
+    const text = modelMessageText(item)
+    if (!text.startsWith('<tools>\n') || !text.endsWith('\n</tools>')) continue
+    const lines = text.split('\n')
+    const added = lines.indexOf('Added deferred tool namespaces:')
+    if (added < 0) continue
+    const removed = lines.indexOf('Removed deferred tool namespaces:', added + 1)
+    if (
+      lines
+        .slice(added + 1, removed < 0 ? -1 : removed)
+        .some(line => line === '- ' + namespace || line.startsWith('- ' + namespace + ': '))
+    )
+      catalogIndex = index
+  }
+  return catalogIndex < 0 ? searchCallId : searchCallId + '-catalog-' + catalogIndex
+}
+
 function mcpToolRequestEvents(
   request,
   { toolName, argumentsValue, directToolName, searchCallId, toolCallId }
 ) {
   const selection = selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
+  searchCallId = discoveryCallIdAfterCatalogUpdate(request, searchCallId, directToolName)
   if (
     selection.mode === 'search' &&
     searchCallId &&

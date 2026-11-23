@@ -1,3 +1,7 @@
+import {
+  OVERLOAD_FIRST_RETRY_DELAY_MS,
+  assertOverloadRetryTiming,
+} from '../modules/overload-retry-timing.mjs'
 import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -277,11 +281,12 @@ export function createDesktopScenario({
       await control.command('waitFor', `${WORKBENCH} [data-testid="pause-response-button"]`)
       await waitUntil(
         () => requests.length === 3,
-        // Native recovery now deliberately waits 10 seconds before its first retry.
-        10_000 + uiTimeoutMs,
+        // Keep the positive wait aligned with the configured native retry deadline.
+        OVERLOAD_FIRST_RETRY_DELAY_MS + uiTimeoutMs,
         'The direct-provider overload did not automatically continue the saved conversation'
       )
       const log = await readFile(join(resultDir, 'executor.log'), 'utf8')
+      assertOverloadRetryTiming(log)
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
       assert.ok(taskId, 'The overload task has no identity')
@@ -426,8 +431,8 @@ export function createDesktopScenario({
         uiTimeoutMs,
         'Cancellation did not stop overload backoff'
       )
-      // Observe beyond the real ten-second retry deadline, including scheduling margin.
-      await new Promise(resolve => setTimeout(resolve, 10_500))
+      // Observe beyond the configured retry deadline, including scheduling margin.
+      await new Promise(resolve => setTimeout(resolve, OVERLOAD_FIRST_RETRY_DELAY_MS + 500))
       assert.equal(cancelRequests.length, 1, 'A cancelled overload task sent another model request')
       assert.equal(requests.length, 3, 'The completed tool work was replayed')
       active = false

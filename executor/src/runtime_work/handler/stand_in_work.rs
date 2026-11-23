@@ -112,10 +112,33 @@ impl RuntimeWorkRpcHandler {
         if origin["initiatedBy"] != "stand_in" {
             return Ok(());
         }
+        if origin["type"] == "stand_in_schedule" {
+            return Ok(());
+        }
         let Some(user) = origin["userId"].as_i64() else {
             return Ok(());
         };
         if origin["type"] == "stand_in_task" {
+            if origin["roleDelegation"].is_object() {
+                let role_id = origin["standInId"].as_str();
+                let store =
+                    LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+                let settings = store
+                    .personal_stand_in(user, &self.device_id)
+                    .map_err(settings_error)?;
+                if role_id.is_none()
+                    || !settings["lifecycle"]["status"].is_null()
+                    || !stand_in_identities(&settings)
+                        .iter()
+                        .any(|role| role["id"].as_str() == role_id && role["enabled"] == true)
+                {
+                    return Err(AppIpcError::new(
+                        "role_unavailable",
+                        "The delegated role is no longer enabled",
+                    ));
+                }
+                request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(true);
+            }
             if request
                 .extra
                 .get("standInDelegation")
@@ -504,7 +527,7 @@ impl RuntimeWorkRpcHandler {
             .update_stand_in_dispatch(user, work_id, &ids, "sending", None)
             .map_err(settings_error)?;
         let result = if self.local_task_link(task_id).is_some() {
-            self.send_message(payload.take()).await
+            self.send_message_from_event(payload.take()).await
         } else {
             self.create_task(payload.take()).await
         };
@@ -655,7 +678,8 @@ fn selected_pending_connection_messages(
             ));
         }
     }
-    Ok(messages
+    let mut retry_limit_reached = false;
+    let pending = messages
         .into_iter()
         .filter(|message| {
             selected.as_ref().map_or(true, |ids| {
@@ -669,7 +693,23 @@ fn selected_pending_connection_messages(
                         Some("failed" | "needs_grouping")
                     )))
         })
-        .collect())
+        .filter(|message| {
+            let failures = LocalTaskStore::stand_in_dispatch_failure_count(
+                message,
+                message["dispatchStatus"] == "failed",
+            );
+            let exhausted = failures >= LocalTaskStore::STAND_IN_DISPATCH_FAILURE_LIMIT;
+            retry_limit_reached |= exhausted;
+            !exhausted
+        })
+        .collect::<Vec<_>>();
+    if pending.is_empty() && retry_limit_reached {
+        return Err(AppIpcError::new(
+            "stand_in_dispatch_retry_limit",
+            "This input has reached the stand-in dispatch failure limit",
+        ));
+    }
+    Ok(pending)
 }
 
 fn dingtalk_client_id(work: &str, ids: &[String]) -> String {
@@ -690,6 +730,7 @@ fn connection_source_identity(source: &Value) -> Value {
 
 fn set_connection_message_presentation(payload: &mut Value, messages: &[Value]) {
     payload["restoreUserMessageContent"] = json!(true);
+    payload["source"] = json!({"source": "connection_work"});
     payload["message"] = json!(messages
         .iter()
         .map(|message| format!(
@@ -765,6 +806,7 @@ mod tests {
             json!({"recordId":"deferred","dispatchStatus":"pending"}),
             json!({"recordId":"ignored","dispatchStatus":"ignored"}),
             json!({"recordId":"sent","dispatchStatus":"sent"}),
+            json!({"recordId":"exhausted","dispatchStatus":"failed","dispatchFailureCount":3}),
         ];
         let selected = vec!["selected".into(), "sent".into()];
         let pending =
@@ -788,6 +830,12 @@ mod tests {
         );
         let manual = selected_pending_connection_messages(messages.clone(), true, None).unwrap();
         assert_eq!(manual, messages[..2]);
+        assert_eq!(
+            selected_pending_connection_messages(messages, true, Some(&["exhausted".into()]))
+                .unwrap_err()
+                .code,
+            "stand_in_dispatch_retry_limit"
+        );
     }
 
     #[tokio::test]
@@ -886,6 +934,13 @@ mod tests {
             user_message_presentation(&payload).unwrap()["content"],
             payload["message"]
         );
+        let mut request = execution_request(&payload).unwrap();
+        apply_runtime_payload_metadata(&mut request, &payload);
+        let live_message = &request.extra["runtime_generated_user_message"];
+        assert_eq!(live_message["id"], "batch");
+        assert_eq!(live_message["message"], payload["message"]);
+        assert_eq!(live_message["source"], payload["source"]);
+        assert_eq!(request.prompt, "Internal orchestration");
         let mut transcript = vec![
             json!({"role":"user","clientUserMessageId":"batch","content":"Internal orchestration"}),
         ];

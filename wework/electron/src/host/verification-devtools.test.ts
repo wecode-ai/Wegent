@@ -15,16 +15,16 @@ function fixture() {
     isAttached: () => attached,
     sendCommand: vi.fn(async () => ({ result: 42 })),
   })
-  const target = {
+  const target = Object.assign(new EventEmitter(), {
     id: 1,
     debugger: session,
     isDestroyed: () => false,
     getURL: () => 'file:///app/index.html',
     getTitle: () => 'App',
     getType: () => 'window',
-  }
+  })
   const devtools = new VerificationDevtools(() => [target] as never)
-  return { session, devtools }
+  return { session, target, devtools }
 }
 
 describe('VerificationDevtools', () => {
@@ -87,6 +87,25 @@ describe('VerificationDevtools', () => {
       devtools.dispatch({ action: 'command', target: 1, method: 'Runtime.enable', params: [] })
     ).rejects.toThrow('params')
     expect(session.sendCommand).not.toHaveBeenCalled()
+    devtools.close()
+  })
+
+  test('closes the native message box only after CDP handled a top-level dialog', async () => {
+    const { session, target, devtools } = fixture()
+    const close = vi.fn()
+    target.on('-cancel-dialogs', close)
+    const request = {
+      action: 'command',
+      target: 1,
+      method: 'Page.handleJavaScriptDialog',
+      params: { accept: true },
+    }
+    session.sendCommand.mockRejectedValueOnce(new Error('No dialog is showing'))
+    await expect(devtools.dispatch(request)).rejects.toThrow('No dialog is showing')
+    await devtools.dispatch({ ...request, sessionId: 'child' })
+    expect(close).not.toHaveBeenCalled()
+    await expect(devtools.dispatch(request)).resolves.toEqual({ result: 42 })
+    expect(close).toHaveBeenCalledExactlyOnceWith({ resetState: false })
     devtools.close()
   })
 })

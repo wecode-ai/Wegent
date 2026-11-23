@@ -2,64 +2,63 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export * from "./IssueDetailCore";
-export { TagEditor } from "./TagEditor";
-export * from "./IssueActivityPanel";
-export * from "./IssueActivityFeed";
-export * from "./IssueDetailControls";
-export * from "./IssueDetailDraft";
-export * from "./IssueHistoryLists";
-export * from "./attachmentMarkdown";
-export { useIssueProjectChat } from "./useIssueProjectChat";
-export * from "./createSharedIssueDetailPort";
-export { persistIssueDetailFields } from "./persistIssueDetailFields";
-export * from "./dateTime";
+export * from './IssueDetailCore'
+export { formatIssueAttachmentSize } from './issueAttachmentSize'
+export { TagEditor } from './TagEditor'
+export * from './IssueActivityPanel'
+export * from './IssueActivityFeed'
+export * from './IssueDetailControls'
+export * from './IssueDetailDraft'
+export * from './IssueHistoryLists'
+export * from './attachmentMarkdown'
+export { useIssueProjectChat } from './useIssueProjectChat'
+export * from './createSharedIssueDetailPort'
+export { persistIssueDetailFields } from './persistIssueDetailFields'
+export * from './dateTime'
 
-export * from "./IssueConversationDrawers";
-export * from "./IssueActivityPresentation";
-export * from "./IssueDrawerHeader";
+export * from './IssueConversationDrawers'
+export * from './IssueActivityPresentation'
+export * from './IssueDrawerHeader'
 
-export * from "./IssueActivityContent";
-export * from "./IssueActivityThread";
+export * from './IssueActivityContent'
+export * from './IssueActivityThread'
 
-export * from "./IssueInlineCommentComposer";
-export * from "./IssueActivityMarkdown";
-export { IssueMarkdownProvider } from './IssueMarkdownProvider';
+export * from './IssueInlineCommentComposer'
+export * from './IssueActivityMarkdown'
+export { IssueMarkdownProvider } from './IssueMarkdownProvider'
 
-export * from "./IssueThreadReplyComposer";
-export * from "./IssueChatMessage";
+export * from './IssueThreadReplyComposer'
+export * from './IssueChatMessage'
 export {
   compareIssueTimestamps,
   issueActivityTimestamp,
   issueThreadActivityTimestamp,
   formatIssueTimestamp,
   issueExecutionElapsedMinutes,
-} from "./issueTimestamp";
-export * from "./CompositedSpinner";
-export * from "./Tooltip";
-export * from "./executionStatus";
-export * from "./activityMessageUtils";
-export * from "./managerActivity";
-export * from "./humanDispatchAssignment";
+} from './issueTimestamp'
+export * from './CompositedSpinner'
+export * from './executionStatus'
+export * from './activityMessageUtils'
+export * from './managerActivity'
+export * from './humanDispatchAssignment'
 
-export * from "./IssueMainCommentComposer";
-export * from "./useIssueMentionCandidates";
-export * from "./AttachmentImageView";
-export * from "./ComposerAttachmentBadges";
-export * from "./attachmentPresentation";
+export * from './IssueMainCommentComposer'
+export * from './useIssueMentionCandidates'
+export * from './AttachmentImageView'
+export * from './ComposerAttachmentBadges'
+export * from './attachmentPresentation'
 
-export * from "./RuntimeExecutionDetails";
+export * from './RuntimeExecutionDetails'
 
-export * from "./RuntimeExecutionConversation";
-export * from "./runtimeExecutionTarget";
-export * from "./IssueTaskConversationPanel";
+export * from './RuntimeExecutionConversation'
+export * from './runtimeExecutionTarget'
+export * from './IssueTaskConversationPanel'
 
-export { issueTaskSummaryForMessage } from "./issueTaskSummary";
+export { issueTaskSummaryForMessage } from './issueTaskSummary'
 
-export { issueCommentBody } from "./useIssueCommentAttachments";
+export { issueCommentBody } from './useIssueCommentAttachments'
 
-export { IssueCommentChildAction } from "./IssueCommentChildAction";
-export type {
-  CommentChildInput,
-  CommentSubmissionOptions,
-} from "./useCommentAssignment";
+export { IssueCommentChildAction } from './IssueCommentChildAction'
+export type { CommentChildInput, CommentSubmissionOptions } from './useCommentAssignment'
+
+export { createTagDraft, type TagDraftStore } from './tagDraft'

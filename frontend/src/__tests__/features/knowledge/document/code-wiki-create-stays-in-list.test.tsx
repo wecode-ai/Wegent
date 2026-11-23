@@ -44,6 +44,7 @@ describe('creating a Code Wiki', () => {
         selectedGroupId: null,
         currentUser: { id: 1 },
         selectedKbId: 1,
+        saveKnowledgeBaseSettings: jest.fn(),
         refreshAll: jest.fn(),
         clearSelection: jest.fn(),
       }
@@ -83,6 +84,7 @@ describe('creating a Code Wiki', () => {
         selectedGroupId: null,
         currentUser: { id: 1 },
         selectedKbId: 1,
+        saveKnowledgeBaseSettings: jest.fn(),
         refreshAll: jest.fn().mockResolvedValue(undefined),
         clearSelection: jest.fn(),
       }
@@ -148,6 +150,7 @@ describe('creating a Code Wiki', () => {
       selectedGroupId: null,
       currentUser: { id: 1 },
       selectedKbId: null,
+      saveKnowledgeBaseSettings: jest.fn(),
       refreshAll,
       clearSelection: jest.fn(),
     }
@@ -165,7 +168,7 @@ describe('creating a Code Wiki', () => {
 
     expect(refreshAll).toHaveBeenCalledTimes(1)
     expect(jest.mocked(useRouter).mock.results[0].value.push).not.toHaveBeenCalled()
-    expect(toast.success).toHaveBeenCalledWith('codeWiki.create.created')
+    expect(toast.success).not.toHaveBeenCalled()
     expect(result.current.isCreating).toBe(false)
 
     resolveRefresh?.()
@@ -188,6 +191,7 @@ describe('creating a Code Wiki', () => {
       selectedGroupId: null,
       currentUser: { id: 1 },
       selectedKbId: null,
+      saveKnowledgeBaseSettings: jest.fn(),
       refreshAll: jest.fn().mockResolvedValue(undefined),
       clearSelection: jest.fn(),
     }
@@ -235,6 +239,7 @@ describe('creating a normal knowledge base', () => {
       selectedGroupId: null,
       currentUser: { id: 1 },
       selectedKbId: null,
+      saveKnowledgeBaseSettings: jest.fn(),
       refreshAll: jest.fn().mockResolvedValue(undefined),
       clearSelection: jest.fn(),
     }
@@ -254,28 +259,6 @@ describe('creating a normal knowledge base', () => {
   })
 })
 
-it('retains the created library identity and does not recreate when list refresh fails', async () => {
-  jest
-    .mocked(createKnowledgeBase)
-    .mockResolvedValueOnce({ id: 29, name: 'Created once', namespace: 'default' } as never)
-  const sidebar = {
-    groups: [],
-    selectedGroupId: null,
-    currentUser: { id: 1 },
-    selectedKbId: null,
-    refreshAll: jest.fn().mockRejectedValue(new Error('list offline')),
-    clearSelection: jest.fn(),
-  }
-  const { result } = renderHook(() => useKnowledgeBaseDialogs({ sidebar }))
-  await act(async () => result.current.handleCreate({ name: 'Created once' }))
-  expect(result.current.createdKb).toEqual({ id: 29, name: 'Created once', namespace: 'default' })
-  expect(result.current.createError).toBeNull()
-  expect(result.current.createRefreshError).toBe('list offline')
-  const calls = jest.mocked(createKnowledgeBase).mock.calls.length
-  await act(async () => result.current.handleCreate({ name: 'Created once' }))
-  expect(createKnowledgeBase).toHaveBeenCalledTimes(calls)
-})
-
 it('rechecks the selected team before creating even through a previously captured submit callback', async () => {
   const sidebar = {
     groups: [{ id: 'group-team', name: 'team', displayName: 'Team', type: 'group' }],
@@ -283,6 +266,7 @@ it('rechecks the selected team before creating even through a previously capture
     selectedGroupId: null,
     currentUser: { id: 1 },
     selectedKbId: null,
+    saveKnowledgeBaseSettings: jest.fn(),
     refreshAll: jest.fn().mockResolvedValue(undefined),
     clearSelection: jest.fn(),
   }
@@ -307,7 +291,7 @@ it('rechecks the selected team before creating even through a previously capture
     )
   })
   expect(createKnowledgeBase).toHaveBeenCalledTimes(calls)
-  expect(result.current.createdKb).toBeNull()
+  expect(result.current.showCreateDialog).toBe(true)
 })
 
 it('ignores a late creation response after changing account and keeps the new scope idle', async () => {
@@ -322,6 +306,7 @@ it('ignores a late creation response after changing account and keeps the new sc
     groups: [],
     selectedGroupId: null,
     selectedKbId: null,
+    saveKnowledgeBaseSettings: jest.fn(),
     refreshAll: jest.fn().mockResolvedValue(undefined),
     clearSelection: jest.fn(),
   }
@@ -342,7 +327,7 @@ it('ignores a late creation response after changing account and keeps the new sc
     finish({ id: 29, name: 'Old library', namespace: 'default' } as never)
     await request
   })
-  expect(result.current.createdKb).toBeNull()
+  expect(result.current.showCreateDialog).toBe(false)
   expect(result.current.isCreating).toBe(false)
   expect(base.refreshAll).not.toHaveBeenCalled()
 })
@@ -355,6 +340,7 @@ it('does not send the deferred document create when its account scope has alread
     groups: [],
     selectedGroupId: null,
     selectedKbId: null,
+    saveKnowledgeBaseSettings: jest.fn(),
     refreshAll: jest.fn().mockResolvedValue(undefined),
     clearSelection: jest.fn(),
   }
@@ -373,7 +359,7 @@ it('does not send the deferred document create when its account scope has alread
   })
   await act(async () => request)
   expect(createKnowledgeBase).toHaveBeenCalledTimes(calls)
-  expect(result.current.createdKb).toBeNull()
+  expect(result.current.showCreateDialog).toBe(false)
 })
 
 it.each([
@@ -386,6 +372,7 @@ it.each([
     selectedGroupId: null,
     currentUser: { id: 1 },
     selectedKbId: null,
+    saveKnowledgeBaseSettings: jest.fn(),
     refreshAll: jest.fn().mockResolvedValue(undefined),
     clearSelection: jest.fn(),
   }

@@ -40,7 +40,7 @@ const response = {
   },
 }
 
-function fixture(overrides = {}) {
+function fixture(overrides = {}, searchResult = response) {
   const calls = []
   const page = {
     contractVersion: 'im.message-list.v1',
@@ -63,7 +63,7 @@ function fixture(overrides = {}) {
           case 'listDirectConversation':
             return page
           case 'searchMessages':
-            return response
+            return searchResult
           default:
             assert.fail(`Unexpected operation: ${input.tool}`)
         }
@@ -72,6 +72,43 @@ function fixture(overrides = {}) {
   }
   return { ctx, calls }
 }
+
+test('attributed history identifies owner requests in the resolved self-chat', async () => {
+  const end = Date.now() - 1000
+  const createTime = new Date(end - 1000).toISOString()
+  const conversation = {
+    openConversationId: 'self-chat',
+    singleChat: true,
+    messages: [
+      message('question', { createTime }),
+      message('answer', {
+        createTime,
+        messageAiSendFlag: 'DWS',
+        quotedMessage: { openMessageId: 'question' },
+      }),
+      message('feedback', { createTime, quotedMessage: { openMessageId: 'answer' } }),
+    ],
+  }
+  const { ctx } = fixture(
+    {},
+    { result: { conversationMessagesList: [conversation], hasMore: false } }
+  )
+  const history = await createProvider().readSource(ctx, {
+    source: { ...source, providerId: '@wegent/dsh-connection-dingtalk/dingtalk' },
+    query: {
+      since: new Date(end - 60000).toISOString(),
+      trainingUntil: new Date(end).toISOString(),
+    },
+  })
+  assert.deepEqual(
+    history.items.map(row => [row.author, row.isSelfConversation, row.quotedMessageId]),
+    [
+      ['owner', true, null],
+      ['accountAutomation', true, 'question'],
+      ['owner', true, 'answer'],
+    ]
+  )
+})
 
 test('collects manual self-chat commands without AI replies or outgoing messages to others', async () => {
   const { ctx, calls } = fixture()

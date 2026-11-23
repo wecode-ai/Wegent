@@ -5,8 +5,8 @@
   "ci": {
     "core": {
       "order": 7000,
-      "shard": 3,
-      "position": 25000
+      "shard": 9,
+      "position": 1000
     }
   }
 }

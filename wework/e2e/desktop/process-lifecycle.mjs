@@ -75,6 +75,17 @@ async function waitForProcessExit(child, timeoutMs, { requireExitEvent = false }
 
 export function processExitDiagnostics(child) {
   const diagnostics = { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }
+  if (process.platform === 'darwin' && Number.isInteger(child.pid)) {
+    try {
+      diagnostics.macos = execFileSync(
+        'ps',
+        ['-p', String(child.pid), '-o', 'pid=,ppid=,pgid=,uid=,stat=,lstart=,comm='],
+        { encoding: 'utf8', timeout: 1_000 }
+      ).trim()
+    } catch (error) {
+      diagnostics.macos = { unavailable: error.code ?? error.status ?? error.name }
+    }
+  }
   if (process.platform !== 'linux' || !Number.isInteger(child.pid)) return diagnostics
   try {
     const stat = readFileSync(`/proc/${child.pid}/stat`, 'utf8')

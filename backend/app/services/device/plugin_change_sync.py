@@ -76,8 +76,11 @@ async def sync_plugin_change(
     user_id: int,
     device_id: str,
     installed_plugin_ids: list[int],
+    versioned: bool | None = None,
 ) -> DeviceCapabilitySyncResult:
-    if not await service.supports_plugin_delta(user_id, device_id):
+    if versioned is None:
+        versioned = await service.supports_plugin_delta(user_id, device_id)
+    if not versioned:
         return await service.sync_current_device_capabilities(
             user_id=user_id, device_id=device_id
         )

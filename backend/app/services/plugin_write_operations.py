@@ -1,6 +1,7 @@
 """Run synchronous plugin transactions outside the ASGI event loop."""
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -11,20 +12,57 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
 from app.services.plugin_write_coordination import configure_plugin_session
-from app.services.plugin_write_errors import PluginWriteError
+from app.services.plugin_write_errors import PluginWriteError, is_mysql_deadlock
 from shared.telemetry.decorators import trace_sync
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
-async def run_plugin_operation(operation: Callable[..., T], **kwargs: Any) -> T:
+async def run_plugin_operation(
+    operation: Callable[..., T],
+    *,
+    retry_busy: bool = False,
+    retry_conflicts: bool = False,
+    **kwargs: Any,
+) -> T:
     """Keep a transaction's session, Redis waits and cleanup in one worker."""
-    return await asyncio.to_thread(partial(_run_plugin_operation, operation, kwargs))
+    return await asyncio.to_thread(
+        partial(
+            _run_plugin_operation,
+            operation,
+            kwargs,
+            queued_at=time.monotonic(),
+            retry_busy=retry_busy,
+            retry_conflicts=retry_conflicts,
+        )
+    )
 
 
 @trace_sync("plugin_write.operation", "backend.plugins")
-def _run_plugin_operation(operation: Callable[..., T], kwargs: dict[str, Any]) -> T:
-    return run_plugin_transaction(lambda db: operation(db=db, **kwargs), get_db_session)
+def _run_plugin_operation(
+    operation: Callable[..., T],
+    kwargs: dict[str, Any],
+    *,
+    queued_at: float,
+    retry_busy: bool = False,
+    retry_conflicts: bool = False,
+) -> T:
+    started = time.monotonic()
+    try:
+        return run_plugin_transaction(
+            lambda db: operation(db=db, **kwargs),
+            get_db_session,
+            retry_busy=retry_busy,
+            retry_conflicts=retry_conflicts,
+        )
+    finally:
+        logger.debug(
+            "Plugin write operation=%s queue_ms=%.0f execution_ms=%.0f",
+            getattr(operation, "__name__", "plugin_operation"),
+            (started - queued_at) * 1000,
+            (time.monotonic() - started) * 1000,
+        )
 
 
 def run_plugin_transaction(
@@ -49,21 +87,30 @@ def run_plugin_transaction(
                 return operation(db)
             except Exception as error:
                 db.rollback()
-                if (
-                    not isinstance(error, PluginWriteError)
-                    or time.monotonic() >= deadline
-                ):
+                if is_mysql_deadlock(error):
+                    # MySQL aborted the whole transaction. Rebuild from a fresh
+                    # session using the same contention budget as a failed CAS.
+                    failure = PluginWriteError("plugin_write_conflict")
+                elif isinstance(error, PluginWriteError):
+                    failure = error
+                else:
                     raise
-                if retry_busy and error.code == "plugin_write_busy":
+                if time.monotonic() >= deadline:
+                    if failure is error:
+                        raise
+                    raise failure from error
+                if retry_busy and failure.code == "plugin_write_busy":
                     delay = busy_backoff
                     busy_backoff = min(0.25, busy_backoff * 2)
-                elif error.code == "plugin_write_conflict" and (
+                elif failure.code == "plugin_write_conflict" and (
                     retry_conflicts or attempt + 1 < attempts
                 ):
                     attempt += 1
                     delay = min(0.25, 0.01 * attempt)
                 else:
-                    raise
-                last_error = error
+                    if failure is error:
+                        raise
+                    raise failure from error
+                last_error = failure
         time.sleep(min(delay, max(0, deadline - time.monotonic())))
     raise AssertionError("Plugin transaction retry exhausted without a result")

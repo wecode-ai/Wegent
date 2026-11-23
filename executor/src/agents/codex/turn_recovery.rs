@@ -11,6 +11,14 @@ use super::{message_params, CodexRunState, CODEX_APP_SERVER_TURN_CANCELLED};
 
 const RETRY_DELAYS: [u64; 4] = [10, 30, 120, 300];
 
+fn overload_retry_delay(attempt: usize, configured_base: Option<&str>) -> Duration {
+    let base_ms = configured_base
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| (1..=10_000).contains(value))
+        .unwrap_or(10_000);
+    Duration::from_millis(base_ms * (RETRY_DELAYS[attempt] / RETRY_DELAYS[0]))
+}
+
 #[derive(Default)]
 pub(super) struct TurnRecovery {
     pub(super) recover_usage_limits: bool,
@@ -139,7 +147,8 @@ impl TurnRecovery {
                         }),
                     });
                 }
-                let delay = Duration::from_secs(RETRY_DELAYS[self.retries]);
+                let configured_base = std::env::var("WEWORK_E2E_OVERLOAD_RETRY_BASE_MS").ok();
+                let delay = overload_retry_delay(self.retries, configured_base.as_deref());
                 self.retries += 1;
                 notification["params"]["willRetry"] = json!(true);
                 notification["params"]["retryAt"] =

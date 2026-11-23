@@ -355,23 +355,13 @@ body {
 
 .startup-button,
 .startup-link-button {
-  min-width: 0;
-  max-width: 100%;
-  border: 0;
-  font: inherit;
-  cursor: pointer;
-  overflow-wrap: anywhere;
   -webkit-app-region: no-drag;
 }
 
 .startup-button {
-  min-height: 30px;
-  padding: 6px 12px;
   color: var(--startup-text);
-  border: 1px solid var(--startup-border);
-  border-radius: 8px;
+  border-color: var(--startup-border);
   background: var(--startup-button-background);
-  font-size: var(--text-xs);
 }
 
 .startup-button-primary {
@@ -388,21 +378,14 @@ body {
 
 .startup-link-button {
   padding: 6px 2px;
+  border-color: transparent;
   color: var(--startup-link);
   background: transparent;
-  font-size: var(--text-xs);
-}
-
-.startup-button:focus-visible,
-.startup-link-button:focus-visible {
-  outline: 2px solid #339cff;
-  outline-offset: 2px;
 }
 
 .startup-button:disabled,
 .startup-link-button:disabled {
   cursor: wait;
-  opacity: 0.55;
 }
 
 .startup-action-error {
@@ -467,11 +450,6 @@ body {
 @media (max-width: 767px) {
   .startup-status {
     padding: 12px 20px 16px;
-  }
-
-  .startup-button,
-  .startup-link-button {
-    min-height: 44px;
   }
 }
 

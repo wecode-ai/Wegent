@@ -66,10 +66,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const bulkMilestone = async (control, id) => {
     await selectCollaborationProjectView(control, CONTENT, 'table')
     await control.command('waitFor', scoped('collaboration-issue-table'))
-    const unchecked = `${scoped('collaboration-issue-table-select-all')}:not(:checked)`
-    if (Number(await control.command('getElementCount', unchecked)) > 0) {
-      await control.command('click', unchecked)
+    const selectAll = `${scoped('collaboration-issue-table-select-all')}[role="checkbox"]`
+    await control.command('waitFor', selectAll, { visible: true })
+    const selected = `${selectAll}[aria-checked="true"]`
+    if (Number(await control.command('getElementCount', selected)) === 0) {
+      await control.command('clickWhenEnabled', selectAll)
     }
+    await control.command('waitFor', selected)
     await control.command('waitFor', `${scoped('milestone-bulk-select')}:enabled`)
     await selectMilestone(control, id ?? '', 'milestone-bulk-select')
     await control.command('clickWhenEnabled', scoped('milestone-bulk-apply'))

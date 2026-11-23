@@ -1,13 +1,15 @@
-import { Loader2, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo } from '@/types/api'
-import { getPreferredStandaloneWorkspaceDevice } from './standaloneProjectDevices'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { joinPath } from './device-folder-path'
+import { getPreferredStandaloneWorkspaceDevice } from './standaloneProjectDevices'
 
 function getUniqueProjectDirectoryName(baseName: string, existingNames: string[]): string {
   const existingNameSet = new Set(existingNames.map(name => name.trim()).filter(Boolean))
@@ -56,8 +58,6 @@ export function StandaloneBlankProjectDialog({
     [devices, preferredDeviceId]
   )
 
-  useEscapeKey(onClose, open && !submitting)
-
   if (!open) return null
 
   const submit = async () => {
@@ -104,11 +104,16 @@ export function StandaloneBlankProjectDialog({
         layer === 'system-popover' ? 'z-system-popover' : 'z-modal'
       )}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        data-testid="standalone-blank-project-dialog"
-        className="w-full max-w-[420px] rounded-2xl border border-border bg-surface p-5 text-text-primary shadow-2xl"
+      <DialogSurface
+        onClose={() => {
+          if (open && !submitting) onClose()
+        }}
+        render={
+          <div
+            data-testid="standalone-blank-project-dialog"
+            className="w-full max-w-[420px] rounded-2xl border border-border bg-surface p-5 text-text-primary shadow-2xl"
+          />
+        }
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -119,7 +124,8 @@ export function StandaloneBlankProjectDialog({
               {t('workbench.blank_project_name_desc', '保持简短且易识别')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="close-standalone-blank-project-dialog"
             disabled={submitting}
@@ -128,9 +134,9 @@ export function StandaloneBlankProjectDialog({
             aria-label={t('workbench.close_dialog', '关闭')}
           >
             <X className="h-5 w-5" />
-          </button>
+          </ControlButton>
         </div>
-        <input
+        <ControlInput
           data-testid="standalone-blank-project-name-input"
           value={projectName}
           autoFocus
@@ -147,11 +153,13 @@ export function StandaloneBlankProjectDialog({
               void submit()
             }
           }}
-          className="mt-5 h-12 w-full rounded-xl border border-border bg-transparent px-4 text-base text-text-primary outline-none keyboard:focus:border-primary keyboard:focus:ring-2 keyboard:focus:ring-primary/10 disabled:opacity-50"
+          className="mt-5 h-12 w-full bg-transparent text-base disabled:opacity-50"
         />
         {error && <p className="mt-3 text-xs text-destructive wework:text-red-500">{error}</p>}
         <div className="mt-5 flex justify-end gap-3">
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="cancel-standalone-blank-project-button"
             disabled={submitting}
@@ -159,8 +167,10 @@ export function StandaloneBlankProjectDialog({
             className="h-10 rounded-xl border border-border px-5 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50"
           >
             {t('workbench.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="save-standalone-blank-project-button"
             disabled={!projectName.trim() || submitting || !targetDevice}
@@ -169,9 +179,9 @@ export function StandaloneBlankProjectDialog({
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {t('workbench.save', '保存')}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

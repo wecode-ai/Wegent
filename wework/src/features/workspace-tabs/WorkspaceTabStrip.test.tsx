@@ -17,6 +17,7 @@ import {
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
 import { createWorkspaceTab, workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
+import * as workspaceTabs from './workspaceTabs'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { WorkspaceTabStrip } from './WorkspaceTabStrip'
 
@@ -134,7 +135,7 @@ describe('WorkspaceTabStrip', () => {
     await user.keyboard('{ArrowRight}')
     expect(tabs[1]).toHaveFocus()
     expect(current).toHaveAttribute('aria-selected', 'true')
-    expect(tabs[1]).toHaveAttribute('tabindex', '0')
+    expect(current).toHaveAttribute('tabindex', '0')
     await user.keyboard('{Enter}')
     expect(tabs[1]).toHaveAttribute('aria-selected', 'true')
     await user.keyboard('{End}')
@@ -186,7 +187,7 @@ describe('WorkspaceTabStrip', () => {
     const addButton = screen.getByTestId('workspace-tab-add')
     expect(screen.getByTestId('workspace-tab-strip-container')).toContainElement(addButton)
     expect(tablist).not.toContainElement(addButton)
-    expect(tablist.nextElementSibling).toBe(addButton)
+    expect(tablist.parentElement?.nextElementSibling).toBe(addButton)
     expect(tablist).not.toHaveClass('max-w-[760px]')
     expect(
       within(tablist)
@@ -891,42 +892,42 @@ describe('WorkspaceTabStrip', () => {
   })
 
   test('restores a closed tab with a fresh identity when its old id is already open', async () => {
-    const uuid = vi
-      .spyOn(crypto, 'randomUUID')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000002')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000003')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000004')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000005')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000004')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000006')
     const user = userEvent.setup()
     renderStrip()
+    const oldId = 'board-reopened-test-id'
+    const createTab = createWorkspaceTab
+    using tabFactory = vi.spyOn(workspaceTabs, 'createWorkspaceTab')
+    tabFactory.mockImplementation((kind, tabLabels, overrides) =>
+      createTab(
+        kind,
+        tabLabels,
+        kind === 'board' && !overrides?.id ? { ...overrides, id: oldId } : overrides
+      )
+    )
 
     await user.click(screen.getByTestId('workspace-tab-add'))
     await user.click(screen.getByTestId('workspace-tab-add-board'))
+    await waitFor(() =>
+      expect(screen.getByTestId(`workspace-tab-select-${oldId}`)).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+    )
     fireEvent.keyDown(window, { key: 'w', metaKey: true })
+    expect(screen.queryByTestId(`workspace-tab-select-${oldId}`)).not.toBeInTheDocument()
     await user.click(screen.getByTestId('workspace-tab-add'))
     await user.click(screen.getByTestId('workspace-tab-add-board'))
     await waitFor(() =>
-      expect(window.location.search).toContain(
-        'workspaceTab=board-00000000-0000-4000-8000-000000000004'
-      )
+      expect(new URLSearchParams(window.location.search).get('workspaceTab')).toBe(oldId)
     )
     fireEvent.keyDown(window, { key: 't', metaKey: true, shiftKey: true })
 
-    await waitFor(() =>
-      expect(
-        screen.getByTestId('workspace-tab-board-00000000-0000-4000-8000-000000000006')
-      ).toBeInTheDocument()
-    )
+    const restoredId = new URLSearchParams(window.location.search).get('workspaceTab')
+    expect(restoredId).toMatch(/^board-/)
+    expect(restoredId).not.toBe(oldId)
+    expect(screen.getByTestId(`workspace-tab-${restoredId}`)).toBeInTheDocument()
+    expect(screen.getByTestId(`workspace-tab-${oldId}`)).toBeInTheDocument()
     expect(screen.getAllByRole('tab')).toHaveLength(5)
     expect(new Set(screen.getAllByRole('tab').map(tab => tab.dataset.testid)).size).toBe(5)
-    await waitFor(() =>
-      expect(window.location.search).toContain(
-        'workspaceTab=board-00000000-0000-4000-8000-000000000006'
-      )
-    )
-    uuid.mockRestore()
   })
 })

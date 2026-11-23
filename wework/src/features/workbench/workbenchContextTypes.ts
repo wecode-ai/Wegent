@@ -1,3 +1,4 @@
+import type { HarnessAppLaunchRequest } from '@/features/harness-apps/harnessAppLaunchActor'
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
 import type { PersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
@@ -531,6 +532,9 @@ export type WorkbenchPaneContextValue = Omit<
 }
 
 export interface WorkbenchProviderProps {
+  appshotReceiver?: { onOpenWework(): void }
+  taskRouteActive?: boolean
+  harnessAppLaunch?: HarnessAppLaunchRequest
   children: ReactNode
   user: User
   services?: WorkbenchServices

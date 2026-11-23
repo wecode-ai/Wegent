@@ -144,6 +144,9 @@ export async function createDesktopScenario({
         !(await readFile(appLog, 'utf8')).includes('python-runtime-uv-download-started'),
         'Login downloaded Python after its last plugin was uninstalled'
       )
+      // Chromium times out a paused proxy CONNECT independently of the download
+      // timeout. Finish workspace and model setup before restoring Python demand.
+      await chat.prepareConversation(control)
       const demandOffset = (await readFile(appLog, 'utf8')).length
       const restored = await requestExecutor(
         control,
@@ -170,11 +173,10 @@ export async function createDesktopScenario({
         )
         await downloadGate.waitForRequest(uiTimeoutMs)
         await chat.start(control)
+        await chat.waitForShellCommandRequest()
         await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
           text: '托管环境继续准备',
         })
-        await captureScreenshot(control, 'python-runtime-preparing.png', 'body')
-
         downloadGate.release()
         await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
         await chat.verify(control)

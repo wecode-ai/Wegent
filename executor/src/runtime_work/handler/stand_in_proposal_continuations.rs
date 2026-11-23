@@ -97,6 +97,9 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<(), AppIpcError> {
         let expected = request.extra.remove(EXPECTED);
         request.extra.remove(OWNER);
+        if !activity {
+            request.extra.remove("standInRoleResultRoot");
+        }
         let origin = request.extra.get("origin").cloned().unwrap_or(Value::Null);
         if origin["type"] != "stand_in_identity" {
             return Ok(());
@@ -152,7 +155,12 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn bind_stand_in_owner_command(&self, payload: &mut Value, activity: bool) {
-        if activity || payload.get("commandId").is_some() {
+        // Native replies resolve the live turn through its input channel.
+        if activity
+            || payload.get("commandId").is_some()
+            || request_user_input_response(payload)
+                .is_some_and(|reply| reply["delivery"] != "async")
+        {
             return;
         }
         let Some(task) = runtime_task_id(payload) else {

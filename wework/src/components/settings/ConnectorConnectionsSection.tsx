@@ -1,27 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
-  authorizeWegentConnector,
-  connectorAuthorizationErrorMessage,
-  listWegentConnectorApps,
-  listWegentInstalledConnectorApps,
-  notifyConnectorAuthorizationChanged,
-  refreshWegentConnector,
-  type WegentConnectorApp,
-  type WegentInstalledConnectorApp,
-} from '@/api/cloud/connectorApps'
+  createConnectorConnectionsSource,
+  type ConnectorConnectionsProps,
+} from './connectorConnectionsSource'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
-
-type ConnectorConnectionRow = WegentInstalledConnectorApp & {
-  name: string
-  auth_type: WegentConnectorApp['auth_type']
-}
-
-interface ConnectorConnectionsProps {
-  apiBaseUrl: string | null
-  token: string | null
-}
 
 /** Account changes replace the whole session without placing credentials in keys. */
 export function ConnectorConnectionsSection(props: ConnectorConnectionsProps) {
@@ -32,104 +15,19 @@ export function ConnectorConnectionsSection(props: ConnectorConnectionsProps) {
   return <ConnectorConnectionsSession key={scope.generation} {...props} />
 }
 
-function mergeConnectorRows(
-  catalog: WegentConnectorApp[],
-  installed: WegentInstalledConnectorApp[]
-): ConnectorConnectionRow[] {
-  const installedBySlug = new Map(installed.map(app => [app.slug, app]))
-  return catalog.map(app => {
-    const installedApp = installedBySlug.get(app.slug)
-    return {
-      id: app.slug,
-      slug: app.slug,
-      name: app.name,
-      description: app.description,
-      icon_url: app.icon_url,
-      auth_type: app.auth_type,
-      runtime_name: installedApp?.runtime_name ?? null,
-      enabled: installedApp?.enabled ?? true,
-      callable: installedApp?.callable ?? false,
-      tool_loading_mode:
-        (installedApp?.tool_loading_mode ?? app.tool_loading_mode) === 'lazy' ? 'lazy' : 'static',
-      connection: installedApp?.connection ?? app.connection,
-      tool_summaries: installedApp?.tool_summaries ?? [],
-    }
-  })
-}
-
 function ConnectorConnectionsSession({ apiBaseUrl, token }: ConnectorConnectionsProps) {
   const { t } = useTranslation('common')
-  const activeRef = useRef(false)
-  const [apps, setApps] = useState<ConnectorConnectionRow[]>([])
-  const [loading, setLoading] = useState(Boolean(apiBaseUrl && token))
-  const [error, setError] = useState<string | null>(null)
-  const [pendingSlug, setPendingSlug] = useState<string | null>(null)
-  const [loadRevision, setLoadRevision] = useState(0)
-
-  useLayoutEffect(() => {
-    activeRef.current = true
-    return () => {
-      activeRef.current = false
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!apiBaseUrl || !token) return
-    let cancelled = false
-    void Promise.all([
-      listWegentInstalledConnectorApps(apiBaseUrl, token),
-      listWegentConnectorApps(apiBaseUrl, token),
-    ])
-      .then(([installed, catalog]) => {
-        if (cancelled) return
-        setApps(mergeConnectorRows(catalog, installed.apps))
-        setError(null)
-      })
-      .catch(() => {
-        if (!cancelled) setError(t('workbench.connector_connections_load_failed'))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [apiBaseUrl, token, t, loadRevision])
-
-  const updateConnection = async (app: ConnectorConnectionRow, action: 'refresh' | 'authorize') => {
-    if (!apiBaseUrl || !token) return
-    setPendingSlug(app.slug)
-    setError(null)
-    try {
-      if (action === 'refresh') {
-        await refreshWegentConnector(apiBaseUrl, token, app.slug)
-        if (!activeRef.current) return
-        notifyConnectorAuthorizationChanged()
-      } else {
-        await authorizeWegentConnector(
-          apiBaseUrl,
-          token,
-          app.slug,
-          openConnectorAuthorizationWindow,
-          {
-            isCurrent: () => activeRef.current,
-          }
-        )
-      }
-      if (activeRef.current) setLoadRevision(revision => revision + 1)
-    } catch (cause) {
-      if (!activeRef.current || (cause as { name?: string } | null)?.name === 'AbortError') return
-      setError(
-        action === 'refresh'
-          ? cause instanceof Error
-            ? cause.message
-            : t('workbench.connector_refresh_failed')
-          : connectorAuthorizationErrorMessage(cause, app.name, t)
-      )
-    } finally {
-      if (activeRef.current) setPendingSlug(null)
-    }
-  }
+  const [source] = useState(() => createConnectorConnectionsSource({ apiBaseUrl, token }))
+  const subscribe = useCallback(
+    (listener: () => void) => source.subscribe(listener, t),
+    [source, t]
+  )
+  const { apps, loading, error, pendingSlug } = useSyncExternalStore(
+    subscribe,
+    source.getSnapshot,
+    source.getSnapshot
+  )
+  const updateConnection = source.updateConnection
 
   return (
     <section
@@ -152,7 +50,7 @@ function ConnectorConnectionsSession({ apiBaseUrl, token }: ConnectorConnections
             variant="outline"
             size="sm"
             data-testid="connector-connections-retry"
-            onClick={() => setLoadRevision(revision => revision + 1)}
+            onClick={() => void source.retry()}
             disabled={pendingSlug !== null}
           >
             {t('workbench.retry')}

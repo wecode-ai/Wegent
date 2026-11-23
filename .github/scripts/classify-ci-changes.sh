@@ -140,7 +140,6 @@ classify_path() {
       changed[platform_e2e]=true
       ;;
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
-      .github/ci/wework-native-test-ubuntu.sources | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
       .github/scripts/core-runner-slots.* | \
@@ -166,7 +165,7 @@ classify_path() {
     docs/*/wegent/developer-guide/collaboration-permissions.md)
       changed[backend]=true
       ;;
-    backend-rs/src/cloud_projects* | backend-rs/src/loop_item_executions/device.rs | backend-rs/config/routes.toml)
+    backend-rs/be-server/src/cloud_projects* | backend-rs/project-coordination/* | backend-rs/config/routes.toml)
       changed[backend]=true
       changed[backend_rs]=true
       changed[platform_e2e]=true

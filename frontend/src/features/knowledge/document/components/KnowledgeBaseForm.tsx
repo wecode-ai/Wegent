@@ -4,7 +4,7 @@
 
 'use client'
 
-import { ReactNode, useId, useState } from 'react'
+import { type ReactNode, useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -12,7 +12,7 @@ import { Switch } from '@/components/ui/switch'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Slider } from '@/components/ui/slider'
 import { Button } from '@/components/ui/button'
-import { ChevronDown, Plus, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import {
@@ -26,11 +26,18 @@ import type {
   SummaryModelRef,
 } from '@/types/knowledge'
 import { RetrievalSettingsSection } from './RetrievalSettingsSection'
+import type { RetrieverCatalogCache } from '../hooks/useRetrievers'
 import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { MultimodalConfigSection } from '@/features/knowledge/multimodal/components/MultimodalConfigSection'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 
 interface KnowledgeBaseFormProps {
+  disabled?: boolean
+  editableSection?: Section
+  basicSectionRequired?: boolean
+  navigation: ReturnType<typeof useKnowledgeBaseFormNavigation>
+  kindSection?: ReactNode
+  locationSection?: ReactNode
   typeSection?: ReactNode
   /** False for a code wiki: left blank, the repository's own name is used. */
   nameRequired?: boolean
@@ -66,15 +73,16 @@ interface KnowledgeBaseFormProps {
     exemptCalls: number
   }
   onCallLimitsChange: (limits: { maxCalls: number; exemptCalls: number }) => void
-  advancedOpen: boolean
-  onAdvancedOpenChange: (open: boolean) => void
-  /** Extra rows for this kind of knowledge base, shown inside advanced settings. */
-  advancedExtras?: React.ReactNode
+  /** Creation uses the model default even before the generation section is visited. */
+  generationModelSetting?: ReactNode
+  generationSection?: ReactNode
+  documentSyncSetting?: ReactNode
   retrievalModeSection?: ReactNode
   showRetrievalSection: boolean
   retrievalConfig: RetrievalConfigDraft
   onRetrievalConfigChange: (config: RetrievalConfigDraft) => void
-  onRetrievalConfigUserChange?: () => void
+  onRetrievalConfigUserChange?: (changes: RetrievalConfigDraft) => void
+  retrievalScopeKey?: string
   retrievalScope?: KnowledgeResourceScope
   retrievalGroupName?: string
   retrievalReadOnly?: boolean
@@ -87,63 +95,48 @@ interface KnowledgeBaseFormProps {
   onGuidedQuestionsChange?: (questions: string[]) => void
 }
 
-function FormSection({
-  title,
-  sectionId,
-  open,
-  onOpenChange,
-  defaultOpen = true,
-  children,
-}: {
-  title: string
-  sectionId: string
-  open?: boolean
-  onOpenChange?: (open: boolean) => void
-  defaultOpen?: boolean
-  children: ReactNode
-}) {
-  const contentId = useId()
-  const [internalOpen, setInternalOpen] = useState(defaultOpen)
-  const isOpen = open ?? internalOpen
+const sectionGroups = [
+  { label: 'foundation', items: [['basic', 'knowledge-basic', 'basic']] },
+  {
+    label: 'content',
+    items: [
+      ['models', 'knowledge-summary', 'contentProcessing'],
+      ['retrieval', 'knowledge-advanced', 'retrieval'],
+      ['sync', 'knowledge-data-sync', 'dataSync'],
+      ['generation', 'knowledge-generation', 'generation'],
+    ],
+  },
+  {
+    label: 'management',
+    items: [
+      ['usage', 'knowledge-guided-questions', 'qaSettings'],
+      ['access', 'knowledge-access', 'accessSettings'],
+    ],
+  },
+] as const
 
-  const handleOpenChange = () => {
-    const nextOpen = !isOpen
-    if (onOpenChange) {
-      onOpenChange(nextOpen)
-      return
-    }
-    setInternalOpen(nextOpen)
-  }
+type SectionItem = (typeof sectionGroups)[number]['items'][number]
+type Section = SectionItem[0]
 
-  return (
-    <section className="space-y-4">
-      <button
-        type="button"
-        aria-controls={contentId}
-        aria-expanded={isOpen}
-        data-testid={`${sectionId}-section-trigger`}
-        onClick={handleOpenChange}
-        className="group flex w-full items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-      >
-        <h3 className="shrink-0 text-sm font-semibold text-text-primary">{title}</h3>
-        <div className="h-px flex-1 bg-border transition-colors group-hover:bg-primary/40" />
-        <ChevronDown
-          className={cn(
-            'h-4 w-4 shrink-0 text-text-muted transition-transform duration-200',
-            !isOpen && '-rotate-90'
-          )}
-        />
-      </button>
-      {isOpen && (
-        <div id={contentId} className="space-y-5">
-          {children}
-        </div>
-      )}
-    </section>
-  )
+export function useKnowledgeBaseFormNavigation() {
+  const [selection, setSelection] = useState<{ section: Section; focus?: string }>({
+    section: 'basic',
+  })
+
+  const selectSection = useCallback((section: Section, focus?: string) => {
+    setSelection({ section, focus })
+  }, [])
+
+  return { selection, selectSection }
 }
 
 export function KnowledgeBaseForm({
+  disabled,
+  editableSection,
+  basicSectionRequired,
+  navigation,
+  kindSection,
+  locationSection,
   typeSection,
   nameRequired = true,
   namePlaceholder,
@@ -173,14 +166,15 @@ export function KnowledgeBaseForm({
   bindModel,
   callLimits,
   onCallLimitsChange,
-  advancedOpen,
-  onAdvancedOpenChange,
-  advancedExtras,
+  generationModelSetting,
+  generationSection,
+  documentSyncSetting,
   retrievalModeSection,
   showRetrievalSection,
   retrievalConfig,
   onRetrievalConfigChange,
   onRetrievalConfigUserChange,
+  retrievalScopeKey,
   retrievalScope,
   retrievalGroupName,
   retrievalReadOnly,
@@ -189,7 +183,54 @@ export function KnowledgeBaseForm({
   guidedQuestions = [],
   onGuidedQuestionsChange,
 }: KnowledgeBaseFormProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('knowledge')
+  const { selection, selectSection } = navigation
+  const panelId = useId()
+  const panel = useRef<HTMLDivElement>(null)
+  const sidebar = useRef<HTMLElement>(null)
+  const retrieverCache = useRef<RetrieverCatalogCache>(new Map())
+  const [modelsOpened, setModelsOpened] = useState(false)
+  const [generationOpened, setGenerationOpened] = useState(false)
+  const usageReadOnly = disabled || (editableSection !== undefined && editableSection !== 'usage')
+  const retrievalSettingsReadOnly =
+    retrievalReadOnly ||
+    disabled ||
+    (editableSection !== undefined && editableSection !== 'retrieval')
+
+  useLayoutEffect(() => {
+    if (selection.section === 'models') setModelsOpened(true)
+    if (selection.section === 'generation') setGenerationOpened(true)
+    const content = panel.current
+    if (!content) return
+    content.scrollTop = 0
+    const selector = selection.focus
+    if (!selector) return
+
+    sidebar.current?.querySelector('[aria-current="true"]')?.scrollIntoView?.({
+      block: 'nearest',
+      inline: 'nearest',
+    })
+    const focusField = () => {
+      const target = content.querySelector<HTMLElement>(selector)
+      target?.focus()
+      return target != null && document.activeElement === target
+    }
+    if (focusField()) return
+    content.focus()
+
+    // Model controls can be disabled while their options are loading.
+    const observer = new MutationObserver(() => {
+      if (document.activeElement !== content || focusField()) observer.disconnect()
+    })
+    observer.observe(content, {
+      attributes: true,
+      attributeFilter: ['disabled', 'aria-disabled', 'aria-busy'],
+      childList: true,
+      subtree: true,
+    })
+    return () => observer.disconnect()
+  }, [selection])
+
   // Hide the entire multimodal section when the global pipeline switch is off.
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
 
@@ -227,179 +268,195 @@ export function KnowledgeBaseForm({
     }
   }
 
-  const advancedContent = (
-    <SimpleConfigGroup>
-      {/* Rendered first so a code wiki's own settings are not buried under the call
-          limits every knowledge base has. Passed in rather than branched on here:
-          this form knows nothing about repositories and should not start to. */}
-      {advancedExtras}
-      <SimpleConfigRow
-        label={t('knowledge:document.callLimits.title')}
-        description={t('knowledge:document.callLimits.description')}
-        align="start"
-      >
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="knowledge-max-calls">
-                {t('knowledge:document.callLimits.maxCalls')}
-              </Label>
-              <span className="text-sm text-text-secondary">{callLimits.maxCalls}</span>
-            </div>
-            <Slider
-              id="knowledge-max-calls"
-              value={[callLimits.maxCalls]}
-              onValueChange={values => handleMaxCallsChange(values[0])}
-              min={2}
-              max={50}
-              step={1}
+  const content: Record<Section, ReactNode> = {
+    basic: (
+      <>
+        {kindSection}
+
+        <SimpleConfigRow
+          label={
+            <>
+              {t('document.knowledgeBase.name')}
+              {nameRequired && <span className="text-red-400"> *</span>}
+            </>
+          }
+        >
+          <Input
+            id="knowledge-name"
+            value={name}
+            onChange={e => onNameChange(e.target.value)}
+            placeholder={namePlaceholder ?? t('document.knowledgeBase.namePlaceholder')}
+            maxLength={100}
+            data-testid="kb-name-input"
+            className="bg-base"
+          />
+        </SimpleConfigRow>
+
+        <SimpleConfigRow label={t('document.knowledgeBase.description')} align="start">
+          <Textarea
+            id="knowledge-description"
+            value={description}
+            onChange={e => onDescriptionChange(e.target.value)}
+            placeholder={t('document.knowledgeBase.descriptionPlaceholder')}
+            maxLength={500}
+            rows={3}
+            data-testid="kb-description-input"
+            className="bg-base px-4 placeholder:text-text-muted"
+          />
+        </SimpleConfigRow>
+        {locationSection}
+        {typeSection}
+      </>
+    ),
+    access: directAccessRequirement && onDirectAccessRequirementChange && (
+      <>
+        <SimpleConfigRow
+          label={t('document.knowledgeBase.allowDocumentDownload')}
+          description={t('document.knowledgeBase.allowDocumentDownloadDescription')}
+        >
+          <div className="flex justify-end">
+            <Switch
+              id="knowledge-base-allow-document-download"
+              checked={allowDocumentDownload ?? true}
+              onCheckedChange={onAllowDocumentDownloadChange}
+              data-testid="knowledge-base-allow-document-download"
             />
-            <p className="text-xs text-text-muted">
-              {t('knowledge:document.callLimits.maxCallsHint')}
-            </p>
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="knowledge-exempt-calls">
-                {t('knowledge:document.callLimits.exemptCalls')}
-              </Label>
-              <span className="text-sm text-text-secondary">{callLimits.exemptCalls}</span>
-            </div>
-            <Slider
-              id="knowledge-exempt-calls"
-              value={[callLimits.exemptCalls]}
-              onValueChange={values => handleExemptCallsChange(values[0])}
-              min={1}
-              max={Math.max(1, callLimits.maxCalls - 1)}
-              step={1}
-            />
-            <p className="text-xs text-text-muted">
-              {t('knowledge:document.callLimits.exemptCallsHint')}
-            </p>
-          </div>
-        </div>
-      </SimpleConfigRow>
-
-      {multimodalFeatureEnabled && (
-        <MultimodalConfigSection
-          enabled={multimodalAnalysisEnabled}
-          modelRef={multimodalAnalysisModelRef}
-          modelError={multimodalAnalysisModelError}
-          videoPrompt={multimodalAnalysisVideoPrompt}
-          imagePrompt={multimodalAnalysisImagePrompt}
-          onEnabledChange={onMultimodalAnalysisEnabledChange}
-          onModelChange={onMultimodalAnalysisModelChange}
-          onVideoPromptChange={onMultimodalVideoPromptChange}
-          onImagePromptChange={onMultimodalImagePromptChange}
-        />
-      )}
-
-      {(retrievalModeSection || showRetrievalSection) && (
-        <SimpleConfigRow label={t('knowledge:document.ragConfigMode.title')} align="start">
-          <div className="space-y-4">
-            {retrievalModeSection}
-
-            {showRetrievalSection && (
-              <RetrievalSettingsSection
-                config={retrievalConfig}
-                onChange={onRetrievalConfigChange}
-                onUserChange={onRetrievalConfigUserChange}
-                scope={retrievalScope}
-                groupName={retrievalGroupName}
-                readOnly={retrievalReadOnly}
-                partialReadOnly={retrievalPartialReadOnly}
-              />
-            )}
           </div>
         </SimpleConfigRow>
-      )}
-    </SimpleConfigGroup>
-  )
-
-  return (
-    <div className="space-y-5">
-      <FormSection title={t('knowledge:document.formSections.basic')} sectionId="knowledge-basic">
-        <SimpleConfigGroup>
-          {typeSection}
-
-          <SimpleConfigRow
-            label={
-              <>
-                {t('knowledge:document.knowledgeBase.name')}
-                {nameRequired && <span className="text-red-400"> *</span>}
-              </>
+        <SimpleConfigRow
+          label={t('document.knowledgeBase.directAccessRange')}
+          description={t('document.knowledgeBase.directAccessRangeDescription')}
+          align="start"
+        >
+          <RadioGroup
+            value={directAccessRequirement}
+            onValueChange={value =>
+              onDirectAccessRequirementChange(value as DirectAccessRequirement)
             }
+            className="space-y-2"
+            data-testid="knowledge-base-direct-access-requirement"
           >
-            <Input
-              id="knowledge-name"
-              value={name}
-              onChange={e => onNameChange(e.target.value)}
-              placeholder={namePlaceholder ?? t('knowledge:document.knowledgeBase.namePlaceholder')}
-              maxLength={100}
-              data-testid="kb-name-input"
-              className="bg-base"
-            />
-          </SimpleConfigRow>
-
-          <SimpleConfigRow label={t('knowledge:document.knowledgeBase.description')} align="start">
-            <Textarea
-              id="knowledge-description"
-              value={description}
-              onChange={e => onDescriptionChange(e.target.value)}
-              placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
-              maxLength={500}
-              rows={3}
-              data-testid="kb-description-input"
-              className="bg-base"
-            />
-          </SimpleConfigRow>
-        </SimpleConfigGroup>
-      </FormSection>
-
-      <FormSection
-        title={t('knowledge:document.formSections.summary')}
-        sectionId="knowledge-summary"
-      >
-        <SimpleConfigGroup>
-          <SimpleConfigRow
-            label={t('knowledge:document.summary.enableLabel')}
-            description={t('knowledge:document.summary.enableDescription')}
-          >
-            <div className="flex justify-end">
-              <Switch
-                id="knowledge-summary-enabled"
-                checked={summaryEnabled}
-                onCheckedChange={checked => onSummaryEnabledChange(checked)}
+            <div className="flex items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface/50">
+              <RadioGroupItem
+                value="read"
+                id="knowledge-direct-access-read"
+                data-testid="knowledge-base-direct-access-read"
+                className="mt-0.5"
               />
+              <Label htmlFor="knowledge-direct-access-read" className="flex-1 cursor-pointer">
+                <span className="block text-sm font-medium text-text-primary">
+                  {t('document.knowledgeBase.directAccessAllMembers')}
+                </span>
+                <span className="mt-1 block text-xs font-normal leading-5 text-text-muted">
+                  {t('document.knowledgeBase.directAccessAllMembersDescription')}
+                </span>
+              </Label>
+            </div>
+            <div className="flex items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface/50">
+              <RadioGroupItem
+                value="edit"
+                id="knowledge-direct-access-edit"
+                data-testid="knowledge-base-direct-access-edit"
+                className="mt-0.5"
+              />
+              <Label htmlFor="knowledge-direct-access-edit" className="flex-1 cursor-pointer">
+                <span className="block text-sm font-medium text-text-primary">
+                  {t('document.knowledgeBase.directAccessEditorsOnly')}
+                </span>
+                <span className="mt-1 block text-xs font-normal leading-5 text-text-muted">
+                  {t('document.knowledgeBase.directAccessEditorsOnlyDescription')}
+                </span>
+              </Label>
+            </div>
+          </RadioGroup>
+        </SimpleConfigRow>
+      </>
+    ),
+    models: (
+      <>
+        <h4 className="text-sm font-medium text-text-primary">
+          {t('document.formSections.documentSummary')}
+        </h4>
+        <SimpleConfigRow
+          label={t('document.summary.enableLabel')}
+          description={t('document.summary.enableDescription')}
+        >
+          <div className="flex justify-end">
+            <Switch
+              id="knowledge-summary-enabled"
+              checked={summaryEnabled}
+              onCheckedChange={checked => onSummaryEnabledChange(checked)}
+            />
+          </div>
+        </SimpleConfigRow>
+
+        {summaryEnabled && (
+          <SimpleConfigRow label={t('document.summary.selectModel')}>
+            <ModelRefSelector
+              value={summaryModelRef}
+              onChange={onSummaryModelChange}
+              error={summaryModelError}
+              placeholder={t('document.summary.selectModel')}
+              knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+              bindModel={bindModel}
+              preferenceScope="summary"
+              dataTestId="summary-model-select"
+            />
+          </SimpleConfigRow>
+        )}
+
+        {(modelsOpened || selection.section === 'models') && multimodalFeatureEnabled && (
+          <>
+            <h4 className="border-t border-border pt-4 text-sm font-medium text-text-primary">
+              {t('document.formSections.multimodalAnalysis')}
+            </h4>
+            <MultimodalConfigSection
+              enabled={multimodalAnalysisEnabled}
+              modelRef={multimodalAnalysisModelRef}
+              modelError={multimodalAnalysisModelError}
+              videoPrompt={multimodalAnalysisVideoPrompt}
+              imagePrompt={multimodalAnalysisImagePrompt}
+              onEnabledChange={onMultimodalAnalysisEnabledChange}
+              onModelChange={onMultimodalAnalysisModelChange}
+              onVideoPromptChange={onMultimodalVideoPromptChange}
+              onImagePromptChange={onMultimodalImagePromptChange}
+            />
+          </>
+        )}
+      </>
+    ),
+    retrieval: (
+      <>
+        {(retrievalModeSection || showRetrievalSection) && (
+          <SimpleConfigRow label={t('document.ragConfigMode.title')} align="start">
+            <div className="space-y-4">
+              {retrievalModeSection}
+
+              {showRetrievalSection && (
+                <RetrievalSettingsSection
+                  key={retrievalScopeKey}
+                  retrieverCache={retrieverCache.current}
+                  config={retrievalConfig}
+                  onChange={onRetrievalConfigChange}
+                  onUserChange={onRetrievalConfigUserChange}
+                  scope={retrievalScope}
+                  groupName={retrievalGroupName}
+                  readOnly={retrievalSettingsReadOnly}
+                  partialReadOnly={retrievalPartialReadOnly}
+                />
+              )}
             </div>
           </SimpleConfigRow>
-
-          {summaryEnabled && (
-            <SimpleConfigRow label={t('knowledge:document.summary.selectModel')}>
-              <ModelRefSelector
-                value={summaryModelRef}
-                onChange={onSummaryModelChange}
-                error={summaryModelError}
-                placeholder={t('knowledge:document.summary.selectModel')}
-                knowledgeDefaultTeamId={knowledgeDefaultTeamId}
-                bindModel={bindModel}
-                preferenceScope="summary"
-                dataTestId="summary-model-select"
-              />
-            </SimpleConfigRow>
-          )}
-        </SimpleConfigGroup>
-      </FormSection>
-
-      {showGuidedQuestions && (
-        <FormSection
-          title={t('knowledge:document.formSections.guidedQuestions')}
-          sectionId="knowledge-guided-questions"
-        >
-          <SimpleConfigGroup>
+        )}
+      </>
+    ),
+    usage: (
+      <>
+        {showGuidedQuestions && (
+          <>
             <SimpleConfigRow
-              label={t('knowledge:document.guidedQuestions.label')}
-              description={t('knowledge:document.guidedQuestions.helpText')}
+              label={t('document.guidedQuestions.label')}
+              description={t('document.guidedQuestions.helpText')}
               align="start"
             >
               <div className="space-y-2">
@@ -408,10 +465,10 @@ export function KnowledgeBaseForm({
                     <Input
                       value={question}
                       onChange={e => handleUpdateGuidedQuestion(index, e.target.value)}
-                      placeholder={t('knowledge:document.guidedQuestions.placeholder')}
+                      placeholder={t('document.guidedQuestions.placeholder')}
                       maxLength={MAX_QUESTION_LENGTH}
                       data-testid={`guided-question-input-${index}`}
-                      aria-label={`${t('knowledge:document.guidedQuestions.label')} ${index + 1}`}
+                      aria-label={`${t('document.guidedQuestions.label')} ${index + 1}`}
                       className="bg-base"
                     />
                     <Button
@@ -435,98 +492,171 @@ export function KnowledgeBaseForm({
                     data-testid="add-guided-question"
                   >
                     <Plus className="h-4 w-4 mr-1" />
-                    {t('knowledge:document.guidedQuestions.addButton')}
+                    {t('document.guidedQuestions.addButton')}
                   </Button>
                 )}
                 {guidedQuestions.length >= MAX_GUIDED_QUESTIONS && (
                   <p className="text-xs text-text-muted">
-                    {t('knowledge:document.guidedQuestions.maxReached')}
+                    {t('document.guidedQuestions.maxReached')}
                   </p>
                 )}
               </div>
             </SimpleConfigRow>
-          </SimpleConfigGroup>
-        </FormSection>
-      )}
-
-      {directAccessRequirement && onDirectAccessRequirementChange && (
-        <FormSection
-          title={t('knowledge:document.formSections.access')}
-          sectionId="knowledge-access"
+          </>
+        )}
+        <SimpleConfigRow
+          label={t('document.callLimits.title')}
+          description={t('document.callLimits.description')}
+          align="start"
         >
-          <SimpleConfigGroup>
-            <SimpleConfigRow
-              label={t('knowledge:document.knowledgeBase.allowDocumentDownload')}
-              description={t('knowledge:document.knowledgeBase.allowDocumentDownloadDescription')}
-            >
-              <div className="flex justify-end">
-                <Switch
-                  id="knowledge-base-allow-document-download"
-                  checked={allowDocumentDownload ?? true}
-                  onCheckedChange={onAllowDocumentDownloadChange}
-                  data-testid="knowledge-base-allow-document-download"
-                />
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="knowledge-max-calls">{t('document.callLimits.maxCalls')}</Label>
+                <span className="text-sm text-text-secondary">{callLimits.maxCalls}</span>
               </div>
-            </SimpleConfigRow>
-            <SimpleConfigRow
-              label={t('knowledge:document.knowledgeBase.directAccessRange')}
-              description={t('knowledge:document.knowledgeBase.directAccessRangeDescription')}
-              align="start"
-            >
-              <RadioGroup
-                value={directAccessRequirement}
-                onValueChange={value =>
-                  onDirectAccessRequirementChange(value as DirectAccessRequirement)
-                }
-                className="space-y-2"
-                data-testid="knowledge-base-direct-access-requirement"
-              >
-                <div className="flex items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface/50">
-                  <RadioGroupItem
-                    value="read"
-                    id="knowledge-direct-access-read"
-                    data-testid="knowledge-base-direct-access-read"
-                    className="mt-0.5"
-                  />
-                  <Label htmlFor="knowledge-direct-access-read" className="flex-1 cursor-pointer">
-                    <span className="block text-sm font-medium text-text-primary">
-                      {t('knowledge:document.knowledgeBase.directAccessAllMembers')}
-                    </span>
-                    <span className="mt-1 block text-xs font-normal leading-5 text-text-muted">
-                      {t('knowledge:document.knowledgeBase.directAccessAllMembersDescription')}
-                    </span>
-                  </Label>
-                </div>
-                <div className="flex items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface/50">
-                  <RadioGroupItem
-                    value="edit"
-                    id="knowledge-direct-access-edit"
-                    data-testid="knowledge-base-direct-access-edit"
-                    className="mt-0.5"
-                  />
-                  <Label htmlFor="knowledge-direct-access-edit" className="flex-1 cursor-pointer">
-                    <span className="block text-sm font-medium text-text-primary">
-                      {t('knowledge:document.knowledgeBase.directAccessEditorsOnly')}
-                    </span>
-                    <span className="mt-1 block text-xs font-normal leading-5 text-text-muted">
-                      {t('knowledge:document.knowledgeBase.directAccessEditorsOnlyDescription')}
-                    </span>
-                  </Label>
-                </div>
-              </RadioGroup>
-            </SimpleConfigRow>
-          </SimpleConfigGroup>
-        </FormSection>
-      )}
+              <Slider
+                id="knowledge-max-calls"
+                disabled={usageReadOnly}
+                value={[callLimits.maxCalls]}
+                onValueChange={values => handleMaxCallsChange(values[0])}
+                min={2}
+                max={50}
+                step={1}
+              />
+              <p className="text-xs text-text-muted">{t('document.callLimits.maxCallsHint')}</p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="knowledge-exempt-calls">
+                  {t('document.callLimits.exemptCalls')}
+                </Label>
+                <span className="text-sm text-text-secondary">{callLimits.exemptCalls}</span>
+              </div>
+              <Slider
+                id="knowledge-exempt-calls"
+                disabled={usageReadOnly}
+                value={[callLimits.exemptCalls]}
+                onValueChange={values => handleExemptCallsChange(values[0])}
+                min={1}
+                max={Math.max(1, callLimits.maxCalls - 1)}
+                step={1}
+              />
+              <p className="text-xs text-text-muted">{t('document.callLimits.exemptCallsHint')}</p>
+            </div>
+          </div>
+        </SimpleConfigRow>
+      </>
+    ),
+    sync: documentSyncSetting,
+    generation: generationSection && (
+      <>
+        {generationModelSetting}
+        {(generationOpened || selection.section === 'generation') && generationSection}
+      </>
+    ),
+  }
 
-      <FormSection
-        title={t('knowledge:document.advancedSettings.title')}
-        sectionId="knowledge-advanced"
-        open={advancedOpen}
-        onOpenChange={onAdvancedOpenChange}
+  const visibleGroups = sectionGroups.map(({ label, items }) => ({
+    label,
+    items: (items as readonly SectionItem[]).filter(
+      ([section]) => (section !== 'sync' && section !== 'generation') || content[section]
+    ),
+  }))
+
+  return (
+    <fieldset
+      disabled={disabled}
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row md:gap-4"
+    >
+      <nav
+        ref={sidebar}
+        aria-label={t('document.formSections.navigation')}
+        className="max-h-[32dvh] shrink-0 space-y-2 overflow-y-auto border-b border-border pb-2 md:max-h-none md:w-44 md:space-y-3 md:border-b-0 md:border-r md:pb-0 md:pr-3"
       >
-        {advancedContent}
-      </FormSection>
-    </div>
+        {visibleGroups.map(({ label, items }) => (
+          <div
+            key={label}
+            role="group"
+            aria-label={t(`document.formSectionGroups.${label}`)}
+            className="border-t border-border pt-2 first:border-0 first:pt-0 md:pt-3"
+          >
+            <p aria-hidden="true" className="px-3 pb-1 text-xs text-text-muted">
+              {t(`document.formSectionGroups.${label}`)}
+            </p>
+            <div className="flex flex-wrap gap-1 md:flex-col">
+              {items.map(([section, testId, title]) => {
+                const selected = selection.section === section
+                return (
+                  <button
+                    key={section}
+                    type="button"
+                    aria-expanded={selected}
+                    aria-current={selected ? 'true' : undefined}
+                    aria-controls={panelId}
+                    data-testid={`${testId}-section-trigger`}
+                    onClick={() => selectSection(section)}
+                    className={cn(
+                      'min-h-11 shrink-0 whitespace-nowrap rounded-md px-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:whitespace-normal',
+                      selected
+                        ? 'bg-primary/10 font-medium text-primary'
+                        : 'text-text-secondary hover:bg-hover'
+                    )}
+                  >
+                    {t(`document.formSections.${title}`)}
+                    {section === 'basic' && basicSectionRequired && (
+                      <>
+                        <span className="ml-1 text-red-400" aria-hidden="true">
+                          *
+                        </span>
+                        <span className="sr-only">
+                          {' '}
+                          {t('document.formSections.containsRequiredFields')}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </nav>
+      <div
+        ref={panel}
+        id={panelId}
+        tabIndex={-1}
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-3 [scrollbar-gutter:stable]"
+      >
+        {visibleGroups
+          .flatMap(group => group.items)
+          .map(([section, , label]) => {
+            const selected = selection.section === section
+            // Required model defaults can be resolved before their settings are visited.
+            const keepMounted =
+              section === 'basic' ||
+              section === 'models' ||
+              (section === 'generation' && (generationOpened || generationModelSetting))
+            if (!selected && !keepMounted) return null
+            return (
+              <section
+                key={section}
+                hidden={!selected}
+                aria-label={t(`document.formSections.${label}`)}
+              >
+                <h3 className="mb-3 text-base font-semibold text-text-primary">
+                  {t(`document.formSections.${label}`)}
+                </h3>
+                <fieldset
+                  disabled={editableSection !== undefined && editableSection !== section}
+                  className="min-w-0"
+                >
+                  <SimpleConfigGroup>{content[section]}</SimpleConfigGroup>
+                </fieldset>
+              </section>
+            )
+          })}
+      </div>
+    </fieldset>
   )
 }

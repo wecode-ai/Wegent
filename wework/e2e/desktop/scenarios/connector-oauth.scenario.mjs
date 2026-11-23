@@ -418,18 +418,6 @@ export function createDesktopScenario({
         value: JSON.stringify({ replyPredictionsEnabled: false }),
       })
       const appDevice = await cloudEnvironment.waitForConnectedAppDevice()
-      // Standalone selection establishes its own app/provider and account
-      // fixtures through prepareCloud and the shared account-switch flow.
-      if (checkpoint === 'connector-account-switch') {
-        accountSwitch = await verifyConnectorAccountSwitch({
-          control,
-          backend,
-          api,
-          slug: CONNECTOR_OAUTH_SLUG,
-          mcpUrl: `${provider.url}/mcp`,
-        })
-        return
-      }
       await selectE2EModel(control)
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
         timeoutMs: workbenchReadyTimeoutMs,

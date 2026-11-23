@@ -1,0 +1,25 @@
+[package]
+name = "wegent-resource-readiness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Owned agent readiness and execution environment queries"
+
+[dependencies]
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing.workspace = true
+wegent-access.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-backend-users.workspace = true
+wegent-devices.workspace = true
+wegent-directory.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-resource-store.workspace = true

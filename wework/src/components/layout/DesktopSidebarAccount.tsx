@@ -1,19 +1,23 @@
-import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
-import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
-import { Download, Loader2, UserRound } from 'lucide-react'
-import { useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
-import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
+import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
+import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { User as UserProfile } from '@/types/api'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { ProgressRing } from '@wegent/collaboration/controls/ProgressBar'
+import { controlPopup } from '@wegent/collaboration/controls/recipes'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
+import { Download, Loader2, UserRound } from 'lucide-react'
+import { useContext, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 
 export interface DesktopSidebarAccountSettingsOptions {
@@ -48,33 +52,9 @@ function formatSidebarTemplate(template: string, values: Record<string, string>)
   )
 }
 
-function SidebarUpdateDownloadProgress({ progress }: { progress: number }) {
-  return (
-    <span
-      data-testid="sidebar-app-update-download-progress"
-      role="progressbar"
-      aria-label={`Update download ${progress}%`}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={progress}
-      className="flex h-4 w-4 items-center justify-center rounded-full"
-      style={{
-        background: `conic-gradient(rgb(var(--color-primary)) ${progress}%, rgb(var(--color-sidebar-hover)) 0)`,
-      }}
-    >
-      <span className="h-2 w-2 rounded-full bg-[rgb(var(--color-sidebar))]" />
-    </span>
-  )
-}
-
 function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => void }) {
   const { t } = useTranslation('common')
   const appUpdate = useOptionalAppUpdate()
-  const buttonRef = useRef<HTMLButtonElement | null>(null)
-  const [errorTooltipPosition, setErrorTooltipPosition] = useState<{
-    left: number
-    top: number
-  } | null>(null)
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const status = appUpdate?.status ?? 'idle'
   const downloadProgress = appUpdate?.downloadProgress ?? null
@@ -88,15 +68,6 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
       )
     : null
 
-  const showErrorTooltip = () => {
-    if (!errorSummary || !buttonRef.current) return
-    const rect = buttonRef.current.getBoundingClientRect()
-    setErrorTooltipPosition({
-      left: Math.min(rect.right + 8, Math.max(8, window.innerWidth - 268)),
-      top: Math.min(Math.max(8, rect.top + rect.height / 2), window.innerHeight - 8),
-    })
-  }
-
   if (!appUpdate || !availableUpdate) return null
 
   const title = formatSidebarTemplate(
@@ -109,8 +80,8 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
   const downloadTitle = formatAppUpdateProgress(downloadProgress, t)
   const actionLabel = status === 'downloading' ? downloadTitle : title
   const button = (
-    <button
-      ref={buttonRef}
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="sidebar-app-update-button"
       disabled={busy}
@@ -127,7 +98,11 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
       )}
     >
       {status === 'downloading' && downloadPercent !== null ? (
-        <SidebarUpdateDownloadProgress progress={downloadPercent} />
+        <ProgressRing
+          value={downloadPercent}
+          label={t('workbench.app_update_downloading_progress', { progress: downloadPercent })}
+          testId="sidebar-app-update-download-progress"
+        />
       ) : busy ? (
         <Loader2 className="h-4 w-4 animate-spin" />
       ) : (
@@ -139,37 +114,19 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
       {errorSummary && (
         <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-destructive ring-2 ring-[rgb(var(--color-sidebar-hover))] wework:bg-red-500" />
       )}
-    </button>
+    </ControlButton>
   )
 
   return (
-    <div
-      className="group/update relative shrink-0"
-      onPointerEnter={showErrorTooltip}
-      onPointerLeave={() => setErrorTooltipPosition(null)}
-      onFocus={showErrorTooltip}
-      onBlur={() => setErrorTooltipPosition(null)}
+    <Tooltip
+      label={errorSummary ?? actionLabel}
+      testId={errorSummary ? 'sidebar-app-update-error' : 'sidebar-app-update-tooltip'}
+      className={errorSummary ? 'text-destructive' : undefined}
     >
-      {errorSummary ? (
-        button
-      ) : (
-        <Tooltip label={actionLabel} testId="sidebar-app-update-tooltip">
-          {button}
-        </Tooltip>
-      )}
-      {errorSummary && errorTooltipPosition
-        ? createPortal(
-            <div
-              data-testid="sidebar-app-update-error"
-              style={errorTooltipPosition}
-              className="fixed z-system-popover w-[260px] -translate-y-1/2 rounded-lg border border-destructive/20 bg-popover px-3 py-2 text-xs font-medium leading-5 text-destructive shadow-[0_12px_28px_rgba(0,0,0,0.18)] [overflow-wrap:anywhere] wework:border-red-500/20 wework:text-red-500"
-            >
-              {errorSummary}
-            </div>,
-            document.body
-          )
-        : null}
-    </div>
+      <span className="inline-flex shrink-0" tabIndex={busy ? 0 : undefined}>
+        {button}
+      </span>
+    </Tooltip>
   )
 }
 
@@ -182,6 +139,7 @@ export function DesktopSidebarAccount({
   compact = false,
 }: DesktopSidebarAccountProps) {
   const { t } = useTranslation('common')
+  const portalTheme = useCollaborationPortalTheme()
   const cloudContext = useContext(CloudConnectionContext)
   const cloud = useOptionalCloudConnection()
   const appUpdate = useOptionalAppUpdate()
@@ -204,119 +162,117 @@ export function DesktopSidebarAccount({
   const internalContainerRef = useRef<HTMLDivElement>(null)
   const containerRef = containerRefProp ?? internalContainerRef
 
-  useEffect(() => {
-    if (!menuOpen) return
-
-    const handleOutsidePointer = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) setMenuOpen(false)
-    }
-
-    document.addEventListener('pointerdown', handleOutsidePointer)
-    document.addEventListener('mousedown', handleOutsidePointer)
-    return () => {
-      document.removeEventListener('pointerdown', handleOutsidePointer)
-      document.removeEventListener('mousedown', handleOutsidePointer)
-    }
-  }, [containerRef, menuOpen])
-
   return (
     <>
-      <div
-        ref={containerRef}
-        data-testid="desktop-sidebar-account"
-        className="group/account relative shrink-0"
-      >
+      <Popover open={menuOpen} onOpenChange={setMenuOpen}>
         <div
-          className={cn(
-            'relative flex items-center transition-colors group-hover/account:bg-[rgb(var(--color-sidebar-hover))] group-focus-within/account:bg-[rgb(var(--color-sidebar-hover))]',
-            compact ? 'h-7 rounded-lg' : 'h-[60px] rounded-[10px]'
-          )}
+          ref={containerRef}
+          data-testid="desktop-sidebar-account"
+          className="group/account relative shrink-0"
         >
-          <button
-            type="button"
-            data-testid="settings-button"
-            onClick={() => setMenuOpen(open => !open)}
+          <div
             className={cn(
-              'flex min-w-0 flex-1 items-center text-left text-[rgb(var(--color-sidebar-text-primary))]',
-              compact
-                ? 'h-7 w-7 justify-center rounded-lg'
-                : cn(
-                    'h-[60px] gap-3 rounded-[10px] py-2 pl-1.5',
-                    hasAvailableAppUpdate ? 'pr-[72px]' : 'pr-10'
-                  )
+              'relative flex items-center transition-colors group-hover/account:bg-[rgb(var(--color-sidebar-hover))] group-focus-within/account:bg-[rgb(var(--color-sidebar-hover))]',
+              compact ? 'h-7 rounded-lg' : 'h-[60px] rounded-[10px]'
             )}
-            title={t('workbench.account_and_settings', '账户与设置')}
-            aria-label={t('workbench.account_and_settings', '账户与设置')}
-            aria-expanded={menuOpen}
           >
-            <span
-              data-testid="sidebar-account-avatar"
-              className={cn(
-                'flex shrink-0 items-center justify-center rounded-full',
-                compact
-                  ? 'h-7 w-7 bg-muted text-text-secondary'
-                  : 'h-10 w-10 bg-primary/20 text-primary'
-              )}
-            >
-              <UserRound className={compact ? 'h-4 w-4' : 'h-5 w-5'} aria-hidden="true" />
-            </span>
-            {!compact ? (
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-base font-semibold leading-[18px]">
-                  {account.label}
-                </span>
-                <span className="block truncate text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-secondary))]">
-                  {account.detail}
-                </span>
-              </span>
-            ) : null}
-          </button>
-          {!compact ? (
-            <div
-              className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5"
-              onClickCapture={() => setMenuOpen(false)}
-            >
-              {hasAvailableAppUpdate && (
-                <div data-testid="sidebar-app-update-action">
-                  <SidebarAppUpdateButton onBeforeInstall={() => setMenuOpen(false)} />
-                </div>
-              )}
-              {trailingActions}
-            </div>
-          ) : null}
-          {menuOpen && (
-            <DesktopSettingsMenu
-              user={user}
-              showLogout={usesCloudAccount ? cloud.isConnected : undefined}
-              onOpenSettings={() => {
-                setMenuOpen(false)
-                onOpenSettings()
-              }}
-              onOpenAbout={() => {
-                setMenuOpen(false)
-                onOpenSettings({ settingsPage: 'about' })
-              }}
-              onLogin={
-                requiresCloudLogin
-                  ? () => {
-                      setMenuOpen(false)
-                      setCloudDialogOpen(true)
-                    }
-                  : undefined
+            <PopoverTrigger
+              render={
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  data-testid="settings-button"
+                  className={cn(
+                    'flex min-w-0 flex-1 items-center text-left text-[rgb(var(--color-sidebar-text-primary))]',
+                    compact
+                      ? 'h-7 w-7 justify-center rounded-lg'
+                      : cn(
+                          'h-[60px] gap-3 rounded-[10px] py-2 pl-1.5',
+                          hasAvailableAppUpdate ? 'pr-[72px]' : 'pr-10'
+                        )
+                  )}
+                  title={t('workbench.account_and_settings', '账户与设置')}
+                  aria-label={t('workbench.account_and_settings', '账户与设置')}
+                  aria-expanded={menuOpen}
+                />
               }
-              onLogout={() => {
-                setMenuOpen(false)
-                if (usesCloudAccount) {
-                  cloud.disconnect()
-                  return
+            >
+              <span
+                data-testid="sidebar-account-avatar"
+                className={cn(
+                  'flex shrink-0 items-center justify-center rounded-full',
+                  compact
+                    ? 'h-7 w-7 bg-muted text-text-secondary'
+                    : 'h-10 w-10 bg-primary/20 text-primary'
+                )}
+              >
+                <UserRound className={compact ? 'h-4 w-4' : 'h-5 w-5'} aria-hidden="true" />
+              </span>
+              {!compact ? (
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-base font-semibold leading-[18px]">
+                    {account.label}
+                  </span>
+                  <span className="block truncate text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-secondary))]">
+                    {account.detail}
+                  </span>
+                </span>
+              ) : null}
+            </PopoverTrigger>
+            {!compact ? (
+              <div
+                className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5"
+                onClickCapture={() => setMenuOpen(false)}
+              >
+                {hasAvailableAppUpdate && (
+                  <div data-testid="sidebar-app-update-action">
+                    <SidebarAppUpdateButton onBeforeInstall={() => setMenuOpen(false)} />
+                  </div>
+                )}
+                {trailingActions}
+              </div>
+            ) : null}
+            <PopoverContent
+              {...portalTheme}
+              aria-label={t('workbench.account_and_settings', '账户与设置')}
+              side={compact ? 'bottom' : 'top'}
+              align={compact ? 'end' : 'start'}
+              sideOffset={8}
+              collisionPadding={8}
+              className={cn(portalTheme.className, controlPopup, 'w-72')}
+            >
+              <DesktopSettingsMenu
+                user={user}
+                showLogout={usesCloudAccount ? cloud.isConnected : undefined}
+                onOpenSettings={() => {
+                  setMenuOpen(false)
+                  onOpenSettings()
+                }}
+                onOpenAbout={() => {
+                  setMenuOpen(false)
+                  onOpenSettings({ settingsPage: 'about' })
+                }}
+                onLogin={
+                  requiresCloudLogin
+                    ? () => {
+                        setMenuOpen(false)
+                        setCloudDialogOpen(true)
+                      }
+                    : undefined
                 }
-                onLogout()
-              }}
-              placement={compact ? 'below-right' : 'above'}
-            />
-          )}
+                onLogout={() => {
+                  setMenuOpen(false)
+                  if (usesCloudAccount) {
+                    cloud.disconnect()
+                    return
+                  }
+                  onLogout()
+                }}
+              />
+            </PopoverContent>
+          </div>
         </div>
-      </div>
+      </Popover>
 
       {cloudDialogOpen && (
         <CloudConnectionDialog

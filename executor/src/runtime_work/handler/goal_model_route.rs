@@ -45,11 +45,25 @@ impl RuntimeWorkRpcHandler {
         // recovery reloads the passive history profile after activation and can
         // unload the native continuation that the mutation already started.
         let thread_path = runtime_thread_path_from_link(link);
-        let (_, registration) = self
-            .codex_app_server
-            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
+        self.codex_app_server
+            .resume_thread_for_model_action(
+                &request,
+                thread_id,
+                thread_path.as_deref(),
+                |registration| {
+                    self.retain_goal_model_route(thread_id, registration);
+                },
+            )
             .await
             .map_err(|error| AppIpcError::new("model_route_failed", error))?;
+        Ok(())
+    }
+
+    pub(super) fn retain_goal_model_route(
+        &self,
+        thread_id: &str,
+        registration: Option<crate::agents::ModelActionRegistration>,
+    ) {
         if let Some(route) = self
             .thread_event_routing
             .lock()
@@ -57,11 +71,9 @@ impl RuntimeWorkRpcHandler {
             .routes
             .get_mut(thread_id)
         {
-            // Native Goal turns may run without a local send future. The existing
-            // Goal lifecycle, rather than the mutation response, owns this lease.
+            // Native activation may outlive an ambiguous resume response.
             route.goal_model_route = registration;
         }
-        Ok(())
     }
 
     pub(super) fn release_goal_model_routes(&self, local_task_id: &str) {

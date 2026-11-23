@@ -11,7 +11,10 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
 import { createProjectChatClient } from '../../../../packages/chat-core/src/project-chat'
-import { selectCollaborationProjectView } from '../../utils/collaboration-test-support'
+import {
+  chooseCollaborationOption,
+  selectCollaborationProjectView,
+} from '../../utils/collaboration-test-support'
 import { createApiClient } from '../../utils/api-client'
 import { REGULAR_USER } from '../../config/test-users'
 import type { AssistantParticipation, AssistantParticipationWorkroom } from '@wegent/collaboration'
@@ -319,14 +322,17 @@ test.describe('Collaboration agent execution', () => {
             async () => {
               const rows = await apiRequest<{ items: CollaborationExecution[] }>(
                 request,
-                `/api/v1/cloud-projects/${projectId}/executions?status=completed`
+                `/api/v1/cloud-projects/${projectId}/executions?include_terminal=true`
               )
               second = rows.items.find(row => row.loopItemId === issue.id && row.id !== first.id)
-              return second?.status
+              return ['completed', 'failed', 'cancelled'].includes(second?.status ?? '')
             },
             { timeout: 90_000 }
           )
-          .toBe('completed')
+          .toBe(true)
+        expect(second!.status, second!.errorMessage ?? 'Managed continuation must succeed').toBe(
+          'completed'
+        )
         expect(second!.backendTaskId).toBe(first.backendTaskId)
         const reloaded = await chat.subscribe(projectId, issue.id, 0, () => {})
         try {
@@ -666,7 +672,7 @@ test.describe('Collaboration agent execution', () => {
     await page.getByTestId('project-agent-mode-create').click()
     await expect(page.getByTestId('web-agent-resource-creator')).toBeVisible()
     await page.getByTestId('web-agent-display-name').fill(displayName)
-    await page.getByTestId('web-agent-model').selectOption({
+    await chooseCollaborationOption(page, page.getByTestId('web-agent-model'), {
       label: resources.modelName,
     })
     page.off('request', observeCatalog)

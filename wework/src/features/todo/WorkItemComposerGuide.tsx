@@ -1,12 +1,14 @@
-import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { Button } from '@/components/ui/button'
 import { projectKey, type ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { ComposerContextButton } from '@wegent/collaboration/composer'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { ProjectSpacePickerMenu } from './ProjectSpacePickerMenu'
-import { useWorkItemPickerOpen } from './workItemPickerOpenState'
+import { createWorkItemGuideSource } from './workItemGuideSource'
 
 type TaskBinding = Awaited<ReturnType<ProjectSpaceApi['listTaskBindings']>>[number]
 
@@ -14,6 +16,7 @@ interface WorkItemComposerGuideProps {
   project?: CloudProject | null
   item?: CloudLoopItem | null
   api?: ProjectSpaceApi
+  taskOwnerKey?: string | null
   currentTask?: RuntimeTaskAddress | null
   goalPresent?: boolean
   integrated?: boolean
@@ -43,6 +46,7 @@ function WorkItemComposerGuideContent({
   item,
   api,
   currentTask,
+  taskOwnerKey,
   goalPresent = false,
   integrated = false,
   toolbar = false,
@@ -54,116 +58,48 @@ function WorkItemComposerGuideContent({
   onOpenBoard,
 }: WorkItemComposerGuideProps) {
   const { t } = useTranslation('common')
-  const containerRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null)
   const canChangeProject = Boolean(onSelectProject)
-  const pickerStoreKey = currentTask
-    ? `task:${currentTask.deviceId}:${currentTask.taskId}`
-    : (item?.id ?? null)
-  // Open state outlives this component: a pane remount during restore must
-  // re-render an open picker instead of silently closing it (issue #4637).
-  // Persisted only for identity-stable guides; project-only guides keep
-  // local state so a project storage change still resets their picker.
-  const [persistedOpen, setPersistedOpen] = useWorkItemPickerOpen(
-    canChangeProject ? pickerStoreKey : null
-  )
-  const [localOpen, setLocalOpen] = useState(false)
-  const open = pickerStoreKey !== null ? persistedOpen : localOpen
-  const setOpen = useCallback(
-    (update: boolean | ((current: boolean) => boolean)) => {
-      const next = typeof update === 'function' ? update(open) : update
-      if (pickerStoreKey !== null) {
-        setPersistedOpen(next)
-      } else {
-        setLocalOpen(next)
-      }
-    },
-    [open, pickerStoreKey, setPersistedOpen]
-  )
-  const traceId = useId()
-  const [bindingRetry, setBindingRetry] = useState(0)
-  const [bindingResult, setBindingResult] = useState<{
-    api: ProjectSpaceApi
-    itemId: string
-    bindings: TaskBinding[] | null
-    failed: boolean
-    refreshKey: unknown
-    retry: number
-  } | null>(null)
+  const pickerStoreKey =
+    taskOwnerKey ??
+    (currentTask ? `task:${currentTask.deviceId}:${currentTask.taskId}` : (item?.id ?? null))
+  const scope = project ? projectKey(project) : ''
   const itemId = item?.id
+  const source = useMemo(
+    () => createWorkItemGuideSource(api, itemId, canChangeProject ? pickerStoreKey : null, scope),
+    [api, itemId, canChangeProject, pickerStoreKey, scope]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      source.subscribe(listener, {
+        refreshKey,
+        projectId: project?.id,
+        projectStore: project?.project_store,
+        taskId: currentTask?.taskId,
+        deviceId: currentTask?.deviceId,
+        canChangeProject,
+      }),
+    [
+      source,
+      refreshKey,
+      project?.id,
+      project?.project_store,
+      currentTask?.taskId,
+      currentTask?.deviceId,
+      canChangeProject,
+    ]
+  )
+  const {
+    open,
+    bindings: taskBindings,
+    failed: readFailed,
+    loading: bindingsPending,
+  } = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  const setOpen = source.setOpen
   const menuOpen = open && canChangeProject
-  const closeMenu = useCallback(() => {
-    if (import.meta.env.VITE_WEWORK_E2E === 'true')
-      console.debug('[Wework] Project picker lifecycle', { event: 'close-requested', traceId })
-    setOpen(false)
-  }, [setOpen, traceId])
-
-  useEffect(() => {
-    if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-    console.debug('[Wework] Project picker lifecycle', { event: 'mounted', traceId })
-    return () => {
-      console.debug('[Wework] Project picker lifecycle', { event: 'unmounted', traceId })
-    }
-  }, [traceId])
-
-  useEffect(() => {
-    if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-    console.debug('[Wework] Project picker lifecycle', {
-      event: 'state',
-      traceId,
-      open,
-      projectId: project?.id ?? null,
-      projectStore: project?.project_store ?? null,
-      itemId: item?.id ?? null,
-      taskId: currentTask?.taskId ?? null,
-    })
-  }, [traceId, open, project?.id, project?.project_store, item?.id, currentTask?.taskId])
-
-  useEffect(() => {
-    if (!api || !itemId) return
-    let active = true
-    void api.listTaskBindings(itemId).then(
-      bindings => {
-        if (active)
-          setBindingResult({
-            api,
-            itemId,
-            bindings,
-            failed: false,
-            refreshKey,
-            retry: bindingRetry,
-          })
-      },
-      () => {
-        if (active)
-          setBindingResult(previous => ({
-            api,
-            itemId,
-            bindings:
-              previous && previous.api === api && previous.itemId === itemId
-                ? previous.bindings
-                : null,
-            failed: true,
-            refreshKey,
-            retry: bindingRetry,
-          }))
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, itemId, refreshKey, bindingRetry])
-
+  const closeMenu = useCallback(() => source.setOpen(false), [source])
   const resolvedItem = item ?? null
-  const ownedBindings =
-    bindingResult && bindingResult.api === api && bindingResult.itemId === itemId
-      ? bindingResult
-      : null
-  const taskBindings = !item ? [] : (ownedBindings?.bindings ?? null)
-  const bindingsPending =
-    !ownedBindings ||
-    ownedBindings.refreshKey !== refreshKey ||
-    ownedBindings.retry !== bindingRetry
+
   const taskCount = taskBindings?.length ?? null
   const otherTaskCount =
     taskBindings == null
@@ -174,8 +110,9 @@ function WorkItemComposerGuideContent({
             (taskBindings.some(binding => isCurrentBinding(binding, currentTask)) ? 1 : 0)
         )
 
+  const readFailedText = t('workbench.runtime_work_load_failed')
   const taskSummary =
-    taskCount == null && api && !ownedBindings?.failed
+    taskCount == null && api && !readFailed
       ? t('workbench.loading_task_count', '任务同步中')
       : taskCount != null && taskCount > 1
         ? `${taskCount} 个任务${otherTaskCount ? `，还有 ${otherTaskCount} 个` : ''}`
@@ -191,8 +128,7 @@ function WorkItemComposerGuideContent({
       key={project ? projectKey(project) : 'none'}
       projects={projects}
       project={project}
-      triggerRef={triggerRef}
-      containerRef={containerRef}
+      anchor={trigger}
       onClose={closeMenu}
       onSelect={option => onSelectProject?.(option)}
       onRemoveProject={onRemoveProject}
@@ -202,7 +138,6 @@ function WorkItemComposerGuideContent({
   if (resolvedItem) {
     return (
       <div
-        ref={containerRef}
         className={toolbar ? 'relative min-w-0 max-w-[12rem] shrink' : 'relative min-w-0 flex-1'}
       >
         <div
@@ -213,7 +148,8 @@ function WorkItemComposerGuideContent({
             toolbar ? 'h-8 rounded-lg px-2' : 'h-9 px-2',
           ].join(' ')}
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="work-item-guide-open-summary"
             onClick={() => {
@@ -247,21 +183,23 @@ function WorkItemComposerGuideContent({
                 · {taskSummary}
               </span>
             ) : null}
-          </button>
-          {ownedBindings?.failed ? (
+          </ControlButton>
+          {readFailed ? (
             <Button
               variant="ghost"
               type="button"
               data-testid="work-item-guide-retry-task-count"
               disabled={bindingsPending}
-              onClick={() => setBindingRetry(current => current + 1)}
+              onClick={() => void source.reload()}
+              title={readFailedText}
               className="h-6 shrink-0 px-1 py-0 text-xs text-text-muted"
             >
               {t('workbench.task_count_load_failed_retry', '任务数加载失败，重试')}
             </Button>
           ) : null}
           {onOpen ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="work-item-open-details"
               onClick={() => {
@@ -273,10 +211,11 @@ function WorkItemComposerGuideContent({
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
             >
               <ListChecks className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           ) : null}
           {onOpenBoard ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="work-item-open-board-menu"
               onClick={() => {
@@ -288,11 +227,12 @@ function WorkItemComposerGuideContent({
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
             >
               <ArrowUpRight className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           ) : null}
           {canChangeProject ? (
-            <button
-              ref={triggerRef}
+            <ControlButton
+              variant="unstyled"
+              ref={setTrigger}
               type="button"
               data-testid="work-item-change-board"
               onClick={() => setOpen(current => !current)}
@@ -303,7 +243,7 @@ function WorkItemComposerGuideContent({
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
             >
               <ChevronDown className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           ) : null}
         </div>
         {projectMenu}
@@ -312,23 +252,18 @@ function WorkItemComposerGuideContent({
   }
 
   const projectContextClassName = [
-    'flex w-full min-w-[44px] items-center overflow-hidden text-sm font-normal leading-[18px] text-text-secondary',
-    toolbar ? 'h-8 gap-1.5 rounded-lg px-2' : 'h-9 gap-2 px-2',
-    !toolbar ? 'max-w-[48rem] rounded-xl' : '',
+    'flex h-9 w-full min-w-[44px] max-w-[48rem] items-center gap-2 overflow-hidden rounded-xl px-2 text-sm font-normal leading-[18px] text-text-secondary',
     canChangeProject
       ? 'group transition-[background-color,color] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30'
       : '',
-    canChangeProject && toolbar ? 'hover:bg-background/70' : '',
-    canChangeProject && integrated && !toolbar ? 'hover:bg-background/55' : '',
-    canChangeProject && !integrated && !toolbar
+    canChangeProject && integrated ? 'hover:bg-background/55' : '',
+    canChangeProject && !integrated
       ? 'hover:bg-background/70 hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
       : '',
     open
-      ? integrated && !toolbar
+      ? integrated
         ? 'bg-background/55 text-text-primary'
-        : toolbar
-          ? 'bg-background/70 text-text-primary'
-          : 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
+        : 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
       : '',
   ].join(' ')
 
@@ -350,24 +285,37 @@ function WorkItemComposerGuideContent({
     </>
   )
 
+  const projectTriggerProps = {
+    ref: setTrigger,
+    'data-testid': 'project-space-context-pill',
+    onClick: () => setOpen(current => !current),
+    'aria-expanded': open,
+    'aria-haspopup': 'dialog' as const,
+    title,
+  }
+
+  if (toolbar && canChangeProject) {
+    return (
+      <div className="relative min-w-0 max-w-[12rem] shrink">
+        <ComposerContextButton {...projectTriggerProps}>
+          {projectContextContent}
+        </ComposerContextButton>
+        {projectMenu}
+      </div>
+    )
+  }
+
   return (
-    <div
-      ref={containerRef}
-      className={toolbar ? 'relative min-w-0 max-w-[12rem] shrink' : 'relative min-w-0 flex-1'}
-    >
+    <div className={toolbar ? 'relative min-w-0 max-w-[12rem] shrink' : 'relative min-w-0 flex-1'}>
       {canChangeProject ? (
-        <button
-          ref={triggerRef}
+        <ControlButton
+          variant="unstyled"
           type="button"
-          data-testid="project-space-context-pill"
-          onClick={() => setOpen(current => !current)}
+          {...projectTriggerProps}
           className={projectContextClassName}
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          title={title}
         >
           {projectContextContent}
-        </button>
+        </ControlButton>
       ) : (
         <div
           data-testid="project-space-context-pill"

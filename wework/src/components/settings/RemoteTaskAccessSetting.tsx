@@ -1,62 +1,50 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { getRemoteTaskAccess, setRemoteTaskAccess } from '@/desktop/remoteTaskAccess'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './settings-ui'
 
 export function RemoteTaskAccessSetting() {
   const { t } = useTranslation('common')
-  const [enabled, setEnabled] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const resource = useMemo(
+    () =>
+      createAsyncResource('remote-task-access', async () => (await getRemoteTaskAccess()).enabled),
+    []
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const enabled = snapshot.data ?? false
+  const loading = snapshot.status === 'idle' || snapshot.status === 'loading'
+  const loaded = snapshot.status === 'ready'
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<'load' | 'save' | null>(null)
-  const [loaded, setLoaded] = useState(false)
-  const revision = useRef(0)
+  const [saveError, setSaveError] = useState(false)
   const savingRef = useRef(false)
-
+  const error = saveError ? 'save' : snapshot.status === 'error' ? 'load' : null
   const refresh = useCallback(() => {
     if (savingRef.current) return
-    const request = ++revision.current
-    setLoading(true)
-    setLoaded(false)
-    setError(null)
-    void getRemoteTaskAccess().then(
-      settings => {
-        if (request !== revision.current) return
-        setEnabled(settings.enabled)
-        setLoaded(true)
-        setLoading(false)
-      },
-      () => {
-        if (request !== revision.current) return
-        setError('load')
-        setLoading(false)
-      }
-    )
-  }, [])
-
-  useEffect(() => {
-    refresh()
-    window.addEventListener('focus', refresh)
-    return () => {
-      revision.current += 1
-      window.removeEventListener('focus', refresh)
-    }
-  }, [refresh])
+    setSaveError(false)
+    void resource.reload()
+  }, [resource])
+  useWindowEvent('focus', refresh)
 
   const save = async (next: boolean) => {
-    const request = ++revision.current
     savingRef.current = true
     setSaving(true)
-    setError(null)
+    setSaveError(false)
+    resource.update(value => value)
     try {
       const settings = await setRemoteTaskAccess(next)
-      if (request === revision.current) setEnabled(settings.enabled)
+      resource.update(() => settings.enabled)
     } catch {
-      if (request === revision.current) setError('save')
+      setSaveError(true)
     } finally {
       savingRef.current = false
-      if (request === revision.current) setSaving(false)
+      setSaving(false)
     }
   }
 
@@ -66,7 +54,7 @@ export function RemoteTaskAccessSetting() {
         <SettingsRow
           label={t('workbench.remote_task_access_title')}
           description={t('workbench.remote_task_access_description')}
-          control={
+          children={
             <SettingsSwitch
               data-testid="remote-task-access-toggle"
               checked={enabled}

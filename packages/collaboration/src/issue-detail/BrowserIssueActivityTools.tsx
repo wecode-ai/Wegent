@@ -1,4 +1,5 @@
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useDialogRequests } from '../controls/useDialogRequests'
+import { useContext, useState, useSyncExternalStore } from 'react'
 import type { ProjectChatMessage } from '@wegent/chat-core'
 import type { CollaborationAgent, CollaborationIssue, CollaborationProject } from '../types'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
@@ -37,60 +38,57 @@ export function BrowserIssueActivityTools({
   onTaskUpdated?(issue: CollaborationIssue): void
   translate: CollaborationTranslate
 }) {
+  const { prompt: requestText, dialogs: requestDialogs } = useDialogRequests((key, fallback) => t(key, fallback))
   const execution = useContext(BrowserIssueExecutionContext)
   const drafts = useContext(BrowserTaskDraftContext)
   const operationScope = `issue:${issue.cloud_project_id}:${issue.id}`
   const agent = agents.find(
     agent => agent.id === issue.assignee_agent_id && agent.status === 'active'
   )
-  const request = useRef<object | null>(null)
-  const lifecycle = useRef<object | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  useEffect(() => {
-    lifecycle.current = {}
-    return () => {
-      lifecycle.current = null
-      request.current = null
-    }
-  }, [])
+  const [operation] = useState(createBrowserActivityOperation)
+  const { busy, error } = useSyncExternalStore(
+    operation.subscribe,
+    operation.getSnapshot,
+    operation.getSnapshot
+  )
   async function perform(action: () => Promise<unknown>, failureKey: string) {
-    if (request.current || (drafts && !drafts.operations.begin(operationScope))) return
+    if (
+      !operation.isActive() ||
+      operation.getRequest() ||
+      (drafts && !drafts.operations.begin(operationScope))
+    )
+      return
     drafts?.update(operationScope, { busy: true, error: null })
-    const token = {}
-    request.current = token
-    setBusy(true)
-    setError(null)
+    const token = operation.begin()
     try {
       await action()
     } catch (cause) {
-      if (request.current === token)
-        setError(cause instanceof Error ? cause.message : t(failureKey))
+      if (operation.owns(token))
+        operation.setError(cause instanceof Error ? cause.message : t(failureKey))
     } finally {
       drafts?.operations.end(operationScope)
       drafts?.update(operationScope, { busy: false })
-      if (request.current === token) {
-        request.current = null
-        setBusy(false)
+      if (operation.owns(token)) {
+        operation.finish(token)
       }
     }
   }
   async function update(action: () => Promise<CollaborationIssue>) {
-    const token = request.current
+    const token = operation.getRequest()
     const updated = await action()
-    if (request.current === token) onTaskUpdated?.(updated)
+    if (operation.owns(token)) onTaskUpdated?.(updated)
   }
   async function rerun() {
     if (!api.runtime || !api.activity || !api.taskBindings || !project || !agent || !execution)
       return
     const target = execution.standaloneTarget
     if (!target) throw new Error(t('activity.comment_execution_target_required'))
+    const token = operation.getLifetime()
     const models =
       execution.target?.deviceId === target.deviceId && execution.modelsReady
         ? execution.models
         : await api.runtime.listModels(target.deviceId)
     const selectedModel = selectActivityRerunModel(messages, models)
-    const token = lifecycle.current
     await startTaskAiRun({
       client: api.activity,
       project,
@@ -108,19 +106,20 @@ export function BrowserIssueActivityTools({
       selectedModel,
       selectedModelOptions: {},
       onMessages: incoming => {
-        if (lifecycle.current === token) onMessages(incoming)
+        if (operation.hasLifetime(token)) onMessages(incoming)
       },
       onTaskUpdated: updated => {
-        if (lifecycle.current === token) onTaskUpdated?.(updated)
+        if (operation.hasLifetime(token)) onTaskUpdated?.(updated)
       },
       onError: message => {
-        if (lifecycle.current === token) setError(message)
+        if (operation.hasLifetime(token)) operation.setError(message)
       },
       startFailedText: t('workbench.project_chat_agent_start_failed'),
     })
   }
   return (
     <>
+      {requestDialogs}
       <IssueActivityTools
         task={issue}
         assignedAgent={agent}
@@ -139,8 +138,8 @@ export function BrowserIssueActivityTools({
             'workbench.task_activity_approve_failed'
           )
         }
-        onReject={() => {
-          const reason = window.prompt(t('workbench.task_activity_reject_reason_prompt'))
+        onReject={async () => {
+          const reason = await requestText(t('workbench.task_activity_reject_reason_prompt'))
           if (reason === null) return
           void perform(
             () =>
@@ -177,4 +176,48 @@ export function BrowserIssueActivityTools({
       ) : null}
     </>
   )
+}
+
+/** The actual approval/run snapshot owns request deduplication and detached callback authority. */
+function createBrowserActivityOperation() {
+  let state = { busy: false, error: null as string | null }
+  let request: object | null = null
+  let lifetime = {}
+  const listeners = new Set<() => void>()
+  const publish = () => listeners.forEach(listener => listener())
+  return {
+    getSnapshot: () => state,
+    getRequest: () => request,
+    getLifetime: () => lifetime,
+    isActive: () => listeners.size > 0,
+    owns: (token: object | null) => token !== null && listeners.size > 0 && request === token,
+    hasLifetime: (token: object) => listeners.size > 0 && lifetime === token,
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+        if (listeners.size) return
+        request = null
+        lifetime = {}
+        state = { ...state, busy: false }
+      }
+    },
+    begin() {
+      request = {}
+      state = { busy: true, error: null }
+      publish()
+      return request
+    },
+    finish(token: object) {
+      if (request !== token || !listeners.size) return
+      request = null
+      state = { ...state, busy: false }
+      publish()
+    },
+    setError(error: string | null) {
+      if (!listeners.size || state.error === error) return
+      state = { ...state, error }
+      publish()
+    },
+  }
 }

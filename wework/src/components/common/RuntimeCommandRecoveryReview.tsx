@@ -1,4 +1,6 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import type {
   RuntimeCommandReceipt,
   RuntimeCommandTarget,
@@ -36,36 +38,30 @@ function RecoveryReviewContent({
   const { t } = useTranslation('common')
   const titleId = useId()
   const titleRef = useRef<HTMLHeadingElement>(null)
-  const [receipt, setReceipt] = useState<RuntimeCommandReceipt | null>(null)
-  const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [revision, setRevision] = useState(0)
+  const [actionError, setError] = useState<string | null>(null)
   const [continued, setContinued] = useState(false)
   const lock = useRef(false)
   const resolution = useRef<{ binding: string; requestId: string } | null>(null)
   const { taskId, commandId, userId } = target
-  useEffect(() => {
-    titleRef.current?.focus()
-  }, [])
-  useEffect(() => {
-    let active = true
-    void commands.get(deviceId, { taskId, commandId, userId }).then(
-      result => {
-        if (!active) return
-        setReceipt(result)
-        setLoading(false)
-      },
-      () => {
-        if (!active) return
-        setError(t('runtimeCommandRecovery.load_failed'))
-        setLoading(false)
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [commands, deviceId, taskId, commandId, userId, revision, t])
+  const receiptResource = useMemo(
+    () =>
+      createAsyncResource<RuntimeCommandReceipt | null>('runtime-command-recovery', () =>
+        commands.get(deviceId, { taskId, commandId, userId })
+      ),
+    [commands, deviceId, taskId, commandId, userId]
+  )
+  const snapshot = useSyncExternalStore(
+    receiptResource.subscribe,
+    receiptResource.getSnapshot,
+    receiptResource.getSnapshot
+  )
+  const receipt = snapshot.data ?? null
+  const loading = snapshot.status === 'idle' || snapshot.status === 'loading'
+  const error =
+    actionError ?? (snapshot.status === 'error' ? t('runtimeCommandRecovery.load_failed') : null)
+  const setReceipt = (value: RuntimeCommandReceipt | null) => receiptResource.update(() => value)
+  useFocusRequest(titleRef)
 
   const matches =
     receipt?.success === true &&
@@ -208,10 +204,9 @@ function RecoveryReviewContent({
             data-testid="runtime-command-recovery-refresh"
             disabled={busy}
             onClick={() => {
-              setLoading(true)
               setReceipt(null)
               setError(null)
-              setRevision(value => value + 1)
+              void receiptResource.reload()
             }}
           >
             {t('runtimeCommandRecovery.review_again')}

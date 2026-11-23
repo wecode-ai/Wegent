@@ -9,7 +9,7 @@ import pytest
 
 from executor_manager.clients import executor_binding
 from executor_manager.executors.docker.executor import DockerExecutor
-from executor_manager.routers.routers import openai_responses
+from executor_manager.routers.routers import app, openai_responses
 
 TOKEN = "test-dispatch-credential"
 
@@ -66,6 +66,7 @@ def test_ready_container_requires_binding_before_dispatch(status):
     ("authorization", "expected"),
     [(f"WegentExecutorBinding {TOKEN}", TOKEN), ("Bearer dummy", None)],
 )
+@pytest.mark.asyncio
 async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
     authorization, expected
 ):
@@ -76,6 +77,7 @@ async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
                     "metadata": {
                         "task_id": 42,
                         "subtask_id": 43,
+                        "backend_url": "https://backend.example/api",
                         "executor_binding_token": "body",
                     }
                 }
@@ -91,3 +93,48 @@ async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
 
     queued = queue.return_value.enqueue_task.call_args.args[0]
     assert queued["metadata"].get("executor_binding_token") == expected
+    assert queued["metadata"]["backend_url"] == "https://backend.example/api"
+
+
+@pytest.mark.parametrize("request_id", ["new-turn", "pipeline-42-43"])
+@pytest.mark.parametrize(
+    "backend_context",
+    [
+        {},
+        {"backend_url": None},
+        {"backend_url": ""},
+        {"backend_url": " \t\n"},
+        {"backend_url": "https://backend.example/deployment/api/"},
+    ],
+)
+@pytest.mark.asyncio
+async def test_responses_preserve_optional_backend_context_for_each_queue(
+    request_id: str, backend_context: dict[str, object]
+) -> None:
+    metadata = {
+        "task_id": 42,
+        "subtask_id": 43,
+        "request_id": request_id,
+        **backend_context,
+    }
+    with patch(
+        "executor_manager.services.task_queue_service.TaskQueueService"
+    ) as queue:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://manager.example"
+        ) as client:
+            response = await client.post(
+                "/executor-manager/v1/responses",
+                json={"model": "test-model", "input": "hello", "metadata": metadata},
+            )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    enqueue, unused_enqueue = (
+        (queue.return_value.enqueue_pipeline_task, queue.return_value.enqueue_task)
+        if request_id.startswith("pipeline-")
+        else (queue.return_value.enqueue_task, queue.return_value.enqueue_pipeline_task)
+    )
+    enqueue.assert_called_once()
+    unused_enqueue.assert_not_called()
+    assert enqueue.call_args.args[0]["metadata"] == metadata

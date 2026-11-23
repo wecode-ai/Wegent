@@ -110,9 +110,15 @@ mod tests {
             .request_thread_unsubscribe_if_idle("thread-1", generation)
             .await
             .unwrap());
+        assert_eq!(
+            client.restart_if_idle().await,
+            Err((1, 0)),
+            "A live app owns the process between native requests"
+        );
         client
             .set_mcp_app_session("thread-1", "app", "instance", false)
             .await;
+        assert_eq!(client.restart_if_idle().await, Ok(()));
         assert!(!client.state.lock().await.has_mcp_app_session("thread-1"));
     }
 

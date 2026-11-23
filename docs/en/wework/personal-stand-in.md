@@ -40,6 +40,18 @@ The desktop prompt above the composer offers **Notification settings**, **Don't 
 
 The number beside **My Stand-in** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. Each new message triggers at most one desktop notification. Clicking opens the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
 
+## Delegate work to a specialist role
+
+In **My assistant**, name a role when you hand off work. When you leave the choice open, the assistant can assign work automatically if the responsibilities clearly match. If the choice affects the outcome and several roles fit, the assistant asks first. One request can be split across roles, and a specialist can hand off a part that calls for different expertise.
+
+Expand **Delegated tasks** at the bottom of the original conversation to see roles, progress, and errors. The card prioritizes work that is still active. You can answer supported questions right in the card. Open a task to read its independent conversation and handle native approval prompts. Each role uses its saved model and working directory, and its long-running chat remains available. Results flow back to the assigning assistant, which summarizes them in the original conversation.
+
+Cross-device delegation uses the role's configured execution device on the same Wework account. While that device is offline, the task shows **Waiting for device**. You can open the task from the original conversation once the device is online and accepts it.
+
+Work that depends on earlier results shows **Waiting for prerequisites**. When the prerequisite succeeds, its result goes to the next role. A failed or cancelled prerequisite leaves the dependent task marked **A prerequisite did not complete**. Choose **Retry** beside a failed branch to run it again in the same task. Other branches keep their progress and results.
+
+Choose **Cancel branch** to stop one branch and its subtasks while the other branches continue. Choose **Cancel delegation** to stop every unfinished branch in the request. Completed results remain available. If the execution device is offline, the card shows **Waiting for device to confirm cancellation**.
+
 <a id="role-execution-device"></a>
 
 ## Individual role-profile operations
@@ -70,13 +82,15 @@ If **My stand-in** encounters incompatible versions, it first shows an error wit
 
 The primary stand-in retains one local or cloud instance binding. Scenario roles choose their execution device independently. Select **Execution device** in a role profile and save: new tasks use the selected device, while existing tasks, queued work and existing conversations for the same Issue remain on their original device. Changing a role does not rebind the primary identity. The role list follows saved device locations, and historical work opens at its original task address.
 
+Stand-in binding ownership uses the user ID. Changing the backend address or username preserves the binding without rewriting older bindings or advancing their versions. Matching user IDs from different deployments are treated as the same binding owner; cross-deployment account isolation is not provided. The current connection still checks ownership and availability of the bound cloud device. If the device is unreachable, the stand-in page shows the device error and retains the binding.
+
 Reselect the model and working directory after changing a role's device, and check source accounts and projects on the target. Credentials, existing tasks and conversations are not moved. Offline devices cannot be newly selected. A failed target save preserves the draft. When target activation cannot be confirmed, refresh the target role; the original device is not simultaneously restored as a receiver for new tasks. Role device changes do not require the primary instance's stop-and-rebind flow below.
 
 To rebind the primary identity, select it and open **Stand-in details → Manage stand-in**, then select **Stop stand-in** at the bottom left of settings and confirm. This stops intake and cancels primary and role conversations, running work and queued delegated tasks on the currently bound device. Roles on other devices, other accounts' stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories and history remain; rebinding the original profile restores its previous intake switches.
 
 An offline device, failed cancellation, or missing process-stop acknowledgement keeps the instance **Stopping**, with rebinding unavailable. Reconnect and use **Retry stopping**. Reopening the page does not unlock the binding. Settings on the currently bound device retain **Stop stand-in** at the bottom left; role settings on other devices do not show this entry. There is no duplicate intake switch.
 
-After stopping, you may migrate instead: choose **Profile to migrate** (the primary identity or a scenario role), choose the target device, select **Migrate and bind**, and confirm. Retain old profiles, memories and conversation history while appending portable responsibilities, model settings, tags and visible memories without overwriting target settings. The imported role stays paused until its device directory, project/source grants and arrangements are configured. Only successful copying changes this instance's binding; copying failures support retry while the source stays stopped. If target startup acknowledgement fails after rebinding, retain the target binding for stopping and recovery without automatically restarting the source. A stopped target permits only these disabled, grant-free imports; migration cannot edit existing settings or restore enablement.
+After stopping, you may migrate instead: choose **Profile to migrate** (the primary identity or a scenario role), choose the target device, select **Migrate and bind**, and confirm. Retain old profiles, memories and conversation history while appending portable responsibilities, model settings, tags and visible memories without overwriting target settings. The imported role stays paused until its device directory, project/source grants and arrangements are configured. Only successful copying changes this instance's binding; copying failures support retry while the source stays stopped. If target startup acknowledgement fails after rebinding, retain the target binding for stopping and recovery without automatically restarting the source. A stopped target permits only these disabled, grant-free imports; migration cannot edit existing settings or restore enablement. Learning examples linked to evidence on the original device stay there after migration.
 
 For an unbound instance, a project entry pointing to a specific device establishes that first binding. Such links never replace an existing binding.
 
@@ -118,17 +132,35 @@ Assess related events together and consult recent notifications across batches; 
 
 <a id="stand-in-memory-controls"></a>
 
+<a id="assistant-learning"></a>
+
+**Assistant learning** is an experimental setting for each identity and is off by default. Show experimental features in **Settings → General → Experimental features**, then open **My stand-in → select the primary stand-in or role → Stand-in details → Manage stand-in**, enable **Assistant learning** and save. An enabled identity keeps its control available so you can turn learning off. Manage source scope, automatic replies and send approvals in the existing connection settings.
+
+The memory consolidation arrangement reviews each identity’s own conversations and authorized sources that can provide review evidence, including work Issues it can access. Inbox messages and subscribed GitHub or GitLab discussions can supply source observations. Connections that provide only collection events can contribute the original records already received for this role under its current grant. A status-only subscription can contribute the status events it received. Native records with verifiable authors and context can support demonstrations, praise or corrections. Your own answers can serve as demonstrations even when the stand-in sent nothing. The runtime rechecks access when reading and saving evidence. Verified public comments on cloud work Issues can establish rework. Only their associations are retained, so the report can recheck current project access.
+
+In **Manage stand-in → Memory** for the selected identity, choose **Today’s review** or **Past 7 days**. The review groups lessons into **Needs improvement**, **What worked**, **Your examples**, and **Source observations**, using the local date when feedback occurred. Open **View work example** to inspect the source text, or choose **All memories** to edit or forget a record.
+
+The same review distinguishes confirmed rework from the cross-version rate. A delivered assistant response and your verified follow-up correction, clarification or replacement on the same request establish one reworked request. Repeated corrections to that request count once. The rate also requires the Ghost and Memory versions used for the reply and 24 hours of fully reviewed history. An inbox-only connection, a mentions-only group, a missing page or an unverified author cannot establish zero rework. For Codex, the Memory version includes memories supplied with the turn and additional memories retrieved before sending. Claude currently lacks equivalent evidence of context delivery.
+
+The comparison uses conversations handled by the same role under both versions. It shows the number of answered requests per version and the median change in rework rate across matched conversations, with a 95% interval. When sufficient records exist, you can also compare Memory versions under the same Ghost. Versions identify the actual content used, so reusing identical content counts toward the same version. These figures cover answered requests. Total unanswered demand and your overall workload remain unknown. Both review tabs show the cumulative comparison. They also show the last background verification time when it matches the currently visible result. Verification runs silently.
+
+Reply examples and source observations from the past seven days can inform subsequent replies. Older records can still be reviewed or forgotten while their sources remain authorized. Each account retains up to 1,000 reply examples and 1,000 source observations. When either limit is reached, a new record replaces the earliest collected record of the same kind. Ordinary memories have a separate capacity.
+
+Once independent examples are available, the execution device compares trial answers from the current and proposed role instructions in isolated model sessions. With enough independent cases, the stand-in uses up to six to draft a revision and up to six others to test it. A candidate that passes the first comparison is checked again with the same answers in reverse order. At least one case must improve in both orders, with sufficient evidence and no regression in any case. Open **Pending configuration** for that identity to inspect the text changes, evidence and comparison. Accept to apply a revision, or inspect and undo the latest applicable accepted revision in Manage stand-in. Source work can use the primary stand-in's responsibilities, while private preferences are used in identity conversations. Turning learning off stops new examples and evaluations. Saved memories remain manageable. Offline comparisons currently require a Codex model on the execution device.
+
 The primary stand-in memory panel also lists unreferenced **Legacy forgetting fingerprints** under **Forgetting rules**, with their time and short identifier. Older versions retained neither fact text nor scope, so these show **Unknown scope** without reconstructing content. They are never supplied to models or shown in project-specific panels. Choose **Delete rule** and confirm to remove only that fingerprint; one old memory may have multiple fingerprints, and other restrictions remain. Fingerprints referenced by current rules cannot be removed separately. Concurrent changes require reloading before deletion.
 
 You do not need to say “remember this” every time. The stand-in can extract lasting information from currently authorized ordinary conversations, such as stable preferences, recurring constraints, long-term goals and reusable decisions. Quotes, hypothetical examples, assistant suggestions and other people's facts must not automatically become facts about you. Source content never grants new permissions.
 
-Conversation review reads visible user and assistant text, not raw tool outputs, execution traces or hidden reasoning. This automatic review covers authorized conversation text only. Information present only in tool output without another verifiable source is not yet fully covered; finishing conversation text does not mean all tool results were consolidated.
+Conversation review uses visible user and assistant text and native records from authorized sources. Raw tool traces and hidden reasoning do not serve as native source evidence.
 
 Memory search uses response-size-bounded pages. Oversized records are read in chunks rather than skipped or allowed to block later memories. Changes to records or their visibility invalidate continuation and require a fresh search; old and new pages must not be combined as one piece of evidence.
 
 Pausing new-work intake for the stand-in or a role does not revoke saved source grants; those sources remain available for memory. Pause the memory consolidation arrangement to stop consolidation, or remove a source grant to revoke access. Automatic consolidation exposes only source- and run-validated memory reads, saves and progress tools, never Shell or external writes.
 
 Memory consolidation tasks are hidden from the left task sidebar, including running and finished records. Open **My stand-in → Settings → Connections → Calendar → 助理记忆整理** to view run history and open the original task. Hiding these tasks does not affect background consolidation or saved history.
+
+Memory consolidation and Assistant learning run silently in the background. Open the calendar for run results and the identity’s **Pending configuration** for suggested role revisions.
 
 After the primary stand-in is enabled, its execution device provisions a **助理记忆整理** (memory consolidation) arrangement once, checking every six hours by default. Open **My stand-in → Settings → Connections → Calendar → 助理记忆整理** to inspect its schedule and run history, pause, edit or delete it. Background provisioning does not recreate a paused or deleted arrangement. Consolidation uses an independent conversation, leaving the current chat free; the execution device and model must be available. Open the original task from its run history to inspect the result. Consolidation does not automatically start a primary conversation with ordinary tool permissions just to report completion.
 
@@ -163,6 +195,8 @@ Stand-in chats currently require the Codex runtime for operation approvals; the 
 
 ## DingTalk and collaboration sources
 
+The shared DSH EventBus schedules connection collection for the assistant, the GitHub and GitLab sidebar, and task subscriptions. The host combines duplicate collection requests, provider plugins read their resources, and the Executor stores each subscriber’s cursor and delivery receipts. A source collection is cancelled after 15 seconds. The conversation manages any model turn it has already accepted.
+
 Connections groups sources under **Configured** and **Available**. Each source appears once with its receive scope, status, and next action; other sources remain visible. A configured scope does not mean intake is active: projects retain their scope summary when **Receiving is off**. Calendar has a separate **Scheduled work** section.
 
 Search by app name or configured scope name at the top, or select the configured count to show existing sources only. Select **All sources** to restore the full catalog. The count is per source, and filtering does not change the stand-in's configuration.
@@ -179,11 +213,15 @@ In these DingTalk source settings, both all-group mentions and all-contact direc
 
 Open **Sidebar → My stand-in → select primary or role → Stand-in details → Manage stand-in → Connections → DingTalk**. After adding an individual group under filtered sources, use **Receive** beside that group to choose **Mentions only** (the default) or **All messages**. Existing individual groups can also be edited. The all-groups subscription still receives mentions only; direct messages do not have this option. Click **Save** in settings to apply the change; cancel discards it. A scope change starts intake at its save boundary without importing earlier history. Receiving all messages does not mean replying to every message: responsibilities, handling settings and sending approvals still determine the response.
 
+DingTalk groups set to **All messages** catch up in windows of up to 15 minutes. After a timeout, collection retries from the same starting point with a five-minute window. If that also times out, collection skips backlog older than five minutes and uses one-minute windows for recent messages. If timeouts continue, collection keeps advancing as time passes. Skipped messages remain available in DingTalk.
+
 You can manually mention yourself in a connected group to delegate work. You can also select yourself explicitly as a direct-message contact under filtered sources and save, then manually send instructions in your self-chat. The source's handling and approval policies still apply. Selecting all contacts alone does not enable this entry, and your outgoing messages to other contacts are not treated as instructions. Stand-in replies always retain DingTalk's AI-send marker.
 
 For work requested in your DingTalk self-chat, the stand-in asks task-scope or missing-information questions in that same chat; subsequent answers follow the source's conversation policy. For messages from other people, missing information that the sender must provide is requested in the original DingTalk conversation. Decisions, choices or commitments that require you remain in Wework's **Needs your input** surface and the original work, without sending private owner questions to the other person. Business answers do not replace sending approvals or account authorization. Failed or uncertain clarification sends are reported with their actual state in Wework.
 
 DingTalk source intake ignores messages explicitly identified as robot-sent or carrying an AI-send marker, regardless of sender. This prevents task notifications from the Wegent chat bot from triggering the stand-in again and creating a loop. Business messages from other bots do not trigger automatic handling either. Human-forwarded notifications and human questions quoting notifications remain actionable; conversation history reads still retain these notifications for context.
+
+Each DingTalk message received automatically or read from history carries its original send time. The stand-in interprets “today” and “tomorrow” using the message's send date, then uses the execution device's clock at the start of the turn to check whether a deadline is approaching or has passed. If missing time or timezone information affects that judgment, the stand-in explains the uncertainty.
 
 Choose manual delegation, approval before operations, or automatic handling independently for each source. New DingTalk sources default to approval before operations. The selected execution device uses its installed DingTalk plugin and account. Complete any requested authentication through the existing connector flow.
 
@@ -199,6 +237,8 @@ All four combinations are supported, including immediate separate conversations 
 Direct handling does not require responsibilities or preferences to be filled in. When exactly one role is eligible, an earlier background-coordinator failure or pending question does not block direct dispatch. Existing questions and failures remain visible; this does not automatically answer approvals or replay commands with uncertain outcomes. Coordinator retries recover from actual native sessions and execution receipts, not merely the existence of a task record.
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
+
+Background processing handles failures per event. If a cloud Issue cannot be read, its event is canceled or left pending for retry as appropriate. Other authorized source events continue to dispatch.
 
 Connected collaboration projects display their names, including accessible projects whose parent workspace you have not joined. Names remain visible and existing connections can be removed when switching the stand-in execution device. New local project connections can only be added when executing on the current device.
 
@@ -290,6 +330,8 @@ Enable **Settings → General → Experimental features**, then use **Talk to le
 Publication shares only the content you enter, not private chat or memories. If no commentable Issue is available, create/select an accessible Issue in the project. Pending permission checks/submission may disable controls; changing devices cannot bypass permissions.
 
 Record a matter and its trigger time in **My Stand-in → role profile → Connections → Calendar / scheduled delegation**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
+
+At trigger time, both new and resumed conversations use the currently saved Calendar approval policy. With confirmation required, the owner handles MCP operation approvals. With automatic operation handling allowed, Codex reviews each external MCP call. Resumed work also follows the approval requirements of its original source.
 
 To amend an existing arrangement in chat, the stand-in first reads the saved arrangement, then updates its content, name, trigger, time zone or enabled state in place. Cancellation and recreation are unnecessary. Omitted settings, the arrangement identity and run history are retained. Content-only or name-only edits keep the pending occurrence; changing the trigger, time zone or enabled state recalculates it. Updates still require native confirmation. Rejected confirmation, invalid parameters or a version conflict leave the saved arrangement unchanged; a conflict requires rereading before editing.
 

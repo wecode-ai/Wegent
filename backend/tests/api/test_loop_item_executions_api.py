@@ -10,7 +10,7 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.api.endpoints import loop_item_executions
@@ -300,7 +300,11 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
     )
     assert projected["assignee_group_id"] is None
     assert parent.metadata_json["collaboration_group"]["id"] == "group-1"
-    assert parent.metadata_json["assignment_history"][-1]["to_type"] == "user"
+    history_entry = parent.metadata_json["assignment_history"][-1]
+    assert history_entry["to_type"] == "user"
+    assert history_entry["by_user_id"] == test_user.id
+    assert history_entry["by_agent_id"] == str(manager.id)
+    assert history_entry["by_agent_name"] == (manager.title or manager.name)
     second = loop_item_executions.enqueue_execution_batch(
         project.id, values, test_db, test_user
     )
@@ -377,6 +381,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
             runtime_task_id="manager-runtime-1-member-round-1-agent-assignment",
             status="running",
         ),
+        Response(),
         test_db,
         test_user,
     )
@@ -403,6 +408,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
             status="completed",
             result="Agent evidence delivered.",
         ),
+        Response(),
         test_db,
         test_user,
     )
@@ -428,6 +434,7 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
             status="completed",
             result="Agent evidence delivered.",
         ),
+        Response(),
         test_db,
         test_user,
     )
@@ -540,7 +547,7 @@ def test_agent_only_batch_waits_for_explicit_manager_decision(
         error="Member failed" if outcome == "failed" else "",
     )
     loop_item_executions.report_collaboration_assignment_status(
-        fixture.project.id, values, test_db, test_user
+        fixture.project.id, values, Response(), test_db, test_user
     )
     test_db.refresh(execution)
     test_db.refresh(fixture.parent)
@@ -556,7 +563,7 @@ def test_agent_only_batch_waits_for_explicit_manager_decision(
         }
     )
     loop_item_executions.report_collaboration_assignment_status(
-        fixture.project.id, values, test_db, test_user
+        fixture.project.id, values, Response(), test_db, test_user
     )
     test_db.refresh(execution)
     test_db.refresh(fixture.parent)
@@ -566,7 +573,7 @@ def test_agent_only_batch_waits_for_explicit_manager_decision(
     assert test_db.query(LoopItemExecution).count() == 1
     version = execution.version
     duplicate = loop_item_executions.report_collaboration_assignment_status(
-        fixture.project.id, values, test_db, test_user
+        fixture.project.id, values, Response(), test_db, test_user
     )
     test_db.refresh(execution)
     assert duplicate["changed"] is False

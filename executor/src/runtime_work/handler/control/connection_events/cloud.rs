@@ -382,6 +382,9 @@ impl RuntimeWorkRpcHandler {
         self.guard_cloud_admission(&id, &mut record, &snapshot)
             .map_err(|error| rejected("admission", error))?;
         self.save_event_subscription(&id, &record)?;
+        if record["status"] == "cancelled" {
+            self.remove_queued_event_continuation(&record).await?;
+        }
         if record["status"] == "cancelled" && snapshot["subscription"]["status"] != "cancelled" {
             self.finish_cloud_connection_cancellation(&id, &mut record)
                 .await?;
@@ -400,8 +403,7 @@ impl RuntimeWorkRpcHandler {
         if !signal["deliveryId"].is_null()
             && matches!(record["status"].as_str(), Some("pending" | "resuming_goal"))
         {
-            self.collect_conversation_subscription(&id, record, "cloud-delivery")
-                .await?;
+            self.collect_conversation_subscription(&id, record).await?;
         }
         let record = event_store::read(
             &self.event_subscription_path(),

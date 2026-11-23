@@ -5,6 +5,7 @@
 
 import hashlib
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -570,6 +571,7 @@ class ProjectChatService:
         project_id: str,
         request: ProjectChatAgentCreate,
     ) -> ProjectChatAgentView:
+        started = time.perf_counter()
         project = self._require_scope(
             db,
             user_id=user_id,
@@ -579,6 +581,10 @@ class ProjectChatService:
         )
         from app.services.runner_routing import validate_agent_policies
 
+        logger.info(
+            "Project Agent creation stage=scope elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
         validate_agent_policies(
             db,
             user_id=user_id,
@@ -588,6 +594,10 @@ class ProjectChatService:
             runtime=request.runtime,
         )
         if request.runtime == "wegent":
+            logger.info(
+                "Project Agent creation stage=policies elapsed_ms=%.1f",
+                (time.perf_counter() - started) * 1000,
+            )
             self._authorize_team_binding(
                 db,
                 project,
@@ -597,6 +607,10 @@ class ProjectChatService:
             )
             from app.services.project_automation_domain import runnable_wegent_team
 
+            logger.info(
+                "Project Agent creation stage=authorization elapsed_ms=%.1f",
+                (time.perf_counter() - started) * 1000,
+            )
             runnable_wegent_team(
                 db,
                 user_id,
@@ -610,6 +624,10 @@ class ProjectChatService:
             runtime_profile_service.require_owned(
                 db, request.default_runtime_profile_id, user_id
             )
+        logger.info(
+            "Project Agent creation stage=dependencies elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
         workspace_binding = ProjectChatWorkspaceBindingView(
             type="standalone",
             status="ready",
@@ -697,6 +715,10 @@ class ProjectChatService:
         }
         db.add(row)
         db.flush()
+        logger.info(
+            "Project Agent creation stage=flushed elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
         if request.runtime != "wegent":
             from app.services.collaboration_permissions import (
                 collaboration_permission_service,
@@ -707,7 +729,16 @@ class ProjectChatService:
             )
         self._commit(db)
         db.refresh(row)
-        return self.agent_to_view(row, db=db, viewer_user_id=user_id)
+        logger.info(
+            "Project Agent creation stage=persisted elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
+        result = self.agent_to_view(row, db=db, viewer_user_id=user_id)
+        logger.info(
+            "Project Agent creation stage=view elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
+        return result
 
     def update_agent(
         self,
@@ -1000,11 +1031,9 @@ class ProjectChatService:
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
-        self._validate_agent_mentions(db, project, request)
-        if request.task_id and any(
-            mention.type == "agent" for mention in request.mentions
-        ):
-            self._require_task_execution(db, user_id, project, request.task_id)
+        self._validate_comment_mentions(
+            db, project, user_id, request.task_id, request.mentions
+        )
         assistant_source_binding = self._verified_assistant_source(
             db, user_id=user_id, request=request, source=assistant_source
         )
@@ -1126,25 +1155,6 @@ class ProjectChatService:
             mentions=request.mentions,
             reply_preview=reply.preview,
         )
-        if request.task_id and request.mentions:
-            from app.services.project_chat.stand_in_events import enqueue_issue_wakeup
-
-            for recipient_id in sorted(
-                {
-                    int(mention.id)
-                    for mention in request.mentions
-                    if mention.type == "user"
-                }
-            ):
-                enqueue_issue_wakeup(
-                    db,
-                    user_id=recipient_id,
-                    payload={
-                        "projectId": request.project_id,
-                        "itemId": request.task_id,
-                        "commentId": message_id,
-                    },
-                )
         if request.task_id:
             if item is not None:
                 item.metadata_json = update_change_request_source(
@@ -2678,12 +2688,15 @@ class ProjectChatService:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         return project
 
-    def _validate_agent_mentions(
-        self, db: Session, project: LoopItem, request: ProjectChatSend
+    def _validate_comment_mentions(
+        self,
+        db: Session,
+        project: LoopItem,
+        user_id: int,
+        task_id: str | None,
+        mentions: list[ProjectChatMention],
     ) -> None:
-        agent_mentions = [
-            mention for mention in request.mentions if mention.type == "agent"
-        ]
+        agent_mentions = [mention for mention in mentions if mention.type == "agent"]
         if not agent_mentions:
             return
         unknown = [
@@ -2699,6 +2712,8 @@ class ProjectChatService:
                 status.HTTP_409_CONFLICT,
                 "Mentioned AI is not a member of this project chat",
             )
+        if task_id:
+            self._require_task_execution(db, user_id, project, task_id)
 
     @staticmethod
     def _agent_row_or_none(

@@ -179,12 +179,13 @@ export function createCloudConfigModelService({ readUsage } = {}) {
         rejectModelWebSocketUpgrade(modelServer, socket)
       })
     },
-    async failBundle() {
+    async failBundle({ allowBootstrap = true } = {}) {
       unavailable = true
       // Codex first loads bootstrap settings, then installs its long-lived cloud
       // loader. Drop the service between those two real requests so the configured
       // local origin survives and the second loader caches the genuine failure.
-      bootstrapBundles = 1
+      // Disable that success to cover the defaults used after a startup failure.
+      bootstrapBundles = allowBootstrap ? 1 : 0
       // This is solely the isolated fixture's Codex cache. A cold process must
       // consult the failing service instead of reusing an identity-matched bundle.
       await rm(join(codexHome, 'cloud-config-bundle-cache.json'), { force: true })

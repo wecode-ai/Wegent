@@ -64,11 +64,22 @@ describe('project task restoration', () => {
     }
   )
 
-  test('recovers ownership after startup reconciles an obsolete local device identity', () => {
+  test('recovers ownership after startup proves the previous device address is an alias', () => {
     const hydrated = workbenchReducer(
       {
         ...initialWorkbenchState,
         currentRuntimeTask: { ...address, deviceId: 'previous-local-device' },
+        devices: [
+          {
+            id: 79,
+            device_id: address.deviceId,
+            socket_device_id: 'previous-local-device',
+            name: 'Local Executor',
+            status: 'online',
+            device_type: 'local',
+            is_default: true,
+          },
+        ],
       },
       { type: 'runtime_work_refreshed', runtimeWork }
     )

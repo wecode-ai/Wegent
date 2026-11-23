@@ -1,0 +1,24 @@
+[package]
+name = "wegent-workspaces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Collaborative workspace views, memberships, and execution environments"
+
+[dependencies]
+async-trait = { workspace = true }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+wegent-access = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-identity = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wegent-backend-test-support = { workspace = true }

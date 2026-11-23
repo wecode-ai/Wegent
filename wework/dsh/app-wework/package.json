@@ -26,6 +26,7 @@
   },
   "files": [
     "client.js",
+    "client.backend-request.js",
     "client.d.ts",
     "cordis.patch.yml",
     "index.js",

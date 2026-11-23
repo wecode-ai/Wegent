@@ -1,277 +1,283 @@
 // @vitest-environment jsdom
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createCollaborationTranslator } from "../i18n";
-import type { SharedWorkspaceAttachmentsApi } from "../ports/SharedWorkspaceApi";
-import type { CollaborationAttachment } from "../types";
-import { IssueWebCommentComposer } from "./IssueWebCommentComposer";
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createCollaborationTranslator } from '../i18n'
+import type { SharedWorkspaceAttachmentsApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationAttachment } from '../types'
+import { IssueWebCommentComposer } from './IssueWebCommentComposer'
 
-describe("Web adapter for the desktop main composer", () => {
-  let root: Root;
-  let container: HTMLDivElement;
+describe('Web adapter for the desktop main composer', () => {
+  let root: Root
+  let container: HTMLDivElement
   beforeEach(() => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
     // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
-    Object.defineProperty(Range.prototype, "getClientRects", {
+    Object.defineProperty(Range.prototype, 'getClientRects', {
       configurable: true,
       value: () => [],
-    });
-    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    })
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
       configurable: true,
       value: () => new DOMRect(),
-    });
-    vi.stubGlobal("requestAnimationFrame", () => 0);
-    vi.stubGlobal("cancelAnimationFrame", () => {});
+    })
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+    vi.stubGlobal('cancelAnimationFrame', () => {})
     vi.stubGlobal(
-      "ResizeObserver",
+      'ResizeObserver',
       class {
         observe() {}
         disconnect() {}
-      },
-    );
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-    vi.stubGlobal("IntersectionObserver", undefined);
-    URL.createObjectURL = vi.fn(() => "blob:preview");
-    URL.revokeObjectURL = vi.fn();
-  });
+      }
+    )
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    vi.stubGlobal('IntersectionObserver', undefined)
+    URL.createObjectURL = vi.fn(() => 'blob:preview')
+    URL.revokeObjectURL = vi.fn()
+  })
   afterEach(() => {
-    act(() => root.unmount());
-    container.remove();
-    vi.unstubAllGlobals();
-  });
+    act(() => root.unmount())
+    container.remove()
+    vi.unstubAllGlobals()
+  })
 
   const editor = () =>
     container.querySelector<HTMLElement & { value: string }>(
-      '[data-testid="collaboration-issue-comment"]',
-    )!;
+      '[data-testid="collaboration-issue-comment"]'
+    )!
   async function render(
-    upload: SharedWorkspaceAttachmentsApi["upload"],
+    upload: SharedWorkspaceAttachmentsApi['upload'],
     send = vi.fn().mockResolvedValue(undefined),
-    assignment?: Parameters<typeof IssueWebCommentComposer>[0]["assignment"],
+    assignment?: Parameters<typeof IssueWebCommentComposer>[0]['assignment'],
+    options: Partial<
+      Pick<
+        Parameters<typeof IssueWebCommentComposer>[0],
+        'issueId' | 'attachmentApi' | 'onSent' | 'onError'
+      >
+    > = {}
   ) {
-    const api = {
-      upload,
-      remove: vi.fn().mockResolvedValue(undefined),
-    } as unknown as SharedWorkspaceAttachmentsApi;
+    const api =
+      options.attachmentApi ??
+      ({
+        upload,
+        remove: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SharedWorkspaceAttachmentsApi)
     await act(async () =>
       root.render(
         <IssueWebCommentComposer
           assignment={assignment}
-          issueId="issue"
+          issueId={options.issueId ?? 'issue'}
           canComment
           canAttach
           loading={false}
           members={[]}
           agents={[]}
           attachmentApi={api}
-          translate={createCollaborationTranslator("zh-CN")}
+          translate={createCollaborationTranslator('zh-CN')}
           send={send}
-          onSent={vi.fn()}
-          onError={vi.fn()}
+          onSent={options.onSent ?? vi.fn()}
+          onError={options.onError ?? vi.fn()}
           settings={
-            <span data-testid="comment-execution-settings">
-              Comment execution settings
-            </span>
+            <span data-testid="comment-execution-settings">Comment execution settings</span>
           }
-        />,
-      ),
-    );
-    return { send };
+        />
+      )
+    )
+    return { send, api }
   }
   function write(text: string) {
-    const input = editor();
+    const input = editor()
     act(() => {
-      input.value = text;
-      input.dispatchEvent(
-        new KeyboardEvent("keyup", { key: text.at(-1) ?? "", bubbles: true }),
-      );
-    });
-    return input;
+      input.value = text
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true }))
+    })
+    return input
   }
   async function select(file: File) {
     await act(async () => {
-      const picker =
-        container.querySelector<HTMLInputElement>("input[type=file]")!;
-      Object.defineProperty(picker, "files", {
+      const picker = container.querySelector<HTMLInputElement>('input[type=file]')!
+      Object.defineProperty(picker, 'files', {
         value: [file],
         configurable: true,
-      });
-      picker.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+      })
+      picker.dispatchEvent(new Event('change', { bubbles: true }))
+    })
   }
 
   it.each([
-    ["8", "bob"],
-    ["agent:bot", "代码助手"],
-    ["group:squad", "协作小组"],
-  ])("selects and persists comment assignee %s", async (target, name) => {
-    const assign = vi.fn().mockResolvedValue(undefined);
+    ['8', 'bob'],
+    ['agent:bot', '代码助手'],
+    ['group:squad', '协作小组'],
+  ])('selects and persists comment assignee %s', async (target, name) => {
+    const assign = vi.fn().mockResolvedValue(undefined)
     await render(vi.fn(), vi.fn(), {
       options: [
-        { value: "8", label: "bob", group: "成员" },
-        { value: "agent:bot", label: "代码助手", group: "智能体" },
-        { value: "group:squad", label: "协作小组", group: "协作小组" },
+        { value: '8', label: 'bob', group: '成员' },
+        { value: 'agent:bot', label: '代码助手', group: '智能体' },
+        { value: 'group:squad', label: '协作小组', group: '协作小组' },
       ],
       assign,
-    });
+    })
     const selector = container.querySelector<HTMLButtonElement>(
-      '[data-testid="collaboration-issue-comment-form-assignee"]',
-    )!;
-    await act(async () => selector.click());
+      '[data-testid="collaboration-issue-comment-form-assignee"]'
+    )!
+    await act(async () => selector.click())
     const option = document.querySelector<HTMLButtonElement>(
-      '[data-testid="collaboration-issue-comment-form-assignee-option-' +
-        target +
-        '"]',
-    )!;
-    expect(option).not.toBeNull();
-    await act(async () => option.click());
-    expect(selector.textContent).toContain(name);
-    expect(assign).not.toHaveBeenCalled();
+      '[data-testid="collaboration-issue-comment-form-assignee-option-' + target + '"]'
+    )!
+    expect(option).not.toBeNull()
+    await act(async () => option.click())
+    expect(selector.textContent).toContain(name)
+    expect(assign).not.toHaveBeenCalled()
     await act(async () =>
       document
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="collaboration-issue-comment-submit"]',
-        )!
-        .click(),
-    );
-    expect(assign).toHaveBeenCalledWith(target);
-  });
+        .querySelector<HTMLButtonElement>('[data-testid="collaboration-issue-comment-submit"]')!
+        .click()
+    )
+    expect(assign).toHaveBeenCalledWith(target)
+  })
 
-  it("does not assign when a pending comment fails after leaving the Issue", async () => {
-    let rejectSend!: (error: Error) => void;
+  it('does not assign when a pending comment fails after leaving the Issue', async () => {
+    let rejectSend!: (error: Error) => void
     const send = vi.fn(
       () =>
         new Promise((_resolve, reject) => {
-          rejectSend = reject;
-        }),
-    );
-    const assign = vi.fn().mockResolvedValue(undefined);
+          rejectSend = reject
+        })
+    )
+    const assign = vi.fn().mockResolvedValue(undefined)
     await render(vi.fn(), send, {
-      options: [{ value: "8", label: "bob" }],
+      options: [{ value: '8', label: 'bob' }],
       assign,
-    });
-    write("[$@bob](wework-member://8) Please review");
+    })
+    write('[$@bob](wework-member://8) Please review')
     await act(async () =>
       container
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="collaboration-issue-comment-submit"]',
-        )!
-        .click(),
-    );
-    expect(send).toHaveBeenCalledOnce();
-    act(() => root.unmount());
+        .querySelector<HTMLButtonElement>('[data-testid="collaboration-issue-comment-submit"]')!
+        .click()
+    )
+    expect(send).toHaveBeenCalledOnce()
+    act(() => root.unmount())
     await act(async () => {
-      rejectSend(new Error("offline"));
-    });
-    expect(assign).not.toHaveBeenCalled();
-  });
+      rejectSend(new Error('offline'))
+    })
+    expect(assign).not.toHaveBeenCalled()
+  })
 
-  it("uses the desktop controls and keeps a selected document and draft on send failure", async () => {
+  it('uses the desktop controls and keeps a selected document and draft on send failure', async () => {
     const attachment = {
-      id: "a1",
-      display_name: "brief.pdf",
-      content_type: "application/pdf",
-      markdown: "[brief.pdf](wegent://attachments/a1)",
-    } as CollaborationAttachment;
+      id: 'a1',
+      display_name: 'brief.pdf',
+      content_type: 'application/pdf',
+      markdown: '[brief.pdf](wegent://attachments/a1)',
+    } as CollaborationAttachment
     const send = vi
       .fn()
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValueOnce(undefined);
-    await render(vi.fn().mockResolvedValue(attachment), send);
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(undefined)
+    await render(vi.fn().mockResolvedValue(attachment), send)
     expect(
-      container.querySelector(".composer-prosemirror-placeholder")?.textContent,
-    ).toBe("发起新讨论…");
+      container.querySelector('.composer-prosemirror-placeholder')?.textContent,
+    ).toBe('发起新讨论…')
     expect(
-      container.querySelectorAll(".task-detail-new-comment-actions button"),
-    ).toHaveLength(3);
+      container.querySelectorAll('.task-detail-new-comment-actions button'),
+    ).toHaveLength(3)
     act(() =>
       container
         .querySelector<HTMLButtonElement>(
           '[data-testid="collaboration-comment-settings-toggle"]',
         )!
         .click(),
-    );
+    )
     expect(
-      container.querySelector(".task-detail-comment-settings")?.textContent,
-    ).toBe("Comment execution settings");
-    await select(new File(["pdf"], "brief.pdf", { type: "application/pdf" }));
+      container.querySelector('.task-detail-comment-settings')?.textContent,
+    ).toBe('Comment execution settings')
+    await select(new File(['pdf'], 'brief.pdf', { type: 'application/pdf' }))
     expect(
-      container.querySelector("[data-testid=attachment-badge]")?.className,
-    ).toContain("w-40");
+      container.querySelector('[data-testid=attachment-badge]')?.className,
+    ).toContain('w-40')
     expect(
-      container.querySelector("[data-testid=attachment-document-icon] svg"),
-    ).not.toBeNull();
-    await write("Review this");
-    const input = editor();
+      container.querySelector('[data-testid=attachment-document-icon] svg'),
+    ).not.toBeNull()
+    await write('Review this')
+    const input = editor()
     const submit = container.querySelector<HTMLButtonElement>(
       '[data-testid="collaboration-issue-comment-submit"]',
-    )!;
-    await act(async () => submit.click());
-    expect(input.value).toBe("Review this");
+    )!
+    await act(async () => submit.click())
+    expect(input.value).toBe('Review this')
     expect(
-      container.querySelector("[data-testid=attachment-badge]"),
-    ).not.toBeNull();
-    expect(container.querySelector("[role=alert]")?.textContent).toBe(
-      "offline",
-    );
-    await act(async () => submit.click());
+      container.querySelector('[data-testid=attachment-badge]'),
+    ).not.toBeNull()
+    expect(container.querySelector('[role=alert]')?.textContent).toBe('offline')
+    await act(async () => submit.click())
     expect(send).toHaveBeenLastCalledWith(
-      "Review this\n\n[brief.pdf](wegent://attachments/a1)",
-    );
-    expect(input.value).toBe("");
-    expect(
-      container.querySelector("[data-testid=attachment-badge]"),
-    ).toBeNull();
-  });
+      'Review this\n\n[brief.pdf](wegent://attachments/a1)',
+    )
+    expect(input.value).toBe('')
+    expect(container.querySelector('[data-testid=attachment-badge]')).toBeNull()
+  })
 
-  it("opens the shared image lightbox, zooms and releases the preview when its attachment is removed", async () => {
+  it('opens the shared image lightbox, zooms and releases the preview when its attachment is removed', async () => {
     const attachment = {
-      id: "image",
-      display_name: "screen.png",
-      content_type: "image/png",
-    } as CollaborationAttachment;
-    await render(vi.fn().mockResolvedValue(attachment));
-    await select(new File(["image"], "screen.png", { type: "image/png" }));
+      id: 'image',
+      display_name: 'screen.png',
+      content_type: 'image/png',
+    } as CollaborationAttachment
+    await render(vi.fn().mockResolvedValue(attachment))
+    await select(new File(['image'], 'screen.png', { type: 'image/png' }))
     await act(async () =>
       container
         .querySelector<HTMLButtonElement>(
-          "[data-testid=attachment-image-preview-button]",
+          '[data-testid=attachment-image-preview-button]',
         )!
         .click(),
-    );
+    )
     expect(
-      document.querySelector("[data-testid=attachment-image-lightbox]"),
-    ).not.toBeNull();
+      document.querySelector('[data-testid=attachment-image-lightbox]'),
+    ).not.toBeNull()
+    await vi.waitFor(() =>
+      expect(
+        document
+          .querySelector('[data-testid="attachment-image-lightbox"]')
+          ?.contains(document.activeElement),
+      ).toBe(true),
+    )
     act(() =>
       document
         .querySelector<HTMLButtonElement>(
-          "[data-testid=attachment-image-zoom-in]",
+          '[data-testid=attachment-image-zoom-in]',
         )!
         .click(),
-    );
+    )
     expect(
-      document.querySelector("[data-testid=attachment-image-zoom-value]")
+      document.querySelector('[data-testid=attachment-image-zoom-value]')
         ?.textContent,
-    ).toBe("125%");
+    ).toBe('125%')
     act(() =>
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
-    );
+      document
+        .querySelector('[data-testid="attachment-image-lightbox"]')!
+        .dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Escape',
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+    )
     expect(
-      document.querySelector("[data-testid=attachment-image-lightbox]"),
-    ).toBeNull();
+      document.querySelector('[data-testid=attachment-image-lightbox]'),
+    ).toBeNull()
     await act(async () =>
       container
         .querySelector<HTMLButtonElement>(
-          "[data-testid=remove-attachment-button]",
+          '[data-testid=remove-attachment-button]',
         )!
         .click(),
-    );
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
-    expect(
-      container.querySelector("[data-testid=attachment-badge]"),
-    ).toBeNull();
-  });
-});
+    )
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview')
+    expect(container.querySelector('[data-testid=attachment-badge]')).toBeNull()
+  })
+})

@@ -39,6 +39,10 @@ async function isolatedConsumer(name) {
   const sharedScripts = join(consumer, 'wework/scripts/lib')
   await mkdir(sharedScripts, { recursive: true })
   await cp(
+    join(wework, 'scripts/desktop-control-queue.mjs'),
+    join(consumer, 'wework/scripts/desktop-control-queue.mjs')
+  )
+  await cp(
     join(wework, 'scripts/lib/extract-runtime-archive.mjs'),
     join(sharedScripts, 'extract-runtime-archive.mjs')
   )

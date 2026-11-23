@@ -157,6 +157,7 @@ beforeEach(() => {
   vi.stubEnv('WEWORK_RELEASE_SUPERVISED', '')
   vi.stubEnv('WEWORK_RELEASE_RECOVERY', '')
   vi.stubEnv('WEWORK_STARTUP_RECOVERY', '')
+  vi.stubEnv('WEWORK_APP_HOT_RELOAD', '')
   for (const name of [
     'WEWORK_HARNESS_RUNTIME_ROOT',
     'WEWORK_ACTIVE_RELEASE_ID',

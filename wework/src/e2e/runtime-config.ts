@@ -4,6 +4,7 @@ export interface DesktopE2ERuntimeConfig {
   codexHomeInitialization?: boolean
   controlToken?: string
   controlUrl?: string
+  conversationCacheIdleTtlMs?: number
   disabled?: boolean
   localModelsCatalogReady?: boolean
   modelServerUrl?: string
@@ -21,7 +22,9 @@ const CLOUD_SESSION_TOKEN_KEY = 'wework.e2e.cloudSessionToken'
 export const DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT = 'wework:e2e-cloud-session-changed'
 
 function injectedRuntimeConfig(): DesktopE2ERuntimeConfig {
-  return runtimeConfig ?? window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ ?? {}
+  const injected =
+    typeof window === 'undefined' ? undefined : window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
+  return runtimeConfig ?? injected ?? {}
 }
 
 export async function loadDesktopE2ERuntimeConfig(): Promise<void> {

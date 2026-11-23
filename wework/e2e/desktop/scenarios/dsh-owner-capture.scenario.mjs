@@ -95,11 +95,23 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         const modelSelector = `[data-testid="harness-app-model-${workbench.id}"]`
         await control.command('waitFor', modelSelector, {
           enabled: true,
+        })
+        await control.command('clickWhenEnabled', modelSelector)
+        const modelOptionsId = await control.command('getAttribute', modelSelector, {
+          value: 'aria-controls',
+        })
+        assert.ok(modelOptionsId, 'The model selector did not expose its options')
+        await control.command('waitFor', `[id=${JSON.stringify(modelOptionsId)}] [role="option"]`, {
+          enabled: true,
           text: MODEL_LABEL,
         })
         await control.command('select', modelSelector, {
           by: 'label',
           value: MODEL_LABEL,
+        })
+        await control.command('waitFor', modelSelector, {
+          enabled: true,
+          text: MODEL_LABEL,
         })
         const startSelector = `[data-testid="harness-app-start-${workbench.id}"]`
         await control.command('waitFor', startSelector, { enabled: true })

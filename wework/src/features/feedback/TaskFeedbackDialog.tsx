@@ -1,3 +1,14 @@
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { getConversationDiagnosticsSnapshot } from '@wegent/collaboration/conversation/conversationDiagnostics'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Check,
   ChevronDown,
@@ -6,24 +17,17 @@ import {
   FileText,
   Image as ImageIcon,
   ListChecks,
-  Paperclip,
+  Loader2,
   Monitor,
+  Paperclip,
   ScrollText,
   Send,
   ShieldAlert,
-  Loader2,
   X,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
 import type { ClipboardEvent } from 'react'
+import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
-import { track } from '@/telemetry/client'
-import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
-import { getConversationDiagnosticsSnapshot } from '@wegent/collaboration/conversation/conversationDiagnostics'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 type FeedbackCategory =
   | 'report'
@@ -215,8 +219,6 @@ function TaskFeedbackDialogContent({
     if (phase === 'preview') void discardPreview()
     onClose()
   }
-
-  useEscapeKey(exporting ? () => undefined : handleClose)
 
   const buildPreview = async () => {
     setExporting(true)
@@ -493,11 +495,14 @@ function TaskFeedbackDialogContent({
         capturingScreenshot && 'invisible'
       )}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="task-feedback-dialog-title"
-        className="flex max-h-[85vh] w-full max-w-[480px] flex-col rounded-xl border border-border bg-popover p-5 text-text-primary shadow-xl"
+      <DialogSurface
+        onClose={exporting ? () => undefined : handleClose}
+        render={
+          <div
+            aria-labelledby="task-feedback-dialog-title"
+            className="flex max-h-[85vh] w-full max-w-[480px] flex-col rounded-xl border border-border bg-popover p-5 text-text-primary shadow-xl"
+          />
+        }
       >
         <div className="flex shrink-0 items-start justify-between gap-4">
           <div>
@@ -510,7 +515,8 @@ function TaskFeedbackDialogContent({
                 : t('workbench.feedback_description')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="task-feedback-close-button"
             onClick={handleClose}
@@ -519,7 +525,7 @@ function TaskFeedbackDialogContent({
             aria-label={t('workbench.close_dialog')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         {phase === 'done' && submitted ? (
@@ -564,7 +570,7 @@ function TaskFeedbackDialogContent({
             <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto">
               <label className="block text-sm font-medium">
                 {t('workbench.feedback_note')}
-                <textarea
+                <ControlTextarea
                   data-testid="task-feedback-note"
                   value={note}
                   onChange={event => setNote(event.target.value)}
@@ -581,7 +587,7 @@ function TaskFeedbackDialogContent({
                   <p className="text-xs text-text-secondary">
                     {t('workbench.feedback_paste_attachments_hint')}
                   </p>
-                  <input
+                  <ControlInput
                     ref={attachmentInputRef}
                     data-testid="task-feedback-attachment-input"
                     type="file"
@@ -592,7 +598,8 @@ function TaskFeedbackDialogContent({
                       event.target.value = ''
                     }}
                   />
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="task-feedback-add-attachment-button"
                     onClick={() => attachmentInputRef.current?.click()}
@@ -600,7 +607,7 @@ function TaskFeedbackDialogContent({
                   >
                     <Paperclip className="h-4 w-4" />
                     {t('workbench.feedback_add_attachment')}
-                  </button>
+                  </ControlButton>
                 </div>
                 {attachments.length > 0 ? (
                   <ul
@@ -609,7 +616,8 @@ function TaskFeedbackDialogContent({
                   >
                     {attachments.map((file, index) => (
                       <li key={`${file.name}:${file.size}:${file.lastModified}`}>
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid={`task-feedback-remove-attachment-${index}`}
                           onClick={() =>
@@ -626,7 +634,7 @@ function TaskFeedbackDialogContent({
                           <Paperclip className="h-3.5 w-3.5 shrink-0" />
                           <span className="truncate">{file.name}</span>
                           <X className="h-3 w-3 shrink-0" />
-                        </button>
+                        </ControlButton>
                       </li>
                     ))}
                   </ul>
@@ -659,16 +667,15 @@ function TaskFeedbackDialogContent({
                         disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
                       )}
                     >
-                      <input
+                      <Checkbox
                         data-testid={`task-feedback-group-${group.sensitive ? 'full-task' : 'standard'}-checkbox`}
-                        type="checkbox"
                         checked={checked}
                         disabled={disabled}
-                        onChange={event =>
+                        onCheckedChange={checked =>
                           setSelection(current => ({
                             ...current,
                             ...Object.fromEntries(
-                              group.options.map(option => [option.key, event.target.checked])
+                              group.options.map(option => [option.key, checked === true])
                             ),
                           }))
                         }
@@ -711,7 +718,8 @@ function TaskFeedbackDialogContent({
         ) : null}
         <div className="mt-4 flex shrink-0 justify-end gap-2">
           {phase === 'preview' ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="task-feedback-back-button"
               onClick={() => void backToConfigure()}
@@ -719,9 +727,10 @@ function TaskFeedbackDialogContent({
               className="h-9 rounded-md px-3 text-sm font-medium hover:bg-muted"
             >
               {t('workbench.feedback_back')}
-            </button>
+            </ControlButton>
           ) : (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="task-feedback-cancel-button"
               onClick={handleClose}
@@ -729,10 +738,12 @@ function TaskFeedbackDialogContent({
               className="h-9 rounded-md px-3 text-sm font-medium hover:bg-muted"
             >
               {phase === 'done' ? t('workbench.feedback_close') : t('workbench.cancel')}
-            </button>
+            </ControlButton>
           )}
           {phase === 'configure' ? (
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="task-feedback-export-button"
               disabled={!hasProblem || exporting}
@@ -745,10 +756,11 @@ function TaskFeedbackDialogContent({
                 <FileArchive className="h-4 w-4" />
               )}
               {t('workbench.feedback_preview')}
-            </button>
+            </ControlButton>
           ) : phase === 'preview' ? (
             <>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="task-feedback-confirm-button"
                 disabled={exporting}
@@ -757,9 +769,11 @@ function TaskFeedbackDialogContent({
               >
                 <FileArchive className="h-4 w-4" />
                 {t('workbench.feedback_confirm_export')}
-              </button>
+              </ControlButton>
               {feedbackApi ? (
-                <button
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="button"
                   data-testid="task-feedback-submit-button"
                   disabled={exporting}
@@ -772,12 +786,12 @@ function TaskFeedbackDialogContent({
                     <Send className="h-4 w-4" />
                   )}
                   {t('workbench.feedback_submit')}
-                </button>
+                </ControlButton>
               ) : null}
             </>
           ) : null}
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )
@@ -958,7 +972,8 @@ function PreviewGroupItem({
         sensitive ? 'border-destructive/40 wework:border-red-500/40' : 'border-border/60'
       )}
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`task-feedback-preview-category-${group.key}`}
         onClick={onToggle}
@@ -987,7 +1002,7 @@ function PreviewGroupItem({
         ) : (
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
         )}
-      </button>
+      </ControlButton>
       {expanded ? (
         <ul
           className={cn(
@@ -999,7 +1014,8 @@ function PreviewGroupItem({
             const entryExpanded = expandedEntry === entry.archivePath
             return (
               <li key={entry.archivePath}>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`task-feedback-preview-entry-${entry.archivePath}`}
                   disabled={!entry.previewable}
@@ -1022,7 +1038,7 @@ function PreviewGroupItem({
                   <span className="shrink-0 text-xs text-text-secondary">
                     {formatSize(entry.sizeBytes)}
                   </span>
-                </button>
+                </ControlButton>
                 {entryExpanded && entry.content != null ? (
                   <pre
                     data-testid="task-feedback-preview-content"

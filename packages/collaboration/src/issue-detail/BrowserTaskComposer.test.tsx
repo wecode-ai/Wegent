@@ -1,10 +1,10 @@
-import { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
+import { useRuntimeConversationSession } from '../conversation/useRuntimeConversationSession'
 import {
   createQuickPhrasePreferencesStore,
   defaultQuickPhrases,
 } from '@wegent/chat-core/composer-quick-phrases'
 // @vitest-environment jsdom
-import { act, useState, useMemo, useEffect } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
 import { BrowserTaskComposer } from './BrowserTaskComposer'
@@ -13,7 +13,11 @@ import { useBrowserTaskDraft } from './browserTaskDraftContext'
 import { createCollaborationTranslator } from '../i18n'
 import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
 
-const model = { name: 'gpt-5.6-sol', type: 'runtime' as const, displayName: 'GPT 5.6 Sol' }
+const model = {
+  name: 'gpt-5.6-sol',
+  type: 'runtime' as const,
+  displayName: 'GPT 5.6 Sol',
+}
 const address = { deviceId: 'device-1', taskId: 'task-1' }
 const emptyPluginSnapshot = {
   taskId: 'task-1',
@@ -56,14 +60,7 @@ function Harness({
 }) {
   const [open, setOpen] = useState(true)
   const [currentTask, setCurrentTask] = useState('task-1')
-  const session = useMemo(
-    () => createRuntimeConversationSession(runtime, { ...address, taskId: currentTask }),
-    [runtime, currentTask]
-  )
-  useEffect(() => {
-    session.start()
-    return session.stop
-  }, [session])
+  const { session } = useRuntimeConversationSession(runtime, { ...address, taskId: currentTask })
   const draft = useBrowserTaskDraft(`device-1:${currentTask}`)
   return (
     <>
@@ -107,7 +104,11 @@ function Harness({
           task={{ ...task, taskId: currentTask }}
           projectId="project-1"
           running={running}
-          imageServices={{ identity: file => String(file.id), load: vi.fn(), download: vi.fn() }}
+          imageServices={{
+            identity: file => String(file.id),
+            load: vi.fn(),
+            download: vi.fn(),
+          }}
           translate={translate}
           onAccepted={async () => {}}
         />
@@ -198,10 +199,21 @@ describe('browser adapter for the PC task composer', () => {
     )
   }
 
+  it('refreshes a failed model catalog from the retry action', async () => {
+    vi.mocked(runtime.listModels).mockRejectedValueOnce(new Error('Model directory unavailable'))
+    await mount()
+    expect(container.textContent).toContain('Model directory unavailable')
+    expect(runtime.listModels).toHaveBeenCalledTimes(1)
+    await click('task-conversation-models-retry')
+    expect(runtime.listModels).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[data-testid="task-conversation-models-retry"]')).toBeNull()
+    expect(container.textContent).not.toContain('Model directory unavailable')
+  })
+
   it('displays the addressed task usage and sends its confirmed compact command', async () => {
     const breakdown = {
-      totalTokens: 700,
-      inputTokens: 700,
+      totalTokens: 332_500,
+      inputTokens: 332_500,
       cachedInputTokens: 0,
       outputTokens: 0,
       reasoningOutputTokens: 0,
@@ -212,10 +224,26 @@ describe('browser adapter for the PC task composer', () => {
       running: false,
       messages: [],
       turns: [],
-      contextUsage: { last: breakdown, total: breakdown, modelContextWindow: 1000 },
+      contextUsage: {
+        last: breakdown,
+        total: breakdown,
+        modelContextWindow: 475_000,
+      },
     })
     await mount()
     expect(element('context-usage-indicator').getAttribute('aria-label')).toContain('70%')
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        const enter = new MouseEvent('pointerenter', { bubbles: true })
+        Object.defineProperty(enter, 'pointerType', { value: 'mouse' })
+        element('context-usage-button').dispatchEvent(enter)
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      expect(element('context-usage-details')?.textContent).toContain('475k')
+    } finally {
+      vi.useRealTimers()
+    }
     await click('context-usage-button')
     expect(element('compact-context-confirm-popover').textContent).toContain('压缩')
     expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()
@@ -267,7 +295,10 @@ describe('browser adapter for the PC task composer', () => {
       .fn()
       .mockRejectedValueOnce(new Error('Cannot save'))
       .mockImplementation(async next => next)
-    runtime.quickPhrases = createQuickPhrasePreferencesStore({ load: async () => [], save })
+    runtime.quickPhrases = createQuickPhrasePreferencesStore({
+      load: async () => [],
+      save,
+    })
     await mount()
     await click('quick-phrase-button')
     await click('manage-quick-phrases-button')
@@ -297,7 +328,11 @@ describe('browser adapter for the PC task composer', () => {
     await click('add-quick-phrase-button')
     await act(async () =>
       element('quick-phrase-title-input').dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     )
     expect(element('quick-phrase-content-input')).toBeNull()
@@ -333,7 +368,10 @@ describe('browser adapter for the PC task composer', () => {
         load: async () => [],
         save: async items => items,
       })
-      runtime.composer = { readCatalog: vi.fn(), searchWorkspaceEntries: vi.fn() }
+      runtime.composer = {
+        readCatalog: vi.fn(),
+        searchWorkspaceEntries: vi.fn(),
+      }
       try {
         await mount()
         const quick = element('quick-phrase-button')
@@ -342,7 +380,8 @@ describe('browser adapter for the PC task composer', () => {
           quick.compareDocumentPosition(plugin) & Node.DOCUMENT_POSITION_FOLLOWING
         ).toBeTruthy()
         expect(element('composer-toolbar').getAttribute('data-compact')).toBe(String(width < 475))
-        expect(plugin.classList.contains('w-7')).toBe(true)
+        expect(plugin.getAttribute('aria-label')).toBeTruthy()
+        expect(plugin.textContent).toBe('')
         expect(element('composer-plugin-preview-icons')).toBeNull()
       } finally {
         bounds.mockRestore()
@@ -399,7 +438,10 @@ describe('browser adapter for the PC task composer', () => {
               name: 'pdf',
               installed: true,
               enabled: true,
-              interface: { displayName: 'PDF', defaultPrompt: ['Review this document'] },
+              interface: {
+                displayName: 'PDF',
+                defaultPrompt: ['Review this document'],
+              },
             },
           ],
         },
@@ -424,7 +466,9 @@ describe('browser adapter for the PC task composer', () => {
     await click('switch')
     expect(element('plugin-trial-template-strip')).not.toBeNull()
     await click('plugin-trial-recommendation-apply')
-    const activeEditor = element('chat-input') as HTMLElement & { value: string }
+    const activeEditor = element('chat-input') as HTMLElement & {
+      value: string
+    }
     expect(activeEditor.value).toBe('[$PDF](plugin://pdf@local-tools) Review this document ')
     expect(document.activeElement).toBe(activeEditor)
     expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()

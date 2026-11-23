@@ -58,7 +58,13 @@ or migrations do not justify refusing to open the entire application.
   can recover after the cause is repaired. Follow the repository's test execution
   policy; a visible recovery window is not proof that the normal runtime is ready.
 
+## React effect boundary
+
+Wework and shared packages prohibit product-level React useEffect. Only the exact files in EFFECT_CORE_FILES in scripts/check-effect-boundary.mjs may own it: appearance synchronization, the DSH client runtime lifecycle, and typed native DOM event bindings (including Escape layer arbitration, visibility and element geometry observations, focus and scroll requests, modal focus trapping, background isolation and composer height measurement). Use @wegent/collaboration/dom-events for native listeners, observers and focus requests; this core API accepts event handlers, not arbitrary effect setup/cleanup callbacks. The standalone lint gate also covers shared packages and cannot be disabled with ESLint comments. Existing violations are migration work and remain errors; do not baseline them or expand the core list merely to obtain a pass. Remove derived-state effects, handle user actions in event handlers, use useSyncExternalStore for external subscriptions, and centralize external synchronization in reviewed domain services. Do not alias useEffect or replace it with useLayoutEffect to evade this boundary.
+
 ## UI and component rules
+
+- Find reusable controls in the [component catalog](../docs/zh/wework/component-library.md) ([English](../docs/en/wework/component-library.md)). Run `pnpm --filter wework storybook` for examples; add stories for new public controls and keep the catalog current.
 
 - Before changing Wework UI or interaction behavior, read and follow [`DESIGN.md`](DESIGN.md). It is the source of truth for product-level visual, interaction, accessibility, and responsive-design decisions.
 - Follow the shared [page data loading and error isolation rules](../frontend/AGENTS.md#page-data-loading-and-error-isolation), including for `packages/collaboration/`: active pages own their requests; unrelated pages never share a blocking loading or failure boundary.
@@ -90,8 +96,8 @@ it dispatches (`src/desktop/applicationMenu.ts` and
 - The host owns item ids, labels, and menu structure. Actions and capabilities
   are declared in both `src/desktop/applicationMenuModel.ts` (renderer) and
   `electron/src/host/application-menu.ts` (host); a contract test fails when
-  those two declarations drift, and the `application-menu` E2E checkpoint fails
-  when an item id disappears.
+  those two declarations drift. Keep declaration and native dispatch coverage
+  in the existing menu contract tests.
 - Declaring a capability is a promise that some code reports it. Only declare a
   capability when the renderer actually reports it for the focused window, and
   cover the item becoming _visible_ in the E2E checkpoint. An item whose
@@ -101,9 +107,10 @@ it dispatches (`src/desktop/applicationMenu.ts` and
   `visible: false` item whose accelerator is pressed. Never rely on the hidden
   state to block an action — the renderer handler must guard itself against the
   state where the action is not available.
-- Cover a new item in the `application-menu` desktop E2E checkpoint: assert it
-  exists, that its visibility matches the capability matrix, and that activating
-  it performs its action.
+- Extend the existing menu contracts when declarations or dispatch change. For
+  a new cross-boundary action, extend its feature's retained desktop checkpoint
+  and assert capability-driven visibility and the actual native effect. Follow
+  the repository policy for local E2E execution.
 
 This is a recommendation, not a requirement: a feature that only makes sense
 inside its own surface can stay without a menu entry.

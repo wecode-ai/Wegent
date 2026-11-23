@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   expandCollaborationSpaces,
@@ -16,7 +18,7 @@ async function assertCollaboratorMenuGeometry(control) {
   const [trigger] = JSON.parse(
     await control.command(
       'getElementMetrics',
-      selector('collaboration-project-create-add-collaborator')
+      `[data-participant-field]:has(${selector('collaboration-project-create-add-collaborator')})`
     )
   )
   assert.ok(
@@ -31,12 +33,60 @@ async function assertCollaboratorMenuGeometry(control) {
   const gap = side === 'top' ? trigger.top - menu.bottom : menu.top - trigger.bottom
   assert.ok(
     gap >= 5 && gap <= 7,
-    'The collaborator picker must stay anchored when opening above or below its trigger'
+    `The collaborator picker must stay anchored to its field: ${JSON.stringify({ side, gap, menu, trigger })}`
   )
 }
 
+async function verifyCollaboratorWheel() {
+  const panel = selector('collaboration-project-create-collaborator-panel-members')
+  await withProjectRenderer(async (client, target) => {
+    const command = (method, params) => client({ action: 'command', target, method, params })
+    const read = async () => {
+      const result = await command('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `(() => {
+          const panel = document.querySelector(${JSON.stringify(panel)})
+          if (!panel) return null
+          const rect = panel.getBoundingClientRect()
+          const x = Math.floor(rect.left + rect.width / 2)
+          const y = Math.floor(rect.top + rect.height / 2)
+          const field = panel.closest('[data-testid="collaboration-project-create-collaborator-menu"]')
+            ?.querySelector('input')
+          const style = field ? getComputedStyle(field) : null
+          return {
+            x, y, hit: panel.contains(document.elementFromPoint(x, y)),
+            top: panel.scrollTop, visible: panel.clientHeight, full: panel.scrollHeight,
+            focus: style && { outline: style.outline, shadow: style.boxShadow }
+          }
+        })()`,
+      })
+      return result.result.value
+    }
+    const before = await waitForValue(
+      read,
+      value => value?.hit && value.full > value.visible,
+      'Collaborator search results must overflow within the visible panel',
+      5_000
+    )
+    await command('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      x: before.x,
+      y: before.y,
+      deltaX: 0,
+      deltaY: 200,
+    })
+    const after = await waitForValue(
+      read,
+      value => value?.top > before.top,
+      'A Chromium wheel event must scroll the collaborator results',
+      5_000
+    )
+    console.info('[desktop-e2e] PASS collaborator wheel', JSON.stringify({ before, after }))
+  })
+}
+
 export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
-  let cloud, workspace, participant
+  let cloud, workspace, participants
   async function request(path, method = 'GET', body) {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
@@ -46,6 +96,8 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(10_000),
+    }).catch(cause => {
+      throw new Error(`${method} ${path} failed`, { cause })
     })
     assert.ok(response.ok, `${method} ${path}: ${response.status}`)
     return response.json()
@@ -55,12 +107,18 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
     async prepareCloud(environment) {
       cloud = environment
       await request('/api/admin/setup-complete', 'POST')
-      participant = await request('/api/admin/users', 'POST', {
-        user_name: `project-invitee-${process.pid}`,
-        password: 'project-people-e2e-only',
-        role: 'user',
-        auth_source: 'password',
-      })
+      // The admin endpoint hashes passwords synchronously on the server.
+      participants = []
+      for (let index = 0; index < 10; index++) {
+        participants.push(
+          await request('/api/admin/users', 'POST', {
+            user_name: `project-invitee-${process.pid}-${index}`,
+            password: 'project-people-e2e-only',
+            role: 'user',
+            auth_source: 'password',
+          })
+        )
+      }
       workspace = await request('/api/v1/workspaces', 'POST', {
         name: `project-people-group-${process.pid}`,
       })
@@ -81,6 +139,11 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
       })
       await control.command('click', selector('collaboration-project-create-add-collaborator'))
       await assertCollaboratorMenuGeometry(control)
+      await control.command('fill', selector('collaboration-project-create-people-search'), {
+        value: `project-invitee-${process.pid}-`,
+      })
+      await verifyCollaboratorWheel()
+      const participant = participants[0]
       await control.command('fill', selector('collaboration-project-create-people-search'), {
         value: participant.user_name,
       })

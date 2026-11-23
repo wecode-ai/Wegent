@@ -16,6 +16,7 @@ const incompleteDigests = {
 for (const component of Object.keys(incompleteDigests)) {
   test(`${component} hashes embedded sources and the native build recipe`, () => {
     const root = mkdtempSync(join(tmpdir(), "macos-source-digest-"));
+    const source = component === "executor" ? "src" : "be-server/src";
     const write = (relative, content) => {
       const path = join(root, component, relative);
       mkdirSync(dirname(path), { recursive: true });
@@ -31,20 +32,26 @@ for (const component of Object.keys(incompleteDigests)) {
       const inputs = {
         "Cargo.toml": '[package]\nname = "fixture"\n',
         "Cargo.lock": "version = 4\n",
-        "src/main.rs": "fn main() {}\n",
-        "src/a.rs": "mod a;\n",
-        "src/a/inner.rs": "pub fn nested() {}\n",
-        "src/.hidden.rs": "pub fn hidden() {}\n",
-        "crates/library/src/lib.rs": "pub fn library() {}\n",
-        "src/schema.json": '{"type":"object"}\n',
+        [`${source}/main.rs`]: "fn main() {}\n",
+        [`${source}/a.rs`]: "mod a;\n",
+        [`${source}/a/inner.rs`]: "pub fn nested() {}\n",
+        [`${source}/.hidden.rs`]: "pub fn hidden() {}\n",
+        [`${source}/schema.json`]: '{"type":"object"}\n',
         ...(component === "executor"
           ? {
+              "crates/library/src/lib.rs": "pub fn library() {}\n",
               "vendor/dep/Cargo.toml": '[package]\nname = "dep"\n',
               "vendor/dep/src/lib.rs": "pub fn dep() {}\n",
               "vendor/dep/README.md": "Vendored documentation\n",
               "vendor/dep.bin": "Vendored binary input\n",
             }
-          : {}),
+          : {
+              "be-server/Cargo.toml": '[package]\nname = "server"\n',
+              "library/Cargo.toml": '[package]\nname = "library"\n',
+              "library/src/lib.rs": "pub fn library() {}\n",
+              "migrations/schema.json": '{"revision":"fixture"}\n',
+              "src/task_export_docx/templates/thumbnail.jpeg": "thumbnail input",
+            }),
       };
       for (const [path, content] of Object.entries(inputs))
         write(path, content);
@@ -71,7 +78,10 @@ for (const component of Object.keys(incompleteDigests)) {
               "shared/protocol/runtime_task_create_request_v2.schema.json":
                 '{"type":"object"}\n',
             }
-          : {}),
+          : {
+              "shared/assets/codex-models/openai.json": "Embedded models",
+              "shared/data/builtin-connector-apps.json": "Embedded connectors",
+            }),
       };
       for (const [file, content] of Object.entries(contextInputs)) {
         mkdirSync(dirname(join(root, file)), { recursive: true });
@@ -81,13 +91,13 @@ for (const component of Object.keys(incompleteDigests)) {
       stage();
       const original = digest();
       assert.equal(digest(), original);
-      write("src/schema.json", '{"type":"string"}\n');
+      write(`${source}/schema.json`, '{"type":"string"}\n');
       assert.notEqual(
         digest(),
         original,
         "embedded JSON must invalidate the binary",
       );
-      write("src/schema.json", inputs["src/schema.json"]);
+      write(`${source}/schema.json`, inputs[`${source}/schema.json`]);
       assert.notEqual(original, incompleteDigests[component]);
 
       for (const [file, content] of [
@@ -112,25 +122,32 @@ for (const component of Object.keys(incompleteDigests)) {
       for (const path of [
         "Cargo.toml",
         "Cargo.lock",
-        "src/a/inner.rs",
-        "src/schema.json",
-        ...(component === "executor" ? ["vendor/dep/README.md"] : []),
+        `${source}/a/inner.rs`,
+        `${source}/schema.json`,
+        ...(component === "executor"
+          ? ["vendor/dep/README.md"]
+          : [
+              "library/Cargo.toml",
+              "library/src/lib.rs",
+              "migrations/schema.json",
+              "src/task_export_docx/templates/thumbnail.jpeg",
+            ]),
       ]) {
         write(path, "Changed input\n");
         assert.notEqual(digest(), original, path);
         write(path, inputs[path]);
       }
-      write("src/new.rs", "pub fn added() {}\n");
+      write(`${source}/new.rs`, "pub fn added() {}\n");
       stage();
       const withAddition = digest();
       assert.notEqual(withAddition, original);
-      rmSync(join(root, component, "src/new.rs"));
+      rmSync(join(root, component, `${source}/new.rs`));
       stage();
       assert.equal(digest(), original);
 
       execFileSync(
         "git",
-        ["mv", `${component}/src/schema.json`, `${component}/src/renamed.json`],
+        ["mv", `${component}/${source}/schema.json`, `${component}/${source}/renamed.json`],
         { cwd: root },
       );
       assert.notEqual(digest(), original, "file paths are build inputs");

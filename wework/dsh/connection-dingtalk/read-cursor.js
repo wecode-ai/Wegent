@@ -7,7 +7,7 @@ export function createReadCursor(now = Date.now) {
   const key = randomBytes(32)
   const binding = source =>
     JSON.stringify(
-      ['providerId', 'profile', 'kind', 'id', 'transport', 'enabledAfter'].map(
+      ['providerId', 'profile', 'kind', 'id', 'transport', 'collectionKey', 'enabledAfter'].map(
         field => source[field] ?? null
       )
     )
@@ -40,11 +40,18 @@ export function createReadCursor(now = Date.now) {
           now() - state.issuedAt > TTL_MS ||
           !Number.isFinite(Date.parse(state.start)) ||
           !Number.isFinite(Date.parse(state.end)) ||
-          !Number.isFinite(Date.parse(state.time)) ||
+          (state.training
+            ? typeof state.nativeCursor !== 'string' ||
+              !state.nativeCursor ||
+              typeof state.conversationId !== 'string' ||
+              (input.trainingUntil !== undefined &&
+                Date.parse(input.trainingUntil) !== Date.parse(state.end))
+            : !Number.isFinite(Date.parse(state.time)) || input.trainingUntil !== undefined) ||
           !Number.isSafeInteger(state.limit) ||
           state.limit < 1 ||
           state.limit > 20 ||
-          (input.since !== undefined && Date.parse(input.since) !== Date.parse(state.start)) ||
+          (input.since !== undefined &&
+            Date.parse(input.since) !== Date.parse(state.requestedStart ?? state.start)) ||
           (input.limit !== undefined && input.limit !== state.limit) ||
           (input.includeImages !== undefined && input.includeImages !== state.includeImages)
         )

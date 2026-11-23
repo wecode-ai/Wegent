@@ -348,7 +348,7 @@ function KnowledgeDocumentSession({
 
   const { refreshAll } = sidebar
   // Closing the dialog preserves the owner of writes that are still in flight.
-  const permissionResource = accessKbId ?? dialogs.createdKb?.id ?? sidebar.selectedKbId
+  const permissionResource = accessKbId ?? sidebar.selectedKbId
   const permissionOwner = useRef({ kbId: permissionResource, version: 0 })
   if (permissionResource !== null && permissionResource !== permissionOwner.current.kbId) {
     permissionOwner.current = {
@@ -369,14 +369,9 @@ function KnowledgeDocumentSession({
     void refreshAll()
   }, [refreshAll, permissionVersion, permissionCacheScope])
 
-  const { dismissCreatedKb } = dialogs
   useEffect(() => {
-    if (sidebar.selectedKbId !== null) {
-      dismissCreatedKb()
-      setAccessKbId(null)
-    }
-  }, [sidebar.selectedKbId, dismissCreatedKb])
-  const permissionKb = dialogs.createdKb ?? accessKb
+    if (sidebar.selectedKbId !== null) setAccessKbId(null)
+  }, [sidebar.selectedKbId])
 
   // Auto-collapse sidebar in Notebook view.
   useEffect(() => {
@@ -501,14 +496,6 @@ function KnowledgeDocumentSession({
       updateUrlParams({ group: sidebarGroupId, kb: null })
     },
     [sidebar, updateUrlParams]
-  )
-
-  const handleKnowledgeBaseTypeConverted = useCallback(
-    (updatedKb: KnowledgeBase) => {
-      sidebar.syncConvertedKnowledgeBase(updatedKb)
-      dialogs.setEditingKb(updatedKb)
-    },
-    [sidebar, dialogs]
   )
 
   const retainsDetail =
@@ -741,6 +728,21 @@ function KnowledgeDocumentSession({
       )}
 
       <div className="flex-1 min-h-0 min-w-0 flex flex-col bg-base relative">
+        {sidebar.viewRefreshErrors.map(id => (
+          <div key={id} role="alert" className="px-3 text-sm text-error">
+            {t('document.navigation.viewRefreshFailed', {
+              name: sidebar.allKnowledgeBases.find(kb => kb.id === id)?.name ?? String(id),
+            })}
+            <button
+              type="button"
+              data-testid={`retry-knowledge-view-${id}`}
+              className="min-h-11 min-w-11 px-3"
+              onClick={() => void sidebar.retryViewRefresh(id)}
+            >
+              {t('document.navigation.retry')}
+            </button>
+          </div>
+        ))}
         {sidebar.loadError && !kbResolution && (
           <div role="alert" className="p-3 text-error">
             {t('document.navigation.loadFailed')}
@@ -760,29 +762,13 @@ function KnowledgeDocumentSession({
         {sidebar.loadError && !sidebar.hasLoaded && !kbResolution ? null : renderMainContent()}
       </div>
 
-      {permissionKb && (
+      {accessKb && (
         <KnowledgeAccessDialog
-          kbId={permissionKb.id}
-          kbNamespace={permissionKb.namespace}
-          resourceCreated={Boolean(dialogs.createdKb)}
-          restoreFocus={
-            dialogs.createdKb
-              ? () => {
-                  if (createTrigger.current?.isConnected) createTrigger.current.focus()
-                }
-              : undefined
-          }
-          refreshError={dialogs.createdKb ? dialogs.createRefreshError || sidebar.loadError : null}
-          onRetryRefresh={() => void dialogs.retryCreatedList()}
-          onClose={() => {
-            setAccessKbId(null)
-            dialogs.dismissCreatedKb()
-          }}
+          kbId={accessKb.id}
+          kbNamespace={accessKb.namespace}
+          onClose={() => setAccessKbId(null)}
           onChanged={permissionsChanged}
-          onAccessLost={() => {
-            sidebar.removeInaccessibleKnowledgeBase(permissionKb.id)
-            dialogs.dismissCreatedKb()
-          }}
+          onAccessLost={() => sidebar.removeInaccessibleKnowledgeBase(accessKb.id)}
         />
       )}
       <CreateKnowledgeBaseDialog
@@ -795,10 +781,18 @@ function KnowledgeDocumentSession({
             }
           }
         }}
+        returnFocusRef={createTrigger}
         onSubmit={dialogs.handleCreate}
         loading={dialogs.isCreating}
         scope={dialogs.createScope}
         groupName={dialogs.createGroupName}
+        spaceName={
+          sidebar.groups.find(group =>
+            dialogs.createScope === 'organization'
+              ? group.type === 'organization'
+              : group.type === 'group' && group.name === dialogs.createGroupName
+          )?.displayName
+        }
         kbType={dialogs.createKbType}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}
@@ -813,8 +807,14 @@ function KnowledgeDocumentSession({
         open={!!dialogs.editingKb}
         onOpenChange={open => !open && dialogs.setEditingKb(null)}
         knowledgeBase={dialogs.editingKb}
+        spaceName={
+          sidebar.groups.find(
+            group =>
+              (group.type === 'group' || group.type === 'organization') &&
+              group.name === dialogs.editingKb?.namespace
+          )?.displayName
+        }
         onSubmit={dialogs.handleUpdate}
-        onTypeConverted={handleKnowledgeBaseTypeConverted}
         loading={dialogs.isUpdating}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}

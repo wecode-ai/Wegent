@@ -31,6 +31,43 @@ describe("IssueConversationDrawers", () => {
     else Reflect.deleteProperty(Element.prototype, "getAnimations");
   });
 
+  it("releases the active tab while keeping an Issue drawer mounted", async () => {
+    const close = vi.fn();
+    const render = (active: boolean) => (
+      <>
+        <button data-testid="outside-task">Task search</button>
+        <section hidden={!active}>
+          <IssueConversationDrawers
+            active={active}
+            label="Issue detail"
+            conversation={null}
+            onClose={close}
+            onCloseConversation={vi.fn()}
+          >
+            {() => <input data-testid="issue-draft" defaultValue="Draft" />}
+          </IssueConversationDrawers>
+        </section>
+      </>
+    );
+    await act(async () => root.render(render(true)));
+    const outside = container.querySelector('[data-testid="outside-task"]')!;
+    const draft = container.querySelector('[data-testid="issue-draft"]')!;
+    await act(async () => {
+      await vi.waitFor(() => expect(outside.closest("[inert]")).not.toBeNull());
+    });
+    await act(async () => root.render(render(false)));
+    await act(async () => {
+      await vi.waitFor(() => expect(outside.closest("[inert]")).toBeNull());
+    });
+    expect(container.querySelector('[data-testid="issue-draft"]')).toBe(draft);
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => root.render(render(true)));
+    await act(async () => {
+      await vi.waitFor(() => expect(outside.closest("[inert]")).not.toBeNull());
+    });
+    expect(container.querySelector('[data-testid="issue-draft"]')).toBe(draft);
+  });
+
   it("keeps the Issue open until its exit animation finishes", async () => {
     const close = vi.fn();
     let finishAnimation!: () => void;

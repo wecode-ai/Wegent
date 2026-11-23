@@ -4,6 +4,15 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
+async function openProjectTags(control, find) {
+  const toggle = find('cloud-project-manage-tags-toggle')
+  await control.command('waitFor', toggle, { visible: true })
+  if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'false') {
+    await control.command('clickWhenEnabled', toggle)
+  }
+  await control.command('waitFor', `${toggle}[aria-expanded="true"]`, { visible: true })
+}
+
 // Reuse shared-core's real project and backend; this flow never saves the environment draft.
 export async function verifyCollaborationSettingsUx(control, { scoped, request, project }) {
   const find = id => scoped(`[data-testid="${id}"]`)
@@ -20,7 +29,7 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
       String((persisted.visibility ?? 'private') === visibility)
     )
   }
-  await control.command('click', `${find('cloud-project-manage-tags')} > summary`)
+  await openProjectTags(control, find)
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-toggle'))
   await control.command(
     'waitFor',
@@ -76,10 +85,14 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
 
   await control.command('click', find('collaboration-project-settings-sharing'))
   await control.command('clickWhenEnabled', find('project-template-import'))
+  const templateDialog = '[data-testid="collaboration-template-dialog"][role="dialog"][data-open]'
+  await control.command('waitFor', templateDialog, { visible: true })
   await control.command('clickWhenEnabled', find('template-details-product-lifecycle'))
-  await control.command('waitFor', find('template-inline-detail'), { visible: true })
+  await control.command('waitFor', `${templateDialog} [data-testid="template-inline-detail"]`, {
+    visible: true,
+  })
   assert.equal(
-    Number(await control.command('getElementCount', scoped('dialog[open]'))),
+    Number(await control.command('getElementCount', '[role="dialog"][data-open]')),
     1,
     'Template details must reuse the existing dialog'
   )
@@ -92,12 +105,7 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
 async function addProjectTag(control, scoped, tag) {
   const find = id => scoped(`[data-testid="${id}"]`)
   await control.command('click', find('collaboration-project-settings-project'))
-  if (
-    Number(
-      await control.command('getElementCount', `${find('cloud-project-manage-tags')}[open]`)
-    ) === 0
-  )
-    await control.command('click', `${find('cloud-project-manage-tags')} > summary`)
+  await openProjectTags(control, find)
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-toggle'))
   await control.command('fill', find('cloud-project-tag-create-input'), { value: tag })
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-confirm'))
@@ -121,13 +129,33 @@ async function verifyAgentDialogKeyboard(control, scoped) {
   assert.ok(editId, 'The scenario must have an editable project Agent')
   await control.command('focusMainWindow', 'body')
   await control.command('nativePress', find(editId), { key: 'Enter' })
-  await control.command('waitFor', find('cloud-project-chat-agent-editor'), { visible: true })
-  const save = find('cloud-project-chat-agent-save')
+  const editor = '[data-testid="cloud-project-chat-agent-editor"][role="dialog"]'
+  await control.command('waitFor', editor, { visible: true })
+  const save = `${editor} [data-testid="cloud-project-chat-agent-save"]`
   await control.command('waitFor', save + ':not(:disabled)', { visible: true })
   await control.command('nativePress', save, { key: 'Tab' })
   await assertKeyboardFocus(control, 'cloud-project-chat-agent-cancel')
-  await control.command('nativePress', find('cloud-project-chat-agent-cancel'), { key: 'Escape' })
-  await control.command('waitFor', find('cloud-project-chat-agent-editor'), { visible: false })
+  const readLayers = () =>
+    control.command('getElementMetrics', '[data-slot$="-content"][data-open], :focus', {
+      value: JSON.stringify({ attributeNames: ['data-testid', 'data-slot', 'role', 'id'] }),
+    })
+  const beforeEscape = await readLayers()
+  await control.command(
+    'nativePress',
+    `${editor} [data-testid="cloud-project-chat-agent-cancel"]`,
+    {
+      key: 'Escape',
+    }
+  )
+  try {
+    await control.command('waitFor', editor, { visible: false })
+  } catch (error) {
+    console.error('[desktop-e2e-agent-editor-dismissal]', {
+      beforeEscape,
+      afterEscape: await readLayers().catch(() => 'unavailable'),
+    })
+    throw error
+  }
   await assertKeyboardFocus(control, editId)
 }
 
@@ -138,15 +166,17 @@ async function createDisabledSchedule(control, scoped) {
   await control.command('fill', find('automatic-processing-prompt'), {
     value: 'Settings version regression; never enable this rule.',
   })
-  if (
-    Number(
-      await control.command('getElementCount', `${find('automatic-processing-enabled')}:checked`)
-    ) > 0
-  )
-    await control.command('click', find('automatic-processing-enabled'))
+  const enabled = find('automatic-processing-enabled')
+  if ((await control.command('getAttribute', enabled, { value: 'aria-checked' })) === 'true') {
+    await control.command('click', enabled)
+  }
+  await control.command('waitFor', `${enabled}[aria-checked="false"]`, { visible: true })
   await control.command('click', find('automatic-processing-target'))
-  await control.command('waitFor', find('automatic-processing-target-search'), { visible: true })
-  const options = find('automatic-processing-target-picker') + ' [role="option"]'
+  const searchId = 'automatic-processing-target-search'
+  const search = find(searchId)
+  const picker = find('automatic-processing-target-picker')
+  await control.command('waitFor', search, { visible: true })
+  const options = picker + ' [role="option"]'
   assert.ok(
     Number(await control.command('getElementCount', options)) >= 2,
     'The local fixture must provide multiple Agent targets'
@@ -157,15 +187,28 @@ async function createDisabledSchedule(control, scoped) {
   const second = await control.command('getAttribute', options + ':nth-child(2)', {
     value: 'data-testid',
   })
-  await control.command('nativePress', find('automatic-processing-target-search'), {
-    key: 'ArrowDown',
-  })
-  await assertKeyboardFocus(control, first)
-  await control.command('nativePress', find(first), { key: 'ArrowDown' })
-  await assertKeyboardFocus(control, second)
-  await control.command('nativePress', find(second), { key: 'ArrowUp' })
-  await assertKeyboardFocus(control, first)
-  await control.command('nativePress', find(first), { key: 'Escape' })
+  // The searchable combobox moves its accessible active option and keeps input focus.
+  for (const [key, optionId] of [
+    ['ArrowDown', first],
+    ['ArrowDown', second],
+    ['ArrowUp', first],
+  ]) {
+    const option = find(optionId)
+    const optionDomId = await control.command('getAttribute', option, { value: 'id' })
+    assert.ok(optionDomId, 'Each keyboard option must have a DOM id')
+    await control.command('nativePress', search, { key })
+    await assertKeyboardFocus(control, searchId)
+    await waitForBoardValue(
+      () => control.command('getAttribute', search, { value: 'aria-activedescendant' }),
+      optionDomId,
+      key + ' must highlight ' + optionId,
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+    assert.equal(await control.command('getAttribute', option, { value: 'data-active' }), 'true')
+  }
+  await control.command('nativePress', search, { key: 'Escape' })
+  await control.command('waitFor', picker, { visible: false })
+  await control.command('waitFor', find('automatic-processing-form'), { visible: true })
   await assertKeyboardFocus(control, 'automatic-processing-target')
   await control.command('click', find('automatic-processing-cron-advanced-toggle'))
   const validCron = await control.command('getValue', find('automatic-processing-cron'))

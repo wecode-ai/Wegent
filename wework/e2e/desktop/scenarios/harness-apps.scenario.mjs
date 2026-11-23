@@ -19,7 +19,6 @@ import assert from 'node:assert/strict'
 import { copyFile, mkdir, readFile, readdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { prepareHarnessAppUi } from '../modules/harness-app-bootstrap.mjs'
-import { verifyHarnessDevelopment } from '../modules/harness-app-development.mjs'
 import { verifyHarnessLifecycle } from '../modules/harness-app-lifecycle.mjs'
 import { verifyHarnessAppModels } from '../modules/harness-app-models.mjs'
 import {
@@ -41,7 +40,6 @@ export async function createDesktopScenario({
     LEGACY_INSTALLATION_ID,
     '0.1.0-rc.8'
   )
-  const localDshPluginPath = await createLocalDshPlugin(resultDir)
   const importedPackagePath = await createHarnessPackage(
     resultDir,
     IMPORTED_INSTALLATION_ID,
@@ -296,35 +294,7 @@ export async function createDesktopScenario({
         electronUserDataDirectory,
         resultDir,
       })
-      if (checkpoint === 'harness-app-development') {
-        try {
-          await verifyHarnessDevelopment(control, {
-            uiTimeoutMs,
-            resultDir,
-            captureScreenshot,
-            electronUserDataDirectory,
-            legacyRuntimeCache,
-            localDshPluginPath,
-            downloadsPath,
-          })
-        } finally {
-          const logs = join(resultDir, 'dsh-e2e-created', 'test-results', 'smart-app', 'logs')
-          let entries = []
-          try {
-            entries = await readdir(logs, { withFileTypes: true })
-          } catch (error) {
-            if (error.code !== 'ENOENT') throw error
-          }
-          for (const entry of entries) {
-            if (entry.isFile() && entry.name.endsWith('.log')) {
-              await copyFile(
-                join(logs, entry.name),
-                join(resultDir, `smart-app-verification-${entry.name}`)
-              )
-            }
-          }
-        }
-      } else if (checkpoint === 'harness-app-lifecycle') {
+      if (checkpoint === 'harness-app-lifecycle') {
         assert.ok(
           archiveRegression && publishUpdatedRelease,
           'Archive regression fixtures were not prepared'

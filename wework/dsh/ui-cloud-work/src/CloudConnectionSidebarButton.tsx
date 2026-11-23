@@ -1,13 +1,16 @@
-import { AlertCircle, Cloud, Loader2, Settings } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useTranslation } from '@/hooks/useTranslation'
 import { canUseForProjectCreation, isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo } from '@/types/api'
 import type { CloudWorkCheckStatus, CloudWorkStatus } from '@/types/workbench'
-import { useTranslation } from '@/hooks/useTranslation'
-import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Cloud, Loader2, Settings } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { controlPopup } from '@wegent/collaboration/controls/recipes'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 
 interface CloudConnectionSidebarButtonProps {
   devices: DeviceInfo[]
@@ -18,10 +21,6 @@ interface CloudConnectionSidebarButtonProps {
   onSelectCloudDevice: (deviceId: string) => void
   onAddDevice: () => void
 }
-
-const POPOVER_WIDTH = 288
-const POPOVER_GAP = 4
-const VIEWPORT_PADDING = 8
 
 function hostLabel(value?: string | null): string {
   if (!value) return ''
@@ -45,9 +44,8 @@ export function CloudConnectionSidebarButton({
   const cloud = useOptionalCloudConnection()
   const [open, setOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
-  const [popoverPosition, setPopoverPosition] = useState({ left: 0, top: 0 })
+  const [anchor, setAnchor] = useState<HTMLDivElement | null>(null)
+  const theme = useCollaborationPortalTheme()
   const cloudWorkDevices = useMemo(
     () => devices.filter(device => isCloudDevice(device) || isRemoteDevice(device)),
     [devices]
@@ -131,204 +129,159 @@ export function CloudConnectionSidebarButton({
     if (!errorDetail) setDetailsOpen(false)
   }
 
-  useLayoutEffect(() => {
-    if (!detailsOpen) return
-
-    const updatePosition = () => {
-      const triggerRect = rootRef.current?.getBoundingClientRect()
-      if (!triggerRect) return
-      const popoverHeight = popoverRef.current?.getBoundingClientRect().height ?? 0
-      const maxLeft = Math.max(
-        VIEWPORT_PADDING,
-        window.innerWidth - POPOVER_WIDTH - VIEWPORT_PADDING
-      )
-      const left = Math.min(Math.max(triggerRect.left, VIEWPORT_PADDING), maxLeft)
-      const preferredTop = triggerRect.bottom + POPOVER_GAP
-      const top =
-        popoverHeight > 0 && preferredTop + popoverHeight > window.innerHeight - VIEWPORT_PADDING
-          ? Math.max(VIEWPORT_PADDING, triggerRect.top - POPOVER_GAP - popoverHeight)
-          : preferredTop
-      setPopoverPosition({ left, top })
-    }
-
-    updatePosition()
-    window.addEventListener('resize', updatePosition)
-    window.addEventListener('scroll', updatePosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePosition)
-      window.removeEventListener('scroll', updatePosition, true)
-    }
-  }, [detailsOpen, errorDetail])
-
-  useEffect(() => {
-    if (!detailsOpen) return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
-        setDetailsOpen(false)
-      }
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setDetailsOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown, true)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [detailsOpen])
-
   return (
     <>
-      <div
-        ref={rootRef}
-        className={cn(
-          'group/cloud relative flex h-[30px] items-center rounded-[10px] hover:bg-[rgb(var(--color-sidebar-hover))]',
-          selected && 'bg-[rgb(var(--color-sidebar-active))]'
-        )}
-      >
-        <div className="flex h-[30px] w-[30px] shrink-0 items-center justify-center">
-          {cloudWorkSyncing ? (
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
-          ) : hasErrorDetail ? (
-            <button
-              type="button"
-              data-testid="sidebar-cloud-error-button"
-              onClick={event => {
-                event.stopPropagation()
-                setDetailsOpen(open => !open)
-              }}
-              title={t('workbench.cloud_work_error_details', '查看错误详情')}
-              aria-label={t('workbench.cloud_work_error_details', '查看错误详情')}
-              aria-expanded={detailsOpen}
-              aria-controls={detailsOpen ? 'sidebar-cloud-error-popover' : undefined}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-red-500 hover:bg-red-500/10"
-            >
-              <AlertCircle className="h-4 w-4" />
-            </button>
-          ) : (
-            <Cloud
-              className={cn(
-                'h-4 w-4',
-                connected && !cloudWorkEmpty
-                  ? 'text-primary'
-                  : 'text-[rgb(var(--color-sidebar-text-primary))]'
-              )}
-            />
-          )}
-        </div>
-        <button
-          type="button"
-          data-testid="sidebar-cloud-connection-button"
-          onClick={() => {
-            if (connected) {
-              if (cloudWorkAvailable) {
-                onOpenCloudWork()
-                return
-              }
-              if (errorDetail) {
-                setDetailsOpen(true)
-                return
-              }
-              if (preferredCloudDevice) {
-                onSelectCloudDevice(preferredCloudDevice.device_id)
-              } else {
-                onAddDevice()
-              }
-              return
-            }
-            setOpen(true)
-          }}
-          title={statusTitle}
+      <Popover open={detailsOpen && Boolean(errorDetail)} onOpenChange={setDetailsOpen}>
+        <div
+          ref={setAnchor}
           className={cn(
-            'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] py-0 pl-0 pr-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))]',
-            (needsAttention || cloudWorkUnavailable) && 'text-red-500'
+            'group/cloud relative flex h-[30px] items-center rounded-[10px] hover:bg-[rgb(var(--color-sidebar-hover))]',
+            selected && 'bg-[rgb(var(--color-sidebar-active))]'
           )}
         >
-          <span className="min-w-0 flex-1 truncate">{label}</span>
-          {connected && statusLabel && (
-            <span
-              data-testid="sidebar-cloud-status-label"
+          <div className="flex h-[30px] w-[30px] shrink-0 items-center justify-center">
+            {cloudWorkSyncing ? (
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            ) : hasErrorDetail ? (
+              <PopoverTrigger
+                render={
+                  <ControlButton
+                    variant="unstyled"
+                    type="button"
+                    data-testid="sidebar-cloud-error-button"
+                    onClick={event => event.stopPropagation()}
+                    title={t('workbench.cloud_work_error_details', '查看错误详情')}
+                    aria-label={t('workbench.cloud_work_error_details', '查看错误详情')}
+                    aria-expanded={detailsOpen}
+                    aria-controls={detailsOpen ? 'sidebar-cloud-error-popover' : undefined}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-red-500 hover:bg-red-500/10"
+                  />
+                }
+              >
+                <AlertCircle className="h-4 w-4" />
+              </PopoverTrigger>
+            ) : (
+              <Cloud
+                className={cn(
+                  'h-4 w-4',
+                  connected && !cloudWorkEmpty
+                    ? 'text-primary'
+                    : 'text-[rgb(var(--color-sidebar-text-primary))]'
+                )}
+              />
+            )}
+          </div>
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid="sidebar-cloud-connection-button"
+            onClick={() => {
+              if (connected) {
+                if (cloudWorkAvailable) {
+                  onOpenCloudWork()
+                  return
+                }
+                if (errorDetail) {
+                  setDetailsOpen(true)
+                  return
+                }
+                if (preferredCloudDevice) {
+                  onSelectCloudDevice(preferredCloudDevice.device_id)
+                } else {
+                  onAddDevice()
+                }
+                return
+              }
+              setOpen(true)
+            }}
+            title={statusTitle}
+            className={cn(
+              'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] py-0 pl-0 pr-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))]',
+              (needsAttention || cloudWorkUnavailable) && 'text-red-500'
+            )}
+          >
+            <span className="min-w-0 flex-1 truncate">{label}</span>
+            {connected && statusLabel && (
+              <span
+                data-testid="sidebar-cloud-status-label"
+                className={cn(
+                  'ml-auto shrink-0 rounded-full px-1.5 text-xs font-semibold leading-5 group-hover/cloud:invisible group-focus-within/cloud:invisible',
+                  cloudWorkAvailable && 'bg-primary/10 text-primary',
+                  cloudWorkSyncing && 'bg-primary/10 text-primary',
+                  cloudWorkEmpty &&
+                    'bg-[rgb(var(--color-bg-surface))] text-[rgb(var(--color-sidebar-text-secondary))]',
+                  (needsAttention || cloudWorkUnavailable) && 'bg-red-500/10 text-red-500'
+                )}
+              >
+                {statusLabel}
+              </span>
+            )}
+          </ControlButton>
+          {connected && (
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="sidebar-cloud-management-button"
+              onClick={event => {
+                event.stopPropagation()
+                onOpenSettings()
+              }}
+              title={t('workbench.cloud_connection_manage', '管理云端连接')}
+              aria-label={t('workbench.cloud_connection_manage', '管理云端连接')}
               className={cn(
-                'ml-auto shrink-0 rounded-full px-1.5 text-xs font-semibold leading-5 group-hover/cloud:invisible group-focus-within/cloud:invisible',
-                cloudWorkAvailable && 'bg-primary/10 text-primary',
-                cloudWorkSyncing && 'bg-primary/10 text-primary',
-                cloudWorkEmpty &&
-                  'bg-[rgb(var(--color-bg-surface))] text-[rgb(var(--color-sidebar-text-secondary))]',
-                (needsAttention || cloudWorkUnavailable) && 'bg-red-500/10 text-red-500'
+                'pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 transition-opacity hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:pointer-events-auto focus:opacity-100 group-hover/cloud:pointer-events-auto group-hover/cloud:opacity-100 group-focus-within/cloud:pointer-events-auto group-focus-within/cloud:opacity-100',
+                needsAttention && 'text-red-500'
               )}
             >
-              {statusLabel}
-            </span>
+              <Settings className="h-3.5 w-3.5" />
+            </ControlButton>
           )}
-        </button>
-        {connected && (
-          <button
-            type="button"
-            data-testid="sidebar-cloud-management-button"
-            onClick={event => {
-              event.stopPropagation()
-              onOpenSettings()
-            }}
-            title={t('workbench.cloud_connection_manage', '管理云端连接')}
-            aria-label={t('workbench.cloud_connection_manage', '管理云端连接')}
-            className={cn(
-              'pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 transition-opacity hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:pointer-events-auto focus:opacity-100 group-hover/cloud:pointer-events-auto group-hover/cloud:opacity-100 group-focus-within/cloud:pointer-events-auto group-focus-within/cloud:opacity-100',
-              needsAttention && 'text-red-500'
-            )}
-          >
-            <Settings className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-      {detailsOpen &&
-        errorDetail &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            ref={popoverRef}
+        </div>
+        {errorDetail && (
+          <PopoverContent
+            {...theme}
+            anchor={anchor}
+            align="start"
+            sideOffset={4}
+            collisionPadding={8}
             id="sidebar-cloud-error-popover"
             data-testid="sidebar-cloud-error-popover"
-            role="status"
-            style={{ left: popoverPosition.left, top: popoverPosition.top }}
-            className="fixed z-system-popover max-h-[calc(100vh-16px)] w-72 overflow-y-auto rounded-xl border border-red-500/20 bg-popover p-3 text-xs text-text-primary shadow-lg ring-1 ring-black/5"
+            aria-label={t('workbench.cloud_work_error_title', '云端工作不可用')}
+            className={cn(theme.className, controlPopup, 'w-72 p-3')}
           >
-            <div className="flex items-start gap-2">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-              <div className="min-w-0 flex-1">
-                <div className="font-semibold text-text-primary">
-                  {t('workbench.cloud_work_error_title', '云端工作不可用')}
-                </div>
-                <div className="mt-1 leading-5 text-text-secondary">{errorDetail}</div>
-              </div>
-            </div>
-            {cloudWorkStatus && (
-              <div className="mt-3 grid gap-1.5 border-t border-border pt-2">
-                {(Object.keys(checkLabels) as Array<keyof CloudWorkStatus['checks']>).map(key => (
-                  <div key={key} className="flex items-center justify-between gap-3">
-                    <span className="text-text-secondary">{checkLabels[key]}</span>
-                    <span
-                      className={cn(
-                        'font-medium',
-                        cloudWorkStatus.checks[key] === 'unavailable'
-                          ? 'text-red-500'
-                          : 'text-text-primary'
-                      )}
-                    >
-                      {checkStatusLabels[cloudWorkStatus.checks[key]]}
-                    </span>
+            <div role="status">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-text-primary">
+                    {t('workbench.cloud_work_error_title', '云端工作不可用')}
                   </div>
-                ))}
+                  <div className="mt-1 leading-5 text-text-secondary">{errorDetail}</div>
+                </div>
               </div>
-            )}
-          </div>,
-          document.body
+              {cloudWorkStatus && (
+                <div className="mt-3 grid gap-1.5 border-t border-border pt-2">
+                  {(Object.keys(checkLabels) as Array<keyof CloudWorkStatus['checks']>).map(key => (
+                    <div key={key} className="flex items-center justify-between gap-3">
+                      <span className="text-text-secondary">{checkLabels[key]}</span>
+                      <span
+                        className={cn(
+                          'font-medium',
+                          cloudWorkStatus.checks[key] === 'unavailable'
+                            ? 'text-red-500'
+                            : 'text-text-primary'
+                        )}
+                      >
+                        {checkStatusLabels[cloudWorkStatus.checks[key]]}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </PopoverContent>
         )}
+      </Popover>
       {open && (
         <CloudConnectionDialog
           open

@@ -1,3 +1,7 @@
+import { createServer } from 'node:http'
+import { once } from 'node:events'
+import { DesktopE2EServer } from '../../e2e/desktop/modules/desktop-server.mjs'
+import * as nativeRuntime from '../../electron/src/host/e2e-runtime-request'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
@@ -6,14 +10,18 @@ import * as nativeKey from './native-key-acknowledgement'
 import { getDesktopControlDiagnostics } from './desktop-control-diagnostics'
 import {
   fillDesktopControlElement,
+  installWeworkAutomationBridge,
   isWeworkAutomationEnabled,
   runDesktopControlClient,
   seedDesktopE2ELocalModels,
   seedDesktopE2ERuntime,
 } from './automation'
+import { ensureLocalModelCatalogReady } from './local-model-catalog-readiness'
+import * as localExecutor from '@/desktop/localExecutor'
 import {
   clearLocalModelConfigs,
   listLegacyLocalModelConfigs,
+  markLocalModelCatalogReady,
   listLocalModelConfigs,
 } from '@/features/model-settings/localModelSettings'
 import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
@@ -361,21 +369,155 @@ describe('Electron desktop E2E automation', () => {
     }
   )
 
+  test('delivers a Runtime result while Renderer ACK and IPC continuations are blocked', async () => {
+    const nativeFetch = globalThis.fetch
+    const control = new DesktopE2EServer('/workspace')
+    await control.start()
+    let runtimeRequests = 0
+    const runtimeCookies: Array<string | undefined> = []
+    const runtime = createServer((request, response) => {
+      runtimeCookies.push(request.headers.cookie)
+      runtimeRequests += 1
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end('{"running":false}')
+    })
+    runtime.listen(0, '127.0.0.1')
+    await once(runtime, 'listening')
+    const address = runtime.address() as { port: number }
+    let releaseRendererAck!: () => void
+    let releaseIpcContinuation!: () => void
+    const rendererAck = new Promise<void>(resolve => {
+      releaseRendererAck = resolve
+    })
+    const ipcContinuation = new Promise<void>(resolve => {
+      releaseIpcContinuation = resolve
+    })
+    let closing = false
+    let ipcReturned = false
+    let rendererAcks = 0
+    const verificationWindow = window as Window & { weworkElectronVerification?: unknown }
+    verificationWindow.weworkElectronVerification = {
+      async requestRuntime(input: unknown) {
+        const result = await nativeRuntime.completeE2ERuntimeControl(
+          { VITE_WEWORK_E2E: 'true', WEWORK_E2E_CONTROL_URL: control.controlUrl },
+          input,
+          async () => [{ name: 'dsh-auth-test', value: 'fixture-session' }],
+          nativeFetch
+        )
+        await ipcContinuation
+        ipcReturned = true
+        return result
+      },
+    }
+    vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
+      if (closing && input.includes('/commands?')) return new Response(null, { status: 410 })
+      const response = await nativeFetch(input, init)
+      if (input.endsWith('/started')) {
+        rendererAcks += 1
+        const read = response.arrayBuffer.bind(response)
+        response.arrayBuffer = async () => {
+          await rendererAck
+          if (closing) throw new Error('Renderer fixture closed')
+          return read()
+        }
+      }
+      return response
+    })
+    const client = runDesktopControlClient(control.controlUrl, 'main')
+    let receipt: string | undefined
+    let commandError: unknown
+    let commandId: string | undefined
+    try {
+      await control.awaitReady()
+      void control
+        .command('fetchLocalRuntime', 'body', {
+          value: JSON.stringify({ url: `http://127.0.0.1:${address.port}/wework/transcript` }),
+          timeoutMs: 100,
+          preserveResultAcrossClientReplacement: true,
+        })
+        .then(
+          value => {
+            receipt = value
+          },
+          error => {
+            commandError = error
+          }
+        )
+      await vi.waitFor(() => expect(runtimeRequests).toBe(1), { timeout: 1000 })
+      await vi.waitFor(() => expect(receipt).toBeDefined(), { timeout: 1000 })
+      commandId = control.commandHistory[0].id
+      expect(JSON.parse(receipt!)).toMatchObject({ status: 200, body: '{"running":false}' })
+      expect(commandError).toBeUndefined()
+      expect(runtimeCookies).toEqual(['dsh-auth-test=fixture-session'])
+      expect(rendererAcks).toBe(0)
+      expect(ipcReturned).toBe(false)
+      expect(
+        control.controlTransportHistory.filter(
+          event => event.event === 'result-received' && event.commandId === commandId
+        )
+      ).toHaveLength(1)
+    } finally {
+      closing = true
+      releaseRendererAck()
+      releaseIpcContinuation()
+      const id = commandId ?? control.commandHistory[0]?.id
+      if (id && control.commandResults.has(id)) {
+        await nativeFetch(`${control.controlUrl}/results`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id,
+            clientId: control.activeControlClientId,
+            ok: false,
+            error: 'Fixture cleanup',
+          }),
+        })
+      }
+      // Retire the client at the server so already-issued polls also receive 410.
+      await nativeFetch(`${control.controlUrl}/ready`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: 'cleanup-client',
+          windowLabel: 'main',
+          location: 'http://localhost/',
+        }),
+      })
+      await client
+      delete verificationWindow.weworkElectronVerification
+      runtime.closeAllConnections()
+      await Promise.all([
+        control.close(),
+        new Promise<void>(resolve => runtime.close(() => resolve())),
+      ])
+    }
+  })
+
   test.each([false, true])(
     'allows an authenticated RPC to overlap later commands and reports its failure: %s',
     async failHeldRequest => {
-      let resolveHeld!: (value: unknown) => void
+      let resolveHeld!: (value: Response) => void
       let rejectHeld!: (error: Error) => void
-      const held = new Promise((resolve, reject) => {
+      const held = new Promise<Response>((resolve, reject) => {
         resolveHeld = resolve
         rejectHeld = reject
       })
-      const requestRuntime = vi.fn(async (input: { url: string }) => {
-        if (input.url.endsWith('/held')) return held
+      const nativeRequest: typeof fetch = async (input, options) => {
+        const url = String(input)
+        if (url.startsWith('http://127.0.0.1:43111/')) return fetch(url, options)
+        if (url.endsWith('/held')) return held
         if (failHeldRequest) rejectHeld(new Error('Held RPC failed'))
-        else resolveHeld({ status: 200, body: 'held result' })
-        return { status: 200, body: 'overlapping result' }
-      })
+        else resolveHeld(new Response('held result'))
+        return new Response('overlapping result')
+      }
+      const requestRuntime = vi.fn((input: unknown) =>
+        nativeRuntime.completeE2ERuntimeControl(
+          { VITE_WEWORK_E2E: 'true', WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:43111' },
+          input,
+          async () => [{ name: 'dsh-auth-test', value: 'fixture-session' }],
+          nativeRequest
+        )
+      )
       const verificationWindow = window as Window & { weworkElectronVerification?: unknown }
       verificationWindow.weworkElectronVerification = { requestRuntime }
       const command = (id: string): DesktopControlCommand => ({
@@ -407,12 +549,23 @@ describe('Electron desktop E2E automation', () => {
         expect(results[0]).toMatchObject({ id: 'origin', ok: true, value: window.location.origin })
         expect(results.find(result => result.id === 'overlapping')).toMatchObject({
           ok: true,
-          value: JSON.stringify({ status: 200, body: 'overlapping result' }),
+          value: JSON.stringify({
+            status: 200,
+            headers: { 'content-type': 'text/plain;charset=UTF-8' },
+            body: 'overlapping result',
+          }),
         })
         expect(results.find(result => result.id === 'held')).toMatchObject(
           failHeldRequest
             ? { ok: false, error: 'Held RPC failed' }
-            : { ok: true, value: JSON.stringify({ status: 200, body: 'held result' }) }
+            : {
+                ok: true,
+                value: JSON.stringify({
+                  status: 200,
+                  headers: { 'content-type': 'text/plain;charset=UTF-8' },
+                  body: 'held result',
+                }),
+              }
         )
       } finally {
         delete verificationWindow.weworkElectronVerification
@@ -1150,6 +1303,105 @@ describe('Electron desktop E2E automation', () => {
     expect(owner).toHaveBeenCalledWith('modelConfiguration.save', expect.any(Object))
   })
 
+  test.each(['offline', 'unauthorized', 'pending'])(
+    'prepares the native model snapshot independently of %s cloud identity',
+    async cloudState => {
+      clearLocalModelConfigs()
+      replaceProviderModelConfigs([])
+      installNativeModelOwner()
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+        cloudBackendUrl: 'https://cloud.example.com',
+        modelServerUrl: 'http://127.0.0.1:43111',
+        seedLocalModels: true,
+      }
+      let finishIdentity!: () => void
+      const identity = new Promise<Response>(resolve => {
+        finishIdentity = () => resolve(Response.json({ id: 7, user_name: 'fixture' }))
+      })
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/users/me')) {
+          if (cloudState === 'offline') throw new TypeError('Failed to fetch')
+          if (cloudState === 'unauthorized') return new Response('{}', { status: 401 })
+          return identity
+        }
+        return Response.json({ ok: true, result: {} })
+      })
+      seedDesktopE2ELocalModels(
+        window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__,
+        'http://127.0.0.1:43111'
+      )
+      vi.spyOn(localExecutor, 'subscribeLocalExecutorEvents').mockResolvedValue(() => {})
+      const runtimeStatus = {
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        runtimeInstanceId: 'reloaded-runtime',
+      }
+      vi.spyOn(localExecutor, 'ensureLocalExecutorStarted').mockResolvedValue(runtimeStatus)
+      vi.spyOn(localExecutor, 'getLocalExecutorStatus').mockResolvedValue(runtimeStatus)
+      vi.spyOn(localExecutor, 'requestLocalExecutor').mockImplementation(
+        async method =>
+          (method === 'runtime.codex.app_server.restart'
+            ? { restarted: true }
+            : { data: [], models: [] }) as never
+      )
+      let finishStartup!: () => void
+      const startup = new Promise<void>(resolve => {
+        finishStartup = resolve
+      })
+      const bridge = installWeworkAutomationBridge(startup)
+      let bridgeFinished = false
+      const bridgeResult = bridge.then(
+        () => {
+          bridgeFinished = true
+          return null
+        },
+        error => {
+          bridgeFinished = true
+          return error
+        }
+      )
+      let readiness: Promise<unknown> | undefined
+      try {
+        await vi.waitFor(() => expect(window.__WEWORK_E2E__).toBeDefined())
+        vi.useFakeTimers()
+        let preparationFinished = false
+        readiness = ensureLocalModelCatalogReady().then(
+          () => {
+            preparationFinished = true
+            return null
+          },
+          error => error
+        )
+        await vi.advanceTimersByTimeAsync(0)
+        expect(preparationFinished).toBe(false)
+        finishStartup()
+        await vi.waitFor(() => expect(preparationFinished).toBe(true))
+        expect(await readiness).toBeNull()
+        if (cloudState === 'pending') {
+          expect(bridgeFinished).toBe(false)
+        } else {
+          expect((await bridgeResult).message).toContain(
+            cloudState === 'offline' ? 'Failed to fetch' : 'E2E cloud identity returned 401'
+          )
+        }
+
+        expect(listLegacyLocalModelConfigs()).toEqual([])
+        const catalog = listLocalModelConfigs().filter(model => model.catalogEntry)
+        expect(catalog).toHaveLength(4)
+        expect(catalog.every(model => model.catalogReady)).toBe(true)
+      } finally {
+        finishStartup()
+        finishIdentity()
+        await Promise.all([bridgeResult, readiness])
+        vi.useRealTimers()
+        vi.unstubAllEnvs()
+        delete window.__WEWORK_E2E__
+      }
+    }
+  )
+
   test('does not advertise fixture readiness when native ownership cannot be established', async () => {
     vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue({
       providers: [],
@@ -1160,7 +1412,16 @@ describe('Electron desktop E2E automation', () => {
       modelServerUrl: 'http://127.0.0.1:43111',
       seedLocalModels: true,
     }
-    await expect(seedDesktopE2ERuntime()).rejects.toThrow('Native model owner unavailable')
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    try {
+      await expect(installWeworkAutomationBridge()).rejects.toThrow(
+        'Native model owner unavailable'
+      )
+      await expect(ensureLocalModelCatalogReady()).rejects.toThrow('Native model owner unavailable')
+    } finally {
+      vi.unstubAllEnvs()
+      delete window.__WEWORK_E2E__
+    }
   })
 
   test('propagates cloud identity failures after seeding local models', async () => {
@@ -1202,6 +1463,21 @@ describe('Electron desktop E2E automation', () => {
     await expect(seedDesktopE2ERuntime()).rejects.toThrow('E2E cloud identity returned 401')
     expect(listLegacyLocalModelConfigs()).toEqual([])
     expect(owner).toHaveBeenCalledWith('modelConfiguration.save', expect.any(Object))
+  })
+
+  test('reseeding preserves the ready state of unchanged local model fixtures', () => {
+    const config = { seedLocalModels: true, localModelsCatalogReady: false }
+    const endpoint = 'http://127.0.0.1:43111'
+    const readFixture = () =>
+      listLegacyLocalModelConfigs().find(model => model.id === 'desktop-e2e-responses')
+
+    seedDesktopE2ELocalModels(config, endpoint)
+    const pending = readFixture()
+    expect(pending?.catalogReady).toBe(false)
+    markLocalModelCatalogReady([pending!])
+
+    seedDesktopE2ELocalModels(config, endpoint)
+    expect(readFixture()?.catalogReady).toBe(true)
   })
 
   test('skips a dependent model when Provider owns its vision proxy', () => {

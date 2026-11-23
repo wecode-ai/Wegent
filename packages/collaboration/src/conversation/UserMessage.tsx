@@ -1,7 +1,17 @@
-import { FileReferenceIcon } from '../composer/FileReferenceIcon'
-import { isStandInActivityMessage } from './standInActivity'
-import { MessageHoverActions } from './MessageHoverActions'
-import { useMemo, useState } from 'react'
+import { isIMSource } from '@wegent/chat-core/im-source'
+import {
+  parsePluginUri,
+  pluginNameInitial,
+  type PluginReference,
+} from '@wegent/chat-core/plugin-reference'
+import type { Attachment } from '@wegent/chat-core/runtime'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import type { AsyncRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
+import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from '@wegent/chat-core/runtime-user-input'
+import {
+  projectRuntimeUserText,
+  splitRuntimeUserMessage,
+} from '@wegent/chat-core/runtime-user-message'
 import {
   Braces,
   ChevronDown,
@@ -19,42 +29,33 @@ import {
   Radio,
   Target,
 } from 'lucide-react'
-import type { Attachment } from '@wegent/chat-core/runtime'
-import { useConversationTranslation } from './ConversationTranslation'
-import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
+import { useMemo, useState } from 'react'
+import {
+  classifyComposerReference,
+  composerPathReference,
+  composerSkillName,
+} from '../composer/composerMentions'
+import { parseComposerReferences } from '../composer/composerReference'
+import { FileReferenceIcon } from '../composer/FileReferenceIcon'
+import {
+  AttachmentImageView,
+  type AttachmentImageServices,
+} from '../issue-detail/AttachmentImageView'
 import {
   getAttachmentTextPreview,
   getAttachmentTypeLabel,
   isImageAttachment,
   isTextAttachment,
 } from '../issue-detail/attachmentPresentation'
-import {
-  splitRuntimeUserMessage,
-  projectRuntimeUserText,
-} from '@wegent/chat-core/runtime-user-message'
-import { UserMessageEditForm } from './UserMessageEditForm'
-import { isIMSource } from '@wegent/chat-core/im-source'
-import { ImSourceBadge } from './ImSourceBadge'
-import {
-  pluginNameInitial,
-  parsePluginUri,
-  type PluginReference,
-} from '@wegent/chat-core/plugin-reference'
 import { AssistantMarkdown } from '../markdown/AssistantMarkdown'
-import {
-  AttachmentImageView,
-  type AttachmentImageServices,
-} from '../issue-detail/AttachmentImageView'
+import { Button as ControlButton } from '../markdown/Button'
+import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
 import { CodeCommentPreview } from './CodeCommentPreview'
-import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from '@wegent/chat-core/runtime-user-input'
-import type { AsyncRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
-import {
-  classifyComposerReference,
-  composerSkillName,
-  composerPathReference,
-} from '../composer/composerMentions'
-import { parseComposerReferences } from '../composer/composerReference'
+import { useConversationTranslation } from './ConversationTranslation'
+import { ImSourceBadge } from './ImSourceBadge'
+import { MessageHoverActions } from './MessageHoverActions'
+import { isStandInActivityMessage } from './standInActivity'
+import { UserMessageEditForm } from './UserMessageEditForm'
 
 import type { ComposerEditorServices } from '../composer/ComposerEditorServices'
 import type { ComposerTransferServices } from '../composer/useComposerTransfers'
@@ -75,10 +76,12 @@ export interface UserMessageServices {
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
-const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
+const CODEX_FILE_MENTIONS_HEADER_PATTERN =
+  /^\s*# Files mentioned by the user:\s*/i
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
 const CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX = 'PLEASE IMPLEMENT THIS PLAN:'
-const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
+const LOCAL_IMAGE_EXTENSION_PATTERN =
+  /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN =
   /\/(?:var\/folders|private\/var\/folders)\/.*\/codex-clipboard-[^/]+\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const LOCAL_IMAGE_MIME_TYPES: Record<string, string> = {
@@ -113,7 +116,10 @@ export function UserMessage({
   /** Questions this message answered, for non-blocking questions answered by the next user message. */
   replyQuestions?: AsyncRequestUserInputReply[]
   onBeforeToggle?: () => void
-  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenWorkspaceFile?: (
+    path: string,
+    options?: WorkspaceFileOpenOptions,
+  ) => void
   onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
   editing?: boolean
@@ -128,41 +134,48 @@ export function UserMessage({
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
   const codexLocalFileMentions = useMemo(
     () => parseCodexLocalFileMentions(message.content),
-    [message.content]
+    [message.content],
   )
   const displayContent = getUserMessageTextContent(message.content)
   const imageAttachments = useMemo(
     () => (message.attachments ?? []).filter(isImageAttachment),
-    [message.attachments]
+    [message.attachments],
   )
   const documentAttachments = useMemo(
-    () => (message.attachments ?? []).filter(attachment => !isImageAttachment(attachment)),
-    [message.attachments]
+    () =>
+      (message.attachments ?? []).filter(
+        (attachment) => !isImageAttachment(attachment),
+      ),
+    [message.attachments],
   )
   const localImageMentions = useMemo(
-    () => (imageAttachments.length > 0 ? [] : (codexLocalFileMentions?.images ?? [])),
-    [codexLocalFileMentions?.images, imageAttachments.length]
+    () =>
+      imageAttachments.length > 0 ? [] : (codexLocalFileMentions?.images ?? []),
+    [codexLocalFileMentions?.images, imageAttachments.length],
   )
   const localFileMentions = codexLocalFileMentions?.files ?? []
   const localImageAttachments = useMemo(
     () =>
       localImageMentions.map((image, index) =>
-        createLocalImageMentionAttachment(image, index, message.createdAt)
+        createLocalImageMentionAttachment(image, index, message.createdAt),
       ),
-    [localImageMentions, message.createdAt]
+    [localImageMentions, message.createdAt],
   )
   const imagePreviewAttachments = useMemo(
-    () => (imageAttachments.length > 0 ? imageAttachments : localImageAttachments),
-    [imageAttachments, localImageAttachments]
+    () =>
+      imageAttachments.length > 0 ? imageAttachments : localImageAttachments,
+    [imageAttachments, localImageAttachments],
   )
   const hasImagePreviews = imagePreviewAttachments.length > 0
   const hasMultipleImagePreviews = imagePreviewAttachments.length > 1
   const collapseText = parseComposerReferences(displayContent).reduceRight(
     (text, link) =>
       classifyComposerReference(link.label, link.href)
-        ? text.slice(0, link.start) + link.label.replace(/^[@$]/, '') + text.slice(link.end)
+        ? text.slice(0, link.start) +
+          link.label.replace(/^[@$]/, '') +
+          text.slice(link.end)
         : text,
-    displayContent
+    displayContent,
   )
   const shouldCollapse =
     message.runtimeGuidance !== true &&
@@ -183,11 +196,14 @@ export function UserMessage({
         <span
           className="min-w-0 truncate"
           title={
-            typeof message.source.sourceName === 'string' ? message.source.sourceName : undefined
+            typeof message.source.sourceName === 'string'
+              ? message.source.sourceName
+              : undefined
           }
         >
           {t('connection_event_received')}
-          {typeof message.source.sourceName === 'string' && message.source.sourceName
+          {typeof message.source.sourceName === 'string' &&
+          message.source.sourceName
             ? ` · ${message.source.sourceName}`
             : ''}
         </span>
@@ -267,14 +283,14 @@ export function UserMessage({
                 </div>
               </div>
             )}
-            {localFileMentions.map(file => (
+            {localFileMentions.map((file) => (
               <MessageCodexFileMention
                 key={`${file.filename}:${file.path}`}
                 file={file}
                 onOpenFile={onOpenWorkspaceFile}
               />
             ))}
-            {documentAttachments.map(attachment => (
+            {documentAttachments.map((attachment) => (
               <MessageDocumentAttachment
                 openAttachment={services.openAttachment}
                 key={attachment.id}
@@ -307,15 +323,24 @@ export function UserMessage({
               data-message-selectable-text
               className={[
                 'relative overflow-hidden break-words bg-muted px-4 py-1.5',
-                shouldCollapse && !isExpanded && !forceExpanded ? 'max-h-44' : '',
+                shouldCollapse && !isExpanded && !forceExpanded
+                  ? 'max-h-44'
+                  : '',
               ].join(' ')}
             >
               {replyQuestions && replyQuestions.length > 0 ? (
-                <div data-testid="user-message-question-reply" className="flex flex-col gap-2">
+                <div
+                  data-testid="user-message-question-reply"
+                  className="flex flex-col gap-2"
+                >
                   {replyQuestions.map((row, index) => (
                     <div key={index} className="flex flex-col gap-0.5">
-                      <span className="text-xs text-text-muted">{row.question}</span>
-                      <span className="whitespace-pre-wrap text-sm">{row.answer}</span>
+                      <span className="text-xs text-text-muted">
+                        {row.question}
+                      </span>
+                      <span className="whitespace-pre-wrap text-sm">
+                        {row.answer}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -324,7 +349,7 @@ export function UserMessage({
                   displayContent,
                   services,
                   onOpenLocalSkillFile,
-                  onOpenWorkspaceFile
+                  onOpenWorkspaceFile,
                 )
               )}
               {showGoalRequestBadge && (
@@ -350,7 +375,10 @@ export function UserMessage({
                       tabIndex={0}
                       className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2"
                     >
-                      <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+                      <MessageSquare
+                        className="h-3.5 w-3.5"
+                        aria-hidden="true"
+                      />
                       <span>
                         {t('workbench.code_comment_count', {
                           count: codeCommentCount,
@@ -365,13 +393,15 @@ export function UserMessage({
               )}
             </div>
             {shouldCollapse && !forceExpanded && (
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="toggle-user-message-button"
                 aria-expanded={isExpanded}
                 onClick={() => {
                   onBeforeToggle?.()
-                  setIsExpanded(value => !value)
+                  setIsExpanded((value) => !value)
                 }}
                 className="flex h-9 w-full items-center justify-center gap-1 border-t border-border/60 text-xs font-medium text-text-secondary transition-colors hover:bg-surface"
               >
@@ -380,8 +410,10 @@ export function UserMessage({
                 ) : (
                   <ChevronDown className="h-3.5 w-3.5" />
                 )}
-                {t(isExpanded ? 'user_message.collapse' : 'user_message.expand')}
-              </button>
+                {t(
+                  isExpanded ? 'user_message.collapse' : 'user_message.expand',
+                )}
+              </ControlButton>
             )}
           </div>
         ) : null}
@@ -390,7 +422,10 @@ export function UserMessage({
             data-testid="message-source-row"
             className="flex min-h-5 items-center justify-end gap-1"
           >
-            <ImSourceBadge source={message.source} testId="message-source-badge" />
+            <ImSourceBadge
+              source={message.source}
+              testId="message-source-badge"
+            />
           </div>
         )}
       </div>
@@ -414,7 +449,8 @@ export function getUserMessageTextContent(content: string): string {
 export function getUserMessageTextProjection(content: string) {
   const request = projectRuntimeUserText(content)
   const mentions = parseCodexLocalFileMentions(content)
-  if (mentions && !mentions.requestText) return { content: '', sourceStart: 0, sourceEnd: 0 }
+  if (mentions && !mentions.requestText)
+    return { content: '', sourceStart: 0, sourceEnd: 0 }
   return {
     ...request,
     content: normalizeCodexUserMessageContent(request.content),
@@ -422,7 +458,9 @@ export function getUserMessageTextProjection(content: string) {
 }
 
 function normalizeCodexUserMessageContent(content: string): string {
-  return content.trimStart().startsWith(CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX)
+  return content
+    .trimStart()
+    .startsWith(CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX)
     ? CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL
     : content
 }
@@ -446,12 +484,18 @@ function parseCodexLocalFileMentions(content: string): {
     if (isTransientCodexClipboardImage(path)) continue
     const target = { filename, path }
     if (isLocalImageMention(filename, path)) {
-      if (!images.some(image => image.path === path || image.filename === filename)) {
+      if (
+        !images.some(
+          (image) => image.path === path || image.filename === filename,
+        )
+      ) {
         images.push(target)
       }
       continue
     }
-    if (!files.some(file => file.path === path || file.filename === filename)) {
+    if (
+      !files.some((file) => file.path === path || file.filename === filename)
+    ) {
       files.push(target)
     }
   }
@@ -462,7 +506,10 @@ function parseCodexLocalFileMentions(content: string): {
 }
 
 function isLocalImageMention(filename: string, path: string): boolean {
-  return LOCAL_IMAGE_EXTENSION_PATTERN.test(filename) || LOCAL_IMAGE_EXTENSION_PATTERN.test(path)
+  return (
+    LOCAL_IMAGE_EXTENSION_PATTERN.test(filename) ||
+    LOCAL_IMAGE_EXTENSION_PATTERN.test(path)
+  )
 }
 
 function isTransientCodexClipboardImage(path: string): boolean {
@@ -478,7 +525,7 @@ function getLocalImageExtension(filename: string, path: string): string {
 function createLocalImageMentionAttachment(
   image: { filename: string; path: string },
   index: number,
-  createdAt: string
+  createdAt: string,
 ): Attachment {
   const fileExtension = getLocalImageExtension(image.filename, image.path)
 
@@ -508,7 +555,9 @@ function MessageCodexFileMention({
     : 'message-codex-file-document-icon'
 
   return (
-    <button
+    <ControlButton
+      variant="outline"
+      size="sm"
       type="button"
       data-testid="message-codex-file-mention"
       className="inline-flex h-10 max-w-[260px] items-center gap-2 rounded-2xl border border-border bg-base px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm hover:bg-muted"
@@ -523,7 +572,7 @@ function MessageCodexFileMention({
         strokeWidth={1.8}
       />
       <span className="min-w-0 truncate">{file.filename}</span>
-    </button>
+    </ControlButton>
   )
 }
 
@@ -532,7 +581,11 @@ function shouldUseBracesFileIcon(filename: string): boolean {
 }
 
 function openableAttachmentPath(attachment: Attachment): string | null {
-  return attachment.local_path?.trim() || attachment.local_preview_url?.trim() || null
+  return (
+    attachment.local_path?.trim() ||
+    attachment.local_preview_url?.trim() ||
+    null
+  )
 }
 
 function MessageDocumentAttachment({
@@ -566,7 +619,9 @@ function MessageDocumentAttachment({
         {typeLabel}
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate font-medium text-text-primary">{attachment.filename}</span>
+        <span className="truncate font-medium text-text-primary">
+          {attachment.filename}
+        </span>
         <span className="truncate text-text-muted">{typeLabel}</span>
       </span>
     </div>
@@ -594,7 +649,10 @@ function MessageTextAttachment({
         className="h-3.5 w-3.5 shrink-0 text-text-muted"
         strokeWidth={1.8}
       />
-      <span data-testid="message-text-attachment-preview" className="min-w-0 truncate">
+      <span
+        data-testid="message-text-attachment-preview"
+        className="min-w-0 truncate"
+      >
         {preview}
       </span>
     </>
@@ -602,7 +660,8 @@ function MessageTextAttachment({
 
   if (clickable) {
     return (
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="message-text-attachment"
         className={`${className} cursor-pointer hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2`}
@@ -614,7 +673,7 @@ function MessageTextAttachment({
         }}
       >
         {content}
-      </button>
+      </ControlButton>
     )
   }
 
@@ -677,18 +736,23 @@ function displayCodexMentionName(name: string): string {
   return name
     .split(/[-_\s]+/)
     .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
 }
 
-function cloudReferenceKind(href: string): 'project' | 'todo' | 'file' | 'delivery' {
+function cloudReferenceKind(
+  href: string,
+): 'project' | 'todo' | 'file' | 'delivery' {
   if (/\/todos\/[^/]+$/.test(href)) return 'todo'
   if (/\/files\/[^/]+$/.test(href)) return 'file'
   if (/\/deliveries\/[^/]+$/.test(href)) return 'delivery'
   return 'project'
 }
 
-function normalizeRegisteredSkillPath(path: string, homeDirectory?: string): string {
+function normalizeRegisteredSkillPath(
+  path: string,
+  homeDirectory?: string,
+): string {
   const normalized = path.replace(/\\/g, '/')
   if (homeDirectory && normalized.startsWith('~/')) {
     return `${homeDirectory.replace(/\\/g, '/').replace(/\/+$/, '')}/${normalized.slice(2)}`
@@ -701,7 +765,10 @@ function renderUserContent(
   content: string,
   services: UserMessageServices,
   onOpenLocalSkillFile?: (path: string) => void,
-  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenWorkspaceFile?: (
+    path: string,
+    options?: WorkspaceFileOpenOptions,
+  ) => void,
 ) {
   return (
     <AssistantMarkdown
@@ -713,23 +780,34 @@ function renderUserContent(
         const mentionKind = classifyComposerReference(text, linkHref)
         if (!mentionKind) return undefined
         const skill = composerSkillName(text)
-        const mentionName = mentionKind === 'skill' ? skill.name : text.replace(/^[@$]/, '')
+        const mentionName =
+          mentionKind === 'skill' ? skill.name : text.replace(/^[@$]/, '')
         const href = linkHref
-        const skillFilePath = mentionKind === 'skill' ? linkHref.replace(/^skill:\/\//, '') : null
+        const skillFilePath =
+          mentionKind === 'skill' ? linkHref.replace(/^skill:\/\//, '') : null
         const pathReference = composerPathReference(reference)
         const matchingSkills = skillFilePath
           ? (services.localSkills?.filter(
-              item =>
-                normalizeRegisteredSkillPath(item.path, services.localSkillHomeDirectory) ===
-                normalizeRegisteredSkillPath(skillFilePath, services.localSkillHomeDirectory)
+              (item) =>
+                normalizeRegisteredSkillPath(
+                  item.path,
+                  services.localSkillHomeDirectory,
+                ) ===
+                normalizeRegisteredSkillPath(
+                  skillFilePath,
+                  services.localSkillHomeDirectory,
+                ),
             ) ?? [])
           : []
-        const knownSkill = matchingSkills.length === 1 ? matchingSkills[0] : undefined
+        const knownSkill =
+          matchingSkills.length === 1 ? matchingSkills[0] : undefined
         const canOpenSkill = Boolean(knownSkill && onOpenLocalSkillFile)
         const canOpenConversation =
           mentionKind === 'conversation' && Boolean(services.onOpenConversation)
-        const canOpenIssue = mentionKind === 'issue' && Boolean(services.onOpenIssue)
-        const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
+        const canOpenIssue =
+          mentionKind === 'issue' && Boolean(services.onOpenIssue)
+        const cloudKind =
+          mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
         const brandIconUrl =
           mentionKind === 'plugin' || mentionKind === 'app'
             ? (services.resolveMentionIconUrl?.(href) ?? null)
@@ -749,7 +827,7 @@ function renderUserContent(
           (pathReference && onOpenWorkspaceFile) ||
           (parsePluginUri(href) && services.onOpenPlugin) ||
           canOpenConversation ||
-          canOpenIssue
+          canOpenIssue,
         )
         return (
           <a
@@ -760,15 +838,18 @@ function renderUserContent(
             data-cloud-resource-kind={cloudKind}
             className={[
               'composer-mention-node gap-1 no-underline [&>:first-child]:self-center',
-              isIssueReference ? 'composer-mention-link' : 'rounded-xl bg-muted text-blue-600',
+              isIssueReference
+                ? 'composer-mention-link'
+                : 'rounded-xl bg-muted text-blue-600',
             ].join(' ')}
-            onClick={event => {
+            onClick={(event) => {
               event.preventDefault()
-              if (canOpenSkill && knownSkill) onOpenLocalSkillFile?.(knownSkill.path)
+              if (canOpenSkill && knownSkill)
+                onOpenLocalSkillFile?.(knownSkill.path)
               if (pathReference) {
                 onOpenWorkspaceFile?.(
                   pathReference.path,
-                  pathReference.directory ? { isDirectory: true } : undefined
+                  pathReference.directory ? { isDirectory: true } : undefined,
                 )
               }
               const pluginReference = parsePluginUri(href)
@@ -780,7 +861,10 @@ function renderUserContent(
             {isIssueReference ? (
               <Hash data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0" />
             ) : mentionKind === 'folder' ? (
-              <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              <Folder
+                data-testid={iconTestId}
+                className="h-3.5 w-3.5 shrink-0 text-blue-600"
+              />
             ) : mentionKind === 'file' ? (
               <FileReferenceIcon
                 path={pathReference?.path ?? href}
@@ -789,9 +873,15 @@ function renderUserContent(
               />
             ) : mentionKind === 'cloud' ? (
               cloudKind === 'todo' ? (
-                <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+                <ListTodo
+                  data-testid={iconTestId}
+                  className="h-3.5 w-3.5 shrink-0 text-blue-600"
+                />
               ) : cloudKind === 'file' ? (
-                <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+                <FileIcon
+                  data-testid={iconTestId}
+                  className="h-3.5 w-3.5 shrink-0 text-blue-600"
+                />
               ) : cloudKind === 'delivery' ? (
                 <PackageOpen
                   data-testid={iconTestId}
@@ -820,15 +910,22 @@ function renderUserContent(
                 data-testid={iconTestId}
                 className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
               >
-                <span className="scale-75">{pluginNameInitial(mentionName)}</span>
+                <span className="scale-75">
+                  {pluginNameInitial(mentionName)}
+                </span>
               </span>
             ) : (
-              <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              <Package
+                data-testid={iconTestId}
+                className="h-3.5 w-3.5 shrink-0 text-blue-600"
+              />
             )}
             <span className="min-w-0 truncate">
               {mentionKind === 'skill'
                 ? (skill.displayLabel ??
-                  (knownSkill ? displayCodexMentionName(knownSkill.name) : `$${skill.name}`))
+                  (knownSkill
+                    ? displayCodexMentionName(knownSkill.name)
+                    : `$${skill.name}`))
                 : mentionKind === 'file' ||
                     mentionKind === 'folder' ||
                     mentionKind === 'cloud' ||

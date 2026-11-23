@@ -8,6 +8,7 @@ import {
   selectE2EModel,
   fetchJson,
   CLOUD_PUBLIC_MODEL_NAME,
+  MODEL_REQUEST_TIMEOUT_MS,
 } from '../modules/shared.mjs'
 import {
   assistantMessage,
@@ -231,11 +232,11 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       try {
         await control.command('navigate', 'body', { value: '/settings/personal/models' })
         await control.command('waitFor', `[data-testid="provider-row-${MODEL_ID}"]`)
-        await control.command('click', `[data-testid="provider-row-${MODEL_ID}"] > summary`)
+        await control.command('click', `[data-testid="provider-row-${MODEL_ID}"] [data-testid="provider-settings-section-toggle"]`)
         await control.command('click', `[data-testid="provider-model-edit-${MODEL_ID}"]`)
         const editor = `[data-testid="provider-model-editor-${MODEL_ID}"]`
         const compatibility = `[data-testid="provider-model-compatibility-${MODEL_ID}"]`
-        await control.command('click', `${editor} details:has(${compatibility}) > summary`)
+        await control.command('click', `${editor} [data-testid="provider-model-fields-toggle"]`)
         await control.command('waitFor', compatibility)
         assert.equal(await control.command('getValue', compatibility), 'standard')
         await control.command('click', '[data-testid="local-model-advanced-capabilities-toggle"]')
@@ -289,7 +290,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
           await control.command(
             'waitFor',
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-            { text: `${DONE} ${round}` }
+            { text: `${DONE} ${round}`, timeoutMs: MODEL_REQUEST_TIMEOUT_MS }
           )
           assert.equal(await readFile(artifact, 'utf8'), TOOL_OK)
         }

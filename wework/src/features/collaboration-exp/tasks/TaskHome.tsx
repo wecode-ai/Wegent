@@ -1,10 +1,11 @@
-import type { ReactNode } from 'react'
-import { ArrowRight, Circle, Plus } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, Circle, Plus } from 'lucide-react'
+import type { ReactNode } from 'react'
 import weworkLogo from '../../../../resources/icons/icon.png'
 import { selectExperienceTaskState, type ExperienceTaskRow } from '../model'
-import { TaskRhythm } from './TaskRhythm'
 import { useTaskDescription } from './taskPresentation'
+import { TaskRhythm } from './TaskRhythm'
 import './TasksExperience.css'
 
 export function TaskHome({
@@ -35,7 +36,8 @@ export function TaskHome({
           <h1>{t('tasks.home.title')}</h1>
           <p>{t('tasks.home.description')}</p>
           {onCreate && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="experience-task-create-primary"
               data-testid="collaboration-exp-task-home-create"
@@ -43,7 +45,7 @@ export function TaskHome({
             >
               <Plus size={16} aria-hidden="true" />
               {t('tasks.create')}
-            </button>
+            </ControlButton>
           )}
         </div>
         <TaskRhythm rows={rows} onSelect={onSelect} />
@@ -60,7 +62,8 @@ export function TaskHome({
           </span>
           <h2>{next.title}</h2>
           <p>{description}</p>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="experience-task-home-next-action"
             data-testid="collaboration-exp-task-home-next-open"
@@ -68,7 +71,7 @@ export function TaskHome({
           >
             {t('tasks.home.viewProgress')}
             <ArrowRight size={14} aria-hidden="true" />
-          </button>
+          </ControlButton>
         </section>
       )}
     </main>

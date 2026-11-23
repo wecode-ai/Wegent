@@ -160,6 +160,8 @@ export interface CloudLoopItem {
   execution_last_event_seq?: number | null
   can_approve?: boolean
   assignment_history?: Array<{
+    by_agent_id?: string
+    by_agent_name?: string
     by_user_id: number
     to_type: 'user' | 'agent' | 'team' | 'group' | null
     to_id: string | null
@@ -965,7 +967,9 @@ export function createDeliveryApi(client: HttpClient) {
     },
     findCloudContextForTask(task: RuntimeTaskAddress): Promise<CloudTaskContext> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })
-      return client.get(`/v1/runtime-tasks/cloud-context?${query.toString()}`)
+      return client.get(`/v1/runtime-tasks/cloud-context?${query.toString()}`, {
+        expectedErrorStatuses: [404],
+      })
     },
     getMilestonesCacheScope() {
       return client.getCacheScope?.() ?? client

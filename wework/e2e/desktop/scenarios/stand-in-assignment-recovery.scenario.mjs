@@ -21,7 +21,6 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   resultDir,
   executorHome,
-  startupRecoveryOnly = false,
 }) {
   let cloud, user, other, otherToken, project, environment, settings
   const evidence = []
@@ -151,20 +150,6 @@ export function createDesktopScenario({
           ],
         },
       })
-      if (startupRecoveryOnly) {
-        await verifyStandInStartupRecovery({
-          request,
-          rpc,
-          project,
-          user,
-          settings,
-          until,
-          control,
-          resultDir,
-          timeoutMs: modelResponseTimeoutMs,
-        })
-        return
-      }
       await verifyOrphanStandInRecovery({
         cloud,
         request,

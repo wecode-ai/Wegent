@@ -1,0 +1,21 @@
+[package]
+name = "wegent-socket-events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Socket.IO Redis event publication and request acknowledgement lifecycle"
+
+[features]
+test-support = []
+
+[dependencies]
+anyhow = { workspace = true }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+bytes = { workspace = true }
+getrandom = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tracing = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-python-compat = { workspace = true }

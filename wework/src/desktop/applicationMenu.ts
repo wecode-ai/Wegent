@@ -25,7 +25,7 @@ export const APPLICATION_MENU_WORK_ROUTES: Record<string, string> = {
 
 /**
  * Non-workspace-tab menu actions. Workspace-tab actions live in
- * ApplicationMenuWorkspaceBridge because they need the workspace tab context.
+ * workspaceMenuService because they need the committed workspace tab commands.
  */
 export function installApplicationMenuNavigation(): () => void {
   return subscribeDesktopHostEvents(event => {

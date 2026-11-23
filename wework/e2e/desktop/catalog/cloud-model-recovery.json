@@ -9,7 +9,8 @@
     "executor/src/task_runtime/mcp/stand_in_questions.rs",
     "backend/tests/e2e/runtime_question_reply_fixture.py",
     "backend-rs/src/socketio/device_runtime_questions.rs",
-    "backend/app/services/im/runtime_questions.py"
+    "backend/app/services/im/runtime_questions.py",
+    "wework/e2e/desktop/modules/task-feedback-model-identity.mjs"
   ],
   "ci": {
     "cloud": {

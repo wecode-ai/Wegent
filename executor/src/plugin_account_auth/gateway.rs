@@ -111,7 +111,7 @@ impl<T: super::PluginAuthTransport> NativeAuthGateway<T> {
             "credential":exported.credential.into_native_json(),
         });
         let response = self
-            .transfer_call("plugin.auth.transfer.stage", payload)
+            .call_idempotent("plugin.auth.transfer.stage", payload)
             .await?;
         if response["state"] != "staged" && response["state"] != "completed" {
             return Err(AuthError("plugin_auth_invalid_response"));
@@ -147,7 +147,7 @@ impl<T: super::PluginAuthTransport> NativeAuthGateway<T> {
 
     pub async fn abort_transfer(&self, migration_id: &str) -> Result<(), AuthError> {
         let response = self
-            .transfer_call(
+            .call_idempotent(
                 "plugin.auth.transfer.abort",
                 json!({"migration_id":migration_id}),
             )
@@ -163,7 +163,7 @@ impl<T: super::PluginAuthTransport> NativeAuthGateway<T> {
         migration_id: &str,
     ) -> Result<ConnectionMetadata, AuthError> {
         let response = self
-            .transfer_call(
+            .call_idempotent(
                 "plugin.auth.transfer.finish",
                 json!({"migration_id":migration_id}),
             )
@@ -172,7 +172,14 @@ impl<T: super::PluginAuthTransport> NativeAuthGateway<T> {
             .map_err(|_| AuthError("plugin_auth_invalid_response"))
     }
 
-    async fn transfer_call(&self, event: &str, payload: Value) -> Result<Value, AuthError> {
+    pub(super) async fn call_idempotent(
+        &self,
+        event: &str,
+        payload: Value,
+    ) -> Result<Value, AuthError> {
+        if self.transport.uses_native_http() {
+            return self.call(event, payload).await;
+        }
         match self.call(event, payload.clone()).await {
             Err(AuthError("plugin_auth_backend_unavailable")) => self.call(event, payload).await,
             other => other,
@@ -192,13 +199,9 @@ impl<T: super::PluginAuthTransport> NativeAuthGateway<T> {
             payload["account_id"] = json!(result.account_id);
             payload["credential"] = json!(result.credential.into_native_json());
         }
-        let first = self.call("plugin.auth.oauth.finish", payload.clone()).await;
-        let response = match first {
-            Err(AuthError("plugin_auth_backend_unavailable")) => {
-                self.call("plugin.auth.oauth.finish", payload).await?
-            }
-            other => other?,
-        };
+        let response = self
+            .call_idempotent("plugin.auth.oauth.finish", payload)
+            .await?;
         let expected = if succeeded {
             "finished"
         } else if attempted {
@@ -298,6 +301,8 @@ impl<T: super::PluginAuthTransport> NativeAuthGateway<T> {
                 Some("plugin_auth_invalid_request") => "plugin_auth_invalid_request",
                 Some("plugin_auth_invalid_operation") => "plugin_auth_invalid_operation",
                 Some("plugin_auth_exchange_failed") => "plugin_auth_exchange_failed",
+                Some("plugin_auth_busy_retry_later") => "plugin_auth_busy_retry_later",
+                Some("plugin_auth_background_deferred") => "plugin_auth_background_deferred",
                 Some("plugin_auth_device_not_found") => "plugin_auth_device_not_found",
                 Some("plugin_auth_device_upgrade_required") => {
                     "plugin_auth_device_upgrade_required"

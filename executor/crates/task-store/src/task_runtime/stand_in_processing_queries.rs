@@ -51,6 +51,50 @@ pub(super) fn claimed_event_ids(
 }
 
 impl LocalTaskStore {
+    pub fn stand_in_has_due_work(&self, user: i64) -> Result<bool, TaskRuntimeError> {
+        // Collect claims once per poll. A correlated lookup revisits failed
+        // action history for every pending intake item.
+        Ok(self.connection()?.query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM loop_items INDEXED BY ix_stand_in_live_work
+                 WHERE resource_type IN ('stand_in_action','stand_in_event')
+                   AND CASE WHEN json_valid(metadata)
+                            THEN json_extract(metadata,'$.status') IN ('pending','sending','failed')
+                            ELSE 0 END
+                   AND resource_type='stand_in_action'
+                   AND json_extract(metadata,'$.status') IN ('pending','sending')
+                   AND json_extract(metadata,'$.userId')=?1
+                   AND json_extract(metadata,'$.kind') IS NOT 'run_arrangement'
+             ) OR EXISTS (
+                SELECT 1 FROM loop_items AS intake INDEXED BY ix_stand_in_live_work
+                 WHERE intake.resource_type IN ('stand_in_action','stand_in_event')
+                   AND CASE WHEN json_valid(intake.metadata)
+                            THEN json_extract(intake.metadata,'$.status') IN ('pending','sending','failed')
+                            ELSE 0 END
+                   AND intake.resource_type='stand_in_event'
+                   AND json_extract(intake.metadata,'$.status')='pending'
+                   AND json_extract(intake.metadata,'$.userId')=?1
+                   AND (json_extract(intake.metadata,'$.notBefore') IS NULL
+                        OR julianday(json_extract(intake.metadata,'$.notBefore')) <= julianday('now'))
+                   AND (intake.id IS NULL OR intake.id NOT IN (
+                       SELECT event.value FROM loop_items AS action INDEXED BY ix_stand_in_live_work,
+                            json_each(action.metadata,'$.arguments.eventIds') AS event
+                        WHERE action.resource_type IN ('stand_in_action','stand_in_event')
+                          AND CASE WHEN json_valid(action.metadata)
+                                   THEN json_extract(action.metadata,'$.status') IN ('pending','sending','failed')
+                                   ELSE 0 END
+                          AND action.resource_type='stand_in_action'
+                          AND json_extract(action.metadata,'$.status') IN ('pending','sending','failed')
+                          AND json_extract(action.metadata,'$.userId')=?1
+                          AND json_extract(action.metadata,'$.kind') != 'run_arrangement'
+                          AND event.type='text'
+                   ))
+             )",
+            [user],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Drain one batch of an explicit retry request, preserving original intent IDs.
     pub fn retry_failed_stand_in_routing(&self, user: i64) -> Result<usize, TaskRuntimeError> {
         let mut guard = self.connection()?;
@@ -79,6 +123,7 @@ impl LocalTaskStore {
                  AND event.type='text'
              ), latest AS (
                SELECT action.id,action.updated_at,json_extract(action.metadata,'$.retryRequestId') AS retried_request,
+                 coalesce(json_extract(action.metadata,'$.dispatchFailureCount'),1) AS failure_count,
                  row_number() OVER (
                  PARTITION BY event.value ORDER BY action.created_at DESC,action.id DESC
                ) AS position
@@ -99,11 +144,12 @@ impl LocalTaskStore {
                      OR member.value IN (SELECT value FROM held)
                  )
              )
-             UPDATE loop_items SET metadata=json_set(metadata,'$.status','pending','$.resolution','explicit_retry','$.retryRequestId',?3),updated_at=?2
+             UPDATE loop_items SET metadata=json_set(metadata,'$.status','pending','$.resolution','explicit_retry','$.retryRequestId',?3,
+               '$.dispatchFailureCount',coalesce(json_extract(metadata,'$.dispatchFailureCount'),1)),updated_at=?2
              WHERE id IN (SELECT DISTINCT id FROM latest WHERE position=1
-               AND retried_request IS NOT ?3 AND julianday(updated_at)<=julianday(?4)
+               AND failure_count<?5 AND retried_request IS NOT ?3 AND julianday(updated_at)<=julianday(?4)
                ORDER BY id LIMIT 100) RETURNING metadata",
-            params![user, now(), request_id, before],
+            params![user, now(), request_id, before, Self::STAND_IN_DISPATCH_FAILURE_LIMIT],
         )?;
         for action in &actions {
             super::stand_in_history_index::record(&connection, ACTION, action)?;
@@ -173,21 +219,24 @@ impl LocalTaskStore {
     ) -> Result<Vec<Value>, TaskRuntimeError> {
         query_values(
             &*self.connection()?,
-            "SELECT metadata FROM loop_items WHERE resource_type=?1
-             AND json_extract(metadata,'$.userId')=?2 ORDER BY created_at DESC,id DESC LIMIT ?3",
-            params![ACTION, user, limit as i64],
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_action'
+             AND json_valid(metadata) AND json_extract(metadata,'$.userId')=?1
+             ORDER BY created_at DESC,id DESC LIMIT ?2",
+            params![user, limit as i64],
         )
     }
 
     pub fn recent_stand_in_suggestions(&self, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
         query_values(
             &*self.connection()?,
-            "SELECT metadata FROM loop_items WHERE resource_type=?1
-             AND json_extract(metadata,'$.userId')=?2
-             AND json_extract(metadata,'$.kind')='suggest_action'
-             AND json_extract(metadata,'$.status') IS NOT 'cancelled'
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_action'
+             AND CASE WHEN json_valid(metadata)
+                      THEN json_extract(metadata,'$.kind')='suggest_action'
+                       AND json_extract(metadata,'$.status') IS NOT 'cancelled'
+                      ELSE 0 END
+             AND json_extract(metadata,'$.userId')=?1
              ORDER BY created_at DESC,id DESC LIMIT 20",
-            params![ACTION, user],
+            [user],
         )
     }
 
@@ -292,6 +341,18 @@ mod tests {
         assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 0, "The same owner request must not repeat a failure or fall through to an older duplicate");
         store.save_stand_in_processing_state(7, &json!({"routingRetry":{"id":"retry-2","before":(Utc::now()+chrono::Duration::seconds(1)).to_rfc3339()}})).unwrap();
         assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 1);
+        let mut exhausted = store
+            .pending_stand_in_actions(7)
+            .unwrap()
+            .into_iter()
+            .find(|action| action["id"] == "failure-0")
+            .unwrap();
+        assert_eq!(exhausted["dispatchFailureCount"], 1);
+        exhausted["status"] = json!("failed");
+        exhausted["dispatchFailureCount"] = json!(LocalTaskStore::STAND_IN_DISPATCH_FAILURE_LIMIT);
+        store.save_stand_in_action(7, &exhausted).unwrap();
+        store.save_stand_in_processing_state(7, &json!({"routingRetry":{"id":"retry-3","before":(Utc::now()+chrono::Duration::seconds(1)).to_rfc3339()}})).unwrap();
+        assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 0);
     }
 
     #[test]
@@ -358,7 +419,7 @@ mod tests {
             ("foreign", "failed", 8, "continue_work"),
         ] {
             write(&store.connection().unwrap(), ACTION,
-                &json!({"id":id,"userId":user,"kind":kind,"status":status,"arguments":{"eventIds":[id]}})).unwrap();
+                &json!({"id":format!("action-{id}"),"userId":user,"kind":kind,"status":status,"arguments":{"eventIds":[id]}})).unwrap();
         }
         assert_eq!(
             store.claimed_stand_in_event_ids(7).unwrap(),
@@ -367,9 +428,34 @@ mod tests {
                 .into_iter()
                 .collect()
         );
+        {
+            let connection = store.connection().unwrap();
+            for id in ["failure", "foreign"] {
+                write(
+                    &connection,
+                    EVENT,
+                    &json!({"id":id,"userId":7,"status":"pending"}),
+                )
+                .unwrap();
+            }
+            connection
+                .execute(
+                    "UPDATE loop_items SET metadata=json_set(metadata,'$.status','cancelled')
+                 WHERE id IN ('action-pending','action-sending')",
+                    [],
+                )
+                .unwrap();
+        }
+        assert!(store.stand_in_has_due_work(7).unwrap());
         store.connection().unwrap().execute(
-            "UPDATE loop_items SET metadata=json_set(metadata,'$.status','cancelled') WHERE id='failure'", []
+            "UPDATE loop_items SET metadata=json_set(metadata,'$.status','handled') WHERE id='foreign'",
+            [],
         ).unwrap();
+        assert!(!store.stand_in_has_due_work(7).unwrap());
+        store.connection().unwrap().execute(
+            "UPDATE loop_items SET metadata=json_set(metadata,'$.status','cancelled') WHERE id='action-failure'", []
+        ).unwrap();
+        assert!(store.stand_in_has_due_work(7).unwrap());
         assert!(!store
             .claimed_stand_in_event_ids(7)
             .unwrap()

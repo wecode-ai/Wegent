@@ -1,32 +1,31 @@
-import { useStandInPanelNavigation } from './useStandInPanelNavigation'
-import { useCallback, useImperativeHandle, useRef, useState, type Ref, type ReactNode } from 'react'
-import { dequal } from 'dequal'
-import {
-  connectionChangeEnablesIdentity,
-  newStandInRole,
-  type PersonalStandInSettings,
-} from '@/api/personalStandIn'
+import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import { connectionChangeEnablesIdentity, newStandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { DeviceInfo } from '@/types/api'
 import type { CollaborationProject } from '@wegent/collaboration'
+import { createTagDraft } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { dequal } from 'dequal'
+import type { ReactNode, Ref } from 'react'
+import { useCallback, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
+import { StandInComposer } from './StandInComposer'
+import type { StandInConnectionNavigationHandle } from './StandInConnectionSettings'
+import { StandInConnectionSettings } from './StandInConnectionSettings'
+import { StandInDeviceSelect } from './StandInDeviceSelect'
+import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import {
-  StandInConnectionSettings,
-  type StandInConnectionNavigationHandle,
-} from './StandInConnectionSettings'
-import {
-  StandInSettingsHeader,
   StandInSettingsActions,
   StandInSettingsEntry,
   StandInSettingsError,
+  StandInSettingsHeader,
 } from './StandInSettingsLayout'
-import { StandInComposer } from './StandInComposer'
-import { StandInDeviceSelect } from './StandInDeviceSelect'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
-import { useStandInRuntimeWork } from './useStandInRuntimeWork'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
+import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 
 /** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
@@ -78,14 +77,17 @@ export function StandInPrimaryProfile({
     ...defaultRole.collaboration,
     policy: { automatic: true, askBeforeAct: true, immediate: false },
   }
-  // Consolidate the old two-field profile without dropping either saved value.
+  // Legacy profiles retain their single editor. Learning-enabled profiles keep sources and private preferences separate.
+  const separatePrompt = saved.selfLearningEnabled !== undefined
   const original = {
     ...saved,
     collaboration: saved.collaboration ?? defaultCollaboration,
     calendar: saved.calendar,
     connections: saved.connections ?? [],
-    prompt: '',
-    preferences: [saved.prompt, saved.preferences].filter(Boolean).join('\n\n'),
+    prompt: separatePrompt ? saved.prompt : '',
+    preferences: separatePrompt
+      ? saved.preferences
+      : [saved.prompt, saved.preferences].filter(Boolean).join('\n\n'),
   }
   const [draft, setDraft] = useState(original)
   const [baseline, setBaseline] = useState(original)
@@ -111,8 +113,37 @@ export function StandInPrimaryProfile({
     settings.executionDeviceId
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
-  const [connectionDraftDirty, setConnectionDraftDirty] = useState(false)
+  const [tagOwner, setTagOwner] = useState(() => ({
+    api,
+    userId: settings.userId,
+    deviceId: settings.executionDeviceId,
+    store: createTagDraft(),
+  }))
+  if (
+    tagOwner.api !== api ||
+    tagOwner.userId !== settings.userId ||
+    tagOwner.deviceId !== settings.executionDeviceId
+  ) {
+    setDraft(original)
+    setBaseline(original)
+    setTagOwner({
+      api,
+      userId: settings.userId,
+      deviceId: settings.executionDeviceId,
+      store: createTagDraft(),
+    })
+  }
+  const tagDraft = tagOwner.store
+  const connectionDraftDirty = useSyncExternalStore(
+    tagDraft.subscribe,
+    tagDraft.getDirtySnapshot,
+    tagDraft.getDirtySnapshot
+  )
   const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
+  const preserveLegacyInstructions =
+    !separatePrompt &&
+    draft.selfLearningEnabled === true &&
+    draft.preferences === original.preferences
 
   const role = {
     ...defaultRole,
@@ -130,13 +161,19 @@ export function StandInPrimaryProfile({
     else navigation.requestLeave(action)
   }
   const close = () => requestLeave(onClose)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
+  const dialogRef = useRef<HTMLDivElement>(null)
   useImperativeHandle(ref, () => ({ requestClose: close, requestLeave }))
   return (
-    <div
-      ref={dialogRef}
-      className={`flex h-full min-h-0 flex-col px-5 ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
-      data-testid="stand-in-primary-profile"
+    <DialogSurface
+      onClose={close}
+      suspended={discard}
+      render={
+        <div
+          ref={dialogRef}
+          className={`flex h-full min-h-0 flex-col px-5 ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
+          data-testid="stand-in-primary-profile"
+        />
+      }
     >
       <StandInSettingsHeader
         path={[
@@ -192,10 +229,28 @@ export function StandInPrimaryProfile({
       />
       {!connections && (
         <>
+          {separatePrompt && (
+            <label className="mb-4 grid gap-2">
+              <span>{t('standIn.workspace.ghost_prompt')}</span>
+              <ControlTextarea
+                data-testid="stand-in-primary-ghost-prompt"
+                value={draft.prompt}
+                disabled={blocked}
+                onChange={event => setDraft({ ...draft, prompt: event.target.value })}
+                rows={4}
+              />
+            </label>
+          )}
           <label className="grid gap-2">
-            <span>{t('standIn.workspace.profile_instructions')}</span>
+            <span>
+              {t(
+                separatePrompt
+                  ? 'standIn.workspace.ghost_private_preferences'
+                  : 'standIn.workspace.profile_instructions'
+              )}
+            </span>
             <div className="rounded-lg border border-solid border-border bg-background focus-within:border-text-tertiary focus-within:ring-1 focus-within:ring-focus/20">
-              <textarea
+              <ControlTextarea
                 data-testid="stand-in-preferences"
                 value={draft.preferences}
                 disabled={blocked}
@@ -206,9 +261,21 @@ export function StandInPrimaryProfile({
               />
             </div>
             <span className="text-xs text-text-secondary">
-              {t('standIn.workspace.profile_instructions_help')}
+              {t(
+                separatePrompt
+                  ? 'standIn.workspace.ghost_private_preferences_help'
+                  : 'standIn.workspace.profile_instructions_help'
+              )}
             </span>
           </label>
+          <StandInSelfLearningSetting
+            enabled={draft.selfLearningEnabled}
+            savedEnabled={saved.selfLearningEnabled}
+            disabled={blocked}
+            onChange={selfLearningEnabled =>
+              setDraft(current => ({ ...current, selfLearningEnabled }))
+            }
+          />
           <div className="mt-6">
             <StandInSettingsEntry
               label={t('standIn.workspace.connections')}
@@ -241,7 +308,7 @@ export function StandInPrimaryProfile({
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
             onScheduleDirtyChange={setScheduleDirty}
-            onDraftDirtyChange={setConnectionDraftDirty}
+            tagDraft={tagDraft}
             projects={projects}
             api={api}
             deviceId={settings.executionDeviceId}
@@ -343,6 +410,9 @@ export function StandInPrimaryProfile({
               ...settings,
               primary: {
                 ...draft,
+                ...(preserveLegacyInstructions
+                  ? { prompt: saved.prompt, preferences: saved.preferences }
+                  : {}),
                 collaboration:
                   saved.collaboration || !dequal(draft.collaboration, original.collaboration)
                     ? draft.collaboration
@@ -369,6 +439,6 @@ export function StandInPrimaryProfile({
           )}
         </StandInSettingsActions>
       )}
-    </div>
+    </DialogSurface>
   )
 }

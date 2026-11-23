@@ -190,10 +190,7 @@ describe('native function selection', () => {
     })
   })
 })
-import {
-  longCodeStreamingEvents,
-  textDeltaEvents,
-} from '../e2e/desktop/modules/streaming-text-fixture.mjs'
+import { textDeltaEvents } from '../e2e/desktop/modules/streaming-text-fixture.mjs'
 
 function searchResult(...tools) {
   return {
@@ -215,24 +212,6 @@ function functionTool(name) {
 }
 
 describe('responses stream fixtures', () => {
-  test('keeps long-code reasoning and final text in the same order through completion', () => {
-    const stream = longCodeStreamingEvents('long-code')
-    const started = stream.start.filter(event => event.type === 'response.output_item.added')
-    expect(started.map(event => event.output_index)).toEqual([0, 1])
-    expect(started.map(event => event.item.type)).toEqual(['reasoning', 'message'])
-    expect(textDeltaEvents(stream.itemId, 'code', 0, stream.outputIndex)[0]).toMatchObject({
-      item_id: started[1].item.id,
-      output_index: 1,
-    })
-    const completed = stream.finish.at(-1).response.output
-    expect(completed.map(item => item.id)).toEqual(started.map(event => event.item.id))
-    expect(completed.map(item => item.status)).toEqual(['completed', 'completed'])
-    expect(completed[1].phase).toBe('final_answer')
-    expect(
-      stream.finish.filter(event => 'output_index' in event).map(event => event.output_index)
-    ).toEqual([1, 1])
-  })
-
   test('completes tool items in the final response for Codex turn history', () => {
     const events = [
       responseCreated('response-1'),
@@ -432,6 +411,52 @@ describe('selectMcpTool', () => {
 })
 
 describe('selectMcpToolRequest', () => {
+  test('discovers a newly announced native namespace without replaying a failed call ID', () => {
+    const step = {
+      toolName: 'read_task',
+      directToolName: 'mcp__wework_stand_in__read_task',
+      argumentsValue: { taskId: 'child-task' },
+      searchCallId: 'search-child',
+      toolCallId: 'read-child',
+    }
+    const failure = {
+      type: 'custom_tool_call_output',
+      call_id: step.searchCallId,
+      output: 'Native discovery requires one exact capability',
+    }
+    const announcement = {
+      type: 'message',
+      role: 'developer',
+      content: [
+        {
+          type: 'input_text',
+          text: '<tools>\nAdded deferred tool namespaces:\n- wework_stand_in\n</tools>',
+        },
+      ],
+    }
+    const request = { tools: [{ type: 'custom', name: 'exec' }], input: [failure, announcement] }
+    const response = mcpToolRequestEvents(request, step)
+    const call = response.events.find(event => event.type === 'response.output_item.done').item
+    expect(response.mode).toBe('search')
+    expect(call.call_id).not.toBe(step.searchCallId)
+    expect(call.input).toContain('wework_stand_in__read_task')
+    expect(() =>
+      mcpToolRequestEvents(
+        { ...request, input: [failure, announcement, { ...failure, call_id: call.call_id }] },
+        step
+      )
+    ).toThrow('Native discovery did not expose')
+    expect(() =>
+      mcpToolRequestEvents({ ...request, input: [announcement, failure] }, step)
+    ).toThrow('Native discovery did not expose')
+    expect(() =>
+      mcpToolRequestEvents(
+        { ...request, input: [failure, { ...announcement, role: 'user' }] },
+        step
+      )
+    ).toThrow('Native discovery did not expose')
+  })
+
   test('reports the exact failed discovery instead of repeating it until the UI times out', () => {
     const request = {
       tools: [{ type: 'custom', name: 'exec' }],

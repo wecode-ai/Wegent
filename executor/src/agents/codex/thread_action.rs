@@ -4,6 +4,12 @@
 
 use super::*;
 
+#[derive(Clone)]
+pub(crate) struct ModelActionRegistration {
+    _model_route: Option<Arc<LocalProxyRegistration>>,
+    _control_context: Option<Arc<crate::task_runtime::mcp_http::ControlMcpExecution>>,
+}
+
 struct ThreadActionActivity {
     client: CodexAppServerClient,
     thread_id: Option<String>,
@@ -38,7 +44,8 @@ impl CodexAppServerClient {
         request: &ExecutionRequest,
         thread_id: &str,
         thread_path: Option<&str>,
-    ) -> Result<(String, Option<Arc<LocalProxyRegistration>>), String> {
+        retain_registration: impl FnOnce(Option<ModelActionRegistration>) + Send,
+    ) -> Result<String, String> {
         ensure_codex_mcp_endpoints().await?;
         let launch = build_codex_launch_config(request)?;
         let mut params = thread_resume_params(thread_id, request, &launch);
@@ -54,6 +61,13 @@ impl CodexAppServerClient {
             .await?;
         // A cold resume can recover a Goal before the resume response arrives.
         bind_local_proxy_thread(&launch, thread_id)?;
+        retain_registration(
+            (launch.local_proxy_registration.is_some() || launch.control_mcp_execution.is_some())
+                .then(|| ModelActionRegistration {
+                    _model_route: launch.local_proxy_registration.clone(),
+                    _control_context: launch.control_mcp_execution.clone(),
+                }),
+        );
         let response = self
             .request_for_launch_config("thread/resume", params, &launch)
             .await?;
@@ -72,7 +86,7 @@ impl CodexAppServerClient {
                 ("model", codex_request_model(request).unwrap_or_default()),
             ],
         );
-        Ok((resumed, launch.local_proxy_registration))
+        Ok(resumed)
     }
 
     async fn reload_model_action_context(

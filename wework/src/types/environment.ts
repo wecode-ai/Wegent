@@ -52,6 +52,7 @@ export interface EnvironmentInfo {
   deviceId?: string
   workspacePath?: string
   workspaceRoots?: string[]
+  remoteUrl?: string
   branchName?: string
   createPullRequestUrl?: string
   changeRequest?: ChangeRequestLookup

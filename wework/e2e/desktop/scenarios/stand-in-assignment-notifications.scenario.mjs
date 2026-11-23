@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { verifyArchivedStandInNotification } from '../modules/stand-in-archived-notification.mjs'
+import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -14,8 +15,6 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
-// Cover one complete five-second scheduler interval, including timer jitter.
-const OBSERVATION_MS = 5_500
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let cloud
@@ -129,8 +128,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const notice = inbox.items.find(row => row.payload.itemId === unmatched.id)
       assert.ok(notice, 'The real assignment notification must be stored')
       await control.command('waitFor', `[data-testid="wework-notification-${notice.id}"]`)
-      // Observe beyond one old five-second polling period on an unhandled assignment.
-      await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
+      // Observe a complete configured scheduler cycle, including timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(await countAssignments(unmatched), 0, 'Unmatched work must not poll assignments')
       assert.deepEqual(await request(`/v1/loop-items/${unmatched.id}/tasks`), [])
       assert.equal(modelRequests, 0)
@@ -170,7 +169,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       )
       assert.equal(await countAssignments(matching), 1, 'Dispatch must validate assignments once')
       for (let index = 0; index < 3; index += 1) await refreshInbox(control)
-      await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
+      await waitForStandInSchedulerCycle()
       assert.equal(await countAssignments(matching), 1, 'Inbox refresh repeated assignment queries')
       assert.equal(await countAssignments(unmatched), 0)
       assert.equal(modelRequests, 1, 'Inbox refresh duplicated stand-in execution')
@@ -182,7 +181,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await refreshInbox(control)
-      await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
+      await waitForStandInSchedulerCycle()
       assert.equal(await countAssignments(matching), 1, 'Reload must reuse the existing task')
       assert.equal(await countAssignments(unmatched), 0)
       assert.equal(modelRequests, 1)
@@ -296,7 +295,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         'One selected role must execute once without AI role selection'
       )
       await refreshInbox(control)
-      await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
+      await waitForStandInSchedulerCycle()
       assert.equal(await countAssignments(fanout), 1)
       assert.equal(modelRequests, 2, 'Inbox refresh must not replay the selected role')
       assert.deepEqual(await request(`/v1/loop-items/${fanout.id}/tasks`), completedBindings)

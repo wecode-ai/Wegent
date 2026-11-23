@@ -333,6 +333,7 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   const properties = scoped('[data-testid="cloud-todo-more-properties-popover"]')
   const input = `${metadata} [data-testid="cloud-todo-detail-tag-input"]`
   const chip = `${metadata} [data-testid="cloud-todo-detail-tag-tag-${tag}"]`
+  const title = scoped('[data-testid="cloud-todo-detail-title"]')
   const assertCollapsed = async () => {
     await control.command('waitFor', properties, { visible: false, timeoutMs: uiTimeoutMs })
     await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
@@ -357,7 +358,10 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   )
   await control.command('fill', input, { value: tag })
   assert.equal(await control.command('getValue', input), tag)
-  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await control.command('waitFor', `${input}:focus`)
+  await control.command('focus', title)
+  await control.command('waitFor', `${title}:focus`)
+  await control.command('pointerClick', title)
   await assertCollapsed()
   await control.command('click', trigger)
   await control.command('waitFor', properties, { visible: true, timeoutMs: uiTimeoutMs })
@@ -394,10 +398,12 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
 }
 
 async function changeIssueStatus(control, request, issueId, status, uiTimeoutMs) {
-  const statusSelect = scoped('select[data-testid="cloud-todo-detail-status"]:not(:disabled)')
+  const statusSelect = scoped('[data-testid="cloud-todo-detail-status"]')
   await control.command('waitFor', statusSelect, { timeoutMs: uiTimeoutMs })
-  await control.command('select', statusSelect, {
+  await control.command('scrollIntoView', statusSelect)
+  await control.command('chooseWhenEnabled', statusSelect, {
     value: status,
+    timeoutMs: uiTimeoutMs,
   })
   return waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),
@@ -458,6 +464,11 @@ async function verifyManualCommentFlow(control, request, projectId, owner, uiTim
   assert.equal(reassigned.status, 'completed')
   await changeIssueStatus(control, request, manualIssue.id, 'in_progress', uiTimeoutMs)
   await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+  // The visible card is still covered while the modal Issue drawer closes.
+  await control.command('waitFor', '[data-testid="collaboration-issue-detail"]', {
+    visible: false,
+    timeoutMs: uiTimeoutMs,
+  })
   const card = scoped(`[data-testid="cloud-todo-card-${manualIssue.id}"]`)
   await control.command('waitFor', card, { visible: true })
   await control.command('drag', card, {

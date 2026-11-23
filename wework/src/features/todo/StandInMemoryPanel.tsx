@@ -1,47 +1,85 @@
-import { useStandInPanelNavigation } from './useStandInPanelNavigation'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
-import { Plus } from 'lucide-react'
-import { StandInSettingsHeader } from './StandInSettingsLayout'
-import { dequal } from 'dequal'
-import type { CollaborationProject } from '@wegent/collaboration'
-import type { StandInExecutorApi, StandInMemory, StandInMemoryScope } from '@/api/standIn'
 import { standInRoleName, type PersonalStandInSettings } from '@/api/personalStandIn'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import type { StandInExecutorApi, StandInMemory, StandInMemoryScope } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { SegmentedControl } from '@wegent/collaboration/controls/SegmentedControl'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { dequal } from 'dequal'
+import { Plus } from 'lucide-react'
+import {
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from 'react'
 import { StandInMemoryEvidence } from './StandInMemoryEvidence'
 import { StandInMemoryRules } from './StandInMemoryRules'
+import { StandInRecentReview } from './StandInRecentReview'
+import { StandInReworkReview } from './StandInReworkReview'
+import { StandInSettingsHeader } from './StandInSettingsLayout'
+import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 
-export function StandInMemoryPanel({
-  api,
-  settings,
-  projects,
-  fixedScope,
-  scopeLabel,
-  onClose,
-  onBack,
-  parentLabel,
-  ref,
-}: {
+interface StandInMemoryPanelProps {
   api: StandInExecutorApi
   settings: PersonalStandInSettings
   projects: CollaborationProject[]
   fixedScope?: StandInMemoryScope
+  reviewRoleId?: string
   scopeLabel?: string
   onClose(): void
   onBack?: () => void
   parentLabel?: string
   ref?: Ref<StandInSettingsHandle>
-}) {
+}
+
+export function StandInMemoryPanel(props: StandInMemoryPanelProps) {
+  const { api, settings, fixedScope } = props
+  const scope = JSON.stringify([
+    settings.userId,
+    settings.executionDeviceId,
+    fixedScope,
+    props.reviewRoleId,
+  ])
+  const [owner, setOwner] = useState({ api, scope, revision: 0 })
+  if (owner.api !== api || owner.scope !== scope) {
+    setOwner({ api, scope, revision: owner.revision + 1 })
+  }
+  return <StandInMemoryPanelContent key={owner.revision} {...props} />
+}
+
+function StandInMemoryPanelContent({
+  api,
+  settings,
+  projects,
+  fixedScope,
+  reviewRoleId,
+  scopeLabel,
+  onClose,
+  onBack,
+  parentLabel,
+  ref,
+}: StandInMemoryPanelProps) {
   const { t } = useTranslation('common')
-  const [items, setItems] = useState<StandInMemory[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [retry, setRetry] = useState(0)
   const [editing, setEditing] = useState<Partial<StandInMemory> | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [view, setView] = useState<'all' | 'today' | 'week'>('all')
   const [discard, setDiscard] = useState<'close' | 'cancel' | null>(null)
   const scopeKey = fixedScope ? JSON.stringify(fixedScope) : undefined
   const scopes: { scope: StandInMemoryScope; label: string }[] = fixedScope
@@ -89,29 +127,38 @@ export function StandInMemoryPanel({
   const selectedScope = scopes.find(row => dequal(row.scope, editing?.scope))
   const label = (scope: StandInMemoryScope) =>
     scopes.find(row => dequal(row.scope, scope))?.label ?? t('standIn.memory.disconnected')
-  useEffect(() => {
-    let active = true
-    api
-      .memories(settings.userId, settings.executionDeviceId)
-      .then(rows => {
-        if (active) {
-          setItems(
-            rows.filter(row =>
-              scopeKey
-                ? dequal(row.scope, JSON.parse(scopeKey))
-                : row.scope.kind !== 'project_coordinator'
-            )
+  const { userId, executionDeviceId } = settings
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify(['stand-in-memory', userId, executionDeviceId, scopeKey, settings.version]),
+        async () => {
+          const rows = await api.memories(userId, executionDeviceId)
+          return rows.filter(row =>
+            scopeKey
+              ? dequal(row.scope, JSON.parse(scopeKey))
+              : row.scope.kind !== 'project_coordinator'
           )
-          setError(null)
         }
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, settings.userId, settings.executionDeviceId, retry, scopeKey])
+      ),
+    [api, userId, executionDeviceId, scopeKey, settings.version]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const items = snapshot.data ?? null
+  const reviewRole = settings.roles.find(role => role.id === reviewRoleId)
+  const reviewIdentity = reviewRoleId === '@primary' ? settings.primary : reviewRole
+  const showReviewTabs =
+    !!reviewRoleId &&
+    !!reviewIdentity &&
+    (!!reviewIdentity.selfLearningEnabled ||
+      items?.some(row => row.evidence?.trainingCase?.roleId === reviewRoleId))
+  const reviewing = showReviewTabs && view !== 'all'
+  const visibleError =
+    error ?? (snapshot.status === 'error' ? getStandInErrorMessage(snapshot.error) : null)
   const dirty =
     editing !== null &&
     !dequal(
@@ -123,7 +170,7 @@ export function StandInMemoryPanel({
     )
   const navigation = useStandInPanelNavigation(dirty, busy, () => setDiscard('close'))
   const close = () => navigation.requestLeave(onClose)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
+  const dialogRef = useRef<HTMLDivElement>(null)
   useImperativeHandle(ref, () => ({ requestClose: close, requestLeave: navigation.requestLeave }))
   const mutate = async (action: () => Promise<void>) => {
     setBusy(true)
@@ -137,10 +184,16 @@ export function StandInMemoryPanel({
     }
   }
   return (
-    <div
-      ref={dialogRef}
-      className="flex min-h-full flex-col px-5"
-      data-testid="stand-in-memory-panel"
+    <DialogSurface
+      onClose={close}
+      active={!discard}
+      render={
+        <div
+          ref={dialogRef}
+          className="flex min-h-full flex-col px-5"
+          data-testid="stand-in-memory-panel"
+        />
+      }
     >
       <StandInSettingsHeader
         title={t('standIn.memory.title')}
@@ -165,25 +218,82 @@ export function StandInMemoryPanel({
         }
       />
       <p className="mb-5 text-sm text-text-muted">{t('standIn.memory.help')}</p>
-      {error && (
+      {visibleError && (
         <div role="alert" className="mb-4 text-sm text-error">
-          <p>{error}</p>
-          <button
+          <p>{visibleError}</p>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="stand-in-memory-retry"
             disabled={busy}
-            onClick={() => setRetry(value => value + 1)}
+            onClick={() => {
+              setError(null)
+              void resource.reload()
+            }}
             className="mt-2 underline"
           >
             {t('standIn.reload')}
-          </button>
+          </ControlButton>
         </div>
       )}
-      {items === null && !error && <p role="status">{t('standIn.loading')}</p>}
-      {items !== null && (
+      {items === null && !visibleError && <p role="status">{t('standIn.loading')}</p>}
+      {showReviewTabs && (
+        <SegmentedControl
+          label={t('standIn.memory.title')}
+          className="mb-4 self-start"
+          value={view}
+          disabled={busy || editing !== null || deleting !== null}
+          onChange={next => {
+            setView(next)
+            if (next !== 'all' && snapshot.status !== 'loading') void resource.reload()
+          }}
+          options={[
+            { value: 'all', label: t('standIn.memory.manage_all'), testId: 'stand-in-memory-all' },
+            {
+              value: 'today',
+              label: t('standIn.memory.review_today'),
+              testId: 'stand-in-review-today',
+            },
+            {
+              value: 'week',
+              label: t('standIn.memory.review_week'),
+              testId: 'stand-in-review-week',
+            },
+          ]}
+        />
+      )}
+      {reviewing && snapshot.status === 'loading' && <p role="status">{t('standIn.loading')}</p>}
+      {items !== null && reviewing && snapshot.status === 'ready' && (
+        <StandInRecentReview
+          memories={items}
+          roleId={reviewRoleId}
+          name={
+            reviewRole
+              ? standInRoleName(
+                  reviewRole,
+                  settings.roles.indexOf(reviewRole),
+                  t('standIn.personal.default_role')
+                )
+              : t('standIn.memory.review_primary')
+          }
+          period={view}
+        />
+      )}
+      {reviewing && reviewIdentity.selfLearningEnabled && (
+        <StandInReworkReview
+          key={settings.version}
+          api={api}
+          userId={userId}
+          deviceId={reviewRole?.executionDeviceId ?? executionDeviceId}
+          roleId={reviewRoleId}
+        />
+      )}
+      {items !== null && !reviewing && (
         <>
           {!editing && (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="stand-in-memory-add"
               disabled={busy}
@@ -192,7 +302,7 @@ export function StandInMemoryPanel({
             >
               <Plus className="h-4 w-4" />
               {t('standIn.memory.add')}
-            </button>
+            </ControlButton>
           )}
           {editing && (
             <form
@@ -206,14 +316,17 @@ export function StandInMemoryPanel({
                     content: editing.content ?? '',
                     scope: editing.scope ?? fixedScope ?? { kind: 'personal' },
                   })
-                  setItems(current => [row, ...(current ?? []).filter(item => item.id !== row.id)])
+                  resource.update(current => [
+                    row,
+                    ...(current ?? []).filter(item => item.id !== row.id),
+                  ])
                   setEditing(null)
                 })
               }}
             >
               <label className="grid gap-2 text-sm">
                 {t('standIn.memory.content')}
-                <textarea
+                <ControlTextarea
                   data-testid="stand-in-memory-content"
                   autoFocus
                   required
@@ -227,32 +340,40 @@ export function StandInMemoryPanel({
               </label>
               <label className="grid gap-2 text-sm">
                 {t('standIn.memory.scope')}
-                <select
-                  data-testid="stand-in-memory-scope"
+                <SelectRoot
                   disabled={busy}
-                  value={JSON.stringify(selectedScope?.scope ?? editing.scope)}
-                  onChange={event =>
-                    setEditing({
-                      ...editing,
-                      scope: JSON.parse(event.target.value) as StandInMemoryScope,
-                    })
-                  }
-                  className="min-h-8 rounded-md border border-border bg-background px-2"
-                >
-                  {!selectedScope && (
-                    <option value={JSON.stringify(editing.scope)} disabled>
-                      {t('standIn.memory.disconnected')}
-                    </option>
+                  value={normalizeSelectValue(
+                    JSON.stringify(selectedScope?.scope ?? editing.scope)
                   )}
-                  {scopes.map(row => (
-                    <option key={JSON.stringify(row.scope)} value={JSON.stringify(row.scope)}>
-                      {row.label}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null)
+                      return setEditing({
+                        ...editing,
+                        scope: JSON.parse(selectedValue) as StandInMemoryScope,
+                      })
+                  }}
+                >
+                  <SelectTrigger density="compact" data-testid="stand-in-memory-scope" />
+                  <SelectContent data-testid="stand-in-memory-scope-options">
+                    {!selectedScope && (
+                      <SelectItem value={String(JSON.stringify(editing.scope))} disabled>
+                        {t('standIn.memory.disconnected')}
+                      </SelectItem>
+                    )}
+                    {scopes.map(row => (
+                      <SelectItem
+                        key={JSON.stringify(row.scope)}
+                        value={String(JSON.stringify(row.scope))}
+                      >
+                        {row.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               </label>
               <div className="flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="stand-in-memory-cancel"
                   disabled={busy}
@@ -263,15 +384,17 @@ export function StandInMemoryPanel({
                   className="min-h-8 rounded-md px-3 hover:bg-muted"
                 >
                   {t('standIn.cancel')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="submit"
                   data-testid="stand-in-memory-save"
                   disabled={busy || !editing.content?.trim() || !selectedScope}
                   className="min-h-8 rounded-md bg-text-primary px-3 text-background disabled:opacity-50"
                 >
                   {t('standIn.save')}
-                </button>
+                </ControlButton>
               </div>
             </form>
           )}
@@ -281,13 +404,16 @@ export function StandInMemoryPanel({
           <ul className="divide-y divide-border">
             {items.map(row => (
               <li key={row.id} data-testid="stand-in-memory-item" className="py-4">
-                <p className="whitespace-pre-wrap break-words text-sm">{row.content}</p>
+                <p className="whitespace-pre-wrap break-words text-sm">
+                  {row.evidenceUnavailable ? t('standIn.memory.source_unavailable') : row.content}
+                </p>
                 <p className="mt-2 text-xs text-text-muted">
                   {label(row.scope)} · {new Date(row.updatedAt).toLocaleDateString()}
                 </p>
                 <StandInMemoryEvidence memory={row} />
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="stand-in-memory-edit"
                     disabled={busy || editing !== null}
@@ -295,8 +421,9 @@ export function StandInMemoryPanel({
                     className="min-h-8 rounded-md px-2 text-sm hover:bg-muted"
                   >
                     {t('standIn.memory.edit')}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="stand-in-memory-delete"
                     disabled={busy || editing !== null}
@@ -304,13 +431,14 @@ export function StandInMemoryPanel({
                     className="min-h-8 rounded-md px-2 text-sm hover:bg-muted"
                   >
                     {t('standIn.memory.forget')}
-                  </button>
+                  </ControlButton>
                   {deleting === row.id && (
                     <>
                       <p className="basis-full text-sm text-text-muted">
                         {t('standIn.memory.forget_retention')}
                       </p>
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="stand-in-memory-delete-confirm"
                         disabled={busy}
@@ -322,15 +450,18 @@ export function StandInMemoryPanel({
                               row.id,
                               row.version
                             )
-                            setItems(current => current?.filter(item => item.id !== row.id) ?? [])
+                            resource.update(
+                              current => current?.filter(item => item.id !== row.id) ?? []
+                            )
                             setDeleting(null)
                           })
                         }
                         className="min-h-8 rounded-md px-2 text-sm text-error hover:bg-muted"
                       >
                         {t('standIn.memory.confirm_forget')}
-                      </button>
-                      <button
+                      </ControlButton>
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="stand-in-memory-delete-cancel"
                         disabled={busy}
@@ -338,7 +469,7 @@ export function StandInMemoryPanel({
                         className="min-h-8 rounded-md px-2 text-sm hover:bg-muted"
                       >
                         {t('standIn.cancel')}
-                      </button>
+                      </ControlButton>
                     </>
                   )}
                 </div>
@@ -347,16 +478,18 @@ export function StandInMemoryPanel({
           </ul>
         </>
       )}
-      <StandInMemoryRules
-        api={api}
-        userId={settings.userId}
-        deviceId={settings.executionDeviceId}
-        fixedScope={fixedScope}
-        label={label}
-        refreshKey={items}
-        disabled={busy || editing !== null || deleting !== null}
-        onBusyChange={setBusy}
-      />
+      {!reviewing && (
+        <StandInMemoryRules
+          api={api}
+          userId={settings.userId}
+          deviceId={settings.executionDeviceId}
+          fixedScope={fixedScope}
+          label={label}
+          refreshKey={items}
+          disabled={busy || editing !== null || deleting !== null}
+          onBusyChange={setBusy}
+        />
+      )}
       <ConfirmDialog
         open={discard !== null}
         destructive
@@ -378,6 +511,6 @@ export function StandInMemoryPanel({
           })
         }}
       />
-    </div>
+    </DialogSurface>
   )
 }

@@ -74,6 +74,14 @@ undo the completed operation: retain its success view and report that secondary
 failure separately, without retrying or enabling another creation. After a
 timeout or invalid result, verify the actual outcome through a read tool.
 
+## Native Codex control context
+
+The Executor retains the `wework_control` context while a Codex execution uses it. The handle expires after one idle hour once the last execution using it ends. Each request still verifies the instance token, session, and context binding.
+
+When the desktop resumes a Goal, the Executor keeps both the inference route and the control context for the native Goal's lifetime. Stopping the Goal releases both registrations and starts the context's idle timer.
+
+Executor diagnostics for HTTP 401 include the surface, operation, and rejection reason code. They omit tokens, handles, and session IDs.
+
 ## Security boundaries
 
 - The executor derives authority from a real invocation in the owning task. Apps cannot choose another task, server, plugin, connector, or account.

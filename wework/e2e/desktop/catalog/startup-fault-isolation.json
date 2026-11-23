@@ -8,5 +8,12 @@
       "shard": 1,
       "position": 2001
     }
-  }
+  },
+  "paths": [
+    ".github/actions/prepare-electron-installer-cache/*",
+    ".github/scripts/install-e2e-apt-packages.sh",
+    ".github/scripts/prime-ci-electron-installer-cache.mjs",
+    "wework/scripts/lib/electron-installer-cache.mjs",
+    "wework/e2e/desktop/modules/startup-recovery.mjs"
+  ]
 }

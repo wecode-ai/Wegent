@@ -6,11 +6,14 @@ const evidencePath = process.argv[2]
 // The protocol unit test exercises both actions without launching a browser.
 // Desktop CI currently owns cancellation; acceptance needs a real system browser.
 const verifyUrlAccept = process.argv.includes('--verify-url-accept')
+const verifyUnansweredApproval = process.argv.includes('--verify-unanswered-approval')
 if (!evidencePath) {
   throw new Error('Usage: mcp-elicitation-server.mjs <evidence-path>')
 }
 
-const TOOL_NAME = 'confirm_inner_site_access'
+const TOOL_NAME = verifyUnansweredApproval
+  ? 'check_unanswered_approval'
+  : 'confirm_inner_site_access'
 const ELICITATION_ID = 'wework-e2e-elicitation-1'
 const URL_ELICITATION_ID = 'wework-e2e-url-elicitation-1'
 const URL_ACCEPT_ELICITATION_ID = 'wework-e2e-url-elicitation-2'
@@ -220,6 +223,11 @@ input.on('line', async line => {
   if (message.method === 'tools/call') {
     if (message.params?.name !== TOOL_NAME) {
       respondError(message.id, -32601, `Unknown tool: ${String(message.params?.name)}`)
+      return
+    }
+    if (verifyUnansweredApproval) {
+      await appendFile(evidencePath, 'unexpected MCP tool execution\n', 'utf8')
+      respondError(message.id, -32000, 'The unanswered approval must prevent tool execution')
       return
     }
     const scenario = message.params?.arguments?.scenario

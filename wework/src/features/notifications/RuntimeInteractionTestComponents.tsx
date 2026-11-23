@@ -1,19 +1,24 @@
-import { useEffect, useState } from 'react'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useImperativeHandle, useState, type Ref } from 'react'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 
-export function InteractionProbe({
-  onChange,
-}: {
-  onChange: (value: ReturnType<typeof useRuntimeInteractions>) => void
-}) {
+export interface InteractionProbeHandle {
+  value: ReturnType<typeof useRuntimeInteractions>
+}
+
+export function InteractionProbe({ ref }: { ref: Ref<InteractionProbeHandle> }) {
   const value = useRuntimeInteractions()
-  useEffect(() => onChange(value), [onChange, value])
+  useImperativeHandle(ref, () => ({ value }), [value])
   return null
 }
 
 export function UnrelatedForm() {
   const [value, setValue] = useState('')
   return (
-    <input aria-label="Connection address" value={value} onChange={e => setValue(e.target.value)} />
+    <ControlInput
+      aria-label="Connection address"
+      value={value}
+      onChange={e => setValue(e.target.value)}
+    />
   )
 }

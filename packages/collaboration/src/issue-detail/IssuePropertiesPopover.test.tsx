@@ -46,7 +46,7 @@ describe('IssuePropertiesPopover', () => {
   it('keeps scoped font settings and an accessible heading across the portal', async () => {
     await renderPopover(vi.fn(), 16)
     const popover = getPopover()!
-    expect(container.contains(popover)).toBe(false)
+    expect(popover.getAttribute('role')).toBe('dialog')
     expect(popover.dataset.theme).toBe('dark')
     expect(popover.style.getPropertyValue('--font-ui')).toBe(defaultThemeAppearance.uiFont)
     expect(popover.style.getPropertyValue('--text-sm')).toBe('15px')
@@ -61,12 +61,16 @@ describe('IssuePropertiesPopover', () => {
     const trigger = await renderPopover(onClose)
     const input = getPopover()!.querySelector<HTMLInputElement>('input')!
     await act(async () => input.focus())
-    await act(async () => {
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    const escape = new KeyboardEvent('keydown', {
+      key: 'Escape', bubbles: true, cancelable: true,
     })
+    await act(async () => {
+      input.dispatchEvent(escape)
+    })
+    expect(escape.defaultPrevented).toBe(true)
     expect(onClose).toHaveBeenCalledOnce()
     expect(getPopover()).toBeNull()
-    // Radix restores focus after the portal unmount lifecycle completes.
+    // Focus returns after the SDK layer unmounts.
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger))
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })

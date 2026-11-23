@@ -27,17 +27,18 @@ function deferred<T>() {
 describe('ChangeRequestMonitor', () => {
   it('loads a task registered while another task is refreshing', async () => {
     const pending = deferred<DeviceCommandResponse>()
-    const reply = {
-      success: true,
-      stdout: { number: 1, url: 'https://github.com/org/repo/pull/1', state: 'OPEN' },
-    }
+    let reply: DeviceCommandResponse | undefined
     const executeCommand = vi
       .fn<DeviceCommandApi['executeCommand']>()
-      .mockReturnValueOnce(pending.promise)
-      .mockResolvedValue(reply)
+      .mockImplementationOnce(async (_device, request) => {
+        reply = connectionObserverReply(request)
+        return pending.promise
+      })
+      .mockImplementation(async (_device, request) => connectionObserverReply(request))
     const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, devices)
     const first = {
-      ...linkedChangeRequestTarget('device', 'https://github.com/org/repo/pull/1')!,
+      ...linkedChangeRequestTarget('local-device', 'https://github.com/org/repo/pull/1')!,
       taskId: 'first',
     }
     const second = { ...first, taskId: 'second' }
@@ -49,66 +50,37 @@ describe('ChangeRequestMonitor', () => {
       stopSecond = monitor.register(second)
       // Let the new target's scheduled refresh join the already running collection.
       await Promise.resolve()
-      pending.resolve(reply)
+      pending.resolve(reply!)
       await refresh
       await vi.waitFor(() => expect(monitor.getSnapshot(second)?.changeRequest?.number).toBe(1))
       expect(monitor.getSnapshot(first)?.changeRequest?.number).toBe(1)
     } finally {
-      pending.resolve(reply)
+      pending.resolve(reply!)
       stopFirst()
       stopSecond()
     }
   })
 
-  it('keeps old devices on Git commands and switches protocols when metadata changes', async () => {
+  it('starts only the upgraded route and never falls back to the old Git poll', async () => {
     const executeCommand = vi
       .fn<DeviceCommandApi['executeCommand']>()
-      .mockImplementation(async (_device, request) => {
-        if (request.command_key.startsWith('connection_')) return connectionObserverReply(request)
-        return {
-          success: true,
-          stdout: { number: 1, url: 'https://github.com/org/repo/pull/1', state: 'OPEN' },
-        }
-      })
+      .mockImplementation(async (_device, request) => connectionObserverReply(request))
     const monitor = new ChangeRequestMonitor({ executeCommand })
     const target = linkedChangeRequestTarget('local-device', 'https://github.com/org/repo/pull/1')!
-    // An unrelated upgraded device must not enable new RPCs for this route.
     monitor.syncConnectionObservations(null, [{ ...devices[0], device_id: 'other-device' }])
     const stop = monitor.register(target)
     try {
       await monitor.refresh()
-      expect(executeCommand.mock.calls.length).toBeGreaterThan(0)
-      expect(
-        executeCommand.mock.calls.every(
-          ([, request]) => !request.command_key.startsWith('connection_')
-        )
-      ).toBe(true)
-      expect(
-        executeCommand.mock.calls.some(
-          ([, request]) => request.command_key === 'git_github_pull_request_view'
-        )
-      ).toBe(true)
-      executeCommand.mockClear()
+      expect(executeCommand).not.toHaveBeenCalled()
       monitor.syncConnectionObservations(null, devices)
       await monitor.refresh()
-      expect(
-        executeCommand.mock.calls.some(
-          ([, request]) => request.command_key === 'connection_observer_start'
-        )
-      ).toBe(true)
-      expect(
-        executeCommand.mock.calls.every(([, request]) => !request.command_key.startsWith('git_'))
-      ).toBe(true)
+      expect(executeCommand.mock.calls.map(([, request]) => request.command_key)).toEqual([
+        'connection_observer_start',
+      ])
       executeCommand.mockClear()
       monitor.syncConnectionObservations(null, [])
       await monitor.refresh({ shareInflight: false })
-      stop()
-      expect(executeCommand.mock.calls.length).toBeGreaterThan(0)
-      expect(
-        executeCommand.mock.calls.every(
-          ([, request]) => !request.command_key.startsWith('connection_')
-        )
-      ).toBe(true)
+      expect(executeCommand).not.toHaveBeenCalled()
     } finally {
       stop()
     }
@@ -345,6 +317,7 @@ describe('ChangeRequestMonitor', () => {
                           url: 'https://github.com/org/repo/pull/1',
                           state: 'OPEN',
                           title: 'Shared observation',
+                          headRefName: 'fix/status',
                         },
                       },
                     ],
@@ -369,6 +342,27 @@ describe('ChangeRequestMonitor', () => {
       ],
     } as unknown as RuntimeWorkListResponse
   }
+
+  it('uses an active PR observation for a workspace branch before any UI lookup', async () => {
+    const executeCommand = vi.fn<DeviceCommandApi['executeCommand']>()
+    const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(observationWork(), devices)
+    const target = {
+      deviceId: 'local-device',
+      workspacePath: '/work/repo',
+      remoteUrl: 'git@github.com:org/repo.git',
+      taskId: 'task',
+      branch: 'fix/status',
+    }
+    const stop = monitor.register(target)
+    try {
+      await monitor.refresh()
+      expect(monitor.getSnapshot(target)?.changeRequest?.title).toBe('Shared observation')
+      expect(executeCommand).not.toHaveBeenCalled()
+    } finally {
+      stop()
+    }
+  })
 
   it('keeps simultaneous task projections separate while sharing PR observation facts', async () => {
     const executeCommand = vi.fn<DeviceCommandApi['executeCommand']>()
@@ -613,11 +607,11 @@ describe('ChangeRequestMonitor', () => {
   it('keeps structured lookup failures when preserving a previous snapshot', async () => {
     const executeCommand = vi
       .fn<DeviceCommandApi['executeCommand']>()
-      .mockResolvedValueOnce({ success: true, stdout: [] })
+      .mockImplementationOnce(async (_device, request) => connectionObserverReply(request))
       .mockResolvedValueOnce({
         success: false,
         stdout: '',
-        stderr: 'gh: command not found',
+        stderr: 'git_cli_missing',
       })
     const monitor = new ChangeRequestMonitor({ executeCommand })
     monitor.syncConnectionObservations(null, devices)
@@ -637,7 +631,7 @@ describe('ChangeRequestMonitor', () => {
       provider: 'github',
       lookupState: 'unavailable',
       stale: true,
-      error: 'gh: command not found',
+      error: 'git_cli_missing',
     })
     unregister()
   })

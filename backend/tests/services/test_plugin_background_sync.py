@@ -13,9 +13,126 @@ from app.schemas.device import DeviceCapabilitySyncResult
 from app.services import plugin_device_sync, plugin_write_operations
 from app.services.device import plugin_change_sync
 from app.services.device.capability_sync_service import DeviceCapabilitySyncService
+from app.services.plugin_write_errors import PluginWriteError
 from tests.services.test_plugin_marketplace_v2 import _device_install
 
 pytestmark = pytest.mark.usefixtures("plugin_write_sessions")
+
+
+@pytest.mark.asyncio
+async def test_background_preparation_survives_busy_and_metadata_conflicts(
+    test_db, test_user, monkeypatch
+):
+    installed, release = _device_install(test_db, test_user.id)
+    devices = [
+        Kind(
+            user_id=test_user.id,
+            kind="Device",
+            namespace="default",
+            name=name,
+            is_active=True,
+            json={"spec": {"deviceType": "app"}},
+        )
+        for name in ("current", "other")
+    ]
+    test_db.add_all(devices)
+    test_db.commit()
+    source, other = [f"app-record-{device.id}" for device in devices]
+    monkeypatch.setattr(
+        plugin_device_sync, "get_db_session", plugin_write_operations.get_db_session
+    )
+    service = plugin_device_sync.plugin_device_installation_service
+    monkeypatch.setattr(
+        plugin_device_sync.device_service,
+        "get_all_devices",
+        AsyncMock(return_value=[{"device_id": source}, {"device_id": other}]),
+    )
+    monkeypatch.setattr(
+        plugin_device_sync.device_service,
+        "get_online_devices",
+        AsyncMock(return_value=[{"device_id": other}]),
+    )
+    prepare = service._ensure_pending_for_devices
+    failures = iter(["plugin_write_busy", "plugin_write_conflict", None])
+    attempts = []
+
+    def contended(db, **kwargs):
+        attempts.append(kwargs)
+        failure = next(failures)
+        if failure:
+            raise PluginWriteError(failure)
+        return prepare(db, **kwargs)
+
+    monkeypatch.setattr(service, "_ensure_pending_for_devices", contended)
+    dispatch = Mock()
+    monkeypatch.setattr(plugin_device_sync, "schedule_other_devices", dispatch)
+    await plugin_device_sync.sync_cloud_plugins_after_local_change(
+        test_user.id, installed.id, source
+    )
+
+    rows = (
+        test_db.query(PluginDeviceInstallation)
+        .filter_by(installed_kind_id=installed.id)
+        .all()
+    )
+    assert [(row.device_id, row.state, row.desired_release_id) for row in rows] == [
+        (other, "pending", release.id)
+    ]
+    assert len(attempts) == 3
+    dispatch.assert_called_once_with(
+        plugin_device_sync.device_capability_sync_service,
+        user_id=test_user.id,
+        device_ids=[other],
+        installed_plugin_ids=[installed.id],
+    )
+
+
+def test_active_background_preparation_is_read_only(test_db, test_user, monkeypatch):
+    installed, release = _device_install(test_db, test_user.id)
+    acquire = Mock(side_effect=AssertionError("An active-state read acquired a lease"))
+    monkeypatch.setattr(plugin_device_sync, "acquire_plugin_write_lock", acquire)
+
+    assert plugin_device_sync._prepare_cloud_sync_after_local_change(
+        test_db, user_id=test_user.id, installed_id=installed.id
+    ) == (True, release.id)
+    acquire.assert_not_called()
+
+
+def test_background_removal_rechecks_reinstall_after_lock_wait(
+    test_db, test_user, monkeypatch
+):
+    installed, release = _device_install(test_db, test_user.id)
+    installed.is_active = False
+    test_db.commit()
+
+    def acquire(db, user_id, *, installed_id):
+        assert user_id == test_user.id
+        db.query(Kind).filter_by(id=installed_id).update({"is_active": True})
+        db.commit()
+
+    monkeypatch.setattr(plugin_device_sync, "acquire_plugin_write_lock", acquire)
+    cleanup = Mock(side_effect=AssertionError("Old removal superseded a reinstall"))
+    monkeypatch.setattr(plugin_device_sync, "prepare_plugin_removal", cleanup)
+
+    assert plugin_device_sync._prepare_cloud_sync_after_local_change(
+        test_db, user_id=test_user.id, installed_id=installed.id
+    ) == (True, release.id)
+    cleanup.assert_not_called()
+
+
+def test_background_inactive_preparation_still_stages_removal(
+    test_db, test_user, monkeypatch
+):
+    installed, _ = _device_install(test_db, test_user.id)
+    installed.is_active = False
+    test_db.commit()
+    cleanup = Mock()
+    monkeypatch.setattr(plugin_device_sync, "prepare_plugin_removal", cleanup)
+
+    assert plugin_device_sync._prepare_cloud_sync_after_local_change(
+        test_db, user_id=test_user.id, installed_id=installed.id
+    ) == (False, None)
+    cleanup.assert_called_once_with(test_db, test_user.id, installed.id)
 
 
 @pytest.mark.asyncio

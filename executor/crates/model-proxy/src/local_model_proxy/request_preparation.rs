@@ -143,7 +143,7 @@ pub(super) fn prepare_request_with_model_hint(
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
-    normalize_responses_request_ids(&mut responses_body);
+    normalize_responses_request_input(&mut responses_body, api_format);
     image_budget::limit_request_images(&mut responses_body);
 
     if api_format == "openai-responses" {
@@ -218,21 +218,35 @@ pub(super) fn apply_max_output_tokens(body: &mut Value, max_output_tokens: u64) 
     );
 }
 
-pub(super) fn normalize_responses_request_ids(body: &mut Value) -> usize {
+fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
+    let adapt_detached_context =
+        matches!(api_format, "anthropic-messages" | "openai-chat-completions");
     let Some(input) = body.get_mut("input") else {
-        return 0;
+        return;
     };
     let items = match input {
         Value::Array(items) => items.as_mut_slice(),
         Value::Object(_) => std::slice::from_mut(input),
-        _ => return 0,
+        _ => return,
     };
-    let mut changed = 0;
 
     for item in items {
+        if let Some(message) = adapt_detached_context
+            .then(|| chat::detached_context_message(item))
+            .flatten()
+        {
+            *item = message;
+            continue;
+        }
         let Some(object) = item.as_object_mut() else {
             continue;
         };
+        if object.get("type").and_then(Value::as_str) == Some("agent_message") {
+            // The message content carries the sender and recipient in its Codex envelope.
+            object.retain(|field, _| field == "content");
+            object.insert("type".to_owned(), json!("message"));
+            object.insert("role".to_owned(), json!("developer"));
+        }
         for field in ["id", "call_id"] {
             let Some(value) = object.get_mut(field) else {
                 continue;
@@ -243,12 +257,9 @@ pub(super) fn normalize_responses_request_ids(body: &mut Value) -> usize {
             let normalized = normalized_responses_api_id(raw);
             if normalized != raw {
                 *value = Value::String(normalized);
-                changed += 1;
             }
         }
     }
-
-    changed
 }
 
 pub(super) fn normalized_responses_api_id(value: &str) -> String {

@@ -1,5 +1,7 @@
-import { Loader2, Trash2, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, Trash2, X } from 'lucide-react'
 
 export function ClearBrowserDataDialog({
   loading,
@@ -20,12 +22,17 @@ export function ClearBrowserDataDialog({
         if (!loading && event.target === event.currentTarget) onCancel()
       }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="browser-clear-data-dialog-title"
-        data-testid="browser-clear-data-dialog"
-        className="w-full max-w-[430px] rounded-2xl border border-border bg-popover p-5 shadow-[0_20px_60px_rgba(0,0,0,0.28)]"
+      <DialogSurface
+        onClose={() => {
+          if (!loading) onCancel()
+        }}
+        render={
+          <div
+            aria-labelledby="browser-clear-data-dialog-title"
+            data-testid="browser-clear-data-dialog"
+            className="w-full max-w-[430px] rounded-2xl border border-border bg-popover p-5 shadow-[0_20px_60px_rgba(0,0,0,0.28)]"
+          />
+        }
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -39,7 +46,8 @@ export function ClearBrowserDataDialog({
               {t('workbench.browser_settings_clear_dialog_description')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="browser-clear-data-dialog-close"
             aria-label={t('common.close', '关闭')}
@@ -48,24 +56,26 @@ export function ClearBrowserDataDialog({
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="browser-clear-data-cancel"
             disabled={loading}
             onClick={onCancel}
-            className="h-8 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover disabled:opacity-50"
           >
             {t('common.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
             type="button"
             data-testid="browser-clear-data-confirm"
             disabled={loading}
             onClick={onConfirm}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-contrast hover:bg-destructive disabled:opacity-50 wework:bg-red-500 wework:text-white wework:hover:bg-red-600"
+            variant="destructive"
+            size="sm"
           >
             {loading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -73,9 +83,9 @@ export function ClearBrowserDataDialog({
               <Trash2 className="h-4 w-4" />
             )}
             {t('workbench.browser_settings_clear_action')}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>
   )
 }

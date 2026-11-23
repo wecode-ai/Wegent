@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import {
   chmod,
@@ -24,6 +23,22 @@ const packagerRequire = createRequire(require.resolve('@electron/packager'))
 const { createPackage } = await import(
   pathToFileURL(packagerRequire.resolve('@electron/asar')).href
 )
+
+// The suite can run inside the project's own Electron runtime host, whose
+// asar-patched fs cannot delete .asar paths. Remove the fixture tree from an
+// isolated child with ASAR disabled, mirroring removePhysicalRelease (#4740).
+function removeFixtureTree(path) {
+  return promisify(execFile)(
+    require('electron'),
+    [
+      '--input-type=commonjs',
+      '--eval',
+      'process.noAsar = true\nrequire("node:fs").rmSync(process.argv[1], { recursive: true, force: true })',
+      path,
+    ],
+    { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 30_000 }
+  )
+}
 
 test('copies physical ASAR bytes without disabling ASAR in the running Electron process', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-physical-asar-'))
@@ -51,14 +66,28 @@ test('copies physical ASAR bytes without disabling ASAR in the running Electron 
       }
     )
     expect(JSON.parse(stdout.trim())).toEqual({ before: true, after: true })
-    expect((await stat(target)).isFile()).toBe(true)
-    const digest = async path =>
-      createHash('sha256')
-        .update(await readFile(path))
-        .digest('hex')
-    expect(await digest(target)).toBe(await digest(source))
-  } finally {
-    await rm(root, { recursive: true, force: true })
+    // Physical-byte assertions must run outside any asar-patched process: the
+    // host runtime sees .asar paths as virtual directories (#4740).
+    const { stdout: probe } = await promisify(execFile)(
+      require('electron'),
+      [
+        '--input-type=commonjs',
+        '--eval',
+        'process.noAsar = true\nconst fs = require("node:fs")\nconst crypto = require("node:crypto")\nconst [targetPath, sourcePath] = process.argv.slice(1)\nconst digest = path => crypto.createHash("sha256").update(fs.readFileSync(path)).digest("hex")\nconsole.log(JSON.stringify({ isFile: fs.statSync(targetPath).isFile(), identical: digest(targetPath) === digest(sourcePath) }))',
+        target,
+        source,
+      ],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 30_000 }
+    )
+    expect(JSON.parse(probe.trim())).toEqual({ isFile: true, identical: true })
+    await removeFixtureTree(root)
+  } catch (error) {
+    try {
+      await removeFixtureTree(root)
+    } catch (cleanupError) {
+      console.error('Fixture cleanup failed after test failure:', cleanupError)
+    }
+    throw error
   }
 }, 35_000)
 

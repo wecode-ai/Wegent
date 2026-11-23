@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { Menu } from 'lucide-react'
+import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
@@ -10,20 +9,18 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { useAuth } from '@/features/auth/useAuth'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { initializePluginDevelopmentProject } from '@/features/dsh-plugins/pluginDevelopment'
+import { pluginDevelopmentInitialInput } from '@/features/dsh-plugins/pluginDevelopment'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
 import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
-import { track } from '@/telemetry/client'
-import { prefetchPluginsWorkspace } from '@/components/plugins/workspace/prefetchPluginsWorkspace'
-import {
-  initializePluginDevelopmentProject,
-  pluginDevelopmentInitialInput,
-} from '@/features/dsh-plugins/pluginDevelopment'
-import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
-import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Menu } from 'lucide-react'
+import { useState } from 'react'
 
 export function PluginManagementPage() {
   const { t } = useTranslation('common')
@@ -67,11 +64,6 @@ export function PluginManagementPage() {
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isDesktop = isElectronRuntime()
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
-
-  useEffect(() => {
-    track('plugin_center_opened', { surface: 'management' })
-    prefetchPluginsWorkspace()
-  }, [])
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -189,7 +181,8 @@ export function PluginManagementPage() {
       {isMobile && (
         <>
           <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="open-mobile-drawer-button"
               onClick={() => setDrawerOpen(true)}
@@ -197,7 +190,7 @@ export function PluginManagementPage() {
               aria-label={t('workbench.open_menu', '打开菜单')}
             >
               <Menu className="h-5 w-5" />
-            </button>
+            </ControlButton>
           </header>
           <MobileDrawer
             open={drawerOpen}

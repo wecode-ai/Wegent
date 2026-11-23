@@ -1,0 +1,21 @@
+[package]
+name = "wegent-plugin-package"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bounded plugin package parsing and metadata for mirroring and bundled installation"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+regex.workspace = true
+rustpython-ast = { workspace = true, features = ["num-bigint", "fold"] }
+rustpython-parser = { workspace = true, features = ["num-bigint"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+unicode-normalization.workspace = true
+zip = { workspace = true, features = ["deflate"] }
+
+[lints.rust]
+unsafe_code = "forbid"

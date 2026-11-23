@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { reloadMainWindow, waitForWorkbenchTask } from './workspace-flows.mjs'
 
 const MENU = '[data-testid="work-item-context-menu"]'
-const OPTIONS = `${MENU} [role="option"]`
+const OPTIONS = `${MENU} [role="option"][data-project-space-key]`
 const SEARCH = '[data-testid="project-space-picker-search"]'
 const SORT = '[data-testid="project-space-picker-sort"]'
 const CHANGE = '[data-testid="work-item-change-board"]'
@@ -15,16 +15,12 @@ const groupSelector = key =>
   `[data-testid="project-space-picker-group"][data-group-key=${JSON.stringify(key)}]`
 
 async function optionKeys(control) {
-  const count = Number(await control.command('getElementCount', OPTIONS))
-  const keys = []
-  for (let index = 1; index <= count; index += 1) {
-    keys.push(
-      await control.command('getAttribute', `${OPTIONS}:nth-child(${index})`, {
-        value: 'data-project-space-key',
-      })
-    )
-  }
-  return keys
+  const options = JSON.parse(
+    await control.command('getElementMetrics', OPTIONS, {
+      value: JSON.stringify({ attributeNames: ['data-project-space-key'] }),
+    })
+  )
+  return options.map(option => option.attributes['data-project-space-key'])
 }
 
 async function assertProjects(control, projects, message) {
@@ -218,11 +214,12 @@ export function createProjectSpacePickerRegression({
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', `${optionSelector(sharedB)}[aria-selected="true"]`)
+      const currentProject = '[aria-current="true"]'
+      await control.command('waitFor', `${optionSelector(sharedB)}${currentProject}`)
       assert.equal(
-        await control.command('getAttribute', optionSelector(sharedA), { value: 'aria-selected' }),
-        'false',
-        'Reload selected both same-named projects'
+        Number(await control.command('getElementCount', `${OPTIONS}${currentProject}`)),
+        1,
+        'Reload must mark only the persisted project as current'
       )
       assert.equal(
         await control.command('getValue', SEARCH),

@@ -1,7 +1,0 @@
-{
-  "order": 15501,
-  "ciHost": "connector-oauth",
-  "scenario": "./scenarios/connector-oauth.scenario.mjs",
-  "scenarioOnly": true,
-  "cloudOnly": true
-}

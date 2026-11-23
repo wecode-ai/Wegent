@@ -18,9 +18,13 @@ from app.services.loop_item_status_history import (
     automatic_project_status,
     write_status_change,
 )
-from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.task_bindings import active_task_binding_query
-from app.services.project_chat.message_provenance import shared_project_chat_message
+from app.services.project_chat.public_replies import (
+    existing_public_reply,
+    public_reply_key,
+    public_reply_view,
+    save_public_reply,
+)
 from app.services.project_chat.service import project_chat_service
 from shared.telemetry.decorators import trace_sync
 
@@ -58,13 +62,6 @@ def _dispatch_endpoint_belongs_to(
     except ValueError:
         return False
     return endpoint_owner == user_id
-
-
-def _public_reply_view(db: Session, row: ProjectChatMessage) -> ProjectChatMessageView:
-    view = project_chat_service.to_view(row, db=db)
-    return ProjectChatMessageView.model_validate(
-        shared_project_chat_message(view.model_dump(mode="json", by_alias=True))
-    )
 
 
 @trace_sync("stand_in.public_issue_reply", tracer_name="backend.project_chat")
@@ -111,24 +108,12 @@ def publish_stand_in_reply(
     sender = (
         f"stand-in:{user_id}:{hashlib.sha256(identity.role_id.encode()).hexdigest()}"
     )
-    client = hashlib.sha256(
-        f"{project_id}\0{item_id}\0{identity.device_id}\0{identity.task_id}\0{identity.message_id}".encode()
-    ).hexdigest()
-    existing = (
-        db.query(ProjectChatMessage)
-        .filter_by(
-            sender_type="agent",
-            sender_id=sender,
-            client_message_id=client,
-        )
-        .first()
+    client = public_reply_key(
+        project_id, item_id, identity.device_id, identity.task_id, identity.message_id
     )
+    existing = existing_public_reply(db, sender_id=sender, key=client, body=body)
     if existing is not None:
-        if existing.content != body:
-            raise HTTPException(
-                409, "The public message identity already has different content"
-            )
-        return _public_reply_view(db, existing)
+        return public_reply_view(db, existing)
     message_id = str(uuid.uuid4())
     metadata = dict(item.metadata_json or {})
     policy = metadata.get("assistant_autonomy_policy")
@@ -244,10 +229,4 @@ def publish_stand_in_reply(
         status="completed",
         thread_root_message_id=message_id,
     )
-    db.add(row)
-    item.metadata_json = advance_content_revision(metadata)
-    item.version += 1
-    project_chat_service._queue_loop_item_change(db, item)
-    project_chat_service._commit(db)
-    db.refresh(row)
-    return _public_reply_view(db, row)
+    return save_public_reply(db, item=item, row=row, item_metadata=metadata)

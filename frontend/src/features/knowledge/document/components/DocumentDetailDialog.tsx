@@ -38,7 +38,10 @@ import { ChunksSection } from './ChunksSection'
 import { DocumentSummarySection } from './DocumentSummarySection'
 import { DocumentContentViewer } from './DocumentContentViewer'
 import { KnowledgeSourcePreview } from './KnowledgeSourcePreview'
-import { getProcessingErrorMessage } from '../utils/processing-error'
+import {
+  DINGTALK_AUTHORIZATION_REQUIRED,
+  getProcessingErrorMessage,
+} from '../utils/processing-error'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
@@ -164,10 +167,14 @@ export function DocumentDetailDialog({
       })
   }, [])
 
+  const authorizationExpired = document?.processing_error?.code === DINGTALK_AUTHORIZATION_REQUIRED
+  const skipPreview = authorizationExpired && !document?.attachment_id
+
   const {
     detail,
     loading,
     error,
+    previewNotReady,
     refresh,
     loadingMore,
     hasMoreContent,
@@ -177,7 +184,7 @@ export function DocumentDetailDialog({
   } = useDocumentDetail({
     kbId: knowledgeBaseId,
     docId: document?.id || 0,
-    enabled: open && !!document,
+    enabled: open && !!document && !skipPreview,
   })
 
   // Check if document is editable
@@ -460,10 +467,19 @@ export function DocumentDetailDialog({
             >
               <CircleAlert className="mt-0.5 h-4 w-4 flex-none text-error" />
               <div className="min-w-0">
-                <p className="font-medium text-error">
-                  {t(`document.document.processingError.stage.${document.processing_error.stage}`)}
-                </p>
-                <p className="mt-1 break-words text-text-secondary">
+                {!authorizationExpired && (
+                  <p className="font-medium text-error">
+                    {t(
+                      `document.document.processingError.stage.${document.processing_error.stage}`
+                    )}
+                  </p>
+                )}
+                <p
+                  className={cn(
+                    'break-words',
+                    authorizationExpired ? 'text-error' : 'mt-1 text-text-secondary'
+                  )}
+                >
                   {getProcessingErrorMessage(document.processing_error, t)}
                 </p>
                 {document.processing_error.model && (
@@ -511,7 +527,9 @@ export function DocumentDetailDialog({
               />
             )}
 
-            {isSourceView ? null : loading ? (
+            {isSourceView ||
+            skipPreview ||
+            (authorizationExpired && previewNotReady) ? null : loading ? (
               <div className="flex items-center justify-center py-12">
                 <Spinner />
               </div>

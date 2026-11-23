@@ -1,0 +1,808 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! Cancellation lifecycle tests for the synchronous chat-shell consumer.
+//!
+//! `_wait_for_sse_cancellation` is an independent task in the Source, so these
+//! tests exercise the two races the chunk-loop-only poll could not express: a
+//! cancel observed while the response headers are still outstanding, and a
+//! cancel observed while one terminal-persistence step is awaited.
+
+// Extracted test-only module: mark the file itself so source review does not
+// infer production ownership for the local test servers spawned below.
+#![cfg(test)]
+
+use std::time::Duration;
+
+use brz_http::Client as HttpClient;
+use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+
+use super::*;
+use crate::executor_manager::ExecutorManager;
+use crate::internal_callback::completion::Tables;
+use crate::responses::create::dispatch::ExecutionRequest;
+use wegent_responses_streaming::{
+    sse_protocol::CANCEL_POLL_INTERVAL,
+    test_support::{poll_cancellation, poll_once},
+    transport::stream_request,
+};
+
+use crate::responses::test_mysql::{Gate, RecordingMysql, SUBTASK_ID, TASK_ID};
+
+const CREATED: &str = r#"{"type":"response.created","shell_type":"chat"}"#;
+const DELTA: &str = r#"{"type":"response.output_text.delta","delta":"hello","offset":0}"#;
+const COMPLETED: &str = r#"{"type":"response.completed","response":{}}"#;
+
+fn tables() -> Tables {
+    Tables {
+        tasks: "tasks_0424",
+        subtasks: "subtasks_0424",
+    }
+}
+
+fn execution_request() -> ExecutionRequest {
+    ExecutionRequest {
+        task_id: TASK_ID,
+        subtask_id: SUBTASK_ID,
+        message_id: Some(2),
+        prompt: json!("hello"),
+        model_config: json!({"model_id": "test-model"}),
+        ..ExecutionRequest::default()
+    }
+}
+
+fn executor_manager() -> ExecutorManager {
+    ExecutorManager::new("http://127.0.0.1:1").expect("client")
+}
+
+use crate::responses::test_redis::RecordingRedis;
+
+/// One local chat-shell server that never writes response headers: the client
+/// stays in its header wait until it drops the request future.
+async fn spawn_header_stalled_server() -> (String, tokio::sync::oneshot::Receiver<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (started, started_receiver) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        if !read_http_request(&mut stream).await {
+            return;
+        }
+        let _ = started.send(());
+        // Hold the connection without a response; the consumer's cancellation
+        // must end the dispatch while this wait is outstanding.
+        let mut byte = [0_u8; 1];
+        let _ = stream.read(&mut byte).await;
+    });
+    (format!("http://{addr}"), started_receiver)
+}
+
+/// One local chat-shell server that answers with `200 text/event-stream` and
+/// the supplied frames, then holds the connection open.
+async fn spawn_stream_server(frames: Vec<&'static str>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        if !read_http_request(&mut stream).await {
+            return;
+        }
+        let _ = stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
+            )
+            .await;
+        for frame in frames {
+            let _ = stream
+                .write_all(format!("data: {frame}\n\n").as_bytes())
+                .await;
+        }
+        let _ = stream.flush().await;
+        let mut byte = [0_u8; 1];
+        let _ = stream.read(&mut byte).await;
+    });
+    format!("http://{addr}")
+}
+
+async fn read_http_request(stream: &mut TcpStream) -> bool {
+    let mut buffer = Vec::new();
+    loop {
+        let mut chunk = [0_u8; 1024];
+        match stream.read(&mut chunk).await {
+            Ok(0) | Err(_) => return false,
+            Ok(read) => buffer.extend_from_slice(&chunk[..read]),
+        }
+        let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
+            continue;
+        };
+        let headers = String::from_utf8_lossy(&buffer[..headers_end]).to_ascii_lowercase();
+        let length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let body_end = headers_end + 4 + length;
+        while buffer.len() < body_end {
+            let mut chunk = [0_u8; 1024];
+            match stream.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(read) => buffer.extend_from_slice(&chunk[..read]),
+            }
+        }
+        return true;
+    }
+}
+
+/// An already-set cross-worker flag is resolved by the poll loop's immediate
+/// GET, before the stream's first interval wait; the stream open is still
+/// started and then dropped like the Source's `_cancel_sse_stream_open`.
+#[tokio::test]
+async fn an_already_set_cancel_resolves_on_the_initial_get() {
+    let (url, _request_received) = spawn_header_stalled_server().await;
+    let redis = RecordingRedis::default();
+    redis.mark_cancelled();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("CANCELLED")
+        .await;
+    let executor = executor_manager();
+    let request = execution_request();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    let collected = tokio::time::timeout(
+        Duration::from_secs(5),
+        collect(&ctx, &url, &request, "req-test", Some(2)),
+    )
+    .await
+    .expect("an already-set flag does not wait for an interval")
+    .expect("a cancelled dispatch is not a failure");
+
+    assert_eq!(collected.content, "");
+    assert_eq!(
+        redis.count("GET chat:cancel:"),
+        1,
+        "the immediate GET resolves the flag without a later poll: {:?}",
+        redis.calls()
+    );
+    assert_eq!(redis.count("EVAL chat:cancel:"), 1, "{:?}", redis.calls());
+    assert_eq!(
+        redis.count("DEL-MANY chat:cancel:"),
+        1,
+        "unregister atomically removes the intent and flag: {:?}",
+        redis.calls()
+    );
+}
+
+#[tokio::test]
+async fn image_cancellation_releases_the_key_before_the_subtask_can_be_retried() {
+    let redis = RecordingRedis::default();
+    redis.mark_cancelled();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("CANCELLED")
+        .await;
+    let executor = executor_manager();
+    let request = execution_request();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: true,
+        start_data: Value::Null,
+        created_task: None,
+        owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    collect(
+        &ctx,
+        &super::super::package_runtime::image_url(),
+        &request,
+        "image-cancel",
+        Some(2),
+    )
+    .await
+    .expect("the queued cancellation completes the image turn");
+
+    let calls = redis.calls();
+    let check = calls
+        .iter()
+        .position(|call| call.starts_with("GET chat:cancel:"))
+        .unwrap();
+    let cleanup = calls
+        .iter()
+        .position(|call| call.starts_with("DEL-MANY chat:cancel:"))
+        .unwrap();
+    let published = calls
+        .iter()
+        .position(|call| call.starts_with("PUBLISH ") && call.contains("chat:cancelled"))
+        .unwrap();
+    assert!(check < cleanup && cleanup < published, "{calls:?}");
+    assert_eq!(redis.count("DEL-MANY chat:cancel:"), 1, "{calls:?}");
+}
+
+/// The client's read timeout bounds inactivity, not total stream lifetime.
+/// Reintroducing `RequestBuilder::timeout(STREAM_TIMEOUT)` would make this
+/// assertion fail and reproduce the 300-second truncation regression.
+#[test]
+fn chat_shell_stream_request_has_no_total_timeout() {
+    let client = HttpClient::builder().build().expect("HTTP client");
+    let request = stream_request(
+        &client,
+        "http://127.0.0.1:1/v1/responses",
+        &json!({"stream": true}),
+        "req-test",
+    )
+    .expect("request builds");
+
+    assert!(request.timeout().is_none());
+}
+
+/// A cross-worker cancel is acted on while `.send()` still awaits the HTTP
+/// response headers; the previous implementation could only poll between
+/// chunks, so it stayed suspended for the whole header wait.
+#[tokio::test]
+async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
+    let (url, request_received) = spawn_header_stalled_server().await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("CANCELLED")
+        .await;
+    let executor = executor_manager();
+    let request = execution_request();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
+    tokio::pin!(dispatch);
+    // The headers never arrive; wait until the request is in flight, then arm
+    // the cross-worker flag.
+    tokio::select! {
+        received = request_received => received.expect("the request reaches the server"),
+        result = &mut dispatch => panic!("the dispatch ended before the header wait: {result:?}"),
+    }
+    redis.mark_cancelled();
+
+    let collected = tokio::time::timeout(Duration::from_secs(5), &mut dispatch)
+        .await
+        .expect("cancellation ends the dispatch while the headers are outstanding")
+        .expect("a cancelled dispatch is not a failure");
+
+    assert_eq!(collected.content, "");
+    assert!(
+        redis.count("GET chat:cancel:") >= 2,
+        "the initial GET plus the poll that observes the armed flag: {:?}",
+        redis.calls()
+    );
+    assert_eq!(redis.count("EVAL chat:cancel:"), 1, "{:?}", redis.calls());
+    assert_eq!(
+        redis.count("DEL-MANY chat:cancel:"),
+        1,
+        "unregister atomically removes the intent and flag: {:?}",
+        redis.calls()
+    );
+}
+
+/// A cross-worker cancel is acted on while the terminal event's persistence is
+/// awaiting a read that never returns. Only dropping the consume future - the
+/// Source's `stream_task.cancel()` - can end the dispatch here.
+#[tokio::test]
+async fn cancel_is_observed_during_a_slow_persistence_step() {
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let (gate, persistence_started) = Gate::new();
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::gated(gate)
+        .with_terminal_rows("CANCELLED")
+        .await
+        .with_terminal_rows("COMPLETED")
+        .await;
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    let request = execution_request();
+    let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
+    tokio::pin!(dispatch);
+    tokio::select! {
+        signal = persistence_started => signal.expect("the terminal persistence read is reached"),
+        result = &mut dispatch => panic!("the dispatch finished before cancellation: {result:?}"),
+    }
+
+    // The terminal completion is now blocked on its by-id read; only the
+    // independent cancel poll can end the dispatch from here.
+    redis.mark_cancelled();
+    let collected = tokio::time::timeout(Duration::from_secs(5), &mut dispatch)
+        .await
+        .expect("cancellation interrupts the persistence step")
+        .expect("a cancelled dispatch is not a failure");
+
+    assert_eq!(
+        collected.content, "hello",
+        "the content accumulated before the terminal event is kept"
+    );
+    assert!(
+        mysql
+            .statements()
+            .iter()
+            .any(|statement| statement.contains("subtasks_0424")),
+        "the terminal persistence read was reached: {:?}",
+        mysql.statements()
+    );
+    assert!(
+        redis.count("GET chat:cancel:") >= 2,
+        "the initial GET plus a later poll during the blocked persistence: {:?}",
+        redis.calls()
+    );
+    assert_eq!(redis.count("EVAL chat:cancel:"), 1, "{:?}", redis.calls());
+    assert_eq!(
+        redis.count("DEL-MANY chat:cancel:"),
+        1,
+        "unregister atomically removes the intent and flag: {:?}",
+        redis.calls()
+    );
+}
+
+/// Terminal received, EOF delayed: `_drain_terminal_stream` keeps the
+/// independent cancel poll running. A flag armed after the terminal must not
+/// change the delivered completed state, and the poll must still issue its
+/// GETs through the drain.
+#[tokio::test]
+async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let (gate, persistence_started) = Gate::new();
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::gated(gate.clone())
+        .with_terminal_rows("COMPLETED")
+        .await;
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    let request = execution_request();
+    let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
+    tokio::pin!(dispatch);
+    tokio::select! {
+        started = persistence_started => started.expect("the terminal persistence was reached"),
+        result = &mut dispatch => panic!("the dispatch ended before the terminal: {result:?}"),
+    }
+
+    // Separate the one-second poll and drain deadlines without changing either
+    // budget. Persistence keeps the drain from starting while the poll is aged.
+    tokio::time::pause();
+    let (poll_started, release_poll) = redis.arm_cancel_gate();
+    tokio::time::advance(CANCEL_POLL_INTERVAL).await;
+    tokio::select! {
+        started = poll_started => started.expect("the existing cancellation poll is admitted"),
+        result = &mut dispatch => panic!("the dispatch ended during persistence: {result:?}"),
+    }
+    release_poll.send(()).unwrap();
+    assert!(poll_once(dispatch.as_mut()).await.is_none());
+    let polls_before_drain = redis.count("GET chat:cancel:");
+    tokio::time::advance(CANCEL_POLL_INTERVAL / 2).await;
+    gate.release();
+    assert!(poll_once(dispatch.as_mut()).await.is_none());
+
+    // The terminal already won; arm the cross-worker flag while the drain is
+    // still reading the held-open tail.
+    let (drain_poll_started, release_drain_poll) = redis.arm_cancel_gate();
+    redis.mark_cancelled();
+    // Observe the GET itself instead of assuming a clock advance has already
+    // delivered its timer wake to the consumer.
+    tokio::select! {
+        started = drain_poll_started => started.expect("a cancellation GET runs during the drain"),
+        result = &mut dispatch => panic!("the drain ended before the next poll: {result:?}"),
+    }
+    assert!(
+        redis.count("GET chat:cancel:") > polls_before_drain,
+        "a new cancellation GET must run after the terminal enters its drain: {:?}",
+        redis.calls()
+    );
+    release_drain_poll.send(()).unwrap();
+    assert!(
+        poll_once(dispatch.as_mut()).await.is_none(),
+        "the in-drain cancel must not end the held-open tail"
+    );
+    let collected = tokio::time::timeout(Duration::from_secs(5), &mut dispatch)
+        .await
+        .expect("the bounded drain completes")
+        .expect("the delivered completed state is unchanged");
+
+    assert_eq!(
+        collected.content, "hello",
+        "the completed result survives the in-drain cancellation"
+    );
+    assert!(
+        redis.cancel_get_after("GET chat:task_streaming:424242"),
+        "the cancellation poll must issue a GET after terminal persistence starts: {:?}",
+        redis.calls()
+    );
+    let statements = mysql.statements();
+    let result_reads = statements
+        .iter()
+        .filter(|sql| sql.contains("FROM subtasks_0424") && sql.ends_with("FOR UPDATE"))
+        .count();
+    let parent_locks = statements
+        .iter()
+        .filter(|statement| {
+            statement.contains("FROM tasks_0424") && statement.ends_with("FOR UPDATE")
+        })
+        .count();
+    assert_eq!(
+        (result_reads, parent_locks),
+        (1, 1),
+        "the terminal collects once and locks its parent once; the in-drain cancel must not persist: {statements:?}",
+    );
+}
+
+/// `finally` must stop scheduling cancellation reads and then await the one
+/// already-admitted GET: `stop` never abandons an in-flight read, and no new
+/// poll is scheduled afterwards.
+#[tokio::test]
+async fn stop_joins_an_admitted_cancel_get() {
+    use std::future::poll_fn;
+    use std::task::Poll;
+
+    let redis = RecordingRedis::default();
+    let (mut started, release) = redis.arm_cancel_gate();
+    let (stop, stop_rx) = tokio::sync::oneshot::channel();
+    let key = format!("chat:cancel:{SUBTASK_ID}");
+    let mut poll = Box::pin(poll_cancellation(&redis, &key, stop_rx));
+
+    tokio::select! {
+        biased;
+        _ = &mut started => {}
+        _ = &mut poll => panic!("poller finished before the GET was admitted"),
+    }
+    // Termination wins while the admitted GET is still in flight.
+    stop.send(()).unwrap();
+    let pending = poll_fn(|cx| Poll::Ready(poll.as_mut().poll(cx).is_pending())).await;
+    assert!(pending, "stop must not abandon the admitted GET");
+    assert_eq!(redis.count("GET chat:cancel:"), 1);
+
+    release.send(()).unwrap();
+    poll.await;
+    assert_eq!(
+        redis.count("GET chat:cancel:"),
+        1,
+        "no new poll may be scheduled after stop: {:?}",
+        redis.calls()
+    );
+    let calls = redis.calls();
+    let get_end = calls
+        .iter()
+        .position(|call| call.starts_with("GET-END chat:cancel:"))
+        .expect("the admitted GET completed before the join returned");
+    assert_eq!(
+        get_end + 1,
+        calls.len(),
+        "GET completion is the last call: {calls:?}"
+    );
+}
+
+/// Stopping between polls finishes immediately and never issues another GET.
+#[tokio::test]
+async fn stop_during_the_interval_wait_schedules_no_further_get() {
+    use std::future::poll_fn;
+    use std::task::Poll;
+
+    let redis = RecordingRedis::default();
+    let (stop, stop_rx) = tokio::sync::oneshot::channel();
+    let key = format!("chat:cancel:{SUBTASK_ID}");
+    let mut poll = Box::pin(poll_cancellation(&redis, &key, stop_rx));
+
+    let pending = poll_fn(|cx| Poll::Ready(poll.as_mut().poll(cx).is_pending())).await;
+    assert!(
+        pending,
+        "the first GET resolves and the loop waits between polls"
+    );
+    assert_eq!(redis.count("GET chat:cancel:"), 1);
+
+    stop.send(()).unwrap();
+    poll.await;
+    assert_eq!(
+        redis.count("GET chat:cancel:"),
+        1,
+        "stop during the interval wait schedules no further GET: {:?}",
+        redis.calls()
+    );
+    assert_eq!(
+        redis.count("GET-END chat:cancel:"),
+        0,
+        "no GET was outstanding"
+    );
+}
+
+/// End to end: with a cancellation GET admitted and held, the terminal path
+/// finishes and `collect` cannot run `unregister_stream`'s `DEL` until that GET
+/// completes; the DEL then follows the GET.
+#[tokio::test]
+async fn unregister_del_waits_for_an_admitted_cancel_get() {
+    let url = spawn_stream_server(vec![CREATED, COMPLETED]).await;
+    let redis = RecordingRedis::default();
+    let (mut started, release) = redis.arm_cancel_gate();
+    let (mysql, mut terminal) = RecordingMysql::signaling();
+    let mysql = mysql.with_terminal_rows("COMPLETED").await;
+    let executor = executor_manager();
+    let request = execution_request();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    let mut collect_fut = Box::pin(collect(&ctx, &url, &request, "req-test", Some(2)));
+    tokio::select! {
+        biased;
+        _ = &mut started => {}
+        _ = collect_fut.as_mut() => panic!("collect finished before the cancel GET was admitted"),
+    }
+    tokio::select! {
+        biased;
+        _ = &mut terminal => {}
+        _ = collect_fut.as_mut() => panic!("collect finished before the terminal path ran"),
+    }
+
+    // The admitted GET is outstanding: registration ran, atomic cleanup did not.
+    assert_eq!(redis.count("EVAL chat:cancel:"), 1);
+    assert_eq!(
+        redis.count("DEL-MANY chat:cancel:"),
+        0,
+        "atomic unregister must wait for the in-flight GET: {:?}",
+        redis.calls()
+    );
+
+    release.send(()).unwrap();
+    let collected = collect_fut.await.expect("collect succeeds");
+    assert_eq!(collected.content, "");
+
+    let calls = redis.calls();
+    let unregister = calls
+        .iter()
+        .rposition(|call| call.starts_with("DEL-MANY chat:cancel:"))
+        .expect("unregister DEL ran");
+    let get_end = calls
+        .iter()
+        .position(|call| call.starts_with("GET-END chat:cancel:"))
+        .expect("the admitted GET completed");
+    assert!(
+        get_end < unregister,
+        "unregister DEL must follow the admitted GET: {calls:?}"
+    );
+}
+
+/// Forwarding mode publishes the dispatcher START pair, the streamed chunks
+/// and the terminal frames (`chat:done`, `task:status`) like
+/// `WebSocketResultEmitter`.
+#[tokio::test]
+async fn a_forwarded_dispatch_publishes_the_chat_frames() {
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("COMPLETED")
+        .await;
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: true,
+        start_data: serde_json::json!({"shell_type": "Chat", "bot_name": "wegent-chat"}),
+        created_task: Some(crate::internal_callback::emitter::CreatedTask {
+            user_id: 6501,
+            team_id: 110_467,
+            team_name: "wegent-chat".into(),
+            title: "title".into(),
+            is_group_chat: false,
+            project_id: 0,
+        }),
+        owner_user_id: Some(6501),
+        acceptance: None,
+        recover_terminal: false,
+    };
+    let request = execution_request();
+    collect(&ctx, &url, &request, "req-test", Some(2))
+        .await
+        .expect("the forwarded dispatch completes");
+    let published = redis
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("PUBLISH socketio "))
+        .collect::<Vec<_>>();
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"chat:start\"")
+                && message.contains("\"bot_name\": \"wegent-chat\"")),
+        "the dispatcher START frame is published: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"task:created\"")
+                && message.contains("\"room\": \"user:6501\"")),
+        "the START branch also publishes task:created: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"chat:chunk\"")),
+        "streamed chunks are forwarded: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"chat:done\"")),
+        "the terminal publishes chat:done: {published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|message| message.contains("\"event\": \"task:status\"")
+                && message.contains("\"room\": \"user:6501\"")),
+        "the terminal publishes task:status to the owner room: {published:?}"
+    );
+}
+
+#[tokio::test]
+async fn parent_status_write_failure_rolls_back_and_does_not_deliver_completion() {
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::failing_parent_update()
+        .with_terminal_rows("COMPLETED")
+        .await
+        .with_terminal_rows("COMPLETED")
+        .await;
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: true,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: Some(6501),
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    let result = collect(&ctx, &url, &execution_request(), "req-test", Some(2)).await;
+
+    assert_eq!(result.unwrap_err(), "Could not save the execution result");
+    let statements = mysql.statements();
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql.starts_with("UPDATE subtasks_"))
+    );
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql.starts_with("UPDATE tasks_"))
+    );
+    assert!(
+        !statements
+            .iter()
+            .any(|sql| sql.contains("subtask_contexts"))
+    );
+    assert_eq!(
+        statements.iter().filter(|sql| *sql == "ROLLBACK").count(),
+        2
+    );
+    assert!(!statements.iter().any(|sql| sql == "COMMIT"));
+    let calls = redis.calls();
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.contains("chat:done") || call.contains("task:status"))
+    );
+    assert_eq!(redis.count("DEL chat:task_streaming:"), 0);
+}
+
+/// A late consumer that finds the subtask already settled must not overwrite
+/// the committed status, but it still owns the cleanup of streaming keys it
+/// may have recreated after the local cancellation fallback.
+#[tokio::test]
+async fn an_already_settled_consumer_cleans_streaming_state() {
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::already_settled();
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    let result = collect(&ctx, &url, &execution_request(), "req-test", Some(2)).await;
+
+    assert_eq!(result.unwrap_err(), "The execution was already settled");
+    assert!(
+        redis
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("DEL-MANY chat:streaming:424243"))
+    );
+    assert_eq!(redis.count("DEL chat:task_streaming:"), 0);
+}

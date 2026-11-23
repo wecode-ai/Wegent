@@ -1,0 +1,29 @@
+[package]
+name = "wegent-models"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Model catalogue aggregation and authorization"
+
+[dependencies]
+jsonwebtoken = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-access = { workspace = true }
+wegent-resource-store = { workspace = true }
+anyhow = { workspace = true }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+brz-json = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+wegent-identity = { workspace = true, features = ["test-support"] }
+wegent-backend-test-support = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync", "time"] }

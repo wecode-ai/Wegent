@@ -10,6 +10,7 @@ import type { ComposerCatalogStore, ComposerCatalogEvents } from './useComposerC
 import type { ComposerMentionCandidate } from './composerMentionCandidates'
 import type { WorkspaceMentionSearchApi, WorkspaceMentionTarget } from './workspaceMentionTypes'
 import type { SlashCommand } from './composerAutocomplete'
+import type { ComposerAutocompleteState } from './composerAutocompleteState'
 import type { ComposerPathTransfer } from './useComposerTransfers'
 
 export type ComposerCatalogCommand = SlashCommand<LocalDeviceApp, LocalDeviceSkill>
@@ -46,6 +47,7 @@ export interface ComposerAutocompleteInputProps<
   testId?: string
   predictionStatusTarget?: HTMLElement | null
   skillMenuClassName?: string
+  slashMenuClassName?: string
   disableAutocomplete?: boolean
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceMentionTarget | null
@@ -97,7 +99,7 @@ export interface ComposerAutocompleteInputProps<
   onPickWorkspacePaths?: (path?: string) => Promise<ComposerPathTransfer>
   contributedMentionCandidates?: ComposerMentionCandidate<Project, Conversation>[]
   contributedSlashCommands?: ComposerCatalogCommand[]
-  onMentionQueryChange?: (query: string) => void
+  autocompleteState?: ComposerAutocompleteState
   onExecuteCommand?: (
     command: NonNullable<ComposerCatalogCommand['extensionCommand']>,
     editor: ComposerCommandEditor

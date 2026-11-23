@@ -65,23 +65,25 @@ def _prepare_cloud_sync_after_local_change(
     db: Session, *, user_id: int, installed_id: int
 ) -> tuple[bool, int | None]:
     configure_plugin_session(db)
-    acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
-    row = (
-        db.query(Kind)
-        .filter_by(
-            id=installed_id,
-            user_id=user_id,
-            kind="InstalledPlugin",
-            namespace="default",
-        )
-        .one_or_none()
+    query = db.query(Kind).filter_by(
+        id=installed_id,
+        user_id=user_id,
+        kind="InstalledPlugin",
+        namespace="default",
     )
+    row = query.one_or_none()
     if row is None:
         return False, None
     if not row.is_active:
-        prepare_plugin_removal(db, user_id, installed_id)
-        db.commit()
-        return False, None
+        # Reads need no write lease. Re-read removal state after acquiring one:
+        # a reinstall may have superseded the inactive row while we waited.
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
+        row = query.populate_existing().one_or_none()
+        if row is None or not row.is_active:
+            if row is not None:
+                prepare_plugin_removal(db, user_id, installed_id)
+                db.commit()
+            return False, None
     release_id = row.json.get("spec", {}).get("releaseId")
     return True, release_id if type(release_id) is int else None
 
@@ -96,6 +98,8 @@ async def sync_cloud_plugins_after_local_change(
     try:
         active, release = await run_plugin_operation(
             _prepare_cloud_sync_after_local_change,
+            retry_busy=True,
+            retry_conflicts=True,
             user_id=user_id,
             installed_id=installed_id,
         )

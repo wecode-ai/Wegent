@@ -1133,7 +1133,8 @@
   },
   "appPreview": {
     "button": "Preview",
-    "title": "App Preview"
+    "title": "App Preview",
+    "unavailable": "This app preview URL is unavailable."
   },
   "userSearch": {
     "searchFailed": "Search failed. Please try again.",
@@ -1359,6 +1360,7 @@
     "batch_updating": "Batch updating..."
   },
   "models": {
+    "group_icons_load_failed": "Could not load group icons",
     "label": "Model",
     "title": "Model Management",
     "description": "Manage your AI model configurations",

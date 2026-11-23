@@ -32,8 +32,17 @@ export async function completeCommandOnProcessExit(result, processId, timeoutMs)
     return 'exited'
   })()
   try {
-    // An explicit command error still fails; a response alone cannot prove exit.
-    return await Promise.race([exited, result.then(() => exited)])
+    return await Promise.race([
+      exited,
+      result.then(
+        () => exited,
+        error => {
+          // The host can close the renderer's HTTP connection during a normal quit.
+          if (error.message === 'Failed to fetch') return exited
+          throw error
+        }
+      ),
+    ])
   } finally {
     cancelled = true
   }

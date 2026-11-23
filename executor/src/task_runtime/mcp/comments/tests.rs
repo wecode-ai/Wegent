@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::super::{call_backend_tool, BackendToolContext, SpaceContextGrant};
+use super::super::{call_backend_tool, BackendToolContext, SpaceContextGrant, SpaceContextRole};
 use super::*;
 
 #[tokio::test]
@@ -44,8 +44,16 @@ async fn local_comment_write_persists_in_the_same_issue_activity() {
 
 #[tokio::test]
 async fn backend_comment_tools_use_the_visible_issue_activity() {
-    use axum::{extract::Query, http::HeaderMap, routing::get, Json, Router};
-    use std::collections::HashMap;
+    use axum::{
+        extract::Query,
+        http::{HeaderMap, StatusCode},
+        routing::get,
+        Json, Router,
+    };
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -59,16 +67,31 @@ async fn backend_comment_tools_use_the_visible_issue_activity() {
                 Json(json!([{"id": "visible-comment", "body": "PR link", "sequence_number": 32}]))
             },
         )
-        .post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+        .post({
+          let first_publication = Arc::new(Mutex::new(None));
+          move |headers: HeaderMap, Json(body): Json<Value>| {
+           let first_publication = Arc::clone(&first_publication);
+           async move {
             assert_eq!(headers.get("authorization").unwrap(), "Bearer unit-token");
             assert_eq!(body["body"], "Review report");
             assert_eq!(
                 body["mentions"],
                 json!([{"type": "user", "id": "52", "label": "Reviewer"}])
             );
-            Json(
-                json!({"id": "visible-report", "body": body["body"], "mentions": body["mentions"], "assistant_source":body["assistant_source"]}),
-            )
+            if body["collaboration"].is_object() {
+                let mut first = first_publication.lock().unwrap();
+                if let Some(original) = first.as_ref() {
+                    assert_eq!(original, &body);
+                } else {
+                    *first = Some(body);
+                    return (StatusCode::TOO_EARLY, Json(json!({})));
+                }
+            }
+            (StatusCode::OK, Json(
+                json!({"id": "visible-report", "body": body["body"], "mentions": body["mentions"], "assistant_source":body["assistant_source"], "collaboration":body["collaboration"]}),
+            ))
+           }
+          }
         }),
     );
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -126,6 +149,29 @@ async fn backend_comment_tools_use_the_visible_issue_activity() {
             assert!(published["assistant_source"].is_null());
         }
     }
+    grant.item_id = Some("ISSUE-1".into());
+    grant.dispatch_id = Some("group-dispatch".into());
+    grant.role = Some(SpaceContextRole::Executor);
+    let published = call_backend_tool(
+        &BackendToolContext {
+            grant: Some(&grant),
+            ..context
+        },
+        "add_board_item_comment",
+        &json!({
+            "item_id": "ISSUE-1",
+            "body": "Review report",
+            "mentions": [{"type": "user", "id": "52", "label": "Reviewer"}],
+            "collaboration": {"dispatch_id": "forged-dispatch"}
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(published["assistant_source"].is_null());
+    assert_eq!(published["collaboration"]["dispatch_id"], "group-dispatch");
+    assert_eq!(published["collaboration"]["device_id"], "cloud-device");
+    assert_eq!(published["collaboration"]["task_id"], "owned-runtime");
+    assert!(published["collaboration"]["message_id"].is_string());
     let comments = call_backend_tool(
         &context,
         "list_board_item_comments",

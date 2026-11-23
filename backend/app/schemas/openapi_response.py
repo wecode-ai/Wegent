@@ -7,9 +7,9 @@ OpenAPI Response schemas for v1/responses endpoint.
 Compatible with OpenAI Responses API format.
 """
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, conint, conlist
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, conint, conlist
 
 # Maximum number of attachment IDs allowed per request
 MAX_ATTACHMENT_IDS = 100
@@ -245,6 +245,15 @@ class WegentOptions(BaseModel):
 class WegentExecution(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["wegent"]
+    device_id: Optional[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    ] = Field(
+        default=None,
+        description=(
+            "Traditional executor device ID for Wegent Team execution. "
+            "Continuations inherit the previous response device binding."
+        ),
+    )
 
 
 class ResponseCreateInput(BaseModel):

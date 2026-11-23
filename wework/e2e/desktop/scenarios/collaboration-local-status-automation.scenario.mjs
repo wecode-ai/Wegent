@@ -30,7 +30,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const CHECKPOINT = 'collaboration-local-status-automation'
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = name => `${CONTENT} [data-testid="${name}"]`
 const MARKER = `LOCAL_STATUS_AUTOMATION_${process.pid}`
@@ -300,7 +299,6 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
 
 export async function createDesktopScenario(options) {
   const status = createStatusAutomation(options)
-  if (options.checkpoint === CHECKPOINT) return status
   const existing = await createAgentDispatch(options)
   let active = existing
   return {

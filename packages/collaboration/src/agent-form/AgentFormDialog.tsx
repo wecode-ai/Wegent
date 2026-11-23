@@ -1,10 +1,16 @@
+import { useRef } from 'react'
+import { DialogSurface } from '../controls/DialogSurface'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { ChevronRight, LoaderCircle, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { DialogForm } from '../controls/DialogForm'
-import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 
 function classes(...values: Array<string | undefined>): string {
   return values.filter(Boolean).join(' ')
@@ -124,9 +130,7 @@ export function AgentFormDialog({
   testIds: AgentFormTestIds
   title: string
 }) {
-  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
-    if (!busy) onClose()
-  })
+  const dialogRef = useRef<HTMLFormElement>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   const titleId = `${testIds.dialog}-title`
@@ -149,19 +153,24 @@ export function AgentFormDialog({
         if (event.target === event.currentTarget && !busy) onClose()
       }}
     >
-      <DialogForm
-        ref={dialogRef}
-        tabIndex={-1}
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="flex max-h-[90dvh] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border bg-popover text-text-primary shadow-xl"
-        data-agent-form="shared"
-        data-testid={testIds.dialog}
-        role="dialog"
-        onSubmit={event => {
-          event.preventDefault()
-          if (!busy && !saveDisabled) onSave()
+      <DialogSurface
+        onClose={() => {
+          if (!busy) onClose()
         }}
+        render={
+          <DialogForm
+            ref={dialogRef}
+            tabIndex={-1}
+            aria-labelledby={titleId}
+            className="flex max-h-[90dvh] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border bg-popover text-text-primary shadow-xl"
+            data-agent-form="shared"
+            data-testid={testIds.dialog}
+            onSubmit={event => {
+              event.preventDefault()
+              if (!busy && !saveDisabled) onSave()
+            }}
+          />
+        }
       >
         <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
           <div className="min-w-0 space-y-1">
@@ -170,8 +179,11 @@ export function AgentFormDialog({
             </h2>
             <p className="max-w-prose text-sm leading-5 text-text-secondary">{description}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             aria-label={labels.close}
+            title={labels.close}
+            showTooltip={false}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-40 md:h-8 md:w-8"
             data-testid={testIds.close}
             disabled={busy}
@@ -179,7 +191,7 @@ export function AgentFormDialog({
             type="button"
           >
             <X aria-hidden="true" className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
         {loading ? (
           <p
@@ -301,7 +313,8 @@ export function AgentFormDialog({
             </p>
           ) : null}
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               className="h-11 rounded-md px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-40 md:h-9"
               data-testid={`${testIds.dialog}-cancel`}
               disabled={busy}
@@ -309,8 +322,10 @@ export function AgentFormDialog({
               type="button"
             >
               {labels.cancel}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               className="inline-flex h-11 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-80 disabled:opacity-40 md:h-9"
               data-testid={testIds.save}
               disabled={busy || saveDisabled}
@@ -318,10 +333,10 @@ export function AgentFormDialog({
             >
               {busy ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : null}
               {busy ? savingLabel : saveLabel}
-            </button>
+            </ControlButton>
           </div>
         </footer>
-      </DialogForm>
+      </DialogSurface>
     </div>
   )
 }
@@ -349,7 +364,8 @@ function ConfigurationDisclosure({
 }) {
   return (
     <section className="border-t border-border">
-      <button
+      <ControlButton
+        variant="unstyled"
         aria-expanded={open}
         aria-controls={panelId}
         aria-labelledby={`${panelId}-heading`}
@@ -372,7 +388,7 @@ function ConfigurationDisclosure({
           </span>
           {!open ? <span className="mt-2 block">{summary}</span> : null}
         </span>
-      </button>
+      </ControlButton>
       <div className="space-y-4 pb-4" id={panelId} hidden={!open}>
         {open || keepMounted ? children : null}
       </div>
@@ -384,8 +400,8 @@ function TextInput({ busy, field }: { busy: boolean; field: AgentFormField }) {
   return (
     <label className="block space-y-1.5 text-sm text-text-secondary">
       <span>{field.label}</span>
-      <input
-        className={classes('h-11 md:h-9', fieldClassName)}
+      <ControlInput
+        className="w-full transition-[border-color,box-shadow] placeholder:text-text-muted disabled:opacity-50"
         data-testid={field.testId}
         disabled={busy || field.disabled}
         onChange={event => field.onChange(event.target.value)}
@@ -400,24 +416,31 @@ function SelectInput({ busy, field }: { busy: boolean; field: AgentFormSelectFie
   return (
     <label className="block space-y-1.5 text-sm text-text-secondary">
       <span>{field.label}</span>
-      <select
-        className={classes('h-11 md:h-9', fieldClassName)}
-        data-testid={field.testId}
+      <SelectRoot
         disabled={busy || field.disabled}
-        onChange={event => field.onChange(event.target.value)}
-        value={field.value}
+        onValueChange={selectedValue => {
+          if (selectedValue !== null) return field.onChange(selectedValue)
+        }}
+        value={normalizeSelectValue(field.value)}
       >
-        {field.placeholder ? (
-          <option disabled value="">
-            {field.placeholder}
-          </option>
-        ) : null}
-        {field.options.map(option => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger
+          aria-label={field.label}
+          className="w-full transition-[border-color,box-shadow] placeholder:text-text-muted disabled:opacity-50"
+          data-testid={field.testId}
+        />
+        <SelectContent>
+          {field.placeholder ? (
+            <SelectItem disabled value="">
+              {field.placeholder}
+            </SelectItem>
+          ) : null}
+          {field.options.map(option => (
+            <SelectItem key={option.value} value={String(option.value)}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </SelectRoot>
     </label>
   )
 }
@@ -434,7 +457,7 @@ function TextareaInput({
   return (
     <label className="block space-y-1.5 text-sm text-text-secondary">
       <span>{field.label}</span>
-      <textarea
+      <ControlTextarea
         className={classes(
           code ? 'min-h-24 font-mono text-code' : 'min-h-20',
           'resize-y py-2.5',

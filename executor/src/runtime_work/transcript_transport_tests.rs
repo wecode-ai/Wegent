@@ -248,7 +248,7 @@ fn expired_snapshots_fail_explicitly_and_are_cleaned_on_write() {
 }
 
 #[test]
-fn cleanup_only_removes_expired_snapshots_in_the_transfer_cache() {
+fn cleanup_only_sweeps_expired_transfer_snapshots_once_per_interval() {
     let root = tempfile::tempdir().unwrap();
     let directory = snapshot_directory(root.path(), &json!({"taskId":"old", "threadId":"s"}));
     fs::create_dir_all(&directory).unwrap();
@@ -258,16 +258,27 @@ fn cleanup_only_removes_expired_snapshots_in_the_transfer_cache() {
     for path in [&expired_path, &active_path, &unrelated_path] {
         fs::write(path, "test snapshot").unwrap();
     }
-    for path in [&expired_path, &unrelated_path] {
+    let expire = |path: &Path| {
         File::options()
             .write(true)
             .open(path)
             .unwrap()
             .set_modified(SystemTime::now() - SNAPSHOT_LIFETIME - Duration::from_secs(1))
             .unwrap();
-    }
-    remove_expired_transfers(root.path()).unwrap();
+    };
+    expire(&expired_path);
+    expire(&unrelated_path);
+    let cleanup = TransferCleanup::default();
+    let now = Instant::now();
+    cleanup.run_if_due(root.path(), now);
     assert!(!expired_path.exists());
     assert!(active_path.exists());
+    assert!(unrelated_path.exists());
+
+    expire(&active_path);
+    cleanup.run_if_due(root.path(), now + Duration::from_secs(1));
+    assert!(active_path.exists());
+    cleanup.run_if_due(root.path(), now + TRANSFER_CLEANUP_INTERVAL);
+    assert!(!active_path.exists());
     assert!(unrelated_path.exists());
 }

@@ -561,6 +561,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     );
 
     // A different agent sharing the checkout must not inherit custom definitions.
+    let mut broken_configuration = followup.clone();
     let mut other_agent = authenticated_bot_request(followup);
     other_agent.task_id = "7791".to_owned();
     other_agent.extra.insert("team_id".to_owned(), json!(13));
@@ -569,6 +570,49 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         .insert("team_name".to_owned(), json!("other-agent"));
     assert_eq!(engine.run(other_agent).await, outcome);
     assert_eq!(read_json(&log_path.with_extension("mcp")), managed_only);
+
+    // A broken optional MCP file must not stop the next turn or be overwritten.
+    fs::write(&latest_config, "{broken").unwrap();
+    broken_configuration.task_id = "7788".to_owned();
+    broken_configuration.subtask_id = "102".to_owned();
+    assert_eq!(
+        engine
+            .run(authenticated_bot_request(broken_configuration))
+            .await,
+        outcome
+    );
+    let args = read_arguments(&log_path);
+    let inline = args
+        .as_array()
+        .unwrap()
+        .windows(2)
+        .find(|pair| pair[0] == "--mcp-config")
+        .unwrap()[1]
+        .as_str()
+        .unwrap();
+    let inline: Value = serde_json::from_str(inline).unwrap();
+    assert_eq!(
+        inline["mcpServers"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        vec!["wework_space"]
+    );
+    assert!(inline["mcpServers"]["wework_space"]["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("${WEGENT_MCP_MANAGED_"));
+    assert!(
+        inline["mcpServers"]["wework_space"]["headers"]["Authorization"]
+            .as_str()
+            .unwrap()
+            .starts_with("${WEGENT_MCP_MANAGED_")
+    );
+    assert_eq!(
+        fs::read_to_string(execution_home(&agent_home, "7788").join("mcp.json")).unwrap(),
+        "{broken"
+    );
 }
 
 #[tokio::test]
@@ -1505,12 +1549,9 @@ async fn claude_runtime_proxies_deferred_interactive_mcp_to_waiting_outcome() {
 }
 
 #[tokio::test]
-async fn claude_runtime_retries_deferred_interactive_mcp_invalid_form() {
+async fn claude_runtime_continues_after_deferred_mcp_errors() {
     let _lock = env_lock().await;
-    let workspace_root = unique_dir("claude-runtime-deferred-retry-workspace");
-    let marker = unique_dir("claude-runtime-deferred-retry-marker").join("count");
-    let fake_claude = write_fake_claude_deferred_then_completed(&marker);
-    let mcp_url = spawn_mcp_server(vec![
+    let valid_form_url = spawn_mcp_server(vec![
         json!({"jsonrpc": "2.0", "id": 1, "result": {}}),
         json!({"jsonrpc": "2.0", "result": {}}),
         json!({
@@ -1522,37 +1563,55 @@ async fn claude_runtime_retries_deferred_interactive_mcp_invalid_form() {
         }),
     ])
     .await;
-    let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
-    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
-    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
-        fake_claude.display().to_string(),
-        "codex",
-    ));
-    let request = ExecutionRequest {
-        task_id: "7791".to_owned(),
-        subtask_id: "102".to_owned(),
-        prompt: json!("ask for form"),
-        bot: json!([{
-            "id": 7,
-            "shell_type": "ClaudeCode"
-        }]),
-        mcp_servers: vec![json!({
-            "name": "interactive-wegent-interactive-form-question",
-            "type": "streamable-http",
-            "url": mcp_url
-        })],
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
-        ..ExecutionRequest::default()
-    };
+    let failed_url = spawn_mcp_server(vec![json!({
+        "jsonrpc": "2.0", "id": 1,
+        "error": {"code": -32000, "message": "synthetic-private-credential"}
+    })])
+    .await;
+    for (index, mcp_url) in [valid_form_url, failed_url, "not-a-valid-url".into()]
+        .into_iter()
+        .enumerate()
+    {
+        let workspace_root = unique_dir("claude-runtime-deferred-retry-workspace");
+        let marker = unique_dir("claude-runtime-deferred-retry-marker").join("count");
+        let fake_claude = write_fake_claude_deferred_then_completed(&marker);
+        let _workspace = EnvGuard::set("WORKSPACE_ROOT", workspace_root.display().to_string());
+        let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+        let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+            fake_claude.display().to_string(),
+            "codex",
+        ));
+        let request = ExecutionRequest {
+            task_id: "7791".to_owned(),
+            subtask_id: "102".to_owned(),
+            prompt: json!("ask for form"),
+            bot: json!([{
+                "id": 7,
+                "shell_type": "ClaudeCode"
+            }]),
+            mcp_servers: vec![json!({
+                "name": "interactive-wegent-interactive-form-question",
+                "type": "streamable-http",
+                "url": mcp_url
+            })],
+            model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+            ..ExecutionRequest::default()
+        };
 
-    let outcome = engine.run(authenticated_bot_request(request)).await;
+        let outcome = engine.run(authenticated_bot_request(request)).await;
 
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "retried".to_owned()
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: "retried".to_owned()
+            }
+        );
+        let args = fs::read_to_string(marker.with_extension("args")).unwrap();
+        assert!(args.contains("EnterWorktree"));
+        if index > 0 {
+            assert!(args.contains("mcp__interactive_wegent-interactive-form-question__*"));
         }
-    );
+    }
 }
 
 #[tokio::test]
@@ -1872,6 +1931,7 @@ fn write_fake_claude_deferred_then_completed(marker: &Path) -> PathBuf {
     let content = format!(
         r#"#!/bin/sh
 MARKER='{}'
+printf '%s\n' "$@" > "$MARKER.args"
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
   cat >/dev/null
@@ -1881,8 +1941,15 @@ if [ ! -f "$MARKER" ]; then
 fi
 case "$*" in
   *"--resume session-retry"*"--input-format stream-json"*)
-    if ! grep -q 'interactive_form_question arguments were invalid' >/dev/null 2>&1; then
+    input=$(cat)
+    if ! printf '%s' "$input" | grep -Eq 'interactive_form_question arguments were invalid|mcp_unavailable'; then
       exit 7
+    fi
+    if [ "$(cat "$MARKER")" = 1 ] && printf '%s' "$input" | grep -q mcp_unavailable; then
+      printf 2 > "$MARKER"
+      printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-retry"}}'
+      printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-retry","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-2","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
+      exit 0
     fi
     printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"retried"}}]}}}}'
     printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-retry","stop_reason":"end_turn"}}'

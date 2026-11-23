@@ -16,8 +16,7 @@
   background: rgb(var(--color-bg-muted));
 }
 
-:where(html:not([data-input-modality="pointer"]))
-  .issue-assignment-history-summary:focus-visible {
+:where(html:not([data-input-modality='pointer'])) .issue-assignment-history-summary:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -27,15 +26,15 @@
 }
 
 .issue-assignment-history-hide,
-.issue-assignment-history-disclosure[open] .issue-assignment-history-show {
+.issue-assignment-history-disclosure[data-open] .issue-assignment-history-show {
   display: none;
 }
 
-.issue-assignment-history-disclosure[open] .issue-assignment-history-hide {
+.issue-assignment-history-disclosure[data-open] .issue-assignment-history-hide {
   display: inline;
 }
 
-.issue-assignment-history-disclosure[open] .issue-assignment-history-chevron {
+.issue-assignment-history-disclosure[data-open] .issue-assignment-history-chevron {
   transform: rotate(180deg);
 }
 

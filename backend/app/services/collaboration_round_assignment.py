@@ -5,7 +5,7 @@
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, ProjectChatAgent
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_items.service import loop_item_service
 
@@ -16,6 +16,7 @@ def assign_round_owner(
     item: LoopItem,
     assignments: list[dict[str, object]],
     user_id: int,
+    manager: ProjectChatAgent | None = None,
 ) -> None:
     """Prefer the first human, otherwise the first agent, as in local projects.
 
@@ -49,6 +50,7 @@ def assign_round_owner(
         "user" if human else "agent",
         member_id,
         str(owner["human_user_name"] if human else owner["agent_name"]),
+        actor_agent=manager,
     )
     item.assignee_user_id = int(member_id) if human else None
     item.assignee_agent_id = "" if human else member_id

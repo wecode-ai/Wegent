@@ -1,3 +1,9 @@
+/** Bind Runtime admission to its queued payload while preserving UI acknowledgements. */
+export function matchesRuntimeControlCommand(queued, started) {
+  if (queued.action !== 'fetchLocalRuntime' && started.action !== 'fetchLocalRuntime') return true
+  return queued.action === started.action && queued.value === started.value
+}
+
 export class WindowCommandQueue {
   #commands = []
   #clients = new Map()

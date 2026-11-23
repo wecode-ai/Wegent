@@ -1,8 +1,9 @@
+import { useRef } from 'react'
+import { DialogSurface } from '../controls/DialogSurface'
 // @vitest-environment jsdom
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 import { TemplateDialog } from './TemplateDialog'
 
 let root: Root
@@ -10,10 +11,10 @@ let container: HTMLDivElement
 const closeProject = vi.fn()
 
 function Harness({ busy = false }: { busy?: boolean }) {
-  const ref = useDialogKeyboard<HTMLDivElement>(closeProject)
+  const ref = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   return (
-    <div ref={ref} role="dialog" aria-label="Create project">
+    <DialogSurface onClose={closeProject} render={<div ref={ref} aria-label="Create project" />}>
       <input defaultValue="Keep my project draft" data-testid="project-draft" />
       <button data-testid="preview-template" onClick={() => setOpen(true)}>
         Preview
@@ -28,7 +29,7 @@ function Harness({ busy = false }: { busy?: boolean }) {
           <p>Template content</p>
         </TemplateDialog>
       )}
-    </div>
+    </DialogSurface>
   )
 }
 
@@ -38,18 +39,6 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
-  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
-    configurable: true,
-    value: function (this: HTMLDialogElement) {
-      this.open = true
-    },
-  })
-  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
-    configurable: true,
-    value: function (this: HTMLDialogElement) {
-      this.open = false
-    },
-  })
 })
 afterEach(async () => {
   await act(async () => root.unmount())
@@ -57,32 +46,41 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-it.each([false, true])(
-  'handles Escape only in the top native template modal, busy=%s',
-  async busy => {
-    await act(async () => root.render(<Harness busy={busy} />))
-    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="preview-template"]')!
-    trigger.focus()
-    await act(async () => trigger.click())
-    const dialog = container.querySelector<HTMLDialogElement>('dialog')!
+it.each([false, true])('handles Escape only in the top template modal, busy=%s', async busy => {
+  await act(async () => root.render(<Harness busy={busy} />))
+  const trigger = container.querySelector<HTMLButtonElement>('[data-testid="preview-template"]')!
+  trigger.focus()
+  await act(async () => trigger.click())
+  const dialog = document.querySelector<HTMLElement>(
+    '[data-testid="collaboration-template-dialog"]'
+  )!
+  await act(async () =>
+    dialog.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
+    )
+  )
+  expect(closeProject).not.toHaveBeenCalled()
+  expect((container.querySelector('[data-testid="project-draft"]') as HTMLInputElement).value).toBe(
+    'Keep my project draft'
+  )
+  expect(Boolean(document.querySelector('[data-testid="collaboration-template-dialog"]'))).toBe(
+    busy
+  )
+  if (!busy) {
+    expect(document.activeElement).toBe(trigger)
     await act(async () =>
-      dialog.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      trigger.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     )
-    expect(closeProject).not.toHaveBeenCalled()
-    expect(
-      (container.querySelector('[data-testid="project-draft"]') as HTMLInputElement).value
-    ).toBe('Keep my project draft')
-    expect(Boolean(container.querySelector('dialog'))).toBe(busy)
-    if (!busy) {
-      expect(document.activeElement).toBe(trigger)
-      await act(async () =>
-        trigger.dispatchEvent(
-          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-        )
-      )
-      expect(closeProject).toHaveBeenCalledOnce()
-    }
+    expect(closeProject).toHaveBeenCalledOnce()
   }
-)
+})

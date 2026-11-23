@@ -22,7 +22,7 @@ pub(super) fn full_reconciliation_gate(path: &Path) -> Arc<tokio::sync::Mutex<()
 }
 
 pub(super) struct LocalSyncLease {
-    _file: std::fs::File,
+    _file: recovery::FileLock,
     _serial: tokio::sync::OwnedMutexGuard<()>,
 }
 

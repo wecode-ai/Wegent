@@ -9,6 +9,47 @@ import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const PROVIDER = '@test/connection-source/records'
 
+async function verifyStatusSurvivesTimeout(control, resultDir, source, timeoutMs) {
+  const input = { consumerKey: 'pr-status-timeout', generation: 'first', source }
+  const invoke = (operation, deadline = timeoutMs) =>
+    requestExecutor(control, `runtime.connections.observers.${operation}`, input, deadline)
+  const status = {
+    kind: 'change_request',
+    provider: 'github',
+    topicId: 'https://github.com/org/repo/pull/17',
+    observedAt: new Date().toISOString(),
+    data: { statusCheckRollup: { state: 'PENDING' } },
+  }
+  const setStatus = (stall, observed = status) =>
+    writeFile(
+      join(resultDir, 'records.json'),
+      JSON.stringify([{ id: source.id, value: JSON.stringify({ stall, status: observed }) }])
+    )
+  await setStatus(false)
+  const initial = await invoke('start')
+  try {
+    assert.equal(initial.observation.errorCode, null)
+    assert.deepEqual(initial.observation.resourceStates, [status])
+    await setStatus(true)
+    const timedOut = await invoke('refresh', 25_000)
+    assert.equal(timedOut.observation.errorCode, 'request_timeout')
+    assert.equal(timedOut.observation.lastCollectedAt, initial.observation.lastCollectedAt)
+    assert.deepEqual(timedOut.observation.resourceStates, [status])
+
+    const updated = { ...status, data: { statusCheckRollup: { state: 'SUCCESS' } } }
+    await setStatus(false, updated)
+    const recovered = await invoke('refresh')
+    assert.equal(recovered.observation.errorCode, null)
+    assert.deepEqual(recovered.observation.resourceStates, [updated])
+  } finally {
+    await invoke('stop')
+    await writeFile(
+      join(resultDir, 'records.json'),
+      JSON.stringify([{ id: 'archive-record', value: '[]' }])
+    )
+  }
+}
+
 /** Real installed provider, executor, SQLite, collection scheduler and desktop restart. */
 export function createDesktopScenario(options) {
   const base = createEventScenario(options)
@@ -54,6 +95,9 @@ export function createDesktopScenario(options) {
       })
       const source = resources.items.find(item => item.id === 'archive-record')
       assert.ok(source)
+      const prStatus = resources.items.find(item => item.id === 'pr-status-record')
+      assert.ok(prStatus)
+      await verifyStatusSurvivesTimeout(control, resultDir, prStatus, uiTimeoutMs)
       const input = { consumerKey: 'storage-regression', generation: 'restart', source }
       const initial = await rpc(control, 'runtime.connections.observers.start', input)
       const sourceId = initial.observation.id

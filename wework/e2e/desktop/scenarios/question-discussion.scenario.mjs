@@ -61,6 +61,7 @@ export function createDesktopScenario({
   resultDir,
   captureScreenshot,
   workbenchReadyTimeoutMs,
+  modelResponseTimeoutMs,
 }) {
   let active = false
   let discussionCalls = 0
@@ -402,7 +403,11 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
       )
-      await control.command('waitFor', CARD, { text: QUESTION, visible: true })
+      await control.command('waitFor', CARD, {
+        text: QUESTION,
+        visible: true,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       await control.command(
         'clickWhenEnabled',
         `${CARD} [data-testid="request-user-input-discuss"]`

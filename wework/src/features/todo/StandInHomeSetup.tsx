@@ -1,10 +1,16 @@
-import { useEffect, useState, type ReactNode } from 'react'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
-import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
 
 export function StandInHomeSetupPrompt() {
   const { t } = useTranslation('common')
@@ -37,54 +43,44 @@ export function StandInHomeSetup({
   active: boolean
   children(settings: PersonalStandInSettings): ReactNode
 }) {
-  const { t, i18n } = useTranslation('common')
-  const [snapshot, setSnapshot] = useState<{
-    api: typeof api
-    scope: string
-    settings?: PersonalStandInSettings
-    error?: string
-  }>()
-  const [revision, setRevision] = useState(0)
-  const scope = `${userId}:${deviceId}`
-  useEffect(() => {
-    if (!active || !api) return
-    let current = true
-    void api.personalGet(userId, deviceId).then(
-      value => {
-        if (current) setSnapshot({ api, scope, settings: value })
-      },
-      cause => {
-        if (current)
-          setSnapshot(previous => ({
-            api,
-            scope,
-            settings:
-              previous?.api === api && previous.scope === scope ? previous.settings : undefined,
-            error: getStandInErrorMessage(cause),
-          }))
-      }
-    )
-    return () => {
-      current = false
-    }
-  }, [api, userId, deviceId, active, scope, i18n.language, revision])
-  const current = snapshot?.api === api && snapshot?.scope === scope ? snapshot : undefined
+  const { t } = useTranslation('common')
+  const resource = useMemo(
+    () =>
+      api
+        ? createAsyncResource(
+            JSON.stringify([userId, deviceId]),
+            () => api.personalGet(userId, deviceId),
+            { refreshOnSubscribe: true }
+          )
+        : null,
+    [api, userId, deviceId]
+  )
+  const snapshot = useSyncExternalStore(
+    active && resource ? resource.subscribe : subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const settings = snapshot.data
+  const failed = snapshot.status === 'error' || snapshot.error !== undefined
   const error =
-    !api || current?.error ? (
+    !api || failed ? (
       <div role="alert" className="p-5 text-sm text-error">
-        {current?.error ?? t('personalHome.workUnavailable')}
-        <button
+        {failed ? getStandInErrorMessage(snapshot.error) : t('personalHome.workUnavailable')}
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="personal-home-setup-retry"
           className="ml-2 min-h-11 underline md:min-h-8"
-          onClick={() => setRevision(value => value + 1)}
+          onClick={() => {
+            if (active) void resource?.reload()
+          }}
         >
           {t('standIn.reload')}
-        </button>
+        </ControlButton>
       </div>
     ) : null
-  if (!current?.settings && error) return error
-  if (!current)
+  if (!settings && error) return error
+  if (!settings)
     return (
       <p role="status" className="p-5 text-sm text-text-muted">
         {t('standIn.loading')}
@@ -93,7 +89,7 @@ export function StandInHomeSetup({
   return (
     <>
       {error}
-      {current.settings ? children(current.settings) : null}
+      {children(settings)}
     </>
   )
 }

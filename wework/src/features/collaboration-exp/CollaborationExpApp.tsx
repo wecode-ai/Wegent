@@ -1,25 +1,34 @@
-import { useCallback, useMemo, useState } from 'react'
-import { Circle, Ellipsis, FolderKanban, Lock, Paperclip } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { parseDingTalkAITableLink } from '@/features/todo/projectProviderConfig'
+import { useCollaborationMarkdownServices } from '@/features/todo/useCollaborationMarkdownServices'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
+import { useTranslation } from '@/hooks/useTranslation'
+import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
+import type { CollaborationAttachment, CollaborationView } from '@wegent/collaboration'
 import {
   BrowserAttachmentPreview,
-  IssueMarkdownProvider,
   createCollaborationTranslator,
+  IssueMarkdownProvider,
   ProjectCreateDialog,
   projectCreateLabels,
 } from '@wegent/collaboration'
-import type { CollaborationView, CollaborationAttachment } from '@wegent/collaboration'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
-import { Button } from '@/components/ui/button'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { useCollaborationMarkdownServices } from '@/features/todo/useCollaborationMarkdownServices'
-import { parseDingTalkAITableLink } from '@/features/todo/projectProviderConfig'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
-import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Circle, Ellipsis, FolderKanban, Lock, Paperclip } from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
+import {
+  AssistantConversationPane,
+  AssistantHome,
+  AssistantHomeToolbar,
+  AssistantTeamRelay,
+  type AssistantHomePanel,
+} from './assistant'
+import { CreateExperienceIssue } from './CreateExperienceIssue'
+import { useExperienceIssue } from './data/useExperienceIssue'
 import { useExperienceSources } from './data/useExperienceSources'
 import { useExperienceTasks } from './data/useExperienceTasks'
-import { useExperienceIssue } from './data/useExperienceIssue'
 import { useExperienceTimeline } from './data/useExperienceTimeline'
 import { buildCollaborationExpRoute } from './integration/deepLinks'
 import { projectScopeOf, selectProjectScopes, selectTaskRows } from './model'
@@ -28,29 +37,21 @@ import type {
   ExperienceProjectScope,
   ExperienceTaskRow,
 } from './model/types'
-import {
-  AssistantConversationPane,
-  AssistantHome,
-  AssistantHomeToolbar,
-  AssistantTeamRelay,
-  type AssistantHomePanel,
-} from './assistant'
+import { PrivateDiscussionPane } from './private'
 import { ExperienceNavigation, ExperiencePanes, type ExperiencePane } from './shell'
 import { ExperienceAccount } from './shell/ExperienceAccount'
+import './shell/ExperienceTheme.css'
 import { ExperienceThemeProvider } from './shell/ExperienceThemeProvider'
-import { TaskListView } from './tasks/TaskListView'
-import { TaskHome } from './tasks/TaskHome'
+import type { ProjectDrilldownView } from './tasks/ProjectDrilldown'
+import { ProjectExperience } from './tasks/ProjectExperience'
 import { ProjectHome } from './tasks/ProjectHome'
 import type { TaskFilterValue } from './tasks/TaskFilters'
-import { ProjectExperience } from './tasks/ProjectExperience'
-import type { ProjectDrilldownView } from './tasks/ProjectDrilldown'
-import { TaskTimeline, type TimelineAttachmentSelection } from './timeline/TaskTimeline'
-import type { TimelineFilter } from './timeline/TimelineFilters'
+import { TaskHome } from './tasks/TaskHome'
+import { TaskListView } from './tasks/TaskListView'
 import { ExperienceIssueDetails } from './timeline/ExperienceIssueDetails'
 import { ExperienceIssueSummary } from './timeline/ExperienceIssueSummary'
-import { PrivateDiscussionPane } from './private'
-import { CreateExperienceIssue } from './CreateExperienceIssue'
-import './shell/ExperienceTheme.css'
+import { TaskTimeline, type TimelineAttachmentSelection } from './timeline/TaskTimeline'
+import type { TimelineFilter } from './timeline/TimelineFilters'
 
 export default function CollaborationExpApp({
   active = true,
@@ -462,7 +463,8 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
             role="img"
             className="experience-header-status"
           />
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="experience-header-tool"
             title={t('timeline.attachments')}
@@ -478,8 +480,9 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
             }
           >
             <Paperclip size={16} aria-hidden="true" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="experience-header-tool"
             title={t('timeline.openProject', { name: detail.data.project.name })}
@@ -488,8 +491,9 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
             onClick={() => openProject(projectScopeOf(detail.data!.project))}
           >
             <FolderKanban size={16} aria-hidden="true" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="experience-header-tool"
             title={t('timeline.details')}
@@ -498,7 +502,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
             onClick={() => navigate({ inspector: 'summary', discussion: null, nodeId: null })}
           >
             <Ellipsis size={16} aria-hidden="true" />
-          </button>
+          </ControlButton>
         </>
       ) : undefined,
       onBack: () => navigate({ issueId: null, discussion: null, nodeId: null }),
