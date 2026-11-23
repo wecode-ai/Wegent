@@ -229,6 +229,7 @@ export function AutomationsPage({
       : null
   const error = operationError ?? listError ?? runsError
   const [query, setQuery] = useState('')
+  const [rowFocusRequest, setRowFocusRequest] = useState<{ id: string }>()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -292,6 +293,7 @@ export function AutomationsPage({
 
   const openCreate = (template?: Partial<AutomationDraft>) =>
     requestLeave(() => {
+      setRowFocusRequest(undefined)
       const device = standInDeviceId
         ? state.devices.find(item => item.device_id === standInDeviceId)
         : localDevices.find(canUseForProjectCreation)
@@ -347,6 +349,7 @@ export function AutomationsPage({
 
   const selectAutomation = (automation: Automation) =>
     requestLeave(() => {
+      setRowFocusRequest(undefined)
       source.resolveInitialSelection()
       setSelectedAutomationId(automation.id)
       setEditing(automation)
@@ -505,6 +508,7 @@ export function AutomationsPage({
       if (detailOnly) {
         onClose?.()
       } else if (standInOwner) {
+        if (editing) setRowFocusRequest({ id: response.automation.id })
         setSelectedAutomationId(null)
         setEditing(null)
         setDraft(null)
@@ -594,6 +598,7 @@ export function AutomationsPage({
         onClose?.()
         return
       }
+      if (standInOwner && editing) setRowFocusRequest({ id: editing.id })
       source.resolveInitialSelection()
       setSelectedAutomationId(null)
       setEditing(null)
@@ -793,6 +798,7 @@ export function AutomationsPage({
                   query={query}
                   statusFilter={statusFilter}
                   selectedAutomationId={selectedAutomationId}
+                  rowFocusRequest={rowFocusRequest}
                   locale={locale}
                   loading={loading}
                   error={error}
