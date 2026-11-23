@@ -65,7 +65,7 @@ describe('DownloadTargetPolicy', () => {
       await policy.prepare()
 
       const first = new FakeDownloadItem('video.mp4')
-      const second = new FakeDownloadItem('Video.MP4')
+      const second = new FakeDownloadItem('video.mp4')
       const firstResult = policy.apply(first, { id: 1 })
       const secondResult = policy.apply(second, { id: 1 })
 
@@ -75,13 +75,27 @@ describe('DownloadTargetPolicy', () => {
       })
       expect(secondResult).toEqual({
         mode: 'save-path',
-        path: join(downloadsDir, 'Video (2).MP4'),
+        path: join(downloadsDir, 'video (2).mp4'),
       })
       expect(first.setSavePath).toHaveBeenCalledExactlyOnceWith(join(downloadsDir, 'video (1).mp4'))
       expect(first.setSaveDialogOptions).not.toHaveBeenCalled()
       expect(second.setSavePath).toHaveBeenCalledExactlyOnceWith(
-        join(downloadsDir, 'Video (2).MP4')
+        join(downloadsDir, 'video (2).mp4')
       )
+
+      // Concurrent case-variant downloads reserve distinct paths regardless of host filesystem.
+      const upper = new FakeDownloadItem('Report.zip')
+      const lower = new FakeDownloadItem('report.zip')
+      expect(policy.apply(upper, { id: 1 })).toEqual({
+        mode: 'save-path',
+        path: join(downloadsDir, 'Report.zip'),
+      })
+      expect(policy.apply(lower, { id: 1 })).toEqual({
+        mode: 'save-path',
+        path: join(downloadsDir, 'report (1).zip'),
+      })
+      upper.emit('done', {}, 'cancelled')
+      lower.emit('done', {}, 'cancelled')
 
       first.emit('done', {}, 'completed')
       second.emit('done', {}, 'cancelled')
@@ -209,5 +223,47 @@ describe('DownloadTargetPolicy', () => {
       defaultPath: join('/Users/demo/Downloads', 'video.mp4'),
     })
     expect(warnings).toHaveLength(2)
+  })
+
+  test('prompts instead of saving to system Downloads while a new custom directory check is pending', async () => {
+    let releaseCustomCheck: (() => void) | null = null
+    const customDir = '/Users/demo/CustomDownloads'
+    const systemDir = '/Users/demo/Downloads'
+    const policy = new DownloadTargetPolicy({
+      defaultDownloadsDirectory: () => systemDir,
+      fs: {
+        mkdir: async path => {
+          if (path === customDir) {
+            await new Promise<void>(resolve => {
+              releaseCustomCheck = resolve
+            })
+          }
+        },
+        access: async () => undefined,
+        existsSync: () => false,
+      },
+    })
+    await policy.prepare()
+
+    const pendingUpdate = policy.update({
+      browserDownloadDirectory: customDir,
+      browserAskBeforeDownload: false,
+    })
+
+    const duringCheck = new FakeDownloadItem('pending.mp4')
+    expect(policy.apply(duringCheck, { id: 3 })).toEqual({
+      mode: 'save-dialog',
+      path: join(systemDir, 'pending.mp4'),
+    })
+    expect(duringCheck.setSavePath).not.toHaveBeenCalled()
+
+    releaseCustomCheck?.()
+    await pendingUpdate
+
+    const afterCheck = new FakeDownloadItem('ready.mp4')
+    expect(policy.apply(afterCheck, { id: 3 })).toEqual({
+      mode: 'save-path',
+      path: join(customDir, 'ready.mp4'),
+    })
   })
 })

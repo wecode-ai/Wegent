@@ -113,6 +113,7 @@ export class DownloadTargetPolicy {
   private readonly fs: DownloadFileSystem
   private readonly caseInsensitivePaths: boolean
   private prepareGeneration = 0
+  private preparing = false
 
   constructor(private readonly options: DownloadTargetPolicyOptions) {
     this.fs = options.fs ?? DEFAULT_FS
@@ -128,27 +129,34 @@ export class DownloadTargetPolicy {
 
   async prepare(): Promise<void> {
     const generation = ++this.prepareGeneration
-    const preferred = this.preferences.downloadDirectory
-    const fallback = this.resolveFallbackDirectory()
-    const checks: Array<{ directory: string; label: string }> = []
-    if (preferred && isAbsolute(preferred)) {
-      checks.push({ directory: preferred, label: 'custom download directory' })
-    }
-    if (fallback && fallback !== preferred) {
-      checks.push({ directory: fallback, label: 'system downloads directory' })
-    }
+    this.preparing = true
+    try {
+      const preferred = this.preferences.downloadDirectory
+      const fallback = this.resolveFallbackDirectory()
+      const checks: Array<{ directory: string; label: string }> = []
+      if (preferred && isAbsolute(preferred)) {
+        checks.push({ directory: preferred, label: 'custom download directory' })
+      }
+      if (fallback && fallback !== preferred) {
+        checks.push({ directory: fallback, label: 'system downloads directory' })
+      }
 
-    const results = await Promise.all(
-      checks.map(async ({ directory, label }) => ({
-        directory,
-        writable: await this.tryPrepareDirectory(directory, label),
-      }))
-    )
+      const results = await Promise.all(
+        checks.map(async ({ directory, label }) => ({
+          directory,
+          writable: await this.tryPrepareDirectory(directory, label),
+        }))
+      )
 
-    if (generation !== this.prepareGeneration) return
-    this.verifiedDirectories.clear()
-    for (const { directory, writable } of results) {
-      this.verifiedDirectories.set(directory, writable)
+      if (generation !== this.prepareGeneration) return
+      this.verifiedDirectories.clear()
+      for (const { directory, writable } of results) {
+        this.verifiedDirectories.set(directory, writable)
+      }
+    } finally {
+      if (generation === this.prepareGeneration) {
+        this.preparing = false
+      }
     }
   }
 
@@ -183,7 +191,7 @@ export class DownloadTargetPolicy {
     const directory = this.selectVerifiedDirectory()
 
     if (!directory) {
-      void this.prepare()
+      if (!this.preparing) void this.prepare()
       const defaultPath = this.fallbackDefaultPath(filename)
       item.setSaveDialogOptions({ defaultPath })
       this.attachCompletionHook(item)
@@ -228,8 +236,11 @@ export class DownloadTargetPolicy {
 
   private selectVerifiedDirectory(): string | null {
     const preferred = this.preferences.downloadDirectory
-    if (preferred && isAbsolute(preferred) && this.verifiedDirectories.get(preferred) === true) {
-      return preferred
+    if (preferred && isAbsolute(preferred)) {
+      const status = this.verifiedDirectories.get(preferred)
+      if (status === true) return preferred
+      // Do not silently save to the system directory while a new custom directory is still being verified.
+      if (status === undefined) return null
     }
     const fallback = this.resolveFallbackDirectory()
     if (fallback && this.verifiedDirectories.get(fallback) === true) {
