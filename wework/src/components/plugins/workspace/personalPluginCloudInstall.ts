@@ -123,6 +123,7 @@ async function publishFirstRelease(
       targets: [],
       allowCopy: false,
       privateFirstInstall: true,
+      restoreDeleted: true,
     },
     requireCurrent
   )
@@ -149,6 +150,61 @@ async function findImportedInstall(local: LocalCodexPluginApi, source: LocalPlug
   })
 }
 
+type PersonalReleasePlan =
+  | { restoreDeleted: true; pluginId: number }
+  | {
+      restoreDeleted: false
+      pluginId: number
+      releaseId: number
+      firstRelease: boolean
+      installed: boolean
+    }
+
+async function personalReleasePlan(
+  api: AccountApi,
+  local: LocalCodexPluginApi,
+  plugin: InstalledPlugin,
+  slug: string,
+  requireCurrent: () => void
+): Promise<PersonalReleasePlan> {
+  let listing = await readOwnedPersonalPluginRelease(api, slug)
+  requireCurrent()
+  const linkedId = linkedCloudPluginId(plugin)
+  if (linkedId !== null && listing && linkedId !== Number(listing.id))
+    throw new Error('Personal plugin is linked to a different cloud source')
+  if (!listing && linkedId !== null) return { restoreDeleted: true, pluginId: linkedId }
+  let firstRelease = false
+  if (!listing?.latestReleaseId) {
+    try {
+      listing = await publishFirstRelease(api, local, plugin, slug, requireCurrent)
+      firstRelease = true
+    } catch (error) {
+      requireCurrent()
+      if (error instanceof ApiError && error.errorCode === 'PRIVATE_PLUGIN_REINSTALL_REQUIRED') {
+        const detail = error.detail as { pluginId?: unknown } | undefined
+        const pluginId = Number(detail?.pluginId)
+        if (Number.isSafeInteger(pluginId) && pluginId > 0)
+          return { restoreDeleted: true, pluginId }
+      }
+      if (!(error instanceof ApiError) || error.errorCode !== 'PRIVATE_FIRST_INSTALL_CONFLICT')
+        throw error
+      listing = await readOwnedPersonalPluginRelease(api, slug)
+      if (!listing?.latestReleaseId) throw error
+    }
+  }
+  const pluginId = Number(listing.id)
+  const releaseId = listing.latestReleaseId
+  if (!Number.isSafeInteger(pluginId) || pluginId <= 0 || !releaseId)
+    throw new Error('Personal plugin cloud release identity is unavailable')
+  return {
+    restoreDeleted: false,
+    pluginId,
+    releaseId,
+    firstRelease,
+    installed: listing.installedPluginId != null,
+  }
+}
+
 async function syncPersonalInstall(
   api: AccountApi,
   local: LocalCodexPluginApi,
@@ -164,40 +220,37 @@ async function syncPersonalInstall(
   requireCurrent()
   const slug = createdPluginSlugFromKey(pluginKey)
   const plugin = 'spec' in source ? source : await findImportedInstall(local, source)
-  if (!plugin) return
-  requireCurrent()
-  let listing = await readOwnedPersonalPluginRelease(api, slug)
-  const linkedId = linkedCloudPluginId(plugin)
-  if (linkedId !== null && linkedId !== Number(listing?.id))
-    throw new Error('Personal plugin is linked to a different cloud source')
-  let firstRelease = false
-  if (!listing?.latestReleaseId) {
-    try {
-      listing = await publishFirstRelease(api, local, plugin, slug, requireCurrent)
-      firstRelease = true
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.errorCode !== 'PRIVATE_FIRST_INSTALL_CONFLICT')
-        throw error
-      requireCurrent()
-      listing = await readOwnedPersonalPluginRelease(api, slug)
-      if (!listing?.latestReleaseId) throw error
-    }
+  if (!plugin) {
+    requireCurrent()
+    throw new Error('Installed personal plugin source is unavailable')
   }
   requireCurrent()
-  const pluginId = Number(listing.id)
-  const releaseId = listing.latestReleaseId
-  if (!Number.isSafeInteger(pluginId) || pluginId <= 0 || !releaseId) {
-    throw new Error('Personal plugin cloud release identity is unavailable')
-  }
+  const plan = await personalReleasePlan(api, local, plugin, slug, requireCurrent)
+  requireCurrent()
   job.commit = (async () => {
-    await local.linkPersonalPluginRelease(plugin, pluginId, releaseId, {
+    if (plan.restoreDeleted) {
+      const response = await api.installMarketplacePluginForAccount(plan.pluginId, undefined, true)
+      const restored = response.plugin
+      requireCurrent()
+      if (restored.spec.pluginId !== plan.pluginId || !restored.spec.releaseId)
+        throw new Error('Restored private plugin identity was not confirmed')
+      await local.linkPersonalPluginRelease(plugin, plan.pluginId, restored.spec.releaseId, {
+        isCurrent: () => !job.cancelled && job.isCurrent(),
+        accountInstall: 'updateRelease',
+      })
+      return
+    }
+    await local.linkPersonalPluginRelease(plugin, plan.pluginId, plan.releaseId, {
       isCurrent: () => !job.cancelled && job.isCurrent(),
-      accountInstall: firstRelease ? 'updateRelease' : 'keepRelease',
+      accountInstall: plan.firstRelease ? 'updateRelease' : 'keepRelease',
     })
     requireCurrent()
-    if (listing.installedPluginId == null) {
+    if (!plan.installed) {
       // The existing account install endpoint delivers to devices in the background.
-      await api.installMarketplacePluginForAccount(pluginId, firstRelease ? releaseId : undefined)
+      await api.installMarketplacePluginForAccount(
+        plan.pluginId,
+        plan.firstRelease ? plan.releaseId : undefined
+      )
     }
   })()
   await job.commit

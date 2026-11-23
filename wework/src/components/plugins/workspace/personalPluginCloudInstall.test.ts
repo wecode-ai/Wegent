@@ -83,6 +83,53 @@ function fixture() {
   return { local, schedule, onInstalled }
 }
 
+test.each([false, true])(
+  'reinstall restores the retained private release (linked: %s)',
+  async linked => {
+    const { schedule, local, onInstalled } = fixture()
+    const plugin = linked
+      ? { ...first, spec: { ...first.spec, sourcePayload: { cloudPluginId: 17 } } }
+      : first
+    const restored = { ...first, spec: { ...first.spec, pluginId: 17, releaseId: 117 } }
+    mocks.list.mockResolvedValue({ items: [] })
+    mocks.install.mockResolvedValue({ plugin: restored })
+    if (!linked) {
+      const archive = new JSZip()
+      archive.file('.codex-plugin/plugin.json', JSON.stringify({ name: 'first', version: '1.0.0' }))
+      local.packageCreatedPlugin.mockResolvedValue(
+        new File([await archive.generateAsync({ type: 'arraybuffer' })], 'first.zip')
+      )
+      mocks.publish.mockRejectedValue(
+        new ApiError('Reinstall the verified release', 409, 'PRIVATE_PLUGIN_REINSTALL_REQUIRED', {
+          pluginId: 17,
+          releaseId: 117,
+        })
+      )
+    }
+
+    schedule(plugin)
+    await vi.waitFor(() => expect(onInstalled).toHaveBeenCalledOnce())
+
+    expect(mocks.install).toHaveBeenCalledExactlyOnceWith(17, undefined, true)
+    expect(local.linkPersonalPluginRelease).toHaveBeenCalledWith(
+      plugin,
+      17,
+      117,
+      expect.objectContaining({ accountInstall: 'updateRelease' })
+    )
+    if (linked) {
+      expect(local.packageCreatedPlugin).not.toHaveBeenCalled()
+      expect(mocks.publish).not.toHaveBeenCalled()
+    } else {
+      expect(mocks.publish).toHaveBeenCalledWith(
+        expect.any(File),
+        expect.objectContaining({ privateFirstInstall: true, restoreDeleted: true }),
+        expect.any(Function)
+      )
+    }
+  }
+)
+
 test('a pending or failed account install cannot delay another personal plugin', async () => {
   const { schedule, local, onInstalled } = fixture()
   const failing = Promise.withResolvers<void>()

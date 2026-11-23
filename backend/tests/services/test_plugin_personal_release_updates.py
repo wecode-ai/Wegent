@@ -528,6 +528,146 @@ def test_private_first_install_approves_for_owner_and_rejects_another_first_uplo
     assert rejected.value.detail["code"] == "PRIVATE_FIRST_INSTALL_CONFLICT"
 
 
+@pytest.mark.parametrize("older_local_package", [False, True])
+def test_private_reinstall_restores_only_the_owners_verified_installation(
+    test_db: Session,
+    test_user: User,
+    shared_personal_release: tuple[
+        PluginMarketplaceService, PluginSubmissionInitResponse, list[User]
+    ],
+    older_local_package: bool,
+) -> None:
+    from app.services.plugin_installation_operations import uninstall_account_plugin
+
+    service, original, recipients = shared_personal_release
+    owner_id = test_user.id
+    owner_installation = service.install(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    recipient_installation = service.install(
+        test_db, user_id=recipients[0].id, plugin_id=original.pluginId
+    )
+    latest = original
+    if older_local_package:
+        package = _plugin_zip(version="2.0.0")
+        latest = service.init_submission(
+            test_db,
+            user_id=owner_id,
+            request=PluginSubmissionInitRequest.model_validate(
+                _submission_payload("2.0.0", package=package)
+            ),
+        )
+        _complete_submission(service, test_db, owner_id, latest, package)
+    original_releases = {
+        release.id: (release.sha256, release.storage_key, release.published_at)
+        for release in test_db.query(PluginRelease)
+        .filter_by(plugin_id=original.pluginId)
+        .all()
+    }
+    impact = service.get_personal_plugin_delete_impact(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    service.delete_owned_personal_plugin(
+        test_db,
+        user_id=owner_id,
+        plugin_id=original.pluginId,
+        impact_revision=impact.impactRevision,
+        revoke_and_delete=True,
+    )
+
+    with pytest.raises(HTTPException) as hint:
+        service.init_submission(
+            test_db,
+            user_id=owner_id,
+            request=PluginSubmissionInitRequest.model_validate(
+                _submission_payload(privateFirstInstall=True, restoreDeleted=True)
+            ),
+        )
+    assert hint.value.status_code == 409
+    assert isinstance(hint.value.detail, dict), hint.value.detail
+    assert hint.value.detail["code"] == "PRIVATE_PLUGIN_REINSTALL_REQUIRED"
+    assert hint.value.detail["pluginId"] == original.pluginId
+    assert hint.value.detail["releaseId"] == latest.releaseId
+    assert test_db.get(Plugin, original.pluginId).status == "deleted"
+
+    with pytest.raises(HTTPException) as denied:
+        service.install(
+            test_db,
+            user_id=recipients[0].id,
+            plugin_id=original.pluginId,
+            restore_deleted=True,
+        )
+    assert denied.value.status_code == 404
+    test_db.rollback()
+    installed = service.install(
+        test_db,
+        user_id=owner_id,
+        plugin_id=original.pluginId,
+        restore_deleted=True,
+    )
+    assert (
+        installed.metadata["labels"]["id"]
+        == owner_installation.metadata["labels"]["id"]
+    )
+    assert installed.spec.releaseId == latest.releaseId
+    repeated = service.install(
+        test_db, user_id=owner_id, plugin_id=original.pluginId, restore_deleted=True
+    )
+    assert repeated.metadata["labels"]["id"] == installed.metadata["labels"]["id"]
+    assert repeated.spec.releaseId == latest.releaseId
+    assert {
+        release.id: (release.sha256, release.storage_key, release.published_at)
+        for release in test_db.query(PluginRelease)
+        .filter_by(plugin_id=original.pluginId)
+        .all()
+    } == original_releases
+    access = service.get_plugin_access(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    assert access.targets == []
+    assert not access.allowCopy
+    assert service.list_plugins(test_db, user_id=recipients[0].id).items == []
+    assert not test_db.get(
+        Kind, int(recipient_installation.metadata["labels"]["id"])
+    ).is_active
+    installed_id = int(installed.metadata["labels"]["id"])
+    uninstall_account_plugin(test_db, user_id=owner_id, installed_id=installed_id)
+    reinstalled = service.install(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    assert reinstalled.spec.releaseId == latest.releaseId
+    assert int(reinstalled.metadata["labels"]["id"]) == installed_id
+
+
+@pytest.mark.parametrize(
+    ("status", "visibility"), [("unpublished", "personal"), ("deleted", "workspace")]
+)
+def test_private_reinstall_does_not_bypass_delisting_or_restore_enterprise_plugins(
+    test_db: Session,
+    test_user: User,
+    shared_personal_release: tuple[
+        PluginMarketplaceService, PluginSubmissionInitResponse, list[User]
+    ],
+    status: str,
+    visibility: str,
+) -> None:
+    service, original, _ = shared_personal_release
+    plugin = test_db.get(Plugin, original.pluginId)
+    plugin.status, plugin.visibility = status, visibility
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as denied:
+        service.install(
+            test_db,
+            user_id=test_user.id,
+            plugin_id=original.pluginId,
+            restore_deleted=True,
+        )
+    assert denied.value.status_code == 404
+    test_db.rollback()
+    assert test_db.get(Plugin, original.pluginId).status == status
+
+
 def test_private_first_install_recreates_deleted_personal_plugin_without_restoring_shares(
     test_db: Session,
     test_user: User,

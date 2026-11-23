@@ -17,6 +17,37 @@ import { CLOUD_DEVICE_ID, resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+export const personalVersionSlug = 'desktop-e2e-personal-version'
+
+export async function uploadPersonalVersionFixture({
+  request,
+  backendUrl,
+  packageBytes,
+  version,
+  pluginSlug = personalVersionSlug,
+  targets,
+}) {
+  const initialized = await request('/plugins/submissions/init', 'POST', {
+    slug: pluginSlug,
+    displayName: pluginSlug === personalVersionSlug ? 'Personal Version E2E' : pluginSlug,
+    version,
+    filename: `${pluginSlug}-${version}.zip`,
+    sha256: digest(packageBytes),
+    sizeBytes: packageBytes.length,
+    listingType: 'plugin',
+    purpose: 'restricted_share',
+    visibility: 'personal',
+    targets,
+    releaseNotes: 'Verify personal release HTTP permission boundaries.',
+  })
+  const uploaded = await fetch(new URL(initialized.uploadUrl, backendUrl), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/zip' },
+    body: packageBytes,
+  })
+  assert.equal(uploaded.status, 204, 'The HTTP boundary fixture package failed to upload')
+  return initialized
+}
 
 async function sourceFiles(root, directory = root) {
   const metadata = await lstat(directory)
@@ -178,6 +209,67 @@ export async function waitForAuthorCloudInstall(cloud, plugin) {
       ),
     `The cloud device did not install the author's release for ${plugin.name}`
   )
+}
+
+export async function verifyUnlinkedOldPersonalPackageReinstall({
+  cloud,
+  request,
+  plugin,
+  oldPackage,
+  newPackage,
+  version,
+}) {
+  const installed = await accountPlugin(cloud, plugin.name)
+  assert.ok(installed, 'The old-package reinstall fixture has no account install')
+  const next = await uploadPersonalVersionFixture({
+    request,
+    backendUrl: cloud.backendUrl,
+    packageBytes: newPackage,
+    pluginSlug: plugin.name,
+    version,
+    targets: [],
+  })
+  const completed = await request(`/plugins/submissions/${next.submissionId}/complete`, 'POST')
+  assert.equal(completed.submission.status, 'approved')
+  assert.notEqual(completed.plugin.latestReleaseId, plugin.latestReleaseId)
+  await pluginApi(cloud, `/plugins/installed/${installed.metadata.labels.id}`, 'DELETE')
+  const home = cloud.remoteExecutorEnv.WEGENT_EXECUTOR_HOME
+  await until(
+    () => materializedPlugin(home, installed.metadata.labels.id),
+    item => !item,
+    'The cloud device did not remove the old-package reinstall fixture'
+  )
+  const path = `/plugins/marketplace/${plugin.id}`
+  const impact = await request(`${path}/delete-impact`)
+  await request(path, 'DELETE', { impactRevision: impact.impactRevision, revokeAndDelete: false })
+  const response = await fetch(`${cloud.backendUrl}/api/plugins/submissions/init`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      slug: plugin.name,
+      displayName: plugin.displayName,
+      version: plugin.version,
+      filename: `${plugin.name}.zip`,
+      sha256: digest(oldPackage),
+      sizeBytes: oldPackage.length,
+      listingType: 'plugin',
+      visibility: 'personal',
+      privateFirstInstall: true,
+      restoreDeleted: true,
+    }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  assert.equal(response.status, 409, 'The old package did not resolve the retained plugin')
+  const { detail } = await response.json()
+  assert.equal(detail.code, 'PRIVATE_PLUGIN_REINSTALL_REQUIRED')
+  assert.equal(detail.pluginId, Number(plugin.id))
+  assert.equal(detail.releaseId, next.releaseId)
+  assert.equal(await accountPlugin(cloud, plugin.name), undefined)
+  await request(`${path}/install?restore_deleted=true`, 'POST')
+  const restored = await waitForAuthorCloudInstall(cloud, completed.plugin)
+  assert.equal(restored.metadata.labels.id, installed.metadata.labels.id)
+  assert.equal((await materializedPlugin(home, restored.metadata.labels.id))?.version, version)
+  return restored
 }
 
 export async function disconnectPersonalPluginRuntime(control, cloud, plugin) {

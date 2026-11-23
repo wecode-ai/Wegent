@@ -36,9 +36,11 @@ import {
   verifyPersonalSourcePersistence,
   verifyRecipientUninstallDoesNotRemoveOwner,
   waitForAuthorCloudInstall,
+  personalVersionSlug as slug,
+  uploadPersonalVersionFixture as uploadVersionFixture,
+  verifyUnlinkedOldPersonalPackageReinstall,
 } from './plugin-personal-uninstall-flow.mjs'
 
-const slug = 'desktop-e2e-personal-version'
 const initialManifestName = 'Desktop E2E Personal Version'
 const initialDisplayName = 'Personal Version E2E'
 const updatedDisplayName = 'Updated Author Source E2E'
@@ -302,6 +304,14 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
         plugin => !plugin,
         'Navigation fixture did not remove the previous account install'
       )
+      const retainedInstallId = install.metadata.labels.id
+      const pluginPath = `/plugins/marketplace/${listing.id}`
+      const impact = await request(`${pluginPath}/delete-impact`)
+      await request(pluginPath, 'DELETE', {
+        impactRevision: impact.impactRevision,
+        revokeAndDelete: false,
+      })
+      assert.equal(await getListing(name), undefined, 'Deleted source remained in the catalog')
       await control.command('clickIfPresent', testId('plugin-detail-back-button'))
       await refreshPluginInventory(control)
       await control.command('fill', testId('plugins-search-input'), { value: name })
@@ -324,6 +334,19 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
         await control.command('releaseLocalExecutorRequestHold', 'body')
       }
       install = await waitForAuthorCloudInstall(cloud, listing)
+      assert.equal(install.metadata.labels.id, retainedInstallId)
+      assert.equal(install.spec.pluginId, Number(listing.id))
+      assert.equal(install.spec.releaseId, listing.latestReleaseId)
+      await assertPersonalSourceUnchanged(source)
+      const version = '1.2.1'
+      install = await verifyUnlinkedOldPersonalPackageReinstall({
+        cloud,
+        request,
+        plugin: listing,
+        oldPackage: await readFile(await createPackage(fixtureRoot, sourceVersion, name, name)),
+        newPackage: await readFile(await createPackage(fixtureRoot, version, name, name)),
+        version,
+      })
       await assertPersonalSourceUnchanged(source)
     }
     await pluginApi(cloud, `/plugins/installed/${install.metadata.labels.id}`, 'DELETE')
@@ -829,33 +852,31 @@ async function verifyOwnerApiContract({
   const verified = []
   try {
     for (const visibility of ['personal', 'workspace', 'public']) {
-      for (const status of ['published', 'unpublished', 'pending_review']) {
+      for (const status of ['published', 'unpublished', 'pending_review', 'deleted']) {
         await cloudEnvironment.executeDatabase(
           'UPDATE plugins SET visibility = %s, status = %s WHERE id = %s',
           [visibility, status, Number(pluginId)]
         )
-        assert.deepEqual(await request(`${pluginPath}/owner`), { pluginId: Number(pluginId) })
+        const ownerStatus = status === 'deleted' && visibility !== 'personal' ? 404 : 200
+        if (ownerStatus === 200) {
+          assert.deepEqual(await request(`${pluginPath}/owner`), { pluginId: Number(pluginId) })
+        } else {
+          await expectHttpStatus(
+            cloudEnvironment.backendUrl,
+            `${pluginPath}/owner`,
+            cloudEnvironment.authToken,
+            ownerStatus
+          )
+        }
         await expectHttpStatus(
           cloudEnvironment.backendUrl,
           `${pluginPath}/owner`,
           recipientToken,
           404
         )
-        verified.push({ visibility, status, owner: 200, recipient: 404 })
+        verified.push({ visibility, status, owner: ownerStatus, recipient: 404 })
       }
     }
-    await cloudEnvironment.executeDatabase('UPDATE plugins SET status = %s WHERE id = %s', [
-      'deleted',
-      Number(pluginId),
-    ])
-    await expectHttpStatus(
-      cloudEnvironment.backendUrl,
-      `${pluginPath}/owner`,
-      cloudEnvironment.authToken,
-      404
-    )
-    await expectHttpStatus(cloudEnvironment.backendUrl, `${pluginPath}/owner`, recipientToken, 404)
-    verified.push({ status: 'deleted', owner: 404, recipient: 404 })
   } finally {
     await cloudEnvironment.executeDatabase(
       'UPDATE plugins SET visibility = %s, status = %s WHERE id = %s',
@@ -863,36 +884,6 @@ async function verifyOwnerApiContract({
     )
   }
   return verified
-}
-
-async function uploadVersionFixture({
-  request,
-  backendUrl,
-  packageBytes,
-  version,
-  pluginSlug = slug,
-  targets,
-}) {
-  const initialized = await request('/plugins/submissions/init', 'POST', {
-    slug: pluginSlug,
-    displayName: pluginSlug === slug ? 'Personal Version E2E' : pluginSlug,
-    version,
-    filename: `${pluginSlug}-${version}.zip`,
-    sha256: createHash('sha256').update(packageBytes).digest('hex'),
-    sizeBytes: packageBytes.length,
-    listingType: 'plugin',
-    purpose: 'restricted_share',
-    visibility: 'personal',
-    targets,
-    releaseNotes: 'Verify personal release HTTP permission boundaries.',
-  })
-  const uploaded = await fetch(new URL(initialized.uploadUrl, backendUrl), {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/zip' },
-    body: packageBytes,
-  })
-  assert.equal(uploaded.status, 204, 'The HTTP boundary fixture package failed to upload')
-  return initialized
 }
 
 async function verifyWrongPackageRejected({

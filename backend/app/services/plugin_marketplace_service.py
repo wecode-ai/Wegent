@@ -482,6 +482,7 @@ class PluginMarketplaceService:
         plugin_id: int,
         release_id: int | None = None,
         commit: bool = True,
+        restore_deleted: bool = False,
     ) -> InstalledPlugin:
         if commit:
             self.reconcile_stale_installed_catalog_refs(
@@ -501,6 +502,11 @@ class PluginMarketplaceService:
             find_existing=lambda: self._find_installation_for_plugin(
                 db, user_id=user_id, plugin=plugin
             ),
+        )
+        reclaimed_keys = (
+            self._restore_private_plugin_for_install(db, user_id, plugin_id)
+            if restore_deleted
+            else []
         )
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
         if release_id is not None:
@@ -539,10 +545,32 @@ class PluginMarketplaceService:
             db.add(installed)
         if commit:
             db.commit()
+            for key in reclaimed_keys:
+                self._delete_submission_object_best_effort(key)
         else:
             db.flush()
         db.refresh(installed)
         return self._kind_to_installed(installed)
+
+    def _restore_private_plugin_for_install(
+        self, db: Session, user_id: int, plugin_id: int
+    ) -> list[str]:
+        plugin = self._lock_plugin(db, plugin_id)
+        if (
+            not plugin
+            or plugin.owner_user_id != user_id
+            or plugin.visibility != "personal"
+            or plugin.status not in {"deleted", "published"}
+        ):
+            raise HTTPException(404, "Owned private plugin not found")
+        if plugin.status == "published":
+            return []
+        self._installable_release(db, plugin, None)
+        reclaimed_keys = self._require_private_first_install(db, plugin)
+        plugin.status = "published"
+        plugin.allow_copy = False
+        plugin.updated_at = datetime.now()
+        return reclaimed_keys
 
     def update_release(
         self,
@@ -969,6 +997,23 @@ class PluginMarketplaceService:
                 and not self._can_start_private_first_install(plugin)
             ):
                 raise self._private_first_install_conflict()
+            # Resolve a reinstall before validating a new publication's metadata.
+            if (
+                request.privateFirstInstall
+                and request.restoreDeleted
+                and plugin.status == "deleted"
+                and plugin.latest_release_id
+            ):
+                latest = self._installable_release(db, plugin, None)
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "PRIVATE_PLUGIN_REINSTALL_REQUIRED",
+                        "message": "Reinstall the existing verified private release",
+                        "pluginId": plugin.id,
+                        "releaseId": latest.id,
+                    },
+                )
             if plugin.listing_type != request.listingType:
                 raise HTTPException(
                     status_code=409, detail="Plugin listing type cannot be changed"

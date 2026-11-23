@@ -1573,6 +1573,7 @@ export interface PluginSubmissionInitRequest {
   allowCopy?: boolean
   releaseNotes?: string | null
   privateFirstInstall?: boolean
+  restoreDeleted?: boolean
 }
 
 export interface PluginSubmissionInitResponse {

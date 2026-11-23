@@ -188,8 +188,15 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
     installMarketplacePlugin(id: string | number, deviceId?: string) {
       return requestMarketplaceInstall(id, deviceQuery(deviceId))
     },
-    installMarketplacePluginForAccount(id: string | number, releaseId?: number) {
-      return requestMarketplaceInstall(id, releaseId == null ? '' : `?release_id=${releaseId}`)
+    installMarketplacePluginForAccount(
+      id: string | number,
+      releaseId?: number,
+      restoreDeleted = false
+    ) {
+      const query = new URLSearchParams()
+      if (releaseId != null) query.set('release_id', String(releaseId))
+      if (restoreDeleted) query.set('restore_deleted', 'true')
+      return requestMarketplaceInstall(id, query.size ? `?${query}` : '')
     },
     updateMarketplacePlugin(
       installedId: string | number,
@@ -357,6 +364,7 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         | 'allowCopy'
         | 'releaseNotes'
         | 'privateFirstInstall'
+        | 'restoreDeleted'
       >,
       requireCurrent?: () => void
     ): Promise<PluginSubmissionCompleteResponse> {

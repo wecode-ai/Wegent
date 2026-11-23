@@ -416,6 +416,7 @@ class PluginSubmissionInitRequest(BaseModel):
     targets: List["PluginAccessTarget"] = Field(default_factory=list)
     allowCopy: bool = False
     privateFirstInstall: bool = False
+    restoreDeleted: bool = False
 
     @field_validator("releaseNotes")
     @classmethod

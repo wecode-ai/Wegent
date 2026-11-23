@@ -139,6 +139,7 @@ def mutate_local_plugin(
                 user_id=user_id,
                 plugin_id=target_id,
                 release_id=(payload or {}).get("releaseId"),
+                restore_deleted=(payload or {}).get("restoreDeleted") is True,
                 commit=False,
             )
         elif action == "ensure_builtin":
