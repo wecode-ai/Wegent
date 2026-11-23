@@ -673,6 +673,8 @@ Local project space Issues have no corresponding Wegent webpage, so this action 
 
 ## Independent Issues and My issues
 
+When a cloud Issue is created, the creator and invited participants receive a notification in their connected private IM chats. When participants are added later, only the newly invited people receive an invitation notification. The message includes the Issue title and a link to open it, and follows the IM setting under **Notification settings → Collaboration notifications**.
+
 Wegent on the web has the same New Issue, Needs my action, Created by me, and Participating entries in the Collaboration sidebar. Choose View issue on the web in an independent Issue notification to open the details in the matching list. Sign in to view the to-do, download shared attachments, and join the discussion.
 
 <!-- ui-source: ../packages/collaboration/src/platform/IndependentIssueDialog.tsx -->

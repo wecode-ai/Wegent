@@ -552,6 +552,19 @@ class LoopItemService:
                 added_by_user_id=added_by_user_id,
             )
             db.add(collaborator)
+            if source == "manual" and collaborator_user_id not in (
+                item.created_by_user_id,
+                item.assignee_user_id,
+            ):
+                from app.services.notification_target import board_notification_target
+                from app.services.wework_notifications import notify_issue_participation
+
+                notify_issue_participation(
+                    db,
+                    user_id=collaborator_user_id,
+                    actor_user_id=added_by_user_id,
+                    target=board_notification_target(db, project, item),
+                )
             if commit:
                 db.commit()
                 db.refresh(collaborator)
@@ -998,7 +1011,11 @@ class LoopItemService:
                     automation_context=automation_context,
                     cancel_existing=False,
                 )
-        self._notify_updated_assignee(
+        from app.services.notification_target import board_notification_target
+        from app.services.wework_notifications import notify_issue_participation
+
+        target = board_notification_target(db, project, item)
+        assignee_notified = self._notify_updated_assignee(
             db,
             item=item,
             actor_user_id=user_id,
@@ -1006,6 +1023,14 @@ class LoopItemService:
             previous_user_id=None,
             notify=values.notify_assignee,
         )
+        if not assignee_notified or item.assignee_user_id != user_id:
+            notify_issue_participation(
+                db, user_id=user_id, actor_user_id=user_id, target=target, created=True
+            )
+        if not assignee_notified and item.assignee_user_id not in (None, user_id):
+            notify_issue_participation(
+                db, user_id=item.assignee_user_id, actor_user_id=user_id, target=target
+            )
         if commit:
             db.commit()
             db.refresh(item)
@@ -2186,9 +2211,9 @@ class LoopItemService:
         target_user_id: int | None,
         previous_user_id: int | None,
         notify: bool,
-    ) -> None:
+    ) -> bool:
         if not target_user_id or target_user_id == previous_user_id:
-            return
+            return False
         from app.services.issue_assignments import issue_assignment_service
 
         assignment = issue_assignment_service.active(
@@ -2214,7 +2239,7 @@ class LoopItemService:
                 target_user_id,
                 assignment.id if assignment else None,
             )
-            return
+            return False
         from app.services.collaboration_human_assignments import (
             notify_direct_human_assignment,
         )
@@ -2222,10 +2247,7 @@ class LoopItemService:
         if assignment is None:
             raise RuntimeError("Direct human assignment notification has no assignment")
         if is_implicit_creator_assignment:
-            return
-        human = db.get(User, target_user_id)
-        if human is None:
-            raise HTTPException(422, "Assignee does not exist")
+            return False
         notify_direct_human_assignment(
             db,
             project=project,
@@ -2234,6 +2256,7 @@ class LoopItemService:
             actor_user_id=actor_user_id,
             assignment_id=assignment.id,
         )
+        return True
 
     def assign(
         self,
