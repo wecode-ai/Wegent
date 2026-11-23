@@ -20,6 +20,8 @@ const NEXT = 'STAND_IN_NATIVE_SECOND_MESSAGE'
 const CHILD = 'STAND_IN_NATIVE_CHILD_WORK'
 const CHILD_RESULT = 'Native child verified its isolated work.'
 const RESULT = '原生子代理已经完成后台检查。'
+const NOTIFICATION_REQUEST = 'STAND_IN_NATIVE_NOTIFICATION_REQUEST'
+const NOTIFICATION_RESULT = '助理已完成后台核对。'
 const CHAT =
   '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
 
@@ -34,6 +36,7 @@ export function createDesktopScenario(options) {
   let lastWaitCallId
   let lastWaitResult
   let childResponse
+  let notificationResponse
   let released = false
   let sequence = 0
   const reply = (response, events) => {
@@ -55,6 +58,15 @@ export function createDesktopScenario(options) {
       const body = await readRequestBody(request)
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
+      if (input.includes(NOTIFICATION_REQUEST)) {
+        assert.equal(
+          notificationResponse,
+          undefined,
+          'The notification request uses one model turn'
+        )
+        notificationResponse = response
+        return true
+      }
       if (isCollaborationSubagentRequest(request.headers) && input.includes(CHILD)) {
         assert.equal(childResponse, undefined, 'Create exactly one real native child')
         childResponse = response
@@ -128,6 +140,10 @@ export function createDesktopScenario(options) {
         await control.command('focusMainWindow', 'body')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', CHAT)
+        await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
+          text: '后续消息仍在第二段',
+          timeoutMs: options.modelResponseTimeoutMs,
+        })
         await control.command('waitFor', badge, { visible: false })
         active = true
         await send(FIRST)
@@ -216,8 +232,36 @@ export function createDesktopScenario(options) {
           primary.task.threadId,
           'All messages remain in the same identity conversation'
         )
+        await control.command('clearSystemNotifications', 'body')
+        await send(NOTIFICATION_REQUEST)
+        await storyUntil(
+          () => Promise.resolve(Boolean(notificationResponse)),
+          Boolean,
+          options.modelResponseTimeoutMs,
+          'The background notification request must reach the model'
+        )
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('closeMainWindowToTray', 'body')
+        const acknowledgement = assistantMessage('收到，正在核对。')
+        acknowledgement.item.phase = 'commentary'
+        reply(notificationResponse, [acknowledgement, assistantMessage(NOTIFICATION_RESULT)])
+        const notifications = await storyUntil(
+          async () =>
+            JSON.parse(await control.command('getSystemNotifications', 'body')).filter(
+              item => item.address?.taskId === primary.task.taskId
+            ),
+          items => items.some(item => item.body === NOTIFICATION_RESULT),
+          options.modelResponseTimeoutMs,
+          'The assistant must deliver the final reply through the system notification channel'
+        )
+        assert.deepEqual(
+          notifications.map(({ title, body }) => ({ title, body })),
+          [{ title: '我的助理', body: NOTIFICATION_RESULT }],
+          'The acknowledgement and result must produce only one system notification from the assistant'
+        )
       } finally {
         releaseChild()
+        if (notificationResponse && !notificationResponse.writableEnded) notificationResponse.end()
         await control.command('focusMainWindow', 'body')
       }
     },
