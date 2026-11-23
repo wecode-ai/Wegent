@@ -65,6 +65,7 @@ export interface NativeContextMenuActions {
   openLinkInNewTab: (url: string) => void
   reloadPage: () => void
   reportError: (action: string, error: unknown) => void
+  requestAnnotation?: (mode: 'quick' | 'batch', x: number, y: number) => void
   resolveImageContext: (params: NativeContextMenuParams) => Promise<ImageContext | null>
   saveUrlAs?: (url: string) => void
   showItemInFolder: (path: string) => void
@@ -73,11 +74,13 @@ export interface NativeContextMenuActions {
 export interface NativeContextMenuState {
   canGoBack: boolean
   canGoForward: boolean
+  canReload?: boolean
 }
 
 export type NativeContextMenuMode = 'app' | 'browser'
 
 interface NativeContextMenuLabels {
+  annotate: string
   back: string
   copy: string
   copyImage: string
@@ -93,6 +96,7 @@ interface NativeContextMenuLabels {
   openImageInNewTab: string
   openLinkInNewTab: string
   paste: string
+  quickAnnotate: string
   redo: string
   reload: string
   saveImageAs: string
@@ -103,6 +107,7 @@ interface NativeContextMenuLabels {
 }
 
 const ZH_CN_LABELS: NativeContextMenuLabels = {
+  annotate: '评论',
   back: '返回',
   copy: '复制',
   copyImage: '复制图片',
@@ -118,6 +123,7 @@ const ZH_CN_LABELS: NativeContextMenuLabels = {
   openImageInNewTab: '在新标签页中打开图片',
   openLinkInNewTab: '在新标签页中打开链接',
   paste: '粘贴',
+  quickAnnotate: '快速评论',
   redo: '重做',
   reload: '重新加载',
   saveImageAs: '图片存储为...',
@@ -128,6 +134,7 @@ const ZH_CN_LABELS: NativeContextMenuLabels = {
 }
 
 const EN_LABELS: NativeContextMenuLabels = {
+  annotate: 'Annotate',
   back: 'Back',
   copy: 'Copy',
   copyImage: 'Copy Image',
@@ -143,6 +150,7 @@ const EN_LABELS: NativeContextMenuLabels = {
   openImageInNewTab: 'Open Image in New Tab',
   openLinkInNewTab: 'Open Link in New Tab',
   paste: 'Paste',
+  quickAnnotate: 'Quick annotate',
   redo: 'Redo',
   reload: 'Reload',
   saveImageAs: 'Save Image As...',
@@ -209,7 +217,11 @@ function navigationMenuGroup(
   return [
     { label: labels.back, enabled: state.canGoBack, click: () => actions.goBack() },
     { label: labels.forward, enabled: state.canGoForward, click: () => actions.goForward() },
-    { label: labels.reload, click: () => actions.reloadPage() },
+    {
+      label: labels.reload,
+      ...(state.canReload !== undefined ? { enabled: state.canReload } : {}),
+      click: () => actions.reloadPage(),
+    },
   ]
 }
 
@@ -343,6 +355,19 @@ function showBrowserContextMenu(
   const hasSelection = params.selectionText.trim().length > 0
 
   const groups: NativeContextMenuItem[][] = []
+  if (actions.requestAnnotation) {
+    const requestAnnotation = actions.requestAnnotation
+    groups.push([
+      {
+        label: labels.quickAnnotate,
+        click: () => requestAnnotation('quick', params.x, params.y),
+      },
+      {
+        label: labels.annotate,
+        click: () => requestAnnotation('batch', params.x, params.y),
+      },
+    ])
+  }
   if (linkUrl) {
     groups.push(linkMenuGroup(linkUrl, actions, labels))
     const copyGroup: NativeContextMenuItem[] = [

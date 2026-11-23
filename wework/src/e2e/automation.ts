@@ -2374,15 +2374,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value || undefined,
         })
       )
-    case 'saveEmbeddedBrowserUrlAs': {
-      const input = JSON.parse(command.value ?? '{}') as { label?: string; url?: string }
-      if (!input.url?.trim()) throw new Error('saveEmbeddedBrowserUrlAs requires url')
-      await invokeDesktopHost('e2e.embeddedBrowserSaveUrlAs', {
-        label: input.label || undefined,
-        url: input.url,
-      })
-      return ''
-    }
     case 'triggerBlobDownload': {
       const input = JSON.parse(command.value ?? '{}') as { content?: string; filename?: string }
       if (!input.filename?.trim()) throw new Error('triggerBlobDownload requires filename')

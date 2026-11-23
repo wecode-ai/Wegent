@@ -2,11 +2,30 @@ import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import {
+  assertNoNativeSaveDialog,
+  triggerEmbeddedBrowserContextMenuItem,
+  withNativeSaveDialog,
+} from '../modules/native-download-dialogs.mjs'
 
 const DOWNLOAD_FIXTURE_PATH = '/embedded-browser-download-fixture'
 const DOWNLOAD_FILE_PATH = '/embedded-browser-download-file'
 const DOWNLOAD_SAVE_AS_REDIRECT_PATH = '/embedded-browser-download-save-as-redirect'
+const DOWNLOAD_IMAGE_PATH = '/embedded-browser-download-image.png'
 const DOWNLOAD_FIXTURE_TITLE = 'Embedded Browser Download Policy Fixture'
+
+// Valid 1x1 red PNG bytes served for the real image right-click Save Image As flow.
+const TEST_IMAGE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
+  'base64'
+)
+
+// Menu positions in the unified embedded browser context menu (separators are skipped by Down).
+// Link menu: Quick annotate(1), Annotate(2), Open Link in New Tab(3), Open in External Browser(4),
+// Copy Link Address(5), Save Link As...(6).
+const LINK_SAVE_AS_MENU_DOWN_COUNT = 6
+// Image menu: Quick annotate(1), Annotate(2), Open Image in New Tab(3), Save Image As...(4).
+const IMAGE_SAVE_AS_MENU_DOWN_COUNT = 4
 
 function downloadFixtureHtml() {
   return `<!doctype html>
@@ -19,18 +38,24 @@ function downloadFixtureHtml() {
         display: flex;
         flex-direction: column;
         align-items: flex-start;
-        gap: 4px;
+        gap: 3px;
         margin: 0;
-        padding: 12px;
-        font: 13px/1.4 sans-serif;
+        padding: 8px 12px;
+        font: 12px/1.3 sans-serif;
       }
       h1 {
         margin: 0 0 4px;
-        font-size: 16px;
+        font-size: 14px;
       }
       a {
         display: inline-block;
         white-space: nowrap;
+      }
+      img {
+        display: block;
+        width: 48px;
+        height: 48px;
+        margin: 2px 0;
       }
     </style>
   </head>
@@ -41,10 +66,16 @@ function downloadFixtureHtml() {
     <a id="download-concurrent-2" download="clip.mp4" href="${DOWNLOAD_FILE_PATH}?name=clip.mp4&delay=1500&body=CONCURRENT_TWO">Download concurrent 2</a>
     <a id="download-case-1" download="Report.zip" href="${DOWNLOAD_FILE_PATH}?name=Report.zip&delay=1500&body=CASE_UPPER">Download case 1</a>
     <a id="download-case-2" download="report.zip" href="${DOWNLOAD_FILE_PATH}?name=report.zip&delay=1500&body=CASE_LOWER">Download case 2</a>
+    <a id="save-as-link" href="${DOWNLOAD_SAVE_AS_REDIRECT_PATH}">Save link target</a>
+    <img id="save-as-image" src="${DOWNLOAD_IMAGE_PATH}" alt="Download fixture sample" />
+    <a id="download-after-link-save-as" download="after-link-save-as.mp4" href="${DOWNLOAD_FILE_PATH}?name=after-link-save-as.mp4&body=AFTER_LINK_SAVE_AS_BYTES">Download after link</a>
+    <a id="download-after-image-save-as" download="after-image-save-as.mp4" href="${DOWNLOAD_FILE_PATH}?name=after-image-save-as.mp4&body=AFTER_IMAGE_SAVE_AS_BYTES">Download after image</a>
     <a id="download-custom" download="custom.mp4" href="${DOWNLOAD_FILE_PATH}?name=custom.mp4&body=CUSTOM_DIR_BYTES">Download custom</a>
-    <a id="download-after-missing-dir" download="after-missing-dir.mp4" href="${DOWNLOAD_FILE_PATH}?name=after-missing-dir.mp4&body=SHOULD_PROMPT_MISSING_DIR">Download after missing dir</a>
-    <a id="download-after-unwritable" download="after-unwritable.mp4" href="${DOWNLOAD_FILE_PATH}?name=after-unwritable.mp4&body=SHOULD_PROMPT_UNWRITABLE">Download unwritable</a>
+    <a id="download-after-missing-dir" download="after-missing-dir.mp4" href="${DOWNLOAD_FILE_PATH}?name=after-missing-dir.mp4&body=MISSING_DIR_BYTES">Download after missing dir</a>
+    <a id="download-after-unwritable" download="after-unwritable.mp4" href="${DOWNLOAD_FILE_PATH}?name=after-unwritable.mp4&body=UNWRITABLE_DIR_BYTES">Download unwritable</a>
+    <a id="download-recovered-default" download="recovered-default.mp4" href="${DOWNLOAD_FILE_PATH}?name=recovered-default.mp4&body=RECOVERED_DEFAULT_BYTES">Download recovered default</a>
     <a id="download-ask-mode" download="ask-mode.mp4" href="${DOWNLOAD_FILE_PATH}?name=ask-mode.mp4&body=ASK_MODE_BYTES">Download ask mode</a>
+    <a id="download-after-ask-mode" download="after-ask-mode.mp4" href="${DOWNLOAD_FILE_PATH}?name=after-ask-mode.mp4&body=AFTER_ASK_MODE_BYTES">Download after ask mode</a>
   </body>
 </html>`
 }
@@ -56,9 +87,17 @@ export async function handleBrowserDownloadHttp(request, response, url) {
     response.end(downloadFixtureHtml())
     return true
   }
+  if (url.pathname === DOWNLOAD_IMAGE_PATH) {
+    response.writeHead(200, {
+      'content-type': 'image/png',
+      'content-length': String(TEST_IMAGE_PNG.byteLength),
+    })
+    response.end(TEST_IMAGE_PNG)
+    return true
+  }
   if (url.pathname === DOWNLOAD_SAVE_AS_REDIRECT_PATH) {
     response.writeHead(302, {
-      location: `${DOWNLOAD_FILE_PATH}?name=saved-via-menu.mp4&body=SAVE_AS_REDIRECT`,
+      location: `${DOWNLOAD_FILE_PATH}?name=saved-link.mp4&body=SAVE_AS_LINK_BYTES`,
     })
     response.end()
     return true
@@ -113,21 +152,12 @@ async function waitForFileContent(filePath, expected, timeoutMs, description) {
   )
 }
 
-async function readSaveDialogLog(logPath) {
-  if (!existsSync(logPath)) return []
-  const raw = await readFile(logPath, 'utf8')
-  return raw
-    .split('\n')
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => JSON.parse(line))
-}
-
-async function waitForSaveDialogEvent(logPath, previousCount, timeoutMs, description) {
+async function waitForFileBuffer(filePath, expectedBuffer, timeoutMs, description) {
   return waitForCondition(
     async () => {
-      const events = await readSaveDialogLog(logPath)
-      return events.length > previousCount ? events[previousCount] : null
+      if (!existsSync(filePath)) return false
+      const content = await readFile(filePath)
+      return content.equals(expectedBuffer) ? content : false
     },
     timeoutMs,
     description
@@ -145,19 +175,20 @@ async function clickDownloadLink(bridgeCall, selector) {
 
 export async function verifyBrowserDownloadPolicy({
   bridgeCall,
-  browserLabel,
   control,
   downloadsPath,
   resultDir,
-  saveDialogLogPath,
   uiTimeoutMs,
 }) {
   await mkdir(downloadsPath, { recursive: true })
   const fixtureUrl = `${control.url}${DOWNLOAD_FIXTURE_PATH}`
-  const saveAsRedirectUrl = `${control.url}${DOWNLOAD_SAVE_AS_REDIRECT_PATH}`
+  const chosenDir = join(resultDir, 'user-chosen-downloads')
   const customDownloadsDir = join(resultDir, 'custom-downloads')
   const blockingFile = join(resultDir, 'unwritable-download-parent')
   const unwritableCustomDir = join(blockingFile, 'nested-downloads')
+  await mkdir(chosenDir, { recursive: true })
+
+  const pid = control.applicationProcessId
 
   try {
     await control.command('setAppPreferences', 'body', {
@@ -188,11 +219,7 @@ export async function verifyBrowserDownloadPolicy({
       uiTimeoutMs,
       'direct embedded-browser download clip.mp4'
     )
-    assert.deepEqual(
-      await readSaveDialogLog(saveDialogLogPath),
-      [],
-      'Direct download unexpectedly triggered a save dialog'
-    )
+    await assertNoNativeSaveDialog(pid)
 
     // 2. Concurrent duplicate downloads write distinct collision-free files.
     await clickDownloadLink(bridgeCall, '#download-concurrent-1')
@@ -248,37 +275,121 @@ export async function verifyBrowserDownloadPolicy({
       uiTimeoutMs,
       'main window direct download main-video.mp4'
     )
-    assert.deepEqual(
-      await readSaveDialogLog(saveDialogLogPath),
-      [],
-      'Main window download unexpectedly triggered a save dialog'
-    )
+    await assertNoNativeSaveDialog(pid)
 
-    // 4. Explicit one-shot Save As (including HTTP 302 redirect) prompts once, then returns to direct save.
-    const countBeforeSaveAs = (await readSaveDialogLog(saveDialogLogPath)).length
-    await control.command('saveEmbeddedBrowserUrlAs', 'body', {
-      value: JSON.stringify({ label: browserLabel, url: saveAsRedirectUrl }),
-    })
-    const saveAsEvent = await waitForSaveDialogEvent(
-      saveDialogLogPath,
-      countBeforeSaveAs,
-      uiTimeoutMs,
-      'one-shot Save As dialog request'
+    // 4. Real link right-click menu ("Save Link As...") with HTTP 302 redirect:
+    //    cancel once, save to user-chosen location, then verify subsequent direct save recovers.
+    await withNativeSaveDialog(
+      control,
+      () =>
+        triggerEmbeddedBrowserContextMenuItem({
+          bridgeCall,
+          control,
+          downCount: LINK_SAVE_AS_MENU_DOWN_COUNT,
+          resultDir,
+          stepName: 'link-save-as-cancel',
+          targetSelector: '#save-as-link',
+          timeoutMs: uiTimeoutMs,
+        }),
+      { action: 'cancel', resultDir, stepName: 'link-save-as-cancel', timeoutMs: uiTimeoutMs }
     )
-    assert.equal(saveAsEvent.reason, 'save-as')
-    assert.equal(saveAsEvent.savePath, '')
-    assert.equal(saveAsEvent.defaultPath, join(downloadsPath, 'saved-via-menu.mp4'))
-    assert.equal(existsSync(join(downloadsPath, 'saved-via-menu.mp4')), false)
+    assert.equal(existsSync(join(downloadsPath, 'saved-link.mp4')), false)
 
-    await clickDownloadLink(bridgeCall, '#download-custom')
+    const chosenLinkPath = join(chosenDir, 'chosen-link.mp4')
+    await withNativeSaveDialog(
+      control,
+      () =>
+        triggerEmbeddedBrowserContextMenuItem({
+          bridgeCall,
+          control,
+          downCount: LINK_SAVE_AS_MENU_DOWN_COUNT,
+          resultDir,
+          stepName: 'link-save-as-choose',
+          targetSelector: '#save-as-link',
+          timeoutMs: uiTimeoutMs,
+        }),
+      {
+        action: 'save',
+        savePath: chosenLinkPath,
+        resultDir,
+        stepName: 'link-save-as-choose',
+        timeoutMs: uiTimeoutMs,
+      }
+    )
     await waitForFileContent(
-      join(downloadsPath, 'custom.mp4'),
-      'CUSTOM_DIR_BYTES',
+      chosenLinkPath,
+      'SAVE_AS_LINK_BYTES',
       uiTimeoutMs,
-      'direct download after one-shot Save As'
+      'Save Link As file written to user-chosen location'
     )
+    assert.equal(existsSync(join(downloadsPath, 'saved-link.mp4')), false)
 
-    // 5. Custom download directory saves directly, then runtime deletion triggers Save As without silent fallback.
+    await clickDownloadLink(bridgeCall, '#download-after-link-save-as')
+    await waitForFileContent(
+      join(downloadsPath, 'after-link-save-as.mp4'),
+      'AFTER_LINK_SAVE_AS_BYTES',
+      uiTimeoutMs,
+      'direct download recovery after Save Link As'
+    )
+    await assertNoNativeSaveDialog(pid)
+
+    // 5. Real image right-click menu ("Save Image As..."):
+    //    cancel once, save to user-chosen location, then verify subsequent direct save recovers.
+    await withNativeSaveDialog(
+      control,
+      () =>
+        triggerEmbeddedBrowserContextMenuItem({
+          bridgeCall,
+          control,
+          downCount: IMAGE_SAVE_AS_MENU_DOWN_COUNT,
+          resultDir,
+          stepName: 'image-save-as-cancel',
+          targetSelector: '#save-as-image',
+          timeoutMs: uiTimeoutMs,
+        }),
+      { action: 'cancel', resultDir, stepName: 'image-save-as-cancel', timeoutMs: uiTimeoutMs }
+    )
+    assert.equal(existsSync(join(downloadsPath, 'embedded-browser-download-image.png')), false)
+
+    const chosenImagePath = join(chosenDir, 'chosen-image.png')
+    await withNativeSaveDialog(
+      control,
+      () =>
+        triggerEmbeddedBrowserContextMenuItem({
+          bridgeCall,
+          control,
+          downCount: IMAGE_SAVE_AS_MENU_DOWN_COUNT,
+          resultDir,
+          stepName: 'image-save-as-choose',
+          targetSelector: '#save-as-image',
+          timeoutMs: uiTimeoutMs,
+        }),
+      {
+        action: 'save',
+        savePath: chosenImagePath,
+        resultDir,
+        stepName: 'image-save-as-choose',
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+    await waitForFileBuffer(
+      chosenImagePath,
+      TEST_IMAGE_PNG,
+      uiTimeoutMs,
+      'Save Image As file written to user-chosen location'
+    )
+    assert.equal(existsSync(join(downloadsPath, 'embedded-browser-download-image.png')), false)
+
+    await clickDownloadLink(bridgeCall, '#download-after-image-save-as')
+    await waitForFileContent(
+      join(downloadsPath, 'after-image-save-as.mp4'),
+      'AFTER_IMAGE_SAVE_AS_BYTES',
+      uiTimeoutMs,
+      'direct download recovery after Save Image As'
+    )
+    await assertNoNativeSaveDialog(pid)
+
+    // 6. Custom directory saves directly; runtime deletion opens real Save As (cancel + choose) without silent fallback.
     await mkdir(customDownloadsDir, { recursive: true })
     await control.command('setAppPreferences', 'body', {
       value: JSON.stringify({
@@ -293,23 +404,39 @@ export async function verifyBrowserDownloadPolicy({
       uiTimeoutMs,
       'custom directory download custom.mp4'
     )
+    await assertNoNativeSaveDialog(pid)
 
     await rm(customDownloadsDir, { recursive: true, force: true })
-    const countBeforeMissingDirPrompt = (await readSaveDialogLog(saveDialogLogPath)).length
-    await clickDownloadLink(bridgeCall, '#download-after-missing-dir')
-    const afterMissingDirEvent = await waitForSaveDialogEvent(
-      saveDialogLogPath,
-      countBeforeMissingDirPrompt,
-      uiTimeoutMs,
-      'save dialog after custom download directory was removed at runtime'
+    await withNativeSaveDialog(
+      control,
+      () => clickDownloadLink(bridgeCall, '#download-after-missing-dir'),
+      { action: 'cancel', resultDir, stepName: 'missing-dir-cancel', timeoutMs: uiTimeoutMs }
     )
-    assert.equal(afterMissingDirEvent.reason, 'directory-unavailable')
-    assert.equal(afterMissingDirEvent.savePath, '')
-    assert.equal(afterMissingDirEvent.filename, 'after-missing-dir.mp4')
     assert.equal(existsSync(join(downloadsPath, 'after-missing-dir.mp4')), false)
     assert.equal(existsSync(customDownloadsDir), false)
 
-    // 6. Unwritable custom directory from the start prompts Save As instead of silently saving to system Downloads.
+    const chosenAfterMissingPath = join(chosenDir, 'after-missing-dir-chosen.mp4')
+    await withNativeSaveDialog(
+      control,
+      () => clickDownloadLink(bridgeCall, '#download-after-missing-dir'),
+      {
+        action: 'save',
+        savePath: chosenAfterMissingPath,
+        resultDir,
+        stepName: 'missing-dir-choose',
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+    await waitForFileContent(
+      chosenAfterMissingPath,
+      'MISSING_DIR_BYTES',
+      uiTimeoutMs,
+      'download saved to chosen location after custom directory was removed'
+    )
+    assert.equal(existsSync(join(downloadsPath, 'after-missing-dir.mp4')), false)
+    assert.equal(existsSync(customDownloadsDir), false)
+
+    // 7. Unwritable custom directory opens real Save As (cancel + choose), then recovers when reset to default.
     await writeFile(blockingFile, 'not a directory', 'utf8')
     await control.command('setAppPreferences', 'body', {
       value: JSON.stringify({
@@ -317,38 +444,93 @@ export async function verifyBrowserDownloadPolicy({
         browserAskBeforeDownload: false,
       }),
     })
-    const countBeforeUnwritablePrompt = (await readSaveDialogLog(saveDialogLogPath)).length
-    await clickDownloadLink(bridgeCall, '#download-after-unwritable')
-    const unwritableEvent = await waitForSaveDialogEvent(
-      saveDialogLogPath,
-      countBeforeUnwritablePrompt,
-      uiTimeoutMs,
-      'save dialog for unwritable custom download directory'
+    await withNativeSaveDialog(
+      control,
+      () => clickDownloadLink(bridgeCall, '#download-after-unwritable'),
+      { action: 'cancel', resultDir, stepName: 'unwritable-dir-cancel', timeoutMs: uiTimeoutMs }
     )
-    assert.equal(unwritableEvent.reason, 'directory-unavailable')
-    assert.equal(unwritableEvent.savePath, '')
-    assert.equal(unwritableEvent.filename, 'after-unwritable.mp4')
     assert.equal(existsSync(join(downloadsPath, 'after-unwritable.mp4')), false)
 
-    // 7. Ask-before-download preference prompts Save As for every download.
+    const chosenUnwritablePath = join(chosenDir, 'unwritable-dir-chosen.mp4')
+    await withNativeSaveDialog(
+      control,
+      () => clickDownloadLink(bridgeCall, '#download-after-unwritable'),
+      {
+        action: 'save',
+        savePath: chosenUnwritablePath,
+        resultDir,
+        stepName: 'unwritable-dir-choose',
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+    await waitForFileContent(
+      chosenUnwritablePath,
+      'UNWRITABLE_DIR_BYTES',
+      uiTimeoutMs,
+      'download saved to chosen location when custom directory is unwritable'
+    )
+    assert.equal(existsSync(join(downloadsPath, 'after-unwritable.mp4')), false)
+
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({
+        browserDownloadDirectory: null,
+        browserAskBeforeDownload: false,
+      }),
+    })
+    await clickDownloadLink(bridgeCall, '#download-recovered-default')
+    await waitForFileContent(
+      join(downloadsPath, 'recovered-default.mp4'),
+      'RECOVERED_DEFAULT_BYTES',
+      uiTimeoutMs,
+      'direct download recovery after clearing unwritable custom directory'
+    )
+    await assertNoNativeSaveDialog(pid)
+
+    // 8. Ask-before-download opens real Save As (cancel + choose), then recovers to direct save when disabled.
     await control.command('setAppPreferences', 'body', {
       value: JSON.stringify({
         browserDownloadDirectory: null,
         browserAskBeforeDownload: true,
       }),
     })
-    const countBeforeAskMode = (await readSaveDialogLog(saveDialogLogPath)).length
-    await clickDownloadLink(bridgeCall, '#download-ask-mode')
-    const askModeEvent = await waitForSaveDialogEvent(
-      saveDialogLogPath,
-      countBeforeAskMode,
-      uiTimeoutMs,
-      'save dialog when browserAskBeforeDownload is enabled'
-    )
-    assert.equal(askModeEvent.reason, 'ask-before-download')
-    assert.equal(askModeEvent.savePath, '')
-    assert.equal(askModeEvent.defaultPath, join(downloadsPath, 'ask-mode.mp4'))
+    await withNativeSaveDialog(control, () => clickDownloadLink(bridgeCall, '#download-ask-mode'), {
+      action: 'cancel',
+      resultDir,
+      stepName: 'ask-mode-cancel',
+      timeoutMs: uiTimeoutMs,
+    })
     assert.equal(existsSync(join(downloadsPath, 'ask-mode.mp4')), false)
+
+    const chosenAskModePath = join(chosenDir, 'ask-mode-chosen.mp4')
+    await withNativeSaveDialog(control, () => clickDownloadLink(bridgeCall, '#download-ask-mode'), {
+      action: 'save',
+      savePath: chosenAskModePath,
+      resultDir,
+      stepName: 'ask-mode-choose',
+      timeoutMs: uiTimeoutMs,
+    })
+    await waitForFileContent(
+      chosenAskModePath,
+      'ASK_MODE_BYTES',
+      uiTimeoutMs,
+      'download saved to chosen location when browserAskBeforeDownload is enabled'
+    )
+    assert.equal(existsSync(join(downloadsPath, 'ask-mode.mp4')), false)
+
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({
+        browserDownloadDirectory: null,
+        browserAskBeforeDownload: false,
+      }),
+    })
+    await clickDownloadLink(bridgeCall, '#download-after-ask-mode')
+    await waitForFileContent(
+      join(downloadsPath, 'after-ask-mode.mp4'),
+      'AFTER_ASK_MODE_BYTES',
+      uiTimeoutMs,
+      'direct download recovery after disabling browserAskBeforeDownload'
+    )
+    await assertNoNativeSaveDialog(pid)
   } finally {
     await control.command('setAppPreferences', 'body', {
       value: JSON.stringify({

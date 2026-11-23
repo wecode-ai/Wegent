@@ -908,9 +908,13 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
-  test('omits navigation actions for a non-plain browser context', async () => {
+  test('shows link and image Save As actions while omitting navigation for non-plain browser context', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const manager = new EmbeddedBrowserManager(directory)
+    const downloadPolicy = {
+      apply: vi.fn(),
+      downloadUrlAs: vi.fn(),
+    }
+    const manager = new EmbeddedBrowserManager(directory, undefined, undefined, downloadPolicy)
     const contents = new FakeWebContents()
     contents.loadURL.mockImplementation(async url => {
       contents.commitUrl(url)
@@ -939,16 +943,65 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       }
     )
 
-    const items = electronMocks.menuBuildFromTemplate.mock.calls.at(-1)?.[0] as Array<{
+    const linkItems = electronMocks.menuBuildFromTemplate.mock.calls.at(-1)?.[0] as Array<{
+      click?: () => void
       label?: string
       type?: string
     }>
-    expect(items.map(item => item.label ?? item.type)).toEqual([
+    expect(linkItems.map(item => item.label ?? item.type)).toEqual([
       '快速评论',
       '评论',
       'separator',
+      '在新标签页中打开链接',
+      '在外部浏览器中打开',
+      'separator',
+      '复制链接地址',
+      'separator',
+      '链接存储为...',
+      'separator',
       '检查',
     ])
+    linkItems.find(item => item.label === '链接存储为...')?.click?.()
+    expect(downloadPolicy.downloadUrlAs).toHaveBeenCalledWith(
+      contents,
+      'https://example.test/linked'
+    )
+
+    contents.emit(
+      'context-menu',
+      {},
+      {
+        x: 24,
+        y: 44,
+        isEditable: false,
+        formControlType: 'none',
+        mediaType: 'image',
+        linkURL: '',
+        srcURL: 'https://example.test/photo.png',
+        selectionText: '',
+      }
+    )
+    const imageItems = electronMocks.menuBuildFromTemplate.mock.calls.at(-1)?.[0] as Array<{
+      click?: () => void
+      label?: string
+      type?: string
+    }>
+    expect(imageItems.map(item => item.label ?? item.type)).toEqual([
+      '快速评论',
+      '评论',
+      'separator',
+      '在新标签页中打开图片',
+      '图片存储为...',
+      '复制图片',
+      '复制图片地址',
+      'separator',
+      '检查',
+    ])
+    imageItems.find(item => item.label === '图片存储为...')?.click?.()
+    expect(downloadPolicy.downloadUrlAs).toHaveBeenCalledWith(
+      contents,
+      'https://example.test/photo.png'
+    )
     await rm(directory, { recursive: true, force: true })
   })
 

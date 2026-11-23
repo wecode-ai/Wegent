@@ -56,7 +56,7 @@ import {
 } from 'electron'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { release } from 'node:os'
@@ -166,11 +166,7 @@ import { CloudCredentialError, CloudCredentialService } from './host/cloud-crede
 import { PluginNativeAuthorization } from './host/plugin-native-authorization.js'
 import { cloudFetch } from './host/cloud-http.js'
 import { installE2eDshReleaseRedirect } from './host/e2e-dsh-release-redirect.js'
-import {
-  cleanupStaleTemporaryImages,
-  createNativeContextMenuActions,
-  installContextMenu,
-} from './host/image-context-actions.js'
+import { cleanupStaleTemporaryImages, installContextMenu } from './host/image-context-actions.js'
 import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
@@ -388,28 +384,6 @@ const desktopDownloadPolicy = new DownloadTargetPolicy({
   defaultDownloadsDirectory: () => downloadsDirectory(),
   onDownloadCompleted: savePath => {
     if (process.platform === 'darwin') app.dock?.downloadFinished(savePath)
-  },
-  onSaveDialogRequested: event => {
-    const logPath =
-      process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
-        ? process.env.WEWORK_E2E_DOWNLOAD_SAVE_DIALOG_LOG?.trim()
-        : ''
-    if (!logPath) return
-    appendFileSync(
-      logPath,
-      `${JSON.stringify({
-        defaultPath: event.defaultPath,
-        filename: event.filename,
-        reason: event.reason,
-        savePath: event.item.getSavePath(),
-        url: event.url,
-        urlChain: event.urlChain,
-        webContentsId: event.webContentsId,
-      })}\n`,
-      'utf8'
-    )
-    event.preventDefault?.()
-    event.item.cancel()
   },
   onDirectoryWarning: (message, error) => console.warn(message, error),
 })
@@ -923,16 +897,6 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       ownerId: contents.id,
     })
     embeddedBrowser.attach(pending.label, guestContents)
-    const browserManager = embeddedBrowser
-    installContextMenu(
-      guestContents,
-      'browser',
-      createNativeContextMenuActions(
-        guestContents,
-        url => browserManager.requestPopupTab(pending.label, url),
-        url => desktopDownloadPolicy.downloadUrlAs(guestContents, url)
-      )
-    )
   })
   contents.once('destroyed', () => pendingEmbeddedBrowserAttachments.delete(contents.id))
 }
@@ -1043,8 +1007,8 @@ function installDshWindowLabelHeaders(): void {
       ),
     })
   })
-  session.defaultSession.on('will-download', (event, item, webContents) => {
-    desktopDownloadPolicy.apply(item, webContents, event)
+  session.defaultSession.on('will-download', (_event, item, webContents) => {
+    desktopDownloadPolicy.apply(item, webContents)
   })
   void desktopDownloadPolicy.prepare()
 }

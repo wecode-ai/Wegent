@@ -10,7 +10,6 @@ export interface DownloadPreferences {
 export type SaveDialogReason = 'ask-before-download' | 'save-as' | 'directory-unavailable'
 
 export interface ManagedDownloadItem {
-  cancel: () => void
   getFilename: () => string
   getSavePath: () => string
   getURL: () => string
@@ -18,17 +17,6 @@ export interface ManagedDownloadItem {
   setSavePath: (path: string) => void
   setSaveDialogOptions: (options: { defaultPath?: string }) => void
   once: (event: 'done', listener: (event: unknown, state: string) => void) => unknown
-}
-
-export interface SaveDialogRequestEvent {
-  defaultPath: string
-  filename: string
-  item: ManagedDownloadItem
-  preventDefault?: () => void
-  reason: SaveDialogReason
-  url: string
-  urlChain: string[]
-  webContentsId: number | null
 }
 
 export interface DownloadUrlTarget {
@@ -49,7 +37,6 @@ interface DownloadFileSystem {
 export interface DownloadTargetPolicyOptions {
   defaultDownloadsDirectory: () => string
   onDownloadCompleted?: (savePath: string) => void
-  onSaveDialogRequested?: (event: SaveDialogRequestEvent) => void
   onDirectoryWarning?: (message: string, error: unknown) => void
   fs?: DownloadFileSystem
   caseInsensitivePaths?: boolean
@@ -195,8 +182,7 @@ export class DownloadTargetPolicy {
 
   apply(
     item: ManagedDownloadItem,
-    webContents?: { id: number } | null,
-    willDownloadEvent?: { preventDefault: () => void } | null
+    webContents?: { id: number } | null
   ): { mode: 'save-path' | 'save-dialog'; path: string; reason?: SaveDialogReason } {
     const webContentsId = webContents?.id ?? null
     const promptForSave = this.consumePendingSaveAs(webContentsId, item)
@@ -214,14 +200,7 @@ export class DownloadTargetPolicy {
         : this.preferences.askBeforeDownload
           ? 'ask-before-download'
           : 'directory-unavailable'
-      return this.requestSaveDialog(
-        item,
-        filename,
-        defaultPath,
-        reason,
-        webContentsId,
-        willDownloadEvent
-      )
+      return this.requestSaveDialog(item, defaultPath, reason)
     }
 
     const candidatePath = findAvailablePath(
@@ -234,14 +213,7 @@ export class DownloadTargetPolicy {
 
     if (promptForSave || this.preferences.askBeforeDownload) {
       const reason: SaveDialogReason = promptForSave ? 'save-as' : 'ask-before-download'
-      return this.requestSaveDialog(
-        item,
-        filename,
-        candidatePath,
-        reason,
-        webContentsId,
-        willDownloadEvent
-      )
+      return this.requestSaveDialog(item, candidatePath, reason)
     }
 
     const reservedKey = reservationKey(candidatePath, this.caseInsensitivePaths)
@@ -256,26 +228,11 @@ export class DownloadTargetPolicy {
 
   private requestSaveDialog(
     item: ManagedDownloadItem,
-    filename: string,
     defaultPath: string,
-    reason: SaveDialogReason,
-    webContentsId: number | null,
-    willDownloadEvent?: { preventDefault: () => void } | null
+    reason: SaveDialogReason
   ): { mode: 'save-dialog'; path: string; reason: SaveDialogReason } {
     item.setSaveDialogOptions({ defaultPath })
     this.attachCompletionHook(item)
-    this.options.onSaveDialogRequested?.({
-      defaultPath,
-      filename,
-      item,
-      ...(typeof willDownloadEvent?.preventDefault === 'function'
-        ? { preventDefault: () => willDownloadEvent.preventDefault() }
-        : {}),
-      reason,
-      url: item.getURL(),
-      urlChain: item.getURLChain?.() ?? [item.getURL()],
-      webContentsId,
-    })
     return { mode: 'save-dialog', path: defaultPath, reason }
   }
 

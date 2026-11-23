@@ -967,13 +967,6 @@ export function createElectronCapabilityRouter(
       ),
     }
   })
-  router.register('e2e.embeddedBrowserSaveUrlAs', params => {
-    assertE2EEnabled('Embedded browser download test controls')
-    browser.saveUrlAs(
-      optionalStringParam(params, 'label') ?? 'workspace-browser',
-      stringParam(params, 'url')
-    )
-  })
   router.register('e2e.verifyEmbeddedBrowserDetachedInspector', params =>
     browser.verifyDetachedInspector(optionalStringParam(params, 'label') ?? 'workspace-browser')
   )

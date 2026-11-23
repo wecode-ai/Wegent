@@ -3,15 +3,11 @@ import {
   dshBrowserRequestHeaders,
 } from '../runtime/dsh-browser-auth.js'
 import {
-  app,
   BrowserWindow,
-  Menu,
   WebContentsView,
   session,
   shell,
-  type ContextMenuParams,
   type DownloadItem,
-  type MenuItemConstructorOptions,
   type WebContents,
 } from 'electron'
 import { randomUUID } from 'node:crypto'
@@ -24,6 +20,7 @@ import {
 } from './browser-history-store.js'
 import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
 import type { DownloadTargetPolicy } from './download-target-policy.js'
+import { createNativeContextMenuActions, installContextMenu } from './image-context-actions.js'
 import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { BrowserScriptEvaluator } from './browser-script-evaluator.js'
@@ -205,7 +202,7 @@ export class EmbeddedBrowserManager {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
     const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
     browserSession.on('will-download', (event, item, webContents) => {
-      this.downloadPolicy?.apply(item, webContents, event)
+      this.downloadPolicy?.apply(item, webContents)
       if (event.defaultPrevented) return
       const entry = [...this.entries.values()].find(
         candidate => candidate.contents.id === webContents.id
@@ -504,9 +501,23 @@ export class EmbeddedBrowserManager {
       if (contents.isDevToolsOpened()) contents.closeDevTools()
       else contents.openDevTools({ mode: 'detach', activate: true })
     })
-    contents.on('context-menu', (_event, params) => {
-      this.showContextMenu(entry, params)
-    })
+    installContextMenu(
+      contents,
+      'browser',
+      createNativeContextMenuActions(contents, url => this.requestPopupTab(entry.label, url), {
+        canReload: () => Boolean(this.currentVisibleUrl(entry) || entry.requestedUrl),
+        requestAnnotation: (mode, x, y) => {
+          this.emit('annotation-request', {
+            label: entry.label,
+            nativeLabel: entry.nativeLabel,
+            mode,
+            x,
+            y,
+          })
+        },
+        saveUrlAs: url => this.saveUrlAs(entry.label, url),
+      })
+    )
     contents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('wework://')) {
         this.openWeworkScheme(url)
@@ -1402,56 +1413,6 @@ export class EmbeddedBrowserManager {
     this.emitPageState(entry)
   }
 
-  private showContextMenu(entry: BrowserEntry, params: ContextMenuParams): void {
-    const contents = entry.contents
-    const labels = embeddedBrowserContextMenuLabels(app.getLocale())
-    const requestAnnotation = (mode: 'quick' | 'batch') => {
-      this.emit('annotation-request', {
-        label: entry.label,
-        nativeLabel: entry.nativeLabel,
-        mode,
-        x: params.x,
-        y: params.y,
-      })
-    }
-    const items: MenuItemConstructorOptions[] = [
-      {
-        label: labels.quickAnnotate,
-        click: () => requestAnnotation('quick'),
-      },
-      {
-        label: labels.annotate,
-        click: () => requestAnnotation('batch'),
-      },
-      { type: 'separator' },
-    ]
-    if (isPlainBrowserContext(params)) {
-      items.push(
-        {
-          label: labels.back,
-          enabled: contents.navigationHistory.canGoBack(),
-          click: () => contents.navigationHistory.goBack(),
-        },
-        {
-          label: labels.forward,
-          enabled: contents.navigationHistory.canGoForward(),
-          click: () => contents.navigationHistory.goForward(),
-        },
-        {
-          label: labels.reload,
-          enabled: Boolean(this.currentVisibleUrl(entry) || entry.requestedUrl),
-          click: () => contents.reload(),
-        },
-        { type: 'separator' }
-      )
-    }
-    items.push({
-      label: labels.inspect,
-      click: () => contents.inspectElement(params.x, params.y),
-    })
-    Menu.buildFromTemplate(items).popup()
-  }
-
   private emit(type: BrowserHostEvent['type'], payload: Record<string, unknown>): void {
     this.onEvent({
       sequence: ++this.eventSequence,
@@ -1659,47 +1620,6 @@ function isBrowserUrl(value: string): boolean {
   } catch {
     return false
   }
-}
-
-interface EmbeddedBrowserContextMenuLabels {
-  quickAnnotate: string
-  annotate: string
-  back: string
-  forward: string
-  reload: string
-  inspect: string
-}
-
-function embeddedBrowserContextMenuLabels(language: string): EmbeddedBrowserContextMenuLabels {
-  if (language.trim().toLowerCase().startsWith('zh')) {
-    return {
-      quickAnnotate: '快速评论',
-      annotate: '评论',
-      back: '返回',
-      forward: '前进',
-      reload: '重新加载',
-      inspect: '检查',
-    }
-  }
-  return {
-    quickAnnotate: 'Quick annotate',
-    annotate: 'Annotate',
-    back: 'Back',
-    forward: 'Forward',
-    reload: 'Reload',
-    inspect: 'Inspect',
-  }
-}
-
-function isPlainBrowserContext(params: ContextMenuParams): boolean {
-  return (
-    !params.isEditable &&
-    params.formControlType === 'none' &&
-    params.mediaType === 'none' &&
-    !params.linkURL &&
-    !params.srcURL &&
-    !params.selectionText.trim()
-  )
 }
 
 function isHistoryRecordableUrl(value: string): boolean {

@@ -666,12 +666,10 @@ export function createDesktopScenario({
 }) {
   let cacheResourceRequests = 0
   const downloadsPath = join(resultDir, 'e2e-downloads')
-  const saveDialogLogPath = join(resultDir, 'e2e-download-save-dialogs.jsonl')
 
   return {
     appEnvironment: {
       WEWORK_E2E_DOWNLOADS_DIR: downloadsPath,
-      WEWORK_E2E_DOWNLOAD_SAVE_DIALOG_LOG: saveDialogLogPath,
       WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
       WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS: '5000',
     },
@@ -1885,11 +1883,9 @@ export function createDesktopScenario({
 
       await verifyBrowserDownloadPolicy({
         bridgeCall,
-        browserLabel,
         control,
         downloadsPath,
         resultDir,
-        saveDialogLogPath,
         uiTimeoutMs,
       })
 
