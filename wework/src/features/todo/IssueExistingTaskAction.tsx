@@ -3,6 +3,7 @@ import type { WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
 import type { CloudLoopItem, LoopItemTaskBinding } from '@/api/deliveries'
 import type { RuntimeProjectSpaceRef, RuntimeWorkListResponse } from '@/types/api'
 import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskTracking'
+import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
 import { IssueExistingTaskPicker, type ExistingIssueTask } from './IssueExistingTaskPicker'
 
@@ -36,6 +37,7 @@ export function IssueExistingTaskAction({
     ...(source.work?.chats ?? []),
   ]) {
     for (const task of workspace.tasks) {
+      if (isStandInMemoryReviewTask(task)) continue
       const key = `${workspace.deviceId}:${task.taskId}`
       if (existing.has(key) || linked.has(key)) continue
       tasks.set(key, {
