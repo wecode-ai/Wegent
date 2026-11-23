@@ -70,6 +70,24 @@ describe('AskUserForm', () => {
     expect(screen.getByText('Which programming language do you prefer?')).toBeInTheDocument()
   })
 
+  it('closes a native form as its response deadline passes', () => {
+    jest.useFakeTimers()
+    try {
+      const data = createMockData({
+        tool_output: { __deferred_user_input__: true, expires_at_unix_ms: Date.now() + 1000 },
+      })
+      render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)
+      expect(screen.getByTestId('ask-user-submit')).toBeEnabled()
+
+      act(() => jest.advanceTimersByTime(1000))
+
+      expect(screen.queryByTestId('ask-user-submit')).not.toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent('ask_user_question.expired')
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it('renders single choice options with radio buttons', () => {
     const data = createMockData()
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)

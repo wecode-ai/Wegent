@@ -177,7 +177,9 @@ export function StandInMemoryRules({
                 <p className="mt-1 whitespace-pre-wrap break-words text-sm">
                   {row.kind === 'legacy_fingerprint'
                     ? t('standIn.memory.legacy_rule_help')
-                    : row.content}
+                    : row.evidenceUnavailable
+                      ? t('standIn.memory.rule_source_unavailable')
+                      : row.content}
                 </p>
                 <p className="mt-2 text-xs text-text-muted">
                   {row.kind === 'legacy_fingerprint'

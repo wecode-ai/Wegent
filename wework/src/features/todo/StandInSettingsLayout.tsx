@@ -197,7 +197,7 @@ export function StandInSettingsEntry({
       onClick={onClick}
       className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:opacity-40"
     >
-      <span className="flex-1">
+      <span className="min-w-0 flex-1 whitespace-normal break-words">
         <span className="block font-medium">{label}</span>
         {description && (
           <span className="mt-1 block text-sm text-text-secondary">{description}</span>

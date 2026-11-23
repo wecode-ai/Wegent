@@ -102,6 +102,22 @@ describe('desktop host events', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  test('keeps the connection open for a supported host preparation', async () => {
+    vi.useFakeTimers()
+    const response = Promise.withResolvers<Response>()
+    const fetch = vi.fn<typeof globalThis.fetch>().mockReturnValue(response.promise)
+    vi.stubGlobal('fetch', fetch)
+    const { invokeDesktopHost } = await import('./desktopHost')
+    const request = invokeDesktopHost('smartApps.verify')
+
+    await vi.advanceTimersByTimeAsync(180_000)
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(false)
+    response.resolve(Response.json({ ok: true, result: 'ready' }))
+
+    await expect(request).resolves.toBe('ready')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   test.each(['true', 'false'])(
     'records attachment chunk timing without its payload only in E2E: %s',
     async e2e => {

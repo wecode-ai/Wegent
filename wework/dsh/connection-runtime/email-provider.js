@@ -5,35 +5,72 @@ export const EMAIL_PROVIDER = '@wegent/dsh-connection-runtime/email'
 const PAGE_SIZE = 20
 const DAY_MS = 24 * 60 * 60 * 1000
 
-function readWindow({ since, limit = PAGE_SIZE }) {
+function readWindow({ since, trainingUntil, limit = PAGE_SIZE }) {
   const now = Date.now()
   const start = since === undefined ? now - DAY_MS : Date.parse(since)
+  const end = trainingUntil === undefined ? now : Date.parse(trainingUntil)
   if (
     (since !== undefined && typeof since !== 'string') ||
     !Number.isFinite(start) ||
-    start < now - 7 * DAY_MS ||
-    start > now ||
+    (trainingUntil === undefined && start < now - 7 * DAY_MS) ||
+    !Number.isFinite(end) ||
+    end > now ||
+    start > end ||
     !Number.isSafeInteger(limit) ||
     limit < 1 ||
     limit > PAGE_SIZE
   )
     throw mailError('email_read_range_invalid')
-  return { since: new Date(start), until: new Date(now), limit }
+  const earliest = Math.min(end, Math.max(start, now - 7 * DAY_MS))
+  return {
+    requestedStart: start,
+    since: new Date(earliest),
+    until: new Date(end),
+    limit,
+    review: trainingUntil !== undefined,
+  }
+}
+
+function mailReviewRow(mail, row, ownEmail, limit) {
+  const headerId = value => typeof value === 'string' && /^<[^<>\s]{1,996}>$/.test(value)
+  const nativeId = headerId(mail.messageId) ? mail.messageId : null
+  const id = nativeId ?? row.id
+  const parent = headerId(mail.inReplyTo) ? mail.inReplyTo : null
+  const references = (Array.isArray(mail.references) ? mail.references : [mail.references]).filter(
+    headerId
+  )
+  const topic = references[0] ?? parent ?? id
+  // An IMAP envelope is not proof that a message was sent by the mailbox owner.
+  // A matching host-side SMTP receipt can independently identify the assistant's copy.
+  const candidate = nativeId && row.from.toLowerCase() === ownEmail.toLowerCase()
+  const budget = Math.min(20000, Math.floor(24000 / limit))
+  return {
+    id,
+    at: row.at,
+    text: row.text.slice(0, budget),
+    truncated: row.truncated || row.text.length > budget,
+    author: candidate ? 'accountCandidate' : 'unknown',
+    conversationId: topic,
+    topicId: topic,
+    quotedMessageId: parent,
+  }
 }
 
 export function createEmailProvider(accounts, network = { imapSession, parseMail }) {
   const readCursors = new Map()
   const binding = source =>
     JSON.stringify([source.providerId, source.profile, source.kind, source.id, source.enabledAfter])
-  const session = async (ctx, source, action) =>
-    network.imapSession(
-      await accounts.get(source.profile),
+  const session = async (ctx, source, action) => {
+    const account = await accounts.get(source.profile)
+    return network.imapSession(
+      account,
       async client => {
         await client.mailboxOpen(source.id, { readOnly: true })
-        return action(client)
+        return action(client, account.email)
       },
       ctx.signal
     )
+  }
   return {
     async check() {
       return { status: 'ready' }
@@ -77,21 +114,32 @@ export function createEmailProvider(accounts, network = { imapSession, parseMail
           !state ||
           state.binding !== binding(source) ||
           state.expiresAt < Date.now() ||
+          (input.query !== undefined &&
+            Boolean(input.query.trainingUntil) !== state.window.review) ||
+          (input.query?.trainingUntil !== undefined &&
+            Date.parse(input.query.trainingUntil) !== state.window.until.getTime()) ||
           (input.query?.since !== undefined &&
-            Date.parse(input.query.since) !== state.window.since.getTime()) ||
+            Date.parse(input.query.since) !== state.window.requestedStart) ||
           (input.query?.limit !== undefined && input.query.limit !== state.window.limit)
         )
           throw mailError('source_read_cursor_invalid')
       }
       const window = state?.window ?? readWindow(input.query ?? {})
-      return session(ctx, source, async client => {
+      return session(ctx, source, async (client, ownEmail) => {
         const partition = String(client.mailbox.uidValidity)
         if (state && state.partition !== partition) throw mailError('email_mailbox_reset')
         const ceiling = state?.ceiling ?? client.mailbox.uidNext - 1
         const uids =
-          ceiling < 1
+          ceiling < 1 || (window.review && +window.since === +window.until)
             ? []
-            : await client.search({ since: window.since, uid: '1:' + ceiling }, { uid: true })
+            : await client.search(
+                {
+                  since: window.since,
+                  ...(window.review ? { before: new Date(+window.until + DAY_MS) } : {}),
+                  uid: '1:' + ceiling,
+                },
+                { uid: true }
+              )
         const selected = [...uids]
           .filter(uid => uid <= ceiling)
           .sort((a, b) => b - a)
@@ -112,10 +160,11 @@ export function createEmailProvider(accounts, network = { imapSession, parseMail
         for (const row of rows) {
           const at = new Date(row.internalDate)
           if (!Number.isFinite(at.getTime())) throw mailError('email_message_invalid')
-          if (at < window.since || at > window.until) continue
+          if (at < window.since || at > window.until || (window.review && +at === +window.until))
+            continue
           const mail = await network.parseMail(row.source)
           const sender = mail.from?.value?.[0]
-          items.push({
+          const item = {
             id: `${client.mailbox.uidValidity}:${row.uid}`,
             at: at.toISOString(),
             subject: mail.subject ?? '',
@@ -123,7 +172,8 @@ export function createEmailProvider(accounts, network = { imapSession, parseMail
             senderName: sender?.name ?? '',
             text: (mail.text ?? '').slice(0, 20000),
             truncated: row.size > 262144 || (mail.text?.length ?? 0) > 20000,
-          })
+          }
+          items.push(window.review ? mailReviewRow(mail, item, ownEmail, window.limit) : item)
         }
         items.sort((left, right) => right.at.localeCompare(left.at))
         const hasMore = uids.some(uid => uid < selected.at(-1))
@@ -143,6 +193,10 @@ export function createEmailProvider(accounts, network = { imapSession, parseMail
         }
         return {
           items: items.slice(0, window.limit),
+          ...(window.review ? { reviewCoverage: 'partial' } : {}),
+          ...(window.requestedStart < +window.since
+            ? { coverageGap: { from: window.requestedStart, through: +window.since } }
+            : {}),
           range: { since: window.since.toISOString(), until: window.until.toISOString() },
           hasMore,
           ...(nextCursor ? { nextCursor } : {}),

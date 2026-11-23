@@ -196,10 +196,20 @@ function getToolIcon(toolName: string) {
  * Extended props for ToolBlock with count and merged tools support
  */
 interface ToolBlockWithCountProps extends ToolBlockProps {
+  taskStatus?: string
   /** Number of consecutive same tools (for merged display) */
   count?: number
   /** All merged tools (for expanded view when count > 1) */
   mergedTools?: ToolRendererProps['tool'][]
+}
+
+function isActiveTool(tool: ToolRendererProps['tool']): boolean {
+  return (
+    tool.status === 'generating_arguments' ||
+    tool.status === 'invoking' ||
+    tool.status === 'streaming' ||
+    tool.status === 'pending'
+  )
 }
 
 /**
@@ -215,9 +225,11 @@ export const ToolBlock = memo(function ToolBlock({
   defaultExpanded = false,
   count = 1,
   mergedTools = [],
+  taskStatus,
 }: ToolBlockWithCountProps) {
   const { t } = useTranslation('chat')
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+  const isCancelled = taskStatus === 'CANCELLED'
 
   // Get tool icon component
   const ToolIcon = getToolIcon(tool.toolName)
@@ -225,17 +237,12 @@ export const ToolBlock = memo(function ToolBlock({
   // Check if any tool is running (for spinner animation)
   // For merged tools, check if any of them is still running
   const isRunning = useMemo(() => {
-    const checkRunning = (status: string | undefined) =>
-      status === 'generating_arguments' ||
-      status === 'invoking' ||
-      status === 'streaming' ||
-      status === 'pending'
-
+    if (isCancelled) return false
     if (count > 1 && mergedTools.length > 0) {
-      return mergedTools.some(item => checkRunning(item.status))
+      return mergedTools.some(isActiveTool)
     }
-    return checkRunning(tool.status)
-  }, [tool.status, count, mergedTools])
+    return isActiveTool(tool)
+  }, [tool, count, mergedTools, isCancelled])
 
   // Check if any tool has error status
   const hasError = useMemo(() => {
@@ -338,7 +345,11 @@ export const ToolBlock = memo(function ToolBlock({
       {/* Expanded content - shows all merged tools or single tool */}
       {isExpanded && canExpand && (
         <div className="mt-1.5 ml-6 space-y-2">
-          {toolsToDisplay.map((toolItem, idx) => {
+          {toolsToDisplay.map((rawTool, idx) => {
+            const toolItem =
+              isCancelled && isActiveTool(rawTool)
+                ? { ...rawTool, status: 'cancelled' as const }
+                : rawTool
             const CurrentToolRenderer = getToolRenderer(toolItem.toolName)
             const preview = getToolInputPreview(toolItem, 80)
             // Check if tool has content to render
@@ -373,9 +384,10 @@ export const ToolBlock = memo(function ToolBlock({
                 ) : toolHasContent ? (
                   <CurrentToolRenderer tool={toolItem} />
                 ) : (
-                  // Tool completed but no content (edge case)
                   <div className="text-xs text-[#888] dark:text-[#777] italic">
-                    {t('thinking.no_output')}
+                    {toolItem.status === 'cancelled'
+                      ? t('messages.status_cancelled')
+                      : t('thinking.no_output')}
                   </div>
                 )}
               </div>

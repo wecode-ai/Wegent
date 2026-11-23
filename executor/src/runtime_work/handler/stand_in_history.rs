@@ -109,6 +109,25 @@ impl RuntimeWorkRpcHandler {
         Ok(links)
     }
 
+    pub(super) fn memory_review_window(
+        &self,
+        store: &LocalTaskStore,
+        identity: &StandInMcpIdentity,
+    ) -> Result<(String, i64), AppIpcError> {
+        if !identity.memory_review || identity.review || identity.readonly_worker {
+            return Err(denied());
+        }
+        let (_, through) = self
+            .conversation_scope(identity, store)?
+            .window
+            .ok_or_else(denied)?;
+        let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
+        let run = actor.runtime_handle["executionRequest"]["standInSchedule"]["runId"]
+            .as_str()
+            .ok_or_else(denied)?;
+        Ok((run.to_owned(), through))
+    }
+
     fn conversation_scope(
         &self,
         identity: &StandInMcpIdentity,

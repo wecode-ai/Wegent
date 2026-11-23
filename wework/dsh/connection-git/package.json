@@ -279,6 +279,12 @@
               "additionalProperties": false
             },
             "pagination": "cursor"
+          },
+          "reviewHistory": {
+            "resourceKinds": [
+              "personal",
+              "repository"
+            ]
           }
         },
         {
@@ -536,6 +542,12 @@
               "additionalProperties": false
             },
             "pagination": "cursor"
+          },
+          "reviewHistory": {
+            "resourceKinds": [
+              "personal",
+              "repository"
+            ]
           }
         }
       ]

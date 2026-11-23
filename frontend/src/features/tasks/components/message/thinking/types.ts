@@ -92,6 +92,7 @@ export type ToolStatus =
   | 'streaming'
   | 'invoking'
   | 'done'
+  | 'cancelled'
   | 'error'
 
 /**

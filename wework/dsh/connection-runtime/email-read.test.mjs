@@ -5,7 +5,12 @@ import { ConnectionRegistry } from '../plugin-runtime/connections.js'
 import { createEmailAccounts } from './email-accounts.js'
 import { createEmailProvider, EMAIL_PROVIDER } from './email-provider.js'
 
-async function fixture({ count = 2, read = true, at = new Date(Date.now() - 60 * 1000) } = {}) {
+async function fixture({
+  count = 2,
+  read = true,
+  at = new Date(Date.now() - 60 * 1000),
+  mailHeaders = () => ({}),
+} = {}) {
   const values = new Map()
   const calls = []
   const client = {
@@ -27,6 +32,7 @@ async function fixture({ count = 2, read = true, at = new Date(Date.now() - 60 *
       subject: source,
       from: { value: [{ name: 'Sender', address: 'sender@example.com' }] },
       text: 'Real source content from the IMAP protocol fixture',
+      ...mailHeaders(source),
     }),
   }
   const accounts = createEmailAccounts(
@@ -69,6 +75,47 @@ async function fixture({ count = 2, read = true, at = new Date(Date.now() - 60 *
   }
   return { registry, source, calls, client, at, accounts }
 }
+
+test('review reads only INBOX and a claimed owner address is never proof of a human follow-up', async () => {
+  const f = await fixture({
+    mailHeaders: source => ({
+      from: {
+        value: [{ address: source === 'mail-1' ? 'owner@example.com' : 'someone@example.com' }],
+      },
+      messageId: '<' + source + '@example.com>',
+      inReplyTo: '<question@example.com>',
+    }),
+  })
+  const query = {
+    since: new Date(+f.at - 10).toISOString(),
+    trainingUntil: new Date(+f.at + 10).toISOString(),
+    limit: 1,
+  }
+  const first = await f.registry.call(EMAIL_PROVIDER, 'readSource', { source: f.source, query })
+  assert.equal(first.reviewCoverage, 'partial')
+  assert.equal(first.items[0].id, '<mail-2@example.com>')
+  assert.equal(first.items[0].author, 'unknown')
+  assert.equal(first.items[0].quotedMessageId, '<question@example.com>')
+  const second = await f.registry.call(EMAIL_PROVIDER, 'readSource', {
+    source: f.source,
+    cursor: first.nextCursor,
+  })
+  assert.equal(second.items[0].author, 'accountCandidate')
+  assert.equal(second.items[0].topicId, first.items[0].topicId)
+  assert.ok(
+    f.calls
+      .filter(call => call[0] === 'open')
+      .every(call => call[1] === 'INBOX' && call[2].readOnly)
+  )
+  await assert.rejects(
+    f.registry.call(EMAIL_PROVIDER, 'readSource', {
+      source: f.source,
+      query: { ...query, trainingUntil: f.at.toISOString() },
+      cursor: first.nextCursor,
+    }),
+    { code: 'source_read_cursor_invalid' }
+  )
+})
 
 test('publishes priority guidance with historical read scope without authorizing external actions', async () => {
   const yesterday = new Date(Date.now() - 36 * 60 * 60 * 1000)

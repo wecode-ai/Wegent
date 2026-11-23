@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { initialReview, readActivityPage, readReviewPage, reviewQuery } from './review-history.js'
 
 const PAGE_SIZE = 100
 const TTL_MS = 30 * 60 * 1000
@@ -22,7 +23,11 @@ const binding = source =>
       'subscriptionId',
       'generation',
       'enabledAfter',
-    ].map(key => source[key] ?? null)
+      'collectionKey',
+      'branch',
+      'monitoredObjects',
+      'observeCurrentStatus',
+    ].map(key => source?.[key] ?? null)
   )
 const normalizedQuery = query => ({
   entityKind: query.entityKind,
@@ -31,24 +36,41 @@ const normalizedQuery = query => ({
   ...(query.sha === undefined ? {} : { sha: query.sha }),
 })
 
-export function createGitSourceReader(platform, parseProfile) {
+export function createGitSourceReader(platform, parseProfile, canonicalCommentId, personalTarget) {
   const cursors = new Map()
+  const continuation = state => {
+    for (const [key, value] of cursors) if (value.expiresAt < Date.now()) cursors.delete(key)
+    if (cursors.size >= 1000) cursors.delete(cursors.keys().next().value)
+    const cursor = randomUUID()
+    cursors.set(cursor, state)
+    return cursor
+  }
   return async (ctx, input) => {
     const source = input.source
-    validateSource(platform, source)
-    const identity = parseProfile(source.profile)
     let state = input.cursor === undefined ? null : cursors.get(input.cursor)
     if (
       input.cursor !== undefined &&
       (!state || state.binding !== binding(source) || state.expiresAt < Date.now())
     )
       throw cursorInvalid()
-    if (input.query !== undefined) {
-      validateQuery(input.query)
-      if (state && JSON.stringify(normalizedQuery(input.query)) !== JSON.stringify(state.query))
-        throw cursorInvalid()
-    }
-    const query = state?.query ?? normalizedQuery(validateQuery(input.query))
+    const query =
+      input.query === undefined && state
+        ? state.query
+        : input.query?.trainingUntil !== undefined
+          ? reviewQuery(input.query)
+          : normalizedQuery(validateQuery(input.query))
+    if (state && JSON.stringify(query) !== JSON.stringify(state.query)) throw cursorInvalid()
+    const personal =
+      query.trainingUntil !== undefined &&
+      source?.kind === 'personal' &&
+      source.id === 'personal' &&
+      source.scope === undefined &&
+      source.monitoredObjects === undefined &&
+      source.branch === undefined &&
+      (source.transport === undefined || source.transport === 'cli') &&
+      source.providerId === '@wegent/dsh-connection-git/' + platform
+    if (!personal) validateSource(platform, source)
+    const identity = parseProfile(source.profile)
     const read = async args => {
       const result = await ctx.git.read({
         ...args,
@@ -59,14 +81,36 @@ export function createGitSourceReader(platform, parseProfile) {
       if (result.profile !== source.profile) throw invalid('The selected Git account changed')
       return result.data
     }
-    const repository = await read({ operation: 'repository' })
-    if (
-      !repository ||
-      String(repository.id) !== source.id ||
-      repository[platform === 'github' ? 'full_name' : 'path_with_namespace'] !== source.name
-    )
-      throw invalid('The connected repository identity changed')
     state ??= { binding: binding(source), query, page: 1, expiresAt: Date.now() + TTL_MS }
+    if (!personal) {
+      const repository = await read({ operation: 'repository' })
+      if (
+        !repository ||
+        String(repository.id) !== source.id ||
+        repository[platform === 'github' ? 'full_name' : 'path_with_namespace'] !== source.name
+      )
+        throw invalid('The connected repository identity changed')
+    }
+    if (query.trainingUntil !== undefined) {
+      const review = structuredClone(state.review ?? initialReview(platform, source))
+      const readPage = personal ? readActivityPage : readReviewPage
+      const result = await readPage(
+        platform,
+        source,
+        identity,
+        query,
+        review,
+        read,
+        canonicalCommentId,
+        personalTarget
+      )
+      return {
+        ...result,
+        readOnly: true,
+        reviewCoverage: 'partial',
+        ...(result.hasMore ? { nextCursor: continuation({ ...state, review }) } : {}),
+      }
+    }
     if (['checks', 'statuses'].includes(query.view) && !state.sha)
       state.sha =
         query.sha ??
@@ -112,17 +156,10 @@ export function createGitSourceReader(platform, parseProfile) {
       ]),
       data: row,
     }))
-    let nextCursor
-    if (hasMore) {
-      for (const [key, value] of cursors) if (value.expiresAt < Date.now()) cursors.delete(key)
-      if (cursors.size >= 1000) cursors.delete(cursors.keys().next().value)
-      nextCursor = randomUUID()
-      cursors.set(nextCursor, { ...state, page: state.page + 1 })
-    }
     return {
       items,
       hasMore,
-      ...(nextCursor ? { nextCursor } : {}),
+      ...(hasMore ? { nextCursor: continuation({ ...state, page: state.page + 1 }) } : {}),
       query: structuredClone(state.query),
       ...(state.sha ? { commitSha: state.sha } : {}),
       page: state.page,

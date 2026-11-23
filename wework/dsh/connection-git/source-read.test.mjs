@@ -59,6 +59,246 @@ function fixture(platform, respond = () => [], transport = 'cli') {
 }
 const query = (view, extra = {}) => ({ entityKind: 'change_request', number: 17, view, ...extra })
 
+test('review windows read only the authorized native discussion and bind continuations to its selection', async () => {
+  const at = '2020-09-12T12:00:00Z'
+  const query = { since: '2020-09-12T11:00:00Z', trainingUntil: '2020-09-12T13:00:00Z', limit: 10 }
+  for (const platform of ['github', 'gitlab']) {
+    const f = fixture(platform)
+    const source = { ...f.source, monitoredObjects: [{ entityKind: 'issue', number: 17 }] }
+    const calls = []
+    let deleted = false
+    let confidential = false
+    const provider = bindGitProvider(
+      source.providerId,
+      createProvider(platform),
+      async (method, input) => {
+        assert.equal(method, 'runtime.connections.git.read')
+        assert.equal(input.profile, source.profile)
+        calls.push(input)
+        const by = id => ({ id, type: 'User', username: 'user' + id })
+        const post = (id, author) => ({
+          id,
+          body: 'Reply ' + id,
+          user: by(author),
+          author: by(author),
+          created_at: at,
+          updated_at: at,
+        })
+        const data =
+          input.operation === 'repository'
+            ? { id: 42, full_name: source.name, path_with_namespace: source.name }
+            : input.operation === 'object'
+              ? {
+                  number: 17,
+                  iid: 17,
+                  title: 'Question',
+                  confidential,
+                  user: by(12),
+                  author: by(12),
+                  created_at: at,
+                  updated_at: at,
+                }
+              : [
+                  ...(deleted ? [] : [post(34, 7)]),
+                  post(42, 12),
+                  { ...post(43, 7), updated_at: '2020-09-12T12:10:00Z' },
+                  { ...post(44, 7), updated_at: query.trainingUntil },
+                  ...(platform === 'gitlab'
+                    ? [
+                        { ...post(45, 12), internal: true },
+                        { ...post(46, 12), confidential: true },
+                      ]
+                    : []),
+                ]
+        if (!Array.isArray(data)) return { profile: source.profile, data }
+        const params = new URLSearchParams(input.path.split('?')[1])
+        const page = Number(params.get('page'))
+        const count = Number(params.get('per_page'))
+        return { profile: source.profile, data: data.slice((page - 1) * count, page * count) }
+      }
+    )
+    const first = await provider.readSource(f.ctx, { source, query })
+    assert.equal(first.items[0].author, 'participant')
+    assert.equal(first.reviewUseCollectedEvents, undefined)
+    const before = calls.length
+    await assert.rejects(
+      provider.readSource(f.ctx, {
+        source: { ...source, monitoredObjects: [{ entityKind: 'issue', number: 18 }] },
+        query,
+        cursor: first.nextCursor,
+      }),
+      { code: 'source_read_cursor_invalid' }
+    )
+    assert.equal(calls.length, before)
+    const next = await provider.readSource(f.ctx, { source, query, cursor: first.nextCursor })
+    assert.equal(next.hasMore, false)
+    assert.equal(next.reviewCoverage, 'partial')
+    assert.equal(next.reviewUseCollectedEvents, undefined)
+    assert.match(next.items[0].id, /^git-canonical:/)
+    assert.deepEqual(
+      next.items.map(row => row.author),
+      ['authenticatedAccount', 'participant', 'unknown']
+    )
+    assert.equal(next.items[0].topicId, first.items[0].topicId)
+    assert.equal(next.items[2].at, '2020-09-12T12:10:00.000Z')
+    assert.match(calls.at(-1).path, /^issues\/17\/(comments|notes)\?/)
+    for (const status of [
+      { branch: 'releases' },
+      { observeCurrentStatus: true },
+      {
+        monitoredObjects: [
+          { entityKind: platform === 'github' ? 'workflow_run' : 'pipeline', number: 19 },
+        ],
+      },
+    ]) {
+      const before = calls.length
+      const statusPage = await provider.readSource(f.ctx, {
+        source: { ...source, ...status },
+        query,
+      })
+      assert.deepEqual(statusPage, {
+        items: [],
+        hasMore: false,
+        readOnly: true,
+        reviewCoverage: 'partial',
+        reviewUseCollectedEvents: true,
+      })
+      assert.deepEqual(
+        calls.slice(before).map(call => call.operation),
+        ['repository']
+      )
+    }
+    const empty = await f.provider.readSource(f.ctx, { source: f.source, query })
+    assert.deepEqual(empty.items, [])
+    assert.equal(empty.reviewUseCollectedEvents, undefined)
+    const single = { ...query, limit: 1 }
+    const start = await provider.readSource(f.ctx, { source, query: single })
+    const firstNote = await provider.readSource(f.ctx, { source, cursor: start.nextCursor })
+    assert.equal(firstNote.items[0].text, 'Reply 34')
+    deleted = true
+    await assert.rejects(provider.readSource(f.ctx, { source, cursor: firstNote.nextCursor }), {
+      code: 'source_read_cursor_invalid',
+    })
+    const restart = await provider.readSource(f.ctx, { source, query: single })
+    const nowFirst = await provider.readSource(f.ctx, { source, cursor: restart.nextCursor })
+    assert.equal(nowFirst.items[0].text, 'Reply 42')
+    if (platform === 'gitlab') {
+      confidential = true
+      const count = calls.length
+      const hidden = await provider.readSource(f.ctx, { source, cursor: nowFirst.nextCursor })
+      assert.deepEqual(hidden.items, [])
+      assert.equal(hidden.hasMore, false)
+      assert.deepEqual(
+        calls.slice(count).map(call => call.operation),
+        ['repository', 'object']
+      )
+    }
+  }
+})
+
+test('personal Git review stays in its authenticated activity feed without opening referenced repositories', async () => {
+  const f = fixture('github', () => [
+    {
+      id: 'event',
+      repo: { name: 'other/repo' },
+      created_at: '2020-09-12T12:00:00Z',
+      payload: {
+        action: 'created',
+        issue: { number: 1 },
+        comment: {
+          id: 23,
+          user: { id: 7, type: 'User' },
+          created_at: '2020-09-12T12:00:00Z',
+          body: 'A comment',
+        },
+      },
+    },
+  ])
+  const source = { ...f.source, id: 'personal', kind: 'personal', name: 'Selected account' }
+  const query = { since: '2020-09-12T11:00:00Z', trainingUntil: '2020-09-12T13:00:00Z', limit: 20 }
+  const view = await f.provider.readSource(f.ctx, { source, query })
+  assert.equal(view.items[0].text, 'A comment')
+  assert.equal(view.items[0].author, 'authenticatedAccount')
+  assert.equal(view.reviewCoverage, 'partial')
+  assert.deepEqual(
+    f.calls.map(call => call.operation),
+    ['activity']
+  )
+  assert.match(view.items[0].topicId, /other\/repo\/issues\/1$/)
+  const events = [1, 2].map(id => ({
+    id,
+    repo: { name: 'other/repo' },
+    created_at: '2020-09-12T12:00:00Z',
+    payload: {
+      action: 'created',
+      issue: { number: 1 },
+      comment: { id, body: 'Reply ' + id, created_at: '2020-09-12T12:00:00Z' },
+    },
+  }))
+  const changing = fixture('github', () => events)
+  const first = await changing.provider.readSource(changing.ctx, {
+    source,
+    query: { ...query, limit: 1 },
+  })
+  assert.equal(first.items[0].text, 'Reply 1')
+  events.shift()
+  await assert.rejects(
+    changing.provider.readSource(changing.ctx, { source, cursor: first.nextCursor }),
+    {
+      code: 'source_read_cursor_invalid',
+    }
+  )
+
+  const gl = fixture('gitlab', () => [
+    {
+      project_id: 4,
+      author: { id: 12, username: 'colleague' },
+      note: {
+        id: 33,
+        noteable_id: 9,
+        noteable_type: 'MergeRequest',
+        author_id: 12,
+        created_at: '2020-09-12T12:01:00Z',
+        body: 'Discussion from the personal feed',
+      },
+    },
+  ])
+  const glSource = { ...gl.source, id: 'personal', kind: 'personal' }
+  const glView = await gl.provider.readSource(gl.ctx, { source: glSource, query })
+  assert.equal(glView.items[0].author, 'participant')
+  assert.deepEqual(JSON.parse(glView.items[0].topicId), [
+    'https://git.company.example',
+    'project',
+    4,
+    'MergeRequest',
+    9,
+  ])
+  assert.deepEqual(
+    gl.calls.map(call => call.operation),
+    ['activity']
+  )
+
+  const legacy = fixture('github', () => ({
+    items: [
+      {
+        html_url: 'https://github.com/org/project/issues/23',
+        number: 23,
+        title: 'Assigned issue',
+        user: { id: 12, type: 'User' },
+        created_at: '2020-09-12T12:01:00Z',
+      },
+    ],
+  }))
+  const olderSource = { ...source, transport: undefined }
+  const older = await legacy.provider.readSource(legacy.ctx, { source: olderSource, query })
+  assert.equal(older.items[0].text, 'Assigned issue')
+  assert.equal(older.items[0].author, 'participant')
+  assert.deepEqual(
+    legacy.calls.map(call => call.operation),
+    ['assigned']
+  )
+})
+
 for (const platform of ['github', 'gitlab']) {
   test(
     platform + ' repository reads use the existing native account route without writes',

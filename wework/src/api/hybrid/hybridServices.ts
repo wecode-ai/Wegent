@@ -1971,6 +1971,9 @@ export function createHybridWorkbenchServices(
       async memories(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).memories(userId, deviceId)
       },
+      async reworkReport(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).reworkReport(userId, deviceId, roleId)
+      },
       async memoryRules(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).memoryRules(userId, deviceId)
       },
@@ -2074,12 +2077,16 @@ export function createHybridWorkbenchServices(
       async proposal(userId, deviceId, roleId) {
         return (await standInApiForDevice(deviceId)).proposal(userId, deviceId, roleId)
       },
-      async resolveProposal(userId, deviceId, proposalId, accept) {
+      async latestAppliedGhost(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).latestAppliedGhost(userId, deviceId, roleId)
+      },
+      async resolveProposal(userId, deviceId, proposalId, accept, undoVersion) {
         return (await standInApiForDevice(deviceId)).resolveProposal(
           userId,
           deviceId,
           proposalId,
-          accept
+          accept,
+          undoVersion
         )
       },
       async notifyAssignment(projectId, issueId, assignmentId, userId, deviceId) {

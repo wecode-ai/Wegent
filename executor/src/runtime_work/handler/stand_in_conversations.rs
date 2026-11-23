@@ -161,7 +161,36 @@ impl RuntimeWorkRpcHandler {
             let accept = payload["accept"]
                 .as_bool()
                 .ok_or_else(|| AppIpcError::new("bad_request", "accept is required"))?;
-            let prepared = if accept {
+            let device = if id.starts_with("ghost:") {
+                self.verify_local_stand_in_owner(user)?;
+                let target = store
+                    .ghost_decision_device(user, id)
+                    .map_err(settings_error)?;
+                if !self.stand_in_device_runs_here(&target) {
+                    return Err(AppIpcError::new(
+                        "permission_denied",
+                        "Ghost belongs to another executor",
+                    ));
+                }
+                target
+            } else {
+                self.device_id.clone()
+            };
+            if let Some(value) = payload.get("undoVersion") {
+                let version = value.as_i64().ok_or_else(|| {
+                    AppIpcError::new("bad_request", "A reviewed settings version is required")
+                })?;
+                if !accept {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "Undo requires confirmation",
+                    ));
+                }
+                return store
+                    .undo_trained_ghost(user, &device, id, version)
+                    .map_err(settings_error);
+            }
+            let prepared = if accept && !id.starts_with("ghost:") {
                 let previous = store
                     .personal_stand_in(user, &self.device_id)
                     .map_err(settings_error)?;
@@ -179,7 +208,7 @@ impl RuntimeWorkRpcHandler {
                 None
             };
             let saved = store
-                .resolve_stand_in_proposal(user, &self.device_id, id, accept, prepared)
+                .resolve_stand_in_proposal(user, &device, id, accept, prepared)
                 .map_err(settings_error)?;
             drop(_guard);
             if let Err(error) = self.flush_stand_in_proposal_continuations().await {
@@ -190,9 +219,12 @@ impl RuntimeWorkRpcHandler {
             }
             Ok(saved)
         } else {
-            store
-                .stand_in_proposal(user, payload["roleId"].as_str())
-                .map_err(settings_error)
+            self.stand_in_proposal_on_role_device(
+                &store,
+                user,
+                payload["roleId"].as_str(),
+                payload["latestAppliedGhost"] == true,
+            )
         }
     }
     pub(super) async fn stand_in_conversation(&self, payload: Value) -> Result<Value, AppIpcError> {
