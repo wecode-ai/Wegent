@@ -1,4 +1,53 @@
 import assert from 'node:assert/strict'
+import { withProjectRenderer } from './project-create-test-utils.mjs'
+
+export async function verifyProjectMenuPointerInput(control, projectId, timeoutMs) {
+  const row = `[data-testid="project-row-${projectId}"]`
+  const item = `[data-testid="edit-project-${projectId}"]`
+  const dialog = '[data-testid="local-project-edit-dialog"]'
+
+  await control.command('contextMenu', row)
+  await control.command('waitFor', item, { timeoutMs })
+
+  await withProjectRenderer(async (client, target) => {
+    const command = (method, params) => client({ action: 'command', target, method, params })
+    const mouse = (type, point, button = 'none') =>
+      command('Input.dispatchMouseEvent', {
+        ...point,
+        type,
+        button,
+        clickCount: button === 'none' ? 0 : 1,
+      })
+    await mouse('mouseMoved', { x: 1, y: 1 })
+    const {
+      result: {
+        value: { x, y, hit, pointerEvents },
+      },
+    } = await command('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const option = document.querySelector(${JSON.stringify(item)})
+        const bounds = option.getBoundingClientRect()
+        const x = Math.floor(bounds.left + bounds.width / 2)
+        const y = Math.floor(bounds.top + bounds.height / 2)
+        return { x, y, hit: option.contains(document.elementFromPoint(x, y)),
+          pointerEvents: getComputedStyle(option).pointerEvents }
+      })()`,
+    })
+    assert.ok(
+      hit,
+      `Project menu item must receive pointer input outside the row (${pointerEvents})`
+    )
+    await mouse('mouseMoved', { x, y })
+    await control.command('waitFor', `${item}[data-highlighted]`, { timeoutMs })
+    await mouse('mousePressed', { x, y }, 'left')
+    await mouse('mouseReleased', { x, y }, 'left')
+  })
+
+  await control.command('waitFor', dialog, { visible: true, timeoutMs })
+  await control.command('click', '[data-testid="close-local-project-edit-dialog"]')
+  await control.command('waitFor', dialog, { visible: false, timeoutMs })
+}
 
 export async function verifySidebarHoverLifecycle(control, projectId, uiTimeoutMs) {
   const row = `[data-testid="project-row-${projectId}"]`
