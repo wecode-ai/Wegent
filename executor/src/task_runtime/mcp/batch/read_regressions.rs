@@ -12,7 +12,7 @@ async fn backend(
 
     let app = Router::new()
         .route(
-            "/mcp/wework-space/sse",
+            "/api/mcp/wework-space/sse",
             post(move |headers: HeaderMap, Json(request): Json<Value>| {
                 let respond = respond.clone();
                 async move {
