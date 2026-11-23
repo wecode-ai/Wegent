@@ -225,15 +225,15 @@
   "timing": {
     "action": "耗时分析",
     "title": "耗时分析",
-    "subtitle": "任务执行耗时归因",
     "close": "关闭耗时分析",
+    "refresh": "刷新耗时数据",
     "loading": {
       "title": "正在加载耗时数据",
-      "description": "耗时仅来自实际观测到的执行 Span。"
+      "description": "正在从执行区间汇总时间数据。"
     },
     "empty": {
       "title": "暂无耗时数据",
-      "description": "该任务还没有观测到的耗时 Span。"
+      "description": "当前任务还没有可分析的执行记录。"
     },
     "error": {
       "title": "耗时数据加载失败",
@@ -243,40 +243,90 @@
       "load_failed": "耗时数据加载失败。"
     },
     "summary": {
-      "title": "耗时归因",
+      "title": "时间构成",
       "wall_time": "会话 {{duration}}",
       "tool": "命令/工具",
       "subagent": "子 Agent",
       "agent": "Agent/模型",
       "waiting_user": "等待用户",
       "runtime": "Infra",
-      "gap": "未观测"
+      "gap": "未采样",
+      "no_samples_compact": "{{count}} 类暂无采样点",
+      "coverage": "采样覆盖 {{observed}} · {{percent}}",
+      "hint": "并行执行只计一次；未采样表示采样能力尚未覆盖，不代表空闲。"
     },
-    "suspects": {
-      "title": "主要耗时点",
-      "next_action": "排查建议"
-    },
-    "suggestions": {
-      "inspect_registry": "检查 registry/mirror 或网络",
-      "inspect_git": "检查仓库网络或代理",
-      "inspect_tool": "查看具体命令执行日志",
-      "inspect_subagent": "查看子 Agent 关键路径",
-      "inspect_model": "查看模型/编排耗时",
-      "confirm_waiting": "确认是否仍在等待用户",
-      "inspect_infra": "联系 Infra 检查排队或环境准备"
+    "categories": {
+      "tool": {
+        "description": "命令、文件与工具调用",
+        "example": "Bash、pnpm、git、MCP 工具"
+      },
+      "subagent": {
+        "description": "子 Agent 的独立执行区间",
+        "example": "并行 worker、reviewer、researcher"
+      },
+      "agent": {
+        "description": "主 Agent 的模型调用与编排",
+        "example": "模型响应、thinking、编排决策"
+      },
+      "waiting_user": {
+        "description": "等待用户确认或补充信息",
+        "example": "等待批准、澄清、人工输入"
+      },
+      "runtime": {
+        "description": "排队、调度与环境准备",
+        "example": "队列等待、调度、环境准备"
+      },
+      "gap": {
+        "description": "窗口内暂无采样点覆盖的区间",
+        "example": "需要结合任务日志判断，不代表空闲"
+      },
+      "other": {
+        "description": "尚未归类的采样点",
+        "example": "后端新增但前端尚未归类的类型"
+      },
+      "no_samples": "暂无采样点"
     },
     "timeline": {
-      "title": "时间线详情",
-      "empty": "暂无 Span",
-      "span_meta": "{{kind}} · 轮次 {{turn}} · {{duration}}",
-      "leading_gap": "前段未观测 · {{duration}}",
-      "interior_gap": "未观测 · {{duration}}",
-      "trailing_gap": "后段未观测 · {{duration}}"
+      "title": "执行时间线",
+      "inclusive_note": "每个条带表示一次执行区间的起止耗时；Agent 条带可能包含工具或子 Agent 的重叠时间，因此与上方分类占比不一定相等。",
+      "empty": "暂无执行区间",
+      "span_meta": "{{kind}} · 子任务 {{subtask}} · {{duration}}",
+      "open_span_meta": "{{kind}} · 子任务 {{subtask}} · 进行中（截至快照时间）",
+      "coverage": "采样覆盖",
+      "gap_meta": "未采样 {{start}} → {{end}} · {{duration}} · 请结合任务日志判断原因"
     },
     "status": {
       "completed": "已完成",
       "running": "运行中",
-      "failed": "失败"
+      "failed": "失败",
+      "COMPLETED": "已完成",
+      "RUNNING": "运行中",
+      "FAILED": "失败",
+      "CANCELLED": "已取消",
+      "PENDING": "等待中",
+      "PENDING_CONFIRMATION": "等待确认",
+      "DELETE": "已删除"
+    },
+    "spans": {
+      "title": "执行区间明细",
+      "subtask": "子任务",
+      "kind": "类型",
+      "label": "名称",
+      "start": "开始",
+      "end": "结束",
+      "duration": "耗时",
+      "running": "进行中",
+      "status": "状态",
+      "interval": "相对区间",
+      "sort_by_duration": "按耗时排序",
+      "sort_by_start": "按开始时间排序",
+      "show_all": "显示全部 {{count}} 项",
+      "show_less": "收起"
+    },
+    "report": {
+      "copy": "复制诊断报告",
+      "copied": "已复制",
+      "copy_failed": "复制失败"
     }
   },
   "preview": {
