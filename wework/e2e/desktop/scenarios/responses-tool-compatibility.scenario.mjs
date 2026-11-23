@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -27,6 +27,7 @@ import {
   shellCommandPollResponse,
 } from '../modules/shell-command-response.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import { findRolloutPath } from '../modules/running-history-fixtures.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const MODEL = 'custom-responses-model'
@@ -37,15 +38,24 @@ const TOOL_OK = 'RESPONSES_SHELL_OK'
 const DONE = 'RESPONSES_TOOL_COMPLETED'
 const API_KEY = 'responses-protocol-fixture-key'
 const ERROR = "Unsupported custom tool: 'exec'. Only 'apply_patch' is supported."
+const DETACHED_CONTEXT = 'RESPONSES_HISTORICAL_CONTEXT'
+const TASK_ROW_PREFIX = 'runtime-local-task-row-'
 
 /** Exercise the real desktop/runtime/Codex chain against a strict model protocol oracle. */
-export function createDesktopScenario({ electronUserDataDirectory, workspacePath, resultDir }) {
+export function createDesktopScenario({
+  electronUserDataDirectory,
+  executorHome,
+  workspacePath,
+  resultDir,
+}) {
   const requests = []
   let probeRequests = 0
   let nativeProbeRequests = 0
   let round = 1
   let cloudEnvironment
   let cloudModelId
+  let restartDesktopApp
+  let replayedDetachedContext = false
   const cloudRequest = (path, options = {}) =>
     fetchJson(`${cloudEnvironment.backendUrl}${path}`, {
       ...options,
@@ -57,6 +67,9 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
   const artifact = join(workspacePath, 'responses-tool-compatibility.txt')
   return {
     requiresCloudEnvironment: true,
+    setRestartDesktopApp(restart) {
+      restartDesktopApp = restart
+    },
     async prepareCloud(cloud) {
       cloudEnvironment = cloud
       await cloudRequest('/api/admin/setup-complete', { method: 'POST' })
@@ -168,6 +181,22 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         )
         return true
       }
+      if (round === 2) {
+        const context = body.input.find(item => JSON.stringify(item).includes(DETACHED_CONTEXT))
+        assert.equal(context?.type, 'message', 'Codex must replay the historical context')
+        assert.equal(context.role, 'user')
+        assert.ok(
+          context.content.some(part => part.type === 'input_text' && part.text === DETACHED_CONTEXT)
+        )
+        assert.ok(
+          context.content.some(
+            part =>
+              part.type === 'input_text' &&
+              part.text === '[tool_result without a matching tool_call]'
+          )
+        )
+        replayedDetachedContext = true
+      }
       const tools = programmaticExecTools(body)
       const rejected = !native && tools.some(tool => tool.type === 'custom')
       requests.push({
@@ -232,7 +261,10 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       try {
         await control.command('navigate', 'body', { value: '/settings/personal/models' })
         await control.command('waitFor', `[data-testid="provider-row-${MODEL_ID}"]`)
-        await control.command('click', `[data-testid="provider-row-${MODEL_ID}"] [data-testid="provider-settings-section-toggle"]`)
+        await control.command(
+          'click',
+          `[data-testid="provider-row-${MODEL_ID}"] [data-testid="provider-settings-section-toggle"]`
+        )
         await control.command('click', `[data-testid="provider-model-edit-${MODEL_ID}"]`)
         const editor = `[data-testid="provider-model-editor-${MODEL_ID}"]`
         const compatibility = `[data-testid="provider-model-compatibility-${MODEL_ID}"]`
@@ -275,8 +307,33 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         await control.command('navigate', 'body', { value: '/' })
         await createSingleRootLocalProject(control, workspacePath, 'Responses compatibility')
         await selectE2EModel(control, `local-model:${MODEL_ID}`, MODEL)
+        const before = JSON.parse(await control.command('snapshot', 'body')).testIds
         for (round = 1; round <= 3; round += 1) {
           if (round === 2) {
+            const { testIds } = JSON.parse(await control.command('snapshot', 'body'))
+            const row = testIds.find(id => id.startsWith(TASK_ROW_PREFIX) && !before.includes(id))
+            assert.ok(row, 'The first turn must have a persisted task to continue')
+            await restartDesktopApp({
+              afterStop: async () => {
+                const index = JSON.parse(
+                  await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
+                )
+                const threadId = index.tasks[row.slice(TASK_ROW_PREFIX.length)]?.thread_id
+                assert.ok(threadId, 'The first turn must have a persisted Codex thread')
+                const rollout = await findRolloutPath(
+                  join(executorHome, 'codex', 'sessions'),
+                  threadId
+                )
+                assert.ok(rollout, 'The first turn must have a persisted Codex rollout')
+                const item = {
+                  timestamp: new Date().toISOString(),
+                  type: 'response_item',
+                  payload: { type: 'function_call_output', call_id: '', output: DETACHED_CONTEXT },
+                }
+                await appendFile(rollout, `${JSON.stringify(item)}\n`, 'utf8')
+              },
+            })
+            await control.command('clickWhenEnabled', `[data-testid="${row}"]`)
             await reloadMainWindow(control)
             await selectE2EModel(control, CLOUD_MODEL, 'Portable Responses')
           }
@@ -296,6 +353,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         }
         assert.ok(requests.length >= 6, 'Local, cloud and native turns must execute real tools')
         assert.ok(requests.every(request => !request.rejected))
+        assert.ok(replayedDetachedContext, 'The cloud follow-up must replay the seeded history')
       } catch (error) {
         errors.push(error)
       } finally {
