@@ -1,158 +1,94 @@
-import { useEffect, useImperativeHandle, useState, type FormEvent, type Ref } from 'react'
-import { Mail, Plus, X } from 'lucide-react'
 import type { StandInRole } from '@/api/personalStandIn'
-import { useTranslation } from '@/hooks/useTranslation'
-import { getDshExtensionHost } from '@/features/dsh-runtime/dshExtensions'
-import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Mail, Plus, X } from 'lucide-react'
+import {
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from 'react'
+import { StandInConnectionHeader } from './StandInConnectionHeader'
+import {
+  createEmailConnectionsModel,
+  EMAIL_PROVIDER,
+  initialEmailForm as initialForm,
+} from './standInEmailConnectionsModel'
+import { StandInProcessingSettings } from './StandInProcessingSettings'
+export { EMAIL_PROVIDER } from './standInEmailConnectionsModel'
 
-export const EMAIL_PROVIDER = '@wegent/dsh-connection-runtime/email'
-type Server = { host: string; port: number; secure: boolean }
-type Account = { id: string; email: string; username: string; imap: Server; smtp: Server }
-const initialForm = {
-  id: undefined as string | undefined,
-  email: '',
-  username: '',
-  password: '',
-  imap: { host: '', port: 993, secure: true },
-  smtp: { host: '', port: 465, secure: true },
-}
-
-async function request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const host = getDshExtensionHost()
-  if (!host) throw new Error('email_unavailable')
-  return host.backend.scope('wework-connection-runtime').request(method, params) as Promise<T>
-}
-
-export function StandInEmailConnections({
-  role,
-  local,
-  disabled,
-  onChange,
-  onDirtyChange,
-  ref,
-}: {
+interface StandInEmailConnectionsProps {
   role: StandInRole
   local: boolean
   disabled: boolean
   onChange(role: StandInRole): void
   onDirtyChange?(dirty: boolean): void
   ref?: Ref<AutomationNavigationHandle>
-}) {
+
+  userId?: number
+  ownerApi?: object
+}
+export function StandInEmailConnections(props: StandInEmailConnectionsProps) {
+  const scope = JSON.stringify([
+    props.userId,
+    props.role.executionDeviceId,
+    props.role.id,
+    props.local,
+  ])
+  const [owner, setOwner] = useState({ api: props.ownerApi, scope, revision: 0 })
+  if (owner.api !== props.ownerApi || owner.scope !== scope)
+    setOwner({ api: props.ownerApi, scope, revision: owner.revision + 1 })
+  return <StandInEmailConnectionsContent key={owner.revision} {...props} />
+}
+function StandInEmailConnectionsContent({
+  role,
+  local,
+  disabled,
+  onChange,
+  onDirtyChange,
+  ref,
+}: StandInEmailConnectionsProps) {
   const { t } = useTranslation('common')
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [form, setForm] = useState(initialForm)
-  const [adding, setAdding] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [saved, setSaved] = useState<'connected' | 'updated' | null>(null)
-  const [revision, setRevision] = useState(0)
-  const [removing, setRemoving] = useState<Account | null>(null)
-  const [baseline, setBaseline] = useState(initialForm)
-  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
-  const dirty = adding && JSON.stringify(form) !== JSON.stringify(baseline)
-  const requestLeave = (action: () => void) => {
-    if (busy) return
-    if (dirty) setPendingNavigation(() => action)
-    else action()
-  }
-  useImperativeHandle(ref, () => ({ requestLeave }))
-  useEffect(() => {
-    onDirtyChange?.(dirty)
-  }, [dirty, onDirtyChange])
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
+  const input = useMemo(
+    () => ({ role, local, disabled, onChange, onDirtyChange }),
+    [role, local, disabled, onChange, onDirtyChange]
+  )
+  const [model] = useState(() => createEmailConnectionsModel(input))
+  const subscribe = useCallback(
+    (listener: () => void) => model.subscribe(listener, input),
+    [model, input]
+  )
+  const state = useSyncExternalStore(subscribe, model.getSnapshot, model.getSnapshot)
+  const { accounts, form, adding, busy, error, saved, removing, pendingNavigation } = state
+  const setForm = (value: Parameters<typeof model.set<'form'>>[1]) => model.set('form', value)
+  const setBaseline = (value: typeof initialForm) => model.set('baseline', value)
+  const setAdding = (value: boolean | ((current: boolean) => boolean)) => model.set('adding', value)
+  const setSaved = (value: 'connected' | 'updated' | null) => model.set('saved', value)
+  const setRemoving = (value: typeof removing) => model.set('removing', value)
+  const setPendingNavigation = (value: typeof pendingNavigation) =>
+    model.set('pendingNavigation', () => value)
+  const requestLeave = model.requestLeave
+  const connect = model.connect
+  const removeAccount = model.removeAccount
   const rows = (role.connections ?? []).filter(row => row.providerId === EMAIL_PROVIDER)
-  useEffect(() => {
-    if (!local) return
-    let active = true
-    void request<Account[]>('emailAccounts')
-      .then(items => {
-        if (active) setAccounts(items)
-      })
-      .catch(() => {
-        if (active) setError('email_unavailable')
-      })
-    return () => {
-      active = false
-    }
-  }, [local, revision])
-  const connect = (account: Pick<Account, 'id' | 'email'>) => {
-    if (rows.some(row => row.profile === account.id)) return
-    onChange({
-      ...role,
-      connections: [
-        ...(role.connections ?? []),
-        {
-          providerId: EMAIL_PROVIDER,
-          profile: account.id,
-          id: 'INBOX',
-          kind: 'inbox',
-          name: account.email,
-          policy: { automatic: true, askBeforeAct: true, immediate: role.id !== '@primary' },
-        },
-      ],
-    })
-  }
-  const save = async (event: FormEvent) => {
-    event.preventDefault()
-    if (busy || disabled || !local) return
-    setBusy(true)
-    setError(null)
-    setSaved(null)
-    try {
-      const account = await request<{ id: string }>('saveEmailAccount', {
-        ...form,
-        username: form.username.trim() || form.email.trim(),
-      })
-      if (!form.id) connect({ id: account.id, email: form.email.trim() })
-      setBaseline(initialForm)
-      setForm(initialForm)
-      setAdding(false)
-      setSaved(form.id || rows.some(row => row.profile === account.id) ? 'updated' : 'connected')
-      setRevision(value => value + 1)
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : ''
-      setError(
-        [
-          'email_smtp_failed',
-          'email_connection_failed',
-          'email_transport_failed',
-          'email_auth_failed',
-          'email_invalid_configuration',
-        ].find(code => message.includes(code)) ?? 'email_unavailable'
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-  const removeAccount = async () => {
-    if (!removing || busy) return
-    setBusy(true)
-    setError(null)
-    try {
-      await request('removeEmailAccount', { id: removing.id })
-      onChange({
-        ...role,
-        connections: (role.connections ?? []).filter(
-          row => row.providerId !== EMAIL_PROVIDER || row.profile !== removing.id
-        ),
-      })
-      setRemoving(null)
-      if (form.id === removing.id) {
-        setBaseline(initialForm)
-        setForm(initialForm)
-        setAdding(false)
-      }
-      setSaved(null)
-      setRevision(value => value + 1)
-    } catch {
-      setError('email_unavailable')
-    } finally {
-      setBusy(false)
-    }
-  }
+  useImperativeHandle(ref, () => ({ requestLeave }), [requestLeave])
   return (
     <section
       className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
@@ -167,7 +103,8 @@ export function StandInEmailConnections({
       {rows.map(row => (
         <div key={row.profile} className="flex items-center gap-2 border-b border-border py-2">
           <span className="min-w-0 flex-1 truncate text-sm">{row.name}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`stand-in-email-remove-${row.profile}`}
             disabled={disabled || busy}
@@ -181,14 +118,15 @@ export function StandInEmailConnections({
             }
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
       ))}
       {local &&
         accounts
           .filter(account => !rows.some(row => row.profile === account.id))
           .map(account => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={account.id}
               type="button"
               data-testid={`stand-in-email-connect-${account.id}`}
@@ -198,50 +136,55 @@ export function StandInEmailConnections({
             >
               <span>{account.email}</span>
               <span>{t('standIn.workspace.add')}</span>
-            </button>
+            </ControlButton>
           ))}
       {local && accounts.length > 0 && (
-        <details className="space-y-2">
-          <summary
+        <CollapsibleRoot className="space-y-2">
+          <CollapsibleTrigger
             data-testid="stand-in-email-manage"
             className="min-h-11 cursor-pointer text-sm text-text-secondary md:min-h-9"
           >
             {t('standIn.email.manage')}
-          </summary>
-          {accounts.map(account => (
-            <div key={account.id} className="flex flex-wrap items-center gap-2 py-1 text-sm">
-              <span className="min-w-0 flex-1 truncate">{account.email}</span>
-              <button
-                type="button"
-                disabled={disabled || busy}
-                data-testid={`stand-in-email-edit-${account.id}`}
-                className="min-h-9 underline"
-                onClick={() =>
-                  requestLeave(() => {
-                    setForm({ ...account, password: '' })
-                    setBaseline({ ...account, password: '' })
-                    setAdding(true)
-                    setSaved(null)
-                  })
-                }
-              >
-                {t('standIn.email.update')}
-              </button>
-              <button
-                type="button"
-                disabled={disabled || busy}
-                data-testid={`stand-in-email-delete-${account.id}`}
-                className="min-h-9 text-error underline"
-                onClick={() => setRemoving(account)}
-              >
-                {t('standIn.email.remove_account')}
-              </button>
-            </div>
-          ))}
-        </details>
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            {accounts.map(account => (
+              <div key={account.id} className="flex flex-wrap items-center gap-2 py-1 text-sm">
+                <span className="min-w-0 flex-1 truncate">{account.email}</span>
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  disabled={disabled || busy}
+                  data-testid={`stand-in-email-edit-${account.id}`}
+                  className="min-h-9 underline"
+                  onClick={() =>
+                    requestLeave(() => {
+                      setForm({ ...account, password: '' })
+                      setBaseline({ ...account, password: '' })
+                      setAdding(true)
+                      setSaved(null)
+                    })
+                  }
+                >
+                  {t('standIn.email.update')}
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  disabled={disabled || busy}
+                  data-testid={`stand-in-email-delete-${account.id}`}
+                  className="min-h-9 text-error underline"
+                  onClick={() => setRemoving(account)}
+                >
+                  {t('standIn.email.remove_account')}
+                </ControlButton>
+              </div>
+            ))}
+          </CollapsiblePanel>
+        </CollapsibleRoot>
       )}
       {local && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="stand-in-email-add"
           disabled={disabled || busy}
@@ -258,11 +201,14 @@ export function StandInEmailConnections({
         >
           {adding ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           {t(adding ? 'standIn.email.cancel_edit' : 'standIn.email.add_account')}
-        </button>
+        </ControlButton>
       )}
       {adding && (
         <form
-          onSubmit={event => void save(event)}
+          onSubmit={event => {
+            event.preventDefault()
+            void model.save()
+          }}
           className="space-y-4"
           data-testid="stand-in-email-form"
         >
@@ -270,7 +216,7 @@ export function StandInEmailConnections({
             {(['email', 'username', 'password'] as const).map(key => (
               <label key={key} className="block space-y-1 text-sm">
                 <span>{t(`standIn.email.${key}`)}</span>
-                <input
+                <ControlInput
                   data-testid={`stand-in-email-${key}`}
                   type={key === 'password' ? 'password' : key === 'email' ? 'email' : 'text'}
                   required={key !== 'username'}
@@ -279,7 +225,7 @@ export function StandInEmailConnections({
                   autoComplete={key === 'password' ? 'new-password' : 'off'}
                   value={form[key]}
                   onChange={event => setForm(value => ({ ...value, [key]: event.target.value }))}
-                  className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
+                  className="min-h-11 w-full md:min-h-9"
                 />
               </label>
             ))}
@@ -299,7 +245,7 @@ export function StandInEmailConnections({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_6rem_8rem]">
                   <label className="space-y-1 text-sm">
                     <span>{t('standIn.email.host')}</span>
-                    <input
+                    <ControlInput
                       required
                       maxLength={253}
                       data-testid={`stand-in-email-${protocol}-host`}
@@ -310,12 +256,12 @@ export function StandInEmailConnections({
                           [protocol]: { ...value[protocol], host: event.target.value },
                         }))
                       }
-                      className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
+                      className="min-h-11 w-full md:min-h-9"
                     />
                   </label>
                   <label className="space-y-1 text-sm">
                     <span>{t('standIn.email.port')}</span>
-                    <input
+                    <ControlInput
                       required
                       type="number"
                       min={1}
@@ -328,41 +274,48 @@ export function StandInEmailConnections({
                           [protocol]: { ...value[protocol], port: Number(event.target.value) },
                         }))
                       }
-                      className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
+                      className="min-h-11 w-full md:min-h-9"
                     />
                   </label>
                   <label className="space-y-1 text-sm">
                     <span>{t('standIn.email.encryption')}</span>
-                    <select
-                      data-testid={`stand-in-email-${protocol}-tls`}
-                      value={form[protocol].secure ? 'tls' : 'starttls'}
-                      onChange={event =>
-                        setForm(value => ({
-                          ...value,
-                          [protocol]: {
-                            ...value[protocol],
-                            secure: event.target.value === 'tls',
-                            port:
-                              protocol === 'imap'
-                                ? event.target.value === 'tls'
-                                  ? 993
-                                  : 143
-                                : event.target.value === 'tls'
-                                  ? 465
-                                  : 587,
-                          },
-                        }))
-                      }
-                      className="min-h-11 w-full rounded-md border border-border bg-background px-2 md:min-h-9"
+                    <SelectRoot
+                      value={normalizeSelectValue(form[protocol].secure ? 'tls' : 'starttls')}
+                      onValueChange={selectedValue => {
+                        if (selectedValue !== null)
+                          return setForm(value => ({
+                            ...value,
+                            [protocol]: {
+                              ...value[protocol],
+                              secure: selectedValue === 'tls',
+                              port:
+                                protocol === 'imap'
+                                  ? selectedValue === 'tls'
+                                    ? 993
+                                    : 143
+                                  : selectedValue === 'tls'
+                                    ? 465
+                                    : 587,
+                            },
+                          }))
+                      }}
                     >
-                      <option value="tls">TLS</option>
-                      <option value="starttls">STARTTLS</option>
-                    </select>
+                      <SelectTrigger
+                        data-testid={`stand-in-email-${protocol}-tls`}
+                        className="min-h-11 w-full md:min-h-9"
+                      />
+                      <SelectContent>
+                        <SelectItem value="tls">TLS</SelectItem>
+                        <SelectItem value="starttls">STARTTLS</SelectItem>
+                      </SelectContent>
+                    </SelectRoot>
                   </label>
                 </div>
               </fieldset>
             ))}
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="submit"
               data-testid="stand-in-email-save"
               className="min-h-9 rounded-md bg-text-primary px-3 text-sm text-background disabled:opacity-40"
@@ -374,7 +327,7 @@ export function StandInEmailConnections({
                     ? 'standIn.email.verify_update'
                     : 'standIn.email.verify_connect'
               )}
-            </button>
+            </ControlButton>
           </fieldset>
         </form>
       )}
@@ -387,18 +340,18 @@ export function StandInEmailConnections({
         <div role="alert" className="space-y-2 text-sm text-error">
           <p>{t(`standIn.email.${error}`)}</p>
           {error === 'email_unavailable' && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-email-retry"
               disabled={busy}
               className="min-h-9 underline"
               onClick={() => {
-                setError(null)
-                setRevision(value => value + 1)
+                model.reload()
               }}
             >
               {t('standIn.workspace.connection_retry')}
-            </button>
+            </ControlButton>
           )}
         </div>
       )}

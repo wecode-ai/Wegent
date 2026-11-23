@@ -1,9 +1,10 @@
-import { useState } from 'react'
 import { GitBranch } from 'lucide-react'
+import { useState } from 'react'
+import type { CollaborationTranslate } from '../i18n'
+import { Tooltip } from "../controls/Tooltip"
+import { Button as ControlButton } from '../markdown/Button'
 import { projectBoardParentRows, type ParentBoardItem } from './parentBoardGrouping'
 import type { ProjectBoardColumn, ProjectBoardStatePort } from './ProjectBoardBody'
-import type { CollaborationTranslate } from '../i18n'
-import { Tooltip } from '../issue-detail/Tooltip'
 
 function readPreference(key: string): boolean {
   try {
@@ -71,7 +72,8 @@ export function useParentIssueBoard<T extends ParentBoardItem>({
       : [],
     toggle: enabled ? (
       <Tooltip label={t('todo.parent_board_layout_hint')} side="bottom">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="cloud-board-parent-layout"
           aria-pressed={active}
@@ -88,7 +90,7 @@ export function useParentIssueBoard<T extends ParentBoardItem>({
         >
           <GitBranch className="h-3.5 w-3.5" />
           <span className="project-board-action-label">{t('todo.parent_board_layout')}</span>
-        </button>
+        </ControlButton>
       </Tooltip>
     ) : null,
   }

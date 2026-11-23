@@ -336,7 +336,7 @@ async def _record_sync_result(
 
 @trace_async(tracer_name="backend.plugins", span_name="sync_pending_plugin_removals")
 async def sync_pending_plugin_removals(
-    user_id: int, device_id: str | None = None
+    user_id: int, device_id: str | None = None, *, exclude_device_id: str | None = None
 ) -> None:
     """Drain persisted removals after DELETE or a device heartbeat.
 
@@ -349,4 +349,10 @@ async def sync_pending_plugin_removals(
         _device_slots[user_id] = device_slots
     with limit_plugin_sync_io(_removal_db_slots, device_slots):
         targets = await run_plugin_sync_db(pending_removal_devices, user_id, device_id)
-        await asyncio.gather(*(_sync_device(user_id, target) for target in targets))
+        await asyncio.gather(
+            *(
+                _sync_device(user_id, target)
+                for target in targets
+                if target != exclude_device_id
+            )
+        )

@@ -1,20 +1,21 @@
-import { RuntimeDeviceAccessBoundary } from '../conversation/RuntimeDeviceAccess'
-import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
-import type { CollaborationTranslate } from '../i18n'
-import { TemporaryConversationLayout } from '../conversation/TemporaryConversationLayout'
 import { ConversationTranslationProvider } from '../conversation/ConversationTranslation'
+import { RuntimeDeviceAccessBoundary } from '../conversation/RuntimeDeviceAccess'
 import { ScrollableMessageArea } from '../conversation/ScrollableMessageArea'
+import { TemporaryConversationLayout } from '../conversation/TemporaryConversationLayout'
 import { DESKTOP_MESSAGE_LIST_WIDTH_CLASS } from '../conversation/conversationLayout'
+import type { CollaborationTranslate } from '../i18n'
 import { MarkdownServicesProvider } from '../markdown'
-import { useBrowserRuntimeConversation } from './useBrowserRuntimeConversation'
+import { Button as ControlButton } from '../markdown/Button'
+import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
 import { BrowserTaskComposer } from './BrowserTaskComposer'
+import { useBrowserRuntimeConversation } from './useBrowserRuntimeConversation'
 
 import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
+import { useMemo } from 'react'
 import {
   ToolInteractionServicesProvider,
   useToolInteractionServices,
 } from '../conversation/ToolInteractionServices'
-import { useMemo } from 'react'
 
 function BrowserTaskConversationContentContent({
   runtime,
@@ -45,14 +46,15 @@ function BrowserTaskConversationContentContent({
           <div role="alert" className="px-4 py-2 text-xs text-error">
             {state.error || metadataError || actionError}
             {(state.error || metadataError) && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="task-conversation-retry"
                 className="ml-2 underline"
                 onClick={() => void reload()}
               >
                 {translate('activity.retry')}
-              </button>
+              </ControlButton>
             )}
           </div>
         )}

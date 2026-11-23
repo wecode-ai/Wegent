@@ -1,7 +1,9 @@
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import { createPersonalHomeTaskDraftStore } from './personalHomeTaskDrafts'
+import { createWeworkProjectSession, type ProjectSessionInput } from './weworkProjectSession'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
@@ -24,7 +26,8 @@ import type {
 import {
   createElement,
   useCallback,
-  useEffect,
+  useMemo,
+  useSyncExternalStore,
   useRef,
   useState,
   type ComponentProps,
@@ -101,29 +104,41 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         })
       }
       const renderCount = useRef(0)
-      const [projectIds, setProjectIds] = useState('')
       const [resourceNames, setResourceNames] = useState('')
       const [automationNames, setAutomationNames] = useState('')
-      const [snapshotStatuses, setSnapshotStatuses] = useState('')
       renderCount.current += 1
-      const loadSnapshot = useCallback(() => {
-        const projectId = host.location.projectId
-        if (!projectId || !api.issues.getBoardSnapshot) return
-        void api.issues
-          .getBoardSnapshot(projectId)
-          .then(snapshot => setSnapshotStatuses(snapshot.items.map(item => item.status).join(',')))
-          .catch(() => undefined)
-      }, [api.issues, host.location.projectId])
-      useEffect(() => {
-        loadSnapshot()
-      }, [loadSnapshot, refreshProjectRequestKey])
-      useEffect(() => {
-        if (typeof api.projects.list !== 'function') return
-        void api.projects
-          .list()
-          .then(projects => setProjectIds(projects.map(project => String(project.id)).join(',')))
-          .catch(() => setProjectIds('error'))
-      }, [api])
+      const snapshotSource = useMemo(
+        () =>
+          createAsyncResource(String(host.location.projectId), async () => {
+            const snapshot = await api.issues.getBoardSnapshot!(host.location.projectId!)
+            return snapshot.items.map(item => item.status).join(',')
+          }),
+        [api.issues, host.location.projectId]
+      )
+      const snapshotState = useSyncExternalStore(
+        useCallback(
+          notify =>
+            host.location.projectId && api.issues.getBoardSnapshot
+              ? snapshotSource.subscribe(notify, refreshProjectRequestKey)
+              : subscribeIdleResource(),
+          [snapshotSource, refreshProjectRequestKey, host.location.projectId, api.issues]
+        ),
+        snapshotSource.getSnapshot
+      )
+      const snapshotStatuses = snapshotState.data ?? ''
+      const loadSnapshot = () => void snapshotSource.reload()
+      const projectsSource = useMemo(
+        () =>
+          createAsyncResource('projects', async () =>
+            (await api.projects.list()).map(project => String(project.id)).join(',')
+          ),
+        [api]
+      )
+      const projectsState = useSyncExternalStore(
+        typeof api.projects.list === 'function' ? projectsSource.subscribe : subscribeIdleResource,
+        projectsSource.getSnapshot
+      )
+      const projectIds = projectsState.status === 'error' ? 'error' : (projectsState.data ?? '')
       const createAgent = () => {
         const projectId = host.location.projectId
         if (!projectId) return
@@ -496,14 +511,17 @@ function runtimeTask(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSu
   }
 }
 
-function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
+function runtimeWork(
+  tasks: RuntimeTaskSummary[],
+  deviceId = 'local-device'
+): RuntimeWorkListResponse {
   return {
     projects: [
       {
         project: { id: 1, key: 'project', name: 'Project' },
         deviceWorkspaces: [
           {
-            deviceId: 'local-device',
+            deviceId,
             workspacePath: '/tmp/project',
             available: true,
             tasks,
@@ -536,6 +554,62 @@ function createHomeDraft() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('opens the linked group execution with Issue scope when its device alias is unavailable', async () => {
+    const project = { id: 'project', project_store: 'backend' } as ProjectSessionInput['project']
+    const address = { deviceId: 'runtime-alias', taskId: 'group-member-task' }
+    const issue = { id: 'issue' } as Parameters<
+      ReturnType<typeof createWeworkProjectSession>['openBoundConversation']
+    >[0]
+    const deviceIdentity = vi.fn().mockRejectedValue(new Error('executor-not-found:runtime-alias'))
+    const executionContext = { threadId: 'bound-thread', workspacePath: '/tmp/issue-worktree' }
+    const bindings = [
+      {
+        ...address,
+        id: 'binding',
+        projectId: project.id,
+        taskUserId: 52,
+        dispatchId: 'group-dispatch',
+        humanAssignmentId: null,
+        executionContext,
+      },
+    ]
+    const session = createWeworkProjectSession({ project, userId: 52 })
+    const release = session.subscribe(vi.fn(), {
+      project,
+      api: {
+        taskBindings: { list: async () => bindings },
+      } as unknown as ProjectSessionInput['api'],
+      projectChatClient: undefined,
+      standInApi: { deviceIdentity } as ProjectSessionInput['standInApi'],
+      runtimeAvailable: true,
+      personalIssue: undefined,
+      focusedItemId: issue.id,
+      runtimeWork: runtimeWork(
+        [runtimeTask({ taskId: address.taskId, threadId: 'catalog-thread' })],
+        address.deviceId
+      ),
+      runtimeTaskLifecycle: undefined,
+      detailExpanded: true,
+      locationIssueId: issue.id,
+      navigateIssue: vi.fn(),
+      onOpenRuntimeTask: undefined,
+      t: key => key,
+    })
+
+    try {
+      await session.openBoundConversation(issue, address)
+
+      expect(session.getSnapshot().taskComposer?.address).toMatchObject({
+        ...address,
+        ...executionContext,
+        projectSession: { projectId: project.id, issueId: issue.id },
+      })
+      expect(deviceIdentity).not.toHaveBeenCalled()
+    } finally {
+      release()
+    }
+  })
+
   it('keeps the cloud project choice available before cloud login', () => {
     render(
       createElement(WeworkCollaborationPlatform, {

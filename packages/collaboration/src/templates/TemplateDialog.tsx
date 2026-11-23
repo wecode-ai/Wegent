@@ -1,9 +1,10 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, type ReactNode } from "react";
-import { ArrowLeft, X } from "lucide-react";
-import { useEscapeKey } from "../markdown/useEscapeKey";
+import { ArrowLeft, X } from 'lucide-react'
+import { useRef, type ReactNode } from 'react'
 
 export function TemplateDialog({
   title,
@@ -14,35 +15,20 @@ export function TemplateDialog({
   onClose,
   busy = false,
   embedded = false,
+  kind = 'dialog',
 }: {
-  title: string;
-  description?: string;
-  closeLabel: string;
-  children: ReactNode;
-  footer?: ReactNode;
-  onClose(): void;
-  busy?: boolean;
-  embedded?: boolean;
+  title: string
+  description?: string
+  closeLabel: string
+  children: ReactNode
+  footer?: ReactNode
+  onClose(): void
+  busy?: boolean
+  embedded?: boolean
+  kind?: 'dialog' | 'alertdialog'
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEscapeKey(
-    () => {
-      if (!busy) onClose();
-    },
-    true,
-    ref,
-  );
-  useEffect(() => {
-    if (embedded) return;
-    const previous = document.activeElement;
-    const dialog = ref.current!;
-    dialog.showModal();
-    return () => {
-      dialog.close();
-      if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus();
-    };
-  }, [embedded]);
+  const ref = useRef<HTMLDivElement>(null)
+
   const content = (
     <>
       <header>
@@ -50,7 +36,8 @@ export function TemplateDialog({
           <h2>{title}</h2>
           {description && <p>{description}</p>}
         </div>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="collaboration-template-icon-button"
           aria-label={closeLabel}
@@ -58,17 +45,13 @@ export function TemplateDialog({
           disabled={busy}
           onClick={onClose}
         >
-          {embedded ? (
-            <ArrowLeft aria-hidden="true" />
-          ) : (
-            <X aria-hidden="true" />
-          )}
-        </button>
+          {embedded ? <ArrowLeft aria-hidden="true" /> : <X aria-hidden="true" />}
+        </ControlButton>
       </header>
       <div className="collaboration-template-dialog-body">{children}</div>
       {footer && <footer>{footer}</footer>}
     </>
-  );
+  )
   return embedded ? (
     <section
       aria-label={title}
@@ -78,18 +61,22 @@ export function TemplateDialog({
       {content}
     </section>
   ) : (
-    <dialog
-      ref={ref}
-      className="collaboration-template-dialog"
-      aria-label={title}
-      data-testid="collaboration-template-dialog"
-      onCancel={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!busy) onClose();
+    <DialogSurface
+      inline={false}
+      kind={kind}
+      onClose={() => {
+        if (!busy) onClose()
       }}
+      render={
+        <div
+          ref={ref}
+          className="collaboration-template-dialog"
+          aria-label={title}
+          data-testid="collaboration-template-dialog"
+        />
+      }
     >
       {content}
-    </dialog>
-  );
+    </DialogSurface>
+  )
 }

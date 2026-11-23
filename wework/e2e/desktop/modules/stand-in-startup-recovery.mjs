@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { currentExecutorPid, waitForRestartedExecutor } from './executor-restart-readiness.mjs'
+import { waitForLogPattern } from './shared.mjs'
 
 /** Fail a real native startup, retain its diagnosis, then retry the same Issue. */
 export async function verifyStandInStartupRecovery({
@@ -86,11 +87,9 @@ export async function verifyStandInStartupRecovery({
     )
     assert.equal(failed.task.threadId ?? null, null)
     const executorLogPath = join(resultDir, 'executor.log')
-    assert.ok(
-      (await readFile(executorLogPath, 'utf8')).includes(
-        `required Skill deployment failed: ${requiredSkill}`
-      ),
-      'The failure must come from real required Skill deployment'
+    await waitForLogPattern(
+      executorLogPath,
+      new RegExp(`required Skill deployment failed: ${requiredSkill}`)
     )
     const failure = failed.task.runtimeHandle.startupFailure
     if (restart) {
@@ -135,8 +134,9 @@ export async function verifyStandInStartupRecovery({
       'Explicit retry must start the original failed Issue conversation'
     )
     assert.ok(completed.task.threadId)
-    assert.equal(completed.task.runtimeHandle.startupFailure.code, 'runtime_start_failed')
-    if (failure) assert.deepEqual(completed.task.runtimeHandle.startupFailure, failure)
+    // Starting the native retry clears the preparation diagnostic while the
+    // diagnostic itself remains covered by the restart assertions above.
+    assert.equal(completed.task.runtimeHandle.startupFailure ?? null, null)
     const bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
     assert.equal(bindings.length, 1)
     assert.equal(bindings[0].task_id, taskId)

@@ -1,5 +1,6 @@
 import { LoaderCircle, RotateCcw } from 'lucide-react'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 import { IssueExecutionStatusControl } from './IssueChatMessage'
 import { isExecutionFailed } from './executionStatus'
 
@@ -38,12 +39,11 @@ export function IssueActivityTools({
 }: IssueActivityToolsProps) {
   const status = task.execution_state ?? task.ai_state?.status
   const awaitingApproval = task.execution_state === 'waiting_approval'
-  const review =
-    task.status === 'in_review' ||
-    ['completed', 'succeeded'].includes(status ?? '')
+  const review = task.status === 'in_review' || ['completed', 'succeeded'].includes(status ?? '')
   const rerun =
     assignedAgent && onRun ? (
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`cloud-task-activity-rerun-${task.id}`}
         title={t('workbench.task_activity_rerun')}
@@ -53,7 +53,7 @@ export function IssueActivityTools({
       >
         <RotateCcw className="h-4 w-4" />
         <span className="sr-only">{t('workbench.task_activity_rerun')}</span>
-      </button>
+      </ControlButton>
     ) : null
   return (
     <>
@@ -62,7 +62,8 @@ export function IssueActivityTools({
           data-testid={`cloud-task-activity-approval-${task.id}`}
           className="flex items-center gap-1.5"
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`cloud-task-activity-reject-${task.id}`}
             disabled={running}
@@ -70,8 +71,10 @@ export function IssueActivityTools({
             className="max-md:min-h-11 max-md:min-w-11 rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-red-600"
           >
             {t('workbench.task_activity_reject')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid={`cloud-task-activity-approve-${task.id}`}
             disabled={running}
@@ -79,7 +82,7 @@ export function IssueActivityTools({
             className="max-md:min-h-11 max-md:min-w-11 rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"
           >
             {t('workbench.task_activity_approve')}
-          </button>
+          </ControlButton>
         </div>
       ) : null}
       {status ? (
@@ -93,13 +96,9 @@ export function IssueActivityTools({
           approvalLabel={
             awaitingApproval && !canApprove
               ? assignedAgent?.createdByUserName
-                ? t(
-                    'workbench.task_activity_awaiting_approval_with_creator',
-                    undefined,
-                    {
-                      name: assignedAgent.createdByUserName,
-                    },
-                  )
+                ? t('workbench.task_activity_awaiting_approval_with_creator', undefined, {
+                    name: assignedAgent.createdByUserName,
+                  })
                 : t('workbench.task_activity_awaiting_approval')
               : undefined
           }
@@ -107,11 +106,10 @@ export function IssueActivityTools({
       ) : null}
       {assignedAgent &&
       onRun &&
-      ['queued', 'starting', 'waiting_runtime'].includes(
-        task.execution_state ?? '',
-      ) &&
+      ['queued', 'starting', 'waiting_runtime'].includes(task.execution_state ?? '') &&
       task.status !== 'in_review' ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`cloud-task-activity-run-now-${task.id}`}
           title={t('workbench.task_activity_run_now')}
@@ -120,10 +118,8 @@ export function IssueActivityTools({
           className="task-detail-activity-icon-button"
         >
           <LoaderCircle className="h-4 w-4" />
-          <span className="sr-only">
-            {t('workbench.task_activity_run_now')}
-          </span>
-        </button>
+          <span className="sr-only">{t('workbench.task_activity_run_now')}</span>
+        </ControlButton>
       ) : null}
       {review ? (
         <div
@@ -132,7 +128,9 @@ export function IssueActivityTools({
         >
           {rerun}
           {onAccept && task.status !== 'completed' ? (
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid={`cloud-task-activity-accept-${task.id}`}
               title={t('workbench.task_activity_accept_hint')}
@@ -141,7 +139,7 @@ export function IssueActivityTools({
               className="max-md:min-h-11 max-md:min-w-11 rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"
             >
               {t('workbench.task_activity_accept')}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
       ) : assignedAgent && isExecutionFailed(status) ? (

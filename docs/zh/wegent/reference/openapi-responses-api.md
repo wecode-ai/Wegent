@@ -48,10 +48,39 @@ POST /api/v1/responses
 | `model` | string | 是 | 智能体标识符。格式：`namespace#team_name` 或 `namespace#team_name#model_id` |
 | `input` | string \| array | 是 | 用户输入提示或对话历史 |
 | `stream` | boolean | 否 | 启用流式输出（默认：`false`） |
+| `background` | boolean | 否 | 后台执行；未绑定设备的 Chat Shell 立即返回 `in_progress`，设备和其它执行器请求立即返回 `queued`；为 `true` 时不返回 SSE（默认：`false`） |
+| `execution` | object | 否 | 执行配置；传统 executor 设备使用 `type: "wegent"` |
+| `execution.device_id` | string | 否 | `execution.type="wegent"` 时指定传统 executor 设备；省略时沿用默认执行方式或任务已有设备绑定 |
 | `previous_response_id` | string | 否 | 用于后续对话的前一个响应 ID |
 | `reasoning` | object | 否 | 模型推理配置，包含 `effort` 和可选的 `summary` |
 | `tools` | array | 否 | Wegent 自定义工具配置 |
 | `omit_mcp_binary_output` | boolean | 否 | 将 MCP 工具输出中的图片、音频、视频等媒体负载（base64）替换为摘要占位符（默认：`false`，即返回原始内容） |
+
+#### 传统 Executor 设备
+
+设置 `execution.type="wegent"` 和 `execution.device_id`，可将智能体任务发送到传统 executor 设备。`model` 仍使用 `namespace#team_name` 格式，任务沿用智能体的 Bot、模型、MCP 工具和技能配置。设备 ID 只选择执行位置。
+
+设备必须属于当前调用者且处于活动状态；派发时还会检查设备在线状态。此配置用于传统 `local`、`cloud` 或 `remote` executor 设备。Wework App 设备继续使用已有的 `execution.type="wework"` 会话接口。不存在、无权访问或离线的显式设备不会自动改用其他执行位置，设备原有的工具审批策略保持生效。
+
+使用 `stream:true` 和 `background:false`，可以在同一个 HTTP 请求中接收 SSE，无需轮询：
+
+```bash
+curl -N -X POST "https://your-domain/api/v1/responses" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "default#my-coding-agent",
+    "input": "执行 pwd 并解释结果",
+    "stream": true,
+    "background": false,
+    "execution": {
+      "type": "wegent",
+      "device_id": "your-executor-device-id"
+    }
+  }'
+```
+
+SSE 使用下文列出的 `response.created`、`response.output_text.delta`、`response.completed` 或 `response.failed` 等现有事件。`stream:false` 的设备请求返回 `queued`；`background:true` 时，未绑定设备的 Chat Shell 返回 `in_progress`，设备和其他执行器请求返回 `queued`。两种情况的结果都可继续通过 `GET /api/v1/responses/{response_id}` 获取。省略 `execution` 不改变现有执行方式。
 
 #### MCP 二进制输出
 
@@ -233,7 +262,7 @@ MCP 工具（例如抓取图片的工具）会以 base64 返回媒体内容，�
 
 #### 响应行为
 
-响应行为取决于 Team 的 Shell 类型：
+响应行为取决于 Team 的 Shell 类型、设备绑定和 `background`。`background:true` 优先于 `stream:true`；未绑定设备的 Chat Shell 返回 `in_progress`，设备和其他执行器请求返回 `queued`。
 
 | Shell 类型 | 流式支持 | 响应模式 |
 |------------|----------|----------|
@@ -244,7 +273,7 @@ MCP 工具（例如抓取图片的工具）会以 base64 返回媒体内容，�
 - 未绑定设备时，阻塞直到 LLM 完成并直接返回已完成的响应
 - 绑定设备时，立即返回状态为 `queued` 的响应
 
-**stream=true（Chat Shell 和非 Chat Shell）：**
+**stream=true、background=false（Chat Shell 和非 Chat Shell）：**
 - 返回与 OpenAI v1/responses 兼容的 SSE 事件流
 - 设备或执行器的单条、批量回调均可传递文本和终态事件
 - 视频模型不支持流式请求，返回 HTTP 400
@@ -338,7 +367,8 @@ POST /api/v1/responses/{response_id}/cancel
 #### 行为
 
 - **Chat Shell 任务**：停止模型请求并保存部分内容
-- **Executor 任务**：调用 executor_manager 进行取消
+- **传统 executor 设备**：向绑定设备发送 `task:cancel`，并提交取消结果
+- **其他 Executor 任务**：调用 executor_manager 进行取消
 
 #### 请求示例
 
@@ -384,7 +414,9 @@ curl -X DELETE "https://your-domain/api/v1/responses/resp_123" \
 
 ## 流式事件
 
-当设置 `stream=true` 时，Chat Shell 和非 Chat Shell 均可返回 OpenAI v1/responses 格式的服务器推送事件（SSE）。视频模型不支持流式请求。
+当设置 `stream=true`、`background=false` 时，Chat Shell 和非 Chat Shell 均可返回 OpenAI v1/responses 格式的服务器推送事件（SSE），包括绑定传统 executor 设备的任务。视频模型不支持流式请求。
+
+设备任务先订阅回调再派发执行，终态事件使用设备回调已经保存的结果。客户端断开 HTTP 连接会释放流订阅，设备任务继续执行；之后可通过响应 ID 查询结果。流式连接不提供历史事件重放，重连不会补发断开期间的文本增量。
 
 ### 事件类型
 
@@ -439,8 +471,8 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 
 | 状态 | 描述 |
 |------|------|
-| `queued` | 任务已排队等待执行（非 Chat Shell） |
-| `in_progress` | 任务正在运行 |
+| `queued` | 任务已排队等待执行（非流式设备或执行器请求，以及后台设备或执行器请求） |
+| `in_progress` | 任务正在运行，包括未绑定设备的 Chat Shell 后台请求 |
 | `completed` | 任务成功完成 |
 | `failed` | 任务失败并带有错误 |
 | `cancelled` | 任务已取消 |
@@ -500,7 +532,19 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 
 这会追加到同一个任务，保持对话上下文。
 
-如果该任务绑定了设备，后续请求会继续发送到该设备。设备离线时返回 HTTP 503。
+如果该任务绑定了传统 executor 设备，后续请求会继承该设备绑定；无需再次传入 `execution.device_id`。显式传入设备时必须与已有绑定指向同一设备，不能通过后续请求将已有设备会话切换到另一台设备。每轮派发都会重新检查设备权限和在线状态，检查失败时拒绝执行。
+
+继续流式对话时，请同时设置 `stream:true`、`background:false`：
+
+```json
+{
+  "model": "default#my-coding-agent",
+  "input": "继续解释当前目录中的项目",
+  "previous_response_id": "resp_123",
+  "stream": true,
+  "background": false
+}
+```
 
 ---
 
@@ -509,5 +553,5 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 - 默认情况下，API 调用使用"干净模式"，不启用服务端增强功能
 - CRD 中配置的 Bot/Ghost MCP 工具始终可用
 - 使用 `wegent_chat_bot` 工具启用完整的服务端能力
-- 流式输出仅支持 Chat Shell 类型的 Team
+- 流式输出支持 Chat Shell 和传统 executor 任务；设置 `background:true` 时，未绑定设备的 Chat Shell 返回 `in_progress`，设备和其他执行器请求返回 `queued`
 - 默认返回 `mcp_call` 的原始输出；将 `omit_mcp_binary_output` 设为 `true` 后，其中的图片、音频、视频等媒体负载（base64）会被替换为摘要占位符，例如 `<image/jpeg payload omitted: 2048 bytes>`，非媒体输出原样返回，模型调用时仍使用完整原始内容

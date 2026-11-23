@@ -1,57 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import { hooksApi } from './hooksApi'
-import { subscribeLocalExecutorEvents } from '@/desktop/localExecutor'
-import type { HookDraft, HookRunSummary, ResolvedHookPlugin } from './hooksTypes'
+import { createHooksSettingsStore } from './hooksSettingsStore'
+import type { HookDraft, ResolvedHookPlugin } from './hooksTypes'
 import { track } from '@/telemetry/client'
 
 export function useHooksSettings() {
-  const [data, setData] = useState<ResolvedHookPlugin[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const store = useMemo(() => createHooksSettingsStore(), [])
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  const data = snapshot.data ?? []
+  const loading = !snapshot.settled
+  const error =
+    snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : String(snapshot.error)
+      : null
   const mutations = useRef(new Map<string, Promise<unknown>>())
-  const load = useCallback(async () => {
-    setError(null)
-    try {
-      setData(await hooksApi.list())
-    } catch (value) {
-      setError(value instanceof Error ? value.message : String(value))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-  useEffect(() => {
-    void Promise.resolve().then(load)
-    let disposed = false
-    let unsubscribe: (() => void) | undefined
-    void subscribeLocalExecutorEvents(message => {
-      if (disposed) return
-      if (message.event === 'runtime.hooks.changed') {
-        void load()
-      } else if (message.event === 'runtime.hooks.run_completed') {
-        const run = message.payload.run as HookRunSummary
-        setData(items =>
-          items.map(plugin =>
-            plugin.manifest.id === run.pluginId
-              ? {
-                  ...plugin,
-                  recentRuns: [
-                    ...plugin.recentRuns.filter(previous => previous.handlerId !== run.handlerId),
-                    run,
-                  ].sort((a, b) => b.startedAtMs - a.startedAtMs),
-                }
-              : plugin
-          )
-        )
-      }
-    }).then(value => {
-      if (disposed) value()
-      else unsubscribe = value
-    })
-    return () => {
-      disposed = true
-      unsubscribe?.()
-    }
-  }, [load])
+  const setData = store.update
+  const load = store.reload
   const serialize = useCallback(async <T>(id: string, operation: () => Promise<T>) => {
     const previous = mutations.current.get(id) ?? Promise.resolve()
     const current = previous.catch(() => undefined).then(operation)
@@ -69,7 +35,7 @@ export function useHooksSettings() {
           a.manifest.name.localeCompare(b.manifest.name)
         )
       ),
-    []
+    [setData]
   )
   const runMutation = useCallback(
     async <T>(

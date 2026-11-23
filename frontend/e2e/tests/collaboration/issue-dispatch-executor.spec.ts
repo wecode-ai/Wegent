@@ -111,10 +111,12 @@ test.describe('Collaboration group Executor coordination', () => {
         await page.getByTestId('template-details-product-lifecycle').click()
         await page.getByTestId('template-use').click()
         await page.getByTestId(`template-project-${fixture.projectId}`).click()
-        await page.getByTestId('template-runtime-configuration').locator('summary').click()
+        await page.getByTestId('template-bindings-toggle').click()
         const environment = page.getByTestId('template-project-environment-select')
+        const environmentValue = environment.locator('[data-value]')
         await expect(environment).toBeEnabled()
-        await expect(environment).toHaveValue(
+        await expect(environmentValue).toHaveAttribute(
+          'data-value',
           deviceSetup === 'authorized' ? String(appDevice.id) : ''
         )
         const groupName = `Imported project team ${Date.now()}`
@@ -132,7 +134,7 @@ test.describe('Collaboration group Executor coordination', () => {
         }
         await page.getByTestId('template-project-environment-refresh').click()
         await expect(environment).toBeEnabled()
-        await expect(environment).toHaveValue(String(appDevice.id))
+        await expect(environmentValue).toHaveAttribute('data-value', String(appDevice.id))
         await expect(name).toHaveValue(groupName)
         await expect(page.getByTestId('template-project-environment-settings')).toHaveAttribute(
           'href',
@@ -264,7 +266,10 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(modelToolNames(modelBodies).some(isNativeSubagentTool)).toBe(false)
 
       await page.reload()
-      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_review')
+      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+        'data-value',
+        'in_review'
+      )
       await expect(page.getByText(result, { exact: false }).first()).toBeVisible()
       await captureEvidence(page, testInfo, '02-direct-agent-in-review')
     } finally {
@@ -419,7 +424,7 @@ test.describe('Collaboration group Executor coordination', () => {
     }
   })
 
-  test('runs two collaboration rounds with parallel members and fresh manager tasks', async ({
+  test('runs two collaboration rounds with parallel members in one manager session', async ({
     page,
     request,
   }, testInfo) => {
@@ -646,9 +651,7 @@ test.describe('Collaboration group Executor coordination', () => {
       const managerToolNames = modelToolNames(managerBodies)
       expect(managerBodies.length).toBeGreaterThanOrEqual(6)
       expect(managerScenario.nextStep).toBe(6)
-      expect(managerSessionIds).toHaveLength(3)
-      expect(managerSessionIds.some(id => id.endsWith(`manager-after-${firstRoundId}`))).toBe(true)
-      expect(managerSessionIds.some(id => id.endsWith(`manager-after-${secondRoundId}`))).toBe(true)
+      expect(managerSessionIds).toEqual([`${executions[0].runtimeTaskId}-manager-initial`])
       expect(managerToolNames.some(isSubmitWorkflowPlan)).toBe(true)
       expect(managerToolNames.some(isUpdateIssueStatus)).toBe(true)
       expect(managerToolNames.some(isNativeSubagentTool)).toBe(false)
@@ -697,7 +700,10 @@ test.describe('Collaboration group Executor coordination', () => {
       )
 
       await page.reload()
-      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_review')
+      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+        'data-value',
+        'in_review'
+      )
       await expect(page.getByText(collectorTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(reviewerTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(synthesisTask, { exact: false }).first()).toBeVisible()

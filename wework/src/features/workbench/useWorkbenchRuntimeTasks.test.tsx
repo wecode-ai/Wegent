@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { ExecutorClient } from '@/api/executorAccess'
 import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
-import { initialWorkbenchState } from './workbenchReducer'
+import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import type { WorkbenchServices } from './workbenchServices'
 import { RuntimeTaskLifecycleStore, useRuntimeTaskSummaryResolver } from './runtimeTaskLifecycle'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
@@ -26,11 +26,14 @@ const task: RuntimeTaskSummary = {
 
 function setup(readTask = vi.fn().mockResolvedValue({ success: true, task })) {
   const lifecycleStore = new RuntimeTaskLifecycleStore('unlisted-open')
-  const dispatch = vi.fn()
+  let held = true
   const state = {
     ...initialWorkbenchState,
     runtimeWork: { projects: [], chats: [], totalTasks: 0 },
   }
+  const dispatch = vi.fn((action: Parameters<typeof workbenchReducer>[1]) => {
+    Object.assign(state, workbenchReducer(state, action))
+  })
   const modelStore = {
     models: [],
     selectedModelByScope: {},
@@ -47,6 +50,8 @@ function setup(readTask = vi.fn().mockResolvedValue({ success: true, task })) {
     const resolveTask = useRuntimeTaskSummaryResolver(state.runtimeWork, lifecycleStore)
     return {
       actions: useWorkbenchRuntimeTasks({
+        getCurrentRuntimeTask: () => state.currentRuntimeTask,
+        isHeld: () => held,
         ownershipKey: JSON.stringify(['', 7]),
         state,
         dispatch,
@@ -61,7 +66,17 @@ function setup(readTask = vi.fn().mockResolvedValue({ success: true, task })) {
       modelSelection: useRuntimeTaskModelSelection({ userId: 7, resolveTask, modelStore }),
     }
   })
-  return { ...hook, lifecycleStore, dispatch, readTask, state }
+  return {
+    ...hook,
+    unmount: () => {
+      held = false
+      hook.unmount()
+    },
+    lifecycleStore,
+    dispatch,
+    readTask,
+    state,
+  }
 }
 
 describe('opening an unlisted original task', () => {

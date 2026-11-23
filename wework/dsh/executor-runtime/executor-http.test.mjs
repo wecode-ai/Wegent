@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { EventEmitter } from 'node:events'
+import { EventEmitter, once } from 'node:events'
+import { createServer, request as httpRequest } from 'node:http'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import { createRequestSecurity } from '../electron-host/request-security.js'
@@ -201,6 +202,25 @@ async function registeredDescribeHandler(t, client) {
   return registeredHandler(t, client, '/wework/executor/v1')
 }
 
+test('publishes a retryable local runtime status without a configured executor', async t => {
+  const key = 'WEWORK_MANAGED_EXECUTOR_UNAVAILABLE'
+  const previous = process.env[key]
+  process.env[key] = '1'
+  t.after(() => {
+    if (previous === undefined) delete process.env[key]
+    else process.env[key] = previous
+  })
+  const describe = await registeredHandler(t, {}, '/wework/executor/v1')
+  const request = executorEventRequest()
+  request.url = '/wework/executor/v1'
+  request.headers = { host: '127.0.0.1:3000', cookie: 'session=authenticated' }
+  const response = responseFixture()
+  await describe(request, response)
+  assert.equal(response.status, 503)
+  assert.equal(JSON.parse(response.body).error.code, 'runtime_not_ready')
+  assert.equal(ExecutorRuntimeClient.fromEnvironment.mock.callCount(), 0)
+})
+
 async function registeredHandler(t, client, path) {
   t.mock.method(ExecutorRuntimeClient, 'fromEnvironment', () => ({
     start: async () => {},
@@ -335,6 +355,92 @@ test('does not forward an unsafe browser request id to the executor', async () =
   assert.equal(response.headers['x-request-id'], receivedRequestId)
 })
 
+test('shares an in-flight archive across HTTP requests with distinct request IDs', async t => {
+  const entered = Promise.withResolvers()
+  const coalesced = Promise.withResolvers()
+  const reply = Promise.withResolvers()
+  const log = console.info
+  t.mock.method(console, 'info', (message, ...details) => {
+    if (message.includes('"event":"archive_coalesced"')) coalesced.resolve()
+    log(message, ...details)
+  })
+  let forwarded = 0
+  const client = {
+    request() {
+      forwarded++
+      entered.resolve()
+      return reply.promise
+    },
+  }
+  const invoke = id => {
+    const response = responseFixture()
+    return handleExecutorRpc(
+      executorRpcRequest({ id, method: 'runtime.tasks.archive', params: { taskId: 'same-task' } }),
+      response,
+      client
+    ).then(() => response)
+  }
+  const first = invoke('archive-first')
+  await entered.promise
+  const second = invoke('archive-second')
+  await coalesced.promise
+  reply.resolve({ accepted: true })
+  const responses = await Promise.all([first, second])
+  assert.equal(forwarded, 1)
+  assert.deepEqual(
+    responses.map(res => res.headers['x-request-id']),
+    ['archive-first', 'archive-second']
+  )
+  assert.ok(responses.every(res => JSON.parse(res.body).result.accepted))
+})
+
+for (const framing of ['content-length', 'chunked']) {
+  test(
+    `returns 413 and closes a real HTTP connection for an oversized ${framing} RPC`,
+    { timeout: 5000 },
+    async t => {
+      let forwarded = 0
+      const server = createServer((req, res) => {
+        void handleExecutorRpc(req, res, {
+          request: async () => {
+            forwarded++
+          },
+        })
+      })
+      t.after(() => {
+        server.closeAllConnections()
+        server.close()
+      })
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      const payload = Buffer.alloc(1024 * 1024 + 92, 'x')
+      const req = httpRequest({
+        host: '127.0.0.1',
+        port: server.address().port,
+        method: 'POST',
+        headers: {
+          'x-request-id': 'oversized-request',
+          connection: 'keep-alive',
+          ...(framing === 'content-length' ? { 'content-length': payload.length } : {}),
+        },
+      })
+      const responseReady = once(req, 'response')
+      const socketClosed = once(req, 'socket').then(([socket]) => once(socket, 'close'))
+      req.write(payload)
+      req.end()
+      const [response] = await responseReady
+      let body = ''
+      for await (const chunk of response) body += chunk
+      assert.equal(response.statusCode, 413)
+      assert.equal(response.headers.connection, 'close')
+      assert.equal(response.headers['x-request-id'], 'oversized-request')
+      assert.equal(JSON.parse(body).error.code, 'request_too_large')
+      await socketClosed
+      assert.equal(forwarded, 0)
+    }
+  )
+}
+
 for (const event of ['finish', 'close']) {
   test(`records HTTP ${event} separately from executor completion without payloads`, async t => {
     const log = t.mock.method(console, 'info', () => {})
@@ -344,12 +450,12 @@ for (const event of ['finish', 'close']) {
       response,
       { request: async () => ({ privateTaskContent: 'must-not-be-logged' }) }
     )
-    assert.equal(log.mock.calls.length, 2)
+    assert.equal(log.mock.calls.length, 3)
 
     response.emit(event)
 
-    assert.equal(log.mock.calls.length, 3)
-    const [label, fields] = log.mock.calls[2].arguments
+    assert.equal(log.mock.calls.length, 5)
+    const [label, fields] = log.mock.calls[3].arguments
     assert.equal(label, '[wework-executor-runtime] RPC HTTP response')
     assert.equal(fields.request_id, 'http-lifecycle')
     assert.equal(fields.event, event === 'finish' ? 'finished' : 'closed')
@@ -499,7 +605,8 @@ test('disconnects only the SSE stream when backpressure does not drain', async (
   )
 
   assert.equal(response.status, 200)
-  assert.equal(response.writableEnded, true)
+  assert.equal(response.destroyed, true)
+  assert.equal(response.writableEnded, false)
   assert.equal(stopped, true)
 })
 
@@ -623,6 +730,9 @@ function responseFixture(options = {}) {
   response.end = function (body = '') {
     this.body += body
     this.writableEnded = true
+  }
+  response.destroy = function () {
+    this.destroyed = true
   }
   return response
 }

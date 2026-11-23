@@ -77,11 +77,23 @@ export async function waitForForkTaskRow(control, sourceTaskId, timeoutMs) {
 }
 
 export async function waitForCompletedRuntimeTaskThread(control, taskId, timeoutMs) {
-  const task = await waitForOwnerTask(
+  return waitForCompletedOwnerTaskThread(
     async id =>
       findRuntimeWorkTask(JSON.parse(await control.command('getLocalRuntimeWork', 'body')), id),
     taskId,
-    task => typeof task?.threadId === 'string' && task.threadId.trim() && task.running === false,
+    timeoutMs
+  )
+}
+
+export async function waitForCompletedOwnerTaskThread(readTask, taskId, timeoutMs) {
+  const task = await waitForOwnerTask(
+    readTask,
+    taskId,
+    task =>
+      (task?.taskId ?? task?.task_id) === taskId &&
+      typeof task.threadId === 'string' &&
+      task.threadId.trim() &&
+      task.running === false,
     `The owning executor did not expose a completed Codex thread for task ${taskId} within ${timeoutMs}ms`,
     timeoutMs
   )

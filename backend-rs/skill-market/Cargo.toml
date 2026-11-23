@@ -1,0 +1,15 @@
+[package]
+name = "wegent-skill-market"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Skill discovery API with a deployment-supplied provider registry"
+
+[dependencies]
+async-trait.workspace = true
+brz-http-server = { workspace = true, features = ["macros"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true

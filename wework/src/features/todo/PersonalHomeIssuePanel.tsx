@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CollaborationIssue,
   CollaborationIssueDetailRenderContext,
   SharedWorkspaceApi,
 } from '@wegent/collaboration'
-import { mergeIssueReadConfirmation } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { X } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useStableEvent } from '@/features/workbench/useStableEvent'
+import type { ReactNode } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { PersonalHomeIssueDetail } from './personalHomeIssueDetail'
 import type { PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
 
 /** Load an authorized Issue and reuse the board's complete detail and task workflow. */
@@ -30,111 +31,35 @@ export function PersonalHomeIssuePanel({
   refreshKey: number
 }) {
   const { t } = useTranslation('common')
-  const publishUpdated = useStableEvent((item: CollaborationIssue) => {
-    if (item.title !== issue.title || item.version !== issue.version)
-      onUpdated({ ...issue, ...item })
-  })
-  const [snapshot, setSnapshot] = useState<{
-    api: SharedWorkspaceApi
-    id: string
-    detail?: Pick<
-      CollaborationIssueDetailRenderContext,
-      'issue' | 'allIssues' | 'assignments' | 'taskBindings'
-    >
-    failed?: boolean
-  }>()
-  const [revision, setRevision] = useState(0)
-  const editRevision = useRef(0)
-  const readConfirmation = useRef<
-    | {
-        api: SharedWorkspaceApi
-        id: string
-        issue: CollaborationIssue
-      }
-    | undefined
-  >(undefined)
-  const saveIssue = useStableEvent((updated: CollaborationIssue) => {
-    editRevision.current += 1
-    setSnapshot(previous =>
-      previous?.api === api && previous.id === issue.id && previous.detail
-        ? { ...previous, detail: { ...previous.detail, issue: updated } }
-        : previous
-    )
-    onUpdated({ ...issue, ...updated })
-  })
-  const confirmRead = useStableEvent((updated: CollaborationIssue) => {
-    if (snapshot?.api !== api || snapshot.id !== issue.id || !snapshot.detail) return
-    const merged = mergeIssueReadConfirmation(snapshot.detail.issue, updated)
-    readConfirmation.current = { api, id: issue.id, issue: merged }
-    setSnapshot(previous =>
-      previous?.api === api && previous.id === issue.id && previous.detail
-        ? {
-            ...previous,
-            detail: {
-              ...previous.detail,
-              issue: mergeIssueReadConfirmation(previous.detail.issue, merged),
-            },
-          }
-        : previous
-    )
-    onUpdated({ ...issue, ...merged })
-  })
-  useEffect(() => {
-    if (!active) return
-    let current = true
-    const requestedEditRevision = editRevision.current
-    void (async () => {
-      const item = await api.issues.get(issue.id)
-      if (String(item.cloud_project_id) !== String(project.id))
-        throw new Error('Issue project identity changed')
-      const [items, assignments, taskBindings] = await Promise.all([
-        api.issues.list(String(project.id)),
-        api.assignments?.list(issue.id) ?? Promise.resolve([]),
-        api.taskBindings?.list(issue.id, String(project.id)) ?? Promise.resolve([]),
-      ])
-      if (current && editRevision.current === requestedEditRevision) {
-        const confirmed = readConfirmation.current
-        const refreshed =
-          confirmed?.api === api && confirmed.id === issue.id
-            ? mergeIssueReadConfirmation(item, confirmed.issue)
-            : item
-        setSnapshot({
-          api,
-          id: issue.id,
-          detail: {
-            issue: refreshed,
-            allIssues: items,
-            assignments,
-            taskBindings,
-          },
-        })
-        publishUpdated(refreshed)
-      }
-    })().catch(() => {
-      if (current && editRevision.current === requestedEditRevision)
-        setSnapshot(previous => ({
-          api,
-          id: issue.id,
-          detail: previous?.api === api && previous.id === issue.id ? previous.detail : undefined,
-          failed: true,
-        }))
-    })
-    return () => {
-      current = false
-    }
-  }, [api, issue.id, project.id, active, revision, refreshKey, publishUpdated])
-  const current = snapshot?.api === api && snapshot?.id === issue.id ? snapshot : undefined
+  const scope = useMemo(
+    () => new PersonalHomeIssueDetail(api, issue.id, String(project.id), project.project_store),
+    [api, issue.id, project.id, project.project_store]
+  )
+  const [activation, setActivation] = useState({ active, revision: 0 })
+  if (activation.active !== active) setActivation({ active, revision: activation.revision + 1 })
+  const version = String(refreshKey) + ':' + activation.revision
+  const subscribe = useCallback(
+    (notify: () => void) =>
+      active
+        ? scope.subscribe({ notify, publish: onUpdated, summary: issue }, version)
+        : () => undefined,
+    [active, issue, onUpdated, scope, version]
+  )
+  const current = useSyncExternalStore(subscribe, scope.getSnapshot, scope.getSnapshot)
+  const saveIssue = scope.save
+  const confirmRead = scope.confirmRead
   const error = current?.failed ? (
     <div role="alert" className="p-5 text-sm text-error">
       {t('personalHome.detailFailed')}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="personal-home-detail-retry"
         className="ml-2 min-h-11 underline md:min-h-8"
-        onClick={() => setRevision(value => value + 1)}
+        onClick={() => void scope.reload()}
       >
         {t('standIn.reload')}
-      </button>
+      </ControlButton>
     </div>
   ) : null
   if (!current?.detail) {
@@ -148,7 +73,8 @@ export function PersonalHomeIssuePanel({
       <>
         <header className="flex items-center justify-between gap-2 border-b border-border p-4">
           <span className="truncate">{issue.title}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="cloud-todo-detail-close"
             aria-label={t('independentIssues.close')}
@@ -156,7 +82,7 @@ export function PersonalHomeIssuePanel({
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md md:h-8 md:w-8 hover:bg-muted"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
         {content}
       </>

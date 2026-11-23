@@ -1,35 +1,34 @@
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Brain, ListTodo, MessageSquare, Send, Settings, X } from 'lucide-react'
+import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { localRuntimeAttachments } from '@/lib/runtime-attachments'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import type {
   CollaborationGroup,
   CollaborationProject,
   SharedWorkspaceApi,
 } from '@wegent/collaboration'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
-import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { localRuntimeAttachments } from '@/lib/runtime-attachments'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Brain, ListTodo, MessageSquare, Send, Settings, X } from 'lucide-react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
+import { ProjectCoordinationPanel } from './ProjectCoordinationPanel'
+import { ProjectCoordinatorPublication } from './ProjectCoordinatorPublication'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
-import { ProjectCoordinatorPublication } from './ProjectCoordinatorPublication'
-import { ProjectCoordinationPanel } from './ProjectCoordinationPanel'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
-export function ProjectCoordinatorConversation({
-  api,
-  project,
-  services,
-  userId,
-  devices,
-  onOpenTask,
-  onOpenGroupSettings,
-  onOpenIssue,
-  onPublished,
-}: {
+type ProjectCoordinatorConversationProps = {
   api: SharedWorkspaceApi
   project: CollaborationProject
   services: WorkbenchServices
@@ -39,15 +38,78 @@ export function ProjectCoordinatorConversation({
   onOpenGroupSettings(): void
   onOpenIssue(issueId: string): void
   onPublished(): void
-}) {
+}
+
+export function ProjectCoordinatorConversation(props: ProjectCoordinatorConversationProps) {
+  const [owner, setOwner] = useState({ api: props.api, services: props.services, revision: 0 })
+  if (owner.api !== props.api || owner.services !== props.services) {
+    setOwner({ api: props.api, services: props.services, revision: owner.revision + 1 })
+  }
+  return (
+    <ProjectCoordinatorConversationContent
+      key={JSON.stringify([
+        owner.revision,
+        props.userId,
+        props.project.project_store,
+        props.project.id,
+      ])}
+      {...props}
+    />
+  )
+}
+
+function ProjectCoordinatorConversationContent({
+  api,
+  project,
+  services,
+  userId,
+  devices,
+  onOpenTask,
+  onOpenGroupSettings,
+  onOpenIssue,
+  onPublished,
+}: ProjectCoordinatorConversationProps) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
-  const [groups, setGroups] = useState<CollaborationGroup[] | null>(null)
-  const [selectedGroup, setSelectedGroup] = useState('')
-  const [localDeviceId, setLocalDeviceId] = useState('')
-  const [deviceId, setDeviceId] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [retry, setRetry] = useState(0)
+  const catalogResource = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify([userId, project.project_store, project.id]),
+        async () => {
+          const [groups, identity] = await Promise.all([
+            api.projects.listCollaborationGroups?.(project.id) ?? Promise.resolve([]),
+            services.getLocalRuntimeSidebarIdentity?.(),
+          ])
+          return { groups, localDeviceId: identity?.deviceId ?? '' }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [api, services, userId, project.project_store, project.id]
+  )
+  const catalog = useSyncExternalStore(
+    open ? catalogResource.subscribe : subscribeIdleResource,
+    catalogResource.getSnapshot,
+    catalogResource.getSnapshot
+  )
+  const groups = catalog.data?.groups ?? null
+  const localDeviceId = catalog.data?.localDeviceId ?? ''
+  const [chosenDeviceId, setDeviceId] = useState('')
+  const deviceId = chosenDeviceId || localDeviceId
+  const [selection, setSelection] = useState<{ id: string; receipt: unknown }>()
+  const selectedGroup =
+    selection &&
+    (groups?.some(row => row.id === selection.id) ||
+      (!selection.id && selection.receipt === catalog.data))
+      ? selection.id
+      : groups?.length === 1
+        ? groups[0].id
+        : ''
+  const error =
+    catalog.status === 'error' || catalog.error !== undefined
+      ? getStandInErrorMessage(catalog.error)
+      : catalog.data && !localDeviceId
+        ? t('standIn.errors.workspace_unavailable')
+        : null
   const [memory, setMemory] = useState(false)
   const [publication, setPublication] = useState(false)
   const memoryRef = useRef<StandInSettingsHandle>(null)
@@ -59,49 +121,21 @@ export function ProjectCoordinatorConversation({
     setMemory(false)
     setOpen(false)
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    closeConversation,
-    open && !memory && !publication
-  )
+  const dialogRef = useRef<HTMLElement>(null)
   const leave = (action: () => void) => {
     if (publication) publicationRef.current?.requestLeave(action)
     else if (memory) memoryRef.current?.requestLeave(action)
     else action()
   }
   const storage = project.project_store === 'local' ? 'local' : 'cloud'
-  useEffect(() => {
-    if (!open) return
-    let active = true
-    void Promise.all([
-      api.projects.listCollaborationGroups?.(project.id) ?? Promise.resolve([]),
-      services.getLocalRuntimeSidebarIdentity?.(),
-    ])
-      .then(([rows, identity]) => {
-        if (!active) return
-        setGroups(rows)
-        setSelectedGroup(current =>
-          rows.some(row => row.id === current) ? current : rows.length === 1 ? rows[0].id : ''
-        )
-        if (identity?.deviceId) {
-          setLocalDeviceId(identity.deviceId)
-          setDeviceId(current => current || identity.deviceId)
-        }
-        setError(identity?.deviceId ? null : t('standIn.errors.workspace_unavailable'))
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, project.id, services, open, retry, t])
   const configure = () => {
     closeConversation()
     onOpenGroupSettings()
   }
   return (
     <>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="project-coordinator-open"
         onClick={() => setOpen(true)}
@@ -110,7 +144,7 @@ export function ProjectCoordinatorConversation({
       >
         <MessageSquare className="h-4 w-4" />
         {t('standIn.project_coordinator.open')}
-      </button>
+      </ControlButton>
       {open &&
         createPortal(
           <div
@@ -122,13 +156,16 @@ export function ProjectCoordinatorConversation({
               }
             }}
           >
-            <section
-              ref={dialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-label={t('standIn.project_coordinator.title', { project: project.name })}
-              className="flex h-full w-full max-w-5xl min-w-0 flex-col border-l border-border bg-background shadow-xl"
-              data-testid="project-coordinator-dialog"
+            <DialogSurface
+              onClose={() => leave(closeConversation)}
+              render={
+                <section
+                  ref={dialogRef}
+                  aria-label={t('standIn.project_coordinator.title', { project: project.name })}
+                  className="flex h-full w-full max-w-5xl min-w-0 flex-col border-l border-border bg-background shadow-xl"
+                  data-testid="project-coordinator-dialog"
+                />
+              }
             >
               <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border px-5 py-3">
                 <div className="min-w-0 flex-1">
@@ -144,7 +181,8 @@ export function ProjectCoordinatorConversation({
                     {t('standIn.project_coordinator.private_context')}
                   </p>
                 </div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-work-list"
                   disabled={memory || publication}
@@ -155,8 +193,9 @@ export function ProjectCoordinatorConversation({
                 >
                   <ListTodo className="h-4 w-4" />
                   {t('standIn.workspace.work_list')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-publish"
                   onClick={() => setPublication(true)}
@@ -165,8 +204,9 @@ export function ProjectCoordinatorConversation({
                 >
                   <Send className="h-4 w-4" />
                   {t('standIn.project_coordinator.publish')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-memory"
                   onClick={() => setMemory(true)}
@@ -175,8 +215,9 @@ export function ProjectCoordinatorConversation({
                 >
                   <Brain className="h-4 w-4" />
                   {t('standIn.memory.title')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-settings"
                   disabled={memory || publication}
@@ -185,8 +226,9 @@ export function ProjectCoordinatorConversation({
                 >
                   <Settings className="h-4 w-4" />
                   {t('standIn.settings')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-close"
                   aria-label={t('standIn.close')}
@@ -196,7 +238,7 @@ export function ProjectCoordinatorConversation({
                   className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
                 >
                   <X className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </header>
               {publication && (
                 <ProjectCoordinatorPublication
@@ -231,20 +273,29 @@ export function ProjectCoordinatorConversation({
                         <span className="shrink-0 text-text-muted">
                           {t('standIn.project_coordinator.group')}
                         </span>
-                        <select
-                          data-testid="project-coordinator-group"
-                          value={selectedGroup}
-                          onChange={event => setSelectedGroup(event.target.value)}
-                          className="min-h-9 min-w-0 flex-1 bg-background outline-none"
+                        <SelectRoot
+                          value={normalizeSelectValue(selectedGroup)}
+                          onValueChange={selectedValue => {
+                            if (selectedValue !== null)
+                              setSelection({ id: selectedValue, receipt: catalog.data })
+                          }}
                         >
-                          <option value="">{t('standIn.project_coordinator.choose_group')}</option>
-                          {groups?.map(row => (
-                            <option key={row.id} value={row.id}>
-                              {row.name}
-                              {row.leader.name ? ` · ${row.leader.name}` : ''}
-                            </option>
-                          ))}
-                        </select>
+                          <SelectTrigger
+                            data-testid="project-coordinator-group"
+                            className="min-h-9 min-w-0 flex-1"
+                          />
+                          <SelectContent>
+                            <SelectItem value="">
+                              {t('standIn.project_coordinator.choose_group')}
+                            </SelectItem>
+                            {groups?.map(row => (
+                              <SelectItem key={row.id} value={String(row.id)}>
+                                {row.name}
+                                {row.leader.name ? ` · ${row.leader.name}` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </SelectRoot>
                       </label>
                       {localDeviceId && (
                         <StandInDeviceSelect
@@ -275,14 +326,15 @@ export function ProjectCoordinatorConversation({
                     {error ? (
                       <div role="alert" className="p-5 text-sm text-error">
                         <p>{error}</p>
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid="project-coordinator-retry"
-                          onClick={() => setRetry(value => value + 1)}
+                          onClick={() => void catalogResource.reload()}
                           className="min-h-9 underline"
                         >
                           {t('standIn.reload')}
-                        </button>
+                        </ControlButton>
                       </div>
                     ) : groups === null ? (
                       <p role="status" className="p-5 text-sm text-text-muted">
@@ -291,14 +343,15 @@ export function ProjectCoordinatorConversation({
                     ) : !groups.length ? (
                       <div className="p-5 text-sm text-text-muted">
                         <p>{t('standIn.project_coordinator.no_group')}</p>
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid="project-coordinator-configure-group"
                           onClick={configure}
                           className="min-h-9 underline"
                         >
                           {t('standIn.project_coordinator.configure')}
-                        </button>
+                        </ControlButton>
                       </div>
                     ) : group?.leader.kind === 'human' ? (
                       <p className="p-5 text-sm text-text-muted">
@@ -323,7 +376,7 @@ export function ProjectCoordinatorConversation({
                   </>
                 )}
               </div>
-            </section>
+            </DialogSurface>
           </div>,
           document.body
         )}
@@ -349,43 +402,36 @@ function ProjectCoordinatorChat({
   active: boolean
 }) {
   const { t } = useTranslation('common')
-  const [initial, setInitial] = useState<{ taskId: string; address: RuntimeTaskAddress | null }>()
-  const [error, setError] = useState<string | null>(null)
-  const [retry, setRetry] = useState(0)
   const storage = project.project_store === 'local' ? 'local' : 'cloud'
-  useEffect(() => {
-    let active = true
-    void api
-      .projectConversation(userId, deviceId, project.id, storage, group.id)
-      .then(result => {
-        if (active) {
-          setInitial(result)
-          setError(null)
-        }
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, userId, deviceId, project.id, storage, group.id, retry])
+  const resource = useMemo(
+    () =>
+      createAsyncResource(JSON.stringify([userId, deviceId, storage, project.id, group.id]), () =>
+        api.projectConversation(userId, deviceId, project.id, storage, group.id)
+      ),
+    [api, userId, deviceId, storage, project.id, group.id]
+  )
+  const snapshot = useSyncExternalStore(
+    active ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const initial = snapshot.data
+  const error = snapshot.status === 'error' ? getStandInErrorMessage(snapshot.error) : null
   if (error)
     return (
       <div role="alert" className="p-5 text-sm text-error">
         <p>{error}</p>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="project-coordinator-chat-retry"
           onClick={() => {
-            setInitial(undefined)
-            setError(null)
-            setRetry(value => value + 1)
+            void resource.reload()
           }}
           className="min-h-9 underline"
         >
           {t('standIn.reload')}
-        </button>
+        </ControlButton>
       </div>
     )
   if (!initial)

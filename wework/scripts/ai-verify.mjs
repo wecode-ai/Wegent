@@ -22,7 +22,7 @@ import {
 } from './ai-verify-auth-cleanup.mjs'
 import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
 import { VerifyVideoRecorder } from './ai-verify-video.mjs'
-import { WindowCommandQueue } from './desktop-control-queue.mjs'
+import { matchesRuntimeControlCommand, WindowCommandQueue } from './desktop-control-queue.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { processIsAlive, windowsTaskkillArguments } from '../e2e/desktop/process-lifecycle.mjs'
 import {
@@ -151,6 +151,8 @@ const SELECTOR_OPTIONAL_COMMANDS = new Set([
 
 function usage() {
   console.error(`Usage:
+  pnpm --filter wework ai:verify bombadil --base origin/main --plan true
+  pnpm --filter wework ai:verify bombadil --suite workbench --seconds 30
   pnpm --filter wework ai:verify start
   pnpm --filter wework ai:verify start --packaged true
   pnpm --filter wework ai:verify start --record true
@@ -233,6 +235,8 @@ export function validateStartOptions(options) {
     'executor-home',
     'device-id',
     'packaged',
+    'bombadil',
+    'prepared',
     'record',
     'timeout',
     'rollout',
@@ -242,6 +246,10 @@ export function validateStartOptions(options) {
     throw new Error(`Unexpected option for start: --${unexpectedOption}`)
   }
   resolveOptionalBoolean(options.packaged, 'packaged')
+  resolveOptionalBoolean(options.bombadil, 'bombadil')
+  resolveOptionalBoolean(options.prepared, 'prepared')
+  if (options.bombadil === 'true' && options['executor-home'])
+    throw new Error('Bombadil requires a new isolated executor home')
   resolveOptionalBoolean(options.record, 'record')
   if (options['device-id'] !== undefined) {
     if (!options['executor-home']) {
@@ -311,6 +319,12 @@ function authorized(request, token) {
 export function acknowledgeStartedCommand(pending, started) {
   if (!pending.has(started.id)) {
     return { status: 404, value: { error: `Unknown command ${started.id}` } }
+  }
+  if (!matchesRuntimeControlCommand(pending.get(started.id), started)) {
+    return {
+      status: 409,
+      value: { error: `Command ${started.id} does not match the queued Runtime request` },
+    }
   }
   return { status: 200, value: { ok: true } }
 }
@@ -415,19 +429,23 @@ export function resolveElectronAppBinary(platform = process.platform, arch = pro
 export function resolveElectronLaunch({
   packaged,
   sourceBinary,
+  bombadil = false,
   platform = process.platform,
   arch = process.arch,
 }) {
+  const debugArgs = bombadil
+    ? ['--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0']
+    : []
   if (packaged) {
     return {
       command: resolveElectronAppBinary(platform, arch),
-      args: [],
+      args: debugArgs,
       cwd: weworkDir,
     }
   }
   return {
     command: sourceBinary,
-    args: ['.'],
+    args: ['.', ...debugArgs],
     cwd: electronDir,
   }
 }
@@ -611,7 +629,12 @@ async function runServer(sessionPath, token) {
         const id = randomUUID()
         const timeoutMs = Number(command.timeoutMs) || defaultTimeoutMs
         const result = new Promise((resolvePromise, reject) =>
-          pending.set(id, { resolve: resolvePromise, reject })
+          pending.set(id, {
+            resolve: resolvePromise,
+            reject,
+            action: command.action,
+            value: command.value,
+          })
         )
         const nextCommand = { id, windowLabel: 'main', ...command }
         queue.enqueue(nextCommand)
@@ -705,6 +728,7 @@ async function runServer(sessionPath, token) {
     session.launchMode === 'source' ? await buildSourceRuntimeEnvironment() : {}
   const launch = resolveElectronLaunch({
     packaged: session.launchMode === 'packaged',
+    bombadil: session.bombadil,
     sourceBinary: session.launchMode === 'source' ? await resolveSourceElectronBinary() : undefined,
   })
   app = spawn(launch.command, launch.args, {
@@ -767,6 +791,7 @@ export async function waitForFreshControlClient(
 
 async function main() {
   const { command, options } = parseArgs(process.argv.slice(2))
+  if (command === 'bombadil') return (await import('./ai-verify-bombadil.mjs')).runBombadil(options)
   if (command === 'serve') return runServer(options.session, options.token)
   if (command === 'start') {
     validateStartOptions(options)
@@ -774,7 +799,7 @@ async function main() {
     if (rolloutSource) await readRolloutHeader(rolloutSource)
     const packaged = resolveOptionalBoolean(options.packaged, 'packaged') ?? false
     const record = resolveOptionalBoolean(options.record, 'record') ?? false
-    await prepareElectronApp({ packaged })
+    if (options.prepared !== 'true') await prepareElectronApp({ packaged })
     const launch = resolveElectronLaunch({
       packaged,
       sourceBinary: packaged ? undefined : await resolveSourceElectronBinary(),
@@ -802,6 +827,7 @@ async function main() {
           token,
           status: 'starting',
           launchMode: packaged ? 'packaged' : 'source',
+          bombadil: options.bombadil === 'true',
           executorHomeOverride: options['executor-home']?.trim(),
           verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
           rolloutReplay,

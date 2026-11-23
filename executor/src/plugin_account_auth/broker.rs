@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Authenticated loopback business API shared by desktop and standalone runners.
 
-use super::{execute, AuthError, ExecutionRequest};
+use super::{
+    automation::PendingLogins, execute, local_http::LocalAuthContext, AuthError, ExecutionRequest,
+};
 mod reconciliation;
 use axum::{
     extract::{DefaultBodyLimit, State},
@@ -26,6 +28,11 @@ use tokio::{
     task::JoinHandle,
 };
 
+pub(super) enum ReconciliationRequest {
+    Audit,
+    Target(u64),
+}
+
 #[derive(Clone)]
 struct Endpoint {
     url: String,
@@ -33,7 +40,8 @@ struct Endpoint {
     mode: String,
     home: PathBuf,
     lifecycle: tokio::sync::mpsc::Sender<super::local_lifecycle::Request>,
-    reconcile: tokio::sync::mpsc::Sender<u64>,
+    reconcile: tokio::sync::mpsc::Sender<ReconciliationRequest>,
+    pending_logins: Arc<PendingLogins>,
 }
 
 fn endpoint() -> &'static Mutex<Option<Endpoint>> {
@@ -74,11 +82,18 @@ pub(super) fn lifecycle_sender(
         .ok_or(AuthError("plugin_auth_broker_unavailable"))
 }
 
-/// Zero requests a complete audit after a successful backend registration.
+/// Backend registration requests a full audit.
 pub(crate) fn request_reconcile(installed_id: Option<u64>) {
     if let Ok(guard) = endpoint().lock() {
         if let Some(endpoint) = guard.as_ref() {
-            let _ = endpoint.reconcile.try_send(installed_id.unwrap_or(0));
+            let request = match installed_id {
+                Some(id) => ReconciliationRequest::Target(id),
+                None => {
+                    endpoint.pending_logins.wake();
+                    ReconciliationRequest::Audit
+                }
+            };
+            let _ = endpoint.reconcile.try_send(request);
         }
     }
 }
@@ -126,6 +141,27 @@ pub async fn start<T: super::PluginAuthTransport>(
     connected: Arc<AtomicBool>,
     cloud: bool,
 ) -> Result<RunningBroker, AuthError> {
+    start_with_logins(transport, home, connected, cloud, Arc::default()).await
+}
+
+pub(crate) async fn start_native(
+    transport: LocalAuthContext,
+    home: PathBuf,
+    connected: Arc<AtomicBool>,
+    cloud: bool,
+) -> Result<RunningBroker, AuthError> {
+    let logins = Arc::new(PendingLogins::default());
+    let transport = transport.with_pending_logins(logins.clone());
+    start_with_logins(transport, home, connected, cloud, logins).await
+}
+
+async fn start_with_logins<T: super::PluginAuthTransport>(
+    transport: T,
+    home: PathBuf,
+    connected: Arc<AtomicBool>,
+    cloud: bool,
+    pending_logins: Arc<PendingLogins>,
+) -> Result<RunningBroker, AuthError> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|_| AuthError("plugin_auth_broker_unavailable"))?;
@@ -150,6 +186,7 @@ pub async fn start<T: super::PluginAuthTransport>(
         home,
         lifecycle: lifecycle_sender,
         reconcile,
+        pending_logins: pending_logins.clone(),
     };
     let revocation_transport = transport.clone();
     let revocation_home = endpoint_value.home.clone();
@@ -175,6 +212,7 @@ pub async fn start<T: super::PluginAuthTransport>(
         connected.clone(),
         cancel.subscribe(),
         requested,
+        pending_logins,
         reconciliation::audit_interval(nonce[0]),
     ));
     let state = BrokerState {

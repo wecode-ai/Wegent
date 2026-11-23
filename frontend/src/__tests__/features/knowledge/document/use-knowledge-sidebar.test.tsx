@@ -5,8 +5,12 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { useKnowledgeSidebar } from '@/features/knowledge/document/hooks/useKnowledgeSidebar'
-import { getKnowledgeBase } from '@/apis/knowledge'
-import type { AllGroupedKnowledgeResponse, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
+import { getKnowledgeBase, updateKnowledgeBase } from '@/apis/knowledge'
+import type {
+  AllGroupedKnowledgeResponse,
+  KnowledgeBase,
+  KnowledgeBaseWithGroupInfo,
+} from '@/types/knowledge'
 
 const mockGetAllGrouped = jest.fn()
 let mockUser = { id: 1 }
@@ -26,6 +30,7 @@ jest.mock('@/apis/knowledge-base', () => ({
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
+  updateKnowledgeBase: jest.fn(),
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
@@ -302,17 +307,152 @@ it('rejects old mutation and refresh callbacks after scope changes, including re
   mockGetAllGrouped.mockResolvedValue(dataset())
   const { result, rerender } = renderHook(() => useKnowledgeSidebar())
   await waitFor(() => expect(result.current.hasLoaded).toBe(true))
-  const oldSync = result.current.syncConvertedKnowledgeBase
+  const first = result.current.allKnowledgeBases[0]
+  const mutation = pending<KnowledgeBase>()
+  jest.mocked(updateKnowledgeBase).mockReturnValueOnce(mutation.promise)
+  const oldSave = result.current.saveKnowledgeBaseSettings(first.id, { kb_type: 'classic' })
   const oldRefresh = result.current.refreshAll
   mockUser = { id: 2 }
   rerender()
   await waitFor(() => expect(result.current.hasLoaded).toBe(true))
   await act(async () => {
-    oldSync({ ...result.current.allKnowledgeBases[0], name: 'Old user mutation' })
+    mutation.resolve({ ...first, kb_type: 'classic' })
+    await oldSave
     await oldRefresh()
   })
-  expect(result.current.allKnowledgeBases[0].name).toBe('Library 1')
+  expect(result.current.allKnowledgeBases[0].kb_type).toBe('notebook')
   expect(result.current.isGroupsLoading).toBe(false)
+})
+
+it('updates only the converted library view when another library is selected', async () => {
+  mockUser = { id: 1 }
+  mockScope = 'backend:session-1'
+  mockGetAllGrouped.mockResolvedValueOnce(dataset())
+  const { result } = renderHook(() => useKnowledgeSidebar())
+  await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+  const [first, second] = result.current.allKnowledgeBases
+  jest.mocked(getKnowledgeBase).mockResolvedValueOnce(second)
+  await act(async () => result.current.selectKb(second))
+
+  jest
+    .mocked(updateKnowledgeBase)
+    .mockResolvedValueOnce({ ...first, name: 'Older snapshot', kb_type: 'classic' })
+  await act(async () => {
+    await result.current.saveKnowledgeBaseSettings(first.id, { kb_type: 'classic' })
+  })
+
+  expect(result.current.allKnowledgeBases.find(kb => kb.id === first.id)).toMatchObject({
+    name: first.name,
+    kb_type: 'classic',
+  })
+  expect(result.current.selectedKb).toMatchObject({ id: second.id, kb_type: second.kb_type })
+})
+
+it('reconciles overlapping saves from the server after the older response arrives last', async () => {
+  mockUser = { id: 1 }
+  mockScope = 'backend:session-1'
+  mockGetAllGrouped.mockResolvedValueOnce(dataset())
+  jest.mocked(getKnowledgeBase).mockClear()
+  const { result } = renderHook(() => useKnowledgeSidebar())
+  await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+  const [first, second] = result.current.allKnowledgeBases
+  const older = pending<KnowledgeBase>()
+  const newer = pending<KnowledgeBase>()
+  jest
+    .mocked(updateKnowledgeBase)
+    .mockReturnValueOnce(older.promise)
+    .mockReturnValueOnce(newer.promise)
+  const olderSave = result.current.saveKnowledgeBaseSettings(first.id, { kb_type: 'classic' })
+  const newerSave = result.current.saveKnowledgeBaseSettings(first.id, { kb_type: 'notebook' })
+
+  await act(async () => {
+    newer.resolve({ ...first, kb_type: 'notebook' })
+    await newerSave
+  })
+  expect(getKnowledgeBase).not.toHaveBeenCalled()
+  jest.mocked(getKnowledgeBase).mockResolvedValueOnce({ ...first, kb_type: 'notebook' })
+  await act(async () => {
+    older.resolve({ ...first, kb_type: 'classic' })
+    await olderSave
+  })
+
+  expect(getKnowledgeBase).toHaveBeenCalledTimes(1)
+  expect(getKnowledgeBase).toHaveBeenCalledWith(first.id, { cache: 'no-store' })
+  expect(result.current.allKnowledgeBases.find(kb => kb.id === first.id)?.kb_type).toBe('notebook')
+  expect(result.current.allKnowledgeBases.find(kb => kb.id === second.id)?.kb_type).toBe(
+    second.kb_type
+  )
+})
+
+it('keeps the saved view when older detail and grouped reads finish', async () => {
+  mockUser = { id: 1 }
+  mockScope = 'backend:session-1'
+  mockGetAllGrouped.mockResolvedValueOnce(dataset())
+  const { result } = renderHook(() => useKnowledgeSidebar())
+  await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+  const [kb] = result.current.allKnowledgeBases
+  const detail = pending<KnowledgeBase>()
+  const grouped = pending<AllGroupedKnowledgeResponse>()
+  jest.mocked(getKnowledgeBase).mockReturnValueOnce(detail.promise)
+  mockGetAllGrouped.mockReturnValueOnce(grouped.promise)
+  jest.mocked(updateKnowledgeBase).mockResolvedValueOnce({ ...kb, kb_type: 'classic' })
+  let refresh!: Promise<void>
+  act(() => {
+    result.current.selectKb(kb)
+    refresh = result.current.refreshAll()
+  })
+  await act(async () => {
+    await result.current.saveKnowledgeBaseSettings(kb.id, { kb_type: 'classic' })
+  })
+
+  const response = dataset()
+  response.personal.created_by_me[0].name = 'Updated by grouped read'
+  await act(async () => {
+    detail.resolve({ ...kb, description: 'From detail' })
+    grouped.resolve(response)
+    await refresh
+  })
+  expect(result.current.selectedKb).toMatchObject({
+    kb_type: 'classic',
+    description: 'From detail',
+  })
+  expect(result.current.allKnowledgeBases[0]).toMatchObject({
+    kb_type: 'classic',
+    name: 'Updated by grouped read',
+  })
+  expect(result.current.detailRequest?.status).toBe('ready')
+  expect(result.current.isGroupsLoading).toBe(false)
+})
+
+it('retries a failed view reconciliation without marking navigation as failed', async () => {
+  mockUser = { id: 1 }
+  mockScope = 'backend:session-1'
+  mockGetAllGrouped.mockResolvedValueOnce(dataset())
+  const { result } = renderHook(() => useKnowledgeSidebar())
+  await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+  const [kb] = result.current.allKnowledgeBases
+  const first = pending<KnowledgeBase>()
+  jest
+    .mocked(updateKnowledgeBase)
+    .mockReturnValueOnce(first.promise)
+    .mockResolvedValueOnce({ ...kb, kb_type: 'classic' })
+  jest.mocked(getKnowledgeBase).mockRejectedValueOnce(new Error('offline'))
+  const firstSave = result.current.saveKnowledgeBaseSettings(kb.id, { kb_type: 'notebook' })
+  await act(async () => {
+    await result.current.saveKnowledgeBaseSettings(kb.id, { kb_type: 'classic' })
+  })
+  await act(async () => {
+    first.resolve({ ...kb, kb_type: 'notebook' })
+    await firstSave
+  })
+  expect(result.current.viewRefreshErrors).toEqual([kb.id])
+  expect(result.current.loadError).toBeNull()
+
+  jest.mocked(getKnowledgeBase).mockResolvedValueOnce({ ...kb, kb_type: 'classic' })
+  await act(async () => result.current.retryViewRefresh(kb.id))
+  expect(getKnowledgeBase).toHaveBeenLastCalledWith(kb.id, { cache: 'no-store' })
+  expect(result.current.allKnowledgeBases[0].kb_type).toBe('classic')
+  expect(result.current.viewRefreshErrors).toEqual([])
 })
 
 it('does not resurrect a revoked library from a delayed detail response', async () => {

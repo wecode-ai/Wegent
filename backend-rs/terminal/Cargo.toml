@@ -1,0 +1,16 @@
+[package]
+name = "wegent-terminal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Terminal session authorization and PTY relay"
+
+[dependencies]
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+brz-socket-io = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tracing = { workspace = true }
+wegent-backend-config = { workspace = true }

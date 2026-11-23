@@ -238,14 +238,6 @@
       "types": "./src/conversation/conversationLayout.ts",
       "import": "./src/conversation/conversationLayout.ts"
     },
-    "./composer/useAnchoredPortalMenu": {
-      "types": "./src/composer/useAnchoredPortalMenu.ts",
-      "import": "./src/composer/useAnchoredPortalMenu.ts"
-    },
-    "./composer/useOutsideClick": {
-      "types": "./src/composer/useOutsideClick.ts",
-      "import": "./src/composer/useOutsideClick.ts"
-    },
     "./composer/attachmentFiles": {
       "types": "./src/composer/attachmentFiles.ts",
       "import": "./src/composer/attachmentFiles.ts"
@@ -434,17 +426,9 @@
       "types": "./src/project-board/projectBoardDnd.ts",
       "import": "./src/project-board/projectBoardDnd.ts"
     },
-    "./project-board/ProjectBoardDragOverlay": {
-      "types": "./src/project-board/ProjectBoardDragOverlay.tsx",
-      "import": "./src/project-board/ProjectBoardDragOverlay.tsx"
-    },
     "./controls/DialogForm": {
       "types": "./src/controls/DialogForm.tsx",
       "import": "./src/controls/DialogForm.tsx"
-    },
-    "./controls/useDialogKeyboard": {
-      "types": "./src/controls/useDialogKeyboard.ts",
-      "import": "./src/controls/useDialogKeyboard.ts"
     },
     "./controls/Textarea": {
       "types": "./src/controls/Textarea.tsx",
@@ -458,9 +442,165 @@
       "types": "./src/files/XMindPreview.tsx",
       "import": "./src/files/XMindPreview.tsx"
     },
-    "./controls/useDialogKeyboard": {
-      "types": "./src/controls/useDialogKeyboard.ts",
-      "import": "./src/controls/useDialogKeyboard.ts"
+    "./controls/DialogSurface": {
+      "types": "./src/controls/DialogSurface.tsx",
+      "import": "./src/controls/DialogSurface.tsx"
+    },
+    "./controls/SearchableSelect": {
+      "types": "./src/controls/SearchableSelect.tsx",
+      "import": "./src/controls/SearchableSelect.tsx"
+    },
+    "./controls/SelectField": {
+      "types": "./src/controls/SelectField.tsx",
+      "import": "./src/controls/SelectField.tsx"
+    },
+    "./controls/SettingsLayout": {
+      "types": "./src/controls/SettingsLayout.tsx",
+      "import": "./src/controls/SettingsLayout.tsx"
+    },
+    "./controls/Switch": {
+      "types": "./src/controls/Switch.tsx",
+      "import": "./src/controls/Switch.tsx"
+    },
+    "./controls/TextField": {
+      "types": "./src/controls/TextField.tsx",
+      "import": "./src/controls/TextField.tsx"
+    },
+    "./controls/Checkbox": {
+      "types": "./src/controls/Checkbox.tsx",
+      "import": "./src/controls/Checkbox.tsx"
+    },
+    "./controls/SelectParts": {
+      "types": "./src/controls/SelectParts.tsx",
+      "import": "./src/controls/SelectParts.tsx"
+    },
+    "./controls/RangeSlider": {
+      "types": "./src/controls/RangeSlider.tsx",
+      "import": "./src/controls/RangeSlider.tsx"
+    },
+    "./controls/SegmentedControl": {
+      "types": "./src/controls/SegmentedControl.tsx",
+      "import": "./src/controls/SegmentedControl.tsx"
+    },
+    "./controls/RadioGroup": {
+      "types": "./src/controls/RadioGroup.tsx",
+      "import": "./src/controls/RadioGroup.tsx"
+    },
+    "./controls/Tabs": {
+      "types": "./src/controls/Tabs.tsx",
+      "import": "./src/controls/Tabs.tsx"
+    },
+    "./controls/entities": {
+      "types": "./src/controls/entities.ts",
+      "import": "./src/controls/entities.ts"
+    },
+    "./controls/PermissionModeSelector": {
+      "types": "./src/controls/PermissionModeSelector.tsx",
+      "import": "./src/controls/PermissionModeSelector.tsx"
+    },
+    "./controls/recipes": {
+      "types": "./src/controls/recipes.ts",
+      "import": "./src/controls/recipes.ts"
+    },
+    "./controls/ActionMenu": {
+      "types": "./src/controls/ActionMenu.tsx",
+      "import": "./src/controls/ActionMenu.tsx"
+    },
+    "./controls/selectValue": {
+      "types": "./src/controls/selectValue.ts",
+      "import": "./src/controls/selectValue.ts"
+    },
+    "./controls/Tooltip": {
+      "types": "./src/controls/Tooltip.tsx",
+      "import": "./src/controls/Tooltip.tsx"
+    },
+    "./controls/tooltipContext": {
+      "types": "./src/controls/tooltipContext.ts",
+      "import": "./src/controls/tooltipContext.ts"
+    },
+    "./controls/Popover": {
+      "types": "./src/controls/Popover.tsx",
+      "import": "./src/controls/Popover.tsx"
+    },
+    "./controls/HoverCard": {
+      "types": "./src/controls/HoverCard.tsx",
+      "import": "./src/controls/HoverCard.tsx"
+    },
+    "./controls/MenuParts": {
+      "types": "./src/controls/MenuParts.tsx",
+      "import": "./src/controls/MenuParts.tsx"
+    },
+    "./controls/ScrollArea": {
+      "types": "./src/controls/ScrollArea.tsx",
+      "import": "./src/controls/ScrollArea.tsx"
+    },
+    "./controls/ProgressBar": {
+      "types": "./src/controls/ProgressBar.tsx",
+      "import": "./src/controls/ProgressBar.tsx"
+    },
+    "./controls/VirtualTree": {
+      "types": "./src/controls/VirtualTree.tsx",
+      "import": "./src/controls/VirtualTree.tsx"
+    },
+    "./controls/DeleteIconButton": {
+      "types": "./src/controls/DeleteIconButton.tsx",
+      "import": "./src/controls/DeleteIconButton.tsx"
+    },
+    "./controls/IconButton": {
+      "types": "./src/controls/IconButton.tsx",
+      "import": "./src/controls/IconButton.tsx"
+    },
+    "./controls/Resizable": {
+      "types": "./src/controls/Resizable.tsx",
+      "import": "./src/controls/Resizable.tsx"
+    },
+    "./controls/Toast": {
+      "types": "./src/controls/Toast.tsx",
+      "import": "./src/controls/Toast.tsx"
+    },
+    "./controls/Collapsible": {
+      "types": "./src/controls/Collapsible.tsx",
+      "import": "./src/controls/Collapsible.tsx"
+    },
+    "./controls/TextInputDialog": {
+      "types": "./src/controls/TextInputDialog.tsx",
+      "import": "./src/controls/TextInputDialog.tsx"
+    },
+    "./controls/useDialogRequests": {
+      "types": "./src/controls/useDialogRequests.tsx",
+      "import": "./src/controls/useDialogRequests.tsx"
+    },
+    "./controls/InlinePanel": {
+      "types": "./src/controls/InlinePanel.tsx",
+      "import": "./src/controls/InlinePanel.tsx"
+    },
+    "./controls/resizableController": {
+      "types": "./src/controls/resizableController.ts",
+      "import": "./src/controls/resizableController.ts"
+    },
+    "./controls/toaster": {
+      "types": "./src/controls/toaster.ts",
+      "import": "./src/controls/toaster.ts"
+    },
+    "./controls/Field": {
+      "types": "./src/controls/Field.tsx",
+      "import": "./src/controls/Field.tsx"
+    },
+    "./controls/Sortable": {
+      "types": "./src/controls/Sortable.tsx",
+      "import": "./src/controls/Sortable.tsx"
+    },
+    "./clock": {
+      "types": "./src/clock.ts",
+      "import": "./src/clock.ts"
+    },
+    "./dom-events": {
+      "types": "./src/dom-events.ts",
+      "import": "./src/dom-events.ts"
+    },
+    "./media-query": {
+      "types": "./src/media-query.ts",
+      "import": "./src/media-query.ts"
     }
   },
   "scripts": {
@@ -468,9 +608,6 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@dnd-kit/core": ">=6.3",
-    "@dnd-kit/sortable": ">=10",
-    "@dnd-kit/utilities": ">=3.2",
     "lucide-react": ">=0.554",
     "react": ">=19",
     "react-dom": ">=19"
@@ -493,14 +630,15 @@
   "dependencies": {
     "@chenglou/pretext": "0.0.8",
     "@panzoom/panzoom": "4.6.2",
-    "@radix-ui/react-popover": "^1.1.16",
-    "@radix-ui/react-scroll-area": "^1.2.11",
-    "@radix-ui/react-slot": "^1.2.5",
+    "@pierre/highlights": "0.4.0",
     "@streamdown/math": "1.0.3",
     "@tanstack/react-virtual": "3.14.23",
+    "@ui-sdk/core": "0.1.0-beta.10",
+    "@ui-sdk/react": "0.1.0-beta.10",
     "@wegent/chat-core": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "dompurify": "3.4.13",
+    "jszip": "3.10.1",
     "katex": "0.16.47",
     "mermaid": "11.15.0",
     "plantuml-encoder": "1.4.0",
@@ -520,8 +658,6 @@
     "streamdown": "2.5.0",
     "tailwind-merge": "^3.6.0",
     "unified": "^11.0.5",
-    "yaml": "2.9.0",
-    "@pierre/highlights": "0.4.0",
-    "jszip": "3.10.1"
+    "yaml": "2.9.0"
   }
 }

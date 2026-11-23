@@ -4,115 +4,112 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
-import type {
-  CollaborationExecutionEnvironment,
-  CollaborationProject,
-} from "../types";
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationExecutionEnvironment, CollaborationProject } from '../types'
 import {
   resolveProjectExecutionEnvironmentReadiness,
   useProjectExecutionEnvironmentReadiness,
-} from "./issueEnvironmentReadiness";
+} from './issueEnvironmentReadiness'
 
 const baseProject: CollaborationProject = {
-  id: "project-1",
-  workspace_id: "workspace-1",
-  public_id: "project-public-1",
-  project_key: "PRJ",
-  name: "Project",
-  description: "",
-  project_store: "backend",
-  task_provider: "local",
+  id: 'project-1',
+  workspace_id: 'workspace-1',
+  public_id: 'project-public-1',
+  project_key: 'PRJ',
+  name: 'Project',
+  description: '',
+  project_store: 'backend',
+  task_provider: 'local',
   provider_config: {},
   created_by_user_id: 1,
-  access_role: "Owner",
-  status: "active",
+  access_role: 'Owner',
+  status: 'active',
   tags: [],
   version: 1,
-  created_at: "2026-09-21T00:00:00Z",
-  updated_at: "2026-09-21T00:00:00Z",
-};
+  created_at: '2026-09-21T00:00:00Z',
+  updated_at: '2026-09-21T00:00:00Z',
+}
 
 function environment(
-  status: CollaborationExecutionEnvironment["status"] = "online",
+  status: CollaborationExecutionEnvironment['status'] = 'online'
 ): CollaborationExecutionEnvironment {
   return {
-    id: "environment-1",
+    id: 'environment-1',
     device_id: 21,
-    device_key: "device-21",
-    name: "Device",
-    kind: "local_device",
-    coding_tools: ["codex"],
-    owner_type: "user",
-    owner_id: "1",
-    owner_name: "Owner",
+    device_key: 'device-21',
+    name: 'Device',
+    kind: 'local_device',
+    coding_tools: ['codex'],
+    owner_type: 'user',
+    owner_id: '1',
+    owner_name: 'Owner',
     status,
-    updated_at: "2026-09-21T00:00:00Z",
-  };
+    updated_at: '2026-09-21T00:00:00Z',
+  }
 }
 
 function projectWithDevice(
-  status: "preparing" | "ready" | "error" | undefined,
-  workspacePath?: string,
+  status: 'preparing' | 'ready' | 'error' | undefined,
+  workspacePath?: string
 ): CollaborationProject {
   return {
     ...baseProject,
     execution_environment: {
       repositories: [],
       setup_steps: [],
-      fingerprint: "environment-v1",
+      fingerprint: 'environment-v1',
       devices: {
-        "device-21": {
+        'device-21': {
           status,
           workspace_path: workspacePath,
-          error: status === "error" ? "clone failed" : undefined,
+          error: status === 'error' ? 'clone failed' : undefined,
         },
       },
     },
-  };
+  }
 }
 
-describe("resolveProjectExecutionEnvironmentReadiness", () => {
+describe('resolveProjectExecutionEnvironmentReadiness', () => {
   it.each([
-    ["unassigned", []],
-    ["offline", [environment("offline")]],
-    ["ready", [environment("online")]],
-    ["ready", [environment("offline"), environment("online")]],
-  ] as const)("resolves %s", (expected, environments) => {
-    expect(resolveProjectExecutionEnvironmentReadiness(environments).kind).toBe(
-      expected,
-    );
-  });
-});
+    ['unassigned', []],
+    ['offline', [environment('offline')]],
+    ['ready', [environment('online')]],
+    ['ready', [environment('offline'), environment('online')]],
+  ] as const)('resolves %s', (expected, environments) => {
+    expect(resolveProjectExecutionEnvironmentReadiness(environments).kind).toBe(expected)
+  })
+})
 
 function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
   const promise = new Promise<T>((next, fail) => {
-    resolve = next;
-    reject = fail;
-  });
-  return { promise, reject, resolve };
+    resolve = next
+    reject = fail
+  })
+  return { promise, reject, resolve }
 }
 
 function Probe({
   api,
   onRefresh,
   project,
+  refreshIntervalMs = 0,
 }: {
-  api: SharedWorkspaceApi;
-  onRefresh?(readiness: string): void;
-  project: CollaborationProject;
+  api: SharedWorkspaceApi
+  onRefresh?(readiness: string): void
+  project: CollaborationProject | null
+  refreshIntervalMs?: number
 }) {
   const readiness = useProjectExecutionEnvironmentReadiness({
     api,
     project,
-    refreshIntervalMs: 0,
-  });
+    refreshIntervalMs,
+  })
   return (
     <>
       <output data-testid="readiness">{readiness.kind}</output>
@@ -120,9 +117,7 @@ function Probe({
         <button
           data-testid="refresh"
           onClick={() => {
-            void readiness
-              .refresh()
-              .then((nextReadiness) => onRefresh(nextReadiness.kind));
+            void readiness.refresh().then(nextReadiness => onRefresh(nextReadiness.kind))
           }}
           type="button"
         >
@@ -130,187 +125,275 @@ function Probe({
         </button>
       ) : null}
     </>
-  );
+  )
 }
 
-let root: Root | null = null;
-let container: HTMLDivElement | null = null;
+let root: Root | null = null
+let container: HTMLDivElement | null = null
 
 afterEach(() => {
-  act(() => root?.unmount());
-  root = null;
-  container?.remove();
-  container = null;
-});
+  act(() => root?.unmount())
+  root = null
+  container?.remove()
+  container = null
+  vi.restoreAllMocks()
+  vi.useRealTimers()
+})
 
-async function renderProbe(
-  api: SharedWorkspaceApi,
-  project: CollaborationProject,
-) {
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(async () => root!.render(<Probe api={api} project={project} />));
+async function renderProbe(api: SharedWorkspaceApi, project: CollaborationProject) {
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root!.render(<Probe api={api} project={project} />))
 }
 
-describe("useProjectExecutionEnvironmentReadiness", () => {
-  it("loads execution environment readiness for a local project", async () => {
+describe('useProjectExecutionEnvironmentReadiness', () => {
+  it('loads execution environment readiness for a local project', async () => {
     const api = {
       projects: {
         get: vi.fn(async () => ({
-          ...projectWithDevice("ready", "/workspace"),
-          project_store: "local" as const,
+          ...projectWithDevice('ready', '/workspace'),
+          project_store: 'local' as const,
         })),
-        listExecutionEnvironments: vi.fn(async () => [environment("online")]),
+        listExecutionEnvironments: vi.fn(async () => [environment('online')]),
       },
-    } as unknown as SharedWorkspaceApi;
+    } as unknown as SharedWorkspaceApi
 
     await renderProbe(api, {
-      ...projectWithDevice("ready", "/workspace"),
-      project_store: "local",
-    });
+      ...projectWithDevice('ready', '/workspace'),
+      project_store: 'local',
+    })
 
-    expect(container?.textContent).toBe("ready");
-    expect(api.projects.listExecutionEnvironments).toHaveBeenCalledWith(
-      "project-1",
-    );
-  });
+    expect(container?.textContent).toBe('ready')
+    expect(api.projects.listExecutionEnvironments).toHaveBeenCalledWith('project-1')
+  })
 
-  it("reports a status check failure as unknown without treating it as unassigned", async () => {
+  it('reports a status check failure as unknown without treating it as unassigned', async () => {
     const api = {
       projects: {
         get: vi.fn(async () => baseProject),
         listExecutionEnvironments: vi.fn(async () => {
-          throw new Error("network unavailable");
+          throw new Error('network unavailable')
         }),
       },
-    } as unknown as SharedWorkspaceApi;
+    } as unknown as SharedWorkspaceApi
 
-    await renderProbe(api, baseProject);
+    await renderProbe(api, baseProject)
 
-    expect(container?.textContent).toBe("unknown");
-  });
+    expect(container?.textContent).toBe('unknown')
+  })
 
-  it("ignores a stale response after switching projects", async () => {
-    const first = deferred<CollaborationExecutionEnvironment[]>();
-    const second = deferred<CollaborationExecutionEnvironment[]>();
+  it('ignores a stale response after switching projects', async () => {
+    const first = deferred<CollaborationExecutionEnvironment[]>()
+    const second = deferred<CollaborationExecutionEnvironment[]>()
     const api = {
       projects: {
         get: vi.fn(async (projectId: string) =>
-          projectId === nextProject.id ? nextProject : baseProject,
+          projectId === nextProject.id ? nextProject : baseProject
         ),
         listExecutionEnvironments: vi
           .fn()
           .mockReturnValueOnce(first.promise)
           .mockReturnValueOnce(second.promise),
       },
-    } as unknown as SharedWorkspaceApi;
+    } as unknown as SharedWorkspaceApi
     const nextProject = {
-      ...projectWithDevice("ready", "/workspace"),
-      id: "project-2",
-      public_id: "project-public-2",
-    };
+      ...projectWithDevice('ready', '/workspace'),
+      id: 'project-2',
+      public_id: 'project-public-2',
+    }
 
-    await renderProbe(api, baseProject);
-    await act(async () =>
-      root!.render(<Probe api={api} project={nextProject} />),
-    );
-    await act(async () => second.resolve([environment("online")]));
-    expect(container?.textContent).toBe("ready");
+    await renderProbe(api, baseProject)
+    await act(async () => root!.render(<Probe api={api} project={nextProject} />))
+    await act(async () => second.resolve([environment('online')]))
+    expect(container?.textContent).toBe('ready')
 
-    await act(async () => first.resolve([]));
-    expect(container?.textContent).toBe("ready");
-  });
+    await act(async () => first.resolve([]))
+    expect(container?.textContent).toBe('ready')
+  })
 
-  it("keeps assigned devices usable while an initialized project version refreshes", async () => {
-    const refreshed = deferred<CollaborationExecutionEnvironment[]>();
+  it('keeps assigned devices usable while an initialized project version refreshes', async () => {
+    const refreshed = deferred<CollaborationExecutionEnvironment[]>()
     const api = {
       projects: {
         get: vi
           .fn()
           .mockResolvedValueOnce(baseProject)
           .mockResolvedValueOnce({
-            ...projectWithDevice("ready", "/workspace"),
+            ...projectWithDevice('ready', '/workspace'),
             version: 2,
           }),
         listExecutionEnvironments: vi
           .fn()
-          .mockResolvedValueOnce([environment("online")])
+          .mockResolvedValueOnce([environment('online')])
           .mockReturnValueOnce(refreshed.promise),
       },
-    } as unknown as SharedWorkspaceApi;
+    } as unknown as SharedWorkspaceApi
 
-    await renderProbe(api, baseProject);
-    expect(container?.textContent).toBe("ready");
+    await renderProbe(api, baseProject)
+    expect(container?.textContent).toBe('ready')
 
     await act(async () =>
       root!.render(
         <Probe
           api={api}
           project={{
-            ...projectWithDevice("ready", "/workspace"),
+            ...projectWithDevice('ready', '/workspace'),
             version: 2,
           }}
-        />,
-      ),
-    );
+        />
+      )
+    )
 
-    expect(container?.textContent).toBe("ready");
-    await act(async () => refreshed.resolve([environment("online")]));
-    expect(container?.textContent).toBe("ready");
-  });
+    expect(container?.textContent).toBe('ready')
+    await act(async () => refreshed.resolve([environment('online')]))
+    expect(container?.textContent).toBe('ready')
+  })
 
-  it("returns the authoritative readiness to an action while the hook is still loading", async () => {
-    const initialLoad = deferred<CollaborationExecutionEnvironment[]>();
+  it('returns the authoritative readiness to an action while the hook is still loading', async () => {
+    const initialLoad = deferred<CollaborationExecutionEnvironment[]>()
     const api = {
       projects: {
-        get: vi.fn(async () => projectWithDevice("ready", "/workspace")),
+        get: vi.fn(async () => projectWithDevice('ready', '/workspace')),
         listExecutionEnvironments: vi
           .fn()
           .mockReturnValueOnce(initialLoad.promise)
-          .mockResolvedValueOnce([environment("online")]),
+          .mockResolvedValueOnce([environment('online')]),
       },
-    } as unknown as SharedWorkspaceApi;
-    const onRefresh = vi.fn();
+    } as unknown as SharedWorkspaceApi
+    const onRefresh = vi.fn()
 
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
     await act(async () =>
       root!.render(
-        <Probe
-          api={api}
-          onRefresh={onRefresh}
-          project={projectWithDevice("ready", "/workspace")}
-        />,
-      ),
-    );
-    expect(container.textContent).toContain("loading");
+        <Probe api={api} onRefresh={onRefresh} project={projectWithDevice('ready', '/workspace')} />
+      )
+    )
+    expect(container.textContent).toContain('loading')
 
     await act(async () => {
-      container
-        ?.querySelector<HTMLButtonElement>('[data-testid="refresh"]')
-        ?.click();
-    });
+      container?.querySelector<HTMLButtonElement>('[data-testid="refresh"]')?.click()
+    })
 
-    expect(onRefresh).toHaveBeenCalledWith("ready");
-    expect(container.textContent).toContain("ready");
-    await act(async () => initialLoad.resolve([]));
-    expect(container.textContent).toContain("ready");
-  });
+    expect(onRefresh).toHaveBeenCalledWith('ready')
+    expect(container.textContent).toContain('ready')
+    await act(async () => initialLoad.resolve([]))
+    expect(container.textContent).toContain('ready')
+  })
 
-  it.each([undefined, "preparing", "error", "ready"] as const)(
-    "does not gate online runners on project preparation status %s",
-    async (status) => {
+  it.each([undefined, 'preparing', 'error', 'ready'] as const)(
+    'does not gate online runners on project preparation status %s',
+    async status => {
       const api = {
         projects: {
           get: vi.fn(),
-          listExecutionEnvironments: vi.fn(async () => [environment("online")]),
+          listExecutionEnvironments: vi.fn(async () => [environment('online')]),
         },
-      } as unknown as SharedWorkspaceApi;
-      await renderProbe(api, projectWithDevice(status));
-      expect(container?.textContent).toBe("ready");
-      expect(api.projects.get).not.toHaveBeenCalled();
+      } as unknown as SharedWorkspaceApi
+      await renderProbe(api, projectWithDevice(status))
+      expect(container?.textContent).toBe('ready')
+      expect(api.projects.get).not.toHaveBeenCalled()
+    }
+  )
+})
+
+it('does not reload merely because the same project was copied into a new object', async () => {
+  const listExecutionEnvironments = vi.fn().mockResolvedValue([environment()])
+  const api = {
+    projects: { listExecutionEnvironments },
+  } as unknown as SharedWorkspaceApi
+  await renderProbe(api, baseProject)
+  await act(async () => root!.render(<Probe api={api} project={{ ...baseProject }} />))
+  expect(listExecutionEnvironments).toHaveBeenCalledOnce()
+  expect(container?.textContent).toBe('ready')
+})
+
+it('isolates a replacement API from a pending response for the same project', async () => {
+  const oldRead = deferred<CollaborationExecutionEnvironment[]>()
+  const firstApi = {
+    projects: {
+      listExecutionEnvironments: vi.fn().mockReturnValue(oldRead.promise),
     },
-  );
-});
+  } as unknown as SharedWorkspaceApi
+  const secondApi = {
+    projects: {
+      listExecutionEnvironments: vi.fn().mockResolvedValue([environment()]),
+    },
+  } as unknown as SharedWorkspaceApi
+  await renderProbe(firstApi, baseProject)
+  await act(async () => root!.render(<Probe api={secondApi} project={baseProject} />))
+  expect(container?.textContent).toBe('ready')
+  await act(async () => oldRead.resolve([]))
+  expect(container?.textContent).toBe('ready')
+})
+
+it('keeps assigned devices visible while changing the polling interval', async () => {
+  const nextRead = deferred<CollaborationExecutionEnvironment[]>()
+  const listExecutionEnvironments = vi
+    .fn()
+    .mockResolvedValueOnce([environment()])
+    .mockReturnValueOnce(nextRead.promise)
+  const api = {
+    projects: { listExecutionEnvironments },
+  } as unknown as SharedWorkspaceApi
+  await renderProbe(api, baseProject)
+  await act(async () =>
+    root!.render(<Probe api={api} project={baseProject} refreshIntervalMs={30_000} />)
+  )
+  expect(container?.textContent).toBe('ready')
+  await act(async () => nextRead.resolve([environment('offline')]))
+  expect(container?.textContent).toBe('offline')
+})
+
+it('pauses polling while hidden, refreshes on visibility and focus, and stops on detach', async () => {
+  vi.useFakeTimers()
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  const listExecutionEnvironments = vi.fn().mockResolvedValue([environment()])
+  const api = {
+    projects: { listExecutionEnvironments },
+  } as unknown as SharedWorkspaceApi
+  await renderProbe(api, baseProject)
+  await act(async () =>
+    root!.render(<Probe api={api} project={baseProject} refreshIntervalMs={1000} />)
+  )
+  listExecutionEnvironments.mockClear()
+  visibility.mockReturnValue('hidden')
+  await act(async () => {
+    vi.advanceTimersByTime(3000)
+    window.dispatchEvent(new Event('focus'))
+  })
+  expect(listExecutionEnvironments).not.toHaveBeenCalled()
+  visibility.mockReturnValue('visible')
+  await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+  expect(listExecutionEnvironments).toHaveBeenCalledOnce()
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(listExecutionEnvironments).toHaveBeenCalledTimes(2)
+  await act(async () => vi.advanceTimersByTime(1000))
+  expect(listExecutionEnvironments).toHaveBeenCalledTimes(3)
+  await act(async () => root!.render(null))
+  await act(async () => {
+    vi.advanceTimersByTime(3000)
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  expect(listExecutionEnvironments).toHaveBeenCalledTimes(3)
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+it('returns not applicable and performs no I/O without a project', async () => {
+  const listExecutionEnvironments = vi.fn()
+  const api = {
+    projects: { listExecutionEnvironments },
+  } as unknown as SharedWorkspaceApi
+  const onRefresh = vi.fn()
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root!.render(<Probe api={api} project={null} onRefresh={onRefresh} />))
+  expect(container.textContent).toContain('not_applicable')
+  await act(async () => container!.querySelector<HTMLButtonElement>('button')!.click())
+  expect(onRefresh).toHaveBeenCalledWith('not_applicable')
+  expect(listExecutionEnvironments).not.toHaveBeenCalled()
+})

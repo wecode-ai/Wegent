@@ -85,8 +85,9 @@ impl RuntimeWorkRpcHandler {
             &self.device_id,
             task,
         );
-        let context = ControlContext::from_request(&request)
+        let mut context = ControlContext::from_request(&request)
             .ok_or_else(|| invalid("Conversation no longer permits personal control"))?;
+        context.use_runtime_backend = true;
         self.validate_control_context(&context)?;
         Ok((context, key.to_owned()))
     }

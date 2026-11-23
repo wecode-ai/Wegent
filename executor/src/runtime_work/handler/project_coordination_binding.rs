@@ -118,6 +118,7 @@ mod tests {
         handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url,
             auth_token: "fixture".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         })));
         let payload = json!({"userId":7,"projectStore":"cloud","projectId":"1001","groupId":"101","binding":{"enabled":true,"expectedGeneration":null,"deviceId":"forged-device"}});

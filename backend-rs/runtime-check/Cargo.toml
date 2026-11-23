@@ -1,0 +1,24 @@
+[package]
+name = "wegent-runtime-check"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Authorized task runtime checkpoints and streaming state"
+
+[dependencies]
+chrono = { workspace = true, features = ["clock", "serde"] }
+wegent-identity = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-task-store = { workspace = true }
+anyhow = { workspace = true }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+wegent-backend-test-support = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync", "time"] }

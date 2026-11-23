@@ -1,5 +1,5 @@
 import { readCiRun } from './ci-run.js'
-import { createTrackedCollector } from './tracked.js'
+import { changeRequestState, createTrackedCollector } from './tracked.js'
 import { createHash } from 'node:crypto'
 import { createGitSourceReader } from './source-read.js'
 import { discoverOpenChanges, coverageEvents } from './repository-baseline.js'
@@ -41,10 +41,68 @@ export function parseProfile(profile) {
   return { instance: value[0], accountId: value[1] }
 }
 
+function branchSelection(branch) {
+  if (branch === undefined) return undefined
+  if (
+    typeof branch !== 'string' ||
+    !branch.trim() ||
+    branch.length > 512 ||
+    /[\x00-\x1f]/.test(branch)
+  )
+    throw invalid('Select an exact change request branch')
+  return { branch, collectionKey: 'git-branch:v1:' + fingerprint(branch) }
+}
+
+async function collectBranch(ctx, platform, source, checkpoint) {
+  const scope = {
+    ...parseProfile(source.profile),
+    profile: source.profile,
+    repository: source.name,
+  }
+  const repository = await ctx.git.read({ ...scope, operation: 'repository' })
+  if (String(repository.data?.id) !== source.id) throw invalid('Repository identity changed')
+  const github = platform === 'github'
+  const path = github
+    ? 'pulls?state=all&sort=updated&direction=desc&per_page=100'
+    : 'merge_requests?scope=all&state=all&order_by=updated_at&sort=desc&per_page=100'
+  const response = await ctx.git.read({ ...scope, operation: 'api', path })
+  if (!Array.isArray(response.data)) throw invalid('Invalid change request list')
+  const number = row => (github ? row.number : row.iid)
+  const match = response.data
+    .filter(row => (github ? row.head?.ref : row.source_branch) === source.branch)
+    .sort(
+      (a, b) =>
+        Number(['open', 'opened'].includes(b.state)) -
+          Number(['open', 'opened'].includes(a.state)) || number(b) - number(a)
+    )[0]
+  const nextCheckpoint = { ...checkpoint, nextCheckAt: Date.now() + 15_000 }
+  if (!match) return { events: [], nextCheckpoint, resourceStates: [], hasMore: false }
+  const result = await ctx.git.read({
+    ...scope,
+    entityKind: 'change_request',
+    number: number(match),
+    operation: github ? 'change_request_status' : 'object',
+  })
+  const data = result.data
+  const url = canonicalTopic(platform, scope.instance, source.name, 'change_request', number(match))
+  if (
+    (data.url ?? data.web_url) !== url ||
+    (data.headRefName ?? data.source_branch) !== source.branch
+  )
+    throw invalid('Observed change request identity or branch changed during collection')
+  const sha = data.headRefOid ?? data.sha ?? data.diff_refs?.head_sha
+  return {
+    events: [],
+    nextCheckpoint,
+    resourceStates: [changeRequestState(platform, url, data, sha)],
+    hasMore: false,
+  }
+}
+
 export function createProvider(platform) {
   const providerId = GIT_PACKAGE + platform
   return {
-    readSource: createGitSourceReader(platform, parseProfile),
+    readSource: createGitSourceReader(platform, parseProfile, canonicalCommentId, personalTarget),
     async check() {
       // A GitLab instance is selected before checking its account; catalog reads
       // must not accidentally probe gitlab.com for an enterprise-only user.
@@ -57,17 +115,19 @@ export function createProvider(platform) {
       } catch {
         throw invalid('Select a Git instance')
       }
+      const branch = branchSelection(query.branch)
       const selection = monitoringMetadata(platform, query.monitoredObjects, {
         fingerprint,
         invalid,
       })
       if (
-        selection &&
+        (selection || branch) &&
         (input.kind !== 'repository' ||
           typeof query.repository !== 'string' ||
           !query.repository.trim())
       )
-        throw invalid('Choose an exact repository for selected-object monitoring')
+        throw invalid('Choose an exact repository for monitoring')
+      if (branch && selection) throw invalid('Choose one change request monitoring scope')
       try {
         const identity = await ctx.git.read({ operation: 'identity', instance: query.instance })
         const profile = required(identity, 'profile')
@@ -144,7 +204,7 @@ export function createProvider(platform) {
                 transport: 'cli',
                 id: String(row.id),
                 name,
-                ...(selection ?? {}),
+                ...(selection ?? branch ?? {}),
               },
             ],
             hasMore: false,
@@ -209,10 +269,22 @@ export function createProvider(platform) {
         if (usesWebhook(source) && (!source.subscriptionId || !source.generation))
           throw invalid('Configure the repository webhook')
       }
-      validateMonitoringSource(platform, source, { fingerprint, invalid })
+      const branch = branchSelection(source.branch)
+      if (branch) {
+        if (
+          source.kind !== 'repository' ||
+          source.transport !== 'cli' ||
+          source.monitoredObjects !== undefined ||
+          source.collectionKey !== branch.collectionKey
+        )
+          throw invalid('Invalid change request branch source')
+      } else {
+        validateMonitoringSource(platform, source, { fingerprint, invalid })
+      }
       return source
     },
     async initialize(ctx, source) {
+      if (source.branch !== undefined) return {}
       const selection = validateMonitoringSource(platform, source, { fingerprint, invalid })
       if (selection)
         return monitoringCheckpoint(platform, source, selection, { canonicalTopic, parseProfile })
@@ -236,6 +308,11 @@ export function createProvider(platform) {
       }
     },
     async collect(ctx, { source, checkpoint, committedCheckpoint = checkpoint, force = false }) {
+      if (source.branch !== undefined) {
+        if (!force && checkpoint.nextCheckAt > Date.now())
+          return { events: [], nextCheckpoint: checkpoint, hasMore: false }
+        return collectBranch(ctx, platform, source, checkpoint)
+      }
       const selection = validateMonitoringSource(platform, source, { fingerprint, invalid })
       if (selection && checkpoint.selectionSignature !== selection.collectionKey)
         checkpoint = monitoringCheckpoint(platform, source, selection, {
@@ -265,6 +342,13 @@ export function createProvider(platform) {
           )
         )
           throw invalid('Monitoring checkpoint contains an unselected object')
+        if (
+          platform === 'github' &&
+          source.observeCurrentStatus === true &&
+          selection.monitoredObjects.length === 1 &&
+          selection.monitoredObjects[0].entityKind === 'change_request'
+        )
+          return collectTracked(ctx, platform, source, next, { statusWait: true, force })
         if ((next.trackIndex ?? 0) === 0 && (next.trackStep ?? 0) === 0 && (next.page ?? 1) === 1) {
           const repository = await ctx.git.read({
             ...parseProfile(source.profile),

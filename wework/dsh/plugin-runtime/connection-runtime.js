@@ -1,5 +1,19 @@
-import { ConnectionRegistry, dependencySources } from './connections.js'
+import { ConnectionError, ConnectionRegistry, dependencySources } from './connections.js'
 import { connectionTools } from './connection-tools.js'
+import { collectObservation } from './connection-observations.js'
+import { EventBus } from './event-bus.js'
+
+function queryKey(value) {
+  return JSON.stringify(value, (_, item) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.keys(item)
+            .sort()
+            .map(key => [key, item[key]])
+        )
+      : item
+  )
+}
 
 /** Provider execution depends on read capabilities, never on a model session. */
 export function createConnectionRuntime({ dependencies, request, satisfies, beforeRequest }) {
@@ -21,9 +35,61 @@ export function createConnectionRuntime({ dependencies, request, satisfies, befo
         ),
       }),
   })
+  const events = new EventBus()
+  const registered = new WeakSet()
   return {
     registry,
+    events,
+    collect(providerId, input, signal) {
+      const entry = registry.entries.get(providerId)
+      if (!entry)
+        throw new ConnectionError('connection_unavailable', 'Connection plugin is not active')
+      if (!registered.has(entry)) {
+        const unregister = events.registerProvider(providerId, {
+          plan(entries) {
+            const groups = new Map()
+            for (const entry of entries) {
+              const key = queryKey(entry.query)
+              const group = groups.get(key) ?? { key, query: entry.query, entries: [] }
+              group.entries.push(entry)
+              groups.set(key, group)
+            }
+            return groups.values()
+          },
+          poll(input, signal) {
+            return collectObservation(registry, providerId, input, { signal })
+          },
+          select: result => result,
+        })
+        entry.controller.signal.addEventListener('abort', unregister, { once: true })
+        registered.add(entry)
+      }
+      const query = {
+        source: input.source,
+        checkpoint: input.checkpoint ?? null,
+        force: input.force === true,
+      }
+      return events.request(providerId, query, signal)
+    },
+    dispose() {
+      events.stop()
+      registry.dispose()
+    },
     registration: () => ({
+      observationOnlyProviders: [...registry.entries.values()]
+        .map(entry => ({
+          providerId: entry.id,
+          resourceKinds: entry.provider.resourceKinds.filter(
+            kind => !entry.provider.reviewHistory?.resourceKinds.includes(kind)
+          ),
+        }))
+        .filter(entry => entry.resourceKinds.length),
+      reviewHistoryProviders: [...registry.entries.values()]
+        .filter(entry => entry.provider.reviewHistory)
+        .map(entry => ({
+          providerId: entry.id,
+          resourceKinds: entry.provider.reviewHistory.resourceKinds,
+        })),
       providerGuidance: [...registry.entries.values()]
         .filter(entry => entry.provider.assistance)
         .map(entry => ({ providerId: entry.id, assistance: entry.provider.assistance })),

@@ -1,6 +1,26 @@
 use super::super::tests::{context, seed, EnvGuard};
 use super::*;
 
+#[test]
+fn connection_provider_discovery_exposes_details_only_for_the_selected_provider() {
+    let github = json!({"id": "github", "displayName": "GitHub", "resourceKinds": ["repository"],
+        "availability": {"status": "ready"}, "assistance": {"observe": ["Wait for checks"]}});
+    let catalog = json!({"items": [github, {"id": "gitlab"}]});
+    let summary = connection_event_provider_catalog(catalog.clone(), None).unwrap();
+    assert_eq!(summary["items"][0]["id"], "github");
+    assert!(summary["items"][0].get("assistance").is_none());
+    assert_eq!(summary["_meta"]["connectionEventProviderCatalog"], catalog);
+
+    let selected = connection_event_provider_catalog(catalog.clone(), Some("github")).unwrap();
+    assert_eq!(selected, json!({"items": [github]}));
+    assert_eq!(
+        connection_event_provider_catalog(catalog, Some("missing"))
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+}
+
 fn seed_claude(handler: &RuntimeWorkRpcHandler, task: &str) -> RuntimeTaskLink {
     let mut link = seed(handler, task);
     link.runtime = "claude_code".into();
@@ -359,6 +379,54 @@ fn current_goal_identity_phase_and_read_failures_govern_wait_cancellation() {
             handler.reconcile_connection_goal_waits("caller").await.unwrap();
             assert_eq!(event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id]["status"].clone())).unwrap(), if retained {phase} else {"cancelled"}, "{phase}/{current}");
         }
+        let link = handler.store.get_task("caller").unwrap();
+        handler.set_claude_goal(&link, &initial);
+        let receipt = json!({
+            "task_id": "caller",
+            "subscription_key": "guided",
+            "status": "resuming_goal",
+            "operation_id": "event-operation",
+            "native_guidance": "accepted",
+            "waiting_goal": goal_identity(&initial),
+            "session": session::binding(&link).unwrap(),
+        });
+        handler.save_event_subscription("guided-reconcile", &receipt).unwrap();
+        let link = handler.store.get_task("caller").unwrap();
+        handler.set_claude_goal(&link, &json!({"status":"complete"}));
+        handler.reconcile_connection_goal_waits("caller").await.unwrap();
+
+        let link = handler.store.get_task("caller").unwrap();
+        handler.set_claude_goal(&link, &initial);
+        handler.save_event_subscription("guided-sync", &receipt).unwrap();
+        let mut unrelated = receipt.clone();
+        unrelated["waiting_goal"]["objective"] = json!("Previous work");
+        handler.save_event_subscription("guided-replaced", &unrelated).unwrap();
+        let mut previous_session = receipt.clone();
+        previous_session["session"]["id"] = json!("previous-native-session");
+        handler.save_event_subscription("guided-previous-session", &previous_session).unwrap();
+        let result = handler.set_task_goal(json!({"taskId":"caller","status":"complete"})).await.unwrap();
+        assert_eq!(result["accepted"], true);
+        let projection = event_store::read(
+            &handler.event_subscription_path(),
+            event_store::Scope::TaskProjection("caller"),
+            |state| Ok(state["operations"].clone()),
+        ).unwrap();
+        for id in ["guided-reconcile", "guided-sync"] {
+            assert_eq!(projection[id]["status"], "delivered", "{id}");
+            assert_eq!(projection[id]["operation_id"], "event-operation");
+        }
+        for id in ["guided-replaced", "guided-previous-session"] {
+            assert!(projection[id].is_null(), "{id}");
+            assert_eq!(
+                event_store::read(
+                    &handler.event_subscription_path(),
+                    event_store::Scope::Row("operations", id),
+                    |state| Ok(state["operations"][id]["status"].clone()),
+                ).unwrap(),
+                "cancelled",
+                "{id}"
+            );
+        }
         let mut link = handler.store.get_task("caller").unwrap();
         handler.set_claude_goal(&link, &initial);
         let record = json!({"task_id":"caller","subscription_key":"unavailable","status":"armed","waiting_goal":goal_identity(&initial),"session":session::binding(&link).unwrap()});
@@ -369,6 +437,59 @@ fn current_goal_identity_phase_and_read_failures_govern_wait_cancellation() {
         assert!(handler.reconcile_connection_goal_waits("caller").await.is_err());
         assert_eq!(event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"]["unavailable"]["status"].clone())).unwrap(), "armed");
     });
+}
+
+#[test]
+fn goal_status_sync_projects_native_status_when_wait_storage_fails() {
+    let _guard = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _env = EnvGuard::home(root.path().to_str().unwrap());
+    let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+    let link = seed_claude(&handler, "caller");
+    let goal = handler.set_claude_goal(
+        &link,
+        &json!({"objective":"Finish work","status":"blocked","tokenBudget":500}),
+    );
+    let waiting = json!({
+        "task_id": "caller",
+        "subscription_key": "wait",
+        "status": "armed",
+        "waiting_goal": goal_identity(&goal),
+        "session": session::binding(&link).unwrap(),
+    });
+    handler.save_event_subscription("wait", &waiting).unwrap();
+    let mut delivered = waiting.clone();
+    delivered["status"] = json!("delivered");
+    handler
+        .save_event_subscription("delivered", &delivered)
+        .unwrap();
+    let connection = rusqlite::Connection::open(handler.event_subscription_path()).unwrap();
+    connection
+        .execute(
+            "UPDATE records SET metadata='invalid' WHERE section='operations' AND id='delivered'",
+            [],
+        )
+        .unwrap();
+    let mut active = goal;
+    active["status"] = json!("active");
+    handler.sync_runtime_task_goal_status("caller", Some("active".into()), Some(&active));
+    assert_eq!(
+        handler
+            .store
+            .get_task("caller")
+            .unwrap()
+            .goal_status
+            .as_deref(),
+        Some("active"),
+    );
+    let wait_status: String = connection
+        .query_row(
+            "SELECT status FROM records WHERE section='operations' AND id='wait'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(wait_status, "armed", "The failed projection must roll back");
 }
 
 #[test]

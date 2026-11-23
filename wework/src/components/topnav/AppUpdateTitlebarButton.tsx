@@ -1,7 +1,8 @@
-import { Download, Loader2 } from 'lucide-react'
 import { useAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Download, Loader2 } from 'lucide-react'
 
 export function AppUpdateTitlebarButton() {
   const { availableUpdate, status, installUpdate } = useAppUpdate()
@@ -12,7 +13,8 @@ export function AppUpdateTitlebarButton() {
   const isBusy = status === 'downloading' || status === 'installing'
 
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="titlebar-app-update-button"
       disabled={isBusy}
@@ -37,6 +39,6 @@ export function AppUpdateTitlebarButton() {
               defaultValue: '更新',
             })}
       </span>
-    </button>
+    </ControlButton>
   )
 }

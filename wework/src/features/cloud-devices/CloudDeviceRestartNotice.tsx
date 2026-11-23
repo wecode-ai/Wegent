@@ -1,6 +1,7 @@
-import { AlertCircle, Check, Loader2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Check, Loader2 } from 'lucide-react'
 import type { DeviceLifecyclePhase } from './useDeviceOfflineLifecycleAction'
 
 export function CloudDeviceRestartNotice({
@@ -72,14 +73,15 @@ export function CloudDeviceRestartNotice({
         )}
       </span>
       {isError || isTimeout ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`connection-device-restart-${isError ? 'retry' : 'refresh'}-${deviceId}`}
           onClick={isError ? onRetry : onRefresh}
           className="min-h-11 min-w-11 shrink-0 rounded-md border border-current/30 px-2 py-1 font-medium hover:bg-background/50 md:min-h-0 md:min-w-0"
         >
           {isError ? t(`${keyPrefix}_retry`) : t(`${keyPrefix}_refresh`)}
-        </button>
+        </ControlButton>
       ) : null}
     </div>
   )

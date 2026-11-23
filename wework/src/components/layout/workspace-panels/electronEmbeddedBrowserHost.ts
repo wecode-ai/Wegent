@@ -33,6 +33,26 @@ const WEBVIEW_TRANSFER_RETENTION_MS = 6_000
 const rendererInstanceId = getRendererInstanceId()
 const hostedWebviews = new Map<string, HostedElectronWebview>()
 let nextHostGeneration = 0
+const hostListeners = new WeakMap<HostedElectronWebview, Set<() => void>>()
+
+export function subscribeElectronEmbeddedBrowserView(
+  host: HostedElectronWebview,
+  listener: () => void
+) {
+  let listeners = hostListeners.get(host)
+  if (!listeners) {
+    listeners = new Set()
+    hostListeners.set(host, listeners)
+  }
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+function publishHost(host: HostedElectronWebview) {
+  for (const listener of hostListeners.get(host) ?? []) listener()
+}
 
 function getRendererInstanceId() {
   const storageKey = 'wework.browser.renderer-instance-id'
@@ -145,6 +165,7 @@ function destroyHostedWebview(host: HostedElectronWebview) {
   if (hostedWebviews.get(host.label) === host) hostedWebviews.delete(host.label)
   destroyElectronWebview(host.webview)
   host.container.remove()
+  publishHost(host)
 }
 
 function connectedHostedWebview(label: string): HostedElectronWebview | null {
@@ -210,6 +231,7 @@ function assignOwner(host: HostedElectronWebview, owner: symbol): void {
     })
   }
   host.owner = owner
+  publishHost(host)
 }
 
 export function claimElectronEmbeddedBrowserView(
@@ -247,10 +269,12 @@ export function releaseElectronEmbeddedBrowserView(
   host.owner = nextClaim?.owner ?? null
   if (nextClaim) {
     applyClaim(host, nextClaim)
+    publishHost(host)
     return
   }
   host.container.style.pointerEvents = 'none'
   host.container.style.visibility = 'hidden'
+  publishHost(host)
   if (host.retained) return
   queueMicrotask(() => {
     if (host.owner !== null || host.retained) return

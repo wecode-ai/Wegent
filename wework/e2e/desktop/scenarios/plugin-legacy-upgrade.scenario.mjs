@@ -76,10 +76,6 @@ export async function createDesktopScenario({
   const evidence = []
   const publishedReleases = new Map()
   const userHomeFor = release => join(homePath, `legacy-${release.version}`)
-  const rootFor = release =>
-    namespace
-      ? join(userHomeFor(release), '.wework/apps', namespace)
-      : join(userHomeFor(release), '.wework')
   const workbenchFor = release => join(userHomeFor(release), '.wegent/workbench')
   const desktopFor = release => join(workbenchFor(release), 'wework', namespace || 'default')
   const environment = release => ({
@@ -139,7 +135,9 @@ export async function createDesktopScenario({
   }
 
   async function seed(release) {
-    const root = rootFor(release)
+    // Exercise plugin-format migration in the Home both binaries explicitly use.
+    // Desktop startup no longer relocates the historical installer's Home.
+    const root = desktopFor(release)
     await mkdir(join(root, 'codex'), { recursive: true })
     await copyFile(seedConfig, join(root, 'codex/config.toml'))
     const userSkill = join(userHomeFor(release), 'personal-skill/SKILL.md')
@@ -164,19 +162,24 @@ export async function createDesktopScenario({
       ...delivered.evidence,
     })
     const fixtures = {}
-    // The install endpoint selects the marketplace latest. Pin the account before
-    // the historical executor connects so an earlier baseline's latest cannot
-    // be materialized into this baseline's native cache.
+    // Pin the account before the historical executor connects so it cannot
+    // materialize a newer release left by an earlier baseline.
     for (const [role, original] of Object.entries(delivered.packages)) {
       const fixture = await publish(original)
       let installed = await accountPlugin(cloud, fixture.slug)
       if (!installed) {
-        await pluginApi(cloud, `/plugins/marketplace/${fixture.pluginId}/install`, 'POST')
-        installed = await accountPlugin(cloud, fixture.slug)
+        const result = await pluginApi(
+          cloud,
+          `/plugins/marketplace/${fixture.pluginId}/install?release_id=${fixture.releaseId}`,
+          'POST'
+        )
+        installed = result.plugin
       }
       assert.ok(installed, 'The historical plugin installation is missing')
       fixture.installedId = Number(installed.metadata.labels.id)
-      await update(fixture, null, { releaseId: fixture.releaseId })
+      if (installed.spec.releaseId !== fixture.releaseId) {
+        await update(fixture, null, { releaseId: fixture.releaseId })
+      }
       fixture.installState = {
         updatePolicy: 'manual',
         ...(role === 'disabled'

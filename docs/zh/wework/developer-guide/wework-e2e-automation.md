@@ -28,6 +28,8 @@ Python 下载描述的 200ms 期限只覆盖 HTTP 响应头和正文。获取凭
 Backend 身份校验在 HTTP 计时范围外完成，避免把串行存储等待算成网络超时；返回地址前
 仍须拒绝 Backend 切换并检查地址是否过期。父窗口日志以 `parent-python-downloads-failed` 记录安全的
 错误分类，可区分描述请求超时，不记录凭据或下载地址。
+Linux Core 分片平衡使用同机运行的超时证据来隔离 Python 启动，包括避免与 `stand-in-cli`、
+`quota-recovery` 和 `permission-modes` 同机运行。
 
 协议专用用例先确认新会话已激活，再打开选择器并实际点选目标模型，不能把旧会话仍可见的输入框或临时默认标签当成配置完成。独立目录可能稍后恢复已配置的默认模型；只有显式选择才能固定协议用例的模型意图。模型目录可能在菜单打开后继续发布推理能力；已经打开的模型列表保持当前面板，显式选中模型后再进入强度面板。Catalog 保存等待器同时观察原生目录重载、编辑器关闭和重启确认框，不能仅凭后台重载日志判定保存交互结束。提及分页的测试任务使用共享批处理器清理，每批最多 8 个请求；清理失败必须显式报错，避免并发清理耗尽 Backend 连接池后污染下一条用例。
 
@@ -40,6 +42,14 @@ Issue 悬浮标题检查使用 1440×720 内容视口，先验证滚动区存在
 普通桌面 E2E 即使未设置发布槽位目录，也会把经过脱敏的 `[shutdown-step]` 和 `[application-quit]` 记录同步写入 `app.log` 的捕获流，避免原生退出时遗失异步输出。Linux 退出等待失败时还记录该进程的线程状态、等待通道及可读取的内核栈；读取失败只作为诊断记录，不替换原始失败。仅由 `traceShutdownStep` 包装的步骤（如 `desktop-runtime`、`control-bridge` 和 `workspace-catalog-log`）记录开始、完成或失败；`completed` 仅表示包装回调未抛出异常。`systemResume.stop()` 未被包装；`performance-recording` 内部会捕获录制器停止错误，因此其 `completed` 不能证明录制器刷新成功，仍需检查 `[performance]` 错误日志。结合这些记录可区分已跟踪的清理流程未结束与 Electron 已触发退出事件但原生进程未结束。发布槽位仍保留自己的 `activation-diagnostics.log`。这些诊断不改变退出预算或进程存活断言。
 
 ## 运行方式
+
+在 macOS 上，可以用既有的流式会话检查点对比多窗口 renderer CPU：
+
+```bash
+WEWORK_E2E_SAMPLE_BACKGROUND_CPU=1 pnpm --filter wework e2e:desktop --segment streaming-conversation-switching
+```
+
+保持第二个窗口打开，分别测量任务窗口获得焦点、可见但失焦和最小化时的 renderer 进程累计 CPU 时间。每段向同一任务发送等量、同节奏的模型增量。`[background-window-cpu]` 记录采样时长、进程数和 CPU 时间。普通 CI 只验证最小化期间的任务进度接收、聚焦恢复和完成未读状态。
 
 首次运行需要安装 Playwright 浏览器：
 

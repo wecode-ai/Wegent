@@ -290,7 +290,7 @@ async fn api(
     endpoint: &str,
     body: Option<&Value>,
 ) -> Result<ApiReply, AppIpcError> {
-    api_request(platform, instance, method, endpoint, body)
+    api_request(platform, instance, method, endpoint, body, None)
         .await
         .map_err(|failure| failure.error)
 }
@@ -413,6 +413,7 @@ async fn api_request(
     method: &str,
     endpoint: &str,
     body: Option<&Value>,
+    pr_number: Option<u64>,
 ) -> Result<ApiReply, GitRequestError> {
     let hostname = instance
         .strip_prefix("https://")
@@ -438,6 +439,10 @@ async fn api_request(
         return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
     }
     let mut command = git_cli_command(platform, std::env::vars().collect());
+    if pr_number.is_some() {
+        // gh HTTP debug output can contain request and response bodies.
+        command.env_remove("GH_DEBUG").env_remove("DEBUG");
+    }
     command.args([
         "api",
         "--include",
@@ -478,7 +483,14 @@ async fn api_request(
         }
         let (out,err)=tokio::try_join!(bounded_output(&mut stdout,2*1024*1024),bounded_output(&mut stderr,8192))?;
         let status=child.wait().await.map_err(|_|invalid("Git CLI failed"))?;
-        let DecodedReply { status: http_status, poll_interval, retry_at: retry, body: response_body } = decode_reply(&out)?;
+        let decoded = decode_reply(&out);
+        if let Some(number) = pr_number.filter(|_| !status.success() || decoded.is_err()) {
+            let http_status = decoded.as_ref().ok()
+                .filter(|_| out.starts_with(b"HTTP/"))
+                .map(|reply| reply.status);
+            status::log_cli_failure(number, http_status, status.code(), &err);
+        }
+        let DecodedReply { status: http_status, poll_interval, retry_at: retry, body: response_body } = decoded?;
         if http_status==429 || (http_status==403 && retry.is_some()) {
             if let Ok(mut limits)=rate_limits().lock(){limits.insert(instance.to_owned(),retry.unwrap_or_else(||chrono::Utc::now().timestamp_millis()+60000));}
             return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
@@ -521,6 +533,12 @@ fn definite_rejection(status: u16) -> bool {
 pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
     let platform = provider(&input)?;
     let instance = instance(&input, platform)?;
+    if input["operation"] == "change_request_status" && platform == "github" {
+        let (response, profile) = status::read(&instance, &input).await?;
+        return Ok(
+            json!({"data":response.data,"profile":profile,"pollIntervalSeconds":response.poll_interval}),
+        );
+    }
     let identity = api(platform, &instance, "GET", "user", None).await?.data;
     let id = identity["id"]
         .as_str()
@@ -534,22 +552,9 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
         return Err(invalid("Missing account ID"));
     }
     let profile = json!([instance, id]).to_string();
-    if let Some(expected) = input["profile"].as_str() {
-        if expected != profile {
-            return Err(AppIpcError::new(
-                "git_account_changed",
-                "The selected CLI account changed",
-            ));
-        }
-    }
+    verify_profile(&input, &profile)?;
     if input["operation"] == "identity" {
         return Ok(json!({"profile":profile,"accountId":id,"login":login,"instance":instance}));
-    }
-    if input["operation"] == "change_request_status" && platform == "github" {
-        let response = status::read(&instance, &input).await?;
-        return Ok(
-            json!({"data":response.data,"profile":profile,"pollIntervalSeconds":response.poll_interval}),
-        );
     }
     if input["operation"] == "job_log" {
         endpoint(
@@ -611,8 +616,39 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
     bound["accountId"] = json!(id);
     bound["login"] = json!(login);
     let path = endpoint(platform, &bound)?;
+    if input["operation"] == "checks" {
+        if let Some(expected) = input.get("repositoryId") {
+            let repository_path = endpoint(
+                platform,
+                &json!({"operation":"repository","repository":input["repository"]}),
+            )?;
+            let repository = api(platform, &instance, "GET", &repository_path, None).await?;
+            verify_repository_id(&repository.data["id"], expected)?;
+        }
+    }
     let data = api(platform, &instance, "GET", &path, None).await?;
     Ok(json!({"data":data.data,"profile":profile,"pollIntervalSeconds":data.poll_interval}))
+}
+
+fn verify_repository_id(actual: &Value, expected: &Value) -> Result<(), AppIpcError> {
+    let repository_id = actual.as_u64().map(|id| id.to_string());
+    if repository_id.is_none() || repository_id.as_deref() != expected.as_str() {
+        return Err(invalid("Repository identity changed"));
+    }
+    Ok(())
+}
+
+fn verify_profile(input: &Value, profile: &str) -> Result<(), AppIpcError> {
+    if input["profile"]
+        .as_str()
+        .is_some_and(|expected| expected != profile)
+    {
+        return Err(AppIpcError::new(
+            "git_account_changed",
+            "The selected CLI account changed",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn write_target(input: &Value) -> Result<(&str, String), AppIpcError> {
@@ -649,9 +685,16 @@ pub(crate) async fn write(input: Value) -> Result<Value, GitRequestError> {
     check["operation"] = json!("identity");
     read(check).await.map_err(GitRequestError::not_sent)?;
     let (method, path) = write_target(&input).map_err(GitRequestError::not_sent)?;
-    let mut result = api_request(platform, &instance, method, &path, Some(&input["body"]))
-        .await?
-        .data;
+    let mut result = api_request(
+        platform,
+        &instance,
+        method,
+        &path,
+        Some(&input["body"]),
+        None,
+    )
+    .await?
+    .data;
     let parts: Vec<_> = input["path"].as_str().unwrap_or("").split('/').collect();
     if parts
         .iter()
@@ -820,6 +863,7 @@ mod tests {
             "POST",
             "repos/org/repo/issues",
             Some(&oversized),
+            None,
         )
         .await
         .err()
@@ -830,8 +874,15 @@ mod tests {
             .lock()
             .unwrap()
             .insert(host.into(), chrono::Utc::now().timestamp_millis() + 60000);
-        let result =
-            api_request("gitlab", host, "POST", "projects/1/hooks", Some(&json!({}))).await;
+        let result = api_request(
+            "gitlab",
+            host,
+            "POST",
+            "projects/1/hooks",
+            Some(&json!({})),
+            None,
+        )
+        .await;
         rate_limits().lock().unwrap().remove(host);
         let failure = result.err().unwrap();
         assert_eq!(failure.error.code, "git_rate_limited");

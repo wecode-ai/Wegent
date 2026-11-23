@@ -7,10 +7,12 @@ export async function configureCatalogReasoning(control) {
   for (const effort of EFFORTS) {
     const selector = `[data-testid="local-model-reasoning-level-${effort}"]`
     await control.command('waitFor', selector, { visible: true })
-    const checked = Number(await control.command('getElementCount', `${selector}:checked`)) === 1
-    if (checked !== CATALOG_EFFORTS.includes(effort)) {
+    const expected = String(CATALOG_EFFORTS.includes(effort))
+    const checked = await control.command('getAttribute', selector, { value: 'aria-checked' })
+    if (checked !== expected) {
       await control.command('click', selector)
     }
+    await control.command('waitFor', `${selector}[aria-checked="${expected}"]`)
   }
   await control.command('fill', '[data-testid="local-model-default-reasoning-input"]', {
     value: 'high',

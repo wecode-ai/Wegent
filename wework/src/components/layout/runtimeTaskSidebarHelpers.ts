@@ -21,6 +21,14 @@ export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
   return task.recencyAt ?? task.updatedAt ?? task.createdAt ?? undefined
 }
 
+export function getRuntimeTaskActivityTime(task: RuntimeTaskSummary): number {
+  const value = getRuntimeTaskTime(task)
+  if (value === undefined) return 0
+  const numeric = typeof value === 'number' ? value : Number(value)
+  const timestamp = Number.isFinite(numeric) ? numeric : new Date(value).getTime()
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
 export function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
   return task.status?.trim().toLowerCase() === 'queued'
 }

@@ -12,6 +12,7 @@ import {
 } from './shared.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { verifyBackendGitProjectCreation } from './backend-git-project-creation.mjs'
+import { waitForControlValue } from './workspace-flows.mjs'
 
 const ACCOUNT_ID = 'desktop-git-recovery'
 const TOKEN = 'desktop-git-recovery-synthetic-token'
@@ -130,11 +131,18 @@ export async function verifyGitCloneRecovery(control, cloud, setPhase) {
     await mkdir(targetRoot, { recursive: true })
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-remote-option"]')
-    await control.command('waitFor', '[data-testid="standalone-remote-device-select"]')
-    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    const devicePicker = '[data-testid="standalone-remote-device-select"]'
+    await control.command('waitFor', devicePicker)
+    await control.command('select', devicePicker, {
       value: CLOUD_DEVICE_ID,
     })
-    await control.command('click', '[data-testid="remote-project-source-git"]')
+    await waitForControlValue(
+      control,
+      devicePicker,
+      CLOUD_DEVICE_ID,
+      'The credential recovery fixture must use the executor configured with its CA'
+    )
+    await control.command('clickWhenEnabled', '[data-testid="remote-project-source-git"]')
     await control.command('waitFor', '[data-testid="remote-project-git-parent-input"]')
     await control.command('fill', '[data-testid="remote-project-git-parent-input"]', {
       value: targetRoot,

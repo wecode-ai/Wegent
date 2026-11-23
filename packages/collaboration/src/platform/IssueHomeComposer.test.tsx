@@ -64,6 +64,7 @@ describe("Issue creation through the task composer port", () => {
   it("assigns only retained member references belonging to the selected project", async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     const container = document.createElement("div");
+    document.body.append(container);
     const root = createRoot(container);
     // Exercise one retained draft; accepted submissions clear its attachments.
     const onSubmit = vi.fn(async () => false);
@@ -220,6 +221,7 @@ describe("Issue creation through the task composer port", () => {
       }
     } finally {
       await act(async () => root.unmount());
+      container.remove();
     }
   });
 });

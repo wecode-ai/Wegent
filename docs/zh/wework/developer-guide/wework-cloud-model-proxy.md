@@ -54,6 +54,8 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 | `standard`      | 使用标准 function 工具格式，转换 `tool_search`、namespace 和 custom tools，并恢复返回给 Codex 的工具身份。适用于不支持 Codex 原生工具类型的 Kimi Responses 等服务。 |
 | `passthrough`   | 仅替换路由所需的模型 ID 和鉴权信息；其余请求业务字段原样保留，响应流也不做协议改写。仅适用于 OpenAI Responses 上游。                                                |
 
+OpenAI Responses 上游在 `auto` 和 `standard` 模式下会收到 `type: "message"`、`role: "developer"` 形式的 Codex 子代理消息。出站条目只发送标准消息字段，发送者和接收者保留在 Codex 的消息正文中。
+
 透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
 
 官方 ChatGPT 的内部路由是一条独立的透传路径。它保留相同的原生字段和响应流行为，但兼容层仍会规范化不可移植的推理历史，并在模型切换后的首个请求执行清理。这样普通对话和助理共用一条路由，同时不会把第三方 `reasoning_text` 或过期密封状态发送给官方 endpoint。
@@ -84,6 +86,10 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 `standard` 模式只向上游提供客户端可执行的 function tools，不提供 `web_search`、`image_generation` 等服务端内置工具。若请求通过 `tool_choice` 强制选择服务端工具，代理返回 HTTP 400；`auto` 和 `passthrough` 继续保留这些工具。
 
 #### 通用 Responses 工具兼容
+
+Responses 转为普通 function 工具、转为 Chat Completions 或转为 Anthropic Messages 时，代理将服务端工具搜索结果合并到出站工具目录，并从会话历史中省略没有 `call_id` 的服务端搜索调用与结果。已配对的常规工具调用和结果保留原有 ID 和顺序。原生 Responses 透传保留完整搜索历史。
+
+协议适配前，代理移除 assistant 消息中的空 `output_text` 文本块。若该消息因此没有剩余内容，代理会省略整条消息。若完整的工具调用及其结果之间夹有 assistant 消息，代理将这些消息移到该组工具调用之前。
 
 所有模型流共用 executor 的 SSE 分帧和数据解析模块，包括 Responses 工具桥接、普通 Responses、透传检查、Chat Completions、Anthropic Messages、工具历史记录和 Harness 适配器。解析按流中的先后顺序处理 LF、CRLF 和 CR 边界，跨块 CRLF 仍作为一个换行；拼接同一事件的全部 `data:` 行，并在网络块之间保留未完整接收的 UTF-8 字符。Responses 的工具分发和终态识别以 JSON `type` 为准，不依赖可选的 SSE `event:` 字段；重写事件时替换全部旧数据行，同时保留事件元数据。透传检查和历史记录不会修改转发的数据块。
 
@@ -159,6 +165,14 @@ executor 持久化已进入恢复的失败轮次 ID。读取原生或缓存历�
 诊断日志 `codex overloaded turn recovery` 记录 thread、重试序号、上限和等待
 毫秒数。桌面检查点 `model-overload-recovery` 使用真实 Electron、Codex 和
 executor 验证工具结果保留、无重复用户消息、自动恢复与取消。
+
+### Codex 外部上下文转换
+
+Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。发往 Chat Completions 或 Anthropic Messages 前，executor 在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍分别通过 `tool_call_id` 或 `tool_use_id` 与原调用配对。
+
+### Codex 子代理消息转换
+
+executor 将 Codex 子代理的 `agent_message` 规范为 `developer` 消息。Chat Completions 适配器将其转换为 `messages` 中的 `system` 消息，Anthropic Messages 适配器将其写入请求的 `system` 字段。`model-sse-parsing` 检查点使用真实 Codex 父子代理和模拟 Anthropic 上游，验证子代理任务及完成结果都通过该字段送达。
 
 ### Anthropic 空输出恢复
 

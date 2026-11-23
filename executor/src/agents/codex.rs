@@ -159,6 +159,7 @@ pub(crate) use turn_recovery::same_goal_configuration;
 mod isolated_turn;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
+pub(crate) use thread_action::ModelActionRegistration;
 mod thread_resume;
 
 use debug_stdout::CodexStdout;
@@ -2232,17 +2233,6 @@ fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {
                     .is_some_and(|value| !value.is_null())
                     .to_string(),
             ),
-            (
-                "failure_reason",
-                params["failureReason"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "error",
-                diagnostics::redact_diagnostic_text(params["error"].as_str().unwrap_or_default()),
-            ),
         ],
     );
 }
@@ -2736,7 +2726,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
-        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
+        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         let active_turn_id = if awaits_initial_goal_turn || awaits_event_goal_turn || resume_goal_only || restored_quota_goal {
@@ -2768,7 +2758,11 @@ async fn run_codex_app_server_turn_on_shared_client(
                 ),
             )
             .await?;
-            turn_start_response_id(&turn_start_response)
+            let native_turn = turn_start_response_id(&turn_start_response);
+            if let Some(id) = native_turn.as_deref().filter(|_| quota_resume.is_none()) {
+                crate::task_runtime::mcp::bind_stand_in_turn_context(request, id);
+            }
+            native_turn
         };
         if let Some(turn_id) = active_turn_id.as_ref() {
             if let Some(callback) = active_turn_started.as_ref() {
@@ -2806,6 +2800,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 overload_turn_recovering,
                 wait_for_goal_continuation,
                 auto_approve_mcp_tool_calls,
+                auto_approve_commands: codex_auto_approve_commands(request),
                 stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(request),
             },
         )
@@ -2895,25 +2890,25 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
             ),
         ];
     };
-    let mcp_keys = config
-        .keys()
-        .filter(|key| key.starts_with("mcp_servers."))
-        .collect::<Vec<_>>();
-    let server_names = mcp_keys
-        .iter()
-        .filter_map(|key| {
-            key.strip_prefix("mcp_servers.")?
-                .split('.')
-                .next()
-                .map(|name| name.trim_matches('"').to_owned())
-        })
-        .filter(|name| !name.is_empty())
+    let servers = config.get("mcp_servers").and_then(Value::as_object);
+    let server_names = servers
+        .into_iter()
+        .flat_map(|servers| servers.keys().cloned())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>()
         .join(",");
     vec![
-        ("mcp_config_key_count", mcp_keys.len().to_string()),
+        (
+            "mcp_config_key_count",
+            servers
+                .into_iter()
+                .flat_map(|servers| servers.values())
+                .filter_map(Value::as_object)
+                .map(Map::len)
+                .sum::<usize>()
+                .to_string(),
+        ),
         ("mcp_server_names", server_names),
         ("reasoning_effort", reasoning_effort),
         (
@@ -2986,6 +2981,9 @@ async fn run_codex_app_server_turn_with_runtime(
     let mut process = match spawn_codex_app_server(binary, &launch_config, launch_config.auth_mode)
     {
         Ok(child) => {
+            if let Some(pid) = child.id() {
+                fields.push(("process_id", pid.to_string()));
+            }
             log_executor_event("codex app-server started", &fields);
             CodexTurnProcess { child }
         }
@@ -3165,7 +3163,7 @@ async fn run_codex_app_server_turn_with_runtime(
         }
 
         let turn_input = turn_input(&request.prompt);
-        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
+        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         turn_fields.push(("input_items", turn_input.len().to_string()));
         log_executor_event("codex turn request started", &turn_fields);
@@ -3238,6 +3236,7 @@ async fn run_codex_app_server_turn_with_runtime(
                     notifications,
                     request_user_input_answers,
                     auto_approve_mcp_tool_calls,
+                    auto_approve_commands: codex_auto_approve_commands(request),
                     defer_interactive_forms,
                     stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
                         request,
@@ -3325,6 +3324,7 @@ struct SharedTurnNotificationOptions {
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
     wait_for_goal_continuation: bool,
     auto_approve_mcp_tool_calls: bool,
+    auto_approve_commands: bool,
     stand_in_single_approval: bool,
 }
 
@@ -3548,12 +3548,6 @@ async fn read_shared_turn_notifications(
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
         }
-        if let Some(error) = required_mcp_startup_failure(&message) {
-            if let Some(sender) = &options.notifications {
-                let _ = sender.send(message);
-            }
-            return Err(error);
-        }
 
         let notification_turn_id = root_turn_notification_id(&message, state);
         let active_turn_update = observed_active_turn_id(
@@ -3708,6 +3702,17 @@ async fn read_shared_turn_notifications(
                     continue;
                 }
             }
+        }
+        if let Some(id) = automatic_command_approval_id(&message, options.auto_approve_commands) {
+            let decision = if cancellation_requested {
+                "decline"
+            } else {
+                "accept"
+            };
+            client
+                .send_response(id, json!({"decision": decision}))
+                .await?;
+            continue;
         }
         if prepare_runtime_notification(
             &mut message,
@@ -3877,35 +3882,6 @@ fn latest_in_progress_turn_id(response: &Value) -> Option<String> {
         .and_then(|turn| turn.get("id"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
-}
-
-fn required_mcp_startup_failure(message: &Value) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
-        return None;
-    }
-    let params = message_params(message);
-    if params.get("name").and_then(Value::as_str)
-        != Some(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME)
-    {
-        return None;
-    }
-    let status = params
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !matches!(status, "failed" | "error") {
-        return None;
-    }
-    let reason = params
-        .get("failureReason")
-        .or_else(|| params.get("error"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    Some(match reason {
-        Some(reason) => format!("required project-space capability failed to connect: {reason}"),
-        None => format!("required project-space capability failed to connect ({status})"),
-    })
 }
 
 fn should_wait_for_goal_continuation(
@@ -4525,6 +4501,26 @@ fn codex_app_server_command(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
+    if env::var("WEWORK_PROCESS_TRACE").as_deref() == Ok("1") {
+        let inherited_log = launch_config
+            .env
+            .get("RUST_LOG")
+            .cloned()
+            .or_else(|| env::var("RUST_LOG").ok())
+            .unwrap_or_else(|| "error".to_owned());
+        // These Codex spans and events record process lifecycle metadata.
+        // Keep general request tracing and the production SQLite filter unchanged.
+        command.env(
+            "RUST_LOG",
+            format!(
+                concat!(
+                    "{},codex_core::unified_exec::process_manager=info,",
+                    "codex_exec_server::local_process=info,codex_otel.trace_safe=info"
+                ),
+                inherited_log
+            ),
+        );
+    }
     command.env_remove("WEGENT_CONNECTION_SERVICE_TOKEN");
     // Use the native Codex desktop HTTP identity. Authentication and the actual
     // runtime version remain owned by Codex; never synthesize browser cookies.
@@ -4559,6 +4555,8 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         task_instructions.trim(),
         WEWORK_HUMAN_INPUT_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
+        runtime_capabilities::mcp_environment::AVAILABILITY_INSTRUCTIONS,
+        "Do not give unsolicited updates about connector startup or availability. If an unavailable connector limited the requested work, explain the impact in the final reply. Answer direct questions about connector status.",
         host_skills::INSTRUCTIONS,
         if crate::python_runtime::managed_python_bridge_configured() {
             crate::plugin_python::INSTRUCTIONS
@@ -4750,10 +4748,12 @@ struct CodexLaunchConfig {
     auth_mode: Option<CodexAuthMode>,
     env: BTreeMap<String, String>,
     user_developer_instructions: String,
+    mcp_unavailable: bool,
     runtime_policy_root: Option<PathBuf>,
     effort: Option<String>,
     summary: Option<String>,
     local_proxy_registration: Option<Arc<LocalProxyRegistration>>,
+    control_mcp_execution: Option<Arc<crate::task_runtime::mcp_http::ControlMcpExecution>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4958,6 +4958,7 @@ fn configure_codex_router(
     routing_model_id: Option<String>,
     model_switched: bool,
     vision_sidecar: Option<VisionSidecarUpstream>,
+    official_websocket: bool,
 ) {
     upstream.routing_model_id = routing_model_id;
     let official_chatgpt = upstream.is_official_chatgpt_codex();
@@ -4982,13 +4983,19 @@ fn configure_codex_router(
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
-    configure_codex_router_registration(launch_config, local_token, official_chatgpt);
+    configure_codex_router_registration(
+        launch_config,
+        local_token,
+        official_chatgpt,
+        official_websocket,
+    );
 }
 
 fn configure_codex_router_registration(
     launch_config: &mut CodexLaunchConfig,
     local_token: String,
     official_chatgpt: bool,
+    official_websocket: bool,
 ) {
     let provider = codex_model_catalog::PROVIDER_ID;
     launch_config.local_proxy_registration = Some(Arc::new(LocalProxyRegistration(local_token)));
@@ -5002,10 +5009,10 @@ fn configure_codex_router_registration(
             .clone();
         launch_config
             .config_overrides
-            .extend(native_provider::official_proxy_overrides(format!(
-                "{}/{token}",
-                codex_router_base_url()
-            )));
+            .extend(native_provider::official_proxy_overrides(
+                format!("{}/{token}", codex_router_base_url()),
+                official_websocket,
+            ));
     } else {
         launch_config
             .config_overrides
@@ -5972,36 +5979,35 @@ fn normalize_service_tier(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn global_mcp_config_overrides(
+fn configure_global_mcps(
+    request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
-) -> Result<Vec<String>, String> {
-    let mcps = runtime_capabilities::load_global_mcp_records()?;
-
-    let mut overrides = Vec::new();
-    let mut names = mcps.keys().collect::<Vec<_>>();
-    names.sort();
-    for name in names {
-        if name == crate::workbench_control::SERVER_NAME {
-            continue;
-        }
-        let Some(server) = mcps
-            .get(name)
-            .and_then(|record| record.get("server"))
-            .and_then(Value::as_object)
-        else {
-            continue;
-        };
-        let server = Value::Object(server.clone());
-        runtime_capabilities::mcp_environment::append_stdio_environment(
-            name,
-            &server,
-            thread_config,
-        )?;
-        if let Some(server) = server.as_object() {
-            overrides.extend(mcp_server_overrides(name, server));
-        }
-    }
-    Ok(overrides)
+) -> Result<bool, String> {
+    let records = runtime_capabilities::load_global_mcp_records();
+    let registry_unavailable = records.is_err();
+    let mcps = records.unwrap_or_else(|_| {
+        runtime_capabilities::mcp_environment::log_server_unavailable(
+            request,
+            "global_mcps",
+            "registry",
+        );
+        BTreeMap::new()
+    });
+    let requested = runtime_capabilities::collect_request_mcp_servers(request);
+    let mut servers = mcps
+        .into_iter()
+        // Requested definitions replace matching globals even when unavailable.
+        .filter(|(name, _)| !requested.contains_key(name))
+        .filter_map(|(name, record)| {
+            record
+                .get("server")
+                .and_then(Value::as_object)
+                .map(|server| (name, Value::Object(server.clone())))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let configured_count = servers.len();
+    runtime_capabilities::configure_codex_mcp_servers(&mut servers, request, thread_config)?;
+    Ok(registry_unavailable || configured_count != servers.len())
 }
 
 fn cdp_browser_mcp_config_overrides(
@@ -6028,8 +6034,14 @@ fn cdp_browser_mcp_config_overrides(
     if !crate::browser_mcp::bridge_is_available() {
         return Ok((overrides, BTreeMap::new()));
     }
-    let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
-        .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
+    let Some(endpoint) = crate::browser_mcp::http::browser_mcp_http_endpoint() else {
+        runtime_capabilities::mcp_environment::log_server_unavailable(
+            request,
+            server_name,
+            "endpoint",
+        );
+        return Ok((overrides, BTreeMap::new()));
+    };
     let auth_env_name = "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION";
     let env = BTreeMap::from([(
         auth_env_name.to_owned(),
@@ -6037,6 +6049,7 @@ fn cdp_browser_mcp_config_overrides(
     )]);
     overrides.extend([
         format!("{key}.enabled=true"),
+        format!("{key}.required=false"),
         format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
             "{}={}",
@@ -6101,7 +6114,7 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
     environment
 }
 
-fn computer_use_mcp_config_overrides() -> Vec<String> {
+fn computer_use_mcp_config_overrides(task_id: &str) -> Vec<String> {
     let path = executor_home().join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
     if crate::computer_use_mcp::read_bridge_record(&path).is_err() {
         return Vec::new();
@@ -6109,6 +6122,14 @@ fn computer_use_mcp_config_overrides() -> Vec<String> {
     let command =
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
     vec![
+        format!(
+            "{}=false",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "required"
+            ])
+        ),
         format!(
             "{}={}",
             toml_key_path(&[
@@ -6121,7 +6142,8 @@ fn computer_use_mcp_config_overrides() -> Vec<String> {
         format!(
             "{}={}",
             toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
-            toml_json_value(&json!(["computer-use-mcp-server", path]))
+            // Separate the native MCP pool by task because the process owns script state.
+            toml_json_value(&json!(["computer-use-mcp-server", path, task_id]))
         ),
         format!(
             "{}=15",
@@ -6151,43 +6173,58 @@ fn computer_use_mcp_config_overrides() -> Vec<String> {
     ]
 }
 
-fn managed_wework_mcp_config_overrides(
+fn configure_managed_wework_mcp(
     request: &ExecutionRequest,
-) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
-    let mut overrides = Vec::new();
-    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
-        .ok_or_else(|| "Wework MCP endpoint is not ready".to_owned())?;
+    launch: &mut CodexLaunchConfig,
+) -> Result<(), String> {
+    crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    let Some(endpoint) = crate::task_runtime::mcp_http::space_mcp_http_endpoint() else {
+        runtime_capabilities::mcp_environment::log_server_unavailable(
+            request,
+            "wework_space",
+            "endpoint",
+        );
+        launch.mcp_unavailable = true;
+        return Ok(());
+    };
     let env = BTreeMap::from([(
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
         format!("Bearer {}", endpoint.token),
     )]);
-    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
-        append_managed_mcp_config(
-            crate::workbench_control::SERVER_NAME,
-            config,
-            &mut overrides,
-        );
+    let configs = runtime_capabilities::managed_mcp_configs(request)?;
+    for (name, config) in configs {
+        configure_managed_mcp_server(request, name, config, launch);
     }
-    if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
-        append_managed_mcp_config(
-            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
-            config,
-            &mut overrides,
-        );
+    launch.env.extend(env);
+    Ok(())
+}
+
+fn configure_managed_mcp_server(
+    request: &ExecutionRequest,
+    server_name: &str,
+    config: crate::task_runtime::mcp::SpaceMcpClientConfig,
+    launch: &mut CodexLaunchConfig,
+) {
+    if server_name == crate::workbench_control::SERVER_NAME {
+        let execution = config
+            .headers
+            .get("X-Wework-Mcp-Context")
+            .ok_or_else(|| "Wework control MCP context is unavailable".to_owned())
+            .and_then(|handle| crate::task_runtime::mcp_http::retain_control_mcp_context(handle));
+        match execution {
+            Ok(execution) => launch.control_mcp_execution = execution.map(Arc::new),
+            Err(_) => {
+                runtime_capabilities::mcp_environment::log_server_unavailable(
+                    request,
+                    server_name,
+                    "context",
+                );
+                launch.mcp_unavailable = true;
+                return;
+            }
+        }
     }
-    if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
-        append_managed_mcp_config(
-            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
-            config,
-            &mut overrides,
-        );
-    }
-    append_managed_mcp_config(
-        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
-        crate::task_runtime::mcp::space_mcp_client_config(request)?,
-        &mut overrides,
-    );
-    Ok((overrides, env))
+    append_managed_mcp_config(server_name, config, &mut launch.config_overrides);
 }
 
 fn append_managed_mcp_config(
@@ -6198,6 +6235,7 @@ fn append_managed_mcp_config(
     let key = toml_key_path(&["mcp_servers", server_name]);
     overrides.extend([
         format!("{key}.enabled=true"),
+        format!("{key}.required=false"),
         format!("{key}.url={}", toml_value(&config.url)),
         format!(
             "{key}.tool_timeout_sec={}",
@@ -6259,65 +6297,6 @@ fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {
             })
             .collect::<String>()
     ))
-}
-
-fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> {
-    let key = toml_key_path(&["mcp_servers", name]);
-    let server_type = server
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim();
-    if server_type == "stdio" || server.get("command").is_some() {
-        let Some(command) = server
-            .get("command")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return Vec::new();
-        };
-        let mut overrides = vec![format!("{key}.command={}", toml_value(command))];
-        if let Some(args) = server.get("args").and_then(Value::as_array) {
-            let args = args
-                .iter()
-                .filter_map(value_string)
-                .map(Value::String)
-                .collect::<Vec<_>>();
-            overrides.push(format!(
-                "{key}.args={}",
-                toml_json_value(&Value::Array(args))
-            ));
-        }
-        if let Some(names) = server.get("env_vars") {
-            overrides.push(format!("{key}.env_vars={}", toml_json_value(names)));
-        }
-        return overrides;
-    }
-
-    let Some(url) = server
-        .get("url")
-        .or_else(|| server.get("base_url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Vec::new();
-    };
-    let mut overrides = vec![format!("{key}.url={}", toml_value(url))];
-    for (source_key, target_key) in [
-        ("bearer_token_env_var", "bearer_token_env_var"),
-        ("bearerTokenEnvVar", "bearer_token_env_var"),
-        ("oauth_client_id", "oauth_client_id"),
-        ("oauthClientId", "oauth_client_id"),
-        ("oauth_resource", "oauth_resource"),
-        ("oauthResource", "oauth_resource"),
-    ] {
-        if let Some(value) = server.get(source_key).and_then(value_string) {
-            overrides.push(format!("{key}.{target_key}={}", toml_value(&value)));
-        }
-    }
-    overrides
 }
 
 async fn prepare_codex_execution_request(
@@ -6453,10 +6432,19 @@ async fn prepare_codex_execution_request(
 }
 
 async fn ensure_codex_mcp_endpoints() -> Result<(), String> {
-    if crate::browser_mcp::bridge_is_available() {
-        crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
+    if crate::browser_mcp::bridge_is_available()
+        && crate::browser_mcp::http::ensure_browser_mcp_http_endpoint()
+            .await
+            .is_err()
+    {
+        log_executor_event("browser MCP endpoint unavailable; execution continues", &[]);
     }
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    if crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint()
+        .await
+        .is_err()
+    {
+        log_executor_event("Wework MCP endpoint unavailable; execution continues", &[]);
+    }
     Ok(())
 }
 
@@ -6918,38 +6906,85 @@ pub(crate) const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
 pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
 pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
-    if external_work::applies(request)
+    let sandbox_approval = external_work::applies(request)
         || crate::runtime_work::stand_in_requires_confirmation(request)
-    {
-        return json!({"granular":{"sandbox_approval":true,"rules":false,"skill_approval":false,"request_permissions":false,"mcp_elicitations":true}});
-    }
-    match codex_runtime_permission_profile(request) {
-        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => json!({
+        || codex_full_access_command_approval(request).is_some();
+    if sandbox_approval || codex_has_full_access(request) {
+        json!({
             "granular": {
-                "sandbox_approval": false,
+                "sandbox_approval": sandbox_approval,
                 "rules": false,
                 "skill_approval": false,
                 "request_permissions": false,
                 "mcp_elicitations": true,
             }
-        }),
-        _ => Value::String("on-request".to_owned()),
+        })
+    } else {
+        json!("on-request")
     }
 }
 
-fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
+fn codex_has_full_access(request: &ExecutionRequest) -> bool {
     codex_runtime_permission_profile(request) == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+}
+
+fn codex_full_access_command_approval(request: &ExecutionRequest) -> Option<&str> {
+    if !codex_has_full_access(request) {
+        return None;
+    }
+    match request
+        .extra
+        .get("runtime_command_approval")
+        .and_then(Value::as_str)
+    {
+        Some(mode @ ("manual" | "ai" | "automatic")) => Some(mode),
+        _ => (requested_codex_permission_profile(request)
+            == Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE))
+        .then_some("manual"),
+    }
+}
+
+fn codex_auto_approve_commands(request: &ExecutionRequest) -> bool {
+    codex_full_access_command_approval(request) == Some("automatic")
+        && stand_in_approval::native_reviewer(request).is_none()
+}
+
+fn automatic_command_approval_id(message: &Value, enabled: bool) -> Option<Value> {
+    let params = message_params(message);
+    // Full access asks only for heuristic command risk. Keep explicit rules,
+    // permission grants, network approvals, and stdin callbacks on their native path.
+    if enabled
+        && message["method"] == "item/commandExecution/requestApproval"
+        && matches!(params["kind"].as_str(), None | Some("command"))
+        && params["command"]
+            .as_str()
+            .is_some_and(|command| !command.is_empty())
+        && params["reason"].is_null()
+        && params["networkApprovalContext"].is_null()
+        && params["additionalPermissions"].is_null()
+        && params["proposedNetworkPolicyAmendments"].is_null()
+        && params["availableDecisions"]
+            .as_array()
+            .map_or(true, |decisions| {
+                decisions.iter().any(|decision| decision == "accept")
+            })
+    {
+        json_rpc_request_id(message)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn prepare_codex_runtime_notification(
     request: &ExecutionRequest,
     message: &mut Value,
 ) -> bool {
-    prepare_runtime_notification(
-        message,
-        codex_auto_approve_mcp_tool_calls(request),
-        crate::runtime_work::stand_in_requires_confirmation(request),
-    )
+    automatic_command_approval_id(message, codex_auto_approve_commands(request)).is_none()
+        && prepare_runtime_notification(
+            message,
+            codex_has_full_access(request),
+            crate::runtime_work::stand_in_requires_confirmation(request),
+        )
 }
 
 fn prepare_runtime_notification(
@@ -6970,12 +7005,7 @@ fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str 
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         return CODEX_READ_ONLY_PERMISSION_PROFILE;
     }
-    match request
-        .extra
-        .get("runtime_permission_profile")
-        .or_else(|| request.extra.get("runtimePermissionProfile"))
-        .and_then(Value::as_str)
-    {
+    match requested_codex_permission_profile(request) {
         Some(CODEX_READ_ONLY_PERMISSION_PROFILE) => CODEX_READ_ONLY_PERMISSION_PROFILE,
         Some(CODEX_WORKSPACE_PERMISSION_PROFILE) => CODEX_WORKSPACE_PERMISSION_PROFILE,
         Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE) => {
@@ -6985,11 +7015,28 @@ fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str 
     }
 }
 
+fn requested_codex_permission_profile(request: &ExecutionRequest) -> Option<&str> {
+    request
+        .extra
+        .get("runtime_permission_profile")
+        .or_else(|| request.extra.get("runtimePermissionProfile"))
+        .and_then(Value::as_str)
+}
+
 fn insert_codex_runtime_permissions(
     params: &mut serde_json::Map<String, Value>,
     request: &ExecutionRequest,
 ) {
-    if let Some(reviewer) = stand_in_approval::native_reviewer(request) {
+    let reviewer = stand_in_approval::native_reviewer(request).or_else(|| {
+        codex_full_access_command_approval(request).map(|mode| {
+            if mode == "ai" {
+                "auto_review"
+            } else {
+                "user"
+            }
+        })
+    });
+    if let Some(reviewer) = reviewer {
         params.insert("approvalsReviewer".into(), json!(reviewer));
     }
     params.insert(
@@ -7217,9 +7264,14 @@ fn append_thread_launch_params(
     let mut config = launch_config.thread_config.clone();
     for override_value in &launch_config.config_overrides {
         if let Some((key, value)) = config_override_entry(override_value) {
-            config.insert(key, value);
+            // The empty table clears saved definitions at child startup only.
+            // Thread RPC replaces the complete table after collecting this turn.
+            if key != "mcp_servers" || value != json!({}) {
+                config.insert(key, value);
+            }
         }
     }
+    mcp_config::consolidate_thread_config(&mut config);
     if !config.is_empty() {
         params.insert("config".to_owned(), Value::Object(config));
     }

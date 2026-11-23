@@ -47,3 +47,47 @@ export function readVisualizationThemeVariables(): Record<string, string> {
   }
   return variables
 }
+
+export interface VisualizationThemeSnapshot {
+  mode: 'light' | 'dark'
+  variables: Record<string, string>
+}
+
+/** Observe the committed host palette without replacing a visualization document. */
+export function createVisualizationThemeObservation(initialMode: 'light' | 'dark') {
+  const initialSnapshot: VisualizationThemeSnapshot = { mode: initialMode, variables: {} }
+  let snapshot = initialSnapshot
+  let mode = initialMode
+  let observer: MutationObserver | undefined
+  const listeners = new Set<() => void>()
+  const update = () => {
+    const variables = readVisualizationThemeVariables()
+    if (snapshot.mode === mode && JSON.stringify(snapshot.variables) === JSON.stringify(variables))
+      return
+    snapshot = { mode, variables }
+    for (const listener of [...listeners]) listener()
+  }
+  return {
+    getSnapshot: () => snapshot,
+    getServerSnapshot: () => initialSnapshot,
+    subscribe(listener: () => void, nextMode: 'light' | 'dark') {
+      listeners.add(listener)
+      mode = nextMode
+      if (!observer) {
+        observer = new MutationObserver(update)
+        observer.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ['style', 'class', 'data-theme', 'data-appearance-theme'],
+        })
+      }
+      update()
+      return () => {
+        listeners.delete(listener)
+        if (!listeners.size) {
+          observer?.disconnect()
+          observer = undefined
+        }
+      }
+    },
+  }
+}

@@ -9,6 +9,7 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
 import { seedCollectionTimeout } from './stand-in-collection-timeout.mjs'
 import { verifyCollectionLockRecovery } from './stand-in-collection-lock.mjs'
+import { verifyStandInGroupCatchUp } from './stand-in-group-catch-up.mjs'
 import {
   openStandInActivity,
   verifyStandInProfileNavigation,
@@ -426,7 +427,7 @@ export function createDirectRecoveryVerification(options) {
         await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
         const restored = await storyUntil(
           () => rpc(control, 'runtime.tasks.get', { taskId: direct.taskId }),
-          value => value.task?.status !== 'archived',
+          value => value.task != null && value.task.status !== 'archived',
           options.modelResponseTimeoutMs,
           'Explicit source restoration must use the existing native unarchive operation'
         )
@@ -446,6 +447,13 @@ export function createDirectRecoveryVerification(options) {
           })
         )
         await options.captureScreenshot(control, 'stand-in-direct-recovery.png')
+        await verifyStandInGroupCatchUp({
+          database,
+          rpc: (method, params) => rpc(control, method, params),
+          root,
+          userId: USER,
+          providerId: PROVIDER,
+        })
       } finally {
         active = false
         await writeFile(join(root, 'active'), '')

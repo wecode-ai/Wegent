@@ -11,6 +11,10 @@ function emitChange(): void {
   for (const listener of listeners) listener()
 }
 
+export function getWorkItemPickerOpen(key: string): boolean {
+  return openKeys.has(key)
+}
+
 export function setWorkItemPickerOpen(key: string, open: boolean): void {
   const had = openKeys.has(key)
   if (had === open) return
@@ -22,7 +26,7 @@ export function setWorkItemPickerOpen(key: string, open: boolean): void {
   emitChange()
 }
 
-function subscribe(listener: () => void): () => void {
+export function subscribeWorkItemPickerOpen(listener: () => void): () => void {
   listeners.add(listener)
   return () => {
     listeners.delete(listener)
@@ -32,7 +36,10 @@ function subscribe(listener: () => void): () => void {
 export function useWorkItemPickerOpen(
   key: string | null
 ): readonly [boolean, (open: boolean) => void] {
-  const open = useSyncExternalStore(subscribe, () => key !== null && openKeys.has(key))
+  const open = useSyncExternalStore(
+    subscribeWorkItemPickerOpen,
+    () => key !== null && openKeys.has(key)
+  )
   return [
     open,
     next => {

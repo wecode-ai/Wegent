@@ -81,7 +81,7 @@ describe('Issue reception receipts', () => {
     const { rerender } = render(view(1))
     await act(async () => {})
     const icon = screen.getByTitle(/^助理已接收/)
-    fireEvent.pointerOver(icon)
+    fireEvent.pointerEnter(icon, { pointerType: 'mouse' })
     await act(async () => vi.advanceTimersByTimeAsync(600))
 
     let resolveRefresh!: (rows: IssueAssignmentReceipt[]) => void
@@ -147,7 +147,7 @@ describe('Issue reception receipts', () => {
     const { rerender } = render(<IssueAssignmentReceipts {...props} version={1} />)
     await act(async () => {})
     const icon = screen.getByText('助理已接收').closest('[title]')!
-    fireEvent.pointerOver(icon)
+    fireEvent.pointerEnter(icon, { pointerType: 'mouse' })
     await act(async () => vi.advanceTimersByTimeAsync(380))
     let finishOldRefresh!: (rows: IssueAssignmentReceipt[]) => void
     api.getIssueAssignmentReceipts.mockImplementationOnce(
@@ -175,7 +175,7 @@ describe('Issue reception receipts', () => {
     )
     expect(screen.queryByText('助理已接收')).not.toBeInTheDocument()
     await act(async () => finishNewAssignment([{ ...receipt, id: 'assignment-2' }]))
-    expect(screen.getByText('未读')).toBeInTheDocument()
+    expect(screen.getByTestId('issue-assignment-receipts')).toHaveTextContent('未读')
   })
 
   it('does not acknowledge when detail loading fails and recovers on the next poll', async () => {
@@ -183,7 +183,7 @@ describe('Issue reception receipts', () => {
     const { api } = setup(7)
     api.getLoopItem.mockRejectedValueOnce(new Error('unavailable'))
     await act(async () => {})
-    expect(screen.getByText('回执同步失败')).toBeInTheDocument()
+    expect(screen.getByTestId('issue-assignment-receipts')).toHaveTextContent('回执同步失败')
     expect(api.acknowledgeIssueAssignment).not.toHaveBeenCalled()
     await act(async () => vi.advanceTimersByTimeAsync(5000))
     expect(api.acknowledgeIssueAssignment).toHaveBeenCalledOnce()

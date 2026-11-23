@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useIntersectionEvent } from '../dom-events'
+import { useCallback, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { Button as ControlButton } from '../markdown/Button'
 
-import { useConversationTranslation } from './ConversationTranslation'
 import { CompositedSpinner } from '../issue-detail/CompositedSpinner'
+import { useConversationTranslation } from './ConversationTranslation'
 
 interface ConversationHistoryBoundaryProps {
   boundaryKey: string
@@ -14,6 +16,11 @@ interface ConversationHistoryBoundaryProps {
   scrollRef: RefObject<HTMLDivElement | null>
   onPrepare: (automatic: boolean) => void
   onLoad?: () => Promise<void> | void
+}
+
+function historyPrefetchMargin(root: Element | Document | null): string {
+  // Fetch one viewport ahead, even in short reading panes.
+  return Math.max(root instanceof Element ? root.clientHeight : 0, 800) + 'px 0px 0px'
 }
 
 export function ConversationHistoryBoundary({
@@ -31,7 +38,6 @@ export function ConversationHistoryBoundary({
   const markerRef = useRef<HTMLDivElement>(null)
   const pendingRef = useRef(false)
   const attemptedBoundaryRef = useRef<string | null>(null)
-  const mountedRef = useRef(false)
   const [request, setRequest] = useState<{
     boundaryKey: string
     automatic: boolean
@@ -40,12 +46,6 @@ export function ConversationHistoryBoundary({
   const currentRequest = request?.boundaryKey === boundaryKey ? request : null
   const status = currentRequest?.status ?? 'idle'
   const requestPending = request?.status === 'loading'
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
 
   const load = useCallback(
     async (automatic: boolean) => {
@@ -57,11 +57,9 @@ export function ConversationHistoryBoundary({
       try {
         onPrepare(automatic)
         await onLoad()
-        if (mountedRef.current) {
-          setRequest({ boundaryKey, automatic, status: 'completed' })
-        }
+        setRequest({ boundaryKey, automatic, status: 'completed' })
       } catch {
-        if (mountedRef.current) setRequest({ boundaryKey, automatic, status: 'failed' })
+        setRequest({ boundaryKey, automatic, status: 'failed' })
       } finally {
         pendingRef.current = false
       }
@@ -69,51 +67,25 @@ export function ConversationHistoryBoundary({
     [boundaryKey, loading, onLoad, onPrepare]
   )
 
-  useEffect(() => {
-    const marker = markerRef.current
-    const scroller = scrollRef.current
-    if (
-      suspended ||
-      manual ||
-      loading ||
-      failed ||
-      requestPending ||
-      status === 'failed' ||
-      !onLoad ||
-      !marker ||
-      !scroller ||
-      typeof IntersectionObserver === 'undefined'
-    )
-      return
-    let active = true
-    const observer = new IntersectionObserver(
-      entries => {
-        if (active && entries.some(entry => entry.isIntersecting)) void load(true)
-      },
-      {
-        root: scroller,
-        // Fetch one viewport ahead, while the boundary is still outside the reader's view.
-        rootMargin: `${Math.max(scroller.clientHeight, 800)}px 0px 0px`,
-        threshold: 0,
-      }
-    )
-    observer.observe(marker)
-    return () => {
-      active = false
-      observer.disconnect()
-    }
-  }, [
-    boundaryKey,
-    failed,
-    load,
-    loading,
-    manual,
-    onLoad,
-    requestPending,
-    scrollRef,
-    status,
-    suspended,
-  ])
+  const onIntersection = useCallback<IntersectionObserverCallback>(
+    entries => {
+      if (entries.some(entry => entry.isIntersecting)) void load(true)
+    },
+    [load]
+  )
+  useIntersectionEvent(markerRef, onIntersection, {
+    enabled:
+      !suspended &&
+      !manual &&
+      !loading &&
+      !failed &&
+      !requestPending &&
+      status !== 'failed' &&
+      Boolean(onLoad),
+    root: scrollRef,
+    rootMargin: historyPrefetchMargin,
+    threshold: 0,
+  })
 
   const busy = loading || requestPending
   const showAction =
@@ -136,7 +108,8 @@ export function ConversationHistoryBoundary({
         createPortal(
           <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center">
             {showAction ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="load-older-runtime-transcript-button"
                 disabled={!onLoad}
@@ -150,7 +123,7 @@ export function ConversationHistoryBoundary({
                   : failed || status === 'failed'
                     ? t('workbench.load_older_messages_failed')
                     : t('workbench.load_older_messages')}
-              </button>
+              </ControlButton>
             ) : (
               <span
                 role="status"

@@ -167,9 +167,10 @@ font size is allowed only when it derives from the shared typography tokens,
 such as an animated transition between two heading roles. Third-party content
 that cannot inherit Wework variables requires a narrow documented exception.
 
-The primary Electron UI weight is `445`, matching ChatGPT's platform-adjusted
-normal weight. Ordinary UI and conversation text inherit this weight instead of forcing
-`font-normal` (`400`) on their containers. Emphasis and headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
+The primary Electron UI weight is `445`. Ordinary UI and conversation text
+inherit it. Task and collaboration sidebar labels use the shared font family,
+size, and weight. Emphasis and headings use `500`. Use `600` sparingly and
+avoid `700` in product chrome.
 
 Entered composer text uses the primary text color so it reads as content. Normal
 menu labels and composer actions such as the quick-phrase trigger also use the
@@ -473,7 +474,7 @@ may reveal on hover/focus but must remain keyboard accessible.
   not duplicate Search as a primary-navigation list row.
 - Secondary row actions can appear on hover/focus but must not steal the row's
   primary click and must have a keyboard path.
-- Overflowing sidebar lists use a quiet theme-aware `4px` overlay thumb inside an
+- Overflowing sidebar lists use a quiet theme-aware `6px` overlay thumb inside an
   `8px` drag target inset `3px` from the sidebar edge. Show it while the pointer
   is anywhere in the sidebar, a sidebar control has visible keyboard focus, or
   the scrollbar is being dragged; hide it when those interactions end. Scrollbars
@@ -795,7 +796,7 @@ Dialogs use:
 - a restrained scrim (`#00000022` in the audited Electron light treatment);
 - a maximum width of `92vw`;
 - default width `520px`;
-- named widths `380`, `400`, `420`, `600`, `680`, and `800px` only when the
+- named widths `380`, `400`, `445`, `600`, `680`, and `800px` only when the
   content role warrants them;
 - a close control at `16px` from the top/right using a `16px` icon;
 - a stable header/content/footer structure with scrolling in the content region.

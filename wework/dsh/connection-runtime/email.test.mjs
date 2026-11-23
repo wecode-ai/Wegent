@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { constants as osConstants } from 'node:os'
+import { ConnectionRegistry } from '../plugin-runtime/connections.js'
 import { createEmailAccounts } from './email-accounts.js'
 import { createEmailProvider, EMAIL_PROVIDER } from './email-provider.js'
 import { initializeObservation } from '../plugin-runtime/connection-observations.js'
@@ -200,8 +201,9 @@ test('confirmed email is sent once; unknown delivery stays blocked and definite 
   const { id } = await f.accounts.save(config)
   const outbox = storage()
   let deliveries = 0
+  let sentId
   let failure
-  const sender = createEmailSender(f.accounts, outbox, {
+  const sendEmail = createEmailSender(f.accounts, outbox, {
     imapSession: async (_account, action) =>
       action({
         mailboxOpen: async () => {},
@@ -218,14 +220,30 @@ test('confirmed email is sent once; unknown delivery stays blocked and definite 
       close() {},
       sendMail: async mail => {
         deliveries++
+        sentId = mail.messageId
         assert.equal(mail.inReplyTo, '<original@example.com>')
         if (failure) throw failure
         return { accepted: ['sender@example.com'], rejected: [] }
       },
     }),
   })
+  const registry = new ConnectionRegistry({ context: value => value })
+  await registry.register({ effect() {} }, new URL('./package.json', import.meta.url), {
+    email: {
+      ...createEmailProvider(f.accounts),
+      executeAction: (_context, input) => sendEmail(input),
+    },
+  })
+  const sender = input =>
+    registry.call(EMAIL_PROVIDER, 'executeAction', { ...input, action: 'send_email' })
   const input = {
-    source: { id: 'INBOX', kind: 'inbox', profile: id, policy: { askBeforeAct: true } },
+    source: {
+      providerId: EMAIL_PROVIDER,
+      id: 'INBOX',
+      kind: 'inbox',
+      profile: id,
+      policy: { askBeforeAct: true },
+    },
     messageId: '123:2',
     workId: 'work',
     from: config.email,
@@ -238,8 +256,14 @@ test('confirmed email is sent once; unknown delivery stays blocked and definite 
     { code: 'email_confirmation_required' }
   )
   assert.equal(deliveries, 0)
-  assert.deepEqual(await sender(input), { status: 'sent' })
-  assert.deepEqual(await sender(input), { status: 'sent', duplicate: true })
+  const receipt = await sender(input)
+  assert.match(sentId, /^<[0-9a-f]{64}@wework\.local>$/)
+  assert.deepEqual(receipt, {
+    status: 'sent',
+    messageId: sentId,
+    inReplyTo: '<original@example.com>',
+  })
+  assert.deepEqual(await sender(input), { status: 'sent', messageId: sentId, duplicate: true })
   assert.equal(deliveries, 1)
   failure = Object.assign(new Error('private'), { command: 'DATA' })
   const unknown = { ...input, text: 'Unknown delivery' }
@@ -304,8 +328,13 @@ async function continuousReplyFixture() {
 
 test('continuous source authorization replies only inside the verified original mail thread', async () => {
   const { sender, input, deliveries, reads } = await continuousReplyFixture()
-  assert.deepEqual(await sender(input), { status: 'sent' })
+  const receipt = await sender(input)
   assert.deepEqual(reads, [7])
+  assert.deepEqual(receipt, {
+    status: 'sent',
+    messageId: deliveries[0].messageId,
+    inReplyTo: '<bound-message@example.com>',
+  })
   assert.equal(deliveries.length, 1)
   assert.equal(deliveries[0].from, config.email)
   assert.equal(deliveries[0].to, 'original-sender@example.com')

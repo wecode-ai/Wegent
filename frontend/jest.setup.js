@@ -4,9 +4,17 @@
 
 import '@testing-library/jest-dom'
 import { TextEncoder } from 'node:util'
+import '../packages/collaboration/src/test/setup'
 
 // JSDOM omits this browser API; use the native implementation for byte-size validation.
 global.TextEncoder = TextEncoder
+
+// Preserve browser cancellation semantics in the older JSDOM AbortSignal.
+if (!AbortSignal.prototype.throwIfAborted) {
+  AbortSignal.prototype.throwIfAborted = function () {
+    if (this.aborted) throw this.reason
+  }
+}
 
 if (typeof Element !== 'undefined' && !Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = () => false
@@ -28,9 +36,9 @@ if (typeof Element !== 'undefined' && !Element.prototype.scrollTo) {
   Element.prototype.scrollTo = () => {}
 }
 
-// JSDOM has no Web Animations engine; shared drawers settle immediately.
-if (typeof Element !== 'undefined' && !Element.prototype.getAnimations) {
-  Element.prototype.getAnimations = () => []
+// JSDOM does not record paint timings used by UI SDK positioning.
+if (typeof performance !== 'undefined' && !performance.getEntriesByType) {
+  performance.getEntriesByType = () => []
 }
 
 // Layout-only API used by shared activity content expansion.

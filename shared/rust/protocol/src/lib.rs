@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod chat_errors;
 pub mod collaboration;
 pub mod connection_events;
 pub mod connector;

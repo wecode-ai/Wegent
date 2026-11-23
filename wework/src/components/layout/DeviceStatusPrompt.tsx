@@ -1,6 +1,3 @@
-import { AlertCircle, ArrowUpCircle, Loader2, PlusCircle, RotateCcw } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import {
   cloudDeviceRestartKey,
@@ -17,14 +14,19 @@ import {
   isDeviceRunningTask,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
+import { cn } from '@/lib/utils'
 import {
   findWorkbenchDevice,
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import { cn } from '@/lib/utils'
 import type { DeviceInfo } from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
+import { Tooltip } from '@wegent/collaboration/controls/Tooltip'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, ArrowUpCircle, Loader2, PlusCircle, RotateCcw } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { useSidebarDeviceObservation } from './sidebarDeviceObservation'
 
 interface DeviceStatusPromptProps {
   devices: DeviceInfo[]
@@ -37,52 +39,6 @@ interface DeviceStatusPromptProps {
   presentation?: 'banner' | 'sidebar-action'
   hideAvailableUpdates?: boolean
   className?: string
-}
-
-const SIDEBAR_EMPTY_DEVICE_FALLBACK_MS = 30_000
-const SIDEBAR_TOOLTIP_MAX_WIDTH = 288
-const SIDEBAR_TOOLTIP_MARGIN = 8
-const SIDEBAR_DEVICE_CACHE_KEY = 'wework.sidebar.lastNonEmptyDevices'
-
-let sidebarDeviceMemoryCache: {
-  devices: DeviceInfo[]
-  updatedAt: number
-} | null = null
-
-function readSidebarDeviceCache() {
-  if (sidebarDeviceMemoryCache) return sidebarDeviceMemoryCache
-
-  try {
-    const value = window.sessionStorage.getItem(SIDEBAR_DEVICE_CACHE_KEY)
-    if (!value) return null
-    const parsed = JSON.parse(value)
-    if (!parsed || !Array.isArray(parsed.devices) || typeof parsed.updatedAt !== 'number') {
-      return null
-    }
-    sidebarDeviceMemoryCache = parsed
-    return parsed as { devices: DeviceInfo[]; updatedAt: number }
-  } catch {
-    return null
-  }
-}
-
-function readFreshSidebarDeviceCache(maxAgeMs: number) {
-  const cached = readSidebarDeviceCache()
-  if (!cached) return null
-
-  return Date.now() - cached.updatedAt < maxAgeMs ? cached : null
-}
-
-function writeSidebarDeviceCache(devices: DeviceInfo[], updatedAt: number) {
-  sidebarDeviceMemoryCache = { devices, updatedAt }
-  try {
-    window.sessionStorage.setItem(
-      SIDEBAR_DEVICE_CACHE_KEY,
-      JSON.stringify(sidebarDeviceMemoryCache)
-    )
-  } catch {
-    // Keep the in-memory cache when browser storage is unavailable.
-  }
 }
 
 function getDeviceName(device: DeviceInfo, t: ReturnType<typeof useTranslation>['t']): string {
@@ -154,30 +110,8 @@ function DeviceStatusPromptContent({
   const { t } = useTranslation('common')
   const cloudRestarts = useWorkbenchCloudDeviceRestarts()
   const [manualPending, setManualPending] = useState(false)
-  const [sidebarTooltipPosition, setSidebarTooltipPosition] = useState<{
-    left: number
-    top: number
-    maxWidth: number
-  } | null>(null)
-  const [sidebarTooltipOpen, setSidebarTooltipOpen] = useState(false)
-  const sidebarActionRef = useRef<HTMLDivElement>(null)
-  const sidebarTooltipRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (presentation === 'sidebar-action' && devices.length > 0) {
-      writeSidebarDeviceCache(devices, Date.now())
-    }
-  }, [devices, presentation])
-
-  const sidebarDeviceCache =
-    presentation === 'sidebar-action'
-      ? readFreshSidebarDeviceCache(SIDEBAR_EMPTY_DEVICE_FALLBACK_MS)
-      : null
-  const canUseSidebarDeviceFallback =
-    presentation === 'sidebar-action' && devices.length === 0 && sidebarDeviceCache !== null
-  const effectiveDevices = canUseSidebarDeviceFallback
-    ? (sidebarDeviceCache?.devices ?? devices)
-    : devices
+  const effectiveDevices = useSidebarDeviceObservation(devices, presentation === 'sidebar-action')
   const claudeCodeDevices = useMemo(
     () => effectiveDevices.filter(isClaudeCodeDevice),
     [effectiveDevices]
@@ -250,7 +184,8 @@ function DeviceStatusPromptContent({
     buttonClass: string
   ) =>
     deviceActions(deviceIds, upgradeLabel).map(({ name, label, run }) => (
-      <button
+      <ControlButton
+        variant="unstyled"
         key={name}
         type="button"
         data-testid={name === 'restart' ? 'device-status-restart-button' : testId}
@@ -270,38 +205,8 @@ function DeviceStatusPromptContent({
           <ArrowUpCircle className="h-3.5 w-3.5" />
         )}
         {label}
-      </button>
+      </ControlButton>
     ))
-
-  const updateSidebarTooltipPosition = () => {
-    const rect = sidebarActionRef.current?.getBoundingClientRect()
-    if (!rect) return
-
-    const viewportMaxWidth = Math.max(0, window.innerWidth - SIDEBAR_TOOLTIP_MARGIN * 2)
-    const maxWidth = Math.min(SIDEBAR_TOOLTIP_MAX_WIDTH, viewportMaxWidth)
-    const measuredWidth = sidebarTooltipRef.current?.offsetWidth ?? 0
-    const tooltipWidth = measuredWidth > 0 ? measuredWidth : maxWidth
-    const maxLeft = Math.max(
-      SIDEBAR_TOOLTIP_MARGIN,
-      window.innerWidth - tooltipWidth - SIDEBAR_TOOLTIP_MARGIN
-    )
-
-    setSidebarTooltipPosition({
-      left: Math.max(SIDEBAR_TOOLTIP_MARGIN, Math.min(rect.left, maxLeft)),
-      top: rect.bottom + SIDEBAR_TOOLTIP_MARGIN,
-      maxWidth,
-    })
-  }
-
-  const openSidebarTooltip = () => {
-    updateSidebarTooltipPosition()
-    setSidebarTooltipOpen(true)
-    window.requestAnimationFrame(updateSidebarTooltipPosition)
-  }
-
-  const closeSidebarTooltip = () => {
-    setSidebarTooltipOpen(false)
-  }
 
   const renderSidebarAction = ({
     message,
@@ -320,46 +225,25 @@ function DeviceStatusPromptContent({
       tone === 'danger'
         ? 'bg-destructive/10 text-destructive hover:bg-destructive/15 disabled:hover:bg-destructive/10 wework:bg-red-50 wework:text-red-600 wework:hover:bg-red-100 wework:disabled:hover:bg-red-50'
         : 'bg-focus/10 text-focus hover:bg-focus/15 disabled:hover:bg-focus/10 wework:bg-blue-50 wework:text-blue-600 wework:hover:bg-blue-100 wework:disabled:hover:bg-blue-50'
-    const tooltip = (
-      <div
-        ref={sidebarTooltipRef}
-        data-testid="device-status-sidebar-tooltip"
-        style={
-          sidebarTooltipPosition
-            ? {
-                left: sidebarTooltipPosition.left,
-                top: sidebarTooltipPosition.top,
-                maxWidth: sidebarTooltipPosition.maxWidth,
-              }
-            : undefined
-        }
-        className={cn(
-          'pointer-events-none fixed z-system-popover w-max min-w-0 whitespace-normal break-words rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)] ring-1 ring-black/5',
-          sidebarTooltipOpen ? 'block' : 'hidden'
-        )}
-      >
-        {message}
-      </div>
-    )
-
     const actions = loading
       ? [{ name: 'upgrade', label: actionLabel, run: undefined }]
       : deviceActions(deviceIds, actionLabel)
 
     return (
-      <>
+      <Tooltip
+        label={message}
+        side="bottom"
+        align="start"
+        testId="device-status-sidebar-tooltip"
+        className="max-w-72 whitespace-normal break-words"
+      >
         <div
-          ref={sidebarActionRef}
           data-testid="device-status-prompt"
           className={cn('relative flex shrink-0 gap-1', className)}
-          onMouseEnter={openSidebarTooltip}
-          onMouseMove={updateSidebarTooltipPosition}
-          onMouseLeave={closeSidebarTooltip}
-          onFocusCapture={openSidebarTooltip}
-          onBlurCapture={closeSidebarTooltip}
         >
           {actions.map(({ name, label, run }) => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={name}
               type="button"
               data-testid={
@@ -384,11 +268,10 @@ function DeviceStatusPromptContent({
                 <ArrowUpCircle className="h-3.5 w-3.5" />
               )}
               <span>{label}</span>
-            </button>
+            </ControlButton>
           ))}
         </div>
-        {typeof document === 'undefined' ? tooltip : createPortal(tooltip, document.body)}
-      </>
+      </Tooltip>
     )
   }
 
@@ -406,7 +289,8 @@ function DeviceStatusPromptContent({
       >
         <AlertCircle className="h-3.5 w-3.5 shrink-0 text-text-muted" />
         <span className="min-w-0 flex-1">{t('workbench.device_status_no_devices')}</span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="device-status-create-device-button"
           onClick={onOpenCloudDeviceSettings}
@@ -414,7 +298,7 @@ function DeviceStatusPromptContent({
         >
           <PlusCircle className="h-3.5 w-3.5" />
           {t('workbench.device_status_create_device')}
-        </button>
+        </ControlButton>
       </div>
     )
   }

@@ -58,9 +58,15 @@ async function configurePolicy(control, policy) {
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
   )
-  await control.command('waitFor', scoped(`[data-testid="${PREFIX}-preparation"]:not([open])`))
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${PREFIX}-preparation-toggle"][aria-expanded="false"]`)
+  )
   await control.command('click', scoped(`[data-testid="${PREFIX}-preparation-toggle"]`))
-  await control.command('waitFor', scoped(`[data-testid="${PREFIX}-preparation"][open]`))
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${PREFIX}-preparation-toggle"][aria-expanded="true"]`)
+  )
   await control.command('select', scoped(`[data-testid="${PREFIX}-workspace-policy"]`), {
     value: policy,
   })

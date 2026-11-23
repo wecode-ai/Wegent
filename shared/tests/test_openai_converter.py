@@ -4,12 +4,30 @@
 
 """Tests for OpenAI request conversion defaults."""
 
+import pytest
+
 from shared.models.execution import (
     GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
     ExecutionRequest,
 )
 from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 from shared.models.openai_converter import OpenAIRequestConverter
+
+
+@pytest.mark.parametrize(
+    "context",
+    [{}, {"backend_url": None}, {"backend_url": ""}, {"backend_url": " \t\n"}],
+)
+def test_missing_backend_context_is_accepted_in_both_wire_formats(
+    context: dict[str, str | None],
+) -> None:
+    direct = ExecutionRequest.from_dict(context)
+    openai = OpenAIRequestConverter.to_execution_request(
+        {"model": "test", "input": "hello", "metadata": context}
+    )
+    assert direct.backend_api_url == ""
+    assert openai.backend_api_url == ""
+    assert direct.backend_url == openai.backend_url
 
 
 def test_resource_owner_and_namespace_survive_both_wire_formats():

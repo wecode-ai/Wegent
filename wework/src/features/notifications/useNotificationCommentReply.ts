@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useIssueCommentDraft } from '@/features/todo/useIssueCommentDraft'
+import type { TaskReplyCard } from '@wegent/collaboration/execution/taskCardReply'
 import { useNotificationEntity } from './NotificationEntityContext'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { canQuickReply, canReplyToInteraction } from './runtimeInteractions'
@@ -6,37 +7,33 @@ import type { RuntimePaneQueuedMessage } from '@wegent/chat-core/conversation-qu
 import type { TaskCardDispatchResult } from '@wegent/collaboration/execution/taskCardReply'
 
 /** Bind an original Issue reply composer to its notification's existing coordination. */
-export function useNotificationCommentReply<T extends { root: { messageId: string } }>({
+export function useNotificationCommentReply<T extends TaskReplyCard>({
   projectId,
   issueId,
   store,
   cards,
-  target,
-  selectTarget,
+  draftScope,
 }: {
   projectId: string
   issueId: string
   store?: 'local' | 'backend'
   cards: T[]
-  target: T | null
-  selectTarget: (card: T) => void
+  draftScope: string
 }) {
   const entity = useNotificationEntity()
   const interactions = useRuntimeInteractions()
-  const selected = useRef<string | null>(null)
   const item = interactions?.pending.find(item => item.id === entity?.id)
   const eligible = Boolean(item && (item.cached || canQuickReply(item.payload)))
   const scope =
     entity && entity.projectId === projectId && entity.issueId === issueId && entity.store === store
       ? entity
       : null
-  useEffect(() => {
-    if (!scope || !eligible || selected.current === scope.id) return
-    const card = cards.find(card => card.root.messageId === scope.rootCommentId)
-    if (!card) return
-    selected.current = scope.id
-    selectTarget(card)
-  }, [cards, scope, selectTarget, eligible])
+  const card =
+    scope && eligible ? cards.find(card => card.root.messageId === scope.rootCommentId) : undefined
+  const { replyTarget } = useIssueCommentDraft(
+    draftScope,
+    scope && card ? { id: scope.id, card } : null
+  )
   if (!scope || !eligible || !interactions) return null
   const ownsRequest = Boolean(
     item?.project &&
@@ -48,7 +45,7 @@ export function useNotificationCommentReply<T extends { root: { messageId: strin
   return {
     id: scope.id,
     rootId: scope.rootCommentId,
-    composing: target?.root.messageId === scope.rootCommentId,
+    composing: replyTarget?.root.messageId === scope.rootCommentId,
     draft: interactions.drafts[scope.id] ?? '',
     error: interactions.errors[scope.id],
     disabled: !item || !ownsRequest || !canReplyToInteraction(item),

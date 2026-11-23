@@ -34,6 +34,14 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .extra
             .insert("resource_event_keys".into(), keys.clone());
     }
+    if let Some(mode) = payload
+        .pointer("/modelOptions/commandApproval")
+        .or_else(|| payload.pointer("/modelSelection/options/commandApproval"))
+    {
+        request
+            .extra
+            .insert("runtime_command_approval".into(), mode.clone());
+    }
     // Conversation privacy belongs to this send, never to the task's immutable origin.
     request.extra.remove("conversationContext");
     if payload["conversationContext"] == "private_discussion" {
@@ -291,7 +299,10 @@ pub(crate) fn runtime_task_title(request: &ExecutionRequest) -> Option<String> {
 
 fn runtime_generated_user_message(payload: &Value) -> Option<Value> {
     let source = payload.get("source").filter(|value| value.is_object())?;
-    if string_field(source, "source").as_deref() != Some("im") {
+    if !matches!(
+        string_field(source, "source").as_deref(),
+        Some("im" | "connection_event" | "connection_work")
+    ) {
         return None;
     }
     let id = string_field(payload, "clientUserMessageId")
@@ -422,20 +433,35 @@ pub(crate) enum ExternalWorkKind {
 }
 
 pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalWorkKind> {
-    if request.extra.contains_key("standInDelegation") {
+    if request.extra.contains_key("standInDelegation") || scheduled_continuation(request).is_some()
+    {
         return Some(ExternalWorkKind::Message);
     }
     let origin = request.extra.get("origin")?;
     if matches!(
         origin["type"].as_str(),
         Some("dingtalk_work" | "connection_work" | "stand_in_coordinator" | "stand_in_task")
-    ) {
+    ) || uses_calendar_connection_policy(origin)
+    {
         Some(ExternalWorkKind::Message)
     } else if origin["type"] == "issue_dispatch" {
         Some(ExternalWorkKind::Project)
     } else {
         None
     }
+}
+
+fn scheduled_continuation(request: &ExecutionRequest) -> Option<&Value> {
+    request
+        .extra
+        .get("standInSchedule")
+        .filter(|schedule| schedule["continuation"] == true)
+}
+
+fn uses_calendar_connection_policy(origin: &Value) -> bool {
+    origin["type"] == "stand_in_schedule"
+        && origin["weeklyReview"] != true
+        && origin["memoryReview"] != true
 }
 
 pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool {
@@ -459,7 +485,15 @@ pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool
     {
         return true;
     }
+    let continuation = scheduled_continuation(request);
+    if continuation.is_some_and(|schedule| schedule["askBeforeAct"] != false) {
+        return true;
+    }
     request.extra.get("origin").is_some_and(|origin| {
+        // The previous calendar run's policy is superseded by this trigger.
+        if continuation.is_some() && uses_calendar_connection_policy(origin) {
+            return false;
+        }
         matches!(
             origin["initiatedBy"].as_str(),
             Some("stand_in" | "stand_in_identity" | "stand_in_coordinator")
@@ -1090,6 +1124,34 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn connection_event_streams_the_public_message_with_its_source() {
+        let mut request = ExecutionRequest {
+            prompt: json!("Internal event delivery payload"),
+            ..Default::default()
+        };
+        let source = json!({"source": "connection_event", "sourceName": "Release document"});
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "clientUserMessageId": "event-operation",
+                "message": "Release document · Review the update",
+                "createdAt": 123,
+                "source": source,
+            }),
+        );
+        assert_eq!(
+            request.extra["runtime_generated_user_message"],
+            json!({
+                "id": "event-operation",
+                "message": "Release document · Review the update",
+                "createdAt": 123,
+                "source": source,
+            })
+        );
+        assert_eq!(request.prompt, "Internal event delivery payload");
+    }
 
     #[test]
     fn private_discussion_context_belongs_to_one_send_and_preserves_origin() {

@@ -4,7 +4,7 @@ import {
   resolveActivityExecutionTurn,
 } from '@wegent/chat-core/activity-execution-turn'
 export { resolveActivityExecutionTurn } from '@wegent/chat-core/activity-execution-turn'
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
@@ -21,13 +21,28 @@ const EMPTY_TURNS: RuntimeConversationTurn[] = []
 export function useActivityExecutionStatus(
   message: ProjectChatMessage | undefined,
   turnId?: string,
-  allowSingleTurn = false
+  allowSingleTurn = false,
+  onTurnIdentified?: (turnId: string) => void,
+  onExecutionRead?: (turns: RuntimeConversationTurn[], turn: RuntimeConversationTurn | null) => void
 ) {
   const address = message?.runtimeAddress
   const subscribe = useCallback(
-    (listener: () => void) =>
-      address ? subscribeRuntimeConversation(address, listener) : () => {},
-    [address]
+    (listener: () => void) => {
+      if (!address) return () => {}
+      const identify = () => {
+        const turns = getRuntimeConversationTurns(address)
+        const turn = resolveActivityExecutionTurn(message, turns, turnId, allowSingleTurn)
+        onExecutionRead?.(turns, turn ?? null)
+        if (turn?.id) onTurnIdentified?.(turn.id)
+      }
+      const release = subscribeRuntimeConversation(address, () => {
+        identify()
+        listener()
+      })
+      identify()
+      return release
+    },
+    [address, message, turnId, allowSingleTurn, onTurnIdentified, onExecutionRead]
   )
   const getSnapshot = useCallback(
     () => (address ? getRuntimeConversationTurns(address) : EMPTY_TURNS),
@@ -73,35 +88,45 @@ export function useActivityExecutionBinding(messages: ProjectChatMessage[], mess
 export function useActivityExecutionDisplayStatus(
   message: ProjectChatMessage | undefined,
   turnId?: string,
-  allowSingleTurn = false
+  allowSingleTurn = false,
+  onTurnIdentified?: (turnId: string) => void
 ) {
-  const turn = useActivityExecutionStatus(message, turnId, allowSingleTurn)
   const lifecycle = useRuntimeTaskLifecycle(message?.runtimeAddress)
+  const reportExecutionRead = useCallback(
+    (turns: RuntimeConversationTurn[], turn: RuntimeConversationTurn | null) => {
+      const config = getDesktopE2ERuntimeConfig()
+      if (!config.controlUrl || config.disabled || !message?.runtimeAddress) return
+      logRuntimeTaskCreateStage('runtime-activity-execution', {
+        messageId: message.messageId,
+        recordedStatus: message.status,
+        triggerMessageId: message.triggerMessageId,
+        deviceId: message.runtimeAddress.deviceId,
+        taskId: message.runtimeAddress.taskId,
+        boundTurnId: turnId,
+        recordedTurnId: message.metadata?.runtime_turn_id,
+        resolvedTurn: turn ? { id: turn.id, status: turn.status } : null,
+        cachedTurns: turns.slice(-4).map(item => ({
+          id: item.id,
+          status: item.status,
+          clientUserMessageId: item.clientUserMessageId,
+        })),
+        execution: lifecycle?.execution,
+        nativeTurn: lifecycle?.turn,
+        busy: lifecycle?.derived.isBusy,
+      })
+    },
+    [message, turnId, lifecycle]
+  )
+  const turn = useActivityExecutionStatus(
+    message,
+    turnId,
+    allowSingleTurn,
+    onTurnIdentified,
+    reportExecutionRead
+  )
   const turns = message?.runtimeAddress
     ? getRuntimeConversationTurns(message.runtimeAddress)
     : EMPTY_TURNS
-  useEffect(() => {
-    const config = getDesktopE2ERuntimeConfig()
-    if (!config.controlUrl || config.disabled || !message?.runtimeAddress) return
-    logRuntimeTaskCreateStage('runtime-activity-execution', {
-      messageId: message.messageId,
-      recordedStatus: message.status,
-      triggerMessageId: message.triggerMessageId,
-      deviceId: message.runtimeAddress.deviceId,
-      taskId: message.runtimeAddress.taskId,
-      boundTurnId: turnId,
-      recordedTurnId: message.metadata?.runtime_turn_id,
-      resolvedTurn: turn ? { id: turn.id, status: turn.status } : null,
-      cachedTurns: turns.slice(-4).map(item => ({
-        id: item.id,
-        status: item.status,
-        clientUserMessageId: item.clientUserMessageId,
-      })),
-      execution: lifecycle?.execution,
-      nativeTurn: lifecycle?.turn,
-      busy: lifecycle?.derived.isBusy,
-    })
-  }, [message, turnId, turn, turns, lifecycle])
   return {
     turn,
     status: activityExecutionDisplayStatus(

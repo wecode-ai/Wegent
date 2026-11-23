@@ -50,6 +50,8 @@ struct AssistantTextPart {
     id: String,
     content: String,
     created_at: i64,
+    explicit_final: bool,
+    deduplicated_final_id: Option<String>,
 }
 
 enum AssistantItemIdentity {
@@ -173,12 +175,19 @@ impl AssistantTurnAccumulation {
                 }
                 AssistantItemIdentity::Text(index) => {
                     self.assistant_parts.get(*index).map(|part| {
-                        json!({
+                        let mut item = json!({
                             "id": part.id,
                             "type": "assistant_text",
                             "content": part.content,
                             "createdAt": part.created_at,
-                        })
+                        });
+                        if part.explicit_final {
+                            item["phase"] = json!("final_answer");
+                        }
+                        if let Some(final_id) = &part.deduplicated_final_id {
+                            item["deduplicatedFinalItemId"] = json!(final_id);
+                        }
+                        item
                     })
                 }
             })
@@ -626,16 +635,30 @@ pub(super) fn collect_assistant_message(
                 ));
             }
             AssistantMessagePhase::Final => {
-                if !duplicates_completed_plan_block(&content, &assistant.blocks)
-                    && !assistant
-                        .assistant_parts
-                        .iter()
-                        .any(|part| part.content == content)
+                let native_final = item["id"]
+                    .as_str()
+                    .filter(|id| !id.trim().is_empty())
+                    .filter(|_| {
+                        assistant_message_phase_name(item).as_deref() == Some("finalanswer")
+                    });
+                if let Some(part) = assistant
+                    .assistant_parts
+                    .iter_mut()
+                    .find(|part| part.content == content)
                 {
+                    if let Some(final_id) = native_final {
+                        // Keep the projected item's display identity and the actual terminal item's proof.
+                        part.deduplicated_final_id =
+                            (final_id != part.id).then(|| final_id.to_owned());
+                        part.explicit_final |= final_id == part.id;
+                    }
+                } else if !duplicates_completed_plan_block(&content, &assistant.blocks) {
                     assistant.assistant_parts.push(AssistantTextPart {
                         id: item_id(item, "assistant-text"),
                         content,
                         created_at: item_timestamp(item).unwrap_or(fallback_timestamp),
+                        explicit_final: native_final.is_some(),
+                        deduplicated_final_id: None,
                     });
                 }
             }

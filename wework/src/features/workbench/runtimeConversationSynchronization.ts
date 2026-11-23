@@ -22,12 +22,19 @@ import {
   runtimeConversationKey,
 } from './runtimeConversationCache'
 
+import {
+  hydrationByConversation,
+  recordRuntimeTranscriptAuthority,
+  threadIdsByConversation,
+} from './runtimeConversationCacheStore'
+
 type Reader = (
   request: RuntimeTranscriptRequest,
   options?: RuntimeReadOptions
 ) => Promise<RuntimeTranscriptResponse>
 type ReadOptions = Omit<RuntimeTranscriptRequest, keyof RuntimeTaskAddress>
-type SynchronizationOptions = ReadOptions & RuntimeReadOptions & { isolated?: boolean }
+type SynchronizationOptions = ReadOptions &
+  RuntimeReadOptions & { isolated?: boolean; authorityScope?: string }
 interface Writer {
   threadId?: string | null
   generation: number
@@ -59,7 +66,7 @@ async function readRuntimeConversation(
 export function synchronizeRuntimeConversation(
   read: Reader,
   address: RuntimeTaskAddress,
-  { isolated, signal, ...options }: SynchronizationOptions = {}
+  { isolated, signal, authorityScope, ...options }: SynchronizationOptions = {}
 ): Promise<RuntimePaneTranscript> {
   if (signal?.aborted) return Promise.reject(cancelledRuntimeRead())
   if (isolated) return readRuntimeConversation(read, address, options, signal)
@@ -78,6 +85,7 @@ export function synchronizeRuntimeConversation(
   const generation = writer.generation
   const requestKey = JSON.stringify([
     conversationKey,
+    authorityScope,
     writer.threadId,
     generation,
     address.projectSession?.projectId ?? null,
@@ -119,7 +127,15 @@ export function synchronizeRuntimeConversation(
       )
       diagnoseRead('resolved', address, options)
       if (writer.generation !== generation) throw new SupersededConversationRead()
-      if (token && operation.isCurrent()) {
+      if (
+        token &&
+        operation.isCurrent() &&
+        hydrationByConversation.get(runtimeConversationKey(address))?.token === token
+      ) {
+        const authorityThread =
+          transcript.threadId ||
+          threadIdsByConversation.get(runtimeConversationKey(address)) ||
+          null
         completeRuntimeConversationHydration(
           address,
           token,
@@ -127,6 +143,13 @@ export function synchronizeRuntimeConversation(
           transcript.threadId,
           transcript.supersededTurnIds
         )
+        if (operation.isCurrent() && !controller.signal.aborted)
+          recordRuntimeTranscriptAuthority(
+            address,
+            transcript.turns,
+            authorityScope,
+            authorityThread
+          )
       } else if (token) {
         abortRuntimeConversationHydration(address, token)
       }

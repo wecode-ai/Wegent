@@ -48,6 +48,12 @@ Cargo target 按组件和 worktree 隔离，编译缓存通过 sccache 共享。
 
 内置插件市场在首屏后计算确定性的内容 SHA-256。目标目录中的 `.wework-content-sha256` 与当前内容一致时不再复制；内容变化时才通过 staging 目录替换，并把 hash 纳入 Codex 本地市场注册键。这样 Wework 升级后仍会及时刷新内置插件，而相同版本启动不会重复复制整个市场。
 
+## 本地 RPC 排队
+
+当 `/wework/executor/v1/rpc` 和 `/wework/electron-host/v1/invoke` 同时变慢时，先查看 DevTools Network 的 Timing。如果耗时集中在请求发出前的 `Blocked`，按 RPC 请求体的 `method` 统计同一时间段的请求，再用 `x-request-id` 对齐 Core DSH 的 `RPC HTTP response` 日志。日志中的 `elapsed_ms` 从 DSH 处理请求开始计时，可用于区分浏览器排队和运行时处理。
+
+混合工作台的并发任务读取在设备路由未命中时共享一次进行中的本地设备发现。发现结束后，下一次路由未命中仍可读取实时状态。`idle-executor-requests` 桌面 E2E 检查 30 个并发读取只发出一次 `runtime.worktrees.capabilities`，并验证各任务仍返回自己的查询结果。
+
 ## Runtime 任务创建诊断
 
 前端会将任务创建关键阶段以 `[Wework] Runtime task create diagnostic` 前缀写入持久化日志，无需开启性能诊断。记录只包含阶段、任务/设备标识、模型标识、耗时和结果，不包含消息正文、凭据或模型连接配置。

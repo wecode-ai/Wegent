@@ -1,8 +1,9 @@
-import { ArrowRight, Bot, CheckCircle2, CircleDot, UserRound } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User as UserProfile } from '@/types/api'
-import type { TodoDetailItem, TodoViewState } from './TodoDetailPanel'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, Bot, CheckCircle2, CircleDot, UserRound } from 'lucide-react'
 import { todoStateColors } from './todoStateColors'
+import type { TodoDetailItem, TodoViewState } from './todoTypes'
 
 interface TodoOverviewProps {
   projectName: string
@@ -128,7 +129,8 @@ export function TodoOverview({
               <h2 className="text-xs font-semibold text-text-primary">
                 {t('todo.recent_work_items', '最近工作空间')}
               </h2>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="todo-overview-open-work-items"
                 onClick={onOpenWorkItems}
@@ -136,7 +138,7 @@ export function TodoOverview({
               >
                 {t('todo.view_all', '查看全部')}
                 <ArrowRight className="h-3.5 w-3.5" />
-              </button>
+              </ControlButton>
             </header>
             {recentItems.length === 0 ? (
               <div className="flex h-[260px] flex-col items-center justify-center text-center">
@@ -144,21 +146,24 @@ export function TodoOverview({
                 <p className="mt-2 text-sm font-medium text-text-secondary">
                   {t('todo.no_work_items', '当前项目还没有工作空间')}
                 </p>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="todo-overview-empty-open-work-items"
                   onClick={onOpenWorkItems}
                   className="mt-2 h-8 rounded-md px-2 text-xs font-medium text-primary hover:bg-primary/10"
                 >
                   {t('todo.open_work_items', '打开工作空间')}
-                </button>
+                </ControlButton>
               </div>
             ) : (
               <div>
                 {recentItems.map(item => {
                   const state = OVERVIEW_STATES.find(entry => entry.state === item.state)!
                   return (
-                    <button
+                    <ControlButton
+                      variant="outline"
+                      size="sm"
                       key={item.id}
                       type="button"
                       data-testid={`todo-overview-item-${item.id}`}
@@ -188,7 +193,7 @@ export function TodoOverview({
                           {formatOverviewDate(item.updatedAt ?? item.createdAt)}
                         </span>
                       </span>
-                    </button>
+                    </ControlButton>
                   )
                 })}
               </div>

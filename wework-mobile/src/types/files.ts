@@ -13,7 +13,7 @@ export type MobileFileRequest =
   | { kind: 'attachment'; attachment: Attachment }
   | { kind: 'local'; uri: string; name: string; mimeType: string }
   | { kind: 'image'; dataUri: string; name: string }
-  | { kind: 'diff'; summary: TurnFileChangesSummary; path?: string }
+  | { kind: 'diff'; summary: TurnFileChangesSummary; path?: string; taskId?: string }
   | {
       kind: 'git-diff'
       target: MobileWorkspaceFileTarget

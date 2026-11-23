@@ -20,6 +20,12 @@ pnpm --filter wework e2e:desktop --segment idle-executor-requests
 
 The independent checkpoint is registered in an existing Core CI shard and does not require earlier scenarios. Local macOS arm64 verification took approximately 52 seconds including startup and cleanup, excluding the shared build. Its result directory contains `idle-executor-requests.json` with method names, timestamps, statuses, and necessary boolean flags only, never request parameters, headers, or query strings. Do not commit logs or screenshots.
 
+## Desktop CPU regression checks
+
+The existing Linux Core CI measures CPU for `idle-executor-requests`, `streaming-conversation-switching`, and `executor-stream-recovery`. The measurement spans the scenario's verification function, including any setup and reloads inside it. For example, the idle scenario's total includes its reload and follow-up verification. CPU time in milliseconds is reported separately for Electron Renderer processes and the main Executor process. Executor child processes are outside the current measurement scope. Both endpoints must identify the same measured processes. Collection failures and process changes are logged as unavailable samples.
+
+[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) tracks a baseline per checkpoint and runner platform. Scheduled or manually dispatched Wework E2E runs on `main` update the baseline. Pull requests and the merge queue only read it. When an existing shard runs the corresponding checkpoint, CI reports the current value, baseline, and ratio. With a baseline, CI fails when either process uses more than 150% of the baseline CPU time or the checkpoint produces no sample. Before the first baseline, CI can pass and reports any available samples.
+
 ## Periodic plugin recovery E2E
 
 The `plugin-periodic-reconcile` checkpoint uses real Electron, Executor, Socket.IO, database, and plugin package storage. It discards one real plugin change notification, then verifies timer-driven recovery, persisted acknowledgements, device identity, and unchanged unrelated plugin content. Its isolated instances set `LOCAL_PLUGIN_RECONCILE_INTERVAL=90` and `LOCAL_PLUGIN_RECONCILE_JITTER=18` (seconds), with the existing `LOCAL_HEARTBEAT_INTERVAL=1` configuration preserving the assertion of at least 10 heartbeats. The checkpoint observes production reconciliation ticks and aligns fault injection to the current timer window when fixture setup crosses one, so setup load cannot force a longer interval.
@@ -35,6 +41,8 @@ The plugin account late-response E2E uses a unique `Server-Timing` diagnostic ma
 ## Conversation model restoration diagnostics
 
 When full task data is selected, the feedback bundle's `context/task.json` includes `modelSelection`: `configured` is the configuration supplied to the model selector, `effective` is the configuration after default resolution, and `selected` is the current composer model. Missing snapshots remain `null`. Snapshots contain only model identity, resource ownership and a diagnostic fingerprint; arbitrary model options and authentication configuration are excluded.
+
+The feedback dialog keeps the task selected when it opened. Its preview reads that task's complete transcript independently of pane refreshes during reconnection and conversation switches.
 
 The `workbench.selection_restored`, `workbench.selection_changed` and `workbench.selection_seeded` events in `logs/app/model-loading.log` correlate scopes and models through numeric fingerprints. Fingerprints are diagnostic identifiers. The executor's `runtime task model selection updated` event records an in-memory assignment. The `runtime task get resolved link` and `runtime task transcript resolved link` events record the owning task's current model identity on reads. Assignment does not prove that a disk write succeeded.
 
@@ -221,3 +229,15 @@ The diff preview uses Pierre virtualization. Keep line callbacks, render options
 Define workbench memoized callbacks in independent Hook lexical scopes instead of the Provider's large render scope. Otherwise callbacks whose dependencies change at different rates can retain historical task, lifecycle and work-list snapshots through their shared closures. `workbenchCallbackLifetime.test.tsx` triggers real GC through Inspector, uses weak references to verify snapshot collection and guards against defining `useCallback` directly in the Provider again.
 
 Interpret CPU samples, HTML parsing duration and process memory separately. Heap object sizes do not equal Activity Monitor process memory; one heap snapshot establishes retaining paths, not a memory growth rate. Keep analysis files local and never commit user traces or heap snapshots.
+
+## PR-scoped Bombadil exploration
+
+Use Bombadil 0.7.10 on macOS ARM64 or Linux and set BOMBADIL_BIN to its executable. Preview selection with `pnpm --filter wework ai:verify bombadil --base origin/main --plan true`. Run the same command without --plan, with `--seconds 30`, or explicitly select `--suite appearance` or `--suite workbench`. Obtain the binary from https://github.com/antithesishq/bombadil/releases/tag/v0.7.10.
+
+The base plan uses committed merge-base-to-HEAD paths, including deletions and both sides of renames. Uncommitted work requires an explicit suite. The map in scripts/ai-verify-bombadil.mjs selects appearance changes, workbench/chat/tab changes, and both suites for shared UI or host changes. Unmapped Wework/packages paths are reported as coverage gaps and prevent automatic execution from claiming a pass. Extend the specification and map for new features. Selection is candidate coverage, not correctness evidence.
+
+Each suite owns a fresh real Electron and Executor session. Only explicit Bombadil startup opens an ephemeral loopback debugger; existing Executor Homes and ambiguous page targets are rejected. Setup dismisses the isolated privacy prompt and establishes the feature prerequisites. Suites run serially with a 1–600 second budget each; success, failure and timeout clean up the session. Model execution and cloud authentication are not exercised.
+
+Results under `wework/test-results/bombadil/<timestamp>/` include summary.json, logs and native traces. Failed checks, cleanup failures and zero-action runs cannot pass. Traces can contain screenshots and page content: keep them local, do not commit them, and never upload session.json, credentials or the entire ai-verify directory. Any CI integration needs a bounded budget. Exploration does not replace deterministic regression, permission or release verification.
+
+The Wework Bombadil exploration GitHub Actions workflow is manual-only. Select the PR branch and provide the base ref (origin/main by default) and seconds per suite. Ordinary PRs gain no automatic exploration. The workflow verifies the pinned download SHA-256 and publishes only summary.json to the step summary, never raw traces or authentication directories.

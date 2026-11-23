@@ -1,29 +1,26 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
 import { Bot, Pencil, Plus, Trash2, UserRound, UsersRound, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 
 import { collaborationMessages, type CollaborationTranslate } from '../i18n'
 import { projectStatuses } from '../board'
 import { Textarea } from '../controls/Textarea'
 import { requestFailureMessage } from '../controls/requestFailure'
-import { useDialogKeyboard } from '../controls/useDialogKeyboard'
+import { DialogSurface } from '../controls/DialogSurface'
+import { Switch } from '../controls/Switch'
 import { DialogForm } from '../controls/DialogForm'
 import { ConfirmationDialog } from '../controls/ConfirmationDialog'
 import type {
   SharedWorkspaceApi,
   WorkspaceAutomationInput,
   WorkspaceAutomationRule,
-  WorkspaceIncomingHook,
 } from '../ports/SharedWorkspaceApi'
-import type {
-  CollaborationAgent,
-  CollaborationGroup,
-  CollaborationMember,
-  CollaborationProject,
-} from '../types'
+import type { CollaborationAgent, CollaborationMember, CollaborationProject } from '../types'
 import { useAutomaticProcessingRules } from './useAutomaticProcessingRules'
 import { ProjectSettingsPage } from './ProjectSettingsPage'
 import {
@@ -59,35 +56,19 @@ function AutomaticProcessingSwitch({
   testId: string
 }) {
   return (
-    <button
-      aria-checked={checked}
+    <Switch
+      checked={checked}
       aria-label={label}
-      className="inline-flex h-11 w-11 items-center justify-center shrink-0 rounded-full md:h-8 md:w-9 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
       data-testid={testId}
       disabled={disabled}
-      onClick={() => onChange(!checked)}
-      role="switch"
-      type="button"
-    >
-      <span
-        className={`relative inline-flex h-5 w-8 items-center rounded-full transition-colors ${
-          checked ? 'bg-blue-500' : 'bg-text-muted/30'
-        }`}
-      >
-        <span
-          className={`h-4 w-4 rounded-full border border-white bg-white shadow-sm transition-transform ${
-            checked ? 'translate-x-[14px]' : 'translate-x-0.5'
-          }`}
-        />
-      </span>
-    </button>
+      onCheckedChange={onChange}
+    />
   )
 }
 
 export function ProjectAutomaticProcessing({
   api,
   project,
-  members,
   agents,
   locale,
   translate,
@@ -107,27 +88,111 @@ export function ProjectAutomaticProcessing({
     error: rulesError,
     load,
   } = useAutomaticProcessingRules(api.automations, project.id)
-  const [groups, setGroups] = useState<CollaborationGroup[]>([])
-  const [availableAgents, setAvailableAgents] = useState<CollaborationAgent[]>(agents)
-  const [availableMembers, setAvailableMembers] = useState<CollaborationMember[]>(members)
-  const [optionsLoading, setOptionsLoading] = useState(true)
-  const [hooks, setHooks] = useState<WorkspaceIncomingHook[]>([])
+  const projectId = project.id
+  const optionsResource = useMemo(
+    () =>
+      createAsyncResource('automatic-processing-options', async () => {
+        const [groups, agents, members] = await Promise.all([
+          api.projects.listCollaborationGroups?.(projectId) ?? [],
+          api.agents.list(projectId),
+          api.members.list(projectId),
+        ])
+        return { groups, agents, members }
+      }),
+    [api, projectId]
+  )
+  const optionsSnapshot = useSyncExternalStore(
+    optionsResource.subscribe,
+    optionsResource.getSnapshot,
+    optionsResource.getSnapshot
+  )
+  const optionsLoading = optionsSnapshot.status === 'idle' || optionsSnapshot.status === 'loading'
+  const [agentSnapshot, setAgentSnapshot] = useState(() => ({
+    resource: optionsResource,
+    catalog: optionsSnapshot.data,
+    source: agents,
+    value: agents,
+  }))
+  if (
+    agentSnapshot.resource !== optionsResource ||
+    agentSnapshot.catalog !== optionsSnapshot.data
+  ) {
+    setAgentSnapshot({
+      resource: optionsResource,
+      catalog: optionsSnapshot.data,
+      source: agents,
+      value: optionsSnapshot.data?.agents ?? agents,
+    })
+  } else if (agentSnapshot.source !== agents) {
+    setAgentSnapshot({ ...agentSnapshot, source: agents, value: agents })
+  }
+  const availableAgents = agentSnapshot.value
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT)
   const [editing, setEditing] = useState(false)
   const [pendingRemoval, setPendingRemoval] = useState<WorkspaceAutomationRule | null>(null)
-  const [hooksLoading, setHooksLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [actionError, setError] = useState('')
   const [cronError, setCronError] = useState('')
-  const [optionsError, setOptionsError] = useState('')
-  const [hooksError, setHooksError] = useState('')
   const [hooksRevision, setHooksRevision] = useState(0)
-  const translateRef = useRef(translate)
-  translateRef.current = translate
-  const saveScope = useMemo(() => ({ api, projectId: project.id }), [api, project.id])
-  const activeSaveScope = useRef(saveScope)
-  activeSaveScope.current = saveScope
   const needsHooks = editing && draft.trigger === 'external'
+  const incomingHooksApi = api.incomingHooks
+  const hookScope = useMemo(
+    () => ({ api, incomingHooksApi, projectId }),
+    [api, incomingHooksApi, projectId]
+  )
+  const hooksResource = useMemo(
+    () =>
+      createAsyncResource(
+        'automatic-processing-hooks',
+        async () => ({
+          hooks: await hookScope.incomingHooksApi!.list(hookScope.projectId),
+          readId: Symbol('incoming-hooks-read'),
+        }),
+        { refreshOnSubscribe: true }
+      ),
+    [hookScope]
+  )
+  const subscribeHooks = useCallback(
+    (listener: () => void) => hooksResource.subscribe(listener, hooksRevision),
+    [hooksResource, hooksRevision]
+  )
+  const hooksEnabled = needsHooks && Boolean(incomingHooksApi)
+  const hooksSnapshot = useSyncExternalStore(
+    hooksEnabled ? subscribeHooks : subscribeIdleResource,
+    hooksResource.getSnapshot,
+    hooksResource.getSnapshot
+  )
+  const hooks = hooksSnapshot.data?.hooks ?? []
+  const hooksLoading =
+    hooksEnabled && (hooksSnapshot.status === 'idle' || hooksSnapshot.status === 'loading')
+  const dataError = (cause: unknown) =>
+    cause instanceof Error
+      ? cause.message
+      : translate('todo.automatic_processing_load_failed', '加载自动处理失败')
+  const optionsError = optionsSnapshot.status === 'error' ? dataError(optionsSnapshot.error) : ''
+  const hooksError =
+    hooksEnabled && hooksSnapshot.status === 'error' ? dataError(hooksSnapshot.error) : ''
+  const [formScope, setFormScope] = useState(optionsResource)
+  if (formScope !== optionsResource) {
+    setFormScope(optionsResource)
+    setDraft(EMPTY_DRAFT)
+    setEditing(false)
+    setPendingRemoval(null)
+    setError('')
+    setCronError('')
+  }
+  const [handledHooksRead, setHandledHooksRead] = useState<symbol>()
+  if (
+    hooksEnabled &&
+    hooksSnapshot.status === 'ready' &&
+    hooksSnapshot.data &&
+    handledHooksRead !== hooksSnapshot.data.readId
+  ) {
+    setHandledHooksRead(hooksSnapshot.data.readId)
+    const hook = hooks[0]
+    if (hook && !draft.hookId)
+      setDraft({ ...draft, hookId: hook.id, eventType: eventTypesForHook(hook)[0] ?? '' })
+  }
   const error =
     actionError ||
     optionsError ||
@@ -145,104 +210,18 @@ export function ProjectAutomaticProcessing({
     setEditing(false)
     setDraft(EMPTY_DRAFT)
   }
-  const editorRef = useDialogKeyboard<HTMLFormElement>(closeEditor, editing)
 
   const projectRefresh = useProjectSettingsRefresh(api, project.id, onProjectChange)
 
   async function reloadAfterMutation() {
+    if (!optionsResource.hasSubscribers()) return
     await projectRefresh.refresh()
-    await load()
+    if (optionsResource.hasSubscribers()) await load()
   }
-
-  useEffect(() => {
-    setDraft(EMPTY_DRAFT)
-    setEditing(false)
-    setHooks([])
-    setHooksError('')
-    setError('')
-  }, [api, project.id])
-
-  useEffect(() => {
-    let active = true
-    setGroups([])
-    setAvailableMembers([])
-    setOptionsLoading(true)
-    setOptionsError('')
-    void Promise.all([
-      api.projects.listCollaborationGroups?.(project.id) ?? [],
-      api.agents.list(project.id),
-      api.members.list(project.id),
-    ])
-      .then(([nextGroups, nextAgents, nextMembers]) => {
-        if (!active) return
-        setGroups(nextGroups)
-        setAvailableAgents(nextAgents)
-        setAvailableMembers(nextMembers)
-      })
-      .catch((cause: unknown) => {
-        if (!active) return
-        setOptionsError(
-          cause instanceof Error
-            ? cause.message
-            : translateRef.current('todo.automatic_processing_load_failed', '加载自动处理失败')
-        )
-      })
-      .finally(() => {
-        if (active) setOptionsLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api, project.id])
-
-  useEffect(() => {
-    if (!needsHooks || !api.incomingHooks) {
-      setHooksLoading(false)
-      return
-    }
-    let active = true
-    setHooksLoading(true)
-    setHooksError('')
-    void api.incomingHooks
-      .list(project.id)
-      .then(nextHooks => {
-        if (!active) return
-        setHooks(nextHooks)
-        const hook = nextHooks[0]
-        if (hook)
-          setDraft(current =>
-            current.hookId
-              ? current
-              : {
-                  ...current,
-                  hookId: hook.id,
-                  eventType: eventTypesForHook(hook)[0] ?? '',
-                }
-          )
-      })
-      .catch((cause: unknown) => {
-        if (!active) return
-        setHooksError(
-          cause instanceof Error
-            ? cause.message
-            : translateRef.current('todo.automatic_processing_load_failed', '加载自动处理失败')
-        )
-      })
-      .finally(() => {
-        if (active) setHooksLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api.incomingHooks, project.id, needsHooks, hooksRevision])
-
-  useEffect(() => {
-    setAvailableAgents(agents)
-  }, [agents])
 
   const targetOptions = useMemo(
     () => ({
-      human: availableMembers.map(member => ({
+      human: (optionsSnapshot.data?.members ?? []).map(member => ({
         id: String(member.user_id),
         name: member.user_name,
       })),
@@ -250,12 +229,12 @@ export function ProjectAutomaticProcessing({
         id: agent.id,
         name: agent.name,
       })),
-      collaboration_group: groups.map(group => ({
+      collaboration_group: (optionsSnapshot.data?.groups ?? []).map(group => ({
         id: group.id,
         name: group.name,
       })),
     }),
-    [availableAgents, groups, availableMembers]
+    [availableAgents, optionsSnapshot.data]
   )
   const targetAvailable = targetOptions[draft.targetKind].some(
     option => option.id === draft.targetId
@@ -449,11 +428,11 @@ export function ProjectAutomaticProcessing({
         await api.automations.create(project.id, input)
       }
       await reloadAfterMutation()
-      if (activeSaveScope.current !== saveScope) return
+      if (!optionsResource.hasSubscribers()) return
       setEditing(false)
       setDraft(EMPTY_DRAFT)
     } catch (saveError) {
-      if (activeSaveScope.current !== saveScope) return
+      if (!optionsResource.hasSubscribers()) return
       const failure = automaticProcessingSaveError(saveError, translate)
       if (draft.trigger === 'schedule' && failure.cronInvalid) {
         setCronError(failure.message)
@@ -476,6 +455,7 @@ export function ProjectAutomaticProcessing({
       })
       await reloadAfterMutation()
     } catch (toggleError) {
+      if (!optionsResource.hasSubscribers()) return
       setError(
         toggleError instanceof Error
           ? toggleError.message
@@ -492,6 +472,7 @@ export function ProjectAutomaticProcessing({
     setError('')
     try {
       await api.automations.remove(project.id, rule.id)
+      if (!optionsResource.hasSubscribers()) return
       if (draft.id === rule.id) {
         setEditing(false)
         setDraft(EMPTY_DRAFT)
@@ -507,7 +488,8 @@ export function ProjectAutomaticProcessing({
       actions={
         canManage ? (
           <div className="flex items-center gap-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="collaboration-primary-button inline-flex shrink-0 items-center gap-1.5"
               data-testid="automatic-processing-create"
@@ -516,7 +498,7 @@ export function ProjectAutomaticProcessing({
             >
               <Plus aria-hidden="true" className="h-4 w-4" />
               {translate('todo.create_automatic_processing', '新建规则')}
-            </button>
+            </ControlButton>
           </div>
         ) : undefined
       }
@@ -591,7 +573,8 @@ export function ProjectAutomaticProcessing({
                       data-testid={`automatic-processing-rule-${rule.id}`}
                       key={rule.id}
                     >
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         className="min-w-0 flex-1 text-left"
                         onClick={() => {
                           setDraft(ruleDraft)
@@ -606,7 +589,7 @@ export function ProjectAutomaticProcessing({
                         <span className="mt-0.5 block truncate text-xs text-text-secondary">
                           {triggerLabel} · {targetKindLabel[rule.targetKind]} · {targetName}
                         </span>
-                      </button>
+                      </ControlButton>
                       {canManage ? (
                         <div className="flex shrink-0 items-center gap-1">
                           <AutomaticProcessingSwitch
@@ -616,7 +599,8 @@ export function ProjectAutomaticProcessing({
                             onChange={() => void toggle(rule)}
                             testId={`automatic-processing-enabled-${rule.id}`}
                           />
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             aria-label={translate('common.edit', '编辑')}
                             className="flex h-11 w-11 items-center justify-center rounded-lg md:h-8 md:w-8 text-text-secondary hover:bg-muted"
                             data-testid={`automatic-processing-edit-${rule.id}`}
@@ -628,8 +612,9 @@ export function ProjectAutomaticProcessing({
                             type="button"
                           >
                             <Pencil aria-hidden="true" className="h-4 w-4" />
-                          </button>
-                          <button
+                          </ControlButton>
+                          <ControlButton
+                            variant="unstyled"
                             aria-label={translate('common.delete', '删除')}
                             className="flex h-11 w-11 items-center justify-center rounded-lg md:h-8 md:w-8 text-red-500 hover:bg-red-500/10 disabled:opacity-50"
                             data-testid={`automatic-processing-delete-${rule.id}`}
@@ -638,7 +623,7 @@ export function ProjectAutomaticProcessing({
                             type="button"
                           >
                             <Trash2 aria-hidden="true" className="h-4 w-4" />
-                          </button>
+                          </ControlButton>
                         </div>
                       ) : null}
                     </article>
@@ -656,18 +641,20 @@ export function ProjectAutomaticProcessing({
 
       {editing ? (
         <div className="collaboration-dialog-backdrop !bg-black/20">
-          <DialogForm
-            ref={editorRef}
-            tabIndex={-1}
-            aria-labelledby="automatic-processing-dialog-title"
-            aria-modal="true"
-            className="collaboration-dialog flex max-h-[calc(100vh-48px)] w-full max-w-[600px] flex-col overflow-hidden !rounded-2xl !p-0 !shadow-lg"
-            data-testid="automatic-processing-form"
-            onSubmit={event => {
-              event.preventDefault()
-              void save()
-            }}
-            role="dialog"
+          <DialogSurface
+            onClose={saving ? undefined : closeEditor}
+            render={
+              <DialogForm
+                tabIndex={-1}
+                aria-labelledby="automatic-processing-dialog-title"
+                className="collaboration-dialog flex max-h-[calc(100vh-48px)] w-full max-w-[600px] flex-col overflow-hidden !rounded-2xl !p-0 !shadow-lg"
+                data-testid="automatic-processing-form"
+                onSubmit={event => {
+                  event.preventDefault()
+                  void save()
+                }}
+              />
+            }
           >
             <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
               <h2 className="heading-small !m-0" id="automatic-processing-dialog-title">
@@ -677,7 +664,8 @@ export function ProjectAutomaticProcessing({
                     ? translate('todo.edit_automatic_processing', '编辑自动处理')
                     : translate('todo.create_automatic_processing', '新建自动处理')}
               </h2>
-              <button
+              <ControlButton
+                variant="unstyled"
                 data-testid="automatic-processing-close"
                 aria-label={translate('common.close', '关闭')}
                 className="flex h-11 w-11 items-center justify-center rounded-lg md:h-8 md:w-8 text-text-secondary hover:bg-muted"
@@ -686,7 +674,7 @@ export function ProjectAutomaticProcessing({
                 type="button"
               >
                 <X aria-hidden="true" className="h-4 w-4" />
-              </button>
+              </ControlButton>
             </header>
 
             <div
@@ -747,7 +735,8 @@ export function ProjectAutomaticProcessing({
                       const available = targetKind.options.length > 0
                       const Icon = targetKind.icon
                       return (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           aria-pressed={selected}
                           className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
                             selected
@@ -796,7 +785,7 @@ export function ProjectAutomaticProcessing({
                                 : translate('common.not_configured', '未配置')}
                             </span>
                           </span>
-                        </button>
+                        </ControlButton>
                       )
                     })}
                   </div>
@@ -901,7 +890,7 @@ export function ProjectAutomaticProcessing({
               onClose={closeEditor}
               valid={valid}
             />
-          </DialogForm>
+          </DialogSurface>
         </div>
       ) : null}
     </ProjectSettingsPage>

@@ -1,5 +1,7 @@
 import { useId, type ReactNode } from 'react'
+import { Button as ControlButton } from '../markdown/Button'
 import { projectAssistantStatusEnglish } from './copy'
+import './project-assistant-status.css'
 import {
   formatReceiptTime,
   hostingRecoveryAction,
@@ -12,7 +14,6 @@ import type {
   ProjectAssistantStatus,
   ProjectAssistantStatusCopy,
 } from './types'
-import './project-assistant-status.css'
 
 export interface ProjectAssistantStatusPanelProps {
   /** Current request context. A snapshot from another project/store is hidden. */
@@ -45,31 +46,15 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function hostingLabel(
-  snapshot: ProjectAssistantStatus,
-  copy: ProjectAssistantStatusCopy,
-) {
+function hostingLabel(snapshot: ProjectAssistantStatus, copy: ProjectAssistantStatusCopy) {
   if (!snapshot.enabled)
-    return snapshot.reasonCode === 'hosting_paused'
-      ? copy.paused
-      : copy.notEnabled
-  return snapshot.reasonCode === 'permission_revoked'
-    ? copy.revoked
-    : copy.enabled
+    return snapshot.reasonCode === 'hosting_paused' ? copy.paused : copy.notEnabled
+  return snapshot.reasonCode === 'permission_revoked' ? copy.revoked : copy.enabled
 }
 
-type SyncState =
-  | 'ready'
-  | 'loading'
-  | 'refreshing'
-  | 'error'
-  | 'stale'
-  | 'unknown'
+type SyncState = 'ready' | 'loading' | 'refreshing' | 'error' | 'stale' | 'unknown'
 
-function matchesScope(
-  current: ProjectAssistantScope,
-  snapshot?: ProjectAssistantScope | null,
-) {
+function matchesScope(current: ProjectAssistantScope, snapshot?: ProjectAssistantScope | null) {
   return (
     (current?.projectStore === 'local' || current?.projectStore === 'cloud') &&
     !!current.projectId?.trim() &&
@@ -78,30 +63,18 @@ function matchesScope(
   )
 }
 
-function managerSnapshot(
-  value: unknown,
-): ProjectAssistantManagerSummary | null {
+function managerSnapshot(value: unknown): ProjectAssistantManagerSummary | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   return projectAssistantManagerSummary(value)
 }
 
-function syncState(
-  hasSnapshot: boolean,
-  loading: boolean,
-  error: boolean,
-): SyncState {
+function syncState(hasSnapshot: boolean, loading: boolean, error: boolean): SyncState {
   if (loading) return hasSnapshot ? 'refreshing' : 'loading'
   if (error) return hasSnapshot ? 'stale' : 'error'
   return hasSnapshot ? 'ready' : 'unknown'
 }
 
-function SyncNotice({
-  state,
-  copy,
-}: {
-  state: SyncState
-  copy: ProjectAssistantStatusCopy
-}) {
+function SyncNotice({ state, copy }: { state: SyncState; copy: ProjectAssistantStatusCopy }) {
   if (state === 'ready') return null
   const failed = state === 'error' || state === 'stale'
   const [label, detail] = {
@@ -135,13 +108,14 @@ function RetryAction({
 }) {
   if (!onRetry || (state !== 'error' && state !== 'stale')) return null
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="project-assistant-retry"
       onClick={onRetry}
     >
       {copy.retryAction}
-    </button>
+    </ControlButton>
   )
 }
 
@@ -165,9 +139,7 @@ export function ProjectAssistantStatusPanel({
   const headingId = useId()
   if (!featureEnabled) return null
   if (audience === 'manager') {
-    const summary = matchesScope(projectScope, statusScope)
-      ? managerSnapshot(status)
-      : null
+    const summary = matchesScope(projectScope, statusScope) ? managerSnapshot(status) : null
     const state = syncState(!!summary, loading, error)
     return (
       <section
@@ -189,9 +161,7 @@ export function ProjectAssistantStatusPanel({
                 : copy.no}
           </Fact>
           <Fact label={copy.availability}>
-            {!summary
-              ? copy.pending
-              : copy.availabilityValues[summary.availability]}
+            {!summary ? copy.pending : copy.availabilityValues[summary.availability]}
           </Fact>
         </dl>
         <footer className="project-assistant-status__footer">
@@ -210,8 +180,7 @@ export function ProjectAssistantStatusPanel({
       : error
         ? copy.error
         : copy.unknown
-  const panelState =
-    state === 'ready' ? (snapshot?.reasonCode ?? 'hosting') : state
+  const panelState = state === 'ready' ? (snapshot?.reasonCode ?? 'hosting') : state
   return (
     <section
       className="project-assistant-status"
@@ -221,9 +190,7 @@ export function ProjectAssistantStatusPanel({
     >
       <header className="project-assistant-status__header">
         <div>
-          <span className="project-assistant-status__eyebrow">
-            {copy.ownerHeading}
-          </span>
+          <span className="project-assistant-status__eyebrow">{copy.ownerHeading}</span>
           <h2 id={headingId}>{projectName || copy.projectFallback}</h2>
         </div>
         <strong
@@ -237,17 +204,9 @@ export function ProjectAssistantStatusPanel({
       <SyncNotice state={state} copy={copy} />
       {snapshot && (
         <>
-          <HostingFacts
-            snapshot={snapshot}
-            copy={copy}
-            locale={locale}
-            timeZone={timeZone}
-          />
+          <HostingFacts snapshot={snapshot} copy={copy} locale={locale} timeZone={timeZone} />
           {snapshot.reasonCode && (
-            <p
-              className="project-assistant-status__notice"
-              data-testid="project-assistant-reason"
-            >
+            <p className="project-assistant-status__notice" data-testid="project-assistant-reason">
               <strong>{copy.reasonLabels[snapshot.reasonCode]}</strong>
               <span>{copy.reasonDetails[snapshot.reasonCode]}</span>
               <code>{snapshot.reasonCode}</code>
@@ -260,9 +219,7 @@ export function ProjectAssistantStatusPanel({
         </>
       )}
       <footer className="project-assistant-status__footer">
-        <span>
-          {snapshot?.synthetic ? copy.fixtureNote : copy.projectionNote}
-        </span>
+        <span>{snapshot?.synthetic ? copy.fixtureNote : copy.projectionNote}</span>
         <RetryAction state={state} copy={copy} onRetry={onRetry} />
         {snapshot && (
           <HostingActions
@@ -314,17 +271,10 @@ function HostingFacts({
       <Fact label={copy.currentTags}>
         {snapshot.currentTags.join(', ') || copy.noTags} · {tagMatch}
       </Fact>
-      <Fact label={copy.availability}>
-        {copy.availabilityValues[snapshot.availability]}
-      </Fact>
+      <Fact label={copy.availability}>{copy.availabilityValues[snapshot.availability]}</Fact>
       <Fact label={copy.lastReceipt}>
         <time dateTime={snapshot.lastReceiptAt ?? undefined}>
-          {formatReceiptTime(
-            snapshot.lastReceiptAt,
-            copy.noReceiptTime,
-            locale,
-            timeZone,
-          )}
+          {formatReceiptTime(snapshot.lastReceiptAt, copy.noReceiptTime, locale, timeZone)}
         </time>
       </Fact>
     </dl>
@@ -366,10 +316,7 @@ function HostingActions({
 }: {
   snapshot: ProjectAssistantStatus
   copy: ProjectAssistantStatusCopy
-} & Pick<
-  ProjectAssistantStatusPanelProps,
-  'onOpenSettings' | 'onOpenRules' | 'onOpenReceipt'
->) {
+} & Pick<ProjectAssistantStatusPanelProps, 'onOpenSettings' | 'onOpenRules' | 'onOpenReceipt'>) {
   const action = hostingRecoveryAction(snapshot.reasonCode)
   const callbacks = {
     settings: onOpenSettings,
@@ -385,31 +332,34 @@ function HostingActions({
   return (
     <>
       {action && recovery && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="project-assistant-recovery"
           onClick={() => recovery(snapshot)}
         >
           {labels[action]}
-        </button>
+        </ControlButton>
       )}
       {onOpenSettings && action !== 'settings' && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="project-assistant-settings"
           onClick={() => onOpenSettings(snapshot)}
         >
           {copy.settingsAction}
-        </button>
+        </ControlButton>
       )}
       {snapshot.receipt && onOpenReceipt && action !== 'receipt' && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="project-assistant-receipt"
           onClick={() => onOpenReceipt(snapshot)}
         >
           {copy.receiptAction}
-        </button>
+        </ControlButton>
       )}
     </>
   )

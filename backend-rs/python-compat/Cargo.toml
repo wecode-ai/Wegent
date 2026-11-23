@@ -1,0 +1,16 @@
+[package]
+name = "wegent-python-compat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Python value compatibility for Wegent"
+
+[dependencies]
+regex = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
+anyhow = { workspace = true }
+yaml-rust2 = { workspace = true }
+brz-json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }

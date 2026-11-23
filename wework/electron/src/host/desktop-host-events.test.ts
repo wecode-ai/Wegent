@@ -2,6 +2,19 @@ import { describe, expect, test } from 'vitest'
 import { DesktopHostEventBroker } from './desktop-host-events.js'
 
 describe('DesktopHostEventBroker', () => {
+  test('wakes waiting readers on publish and immediately replays retained events', async () => {
+    const broker = new DesktopHostEventBroker()
+    let delivered = false
+    const waiting = broker.wait(0).then(batch => {
+      delivered = true
+      return batch
+    })
+    await Promise.resolve()
+    expect(delivered).toBe(false)
+    broker.publish('systemDrag.pending', {})
+    expect((await waiting).events[0]?.type).toBe('systemDrag.pending')
+    expect((await broker.wait(0)).latestSequence).toBe(1)
+  })
   test('returns events published after the requested sequence', () => {
     const broker = new DesktopHostEventBroker()
     broker.publish('tray.action', { type: 'open-settings' })

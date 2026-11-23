@@ -73,6 +73,8 @@ pub struct ConnectionConfig {
     pub socket_url: String,
     #[serde(default)]
     pub auth_token: String,
+    #[serde(skip)]
+    pub authenticated_user_id: Option<i64>,
     #[serde(default)]
     pub runtime_auth_token: String,
 }

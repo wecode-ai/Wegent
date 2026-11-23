@@ -125,7 +125,10 @@ test.describe('Issue Dispatch human assignment', () => {
       'data-value',
       `user:${memberId}`
     )
-    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
+    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+      'data-value',
+      'inbox'
+    )
 
     const notification = await waitForAssignmentNotification(request, fixture.issueId)
     expect(notification.payload).toMatchObject({

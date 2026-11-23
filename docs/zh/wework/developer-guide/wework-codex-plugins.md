@@ -29,7 +29,7 @@ Renderer 通过白名单 Electron capability 调用列举、安装、更新、�
 
 ## 市场和安装
 
-本地市场和 OpenAI 官方市场由 Wework 前端通过本机 executor 的 Codex app-server 读取。本地目录及安装、卸载后的目录校验固定使用 `marketplaceKinds: ['local']`。只有打开 OpenAI 官方页或在该页手动刷新时，才通过独立入口读取默认远程目录；Codex 当前不提供官方目录分页或独立的 remote 市场筛选值。官方目录按设备、运行实例、Codex 鉴权指纹及 Wegent 账号隔离，缓存 60 秒并合并并发请求；缓存过期不会自行发起请求，安装、卸载和本地刷新也不会使该目录失效。账号切换或退出后丢弃旧响应。Executor 在 IPC 返回前精简列表，详情由 `plugin/read` 按需获取，并仅记录各字段字节数以定位大响应。这可减少内部传输，不能替代上游对首次下载量的优化。远程 GitHub 自定义市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。除 Wework 个人市场的本地缓存安装与卸载外，本地市场操作由 Codex app-server 管理。
+本地市场和 OpenAI 官方市场由 Wework 前端通过本机 executor 的 Codex app-server 读取。本地目录及安装、卸载后的目录校验固定使用 `marketplaceKinds: ['local']`。只有打开 OpenAI 官方页或在该页手动刷新时，才通过独立入口读取默认远程目录；Codex 当前不提供官方目录分页或独立的 remote 市场筛选值。桌面端将官方目录摘要写入用户数据目录下的 `plugin-cache/openai-official-catalog.json`，按设备、Codex 用户及工作区、Wegent 账号隔离。进入官方页先展示匹配的缓存，成功写入后 30 分钟内复用该目录。再次打开时如果已满 30 分钟，则在后台刷新。手动刷新可立即重新请求，并与同一范围内的进行中请求合并。目录请求或本地写入失败时，保留上一次成功保存的列表和时间。安装状态取自当前设备的插件清单。账号或运行实例变化后，旧请求的结果不会发布到当前视图。Executor 在 IPC 返回前精简列表，详情由 `plugin/read` 按需获取，并仅记录各字段字节数以定位大响应。这可减少内部传输，不能替代上游对首次下载量的优化。远程 GitHub 自定义市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。除 Wework 个人市场的本地缓存安装与卸载外，本地市场操作由 Codex app-server 管理。
 
 连接 Wegent 云端后，插件页还会展示 Backend 提供的 Wegent 云端市场。云端市场详情和安装状态来自 Backend；普通安装完成后，Backend 将用户的全局 `InstalledPlugin` 期望状态同步到在线本地设备和云设备。设备 Executor 从 Wework Backend / 对象存储取得包后，直接在隔离的 Claude 和 Codex home 中写入运行时缓存、marketplace 元数据和启用配置；云端插件的安装、更新和删除不调用 Codex app-server 的 `plugin/install`、`plugin/uninstall`，也不刷新 GitHub / OpenAI 市场。纯技能插件提交后通过本机配置重载 RPC 激活，见下文。这样企业内部、Wework 公开和已发布个人插件在包已可达后不依赖 GitHub、OpenAI 或 Codex 联网接口。OpenAI 官方市场仍由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
 
@@ -148,11 +148,13 @@ Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保
 | -------- | ------------------------ | --------------- | ---------------------------------------------------------------------- |
 | 只读     | `:read-only`             | `on-request`    | 允许读取工作区；写文件、运行超出权限边界的命令或请求额外权限时需要审批 |
 | 工作区   | `:workspace`             | `on-request`    | 允许在工作区内读写；访问工作区之外或扩大权限时需要审批                 |
-| 完整访问 | `:danger-full-access`    | granular        | 文件、终端和网络执行不弹审批；MCP 插件业务表单仍可以请求用户输入       |
+| 完整访问 | `:danger-full-access`    | granular        | 高危命令可选人工确认、AI 审核或自动执行，MCP 业务表单仍可请求用户输入 |
 
 前端在每次本地运行时请求中发送 `runtime_permission_profile`。Executor 在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 上同时设置对应的 `permissions` 与 `approvalPolicy`；从任务运行句柄恢复或继续会话时，也必须从保存的权限模式重建相同配置，不能回退为更高权限。
 
-完整访问使用 granular approval policy，关闭 `sandbox_approval`、`rules`、`skill_approval` 和 `request_permissions`，但保留 `mcp_elicitations: true`。MCP elicitation 是插件主动发起的业务交互，不属于命令、文件或权限提升等执行安全审批，因此不能通过 `approvalPolicy: "never"` 一并关闭。
+明确指定完整访问的请求使用 granular approval policy，启用 `sandbox_approval` 和 `mcp_elicitations`，关闭 `rules`、`skill_approval` 和 `request_permissions`。MCP elicitation 是插件主动发起的业务交互，不属于命令、文件或权限提升等执行安全审批，因此不能通过 `approvalPolicy: "never"` 一并关闭。
+
+高危命令的处理方式保存在任务的 `modelSelection.options.commandApproval`。人工确认是默认选项，AI 审核使用 Codex 原生 `auto_review`。自动执行只会单次批准 Codex 风险检测产生的命令请求，规则限制和额外授权请求仍由原有审批策略处理。
 
 Wework 的 Claude Code 普通对话通过非交互子进程运行，无法展示或完成 Claude CLI 自带的审批提示。因此，Claude Code 设置中的 `default` 在这条执行路径上会映射为 `bypassPermissions`；用户明确选择的 `acceptEdits`、`plan`、`auto` 或 `bypassPermissions` 仍会原样传递。交互式本地终端不经过这项映射。
 

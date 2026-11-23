@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test } from '../../fixtures/executor-test'
 import { REGULAR_USER } from '../../config/test-users'
+import { chooseCollaborationOption } from '../../utils/collaboration-test-support'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 // The web application defaults to English; persistence follows the localized builtin document.
@@ -65,9 +66,12 @@ for (const destination of ['existing', 'new'] as const) {
       const bindMembers = async () => {
         await page.getByTestId('template-customize-' + group.key).click()
         for (const role of group.roles) {
-          await page
-            .getByTestId('template-role-' + group.key + '-' + role.key)
-            .selectOption('human:' + (role.key === group.leaderRole ? owner.id : executor.id))
+          const member = role.key === group.leaderRole ? owner : executor
+          await chooseCollaborationOption(
+            page,
+            page.getByTestId(`template-role-${group.key}-${role.key}`),
+            { value: `human:${member.id}` }
+          )
         }
       }
       if (destination === 'existing') {

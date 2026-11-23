@@ -1,5 +1,6 @@
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
+import { isPopoutWindowRuntime } from '@/appWindowIdentity'
 import type { ProjectWithTasks, User } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
 import { navigateTo } from '@/lib/navigation'
@@ -7,8 +8,10 @@ import {
   useSelectProject,
   useSelectProjectWorkspace,
   useSelectStandaloneDevice,
+  useStartNewChat,
 } from './useWorkbenchNavigationCallbacks'
 
+vi.mock('@/appWindowIdentity', () => ({ isPopoutWindowRuntime: vi.fn() }))
 vi.mock('@/lib/navigation', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/navigation')>()),
   navigateTo: vi.fn(),
@@ -26,6 +29,24 @@ const state = {
   runtimeWork: null,
   standaloneDeviceId: null,
 } as unknown as WorkbenchState
+
+it('starts a blank chat without leaving the popout route', () => {
+  vi.mocked(isPopoutWindowRuntime).mockReturnValueOnce(true)
+  const dispatch = vi.fn()
+  const { result } = renderHook(() =>
+    useStartNewChat({
+      canNavigateWorkspaceTab: () => true,
+      state,
+      dispatch,
+      ownershipKey: 'popout-navigation-review',
+      workspaceTabId: undefined,
+      user: { id: 7 } as User,
+    })
+  )
+  act(result.current)
+  expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'project_cleared' }))
+  expect(navigateTo).not.toHaveBeenCalled()
+})
 
 it.each([
   ['select', 'project_selected'],

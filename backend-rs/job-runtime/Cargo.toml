@@ -1,0 +1,20 @@
+[package]
+name = "wegent-job-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Durable job submission, registration, worker lifecycle, and business leases"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+brz-schedule = { workspace = true }
+brz-schedule-redis = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
+getrandom = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+tracing = { workspace = true }
+wegent-backend-config = { workspace = true }

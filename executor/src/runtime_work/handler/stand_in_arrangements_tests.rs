@@ -539,7 +539,7 @@ async fn manual_calendar_run_routes_immediately_and_reuses_its_original_receipt(
     let (_, run) = handler.automation_store.start_manual_run("once").unwrap();
     assert_eq!(run.trigger, "manual");
     let entry = handler.automation_store.get("once").unwrap();
-    let prepared = handler
+    let (prepared, _) = handler
         .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
         .await
         .unwrap();
@@ -598,6 +598,27 @@ async fn manual_calendar_run_routes_immediately_and_reuses_its_original_receipt(
     assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "succeeded");
 }
 
+#[test]
+fn a_locally_enabled_role_provisions_review_when_the_primary_is_paused() {
+    let root = tempfile::tempdir().unwrap();
+    let handler = handler(root.path());
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store.materialize_implicit_primary(7, "device").unwrap();
+    let mut settings = store.personal_stand_in(7, "device").unwrap();
+    settings["primary"]["enabled"] = json!(false);
+    settings["roles"][0]["enabled"] = json!(true);
+    settings["roles"][0]["selfLearningEnabled"] = json!(true);
+    settings["roles"][0]["executionDeviceId"] = json!("other");
+    let mut saved = store.save_personal_stand_in(7, "device", settings).unwrap();
+    handler.ensure_memory_review_arrangements().unwrap();
+    assert!(handler.automation_store.list().is_empty());
+
+    saved["roles"][0]["executionDeviceId"] = json!("device");
+    store.save_personal_stand_in(7, "device", saved).unwrap();
+    handler.ensure_memory_review_arrangements().unwrap();
+    assert_eq!(handler.automation_store.list().len(), 1);
+}
+
 #[tokio::test]
 #[allow(clippy::await_holding_lock)] // Isolate process-wide model discovery settings.
 async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
@@ -611,7 +632,7 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
     let mut settings = store.personal_stand_in(7, "device").unwrap();
     settings["primary"]["enabled"] = json!(false);
     store.save_personal_stand_in(7, "device", settings).unwrap();
-    let prepared = handler
+    let (prepared, _) = handler
         .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
         .await
         .unwrap();
@@ -642,7 +663,7 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
         });
         settings["primary"]["modelOptions"][effort_key] = json!("high");
         store.save_personal_stand_in(7, "device", settings).unwrap();
-        let explicit = handler
+        let (explicit, _) = handler
             .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
             .await
             .unwrap();
@@ -709,7 +730,7 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
         .unwrap()
         .remove("supportedReasoningEfforts");
     fs::write(root.path().join("model_list.json"), model_list.to_string()).unwrap();
-    let without_capabilities = handler
+    let (without_capabilities, _) = handler
         .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
         .await
         .unwrap();
@@ -797,7 +818,7 @@ async fn memory_review_due_skips_empty_history_and_routes_changed_history_indepe
         assert_eq!(snapshot["events"][0]["id"], run.id);
         assert_eq!(snapshot["events"][0]["kind"], "schedule_due");
         assert_eq!(snapshot["events"][0]["arrangement"], true);
-        let prepared = handler
+        let (prepared, _) = handler
             .prepare_stand_in_schedule(entry, json!({"message":entry.prompt}))
             .await
             .unwrap();
@@ -839,13 +860,21 @@ async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_polic
             .unwrap()
             .1;
         let entry = handler.automation_store.get("once").unwrap();
-        let prepared = handler
+        let (prepared, _) = handler
             .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
             .await
             .unwrap();
         assert_eq!(prepared["title"], "Review");
         assert_eq!(prepared["message"], "Review progress");
-        assert!(handler.arrangement_contexts(&store).unwrap().is_empty());
+        let contexts = handler
+            .coordination_rpc("runtime.coordination.contexts", json!({}))
+            .await
+            .unwrap();
+        let contexts = contexts["contexts"].as_array().unwrap();
+        assert_eq!(contexts.len(), 1);
+        let context = &contexts[0];
+        assert_eq!(context["id"], "personal:7");
+        assert_eq!(context["needsProcessing"], true);
         handler.arrangement_contexts(&store).unwrap();
         let events = store.stand_in_events(7).unwrap();
         assert_eq!(events.len(), 1);
@@ -853,16 +882,6 @@ async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_polic
         assert_eq!(events[0]["message"]["text"], "Review progress");
         assert_eq!(events[0]["runId"], run.id);
         assert!(handler.local_task_links(true).is_empty());
-        let contexts = handler
-            .coordination_rpc("runtime.coordination.contexts", json!({}))
-            .await
-            .unwrap();
-        let context = contexts["contexts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|context| context["id"] == "personal:7")
-            .unwrap();
         let snapshot = handler
             .coordination_rpc(
                 "runtime.coordination.snapshot",

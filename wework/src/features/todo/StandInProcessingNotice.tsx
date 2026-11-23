@@ -1,18 +1,21 @@
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import type { StandInExecutorApi } from '@/api/standIn'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useStandInProcessingStatus } from './useStandInProcessingStatus'
-import { useEffect, useRef, useState } from 'react'
-import { CircleAlert, Clock } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { RuntimeCommandRecoveryReview } from '@/components/common/RuntimeCommandRecoveryReview'
 import type { RuntimeCommandTarget } from '@/api/runtimeTaskCommands'
+import type { StandInExecutorApi } from '@/api/standIn'
+import { RuntimeCommandRecoveryReview } from '@/components/common/RuntimeCommandRecoveryReview'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CircleAlert, Clock } from 'lucide-react'
+import { useCallback, useRef, useState } from 'react'
+import { standInProcessingFailure } from './standInProcessingFailure'
+import { useStandInProcessingStatus } from './useStandInProcessingStatus'
 
 export function StandInProcessingNotice({
   api,
   userId,
   deviceId,
   onOpen,
+  onOpenConnectionSettings,
   onOpenTask,
   snapshot,
 }: {
@@ -20,6 +23,7 @@ export function StandInProcessingNotice({
   userId: number
   deviceId: string
   onOpen(): void
+  onOpenConnectionSettings(): void
   onOpenTask?(taskId: string): void
   snapshot?: ReturnType<typeof useStandInProcessingStatus>
 }) {
@@ -33,14 +37,16 @@ export function StandInProcessingNotice({
     target: RuntimeCommandTarget
   } | null>(null)
   const currentReview = reviewing?.scope === scope ? reviewing : null
-  const recoveryButton = useRef<HTMLButtonElement>(null)
   const restoreFocus = useRef(false)
-  useEffect(() => {
-    if (!currentReview && restoreFocus.current) {
-      restoreFocus.current = false
-      recoveryButton.current?.focus()
-    }
-  }, [currentReview])
+  const attachRecoveryButton = useCallback(
+    (button: HTMLButtonElement | null) => {
+      if (button && !currentReview && restoreFocus.current) {
+        restoreFocus.current = false
+        button.focus()
+      }
+    },
+    [currentReview]
+  )
   const backgroundModelUnavailable = status?.error?.code === 'model_unavailable'
   const recovery = status?.error?.code === 'coordination_recovery_required'
   const review =
@@ -59,15 +65,7 @@ export function StandInProcessingNotice({
       setChecking(false)
     }
   }
-  const failure =
-    error ??
-    (status?.error
-      ? backgroundModelUnavailable
-        ? t('standIn.processing.background_model_unavailable')
-        : recovery
-          ? t('runtimeCommandRecovery.notice')
-          : getStandInErrorMessage(status.error)
-      : undefined)
+  const { message: failure, ownerMismatch } = standInProcessingFailure(status, error, userId, t)
   if (!failure && !status?.awaitingUser && !currentReview) return null
   return (
     <div
@@ -89,9 +87,21 @@ export function StandInProcessingNotice({
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {ownerMismatch && (
+          <ControlButton
+            variant="outline"
+            size="sm"
+            type="button"
+            data-testid="stand-in-processing-open-connection-settings"
+            className="min-h-11 rounded-md border border-border bg-background px-3 hover:bg-muted md:min-h-8"
+            onClick={onOpenConnectionSettings}
+          >
+            {t('standIn.processing.check_cloud_connection')}
+          </ControlButton>
+        )}
         {recovery && api?.taskCommands && status?.error?.commandId && status.taskId && (
           <Button
-            ref={recoveryButton}
+            ref={attachRecoveryButton}
             size="sm"
             className="min-h-11 md:min-h-8"
             data-testid="stand-in-processing-recover"
@@ -111,17 +121,20 @@ export function StandInProcessingNotice({
           </Button>
         )}
         {(status?.awaitingUser || review) && status?.taskId && onOpenTask && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="stand-in-processing-open-task"
             className="min-h-11 rounded-md px-3 hover:bg-background md:min-h-8"
             onClick={() => onOpenTask(status.taskId!)}
           >
             {t(review ? 'standIn.processing.review_execution' : 'standIn.processing.awaiting_user')}
-          </button>
+          </ControlButton>
         )}
         {failure && !recovery && api && !status?.running && (
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="stand-in-processing-check"
             className="min-h-11 rounded-md border border-border bg-background px-3 hover:bg-muted disabled:opacity-45 md:min-h-8"
@@ -129,17 +142,18 @@ export function StandInProcessingNotice({
             onClick={() => void check()}
           >
             {t('standIn.processing.check')}
-          </button>
+          </ControlButton>
         )}
         {backgroundModelUnavailable && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="stand-in-processing-open-settings"
             className="min-h-11 rounded-md px-3 hover:bg-background md:min-h-8"
             onClick={onOpen}
           >
             {t('standIn.processing.configure_model')}
-          </button>
+          </ControlButton>
         )}
       </div>
       {currentReview && api?.taskCommands && (

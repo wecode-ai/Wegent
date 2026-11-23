@@ -182,6 +182,8 @@ impl RuntimeWorkRpcHandler {
         settings["projectStore"] = json!(project_store);
         settings["projectId"] = json!(project);
         settings["userId"] = json!(user_id);
+        let git_settings = self.task_send_gate(&format!("stand-in-git-settings:{user_id}"));
+        let _git_settings = git_settings.lock().await;
         let gate = self.task_send_gate(&format!("stand-in-processing:{user_id}"));
         let _guard = gate.lock().await;
         let previous = store
@@ -449,6 +451,32 @@ impl RuntimeWorkRpcHandler {
                 interval.tick().await;
                 if let Err(error) = handler.poll_local_stand_ins().await {
                     log_executor_event("stand-in polling failed", &[("error", error.message)]);
+                }
+            }
+        });
+        let handler = self.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(poll_interval);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(error) = handler.flush_local_role_cancellations().await {
+                    log_executor_event(
+                        "Specialist cancellation reconciliation failed",
+                        &[("code", error.code)],
+                    );
+                }
+                if let Err(error) = handler.flush_stand_in_role_dependencies().await {
+                    log_executor_event(
+                        "Specialist prerequisite dispatch failed",
+                        &[("code", error.code)],
+                    );
+                }
+                if let Err(error) = handler.flush_remote_stand_in_role_requests().await {
+                    log_executor_event(
+                        "Specialist dispatch reconciliation failed",
+                        &[("code", error.code)],
+                    );
                 }
             }
         });

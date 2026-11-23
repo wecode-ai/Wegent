@@ -7,6 +7,7 @@ import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
 import {
+  chooseCollaborationOption,
   dragCollaborationIssueToColumn,
   enableLegacyBoardGrouping,
   showAllProjectIssues,
@@ -208,11 +209,16 @@ projectTest(
       .getByTestId('cloud-todo-column-inbox')
       .getByTestId(`cloud-todo-card-${created.id}`)
       .click()
-    await page.getByTestId('cloud-todo-detail-status').selectOption('in_progress')
+    await chooseCollaborationOption(page, page.getByTestId('cloud-todo-detail-status'), {
+      value: 'in_progress',
+    })
     await expect(page.getByTestId('cloud-todo-save-error')).toContainText(
       /项目授权|project-authorized/
     )
-    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
+    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+      'data-value',
+      'inbox'
+    )
   }
 )
 
@@ -942,11 +948,19 @@ projectTest(
       await page.getByTestId(`board-view-lane-value-${index}-create`).click()
     }
     await page.getByTestId('board-view-add-lane').click()
-    await page.getByTestId('board-view-lane-type-3').selectOption('status')
-    await page.getByTestId('board-view-lane-value-3').selectOption('pending')
+    await chooseCollaborationOption(page, page.getByTestId('board-view-lane-type-3'), {
+      value: 'status',
+    })
+    await chooseCollaborationOption(page, page.getByTestId('board-view-lane-value-3'), {
+      value: 'pending',
+    })
     await page.getByTestId('board-view-add-lane').click()
-    await page.getByTestId('board-view-lane-type-4').selectOption('status')
-    await page.getByTestId('board-view-lane-value-4').selectOption('in_progress')
+    await chooseCollaborationOption(page, page.getByTestId('board-view-lane-type-4'), {
+      value: 'status',
+    })
+    await chooseCollaborationOption(page, page.getByTestId('board-view-lane-value-4'), {
+      value: 'in_progress',
+    })
     await page.getByTestId('board-view-set-default').check()
     await page.getByTestId('board-view-save').click()
     await expect(page.getByTestId('board-view-editor')).toHaveCount(0)
@@ -987,7 +1001,7 @@ projectTest(
     await page.getByTestId('board-view-lane-value-0').scrollIntoViewIfNeeded()
     for (const index of [0, 1]) {
       const field = page.getByTestId(`board-view-lane-value-${index}`)
-      const arrow = index === 0 ? field.locator('..').locator('svg') : field.locator('svg')
+      const arrow = field.locator('svg.lucide-chevron-down')
       const fieldBox = await field.boundingBox()
       const arrowBox = await arrow.boundingBox()
       expect(fieldBox).not.toBeNull()
@@ -1073,7 +1087,11 @@ projectTest(
 test('removes My Work and Run Center from navigation and their former URLs', async ({ page }) => {
   await page.goto('/collaboration')
   await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
-  await expect(page.getByTestId('collaboration-nav-inbox')).toBeVisible()
+  const assigned = page.getByTestId('collaboration-primary-issues-assigned')
+  await expect(assigned).toBeVisible()
+  await assigned.click()
+  await expect(page).toHaveURL(/\/collaboration\/assigned$/)
+  await expect(page.getByTestId('personal-issues-assigned')).toBeVisible()
   await expect(page.getByTestId('collaboration-nav-my-work')).toHaveCount(0)
   await expect(page.getByTestId('collaboration-nav-runs')).toHaveCount(0)
   for (const removed of ['my-work', 'runs']) {

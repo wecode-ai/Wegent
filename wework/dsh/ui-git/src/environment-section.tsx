@@ -1,25 +1,9 @@
-import {
-  Check,
-  CircleDot,
-  CornerDownLeft,
-  GitBranch,
-  GitCommit,
-  GitPullRequest,
-  LoaderCircle,
-  Square,
-  Upload,
-  X,
-} from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { createPortal } from 'react-dom'
-
+import { createCommitFeedbackSource } from './commitFeedbackSource'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { ResourceObservationStatus } from '@/components/common/ResourceObservationStatus'
-import {
-  WEWORK_HOST_SERVICES,
-  type EnvironmentHostService,
-} from '@/features/dsh-runtime/conversationHostServices'
+import { WEWORK_HOST_SERVICES } from '@/features/dsh-runtime/conversationHostServices'
+import type { EnvironmentHostService } from '@/features/dsh-runtime/conversationHostServices'
 import type { ConversationSummarySurfaceProps } from '@/features/dsh-runtime/conversationSummarySurface'
 import { changeRequestVisualStatus } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -27,6 +11,27 @@ import { openExternalUrl } from '@/lib/external-links'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type { EnvironmentInfo } from '@/types/environment'
+import { Popover } from '@wegent/collaboration/controls/Popover'
+import { PopoverContent } from '@wegent/collaboration/controls/Popover'
+import { PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
+import { Check } from 'lucide-react'
+import { CircleDot } from 'lucide-react'
+import { CornerDownLeft } from 'lucide-react'
+import { GitBranch } from 'lucide-react'
+import { GitCommit } from 'lucide-react'
+import { GitPullRequest } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
+import { Square } from 'lucide-react'
+import { Upload } from 'lucide-react'
+import { X } from 'lucide-react'
+import { useCallback } from 'react'
+import { useRef } from 'react'
+import { useState } from 'react'
+import { useSyncExternalStore } from 'react'
+import type { FormEvent } from 'react'
 
 interface GitEnvironmentSectionProps {
   branchNameSource?: string
@@ -158,11 +163,22 @@ function GitEnvironmentSectionContent({
   const { t } = useTranslation('common')
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
-  const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
-  const [commitProgressLabel, setCommitProgressLabel] = useState('')
-  const [commitError, setCommitError] = useState<string | null>(null)
-  const commitFeedbackTimerRef = useRef<number | null>(null)
-  const commitFeedbackMountedRef = useRef(false)
+  const [commitFeedback] = useState(createCommitFeedbackSource)
+  const {
+    status: commitStatus,
+    progress: commitProgressLabel,
+    error: commitError,
+  } = useSyncExternalStore(
+    commitFeedback.subscribe,
+    commitFeedback.getSnapshot,
+    commitFeedback.getSnapshot
+  )
+  const {
+    setStatus: setCommitStatus,
+    setProgress: setCommitProgressLabel,
+    setError: setCommitError,
+    clearTimer: clearCommitFeedbackTimer,
+  } = commitFeedback
   const commitButtonRef = useRef<HTMLButtonElement>(null)
   const commitFormRef = useRef<HTMLFormElement>(null)
   const gitRepositoryAvailable = info.isGitRepository !== false
@@ -175,51 +191,33 @@ function GitEnvironmentSectionContent({
   const closeCommitForm = useCallback(() => {
     setCommitFormOpen(false)
     setCommitError(null)
-  }, [])
+  }, [setCommitError])
 
-  const clearCommitFeedbackTimer = useCallback(() => {
-    if (commitFeedbackTimerRef.current === null) return
-    window.clearTimeout(commitFeedbackTimerRef.current)
-    commitFeedbackTimerRef.current = null
-  }, [])
-
-  useEffect(() => {
-    commitFeedbackMountedRef.current = true
-    return () => {
-      commitFeedbackMountedRef.current = false
-      clearCommitFeedbackTimer()
-    }
-  }, [clearCommitFeedbackTimer])
-
-  useEffect(() => {
-    if (!commitFormOpen) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target
       if (
         !(target instanceof Node) ||
         commitFormRef.current?.contains(target) ||
         commitButtonRef.current?.contains(target)
-      ) {
+      )
         return
-      }
       closeCommitForm()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+    },
+    { enabled: commitFormOpen }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
       closeCommitForm()
       commitButtonRef.current?.focus()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown, true)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown, true)
-    }
-  }, [closeCommitForm, commitFormOpen])
+    },
+    { enabled: commitFormOpen, capture: true }
+  )
 
   if (!hasDiffStats && !hasGitInfo && !canShowBranchSelector) return null
 
@@ -262,6 +260,7 @@ function GitEnvironmentSectionContent({
     if (action === 'push' && !onPushChanges) return
 
     clearCommitFeedbackTimer()
+    const isCurrentFeedback = commitFeedback.captureOwner()
     setCommitError(null)
     setCommitProgressLabel(getCommitProgressLabel(action, trimmedMessage))
     setCommitStatus('committing')
@@ -270,16 +269,12 @@ function GitEnvironmentSectionContent({
       if (action === 'push') await onPushChanges?.()
       else if (action === 'commit-and-push') await onCommitAndPushChanges?.(trimmedMessage)
       else await onCommitChanges?.(trimmedMessage)
-      if (!commitFeedbackMountedRef.current) return
+      if (!isCurrentFeedback()) return
       setCommitStatus('success')
       if (action !== 'push') setCommitMessage('')
-      commitFeedbackTimerRef.current = window.setTimeout(() => {
-        commitFeedbackTimerRef.current = null
-        setCommitStatus('idle')
-        setCommitProgressLabel('')
-      }, 1600)
+      commitFeedback.scheduleReset()
     } catch (error) {
-      if (!commitFeedbackMountedRef.current) return
+      if (!isCurrentFeedback()) return
       setCommitStatus('idle')
       setCommitProgressLabel('')
       setCommitError(getCommitErrorMessage(error))
@@ -292,12 +287,21 @@ function GitEnvironmentSectionContent({
   }
 
   return (
-    <>
+    <Popover
+      open={commitFormOpen}
+      onOpenChange={next => {
+        if (next) {
+          setCommitFormOpen(true)
+          setCommitError(null)
+        } else closeCommitForm()
+      }}
+    >
       <section
         data-testid="environment-git-section"
         className="space-y-0.5 border-t border-border pt-3"
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="environment-changes-button"
           disabled={!onOpenChangesReview}
@@ -317,7 +321,7 @@ function GitEnvironmentSectionContent({
             <span className="text-green-500">{additions}</span>
             <span className="text-red-500">{deletions}</span>
           </span>
-        </button>
+        </ControlButton>
         {onListBranches && onCheckoutBranch ? (
           <BranchSelector
             variant="environment"
@@ -354,20 +358,20 @@ function GitEnvironmentSectionContent({
                 </span>
               </div>
             ) : (
-              <button
-                ref={commitButtonRef}
-                type="button"
-                data-testid="environment-commit-button"
-                disabled={!onCommitChanges && !onCommitAndPushChanges && !onPushChanges}
-                aria-expanded={commitFormOpen}
-                onClick={() => {
-                  setCommitFormOpen(open => !open)
-                  setCommitError(null)
-                }}
-                className={cn(
-                  'flex h-8 w-full items-center gap-3 rounded-md text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted',
-                  commitFormOpen && 'bg-hover'
-                )}
+              <PopoverTrigger
+                render={
+                  <ControlButton
+                    variant="unstyled"
+                    type="button"
+                    data-testid="environment-commit-button"
+                    disabled={!onCommitChanges && !onCommitAndPushChanges && !onPushChanges}
+                    aria-expanded={commitFormOpen}
+                    className={cn(
+                      'flex h-8 w-full items-center gap-3 rounded-md text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted',
+                      commitFormOpen && 'bg-hover'
+                    )}
+                  />
+                }
               >
                 <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary">
                   <GitCommit className="h-4 w-4" />
@@ -380,7 +384,7 @@ function GitEnvironmentSectionContent({
                     {t('workbench.environment_committed', '已提交')}
                   </span>
                 ) : null}
-              </button>
+              </PopoverTrigger>
             )}
             {changeRequest ? (
               <ChangeRequestRow
@@ -388,7 +392,8 @@ function GitEnvironmentSectionContent({
                 observation={info.changeRequestObservation}
               />
             ) : (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="create-pull-request-button"
                 disabled={!info.createPullRequestUrl}
@@ -405,7 +410,7 @@ function GitEnvironmentSectionContent({
                     ? t('workbench.environment_create_mr', '创建合并请求')
                     : t('workbench.environment_create_pr', '创建拉取请求')}
                 </span>
-              </button>
+              </ControlButton>
             )}
             {lookupFailed ||
             (info.changeRequestObservation &&
@@ -435,7 +440,8 @@ function GitEnvironmentSectionContent({
                   </p>
                 ) : null}
                 {info.changeRequestObservation?.state !== 'refreshing' ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="change-request-open-settings"
                     onClick={() => {
@@ -445,7 +451,7 @@ function GitEnvironmentSectionContent({
                     className="mt-1 text-xs text-blue-500 hover:underline"
                   >
                     {t('workbench.environment_change_request_configure', '配置代码托管工具')}
-                  </button>
+                  </ControlButton>
                 ) : null}
               </div>
             ) : null}
@@ -455,107 +461,108 @@ function GitEnvironmentSectionContent({
       {commitError ? (
         <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{commitError}</p>
       ) : null}
-      {commitFormOpen && typeof document !== 'undefined'
-        ? createPortal(
-            <form
-              ref={commitFormRef}
-              data-testid="environment-commit-form"
-              className="fixed left-1/2 top-[36vh] z-system-popover w-[430px] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-[0_18px_48px_rgba(0,0,0,0.20)]"
-              onSubmit={handleSubmitCommit}
-            >
-              <div className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-secondary">
-                <GitBranch className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate font-medium">{branchLabel}</span>
-                <span className="ml-3 flex shrink-0 gap-1.5 font-medium">
-                  <span className="text-green-500">{additions}</span>
-                  <span className="text-red-500">{deletions}</span>
-                </span>
-                <button
-                  type="button"
-                  data-testid="environment-cancel-commit-button"
-                  onClick={() => {
-                    closeCommitForm()
-                    commitButtonRef.current?.focus()
-                  }}
-                  aria-label={t('common.close', '关闭')}
-                  className="-mr-2 ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-hover hover:text-text-primary"
-                >
-                  <X className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
-              <textarea
-                data-testid="environment-commit-message-input"
-                value={commitMessage}
-                onChange={event => setCommitMessage(event.target.value)}
-                onKeyDown={event => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                    event.preventDefault()
-                    event.currentTarget.form?.requestSubmit()
-                  }
-                }}
-                className="min-h-[74px] w-full resize-none bg-background px-4 py-2 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
-                placeholder={t('workbench.environment_commit_message_placeholder')}
-                autoFocus
-              />
-              <div
-                data-testid="environment-include-unstaged-row"
-                className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-primary"
-              >
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border bg-background text-text-primary">
-                  <Check className="h-3 w-3" strokeWidth={2.4} />
-                </span>
-                <span className="min-w-0 flex-1 truncate">
-                  {t('workbench.environment_include_unstaged_changes', '包含未暂存的更改')}
-                </span>
-              </div>
-              <div className="border-t border-border p-1.5">
-                <button
-                  type="submit"
-                  data-testid="environment-confirm-commit-button"
-                  disabled={!onCommitChanges || commitStatus === 'committing'}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <GitCommit className="h-4 w-4 shrink-0 text-text-secondary" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {commitStatus === 'committing'
-                      ? t('workbench.environment_committing', '提交中')
-                      : t('workbench.environment_commit', '提交')}
-                  </span>
-                  <span className="ml-auto inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-surface px-1.5 text-xs leading-none text-text-muted">
-                    <span>⌘</span>
-                    <CornerDownLeft className="h-3 w-3" aria-hidden="true" />
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="environment-commit-and-push-button"
-                  disabled={!onCommitAndPushChanges || commitStatus === 'committing'}
-                  onClick={() => void handleCommitPanelAction('commit-and-push')}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
-                >
-                  <Upload className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {t('workbench.environment_commit_and_push', '提交并推送')}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="environment-push-button"
-                  disabled={!onPushChanges || commitStatus === 'committing'}
-                  onClick={() => void handleCommitPanelAction('push')}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
-                >
-                  <Upload className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {t('workbench.environment_push', '推送')}
-                  </span>
-                </button>
-              </div>
-            </form>,
-            document.body
-          )
-        : null}
-    </>
+      <PopoverContent
+        render={<form onSubmit={handleSubmitCommit} />}
+        data-testid="environment-commit-form"
+        aria-label={t('workbench.environment_commit_or_push', '提交或推送')}
+        align="end"
+        sideOffset={8}
+        collisionPadding={16}
+        className="w-[430px] p-0"
+      >
+        <div className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-secondary">
+          <GitBranch className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1 truncate font-medium">{branchLabel}</span>
+          <span className="ml-3 flex shrink-0 gap-1.5 font-medium">
+            <span className="text-green-500">{additions}</span>
+            <span className="text-red-500">{deletions}</span>
+          </span>
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid="environment-cancel-commit-button"
+            onClick={() => {
+              closeCommitForm()
+            }}
+            aria-label={t('common.close', '关闭')}
+            className="-mr-2 ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-hover hover:text-text-primary"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </ControlButton>
+        </div>
+        <ControlTextarea
+          data-testid="environment-commit-message-input"
+          value={commitMessage}
+          onChange={event => setCommitMessage(event.target.value)}
+          onKeyDown={event => {
+            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+              event.preventDefault()
+              event.currentTarget.form?.requestSubmit()
+            }
+          }}
+          className="min-h-[74px] w-full resize-none bg-background px-4 py-2 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
+          placeholder={t('workbench.environment_commit_message_placeholder')}
+          autoFocus
+        />
+        <div
+          data-testid="environment-include-unstaged-row"
+          className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-primary"
+        >
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border bg-background text-text-primary">
+            <Check className="h-3 w-3" strokeWidth={2.4} />
+          </span>
+          <span className="min-w-0 flex-1 truncate">
+            {t('workbench.environment_include_unstaged_changes', '包含未暂存的更改')}
+          </span>
+        </div>
+        <div className="border-t border-border p-1.5">
+          <ControlButton
+            variant="unstyled"
+            type="submit"
+            data-testid="environment-confirm-commit-button"
+            disabled={!onCommitChanges || commitStatus === 'committing'}
+            className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <GitCommit className="h-4 w-4 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">
+              {commitStatus === 'committing'
+                ? t('workbench.environment_committing', '提交中')
+                : t('workbench.environment_commit', '提交')}
+            </span>
+            <span className="ml-auto inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-surface px-1.5 text-xs leading-none text-text-muted">
+              <span>⌘</span>
+              <CornerDownLeft className="h-3 w-3" aria-hidden="true" />
+            </span>
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid="environment-commit-and-push-button"
+            disabled={!onCommitAndPushChanges || commitStatus === 'committing'}
+            onClick={() => void handleCommitPanelAction('commit-and-push')}
+            className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
+          >
+            <Upload className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.environment_commit_and_push', '提交并推送')}
+            </span>
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid="environment-push-button"
+            disabled={!onPushChanges || commitStatus === 'committing'}
+            onClick={() => void handleCommitPanelAction('push')}
+            className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
+          >
+            <Upload className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.environment_push', '推送')}
+            </span>
+          </ControlButton>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -593,7 +600,8 @@ function ChangeRequestRow({
           status === 'merged' ? 'change-request-merged-icon' : 'change-request-pull-request-icon'
         }
       />
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="change-request-button"
         onClick={() => {
@@ -637,7 +645,7 @@ function ChangeRequestRow({
             </span>
           ) : null}
         </span>
-      </button>
+      </ControlButton>
     </div>
   )
 }

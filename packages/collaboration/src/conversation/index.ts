@@ -33,3 +33,5 @@ export * from './TemporaryConversationLayout'
 export * from './ProcessingDurationLabel'
 
 export { AutomaticRetryStatus } from './AutomaticRetryStatus'
+
+export type { MessageSelectionContext, ConversationShareSelectionContext } from './messageTextSelectionState'

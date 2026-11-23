@@ -1,5 +1,7 @@
-import { Check, MessageSquare } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Check, ChevronDown, MessageSquare } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
+import { createStandInImConnectionSource } from './standInImConnectionSource'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { Button } from '@/components/ui/button'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
@@ -31,90 +33,37 @@ export function StandInImConnections({
   const sameDevice = (bound: string) =>
     (aliases.get(bound) ?? bound) === (aliases.get(deviceId) ?? deviceId)
   const api = services.imSessionApi
-  const newState = () => ({
-    owner: { api, deviceId, roleId },
-    sessions: [] as IMPrivateSession[],
-    loading: Boolean(api),
-    saving: null as string | null,
-    error: null as 'load' | 'save' | null,
-  })
-  const [state, setState] = useState(newState)
-  const [channel, setChannel] = useState<string | null>(null)
+  const source = useMemo(
+    () => createStandInImConnectionSource(api, deviceId, roleId),
+    [api, deviceId, roleId]
+  )
+  const subscribe = useCallback(
+    (notify: () => void) => source.subscribe(notify, onOpenChange),
+    [source, onOpenChange]
+  )
+  const { sessions, loading, saving, error, channel, menuOpen } = useSyncExternalStore(
+    subscribe,
+    source.getSnapshot,
+    source.getSnapshot
+  )
   const trigger = useRef<HTMLButtonElement | null>(null)
   const section = useRef<HTMLElement | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [reload, setReload] = useState(0)
-  if (
-    state.owner.api !== api ||
-    state.owner.deviceId !== deviceId ||
-    state.owner.roleId !== roleId
-  ) {
-    setState(newState())
-    setChannel(null)
-    setMenuOpen(false)
-  }
-  const { owner, sessions, loading, saving, error } = state
-  useEffect(() => {
-    if (!api) return
-    let active = true
-    void api
-      .listPrivateSessions()
-      .then(result => {
-        if (active)
-          setState(current =>
-            current.owner === owner
-              ? { ...current, sessions: result.items, loading: false }
-              : current
-          )
-      })
-      .catch(() => {
-        if (active)
-          setState(current =>
-            current.owner === owner ? { ...current, error: 'load', loading: false } : current
-          )
-      })
-    return () => {
-      active = false
-    }
-  }, [api, owner, reload])
-  useEffect(() => {
-    onOpenChange?.(menuOpen || channel !== null)
-    return () => onOpenChange?.(false)
-  }, [channel, menuOpen, onOpenChange])
-
+  const focusTarget = useRef<HTMLElement | null>(null)
+  const [focusRequest, setFocusRequest] = useState<object>()
+  useFocusRequest(focusTarget, focusRequest, {
+    enabled: focusRequest !== undefined,
+    animationFrame: true,
+    preventScroll: true,
+  })
+  const setChannel = source.setChannel
+  const setMenuOpen = source.setMenuOpen
   const connected = (session: IMPrivateSession) =>
     session.mode === 'stand_in' &&
     session.stand_in != null &&
     sameDevice(session.stand_in.deviceId) &&
     (session.stand_in.roleId ?? null) === (roleId ?? null)
-  const connect = async (sessionKey: string) => {
-    if (!api || saving) return
-    setState(current => ({ ...current, saving: sessionKey, error: null }))
-    try {
-      const binding = await api.bindStandIn(sessionKey, { deviceId, roleId: roleId ?? null })
-      setState(current =>
-        current.owner === owner
-          ? {
-              ...current,
-              saving: null,
-              sessions: current.sessions.map(session =>
-                session.session_key === sessionKey
-                  ? { ...session, stand_in: binding, mode: 'stand_in' as const }
-                  : session
-              ),
-            }
-          : current
-      )
-    } catch {
-      setState(current =>
-        current.owner === owner ? { ...current, saving: null, error: 'save' } : current
-      )
-    }
-  }
-  const refresh = () => {
-    setState(current => ({ ...current, loading: true, error: null }))
-    setReload(value => value + 1)
-  }
+  const connect = source.connect
+  const refresh = source.refresh
   const channels = [...new Set(sessions.map(row => row.channel_type))]
   const availableToAdd = CHANNELS.filter(type => !channels.includes(type))
   const label = (type: string) =>
@@ -124,7 +73,38 @@ export function StandInImConnections({
   const device = devices.find(row => sameDevice(row.device_id))
   return (
     <section ref={section} aria-label={t('standIn.im.title')} data-testid="stand-in-im-channels">
-      <h3 className="mb-2 text-sm font-medium text-text-secondary">{t('standIn.im.title')}</h3>
+      <div className="flex min-h-9 items-center justify-between gap-2">
+        <h4 className="text-base font-medium">{t('standIn.im.title')}</h4>
+        {!loading && error !== 'load' && (availableToAdd.length > 0 || menuOpen) && (
+          <ActionMenu
+            ariaLabel={t('standIn.im.add_channels')}
+            testId="stand-in-im-add-channels"
+            placement="bottom-end"
+            itemClassName="max-md:min-h-11"
+            density="default"
+            triggerLabel={
+              <>
+                {t('standIn.im.add_channels_action')}
+                <ChevronDown aria-hidden="true" className="h-4 w-4" />
+              </>
+            }
+            triggerClassName="shrink-0 gap-2 px-0 text-sm"
+            onOpenChange={setMenuOpen}
+            items={availableToAdd.map(type => ({
+              label: t('standIn.im.add_channel', { channel: label(type) }),
+              icon: MessageSquare,
+              testId: `stand-in-im-channel-${type}`,
+              onSelect: () => {
+                trigger.current =
+                  section.current?.querySelector<HTMLButtonElement>(
+                    '[data-testid="stand-in-im-add-channels"]'
+                  ) ?? null
+                setChannel(type)
+              },
+            }))}
+          />
+        )}
+      </div>
       {loading && (
         <p
           role="status"
@@ -152,7 +132,7 @@ export function StandInImConnections({
           </Button>
         </div>
       )}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 empty:hidden">
         {channels.map(type => {
           const isConnected = sessions.some(row => row.channel_type === type && connected(row))
           return (
@@ -166,9 +146,6 @@ export function StandInImConnections({
               aria-label={t('standIn.im.channel_action', { channel: label(type) })}
               onClick={event => {
                 trigger.current = event.currentTarget
-                setState(current =>
-                  current.error === 'save' ? { ...current, error: null } : current
-                )
                 setChannel(type)
               }}
             >
@@ -178,31 +155,6 @@ export function StandInImConnections({
             </Button>
           )
         })}
-        {!loading && error !== 'load' && (availableToAdd.length > 0 || menuOpen) && (
-          <ActionMenu
-            ariaLabel={t('standIn.im.add_channels')}
-            testId="stand-in-im-add-channels"
-            placement="bottom-end"
-            itemClassName="max-md:min-h-11"
-            triggerClassName="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-9 md:min-w-9"
-            onOpenChange={setMenuOpen}
-            items={availableToAdd.map(type => ({
-              label: t('standIn.im.add_channel', { channel: label(type) }),
-              icon: MessageSquare,
-              testId: `stand-in-im-channel-${type}`,
-              onSelect: () => {
-                trigger.current =
-                  section.current?.querySelector<HTMLButtonElement>(
-                    '[data-testid="stand-in-im-add-channels"]'
-                  ) ?? null
-                setState(current =>
-                  current.error === 'save' ? { ...current, error: null } : current
-                )
-                setChannel(type)
-              },
-            }))}
-          />
-        )}
       </div>
       {channel !== null && (
         <StandInImConnectionDialog
@@ -221,23 +173,20 @@ export function StandInImConnections({
           onRefresh={refresh}
           onClose={() => {
             // Release the popover's inert state before restoring its trigger focus.
-            onOpenChange?.(false)
+            const availableTrigger = Array.from(
+              section.current?.querySelectorAll('button') ?? []
+            ).find(button => button.dataset.testid === `stand-in-im-channel-${channel}`)
+            focusTarget.current =
+              availableTrigger ??
+              section.current?.querySelector<HTMLButtonElement>(
+                '[data-testid="stand-in-im-add-channels"]'
+              ) ??
+              section.current?.querySelector<HTMLButtonElement>(
+                '[data-testid="stand-in-im-discovery-retry"]'
+              ) ??
+              (trigger.current?.isConnected ? trigger.current : null)
             setChannel(null)
-            window.requestAnimationFrame(() => {
-              const availableTrigger = Array.from(
-                section.current?.querySelectorAll('button') ?? []
-              ).find(button => button.dataset.testid === `stand-in-im-channel-${channel}`)
-              const focusTarget =
-                availableTrigger ??
-                section.current?.querySelector<HTMLButtonElement>(
-                  '[data-testid="stand-in-im-add-channels"]'
-                ) ??
-                section.current?.querySelector<HTMLButtonElement>(
-                  '[data-testid="stand-in-im-discovery-retry"]'
-                ) ??
-                (trigger.current?.isConnected ? trigger.current : null)
-              focusTarget?.focus({ preventScroll: true })
-            })
+            setFocusRequest({})
           }}
         />
       )}

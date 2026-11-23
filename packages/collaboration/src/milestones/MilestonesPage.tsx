@@ -1,23 +1,22 @@
-import "./milestones.css";
-import { Flag } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
-import type {
-  CollaborationAssignment,
-  CollaborationIssue,
-  CollaborationProject,
-} from "../types";
-import { canManageCollaborationIssueSecurity } from "../permissions";
-import { useIssueAssignmentsByIssueId } from "../platform/useIssueAssignmentsByIssueId";
-import type { Milestone, MilestoneInput } from "./types";
-import { milestoneMessages } from "./messages";
-import { useMilestones, milestoneVisibilityScope } from "./useMilestones";
-import type { MilestoneFilterProps } from "./useMilestoneFilter";
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
+import './milestones.css'
+import { Flag } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationAssignment, CollaborationIssue, CollaborationProject } from '../types'
+import { canManageCollaborationIssueSecurity } from '../permissions'
+import { useIssueAssignmentsByIssueId } from '../platform/useIssueAssignmentsByIssueId'
+import type { Milestone, MilestoneInput } from './types'
+import { milestoneMessages } from './messages'
+import { useMilestones, milestoneVisibilityScope } from './useMilestones'
+import type { MilestoneFilterProps } from './useMilestoneFilter'
 
 const buttonBaseClass =
-  "min-h-11 rounded-md border px-3 text-sm disabled:opacity-50 md:min-h-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40";
-const buttonClass = `${buttonBaseClass} border-border hover:bg-muted`;
-const primaryButtonClass = `${buttonBaseClass} border-transparent bg-text-primary text-background hover:bg-text-primary/90`;
+  'min-h-11 rounded-md border px-3 text-sm disabled:opacity-50 md:min-h-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40'
+const buttonClass = `${buttonBaseClass} border-border hover:bg-muted`
+const primaryButtonClass = `${buttonBaseClass} border-transparent bg-text-primary text-background hover:bg-text-primary/90`
 
 export function MilestonesPage({
   api,
@@ -30,69 +29,67 @@ export function MilestonesPage({
   filter,
   onFilterChange,
 }: MilestoneFilterProps & {
-  api: SharedWorkspaceApi;
-  project: CollaborationProject;
-  issues: CollaborationIssue[];
-  locale: "zh-CN" | "en";
-  onChanged?(): Promise<unknown>;
-  onOpenArchive?(): void;
+  api: SharedWorkspaceApi
+  project: CollaborationProject
+  issues: CollaborationIssue[]
+  locale: 'zh-CN' | 'en'
+  onChanged?(): Promise<unknown>
+  onOpenArchive?(): void
   renderIssues(
     issues: CollaborationIssue[],
     assignments: Record<string, CollaborationAssignment[]>,
     emptyLabel: string,
-    milestoneId: string,
-  ): ReactNode;
+    milestoneId: string
+  ): ReactNode
 }) {
-  const m = milestoneMessages[locale];
+  const m = milestoneMessages[locale]
   const query = useMilestones(
     api.milestones,
     project.id,
     true,
-    issues.map((issue) => `${issue.id}:${issue.version}`).join("|"),
-    milestoneVisibilityScope(project),
-  );
-  const [state, setState] = useState<"open" | "closed">("open");
-  const [selection, setSelection] = useState<string | null>(null);
-  const selected = filter !== undefined ? filter.milestoneId : selection;
+    issues.map(issue => `${issue.id}:${issue.version}`).join('|'),
+    milestoneVisibilityScope(project)
+  )
+  const [state, setState] = useState<'open' | 'closed'>('open')
+  const [selection, setSelection] = useState<string | null>(null)
+  const selected = filter !== undefined ? filter.milestoneId : selection
   function setSelected(value: string | null) {
-    if (filter === undefined) setSelection(value);
-    onFilterChange?.(value);
+    if (filter === undefined) setSelection(value)
+    onFilterChange?.(value)
   }
-  const [editing, setEditing] = useState<Milestone | "new" | null>(null);
-  const [deleting, setDeleting] = useState<Milestone | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const canManage = canManageCollaborationIssueSecurity(project);
-  useEffect(() => {
-    if (!canManage) {
-      setEditing(null);
-      setDeleting(null);
-    }
-  }, [canManage]);
-  const active = query.items.find((item) => item.id === selected);
+  const [editing, setEditing] = useState<Milestone | 'new' | null>(null)
+  const [deleting, setDeleting] = useState<Milestone | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const canManage = canManageCollaborationIssueSecurity(project)
+  if (!canManage && (editing !== null || deleting !== null)) {
+    setEditing(null)
+    setDeleting(null)
+  }
+  const active = query.items.find(item => item.id === selected)
   const linkedIssues = useMemo(
-    () => issues.filter((issue) => issue.milestone_id === selected),
-    [issues, selected],
-  );
+    () => issues.filter(issue => issue.milestone_id === selected),
+    [issues, selected]
+  )
   const { assignmentsByIssueId } = useIssueAssignmentsByIssueId({
     assignmentsApi: api.assignments,
     issues: linkedIssues,
     enabled: selected !== null,
-  });
+  })
 
   async function mutate(action: () => Promise<unknown>) {
-    setBusy(true);
-    setFailed(false);
+    setBusy(true)
+    setFailed(false)
     try {
-      await action();
-      await onChanged?.();
-      setEditing(null);
-      setDeleting(null);
-      query.reload();
+      await action()
+      await onChanged?.()
+      setEditing(null)
+      setDeleting(null)
+      query.reload()
     } catch {
-      setFailed(true);
+      setFailed(true)
     } finally {
-      setBusy(false);
+      setBusy(false)
     }
   }
 
@@ -102,20 +99,18 @@ export function MilestonesPage({
       data-testid="milestones-page"
       aria-busy={busy}
     >
-      <div
-        className="mx-auto w-full max-w-6xl"
-        data-testid="milestones-content"
-      >
+      <div className="mx-auto w-full max-w-6xl" data-testid="milestones-content">
         <header className="mb-6 space-y-4">
           {active ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="min-h-11 text-sm text-text-secondary hover:text-text-primary md:min-h-8"
               data-testid="milestones-back"
               onClick={() => setSelected(null)}
             >
               ← {m.back}
-            </button>
+            </ControlButton>
           ) : (
             <div>
               <h1 className="heading-medium">{m.title}</h1>
@@ -132,78 +127,78 @@ export function MilestonesPage({
                 role="group"
                 aria-label={m.title}
               >
-                {(["open", "closed"] as const).map((value) => (
-                  <button
+                {(['open', 'closed'] as const).map(value => (
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="min-h-11 rounded-md px-3 text-sm text-text-secondary aria-pressed:bg-background aria-pressed:text-text-primary aria-pressed:shadow-sm md:min-h-8"
                     data-testid={`milestones-${value}`}
                     key={value}
                     aria-pressed={value === state}
                     onClick={() => {
-                      setState(value);
-                      setSelected(null);
+                      setState(value)
+                      setSelected(null)
                     }}
                   >
-                    {m[value]}{" "}
+                    {m[value]}{' '}
                     <span className="ml-2 text-xs text-text-muted">
-                      {
-                        query.items.filter((item) => item.state === value)
-                          .length
-                      }
+                      {query.items.filter(item => item.state === value).length}
                     </span>
-                  </button>
+                  </ControlButton>
                 ))}
               </div>
               {canManage ? (
-                <button
+                <ControlButton
+                  variant="primary"
                   type="button"
                   data-testid="milestone-create"
                   className={primaryButtonClass}
                   onClick={() => {
-                    setEditing("new");
-                    setFailed(false);
+                    setEditing('new')
+                    setFailed(false)
                   }}
                 >
                   {m.new}
-                </button>
+                </ControlButton>
               ) : null}
             </div>
           ) : null}
         </header>
         {query.error || failed ? (
           <p role="alert" className="mb-3 text-sm text-red-600">
-            {m.error}{" "}
-            <button
+            {m.error}{' '}
+            <ControlButton
+              variant="outline"
               type="button"
               className={buttonClass}
               data-testid="milestones-retry"
               onClick={() => {
-                setFailed(false);
-                setEditing(null);
-                setDeleting(null);
-                query.reload();
+                setFailed(false)
+                setEditing(null)
+                setDeleting(null)
+                query.reload()
               }}
             >
               {editing ? m.discardAndRefresh : m.retry}
-            </button>
+            </ControlButton>
           </p>
         ) : null}
         {query.loading ? <p role="status">{m.loading}</p> : null}
         {editing && canManage ? (
           <MilestoneForm
-            key={editing === "new" ? "new" : editing.id}
-            milestone={editing === "new" ? null : editing}
+            key={editing === 'new' ? 'new' : editing.id}
+            milestone={editing === 'new' ? null : editing}
             messages={m}
             busy={busy}
             onCancel={() => setEditing(null)}
-            onSave={(input) =>
+            onSave={input =>
               void mutate(() =>
-                editing === "new"
+                editing === 'new'
                   ? api.milestones!.create(project.id, input)
                   : api.milestones!.update(project.id, editing.id, {
                       ...input,
                       version: editing.version,
-                    }),
+                    })
               )
             }
           />
@@ -216,24 +211,20 @@ export function MilestonesPage({
             <span className="min-w-0 max-w-full break-words">
               {deleting.title}: {m.confirm}
             </span>
-            <button
+            <ControlButton
+              variant="destructive"
               type="button"
               className={buttonClass}
               data-testid="milestone-delete-confirm"
               disabled={busy}
               onClick={() =>
-                void mutate(() =>
-                  api.milestones!.remove(
-                    project.id,
-                    deleting.id,
-                    deleting.version,
-                  ),
-                )
+                void mutate(() => api.milestones!.remove(project.id, deleting.id, deleting.version))
               }
             >
               {m.remove}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="outline"
               type="button"
               className={buttonClass}
               data-testid="milestone-delete-cancel"
@@ -241,24 +232,22 @@ export function MilestonesPage({
               onClick={() => setDeleting(null)}
             >
               {m.cancel}
-            </button>
+            </ControlButton>
           </div>
         ) : null}
         {!query.loading &&
         !query.error &&
         !active &&
         !editing &&
-        query.items.filter((item) => item.state === state).length === 0 ? (
+        query.items.filter(item => item.state === state).length === 0 ? (
           <div
             className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border px-6 py-12 text-center"
             data-testid="milestones-empty"
           >
             <Flag className="h-6 w-6 text-text-muted" aria-hidden="true" />
-            <h2 className="heading-small">
-              {state === "closed" ? m.emptyClosed : m.empty}
-            </h2>
+            <h2 className="heading-small">{state === 'closed' ? m.emptyClosed : m.empty}</h2>
             <p className="max-w-md text-sm text-text-muted">
-              {state === "closed" ? m.emptyClosedHint : m.emptyHint}
+              {state === 'closed' ? m.emptyClosedHint : m.emptyHint}
             </p>
           </div>
         ) : null}
@@ -273,35 +262,34 @@ export function MilestonesPage({
             </div>
             {(active.archived_issues ?? 0) > 0 && onOpenArchive ? (
               <div className="my-3">
-                <button
+                <ControlButton
+                  variant="outline"
                   type="button"
                   className={buttonClass}
                   data-testid="milestone-view-archive"
                   onClick={onOpenArchive}
                 >
                   {m.viewArchive}
-                </button>
+                </ControlButton>
               </div>
             ) : null}
             <div key={active.id}>
               {renderIssues(
                 linkedIssues,
                 assignmentsByIssueId,
-                (active.archived_issues ?? 0) > 0
-                  ? m.noActiveIssues
-                  : m.noIssues,
-                active.id,
+                (active.archived_issues ?? 0) > 0 ? m.noActiveIssues : m.noIssues,
+                active.id
               )}
             </div>
           </>
         ) : (
           query.items
-            .filter((item) => item.state === state)
-            .map((item) => {
+            .filter(item => item.state === state)
+            .map(item => {
               const overdue =
-                item.state === "open" &&
+                item.state === 'open' &&
                 item.due_on &&
-                item.due_on < new Date().toLocaleDateString("sv-SE");
+                item.due_on < new Date().toLocaleDateString('sv-SE')
               return (
                 <article
                   key={item.id}
@@ -309,22 +297,24 @@ export function MilestonesPage({
                   data-testid={`milestone-${item.id}`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`milestone-open-${item.id}`}
                       onClick={() => setSelected(item.id)}
                       className="min-h-11 min-w-0 max-w-full break-words text-left text-sm font-semibold hover:underline md:min-h-8"
                     >
                       {item.title}
-                    </button>
+                    </ControlButton>
                     {item.due_on ? (
                       <span className="text-xs text-text-muted">
-                        {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ""}
+                        {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ''}
                       </span>
                     ) : null}
                     {canManage ? (
                       <div className="ml-auto flex gap-2">
-                        <button
+                        <ControlButton
+                          variant="outline"
                           type="button"
                           className={buttonClass}
                           data-testid={`milestone-edit-${item.id}`}
@@ -332,8 +322,9 @@ export function MilestonesPage({
                           onClick={() => setEditing(item)}
                         >
                           {m.edit}
-                        </button>
-                        <button
+                        </ControlButton>
+                        <ControlButton
+                          variant="outline"
                           type="button"
                           className={buttonClass}
                           data-testid={`milestone-state-${item.id}`}
@@ -345,15 +336,15 @@ export function MilestonesPage({
                                 description: item.description,
                                 due_on: item.due_on,
                                 version: item.version,
-                                state:
-                                  item.state === "open" ? "closed" : "open",
-                              }),
+                                state: item.state === 'open' ? 'closed' : 'open',
+                              })
                             )
                           }
                         >
-                          {item.state === "open" ? m.close : m.reopen}
-                        </button>
-                        <button
+                          {item.state === 'open' ? m.close : m.reopen}
+                        </ControlButton>
+                        <ControlButton
+                          variant="destructive-ghost"
                           type="button"
                           className={buttonClass}
                           data-testid={`milestone-delete-${item.id}`}
@@ -361,7 +352,7 @@ export function MilestonesPage({
                           onClick={() => setDeleting(item)}
                         >
                           {m.remove}
-                        </button>
+                        </ControlButton>
                       </div>
                     ) : null}
                   </div>
@@ -372,12 +363,12 @@ export function MilestonesPage({
                     <MilestoneProgress item={item} messages={m} />
                   </div>
                 </article>
-              );
+              )
             })
         )}
       </div>
     </section>
-  );
+  )
 }
 
 function MilestoneForm({
@@ -387,69 +378,69 @@ function MilestoneForm({
   onCancel,
   onSave,
 }: {
-  milestone: Milestone | null;
-  messages:
-    | (typeof milestoneMessages)["en"]
-    | (typeof milestoneMessages)["zh-CN"];
-  busy: boolean;
-  onCancel(): void;
-  onSave(input: MilestoneInput): void;
+  milestone: Milestone | null
+  messages: (typeof milestoneMessages)['en'] | (typeof milestoneMessages)['zh-CN']
+  busy: boolean
+  onCancel(): void
+  onSave(input: MilestoneInput): void
 }) {
   return (
     <form
       data-testid="milestone-form"
       className="milestone-form mb-4 max-w-2xl space-y-3 rounded-md border border-border p-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const form = new FormData(event.currentTarget);
+      onSubmit={event => {
+        event.preventDefault()
+        const form = new FormData(event.currentTarget)
         onSave({
-          title: String(form.get("title")).trim(),
-          description: String(form.get("description")),
-          due_on: String(form.get("due_on")) || null,
-          state: milestone?.state ?? "open",
-        });
+          title: String(form.get('title')).trim(),
+          description: String(form.get('description')),
+          due_on: String(form.get('due_on')) || null,
+          state: milestone?.state ?? 'open',
+        })
       }}
     >
       <label className="block text-sm">
         {m.name}
-        <input
+        <ControlInput
           data-testid="milestone-title"
           name="title"
           required
           maxLength={255}
-          defaultValue={milestone?.title ?? ""}
+          defaultValue={milestone?.title ?? ''}
           className="milestone-form-field mt-1 min-h-11 w-full rounded-md bg-background px-2 md:min-h-8"
         />
       </label>
       <label className="block text-sm">
         {m.description}
-        <textarea
+        <ControlTextarea
           data-testid="milestone-description"
           name="description"
-          defaultValue={milestone?.description ?? ""}
+          defaultValue={milestone?.description ?? ''}
           className="milestone-form-field mt-1 min-h-20 w-full rounded-md bg-background p-2"
         />
       </label>
       <label className="block text-sm">
         {m.due}
-        <input
+        <ControlInput
           data-testid="milestone-due"
           name="due_on"
           type="date"
-          defaultValue={milestone?.due_on ?? ""}
+          defaultValue={milestone?.due_on ?? ''}
           className="milestone-form-field ml-2 min-h-11 rounded-md bg-background px-2 md:min-h-8"
         />
       </label>
       <div className="flex gap-2">
-        <button
+        <ControlButton
+          variant="primary"
           type="submit"
           data-testid="milestone-save"
           disabled={busy}
           className={primaryButtonClass}
         >
           {m.save}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="outline"
           type="button"
           data-testid="milestone-cancel"
           disabled={busy}
@@ -457,23 +448,21 @@ function MilestoneForm({
           onClick={onCancel}
         >
           {m.cancel}
-        </button>
+        </ControlButton>
       </div>
     </form>
-  );
+  )
 }
 
 function MilestoneProgress({
   item,
   messages: m,
 }: {
-  item: Milestone;
-  messages:
-    | (typeof milestoneMessages)["en"]
-    | (typeof milestoneMessages)["zh-CN"];
+  item: Milestone
+  messages: (typeof milestoneMessages)['en'] | (typeof milestoneMessages)['zh-CN']
 }) {
-  const total = item.open_issues + item.closed_issues;
-  const progress = total ? Math.round((item.closed_issues * 100) / total) : 0;
+  const total = item.open_issues + item.closed_issues
+  const progress = total ? Math.round((item.closed_issues * 100) / total) : 0
   return (
     <>
       <div
@@ -491,12 +480,9 @@ function MilestoneProgress({
         />
       </div>
       <p className="mt-1 text-xs text-text-muted">
-        {progress}% · {item.closed_issues} {m.completed} · {item.open_issues}{" "}
-        {m.remaining}
-        {(item.archived_issues ?? 0) > 0
-          ? ` · ${item.archived_issues} ${m.archived}`
-          : ""}
+        {progress}% · {item.closed_issues} {m.completed} · {item.open_issues} {m.remaining}
+        {(item.archived_issues ?? 0) > 0 ? ` · ${item.archived_issues} ${m.archived}` : ''}
       </p>
     </>
-  );
+  )
 }

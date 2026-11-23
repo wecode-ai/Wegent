@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCallback, useImperativeHandle, useRef, useState } from 'react'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import {
   useOptionalWorkspaceTabActivity,
@@ -25,13 +27,14 @@ function TabsState() {
       <div data-testid="board-tab-title">{boardTab?.title}</div>
       <div data-testid="tab-ids">{tabs.map(tab => tab.id).join(',')}</div>
       <div data-testid="fixed-tab-count">{tabs.filter(tab => tab.fixed).length}</div>
-      <button type="button" onClick={() => openTab('board')}>
+      <ControlButton variant="unstyled" type="button" onClick={() => openTab('board')}>
         新建项目空间标签
-      </button>
-      <button type="button" onClick={() => closeTab(activeTab.id)}>
+      </ControlButton>
+      <ControlButton variant="unstyled" type="button" onClick={() => closeTab(activeTab.id)}>
         关闭当前标签
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         onClick={() =>
           boardTab &&
@@ -42,14 +45,16 @@ function TabsState() {
         }
       >
         打开项目任务
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         onClick={() => updateActiveTab({ contentRoute: '/sites?app_type=smart_app' })}
       >
         打开智能工作台市场
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         onClick={() => {
           const tab = openTab('auxiliary', {
@@ -60,8 +65,9 @@ function TabsState() {
         }}
       >
         打开后台智能工作台
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         onClick={() => {
           const applicationsTab = tabs.find(tab => tab.contentRoute.startsWith('/sites?'))
@@ -69,16 +75,18 @@ function TabsState() {
         }}
       >
         返回智能工作台列表
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         onClick={() => {
           capturedCloseTabRef.current = closeTab
         }}
       >
         开始异步关闭
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         onClick={() => {
           if (backgroundTabIdRef.current) {
@@ -87,20 +95,32 @@ function TabsState() {
         }}
       >
         完成异步关闭
-      </button>
+      </ControlButton>
     </>
   )
 }
 
 function ContextValueProbe({ onChange }: { onChange: (value: WorkspaceTabsContextValue) => void }) {
   const value = useWorkspaceTabs()
-  useEffect(() => onChange(value), [onChange, value])
+  const read = useCallback(
+    (current: { value: WorkspaceTabsContextValue } | null) => {
+      if (current) onChange(current.value)
+    },
+    [onChange]
+  )
+  useImperativeHandle(read, () => ({ value }), [value])
   return null
 }
 
 function ActivityProbe({ onRead }: { onRead: (isActive: WorkspaceTabActivity | null) => void }) {
   const isActive = useOptionalWorkspaceTabActivity()
-  useEffect(() => onRead(isActive), [isActive, onRead])
+  const read = useCallback(
+    (current: { isActive: WorkspaceTabActivity | null } | null) => {
+      if (current) onRead(current.isActive)
+    },
+    [onRead]
+  )
+  useImperativeHandle(read, () => ({ isActive }), [isActive])
   return null
 }
 
@@ -130,15 +150,12 @@ export function RoutingHarness({
     search: window.location.search,
   }))
 
-  useEffect(() => {
-    const updateLocation = () =>
-      setLocation({
-        pathname: window.location.pathname,
-        search: window.location.search,
-      })
-    window.addEventListener('popstate', updateLocation)
-    return () => window.removeEventListener('popstate', updateLocation)
-  }, [])
+  useWindowEvent('popstate', () =>
+    setLocation({
+      pathname: window.location.pathname,
+      search: window.location.search,
+    })
+  )
 
   return (
     <WorkspaceTabsProvider

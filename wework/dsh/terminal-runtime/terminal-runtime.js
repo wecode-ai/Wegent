@@ -118,22 +118,27 @@ export class TerminalRuntime {
     const cols = terminalDimension(params.cols, DEFAULT_COLS, 'cols')
     const rows = terminalDimension(params.rows, DEFAULT_ROWS, 'rows')
     const environment = terminalEnvironment(this.#environment, params.env)
-    const command = terminalCommand(params, this.#platform, environment)
-    let pty
-    try {
-      pty = this.#spawn(command.executable, command.args, {
-        name: 'xterm-256color',
-        cwd,
-        cols,
-        rows,
-        env: environment,
-      })
-    } catch (error) {
-      throw new TerminalRuntimeError(
-        'spawn_failed',
-        error instanceof Error ? error.message : String(error)
-      )
+    const commands = terminalCommands(params, this.#platform, environment)
+    let pty = null
+    let lastError = null
+    for (const command of commands) {
+      try {
+        pty = this.#spawn(command.executable, command.args, {
+          name: 'xterm-256color',
+          cwd,
+          cols,
+          rows,
+          env: environment,
+        })
+        break
+      } catch (error) {
+        lastError = error
+        if (commands.length === 1 || !isMissingExecutableError(error)) {
+          throw spawnFailure(error)
+        }
+      }
     }
+    if (!pty) throw spawnFailure(lastError)
     const session = {
       id: sessionId,
       pty,
@@ -338,13 +343,16 @@ function terminalEnvironment(base, overrides) {
   return environment
 }
 
-function terminalShell(platform, environment) {
+function terminalShellCommands(platform, environment) {
   if (platform === 'win32') {
-    const executable = environment.COMSPEC?.trim() || 'pwsh.exe'
-    return {
-      executable,
-      args: /pwsh|powershell/i.test(executable) ? ['-NoLogo'] : [],
-    }
+    // Prefer modern PowerShell, then Windows PowerShell, and use the system shell as the fallback.
+    const comspec = environmentValue(environment, 'COMSPEC')?.trim()
+    return uniqueCommands([
+      { executable: 'pwsh.exe', args: ['-NoLogo'] },
+      { executable: 'powershell.exe', args: ['-NoLogo'] },
+      ...(comspec ? [{ executable: comspec, args: [] }] : []),
+      { executable: 'cmd.exe', args: [] },
+    ])
   }
   const configured = environment.SHELL?.trim()
   const executable =
@@ -353,15 +361,15 @@ function terminalShell(platform, environment) {
       : platform === 'darwin'
         ? '/bin/zsh'
         : '/bin/bash'
-  return { executable, args: ['-l'] }
+  return [{ executable, args: ['-l'] }]
 }
 
-function terminalCommand(params, platform, environment) {
+function terminalCommands(params, platform, environment) {
   const executable =
     typeof params.executable === 'string' && params.executable.trim()
       ? params.executable.trim()
       : null
-  if (!executable) return terminalShell(platform, environment)
+  if (!executable) return terminalShellCommands(platform, environment)
   if (!isAbsolute(executable)) {
     throw new TerminalRuntimeError(
       'invalid_params',
@@ -382,7 +390,34 @@ function terminalCommand(params, platform, environment) {
     }
     return value
   })
-  return { executable, args }
+  return [{ executable, args }]
+}
+
+function environmentValue(environment, name) {
+  const key = Object.keys(environment).find(candidate => candidate.toUpperCase() === name)
+  return key ? environment[key] : undefined
+}
+
+function uniqueCommands(commands) {
+  const seen = new Set()
+  return commands.filter(command => {
+    const key = command.executable.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function isMissingExecutableError(error) {
+  const message = error instanceof Error ? error.message : String(error)
+  return /file not found|enoent|system cannot find the file/i.test(message)
+}
+
+function spawnFailure(error) {
+  return new TerminalRuntimeError(
+    'spawn_failed',
+    error instanceof Error ? error.message : String(error)
+  )
 }
 
 function trimUtf8Tail(value, maxBytes) {

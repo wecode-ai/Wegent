@@ -1,52 +1,50 @@
-import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/lib/navigation'
+import { roleSelectsProject, standInRoleName } from '@/api/personalStandIn'
+import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { Tooltip } from '@/components/ui/tooltip'
+import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { WorkspaceNavigationDetail } from '@/lib/navigation'
+import { navigateTo, WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useStandInOpened } from '@/telemetry/useStandInOpened'
+import type { RuntimeTaskAddress } from '@/types/api'
+import { StandInIcon } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { useDOMEvent, useFocusRequest } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
+import type { ComponentProps, ReactNode, Ref } from 'react'
 import {
-  useContext,
   useCallback,
-  useEffect,
+  useContext,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
-  type ComponentProps,
-  type Ref,
-  type ReactNode,
+  useSyncExternalStore,
 } from 'react'
-import { Check, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
-import { StandInSettingsEntry } from './StandInSettingsLayout'
 import { createPortal } from 'react-dom'
-import { StandInIcon } from '@wegent/collaboration'
-import {
-  roleSelectsProject,
-  standInRoleName,
-  subscribePersonalStandIn,
-  standInConversationTaskId,
-  type PersonalStandInSettings,
-} from '@/api/personalStandIn'
-import type { StandInProposal } from '@/api/standIn'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
-import type { RuntimeTaskAddress } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
-import { usePersonalStandIn } from './usePersonalStandIn'
-import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInConversation } from './StandInConversation'
-import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
-import { StandInScheduleDialog } from './StandInScheduleDialog'
-import { Tooltip } from '@/components/ui/tooltip'
-import { StandInWorkList } from './StandInWorkList'
-import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
+import { StandInGhostRevisionEntry } from './StandInGhostRevisionEntry'
+import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
-import { StandInPrimaryProfile } from './StandInPrimaryProfile'
-import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInOnboarding } from './StandInOnboarding'
+import { createStandInOverviewSource, standInOverviewSourceKey } from './standInOverviewSource'
+import { StandInPrimaryProfile } from './StandInPrimaryProfile'
+import { standInProcessingFailure } from './standInProcessingFailure'
+import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
-import { useStandInProcessingStatus } from './useStandInProcessingStatus'
-import { useStableEvent } from '@/features/workbench/useStableEvent'
+import { StandInSettingsEntry } from './StandInSettingsLayout'
+import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { StandInSettingsPage } from './StandInSettingsPage'
+import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
+import { StandInWorkList } from './StandInWorkList'
+import { usePersonalStandIn } from './usePersonalStandIn'
 import { useStandInInbox } from './useStandInInbox'
+import { useStandInProcessingStatus } from './useStandInProcessingStatus'
 import type { StandInRoleLocation } from './useStandInRoleDirectory'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
@@ -97,147 +95,60 @@ export function StandInOverviewPage({
     localDeviceId
   )
   const { saved, setDraft, reload } = state
-  const [roleId, setRoleId] = useState<string | undefined>(
-    props.initialProfileId === '@primary'
-      ? undefined
-      : (props.initialProfileId ?? initialSelectedRoleId)
+  const [overview] = useState(() =>
+    createStandInOverviewSource({
+      roleId:
+        props.initialProfileId === '@primary'
+          ? undefined
+          : (props.initialProfileId ?? initialSelectedRoleId),
+      profile:
+        initialWorkView === 'scheduled'
+          ? props.initialProfileId && props.initialProfileId !== '@primary'
+            ? 'role'
+            : 'primary'
+          : initialPrimaryProfile || props.initialProfileId === '@primary'
+            ? 'primary'
+            : props.initialProfileId
+              ? 'role'
+              : null,
+      calendarRequest: initialWorkView === 'scheduled' ? 1 : 0,
+      settingsRequestKey,
+      entryRequestKey,
+    })
   )
   const [detailsTarget, setDetailsTarget] = useState<{ anchor: HTMLElement; scope: string } | null>(
     null
   )
   const setDetailsAnchor = (anchor: null) => setDetailsTarget(anchor)
   const detailsTrigger = useRef<HTMLButtonElement>(null)
-  const [calendarRequest, setCalendarRequest] = useState(initialWorkView === 'scheduled' ? 1 : 0)
-  const [scheduleTarget, setScheduleTarget] = useState<{ id: string; scope: string }>()
-  const scheduleTrigger = useRef<HTMLElement | null>(null)
-  const [profile, setProfile] = useState<'primary' | 'role' | 'create' | 'memory' | null>(
-    initialWorkView === 'scheduled'
-      ? props.initialProfileId && props.initialProfileId !== '@primary'
-        ? 'role'
-        : 'primary'
-      : initialPrimaryProfile || props.initialProfileId === '@primary'
-        ? 'primary'
-        : props.initialProfileId
-          ? 'role'
-          : null
-  )
-  const [proposal, setProposal] = useState<StandInProposal | null>(null)
-  const previousProfile = useRef(profile)
   const profileTrigger = useRef<HTMLElement | null>(null)
-  const openProfile = useStableEvent(
-    (target: NonNullable<typeof profile>, trigger?: HTMLElement) => {
+  const rememberProfileTrigger = useCallback(
+    (trigger?: HTMLElement) => {
       if (trigger) profileTrigger.current = trigger
-      else if (profile === null)
+      else if (overview.getSnapshot().profile === null)
         profileTrigger.current =
           document.activeElement instanceof HTMLElement && document.activeElement !== document.body
             ? document.activeElement
             : null
-      setProfile(target)
-    }
+    },
+    [overview]
   )
-  useEffect(() => {
-    if (active && previousProfile.current !== null && profile === null) {
-      const trigger = profileTrigger.current
-      if (trigger?.isConnected) trigger.focus()
-      else detailsTrigger.current?.focus()
-      profileTrigger.current = null
-    }
-    previousProfile.current = profile
-  }, [active, profile])
-  const [resolvedProposal, setResolvedProposal] = useState<{
-    proposal: StandInProposal
-    previous: PersonalStandInSettings
-    result: 'accepted' | 'rejected'
-  } | null>(null)
-  const settledProposalIds = useRef(new Set<string>())
-  const resolvingProposal = useRef(false)
+  const {
+    setRoleId,
+    setProfile,
+    setCalendarRequest,
+    setExampleDraft,
+    resolveProposal,
+    requestNavigation,
+  } = overview
   const [review, setReview] = useState<'proposal' | 'status' | 'work' | null>(null)
   const [guideOpen, setGuideOpen] = useState(false)
-  const [exampleDraft, setExampleDraft] = useState<{ id: number; text: string }>()
-  const exampleSequence = useRef(0)
-  const [proposalError, setProposalError] = useState<string | null>(null)
-  const [proposalSaveError, setProposalSaveError] = useState<{
-    id: string
-    message: string
-  } | null>(null)
-  const [resolving, setResolving] = useState(false)
+  const [imDialogOpen, setImDialogOpen] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
   useImperativeHandle(ref, () => ({
     requestLeave: action => (panelRef.current ? panelRef.current.requestLeave(action) : action()),
   }))
-  const previousSettingsRequest = useRef(settingsRequestKey)
-  useEffect(() => {
-    if (previousSettingsRequest.current === settingsRequestKey) return
-    previousSettingsRequest.current = settingsRequestKey
-    if (!settingsRequestKey) return
-    const targetRole = props.initialProfileId === '@primary' ? undefined : props.initialProfileId
-    const targetPanel = props.initialProfileId === '@primary' ? 'primary' : 'role'
-    if (profile === targetPanel && roleId === targetRole) return
-    const openSettings = () => {
-      setRoleId(targetRole)
-      openProfile(targetPanel)
-    }
-    if (panelRef.current) panelRef.current.requestLeave(openSettings)
-    else openSettings()
-  }, [settingsRequestKey, props.initialProfileId, profile, roleId, openProfile])
   const deviceId = state.loadedDeviceId ?? props.initialDeviceId ?? saved?.executionDeviceId
-  const requestNavigation = useCallback(
-    (route: string) => {
-      const [pathname, search] = route.split('?')
-      if (pathname !== '/stand-in') return
-      if (!search) {
-        const openPrimary = () => {
-          if (primaryDeviceId && primaryDeviceId !== deviceId && onSelectLocation) {
-            onSelectLocation(primaryDeviceId)
-            return
-          }
-          setRoleId(undefined)
-          setDetailsAnchor(null)
-          setCalendarRequest(0)
-          setProfile(null)
-          reload()
-        }
-        if (panelRef.current) panelRef.current.requestLeave(openPrimary)
-        else openPrimary()
-        return
-      }
-      if (new URLSearchParams(search).get('view') !== 'scheduled') return
-      const openView = () => {
-        setCalendarRequest(value => value + 1)
-        openProfile(roleId ? 'role' : 'primary')
-      }
-      // Preserve settings drafts and guard every request, including the same URL.
-      if (panelRef.current) panelRef.current.requestLeave(openView)
-      else openView()
-    },
-    [roleId, reload, primaryDeviceId, deviceId, onSelectLocation, openProfile]
-  )
-  const previousEntryRequest = useRef(entryRequestKey)
-  useEffect(() => {
-    if (!active || previousEntryRequest.current === entryRequestKey) return
-    previousEntryRequest.current = entryRequestKey
-    if (entryRequestKey !== undefined) requestNavigation(entryRoute)
-  }, [active, entryRequestKey, entryRoute, requestNavigation])
-  useEffect(() => {
-    if (!active) return
-    const onNavigate = (event: Event) => {
-      const route = (event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute
-      if (!route || (entryRequestKey !== undefined && route !== entryRoute)) return
-      requestNavigation(route)
-    }
-    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
-    return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
-  }, [active, entryRequestKey, entryRoute, requestNavigation])
-  const leavePanel = (action: () => void) => {
-    if (panelRef.current) panelRef.current.requestLeave(action)
-    else action()
-  }
-  const pressedInPanel = useRef(false)
-  const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
-  const selectedScheduleId = scheduleTarget?.scope === detailsScope ? scheduleTarget.id : undefined
-  const setSelectedScheduleId = (id?: string) =>
-    setScheduleTarget(id ? { id, scope: detailsScope } : undefined)
-  const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
   const api = props.services.standInApi
   const processing = useStandInProcessingStatus(
     api,
@@ -246,48 +157,94 @@ export function StandInOverviewPage({
     active && !!deviceId
   )
   const inbox = useStandInInbox(api, props.userId, deviceId, active)
-  useEffect(
-    () =>
-      subscribePersonalStandIn(value => {
-        if (value.userId === props.userId && value.executionDeviceId === deviceId) {
-          setDraft(value)
-          reload()
-        }
-      }),
-    [props.userId, deviceId, setDraft, reload]
+  const observation = useMemo(
+    () => ({
+      api,
+      userId: props.userId,
+      deviceId,
+      active,
+      saved,
+      settingsRequestKey,
+      initialProfileId: props.initialProfileId,
+      entryRequestKey,
+      entryRoute,
+      primaryDeviceId,
+      onSelectLocation,
+      onOpenTask,
+      reload,
+      setDraft,
+      refreshInbox: inbox.refresh,
+      rememberProfileTrigger,
+      requestLeave: (action: () => void) =>
+        panelRef.current ? panelRef.current.requestLeave(action) : action(),
+      closeReview: () => setReview(null),
+      closeDetails: () => setDetailsTarget(null),
+    }),
+    [
+      api,
+      props.userId,
+      deviceId,
+      active,
+      saved,
+      settingsRequestKey,
+      props.initialProfileId,
+      entryRequestKey,
+      entryRoute,
+      primaryDeviceId,
+      onSelectLocation,
+      onOpenTask,
+      reload,
+      setDraft,
+      inbox.refresh,
+      rememberProfileTrigger,
+    ]
   )
-  useEffect(() => {
-    if (!active || !api || !deviceId) return
-    let current = true
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async () => {
-      try {
-        const next = await api.proposal(props.userId, deviceId, roleId)
-        if (current) {
-          setProposal(next && !settledProposalIds.current.has(next.id) ? next : null)
-          setProposalError(null)
-        }
-      } catch (cause) {
-        if (current) setProposalError(getStandInErrorMessage(cause))
-      } finally {
-        if (current) timer = setTimeout(poll, 3000)
-      }
-    }
-    void poll()
-    return () => {
-      current = false
-      clearTimeout(timer)
-    }
-  }, [active, api, deviceId, props.userId, roleId])
+  const subscribe = useCallback(
+    (listener: () => void) => overview.subscribe(observation, listener),
+    [overview, observation]
+  )
+  const view = useSyncExternalStore(subscribe, overview.getSnapshot, overview.getSnapshot)
+  const { roleId, profile, calendarRequest, exampleDraft } = view
+  const sameOwner = view.api === api && view.userId === props.userId && view.deviceId === deviceId
+  const proposal = sameOwner ? view.proposal : null
+  const resolvedProposal = sameOwner ? view.resolvedProposal : null
+  const proposalError = sameOwner ? view.proposalError : null
+  const proposalSaveError = sameOwner ? view.proposalSaveError : null
+  const resolving = sameOwner && view.resolving
+  const openProfile = (target: NonNullable<typeof profile>, trigger?: HTMLElement) => {
+    rememberProfileTrigger(trigger)
+    setProfile(target)
+  }
+  const focusTarget = useMemo(
+    () => ({
+      get current() {
+        return profileTrigger.current?.isConnected ? profileTrigger.current : detailsTrigger.current
+      },
+    }),
+    []
+  )
+  useFocusRequest(focusTarget, view.focusRequest, {
+    enabled: active && profile === null && view.focusRequest > 0,
+  })
+  useDOMEvent<CustomEvent<WorkspaceNavigationDetail>>(
+    'window',
+    WORKSPACE_NAVIGATION_EVENT,
+    event => {
+      const route = event.detail?.contentRoute
+      if (route && (entryRequestKey === undefined || route === entryRoute)) requestNavigation(route)
+    },
+    { enabled: active }
+  )
+  const leavePanel = (action: () => void) => {
+    if (panelRef.current) panelRef.current.requestLeave(action)
+    else action()
+  }
+  const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
+  const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
   const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
   const role =
     roleLocations?.find(entry => entry.role.id === roleId && entry.deviceId === deviceId)?.role ??
     state.draft?.roles.find(value => value.id === roleId)
-  useStandInOpened(
-    profile === 'memory' ? 'memory' : profile === 'primary' ? 'settings' : 'overview',
-    roleId ? 'role' : 'primary',
-    active && profile !== 'role' && profile !== 'create'
-  )
   const visibleInbox = inbox.items.filter(work => work.messageCount > 0 || work.task)
   const items = mergeStandInWorkItems(
     workbench?.runtimeTaskReminders.items ?? [],
@@ -337,33 +294,6 @@ export function StandInOverviewPage({
     (resolvedProposal.proposal.roleId ?? undefined) === roleId
       ? resolvedProposal
       : null
-  const resolveProposal = async (accept: boolean) => {
-    if (!api || !deviceId || !currentProposal || !saved || resolvingProposal.current) return
-    resolvingProposal.current = true
-    setResolving(true)
-    setProposalSaveError(null)
-    try {
-      const applied = await api.resolveProposal(props.userId, deviceId, currentProposal.id, accept)
-      settledProposalIds.current.add(currentProposal.id)
-      setResolvedProposal({
-        proposal: {
-          ...currentProposal,
-          settings: accept ? applied : currentProposal.settings,
-          status: accept ? 'accepted' : 'rejected',
-        },
-        previous: saved,
-        result: accept ? 'accepted' : 'rejected',
-      })
-      setProposal(null)
-      setReview(null)
-      reload()
-    } catch (cause) {
-      setProposalSaveError({ id: currentProposal.id, message: getStandInErrorMessage(cause) })
-    } finally {
-      resolvingProposal.current = false
-      setResolving(false)
-    }
-  }
   const proposalCard =
     currentProposal && saved ? (
       <StandInProposalCard
@@ -388,13 +318,39 @@ export function StandInOverviewPage({
       {proposalFailureMessage}
     </p>
   )
-  const processingIssue = !!(
-    processing.error ||
-    processing.status?.error ||
-    processing.status?.awaitingUser
+  const device = props.devices.find(
+    device => device.device_id === deviceId || device.app_device_id === deviceId
   )
+  const processingFailure = standInProcessingFailure(
+    processing.status,
+    processing.error,
+    props.userId,
+    t
+  )
+  const processingError =
+    processingFailure.summary ??
+    processingFailure.message ??
+    (processing.status?.awaitingUser ? t('standIn.processing.needs_input') : null)
   const management = (
-    <section data-testid="stand-in-settings-tools" className="mt-6">
+    <section data-testid="stand-in-settings-tools" className="mt-6 space-y-4">
+      {active && deviceId && (profile === 'primary' || profile === 'role') && (
+        <StandInImConnections
+          services={props.services}
+          devices={props.devices}
+          deviceId={deviceId}
+          roleId={profile === 'role' ? roleId : undefined}
+          name={
+            profile === 'role' && role
+              ? standInRoleName(
+                  role,
+                  Math.max(0, roles.indexOf(role)),
+                  t('standIn.personal.default_role')
+                )
+              : t('standIn.title')
+          }
+          onOpenChange={setImDialogOpen}
+        />
+      )}
       {api && saved && (
         <StandInSettingsEntry
           testId="stand-in-memory-open"
@@ -403,6 +359,19 @@ export function StandInOverviewPage({
           onClick={() => leavePanel(() => openProfile('memory'))}
         />
       )}
+      {api &&
+        saved &&
+        (roleId ? saved.roles.find(role => role.id === roleId) : saved.primary)
+          ?.selfLearningEnabled !== undefined && (
+          <StandInGhostRevisionEntry
+            key={JSON.stringify([saved.userId, saved.executionDeviceId, saved.version, roleId])}
+            api={api}
+            userId={saved.userId}
+            deviceId={saved.executionDeviceId}
+            roleId={roleId}
+            requestLeave={leavePanel}
+          />
+        )}
     </section>
   )
   const content = (
@@ -418,7 +387,8 @@ export function StandInOverviewPage({
             data-testid="stand-in-role-selector"
           >
             <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="stand-in-primary-open"
                 aria-current={!roleId ? 'page' : undefined}
@@ -428,7 +398,7 @@ export function StandInOverviewPage({
                 <UserRound aria-hidden="true" className="h-4 w-4" />
                 {t('standIn.title')}
                 {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
-              </button>
+              </ControlButton>
               {roles.map((value, index) => {
                 const projects = props.projects.filter(project =>
                   roleSelectsProject(value, {
@@ -443,7 +413,8 @@ export function StandInOverviewPage({
                 const selected =
                   roleId === value.id && (!roleLocations || value.executionDeviceId === deviceId)
                 return (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     key={`${value.migrationSource ?? value.executionDeviceId}:${value.id}`}
                     type="button"
                     data-testid={`stand-in-overview-role-${value.id}${roles.filter(role => role.id === value.id).length > 1 ? `-${value.executionDeviceId}` : ''}`}
@@ -468,11 +439,12 @@ export function StandInOverviewPage({
                       {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
                       {t('standIn.personal.connected_selected', { count: projects.length })}
                     </span>
-                  </button>
+                  </ControlButton>
                 )
               })}
               <Tooltip label={t('standIn.workspace.create_role')} side="bottom">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="stand-in-create-role"
                   aria-label={t('standIn.workspace.create_role')}
@@ -480,19 +452,19 @@ export function StandInOverviewPage({
                     const trigger = event.currentTarget
                     leavePanel(() => {
                       setCalendarRequest(0)
-                      setSelectedScheduleId(undefined)
                       openProfile('create', trigger)
                     })
                   }}
                   className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted md:h-8 md:w-8"
                 >
                   <Plus aria-hidden="true" className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </Tooltip>
             </div>
           </nav>
           <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-details-open"
               ref={detailsTrigger}
@@ -507,7 +479,7 @@ export function StandInOverviewPage({
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
             >
               <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </Tooltip>
           <p data-testid="stand-in-role-help" className="w-full text-sm text-text-secondary">
             {t('standIn.workspace.role_help')}
@@ -520,14 +492,15 @@ export function StandInOverviewPage({
         ) : state.error && !state.saved ? (
           <div role="alert" className="p-5 text-error">
             <p>{state.error}</p>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-overview-retry"
               onClick={reload}
               className="mt-2 min-h-11 min-w-11 underline md:min-h-8"
             >
               {t('standIn.reload')}
-            </button>
+            </ControlButton>
           </div>
         ) : (
           <>
@@ -562,24 +535,6 @@ export function StandInOverviewPage({
           <StandInDetailsPopover
             key={`${props.userId}:${deviceId}:${roleId ?? '@primary'}`}
             anchor={detailsAnchor}
-            userId={props.userId}
-            roleId={roleId}
-            automationApi={props.services.automationApi}
-            imConnections={
-              deviceId
-                ? {
-                    services: props.services,
-                    devices: props.devices,
-                    deviceId,
-                    roleId,
-                  }
-                : undefined
-            }
-            suspended={!!selectedScheduleId}
-            onSchedule={(schedule, trigger) => {
-              scheduleTrigger.current = trigger
-              setSelectedScheduleId(schedule.id)
-            }}
             name={
               role
                 ? standInRoleName(
@@ -589,17 +544,8 @@ export function StandInOverviewPage({
                   )
                 : t('standIn.title')
             }
-            configuration={role ?? saved?.primary}
-            projects={props.projects}
             enabled={role ? role.enabled : saved?.primary?.enabled !== false}
-            device={props.devices.find(
-              device => device.device_id === deviceId || device.app_device_id === deviceId
-            )}
-            conversation={
-              deviceId
-                ? { deviceId, taskId: standInConversationTaskId(props.userId, roleId) }
-                : undefined
-            }
+            device={device}
             items={roleItems.filter(
               item =>
                 !(item.task.runtimeHandle?.origin as Record<string, unknown> | undefined)
@@ -607,12 +553,8 @@ export function StandInOverviewPage({
             )}
             inbox={visibleInbox}
             sourceErrors={inbox.sourceErrors}
-            error={
-              overviewError ||
-              processing.error ||
-              processing.status?.error?.message ||
-              (processing.status?.awaitingUser ? t('standIn.personal.activity_waiting') : null)
-            }
+            overviewError={overviewError}
+            processingError={processingError}
             onClose={() => {
               setDetailsAnchor(null)
               detailsAnchor.focus()
@@ -620,7 +562,6 @@ export function StandInOverviewPage({
             onSettings={() => {
               setDetailsAnchor(null)
               setCalendarRequest(0)
-              setSelectedScheduleId(undefined)
               openProfile(role ? 'role' : 'primary')
             }}
             onGuide={() => {
@@ -662,24 +603,6 @@ export function StandInOverviewPage({
             onOpenTask={onOpenTask}
           />
         )}
-        {selectedScheduleId && detailsAnchor && active && deviceId && (
-          <StandInScheduleDialog
-            key={`${detailsScope}:${selectedScheduleId}`}
-            id={selectedScheduleId}
-            userId={props.userId}
-            roleId={roleId ?? '@primary'}
-            deviceId={deviceId}
-            onClose={() => {
-              setSelectedScheduleId(undefined)
-              window.requestAnimationFrame(() =>
-                (scheduleTrigger.current?.isConnected
-                  ? scheduleTrigger.current
-                  : detailsTrigger.current
-                )?.focus({ preventScroll: true })
-              )
-            }}
-          />
-        )}
         <StandInReviewDialog
           open={active && review === 'work'}
           title={t('standIn.workspace.details_activity')}
@@ -701,14 +624,7 @@ export function StandInOverviewPage({
               setReview(null)
               navigate()
             }}
-            onOpenTask={
-              onOpenTask
-                ? async address => {
-                    await onOpenTask(address)
-                    setReview(null)
-                  }
-                : undefined
-            }
+            onOpenTask={onOpenTask ? overview.openTask : undefined}
             onRestoreTask={
               props.services.runtimeWorkApi
                 ? async address => {
@@ -740,7 +656,7 @@ export function StandInOverviewPage({
             detailsTrigger.current?.focus()
           }}
         >
-          {deviceId && processingIssue && (
+          {deviceId && processingError && (
             <StandInProcessingNotice
               snapshot={processing}
               api={api}
@@ -749,6 +665,10 @@ export function StandInOverviewPage({
               onOpen={() => {
                 setReview(null)
                 openProfile('primary')
+              }}
+              onOpenConnectionSettings={() => {
+                setReview(null)
+                navigateTo('/settings/connections')
               }}
               onOpenTask={
                 onOpenTask
@@ -760,19 +680,16 @@ export function StandInOverviewPage({
               }
             />
           )}
-          {props.devices
-            .filter(device => device.device_id === deviceId || device.app_device_id === deviceId)
-            .map(device =>
-              device.error ? (
-                <p key={device.device_id} role="alert" className="mb-4 text-sm text-error">
-                  {getStandInErrorMessage(device.error)}
-                </p>
-              ) : null
-            )}
+          {device?.error && (
+            <p role="alert" className="mb-4 text-sm text-error">
+              {getStandInErrorMessage(device.error)}
+            </p>
+          )}
           {overviewError && (
             <div role="alert" className="mb-4 flex items-center gap-3 text-sm">
               <span className="min-w-0 flex-1">{overviewError}</span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="stand-in-overview-inline-retry"
                 onClick={() => {
@@ -782,7 +699,7 @@ export function StandInOverviewPage({
                 className="min-h-11 shrink-0 rounded-md px-3 hover:bg-muted md:min-h-8"
               >
                 {t('standIn.reload')}
-              </button>
+              </ControlButton>
             </div>
           )}
           <div className="divide-y divide-border">
@@ -797,25 +714,22 @@ export function StandInOverviewPage({
                     {getStandInErrorMessage(value.error)}
                   </p>
                 </div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`stand-in-source-retry-${value.source.id}`}
                   className="min-h-11 shrink-0 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
-                  onClick={async () => {
-                    try {
-                      await api?.retrySource(props.userId, deviceId!, value.source)
-                      inbox.refresh()
-                    } catch (cause) {
-                      setProposalError(getStandInErrorMessage(cause))
-                    }
-                  }}
+                  aria-busy={
+                    sameOwner && view.retryingSources.has(standInOverviewSourceKey(value.source))
+                  }
+                  onClick={() => void overview.retrySource(value.source)}
                 >
                   {t('standIn.reload')}
-                </button>
+                </ControlButton>
               </div>
             ))}
           </div>
-          {!inbox.sourceErrors.length && !overviewError && !processingIssue && (
+          {!inbox.sourceErrors.length && !overviewError && !processingError && !device?.error && (
             <p className="text-sm text-text-secondary">{t('standIn.workspace.status_clear')}</p>
           )}
         </StandInReviewDialog>
@@ -828,31 +742,36 @@ export function StandInOverviewPage({
               style={{ display: active ? undefined : 'none' }}
               inert={!active}
               onMouseDown={event => {
-                pressedInPanel.current = event.target !== event.currentTarget
+                overview.pressPanel(event.target !== event.currentTarget)
               }}
               onClick={event => {
-                if (event.target === event.currentTarget && !pressedInPanel.current)
+                const outside = overview.consumeBackdropClick()
+                if (event.target === event.currentTarget && outside)
                   panelRef.current?.requestClose()
-                pressedInPanel.current = false
               }}
             >
-              <aside
-                role="dialog"
-                aria-modal="true"
-                aria-label={t(
-                  profile === 'memory'
-                    ? 'standIn.memory.title'
-                    : profile === 'primary'
-                      ? 'standIn.workspace.primary_profile'
-                      : 'standIn.workspace.role_profile'
-                )}
-                data-testid="stand-in-profile-panel"
-                className="absolute inset-y-0 right-0 z-20 w-full overflow-y-auto border-l border-border bg-background shadow-lg md:max-w-lg"
+              <DialogSurface
+                suspended={imDialogOpen}
+                onClose={() => panelRef.current?.requestClose()}
+                render={
+                  <aside
+                    aria-label={t(
+                      profile === 'memory'
+                        ? 'standIn.memory.title'
+                        : profile === 'primary'
+                          ? 'standIn.workspace.primary_profile'
+                          : 'standIn.workspace.role_profile'
+                    )}
+                    data-testid="stand-in-profile-panel"
+                    className="absolute inset-y-0 right-0 z-20 w-full overflow-y-auto border-l border-border bg-background shadow-lg md:max-w-lg"
+                  />
+                }
               >
                 {profile === 'memory' && api && saved ? (
                   <StandInMemoryPanel
                     ref={panelRef}
                     key={saved.executionDeviceId}
+                    reviewRoleId={roleId ?? '@primary'}
                     api={api}
                     settings={saved}
                     projects={props.projects.filter(
@@ -938,7 +857,7 @@ export function StandInOverviewPage({
                     }}
                   />
                 )}
-              </aside>
+              </DialogSurface>
             </div>,
             document.body
           )}
@@ -976,10 +895,15 @@ export function StandInOverviewPage({
           setDetailsAnchor(null)
           setProfile(null)
           setGuideOpen(false)
-          setExampleDraft({ id: ++exampleSequence.current, text })
+          overview.draftExample(text)
         })
       }
-      bypass={Boolean(props.initialProfileId || profile || (!saved && state.error))}
+      bypass={Boolean(
+        props.initialProfileId ||
+        profile ||
+        (roleId && primaryDeviceId && primaryDeviceId !== deviceId) ||
+        (!saved && state.error)
+      )}
       onClose={props.onCancel}
     >
       {content}

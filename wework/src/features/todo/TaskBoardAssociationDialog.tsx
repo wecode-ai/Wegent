@@ -1,13 +1,15 @@
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ChevronRight, LayoutDashboard, ListTodo, Loader2, Plus, Search, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { Button } from '@/components/ui/button'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
-import { sameProjectSpace, projectSpaceRef } from './projectSpaceSelection'
+import { projectSpaceRef, sameProjectSpace } from './projectSpaceSelection'
 
 interface TaskBoardAssociationDialogProps {
   project: CloudProject | null
@@ -35,13 +37,7 @@ export function TaskBoardAssociationDialog({
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
   const [moveChoice, setMoveChoice] = useState<AssociationChoice | null>(null)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(
-    () => {
-      if (!pending && !moveChoice) onClose()
-    },
-    Boolean(project),
-    '[data-testid="task-board-association-search"]'
-  )
+  const dialogRef = useRef<HTMLDivElement>(null)
 
   const moving =
     Boolean(currentProject && project) &&
@@ -80,14 +76,21 @@ export function TaskBoardAssociationDialog({
           if (event.currentTarget === event.target && !pending) onClose()
         }}
       >
-        <section
-          ref={dialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="task-board-association-title"
-          aria-describedby="task-board-association-description"
-          data-testid="task-board-association-dialog"
-          className="grid h-[min(640px,calc(100dvh-48px))] w-full max-w-[600px] grid-rows-[auto_auto_minmax(6rem,1fr)_auto] overflow-x-hidden overflow-y-auto overscroll-contain rounded-[20px] border border-border bg-popover text-text-primary shadow-lg"
+        <DialogSurface
+          onClose={() => {
+            if (!pending && !moveChoice) onClose()
+          }}
+          active={Boolean(project)}
+          initialFocus={'[data-testid="task-board-association-search"]'}
+          render={
+            <section
+              ref={dialogRef}
+              aria-labelledby="task-board-association-title"
+              aria-describedby="task-board-association-description"
+              data-testid="task-board-association-dialog"
+              className="grid h-[min(640px,calc(100dvh-48px))] w-full max-w-[600px] grid-rows-[auto_auto_minmax(6rem,1fr)_auto] overflow-x-hidden overflow-y-auto overscroll-contain rounded-[20px] border border-border bg-popover text-text-primary shadow-lg"
+            />
+          }
         >
           <header className="relative px-5 pb-5 pt-5">
             <div className="flex items-center gap-2 pr-12 md:pr-9">
@@ -125,14 +128,15 @@ export function TaskBoardAssociationDialog({
             </div>
             <div className="flex h-11 items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 focus-within:border-focus md:h-10">
               <Search className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-              <input
+              <ControlInput
+                appearance="plain"
                 id="task-board-association-search"
                 data-testid="task-board-association-search"
                 value={query}
                 disabled={pending}
                 onChange={event => setQuery(event.target.value)}
                 placeholder={t('workbench.task_board_association_search', '搜索任务编号或标题')}
-                className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted disabled:opacity-45"
+                className="h-full min-w-0 flex-1 placeholder:text-text-muted disabled:opacity-45"
               />
             </div>
           </div>
@@ -172,7 +176,8 @@ export function TaskBoardAssociationDialog({
               </div>
             ) : (
               candidates.map(item => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={item.id}
                   type="button"
                   data-testid={`task-board-association-item-${item.id}`}
@@ -193,7 +198,7 @@ export function TaskBoardAssociationDialog({
                     className="h-4 w-4 shrink-0 text-text-muted opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"
                     aria-hidden="true"
                   />
-                </button>
+                </ControlButton>
               ))
             )}
           </div>
@@ -214,7 +219,7 @@ export function TaskBoardAssociationDialog({
               {t('workbench.task_board_association_create', '新建看板任务')}
             </Button>
           </footer>
-        </section>
+        </DialogSurface>
       </div>
 
       <ConfirmDialog

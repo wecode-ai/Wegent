@@ -1,0 +1,25 @@
+[package]
+name = "wegent-task-export-docx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Task conversation DOCX export and download-token routing"
+
+[dependencies]
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+flate2 = { workspace = true, features = ["zlib"] }
+jsonwebtoken.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+wegent-backend-config.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+base64.workspace = true

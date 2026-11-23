@@ -1,113 +1,72 @@
-import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { dequal } from 'dequal'
-import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import {
+  createPersonalStandInSettingsResource,
+  personalStandInSettingsError,
+} from './personalStandInSettingsResource'
 
-/** Load and save account settings on the selected Executor while preserving dirty drafts and conflicts. */
+export type PersonalStandInObservation = NonNullable<
+  Parameters<ReturnType<typeof createPersonalStandInSettingsResource>['subscribe']>[1]
+>
+
+/** Load and save on the selected Executor without sharing drafts across account or device owners. */
 export function usePersonalStandIn(
   services: WorkbenchServices,
   userId: number,
   initialDeviceId?: string,
-  localDeviceId?: string
+  localDeviceId?: string,
+  observation?: PersonalStandInObservation
 ) {
-  const [saved, setSaved] = useState<PersonalStandInSettings | null>(null)
-  const [draft, setDraft] = useState<PersonalStandInSettings | null>(null)
-  const [currentDeviceId, setCurrentDeviceId] = useState('')
-  const [deviceId, setDeviceId] = useState(initialDeviceId ?? '')
-  const [loadedDeviceId, setLoadedDeviceId] = useState(initialDeviceId)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [reload, setReload] = useState(0)
-  const loaded = useRef<{
-    key: string
-    deviceId: string
-    settings: PersonalStandInSettings
-  } | null>(null)
-
-  useEffect(() => {
-    let active = true
-    void (async () => {
-      const identity = localDeviceId
-        ? { deviceId: localDeviceId }
-        : await services.getLocalRuntimeSidebarIdentity?.()
-      if (!identity) throw new Error('Executor identity is unavailable')
-      const target = deviceId || identity.deviceId
-      const settings = await services.standInApi!.personalGet(userId, target)
-      if (!active) return
-      const key = JSON.stringify([userId, target, reload])
-      const previous = loaded.current
-      loaded.current = { key, deviceId: target, settings }
-      setLoadedDeviceId(target)
-      setCurrentDeviceId(identity.deviceId)
-      setSaved(settings)
-      setDraft(current =>
-        previous?.key === key && current && !dequal(current, previous.settings) ? current : settings
-      )
-      setError(null)
-    })()
-      .catch(cause => {
-        if (active) {
-          reportStandInError('load_settings', cause, deviceId)
-          setError(getStandInErrorMessage(cause, 'load_settings_failed'))
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [services, userId, deviceId, reload, localDeviceId])
-
-  const updateRole = useCallback((id: string, update: (role: StandInRole) => StandInRole) => {
-    setDraft(
-      current =>
-        current && {
-          ...current,
-          roles: current.roles.map(role => (role.id === id ? update(role) : role)),
-        }
-    )
-  }, [])
-
-  const save = async (value = draft) => {
-    if (!value || saving || loading || !loaded.current) return null
-    setSaving(true)
-    setError(null)
-    try {
-      const result = await services.standInApi!.personalSave(userId, value, loaded.current.deviceId)
-      if (loaded.current) loaded.current = { ...loaded.current, settings: result }
-      setSaved(result)
-      setDraft(result)
-      return result
-    } catch (cause) {
-      reportStandInError('save_settings', cause, loaded.current?.deviceId)
-      setError(getStandInErrorMessage(cause, 'save_settings_failed'))
-      return null
-    } finally {
-      setSaving(false)
-    }
+  const [selection, setSelection] = useState({
+    userId,
+    initialDeviceId,
+    deviceId: initialDeviceId ?? '',
+  })
+  if (selection.userId !== userId || selection.initialDeviceId !== initialDeviceId) {
+    setSelection({ userId, initialDeviceId, deviceId: initialDeviceId ?? '' })
   }
-  return {
-    saved,
-    draft,
-    setDraft,
-    updateRole,
-    error,
-    setError,
-    loading,
-    saving,
-    save,
-    currentDeviceId,
-    loadedDeviceId,
-    setDeviceId: (value: string) => {
-      setLoading(true)
-      setDeviceId(value)
+  const { standInApi: api, getLocalRuntimeSidebarIdentity: identify } = services
+  const resource = useMemo(
+    () =>
+      createPersonalStandInSettingsResource({
+        api,
+        identify,
+        userId,
+        deviceId: selection.deviceId,
+        localDeviceId,
+      }),
+    [api, identify, userId, selection.deviceId, localDeviceId]
+  )
+  const initialRoleKey = JSON.stringify(observation?.initialRole ?? null)
+  const initialRole = useMemo(
+    () => JSON.parse(initialRoleKey) as PersonalStandInObservation['initialRole'] | null,
+    [initialRoleKey]
+  )
+  const onSavingChange = observation?.onSavingChange
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      resource.subscribe(listener, {
+        initialRole: initialRole ?? undefined,
+        onSavingChange,
+      }),
+    [resource, initialRole, onSavingChange]
+  )
+  const state = useSyncExternalStore(subscribe, resource.getSnapshot)
+  const setDeviceId = useCallback(
+    (deviceId: string) => {
+      if (resource.isActive()) setSelection(current => ({ ...current, deviceId }))
     },
-    reload: useCallback(() => {
-      setLoading(true)
-      setReload(value => value + 1)
-    }, []),
+    [resource]
+  )
+  return {
+    ...state,
+    error: personalStandInSettingsError(state.error),
+    setDraft: resource.setDraft,
+    updateRole: resource.updateRole,
+    setError: resource.setError,
+    setMoving: resource.setMoving,
+    save: resource.save,
+    reload: resource.reload,
+    setDeviceId,
   }
 }

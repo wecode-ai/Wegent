@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState, type RefObject } from 'react'
-import { clearMemberResultsForEmptyQuery, runActiveMemberSearch } from './memberSearch'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useDocumentEvent, useEscapeKey, useFocusRequest } from '../dom-events'
+import { createMemberSearchResource, filterMemberSearchResults } from './memberSearch'
 import type {
   ProjectManageApi,
   ProjectManageHost,
@@ -51,28 +53,41 @@ export function useProjectMembers<
   openMembersRequestId?: number
   onOpenMembersRequestConsumed?(requestId: number): void
 }) {
-  const [members, setMembers] = useState<Member[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [loadRevision, setLoadRevision] = useState(0)
+  const resource = useMemo(
+    () =>
+      createAsyncResource<Member[]>(
+        'project-members:' + projectId,
+        () => api.listMembers(projectId),
+        { refreshOnSubscribe: true }
+      ),
+    [api, projectId]
+  )
+  const snapshot = useSyncExternalStore(
+    enabled ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const members = snapshot.data ?? []
+  const loading = snapshot.status === 'idle' || snapshot.status === 'loading'
+  const loadError =
+    snapshot.status === 'error'
+      ? host.translate('todo.load_collaboration_data_failed', '加载协作数据失败')
+      : null
   const [membersOpen, setMembersOpen] = useState(false)
   const [memberQuery, setMemberQuery] = useState('')
-  const [memberResults, setMemberResults] = useState<User[]>([])
   const [memberRole, setMemberRole] = useState<Exclude<ProjectManageRole, 'Owner'>>('Developer')
   const [savingUserId, setSavingUserId] = useState<number | null>(null)
   const memberComposerRef = useRef<HTMLDivElement>(null)
   const memberSearchInputRef = useRef<HTMLInputElement>(null)
-  const [renderedProjectId, setRenderedProjectId] = useState(projectId)
+  const [renderedSource, setRenderedSource] = useState(resource)
   const [handledOpenRequestId, setHandledOpenRequestId] = useState<number | undefined>()
 
-  if (renderedProjectId !== projectId) {
-    setRenderedProjectId(projectId)
-    setMembers([])
-    setLoadError(null)
-    setLoading(true)
+  if (renderedSource !== resource) {
+    if (membersOpen) console.debug('[project-members] picker reset after member resource changed')
+    setRenderedSource(resource)
+    setHandledOpenRequestId(undefined)
     setMembersOpen(false)
     setMemberQuery('')
-    setMemberResults([])
     setSavingUserId(null)
   }
   if (handledOpenRequestId !== openMembersRequestId) {
@@ -80,77 +95,52 @@ export function useProjectMembers<
     if (canManage && openMembersRequestId !== undefined) setMembersOpen(true)
   }
 
-  useEffect(() => {
-    if (!enabled) return
-    let active = true
-    setLoadError(null)
-    setLoading(true)
-    void api.listMembers(projectId).then(
-      next => {
-        if (!active) return
-        setMembers(next)
-        setLoading(false)
-      },
-      () => {
-        if (!active) return
-        setLoading(false)
-        setLoadError(host.translate('todo.load_collaboration_data_failed', '加载协作数据失败'))
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, enabled, host, projectId, loadRevision])
-
-  useEffect(() => {
-    if (!membersOpen || typeof document === 'undefined') return
-    const close = (event: MouseEvent) => {
+  const consumedRequest = useRef<{ resource: typeof resource; id: number } | null>(null)
+  const memberPanelRef = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node || openMembersRequestId === undefined) return
+      const previous = consumedRequest.current
+      if (previous?.resource === resource && previous.id === openMembersRequestId) return
+      consumedRequest.current = { resource, id: openMembersRequestId }
+      onOpenMembersRequestConsumed?.(openMembersRequestId)
+    },
+    [resource, openMembersRequestId, onOpenMembersRequestConsumed]
+  )
+  useDocumentEvent(
+    'mousedown',
+    event => {
       if (event.target instanceof Node && !memberComposerRef.current?.contains(event.target)) {
+        console.debug('[project-members] picker closed by document mousedown')
         setMembersOpen(false)
       }
-    }
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMembersOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', escape)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', escape)
-    }
-  }, [membersOpen])
-
-  useEffect(() => {
-    if (openMembersRequestId === undefined) return
-    onOpenMembersRequestConsumed?.(openMembersRequestId)
-  }, [openMembersRequestId, onOpenMembersRequestConsumed, canManage])
-
-  useEffect(() => {
-    if (!membersOpen) return
-    memberSearchInputRef.current?.focus()
-  }, [membersOpen, openMembersRequestId])
-
-  useEffect(() => {
-    const query = memberQuery.trim()
-    if (!query) return
-    let active = true
-    const timer = window.setTimeout(() => {
-      void runActiveMemberSearch({
-        query,
-        existingUserIds: new Set(members.map(member => member.user_id)),
-        search: api.searchUsers,
-        userId: user => user.id,
-        isActive: () => active,
-        onResults: setMemberResults,
-        onError: cause =>
-          reportError(cause, host.translate('todo.search_members_failed', '搜索项目成员失败')),
-      })
-    }, 250)
-    return () => {
-      active = false
-      window.clearTimeout(timer)
-    }
-  }, [api, host, memberQuery, members, reportError])
+    },
+    { enabled: membersOpen }
+  )
+  useEscapeKey(() => setMembersOpen(false), membersOpen, memberComposerRef)
+  // The popover owns initial focus when its trigger opens it.
+  useFocusRequest(memberSearchInputRef, openMembersRequestId, {
+    enabled: membersOpen && openMembersRequestId !== undefined,
+  })
+  const query = memberQuery.trim()
+  const searchResource = useMemo(
+    () =>
+      createMemberSearchResource<User>('project-member-search:' + projectId, query, value =>
+        api.searchUsers(value)
+      ),
+    [api, projectId, query]
+  )
+  const searchSnapshot = useSyncExternalStore(
+    enabled && canManage && membersOpen && query ? searchResource.subscribe : subscribeIdleResource,
+    searchResource.getSnapshot,
+    searchResource.getSnapshot
+  )
+  const memberResults = query ? filterMemberSearchResults(searchSnapshot.data ?? [], members) : []
+  const memberSearchError =
+    searchSnapshot.status === 'error'
+      ? searchSnapshot.error instanceof Error
+        ? searchSnapshot.error.message
+        : host.translate('todo.search_members_failed', '搜索项目成员失败')
+      : undefined
 
   async function refreshMemberState(
     scope: { projectId: string },
@@ -166,8 +156,7 @@ export function useProjectMembers<
       if (options.reloadMembers) {
         const next = await api.listMembers(scope.projectId)
         if (projectScopeRef.current === scope) {
-          setMembers(next)
-          setLoadError(null)
+          resource.update(() => next)
         }
       }
     } catch (cause) {
@@ -184,7 +173,7 @@ export function useProjectMembers<
     try {
       const member = await api.addMember(scope.projectId, user.id, memberRole)
       if (projectScopeRef.current !== scope) return
-      setMembers(current => [...current, member])
+      resource.update(current => [...(current ?? []), member])
       setMemberQuery('')
       host.trackCompleted('member_invite')
       await refreshMemberState(scope, { reloadMembers: true })
@@ -210,7 +199,9 @@ export function useProjectMembers<
     try {
       const next = await api.updateMember(scope.projectId, member.user_id, values)
       if (projectScopeRef.current !== scope) return
-      setMembers(current => current.map(row => (row.user_id === next.user_id ? next : row)))
+      resource.update(current =>
+        (current ?? []).map(row => (row.user_id === next.user_id ? next : row))
+      )
       if (values.role) host.trackCompleted('member_role_change')
       if (values.role && member.user_id === currentUserId) {
         await refreshMemberState(scope, { refreshProject: true })
@@ -269,17 +260,16 @@ export function useProjectMembers<
     members,
     loading,
     loadError,
-    retryLoad: () => setLoadRevision(value => value + 1),
+    retryLoad: resource.reload,
+    memberPanelRef,
+    memberSearchError,
     membersOpen,
     setMembersOpen,
     memberComposerRef,
     memberQuery,
-    setMemberQuery: (query: string) => {
-      setMemberQuery(query)
-      clearMemberResultsForEmptyQuery(query, setMemberResults)
-    },
+    setMemberQuery,
     memberSearchInputRef,
-    memberResults: memberQuery.trim() ? memberResults : [],
+    memberResults,
     memberRole,
     setMemberRole,
     savingUserId,

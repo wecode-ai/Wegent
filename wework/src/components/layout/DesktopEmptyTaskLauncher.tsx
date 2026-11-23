@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { ConversationFindBar } from '@/components/chat/ConversationFindBar'
+import { useConversationFind } from '@/components/chat/useConversationFind'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { focusComposerAtEnd, WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
-import { useConversationFind } from '@/components/chat/useConversationFind'
-import { ConversationFindBar } from '@/components/chat/ConversationFindBar'
+import { focusEditorTarget, useDOMEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCallback, useMemo, useRef, type ReactNode } from 'react'
 
 const EMPTY_CONVERSATION = { messages: [] }
 
@@ -38,15 +40,22 @@ export function DesktopEmptyTaskLauncher({
   const launcherRef = useRef<HTMLElement>(null)
   const composerInputSelector = `[data-testid="${composerInputTestId}"]`
 
-  useEffect(() => {
-    const focusComposer = () => {
-      focusComposerAtEnd(launcherRef.current?.querySelector<HTMLElement>(composerInputSelector))
-    }
-
-    focusComposer()
-    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
-    return () => window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
+  const focusComposer = useCallback(() => {
+    focusComposerAtEnd(launcherRef.current?.querySelector<HTMLElement>(composerInputSelector))
   }, [composerInputSelector])
+  const attachLauncher = useCallback(
+    (node: HTMLElement | null) => {
+      launcherRef.current = node
+      const element = node?.querySelector<HTMLElement>(composerInputSelector)
+      if (!element) return
+      focusEditorTarget(
+        { element, focus: () => focusComposerAtEnd(element) },
+        { guardModalFocus: true, onlyFromBodyOrTarget: true }
+      )
+    },
+    [composerInputSelector]
+  )
+  useDOMEvent('window', WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
 
   const selectSuggestion = (prompt: string) => {
     onSelectSuggestion(prompt)
@@ -61,7 +70,8 @@ export function DesktopEmptyTaskLauncher({
         {projectName ? (
           <>
             {t('workbench.project_empty_title_prefix', '我们应该在')}{' '}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="empty-project-title-button"
               onClick={event => onOpenProjectSelector(event.currentTarget)}
@@ -69,7 +79,7 @@ export function DesktopEmptyTaskLauncher({
               className="max-w-[18rem] truncate align-bottom underline decoration-text-muted decoration-dotted underline-offset-4 transition-colors hover:text-text-secondary focus-visible:rounded focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
             >
               {projectName}
-            </button>{' '}
+            </ControlButton>{' '}
             {t('workbench.project_empty_title_suffix', '中做些什么？')}
           </>
         ) : (
@@ -82,7 +92,7 @@ export function DesktopEmptyTaskLauncher({
 
   return (
     <section
-      ref={launcherRef}
+      ref={attachLauncher}
       data-testid="desktop-empty-composer-frame"
       className={
         compact

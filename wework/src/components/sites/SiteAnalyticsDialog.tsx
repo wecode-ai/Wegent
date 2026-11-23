@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Loader2, X } from 'lucide-react'
 import { ApiError } from '@/api/http'
 import type { Site, SiteAnalytics, SiteAnalyticsRange, SitesApi } from '@/api/sites'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, X } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import { analyticsToday, recentAnalyticsRange, validAnalyticsRange } from './siteAnalyticsDates'
 
 interface SiteAnalyticsDialogProps {
@@ -30,41 +33,23 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
   const { t } = useTranslation('sites')
   const [draft, setDraft] = useState<SiteAnalyticsRange>(() => recentAnalyticsRange(7))
   const [request, setRequest] = useState(() => ({ range: draft, revision: 0 }))
-  const [settled, setSettled] = useState<{
-    request: typeof request
-    api: SitesApi
-    siteid: string
-    data: SiteAnalytics | null
-    error: string | null
-  } | null>(null)
-  const current =
-    settled?.request === request && settled.api === api && settled.siteid === site.siteid
-      ? settled
-      : null
-  const loading = current === null
-  const data = current?.data ?? null
-  const error = current?.error ?? null
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(onClose)
+  const siteid = site.siteid
+  const resource = useMemo(
+    () => createAsyncResource(siteid, () => api.getSiteAnalytics(siteid, request.range)),
+    [api, siteid, request]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const loading = !snapshot.settled
+  const data = snapshot.data ?? null
+  const error = snapshot.status === 'error' ? errorKey(snapshot.error) : null
   const today = analyticsToday()
   const valid = validAnalyticsRange(draft, today)
   const changed =
     draft.start_date !== request.range.start_date || draft.end_date !== request.range.end_date
-
-  useEffect(() => {
-    let active = true
-    void api
-      .getSiteAnalytics(site.siteid, request.range)
-      .then(result => {
-        if (active) setSettled({ request, api, siteid: site.siteid, data: result, error: null })
-      })
-      .catch(failure => {
-        if (active)
-          setSettled({ request, api, siteid: site.siteid, data: null, error: errorKey(failure) })
-      })
-    return () => {
-      active = false
-    }
-  }, [api, site.siteid, request])
 
   function query(range = draft) {
     if (!validAnalyticsRange(range)) return
@@ -74,14 +59,16 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/[0.13]">
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="site-analytics-title"
-        data-testid="site-analytics-dialog"
-        tabIndex={-1}
-        className="flex max-h-[90vh] w-[680px] max-w-[92vw] flex-col rounded-[20px] bg-popover text-text-primary shadow-lg ring-[0.5px] ring-border"
+      <DialogSurface
+        onClose={onClose}
+        render={
+          <div
+            aria-labelledby="site-analytics-title"
+            data-testid="site-analytics-dialog"
+            tabIndex={-1}
+            className="flex max-h-[90vh] w-[680px] max-w-[92vw] flex-col rounded-[20px] bg-popover text-text-primary shadow-lg ring-[0.5px] ring-border"
+          />
+        }
       >
         <header className="flex items-start justify-between gap-4 p-5 pb-4">
           <div className="min-w-0">
@@ -90,7 +77,8 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
             </h2>
             <p className="mt-1 truncate text-sm text-text-secondary">{site.name}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="site-analytics-close"
             aria-label={t('analytics_close')}
@@ -98,7 +86,7 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8 md:w-8"
           >
             <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </ControlButton>
         </header>
         <div className="overflow-y-auto px-5 pb-5">
           <form
@@ -115,7 +103,8 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
                   className="flex min-w-0 flex-1 flex-col gap-1 text-sm text-text-secondary"
                 >
                   {t(field === 'start_date' ? 'analytics_start_date' : 'analytics_end_date')}
-                  <input
+                  <ControlInput
+                    density="compact"
                     type="date"
                     value={draft[field]}
                     max={today}
@@ -126,22 +115,25 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
                     onChange={event =>
                       setDraft(previous => ({ ...previous, [field]: event.target.value }))
                     }
-                    className={`${controlClass} w-full bg-background`}
+                    className="hover:bg-surface disabled:opacity-50 w-full"
                   />
                 </label>
               ))}
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="submit"
                 data-testid="site-analytics-query"
                 disabled={!valid || (loading && !changed)}
                 className="h-11 rounded-lg bg-text-primary px-4 text-sm text-background hover:opacity-90 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50 md:h-8"
               >
                 {t('analytics_query')}
-              </button>
+              </ControlButton>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {[7, 31].map(days => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={days}
                   type="button"
                   data-testid={`site-analytics-recent-${days}`}
@@ -149,7 +141,7 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
                   onClick={() => query(recentAnalyticsRange(days))}
                 >
                   {t('analytics_recent_days', { count: days })}
-                </button>
+                </ControlButton>
               ))}
               <span className="text-xs text-text-secondary">{t('analytics_timezone')}</span>
             </div>
@@ -173,14 +165,15 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
                 <p role="alert" className="text-sm text-danger">
                   {t(error)}
                 </p>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="site-analytics-retry"
                   className={`${controlClass} mt-3`}
                   onClick={() => query(request.range)}
                 >
                   {t('analytics_retry')}
-                </button>
+                </ControlButton>
               </div>
             )}
             {data && (
@@ -256,7 +249,7 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
             )}
           </div>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

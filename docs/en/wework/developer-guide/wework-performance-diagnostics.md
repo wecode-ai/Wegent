@@ -50,6 +50,12 @@ Pending requests with the same task ID are coalesced, and idle tasks start seria
 
 After first paint, the bundled plugin marketplace computes a deterministic content SHA-256. When `.wework-content-sha256` in the destination matches the current content, Wework skips the copy. Changed content is replaced through a staging directory, and the hash participates in the Codex local-marketplace registration key. Bundled plugins therefore refresh after a Wework upgrade without recopied content on every launch of the same version.
 
+## Local RPC Queueing
+
+When `/wework/executor/v1/rpc` and `/wework/electron-host/v1/invoke` slow down together, inspect Timing in DevTools Network. If most time is spent in `Blocked` before sending, group the requests in that interval by the RPC body's `method` and correlate `x-request-id` with the Core DSH `RPC HTTP response` log. The log's `elapsed_ms` starts when DSH handles the request, which helps distinguish browser queueing from runtime processing.
+
+Concurrent task reads in the hybrid workbench share an in-flight local device discovery when their device routes are missing. Once discovery settles, a later route miss can still read live state. The `idle-executor-requests` desktop E2E checks that 30 concurrent reads send one `runtime.worktrees.capabilities` request and retain their individual task results.
+
 ## Diagnosing Runtime Task Creation
 
 The frontend writes key task-creation stages to the persisted log with the `[Wework] Runtime task create diagnostic` prefix. This does not require Performance Diagnostics to be enabled. Records contain only the stage, task/device identifiers, model identifiers, elapsed time, and result; they do not contain message content, credentials, or model connection configuration.

@@ -1,8 +1,16 @@
+import { IconButton } from '../controls/IconButton'
+import { Popover, PopoverContent, PopoverTrigger } from '../controls/Popover'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { RotateCcw } from 'lucide-react'
 
+import { MemberSearchPicker } from '../controls/MemberSearchPicker'
+import { projectSettingsContentClassName } from './ProjectSettingsPage'
 import type {
   ProjectManageHost,
   ProjectManageMember,
@@ -11,8 +19,6 @@ import type {
   ProjectManageUser,
 } from './types'
 import type { useProjectMembers } from './useProjectMembers'
-import { MemberSearchPicker } from '../controls/MemberSearchPicker'
-import { projectSettingsContentClassName } from './ProjectSettingsPage'
 
 const grid = 'collaboration-project-member-grid'
 const focus =
@@ -64,6 +70,8 @@ export function ProjectMembersSection<
 }) {
   const { LockKeyhole, Trash2 } = host.icons
   const {
+    memberPanelRef,
+    memberSearchError,
     members,
     loading,
     loadError,
@@ -97,7 +105,7 @@ export function ProjectMembersSection<
         )
 
   return (
-    <section className={className} data-testid="cloud-project-members-panel">
+    <section ref={memberPanelRef} className={className} data-testid="cloud-project-members-panel">
       <div className={projectSettingsContentClassName}>
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -120,62 +128,106 @@ export function ProjectMembersSection<
           </div>
           {canManage && (
             <div className="relative shrink-0" ref={memberComposerRef}>
-              <button
-                type="button"
-                data-testid="cloud-project-members-toggle"
-                aria-expanded={membersOpen}
-                aria-controls="cloud-project-member-picker"
-                onClick={() => setMembersOpen(open => !open)}
-                className={`min-h-11 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 md:min-h-8 ${focus}`}
+              <Popover
+                open={membersOpen}
+                onOpenChange={(open, details) => {
+                  if (!open) {
+                    const describeFocus = (target: EventTarget | null | undefined) =>
+                      target instanceof Element
+                        ? {
+                            tag: target.tagName,
+                            testId: target.getAttribute('data-testid'),
+                            insidePicker: Boolean(
+                              target.closest('[data-testid="cloud-project-member-picker"]')
+                            ),
+                          }
+                        : null
+                    const event = details.event
+                    console.debug(
+                      '[project-members] picker closed',
+                      details.reason,
+                      JSON.stringify({
+                        event: event?.type,
+                        target: describeFocus(event?.target),
+                        previous: describeFocus(
+                          event instanceof FocusEvent ? event.relatedTarget : null
+                        ),
+                        active: describeFocus(
+                          memberComposerRef.current?.ownerDocument.activeElement
+                        ),
+                      })
+                    )
+                  }
+                  setMembersOpen(open)
+                }}
               >
-                <span aria-hidden="true" className="mr-1">
-                  ＋
-                </span>
-                {host.translate('todo.add_project_member', '添加成员')}
-              </button>
-              {membersOpen && (
-                <div
-                  id="cloud-project-member-picker"
-                  role="dialog"
-                  aria-label={host.translate('todo.add_project_member', '添加成员')}
-                  data-testid="cloud-project-member-picker"
-                  className="absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-3rem)] rounded-xl border border-border bg-background p-3 shadow-lg"
+                <PopoverTrigger
+                  render={
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      data-testid="cloud-project-members-toggle"
+                      aria-expanded={membersOpen}
+                      aria-controls="cloud-project-member-picker"
+                      className={`min-h-11 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 md:min-h-8 ${focus}`}
+                    />
+                  }
                 >
-                  <MemberSearchPicker
-                    query={memberQuery}
-                    onQueryChange={setMemberQuery}
-                    users={memberResults}
-                    onSelect={user => void addMember(user)}
-                    placeholder={host.translate(
-                      'todo.member_search_placeholder',
-                      '搜索用户名或邮箱'
-                    )}
-                    emptyLabel={host.translate('todo.no_search_members', '没有匹配的成员')}
-                    addLabel={host.translate('common.add', '添加')}
-                    addingLabel={host.translate('todo.adding', '添加中…')}
-                    inputTestId="cloud-member-search"
-                    resultTestId={id => 'cloud-member-result-' + id}
-                    inputRef={memberSearchInputRef}
-                    savingUserId={savingUserId}
+                  <span aria-hidden="true" className="mr-1">
+                    ＋
+                  </span>
+                  {host.translate('todo.add_member', '添加成员')}
+                </PopoverTrigger>
+                {membersOpen && (
+                  <PopoverContent
+                    data-testid="cloud-project-member-picker"
+                    initialFocus={() => memberSearchInputRef.current}
                   >
-                    <label className="mt-3 flex items-center justify-between gap-2 text-sm text-text-secondary">
-                      <span>{host.translate('todo.member_role', '加入角色')}</span>
-                      <select
-                        data-testid="cloud-member-role"
-                        value={memberRole}
-                        onChange={event => setMemberRole(event.target.value as typeof memberRole)}
-                        className={`min-h-11 rounded-md border border-border bg-background px-2 text-sm md:min-h-8 ${focus}`}
-                      >
-                        {roles.map(role => (
-                          <option key={role} value={role}>
-                            {roleLabel(role, host)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </MemberSearchPicker>
-                </div>
-              )}
+                    <MemberSearchPicker
+                      error={memberSearchError}
+                      query={memberQuery}
+                      onQueryChange={setMemberQuery}
+                      users={memberResults}
+                      onSelect={user => void addMember(user)}
+                      placeholder={host.translate(
+                        'todo.member_search_placeholder',
+                        '搜索用户名或邮箱'
+                      )}
+                      emptyLabel={host.translate('todo.no_search_members', '没有匹配的成员')}
+                      addLabel={host.translate('common.add', '添加')}
+                      addingLabel={host.translate('todo.adding', '添加中…')}
+                      inputTestId="cloud-member-search"
+                      resultTestId={id => 'cloud-member-result-' + id}
+                      inputRef={memberSearchInputRef}
+                      savingUserId={savingUserId}
+                    >
+                      <label className="mt-3 flex items-center justify-between gap-2 text-sm text-text-secondary">
+                        <span>{host.translate('todo.member_role', '加入角色')}</span>
+                        <SelectRoot
+                          value={normalizeSelectValue(memberRole)}
+                          onValueChange={selectedValue => {
+                            if (selectedValue !== null)
+                              return setMemberRole(selectedValue as typeof memberRole)
+                          }}
+                        >
+                          <SelectTrigger
+                            density="compact"
+                            data-testid="cloud-member-role"
+                            className="keyboard:focus-visible:ring-offset-2"
+                          />
+                          <SelectContent>
+                            {roles.map(role => (
+                              <SelectItem key={role} value={String(role)}>
+                                {roleLabel(role, host)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </SelectRoot>
+                      </label>
+                    </MemberSearchPicker>
+                  </PopoverContent>
+                )}
+              </Popover>
             </div>
           )}
         </header>
@@ -197,24 +249,30 @@ export function ProjectMembersSection<
                 {modeHint}
               </p>
             </div>
-            <select
-              id="cloud-project-membership-mode"
-              data-testid="cloud-project-membership-mode"
-              value={project.membership_mode}
+            <SelectRoot
+              value={normalizeSelectValue(project.membership_mode)}
               disabled={membershipModeBusy || !canManage}
-              aria-describedby="cloud-project-membership-hint"
-              onChange={event =>
-                onMembershipModeChange(event.target.value as 'inherit' | 'restricted')
-              }
-              className={`min-h-11 w-full shrink-0 rounded-md border border-border bg-background px-3 text-sm text-text-primary disabled:opacity-60 md:min-h-8 md:w-auto ${focus}`}
+              onValueChange={selectedValue => {
+                if (selectedValue !== null)
+                  return onMembershipModeChange(selectedValue as 'inherit' | 'restricted')
+              }}
             >
-              <option value="inherit">
-                {host.translate('todo.project_membership_inherit', '继承分组成员')}
-              </option>
-              <option value="restricted">
-                {host.translate('todo.project_membership_restricted_short', '仅邀请成员')}
-              </option>
-            </select>
+              <SelectTrigger
+                density="compact"
+                id="cloud-project-membership-mode"
+                data-testid="cloud-project-membership-mode"
+                aria-describedby="cloud-project-membership-hint"
+                className="w-full shrink-0 disabled:opacity-60 md:w-auto keyboard:focus-visible:ring-offset-2"
+              />
+              <SelectContent>
+                <SelectItem value="inherit">
+                  {host.translate('todo.project_membership_inherit', '继承分组成员')}
+                </SelectItem>
+                <SelectItem value="restricted">
+                  {host.translate('todo.project_membership_restricted_short', '仅邀请成员')}
+                </SelectItem>
+              </SelectContent>
+            </SelectRoot>
           </div>
         )}
 
@@ -284,13 +342,14 @@ export function ProjectMembersSection<
                       <span className="collaboration-project-member-field-label mb-1 block text-xs text-text-secondary">
                         {host.translate('todo.project_member_capability', '职责与能力')}
                       </span>
-                      <input
+                      <ControlInput
+                        density="compact"
                         key={`${project.id}-${member.direct_role ?? ''}-${member.capability_description ?? ''}`}
                         data-testid={`cloud-project-member-capability-${member.user_id}`}
                         defaultValue={member.capability_description ?? ''}
                         disabled={busy || !canManage}
                         onBlur={event => void updateMemberCapability(member, event.target.value)}
-                        className={`min-h-11 w-full rounded-md border border-transparent bg-transparent px-2 text-sm text-text-primary transition-colors placeholder:text-text-tertiary hover:border-border focus:border-border focus:bg-background disabled:cursor-default md:min-h-8 ${focus}`}
+                        className="w-full border-transparent bg-transparent transition-colors placeholder:text-text-tertiary hover:border-border focus:bg-background disabled:cursor-default keyboard:focus-visible:ring-offset-2"
                         placeholder={host.translate(
                           'todo.project_member_capability_placeholder',
                           '例如：前端开发、产品验收'
@@ -331,29 +390,35 @@ export function ProjectMembersSection<
                             {host.translate('todo.project_member_project_role', '项目角色')}
                           </span>
                         )}
-                        <select
-                          data-testid={`cloud-project-member-role-${member.user_id}`}
-                          value={member.direct_role ?? member.role}
+                        <SelectRoot
+                          value={normalizeSelectValue(member.direct_role ?? member.role)}
                           disabled={busy}
-                          onChange={event =>
-                            void updateMember(
-                              member,
-                              event.target.value as Exclude<ProjectManageRole, 'Owner'>
-                            )
-                          }
-                          className={`min-h-11 w-full min-w-0 rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:opacity-40 md:min-h-8 ${focus}`}
-                          aria-label={host.translate(
-                            'todo.project_member_role_label',
-                            '{{name}} 的项目角色',
-                            { name: member.user_name }
-                          )}
+                          onValueChange={selectedValue => {
+                            if (selectedValue !== null)
+                              return void updateMember(
+                                member,
+                                selectedValue as Exclude<ProjectManageRole, 'Owner'>
+                              )
+                          }}
                         >
-                          {roles.map(role => (
-                            <option key={role} value={role}>
-                              {roleLabel(role, host)}
-                            </option>
-                          ))}
-                        </select>
+                          <SelectTrigger
+                            density="compact"
+                            data-testid={`cloud-project-member-role-${member.user_id}`}
+                            className="w-full min-w-0 disabled:opacity-40 keyboard:focus-visible:ring-offset-2"
+                            aria-label={host.translate(
+                              'todo.project_member_role_label',
+                              '{{name}} 的项目角色',
+                              { name: member.user_name }
+                            )}
+                          />
+                          <SelectContent>
+                            {roles.map(role => (
+                              <SelectItem key={role} value={String(role)}>
+                                {roleLabel(role, host)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </SelectRoot>
                       </label>
                     )}
                     {!member.inherited_role && (
@@ -374,20 +439,20 @@ export function ProjectMembersSection<
                         label: removeLabel,
                         align: 'end',
                         children: (
-                          <button
+                          <IconButton
                             type="button"
                             data-testid={`cloud-project-member-remove-${member.user_id}`}
                             disabled={busy}
                             onClick={() => void removeMember(member)}
-                            className={`flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-muted disabled:opacity-40 md:h-8 md:w-8 ${member.inherited_role ? 'hover:text-text-primary' : 'hover:text-destructive'} ${focus}`}
                             aria-label={removeLabel}
+                            tone={member.inherited_role ? 'neutral' : 'danger'}
                           >
                             {member.inherited_role ? (
                               <RotateCcw className="h-4 w-4" />
                             ) : (
                               <Trash2 className="h-4 w-4" />
                             )}
-                          </button>
+                          </IconButton>
                         ),
                       })}
                   </div>
@@ -403,14 +468,15 @@ export function ProjectMembersSection<
             data-testid="cloud-project-members-error"
           >
             <span>{loadError}</span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="min-h-11 rounded-md px-3 text-text-primary hover:bg-hover md:min-h-8"
               data-testid="cloud-project-members-retry"
               onClick={retryLoad}
             >
               {host.translate('common.retry', '重试')}
-            </button>
+            </ControlButton>
           </div>
         )}
         {loading && (

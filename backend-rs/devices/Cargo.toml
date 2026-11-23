@@ -1,0 +1,35 @@
+[package]
+name = "wegent-devices"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Device identity, listing, presence, and command registry"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+getrandom = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tracing = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-backend-persistence = { workspace = true }
+wegent-device-identity = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-python-compat = { workspace = true }
+wegent-resource-store = { workspace = true }
+wegent-socket-events = { workspace = true }
+wegent-task-store = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+wegent-backend-test-support = { workspace = true }

@@ -1,5 +1,5 @@
 import type { RuntimeTranscriptResponse, RuntimeWorkListResponse } from '@/types/api'
-import { act, render, waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { WorkbenchServices } from '../workbenchServices'
@@ -13,7 +13,7 @@ import {
   setRuntimeConversationGoal,
 } from '../runtimeConversationCache'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
+import { renderRuntimeTaskLifecycle } from './RuntimeTaskLifecycleStreamCoordinator.fixtures'
 
 import {
   runtimeTaskAddress,
@@ -46,7 +46,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(() => vi.advanceTimersByTimeAsync(10_000))
 
     expect(listRuntimeWork).not.toHaveBeenCalled()
@@ -75,7 +75,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         },
       } as unknown as WorkbenchServices
 
-      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+      renderRuntimeTaskLifecycle({ services: services, store: store })
       await act(async () => {
         streamHandlers.onBlockCreated?.({
           taskId: address.taskId,
@@ -136,7 +136,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       resumeListener?.()
     })
@@ -181,7 +181,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onRuntimeEventLagged?.({ skipped: 3 })
       streamHandlers.onRuntimeTransportReplaced?.({
@@ -256,7 +256,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onRuntimeTransportReplaced?.({
         previousRuntimeInstanceId: 'runtime-1',
@@ -336,14 +336,12 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         },
         executorClient: { runtime: { listRuntimeWork, getRuntimeTranscript } },
       } as unknown as WorkbenchServices
-      const view = render(
-        <RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />
-      )
+      const view = renderRuntimeTaskLifecycle({ services: services, store: store })
       act(() => streamHandlers.onRuntimeEventLagged?.({ skipped: 0, reason: 'event_history_lost' }))
       if (phase === 'transcript')
         await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledOnce())
       const replacement = { ...services, executorClient: { ...services.executorClient! } }
-      view.rerender(<RuntimeTaskLifecycleStreamCoordinator services={replacement} store={store} />)
+      view.rerender({ services: replacement, store: store })
       await act(async () =>
         phase === 'work-list' ? resolveList(runtimeWork(false)) : resolveTranscript(transcript)
       )
@@ -392,7 +390,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onRuntimeEventLagged?.({ skipped: 1_053 })
     })
@@ -436,7 +434,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onRuntimeEventLagged?.({ skipped: 1 })
     })
@@ -491,7 +489,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onRuntimeEventLagged?.({ skipped: 1 })
     })
@@ -537,7 +535,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       },
     } as unknown as WorkbenchServices
 
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    renderRuntimeTaskLifecycle({ services: services, store: store })
     await act(async () => {
       streamHandlers.onRuntimeEventLagged?.({ skipped: 2 })
     })

@@ -9,6 +9,7 @@ import { useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
+import { DINGTALK_AUTHORIZATION_REQUIRED } from '../utils/processing-error'
 import { isExternalSourceUnavailable } from '../utils/documentUtils'
 
 /**
@@ -26,7 +27,10 @@ export function useDingtalkSyncLabel() {
       // The control doubles as the retry entry: a copy whose index failed needs
       // the same source refresh again, so it must not read as a first-time
       // action.
-      const retryable = isExternalSourceUnavailable(document) || document.index_status === 'failed'
+      const retryable =
+        document.processing_error?.code === DINGTALK_AUTHORIZATION_REQUIRED ||
+        isExternalSourceUnavailable(document) ||
+        document.index_status === 'failed'
       return retryable ? t('document.document.syncRetry') : t('document.document.syncNow')
     },
     [t]

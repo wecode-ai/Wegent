@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { verifyCommentAssignment } from '../modules/comment-assignment.mjs'
 import { verifyIssueCommentWorkflow } from '../modules/issue-comment-workflow.mjs'
+import { setAssignmentNotification } from '../modules/issue-save-notification-flows.mjs'
 import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity-receipts.mjs'
 import { verifyIssueWebLink, verifyLocalIssueHasNoWebLink } from '../modules/issue-web-link.mjs'
 
@@ -85,10 +86,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   async function changeAssignee(control, userId, historyLength, notify = true) {
     await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-    const notifyToggle = '[data-testid="cloud-todo-assignee-notify"]'
-    await control.command('waitFor', notifyToggle)
-    const enabled = Number(await control.command('getElementCount', `${notifyToggle}:checked`)) > 0
-    if (enabled !== notify) await control.command('click', notifyToggle)
+    await setAssignmentNotification(control, notify)
     const target = userId ? `user:${userId}` : 'empty'
     await control.command('click', `[data-testid="cloud-todo-detail-assignee-option-${target}"]`)
     assert.equal(

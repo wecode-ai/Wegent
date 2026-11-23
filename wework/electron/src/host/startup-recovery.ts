@@ -16,6 +16,7 @@ export interface StartupRecoveryDependencies {
   prepareCleanup: () => Promise<void>
   clearRuntimeFiles: () => Promise<void>
   clearUserFiles: () => Promise<void>
+  clearOpenAiCatalog: () => Promise<void>
   disablePlugin: (name: string) => Promise<void>
   log: (
     step: string,
@@ -67,6 +68,10 @@ export class StartupRecoveryService {
       if (mode === 'app-state') {
         await this.cleanupStep('user-browser-storage', this.dependencies.clearUserStorage)
         await this.cleanupStep('user-files', this.dependencies.clearUserFiles)
+        // A rebuildable catalog must not stop user data cleanup or relaunch.
+        await this.cleanupStep('openai-catalog', this.dependencies.clearOpenAiCatalog).catch(
+          () => {}
+        )
         await this.cleanupStep('renderer-storage', () => this.dependencies.rendererStorage.clear())
         await this.cleanupStep('preferences', () => this.dependencies.preferences.clear())
         await this.cleanupStep('cloud-credentials', () =>

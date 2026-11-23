@@ -1,6 +1,11 @@
-import { useEffect, useLayoutEffect, useState, type RefObject } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Toast, ToastAction, ToastRegion, ToastTitle } from '@wegent/collaboration/controls/Toast'
+import { createToaster } from '@wegent/collaboration/controls/toaster'
+import { useElementGeometry } from '@wegent/collaboration/dom-events'
+import { useCallback, useMemo, useState, useSyncExternalStore, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { cn } from '@/lib/utils'
+
+const idleSnapshot = () => null
 
 interface TransientNoticeProps {
   message: string | null
@@ -11,94 +16,72 @@ interface TransientNoticeProps {
   action?: { label: string; testId: string; onClick: () => void; pending: boolean }
 }
 
-interface HorizontalPlacement {
-  left: number
-  maxWidth: number
-}
-
-const NOTICE_VIEWPORT_GUTTER = 16
-
-export function TransientNotice({
+function ActiveNotice({
   message,
-  tone = 'success',
+  tone,
   onClear,
   horizontalAnchorRef,
-  visible = true,
   action,
-}: TransientNoticeProps) {
-  const [horizontalPlacement, setHorizontalPlacement] = useState<HorizontalPlacement | null>(null)
+}: Omit<TransientNoticeProps, 'visible'>) {
+  const { t } = useTranslation('common')
+  const [toaster] = useState(createToaster)
 
-  useEffect(() => {
-    if (!message || action) return
-
-    const timeout = window.setTimeout(onClear, 2200)
-    return () => window.clearTimeout(timeout)
-  }, [action, message, onClear])
-
-  useLayoutEffect(() => {
-    if (!message || !horizontalAnchorRef || !visible) return
-    const anchor = horizontalAnchorRef.current
-    if (!anchor) return
-
-    const updatePlacement = () => {
-      const rect = anchor.getBoundingClientRect()
-      setHorizontalPlacement({
-        left: rect.left + rect.width / 2,
-        maxWidth: Math.max(0, rect.width - NOTICE_VIEWPORT_GUTTER * 2),
-      })
-    }
-    updatePlacement()
-
-    const resizeObserver =
-      typeof ResizeObserver === 'function' ? new ResizeObserver(updatePlacement) : null
-    resizeObserver?.observe(anchor)
-    window.addEventListener('resize', updatePlacement)
-    window.addEventListener('scroll', updatePlacement, true)
+  const subscribe = useCallback(() => {
+    let active = true
+    const id = toaster(message ?? '', {
+      type: tone,
+      duration: action ? Infinity : 2200,
+      action: action
+        ? { label: action.label, onAction: action.onClick, dismiss: false }
+        : undefined,
+      onDismiss: () => {
+        if (active) onClear()
+      },
+    })
     return () => {
-      resizeObserver?.disconnect()
-      window.removeEventListener('resize', updatePlacement)
-      window.removeEventListener('scroll', updatePlacement, true)
+      active = false
+      toaster.dismiss(id)
     }
-  }, [horizontalAnchorRef, message, visible])
+  }, [action, message, onClear, toaster, tone])
 
-  if (!message || !visible) {
-    return null
-  }
+  useSyncExternalStore(subscribe, idleSnapshot, idleSnapshot)
+  const targets = useMemo(
+    () => (horizontalAnchorRef ? [horizontalAnchorRef] : []),
+    [horizontalAnchorRef]
+  )
+  const anchor = useElementGeometry(targets, Boolean(horizontalAnchorRef))?.elements[0]
 
   const notice = (
-    <div
-      role="status"
-      data-testid="transient-notice"
-      data-embedded-browser-occlusion
+    <ToastRegion
+      toaster={toaster}
       style={
-        horizontalPlacement
-          ? {
-              left: horizontalPlacement.left,
-              maxWidth: horizontalPlacement.maxWidth,
-            }
+        anchor
+          ? { left: anchor.left + anchor.width / 2, maxWidth: Math.max(0, anchor.width - 32) }
           : undefined
       }
-      className={cn(
-        'fixed left-1/2 top-28 z-system max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border bg-surface px-4 py-3 text-sm shadow-[0_8px_28px_rgba(0,0,0,0.12)]',
-        tone === 'success'
-          ? 'border-success/20 text-text-primary wework:border-primary/20'
-          : 'border-destructive/30 text-destructive wework:border-red-200 wework:text-red-700'
-      )}
+      aria-label={t('notifications.title')}
+      side="top"
+      align="center"
+      shortcut={null}
+      className="top-28 z-system w-max max-w-[calc(100vw-2rem)]"
     >
-      {message}
-      {action && (
-        <button
-          type="button"
-          data-testid={action.testId}
-          disabled={action.pending}
-          onClick={action.onClick}
-          className="ml-3 min-h-11 min-w-11 underline disabled:opacity-50 md:min-h-7 md:min-w-7"
-        >
-          {action.label}
-        </button>
+      {() => (
+        <Toast data-testid="transient-notice" data-embedded-browser-occlusion>
+          <ToastTitle className="min-w-0 [overflow-wrap:anywhere]" />
+          {action && (
+            <ToastAction
+              data-testid={action.testId}
+              disabled={action.pending}
+              className="min-h-11 min-w-11 shrink-0 underline disabled:opacity-40 md:min-h-7 md:min-w-7"
+            />
+          )}
+        </Toast>
       )}
-    </div>
+    </ToastRegion>
   )
-
   return horizontalAnchorRef ? createPortal(notice, document.body) : notice
+}
+
+export function TransientNotice({ message, visible = true, ...props }: TransientNoticeProps) {
+  return message && visible ? <ActiveNotice key={message} message={message} {...props} /> : null
 }

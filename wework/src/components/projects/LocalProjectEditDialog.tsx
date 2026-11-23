@@ -1,21 +1,6 @@
-import {
-  Brain,
-  Folder,
-  FolderPlus,
-  LayoutDashboard,
-  Loader2,
-  MessageSquareText,
-  X,
-} from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
 import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { ProjectPluginsUnsupportedError } from '@/api/projectDevicePlugins'
-import {
-  projectEditingCapabilities,
-  projectEditingDeviceRevision,
-  type ProjectPluginSupport,
-} from '@/lib/project-editing-capabilities'
+import { DialogForm } from '@/components/common/DialogForm'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
@@ -23,20 +8,21 @@ import {
   projectSpaceKey,
   projectSpaceRef,
   type ProjectSpaceApi,
-  type ProjectSpaceOption,
 } from '@/features/todo/projectSpaceSelection'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { DialogForm } from '@/components/common/DialogForm'
-import { isCloudDevice } from '@/lib/device-capabilities'
 import { useTranslation } from '@/hooks/useTranslation'
-import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
-import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
+import { isCloudDevice } from '@/lib/device-capabilities'
 import {
   getControlsForModel,
   getDefaultModelOptions,
   getModelDisplayLabel,
   normalizeModelOptions,
 } from '@/lib/model-ui'
+import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
+import {
+  projectEditingCapabilities,
+  projectEditingDeviceRevision,
+} from '@/lib/project-editing-capabilities'
+import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
 import type {
   DeviceInfo,
   ModelOptions,
@@ -48,13 +34,43 @@ import type {
   RuntimeProjectWork,
   UnifiedModel,
 } from '@/types/api'
-import { QuickPhrasesEditor } from '../settings/QuickPhrasesEditor'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
+  Brain,
+  Folder,
+  FolderPlus,
+  LayoutDashboard,
+  Loader2,
+  MessageSquareText,
+  X,
+} from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import {
   marketplacePluginLockLabel,
   resolveMarketplacePluginLock,
 } from '../plugins/marketplacePluginLock'
+import { QuickPhrasesEditor } from '../settings/QuickPhrasesEditor'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { ProjectPluginSettingsPanel } from './ProjectPluginSettingsPanel'
+
+const EMPTY_PLUGIN_ITEMS: PluginMarketplaceItem[] = []
 
 interface LocalProjectEditDialogProps {
   open: boolean
@@ -150,14 +166,31 @@ function LocalProjectEditDialogContent({
   const [submitting, setSubmitting] = useState(false)
   const [activeTab, setActiveTab] = useState<'basic' | 'ai' | 'quick-phrases' | 'plugins'>('basic')
   const [showFolderPicker, setShowFolderPicker] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [projectSpaceOptions, setProjectSpaceOptions] = useState<ProjectSpaceOption[]>([])
+  const [actionError, setError] = useState<string | null>(null)
+  const spaces = useMemo(
+    () =>
+      projectSpaceApis.length
+        ? createAsyncResource('project-spaces', async signal => {
+            await Promise.resolve()
+            signal.throwIfAborted()
+            return loadProjectSpaceOptions(projectSpaceApis)
+          })
+        : null,
+    [projectSpaceApis]
+  )
+  const spaceSnapshot = useSyncExternalStore(
+    spaces?.subscribe ?? subscribeIdleResource,
+    spaces?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const projectSpaceOptions = spaceSnapshot.data ?? []
+  const projectSpacesLoading =
+    Boolean(spaces) && (spaceSnapshot.status === 'idle' || spaceSnapshot.status === 'loading')
   const savedDefaultProjectSpace = projectWork.project.defaultProjectSpace
   const [autoJoinProjectSpaceKey, setAutoJoinProjectSpaceKey] = useState<string | null>(() => {
     const ref = projectWork.project.defaultProjectSpace
     return ref ? projectSpaceKey(ref) : null
   })
-  const [projectSpacesLoading, setProjectSpacesLoading] = useState(projectSpaceApis.length > 0)
   const initialAiSettings = projectWork.project.aiSettings
   const [instructions, setInstructions] = useState(initialAiSettings?.instructions ?? '')
   const [modelSelection, setModelSelection] = useState(initialAiSettings?.modelSelection ?? null)
@@ -167,22 +200,63 @@ function LocalProjectEditDialogContent({
   const [quickPhrases, setQuickPhrases] = useState<RuntimeProjectQuickPhrase[]>(
     initialAiSettings?.quickPhrases ?? []
   )
-  const [pluginItems, setPluginItems] = useState<PluginMarketplaceItem[]>([])
   const [pluginSearch, setPluginSearch] = useState('')
-  const [pluginsLoading, setPluginsLoading] = useState(false)
-  const [pluginAttemptRevision, setPluginAttemptRevision] = useState<string | null>(null)
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(null)
   const cloudDevice = !!device && isCloudDevice(device)
   const capabilities = projectEditingCapabilities(device)
   const deviceRevision = projectEditingDeviceRevision(device)
-  const [discoveredPluginSupport, setDiscoveredPluginSupport] = useState<{
-    revision: string
-    support: ProjectPluginSupport
-  } | null>(null)
-  const pluginSupport =
-    discoveredPluginSupport?.revision === deviceRevision
-      ? discoveredPluginSupport.support
-      : capabilities.plugins
+  const offline = device
+    ? Boolean(device.status && device.status !== 'online' && device.status !== 'busy')
+    : projectWork.project.source === 'remote_project' ||
+      projectWork.deviceWorkspaces.some(workspace => !workspace.available)
+  const inventory = useMemo(
+    () =>
+      pluginApi
+        ? createAsyncResource<{
+            items: PluginMarketplaceItem[]
+            support: 'supported' | 'unsupported'
+          }>(
+            deviceRevision,
+            async signal => {
+              await Promise.resolve()
+              signal.throwIfAborted()
+              try {
+                const state = await pluginApi.readState({
+                  mergeAllMarketplaces: true,
+                  refresh: true,
+                })
+                return { items: state.marketplaceItems, support: 'supported' as const }
+              } catch (error) {
+                if (error instanceof ProjectPluginsUnsupportedError)
+                  return { items: [], support: 'unsupported' as const }
+                throw error
+              }
+            },
+            { refreshOnSubscribe: true }
+          )
+        : null,
+    [pluginApi, deviceRevision]
+  )
+  const pluginReadEnabled =
+    activeTab === 'plugins' && !offline && capabilities.plugins !== 'unsupported'
+  const pluginSnapshot = useSyncExternalStore(
+    pluginReadEnabled && inventory ? inventory.subscribe : subscribeIdleResource,
+    inventory?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const pluginItems =
+    pluginSnapshot.status === 'ready'
+      ? (pluginSnapshot.data?.items ?? EMPTY_PLUGIN_ITEMS)
+      : EMPTY_PLUGIN_ITEMS
+  const pluginSupport = pluginSnapshot.data?.support ?? capabilities.plugins
+  const pluginsLoading =
+    pluginReadEnabled &&
+    Boolean(inventory) &&
+    (pluginSnapshot.status === 'idle' || pluginSnapshot.status === 'loading')
+  const readError = spaceSnapshot.status === 'error' ? spaceSnapshot.error : null
+  const error =
+    actionError ??
+    (readError == null ? null : readError instanceof Error ? readError.message : String(readError))
   const selectableModels = useMemo(
     () => models.filter(model => !model.compatibilityDisabled),
     [models]
@@ -208,10 +282,6 @@ function LocalProjectEditDialogContent({
     [selectedModel]
   )
   const { deviceId, projectKey } = getRuntimeProjectOwner(projectWork)
-  const offline = device
-    ? Boolean(device.status && device.status !== 'online' && device.status !== 'busy')
-    : projectWork.project.source === 'remote_project' ||
-      projectWork.deviceWorkspaces.some(workspace => !workspace.available)
   const mutationDisabled = submitting || offline
   const rootsDisabled = mutationDisabled || !capabilities.multiRoots
   const aiDisabled = mutationDisabled || !capabilities.aiSettings
@@ -221,73 +291,7 @@ function LocalProjectEditDialogContent({
     Boolean(pluginApi) &&
     capabilities.plugins !== 'unsupported' &&
     pluginSupport !== 'unsupported' &&
-    (pluginsLoading || pluginAttemptRevision !== deviceRevision)
-  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
-    if (!submitting) onClose()
-  })
-
-  useEffect(() => {
-    if (projectSpaceApis.length === 0) return
-    let active = true
-    void loadProjectSpaceOptions(projectSpaceApis)
-      .then(options => {
-        if (!active) return
-        setProjectSpaceOptions(options)
-      })
-      .catch(loadError => {
-        if (!active) return
-        setError(loadError instanceof Error ? loadError.message : String(loadError))
-      })
-      .finally(() => {
-        if (active) setProjectSpacesLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [projectSpaceApis])
-
-  useEffect(() => {
-    if (
-      activeTab !== 'plugins' ||
-      !pluginApi ||
-      offline ||
-      capabilities.plugins === 'unsupported'
-    ) {
-      return
-    }
-    let active = true
-    void Promise.resolve()
-      .then(() => {
-        if (!active) return null
-        setPluginsLoading(true)
-        setError(null)
-        setPluginItems([])
-        return pluginApi.readState({ mergeAllMarketplaces: true, refresh: true })
-      })
-      .then(state => {
-        if (active && state) {
-          setPluginItems(state.marketplaceItems)
-          setDiscoveredPluginSupport({ revision: deviceRevision, support: 'supported' })
-        }
-      })
-      .catch(loadError => {
-        if (!active) return
-        if (loadError instanceof ProjectPluginsUnsupportedError) {
-          setDiscoveredPluginSupport({ revision: deviceRevision, support: 'unsupported' })
-        } else {
-          setError(loadError instanceof Error ? loadError.message : String(loadError))
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setPluginsLoading(false)
-          setPluginAttemptRevision(deviceRevision)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [activeTab, offline, pluginApi, deviceRevision, capabilities.plugins])
+    (pluginsLoading || !pluginSnapshot.settled)
 
   const filteredPluginItems = useMemo(() => {
     const query = pluginSearch.trim().toLowerCase()
@@ -329,8 +333,15 @@ function LocalProjectEditDialogContent({
           ? current
           : [...current, projectPlugin]
       )
-      setPluginItems(current =>
-        current.map(plugin => (plugin.id === item.id ? { ...plugin, installed: true } : plugin))
+      inventory?.update(current =>
+        current
+          ? {
+              ...current,
+              items: current.items.map(plugin =>
+                plugin.id === item.id ? { ...plugin, installed: true } : plugin
+              ),
+            }
+          : current
       )
     } catch (installError) {
       setError(installError instanceof Error ? installError.message : String(installError))
@@ -409,23 +420,29 @@ function LocalProjectEditDialogContent({
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
-      <DialogForm
-        role="dialog"
-        ref={dialogRef}
-        onSubmit={event => {
-          event.preventDefault()
-          void save()
+      <DialogSurface
+        onClose={() => {
+          if (!submitting) onClose()
         }}
-        aria-modal="true"
-        aria-labelledby="local-project-edit-title"
-        data-testid="local-project-edit-dialog"
-        className="max-h-[calc(100vh-32px)] w-full max-w-[560px] overflow-y-auto rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-2xl"
+        render={
+          <DialogForm
+            role="dialog"
+            onSubmit={event => {
+              event.preventDefault()
+              void save()
+            }}
+            aria-labelledby="local-project-edit-title"
+            data-testid="local-project-edit-dialog"
+            className="max-h-[calc(100vh-32px)] w-full max-w-[560px] overflow-y-auto rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-2xl"
+          />
+        }
       >
         <div className="flex items-center justify-between gap-4">
           <h2 id="local-project-edit-title" className="heading-base">
             {t('workbench.edit_project', '编辑项目')}
           </h2>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="close-local-project-edit-dialog"
             onClick={onClose}
@@ -434,83 +451,81 @@ function LocalProjectEditDialogContent({
             className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-50"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
-        <div className="mt-5 flex gap-1 border-b border-border" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'basic'}
-            data-testid="local-project-settings-basic-tab"
-            onClick={() => setActiveTab('basic')}
-            className={`border-b-2 px-3 py-2 text-sm font-medium ${
-              activeTab === 'basic'
-                ? 'border-text-primary text-text-primary'
-                : 'border-transparent text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            {t('workbench.project_settings_basic_tab', '基本信息')}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'ai'}
-            data-testid="local-project-settings-ai-tab"
-            onClick={() => setActiveTab('ai')}
-            className={`border-b-2 px-3 py-2 text-sm font-medium ${
-              activeTab === 'ai'
-                ? 'border-text-primary text-text-primary'
-                : 'border-transparent text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            {t('workbench.project_settings_ai_tab', 'AI 设置')}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'quick-phrases'}
-            data-testid="local-project-settings-quick-phrases-tab"
-            onClick={() => setActiveTab('quick-phrases')}
-            className={`border-b-2 px-3 py-2 text-sm font-medium ${
-              activeTab === 'quick-phrases'
-                ? 'border-text-primary text-text-primary'
-                : 'border-transparent text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            {t('workbench.project_settings_quick_phrases_tab', '快捷短语')}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'plugins'}
-            data-testid="local-project-settings-plugins-tab"
-            onClick={() => {
-              if (activeTab !== 'plugins') setPluginsLoading(Boolean(pluginApi) && !offline)
-              setActiveTab('plugins')
-            }}
-            className={`border-b-2 px-3 py-2 text-sm font-medium ${
-              activeTab === 'plugins'
-                ? 'border-text-primary text-text-primary'
-                : 'border-transparent text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            {t('workbench.project_settings_plugins_tab', '插件')}
-          </button>
-        </div>
+        <TabsRoot
+          value={activeTab}
+          onValueChange={next => {
+            if (next) setActiveTab(next)
+          }}
+          render={<div className="contents" />}
+        >
+          <TabsList className="mt-5 flex gap-1 border-b border-border">
+            <TabsTab
+              value={'basic'}
+              type="button"
+              data-testid="local-project-settings-basic-tab"
+              className={`border-b-2 px-3 py-2 text-sm font-medium ${
+                activeTab === 'basic'
+                  ? 'border-text-primary text-text-primary'
+                  : 'border-transparent text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {t('workbench.project_settings_basic_tab', '基本信息')}
+            </TabsTab>
+            <TabsTab
+              value={'ai'}
+              type="button"
+              data-testid="local-project-settings-ai-tab"
+              className={`border-b-2 px-3 py-2 text-sm font-medium ${
+                activeTab === 'ai'
+                  ? 'border-text-primary text-text-primary'
+                  : 'border-transparent text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {t('workbench.project_settings_ai_tab', 'AI 设置')}
+            </TabsTab>
+            <TabsTab
+              value={'quick-phrases'}
+              type="button"
+              data-testid="local-project-settings-quick-phrases-tab"
+              className={`border-b-2 px-3 py-2 text-sm font-medium ${
+                activeTab === 'quick-phrases'
+                  ? 'border-text-primary text-text-primary'
+                  : 'border-transparent text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {t('workbench.project_settings_quick_phrases_tab', '快捷短语')}
+            </TabsTab>
+            <TabsTab
+              value={'plugins'}
+              type="button"
+              data-testid="local-project-settings-plugins-tab"
+              className={`border-b-2 px-3 py-2 text-sm font-medium ${
+                activeTab === 'plugins'
+                  ? 'border-text-primary text-text-primary'
+                  : 'border-transparent text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {t('workbench.project_settings_plugins_tab', '插件')}
+            </TabsTab>
+          </TabsList>
+        </TabsRoot>
 
         {activeTab === 'basic' ? (
           <div data-testid="local-project-settings-basic-panel">
             <label className="mt-5 flex h-11 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
               <Folder className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
               <span className="h-full w-px bg-border" />
-              <input
+              <ControlInput
+                appearance="plain"
                 data-testid="local-project-name-input"
                 aria-label={t('workbench.project_name', '项目名称')}
                 value={name}
                 disabled={mutationDisabled}
                 onChange={event => setName(event.target.value)}
-                className="min-w-0 flex-1 bg-transparent px-3 text-base outline-none"
+                className="min-w-0 flex-1 text-base"
               />
             </label>
 
@@ -545,7 +560,8 @@ function LocalProjectEditDialogContent({
                       {t('workbench.primary_folder', '主目录')}
                     </span>
                   ) : (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`make-primary-root-${index}`}
                       disabled={rootsDisabled}
@@ -555,9 +571,10 @@ function LocalProjectEditDialogContent({
                       className="rounded-lg bg-muted px-2 py-1 text-sm hover:bg-border"
                     >
                       {t('workbench.make_primary_folder', '设为主目录')}
-                    </button>
+                    </ControlButton>
                   )}
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`remove-local-project-root-${index}`}
                     disabled={rootsDisabled || roots.length === 1}
@@ -566,10 +583,11 @@ function LocalProjectEditDialogContent({
                     className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-30"
                   >
                     <X className="h-4 w-4" />
-                  </button>
+                  </ControlButton>
                 </div>
               ))}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="add-local-project-folders"
                 disabled={rootsDisabled}
@@ -578,7 +596,7 @@ function LocalProjectEditDialogContent({
               >
                 <FolderPlus className="h-4 w-4 text-text-secondary" />
                 {t('workbench.add_folder', '添加文件夹')}
-              </button>
+              </ControlButton>
               {showFolderPicker && device && (
                 <div
                   className="border-t border-border p-3"
@@ -628,37 +646,45 @@ function LocalProjectEditDialogContent({
                 <label className="mt-2 flex h-11 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
                   <LayoutDashboard className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
                   <span className="h-full w-px bg-border" />
-                  <select
-                    data-testid="local-project-auto-join-space-select"
-                    aria-label={t('workbench.project_auto_join_space', '自动加入项目空间')}
-                    value={autoJoinProjectSpaceKey ?? ''}
+                  <SelectRoot
+                    value={normalizeSelectValue(autoJoinProjectSpaceKey ?? '')}
                     disabled={
                       mutationDisabled || !capabilities.defaultProjectSpace || projectSpacesLoading
                     }
-                    onChange={event => setAutoJoinProjectSpaceKey(event.target.value || null)}
-                    className="min-w-0 flex-1 bg-transparent px-3 text-base outline-none"
+                    onValueChange={selectedValue => {
+                      if (selectedValue !== null)
+                        return setAutoJoinProjectSpaceKey(selectedValue || null)
+                    }}
                   >
-                    <option value="">
-                      {projectSpacesLoading
-                        ? t('workbench.loading', '加载中...')
-                        : t('workbench.project_auto_join_space_none', '不自动加入')}
-                    </option>
-                    {savedDefaultProjectSpace &&
-                      !projectSpaceOptions.some(
-                        option => option.key === projectSpaceKey(savedDefaultProjectSpace)
-                      ) && (
-                        <option value={projectSpaceKey(savedDefaultProjectSpace)}>
-                          {t('workbench.project_saved_space', {
-                            id: savedDefaultProjectSpace.projectId,
-                          })}
-                        </option>
-                      )}
-                    {projectSpaceOptions.map(option => (
-                      <option key={option.key} value={option.key}>
-                        {option.project.name}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger
+                      appearance="plain"
+                      data-testid="local-project-auto-join-space-select"
+                      aria-label={t('workbench.project_auto_join_space', '自动加入项目空间')}
+                      className="min-w-0 flex-1 text-base"
+                    />
+                    <SelectContent>
+                      <SelectItem value="">
+                        {projectSpacesLoading
+                          ? t('workbench.loading', '加载中...')
+                          : t('workbench.project_auto_join_space_none', '不自动加入')}
+                      </SelectItem>
+                      {savedDefaultProjectSpace &&
+                        !projectSpaceOptions.some(
+                          option => option.key === projectSpaceKey(savedDefaultProjectSpace)
+                        ) && (
+                          <SelectItem value={String(projectSpaceKey(savedDefaultProjectSpace))}>
+                            {t('workbench.project_saved_space', {
+                              id: savedDefaultProjectSpace.projectId,
+                            })}
+                          </SelectItem>
+                        )}
+                      {projectSpaceOptions.map(option => (
+                        <SelectItem key={option.key} value={String(option.key)}>
+                          {option.project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </SelectRoot>
                 </label>
               </>
             )}
@@ -686,7 +712,7 @@ function LocalProjectEditDialogContent({
             <label className="mt-4 block text-sm font-medium" htmlFor="local-project-instructions">
               {t('workbench.project_instructions', '项目指令')}
             </label>
-            <textarea
+            <ControlTextarea
               id="local-project-instructions"
               data-testid="local-project-instructions-input"
               value={instructions}
@@ -709,14 +735,13 @@ function LocalProjectEditDialogContent({
               <label className="flex h-11 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
                 <Brain className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
                 <span className="h-full w-px bg-border" />
-                <select
-                  id="local-project-model"
-                  data-testid="local-project-model-select"
-                  value={selectedModelKey}
+                <SelectRoot
+                  value={normalizeSelectValue(selectedModelKey)}
                   disabled={aiDisabled}
-                  onChange={event => {
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
                     const model = selectableModels.find(
-                      candidate => `${candidate.type}:${candidate.name}` === event.target.value
+                      candidate => `${candidate.type}:${candidate.name}` === selectedValue
                     )
                     setModelSelection(
                       model
@@ -728,52 +753,68 @@ function LocalProjectEditDialogContent({
                         : null
                     )
                   }}
-                  className="min-w-0 flex-1 bg-transparent px-3 text-base outline-none"
                 >
-                  <option value="">
-                    {t('workbench.project_default_model_inherit', '跟随全局')}
-                  </option>
-                  {modelSelection && !selectedModel && (
-                    <option value={selectedModelKey}>{modelSelection.modelName}</option>
-                  )}
-                  {selectableModels.map(model => (
-                    <option
-                      key={`${model.type}:${model.name}`}
-                      value={`${model.type}:${model.name}`}
-                    >
-                      {getModelDisplayLabel(model)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    appearance="plain"
+                    id="local-project-model"
+                    data-testid="local-project-model-select"
+                    className="min-w-0 flex-1 text-base"
+                  />
+                  <SelectContent>
+                    <SelectItem value="">
+                      {t('workbench.project_default_model_inherit', '跟随全局')}
+                    </SelectItem>
+                    {modelSelection && !selectedModel && (
+                      <SelectItem value={String(selectedModelKey)}>
+                        {modelSelection.modelName}
+                      </SelectItem>
+                    )}
+                    {selectableModels.map(model => (
+                      <SelectItem
+                        key={`${model.type}:${model.name}`}
+                        value={String(`${model.type}:${model.name}`)}
+                      >
+                        {getModelDisplayLabel(model)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               </label>
-              <select
-                data-testid="local-project-reasoning-select"
-                aria-label={t('workbench.reasoning_level', '推理强度')}
-                value={modelSelection?.options?.reasoning ?? reasoningControl?.defaultValue ?? ''}
+              <SelectRoot
+                value={normalizeSelectValue(
+                  modelSelection?.options?.reasoning ?? reasoningControl?.defaultValue ?? ''
+                )}
                 disabled={aiDisabled || !selectedModel || !reasoningControl}
-                onChange={event => {
+                onValueChange={selectedValue => {
+                  if (selectedValue === null) return
                   if (!selectedModel || !modelSelection) return
                   const options: ModelOptions = normalizeModelOptions(selectedModel, {
                     ...modelSelection.options,
-                    reasoning: event.target.value,
+                    reasoning: selectedValue,
                   })
                   setModelSelection({ ...modelSelection, options })
                 }}
-                className="h-11 min-w-0 rounded-xl border border-border bg-background px-3 text-base outline-none keyboard:focus:border-primary keyboard:focus:ring-2 keyboard:focus:ring-primary/10 disabled:opacity-50"
               >
-                {!reasoningControl ? (
-                  <option value={modelSelection?.options?.reasoning ?? ''}>
-                    {modelSelection?.options?.reasoning ??
-                      t('workbench.project_default_reasoning_inherit', '全局推理设置')}
-                  </option>
-                ) : (
-                  reasoningControl.options.map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.labelKey ? t(option.labelKey, option.label) : option.label}
-                    </option>
-                  ))
-                )}
-              </select>
+                <SelectTrigger
+                  data-testid="local-project-reasoning-select"
+                  aria-label={t('workbench.reasoning_level', '推理强度')}
+                  className="h-11 min-w-0 text-base disabled:opacity-50"
+                />
+                <SelectContent>
+                  {!reasoningControl ? (
+                    <SelectItem value={String(modelSelection?.options?.reasoning ?? '')}>
+                      {modelSelection?.options?.reasoning ??
+                        t('workbench.project_default_reasoning_inherit', '全局推理设置')}
+                    </SelectItem>
+                  ) : (
+                    reasoningControl.options.map(option => (
+                      <SelectItem key={option.value} value={String(option.value)}>
+                        {option.labelKey ? t(option.labelKey, option.label) : option.label}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </SelectRoot>
             </div>
             <p className="mt-1 text-sm text-text-secondary">
               {modelSelection
@@ -830,7 +871,9 @@ function LocalProjectEditDialogContent({
             pluginSearch={pluginSearch}
             pluginsPending={pluginsPending}
             pluginsDisabled={pluginsDisabled}
-            searchDisabled={submitting || pluginsPending}
+            searchDisabled={submitting}
+            catalogFailed={pluginSnapshot.status === 'error'}
+            onRetryCatalog={() => void inventory?.reload()}
             pluginSupport={pluginSupport}
             cloudDevice={cloudDevice}
             aiSettingsSupported={capabilities.aiSettings}
@@ -862,26 +905,30 @@ function LocalProjectEditDialogContent({
           </p>
         )}
         <div className="mt-5 flex items-center gap-3">
-          <button
+          <ControlButton
+            variant="destructive-ghost"
+            size="sm"
             type="button"
             data-testid="delete-local-project-button"
             disabled={submitting}
             onClick={onDelete}
-            className="h-9 rounded-lg bg-destructive/10 px-3 text-sm font-medium text-destructive hover:bg-destructive/15 disabled:opacity-50 wework:bg-red-500/10 wework:text-red-500 wework:hover:bg-red-500/15"
           >
             {t('workbench.delete_project', '删除项目')}
-          </button>
+          </ControlButton>
           <div className="flex-1" />
-          <button
+          <ControlButton
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="cancel-local-project-edit-button"
             disabled={submitting}
             onClick={onClose}
-            className="h-9 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted disabled:opacity-50"
           >
             {t('workbench.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="submit"
             data-testid="save-local-project-button"
             disabled={
@@ -892,13 +939,12 @@ function LocalProjectEditDialogContent({
               !deviceId ||
               !projectKey
             }
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {t('workbench.save', '保存')}
-          </button>
+          </ControlButton>
         </div>
-      </DialogForm>
+      </DialogSurface>
     </div>,
     document.body
   )

@@ -208,6 +208,8 @@ impl ExecutionRequest {
         let Value::Object(object) = &mut value else {
             return Value::Object(Map::new());
         };
+        // Derived context must never reuse a value supplied by an earlier turn.
+        object.remove("backend_api_url");
         if let Some(task_type) = &self.task_type {
             object.insert("type".to_owned(), Value::String(task_type.clone()));
         }
@@ -297,10 +299,14 @@ mod tests {
                 "https://other.example/deployment/api"
             );
         }
-        assert!(ExecutionRequest::default()
-            .variable_context()
-            .get("backend_api_url")
-            .is_none());
+        for backend_url in [None, Some(""), Some(" \t\n")] {
+            let request: ExecutionRequest = serde_json::from_value(json!({
+                "backend_url": backend_url,
+                "backend_api_url": "https://stale.example/api"
+            }))
+            .unwrap();
+            assert!(request.variable_context().get("backend_api_url").is_none());
+        }
     }
 
     #[test]

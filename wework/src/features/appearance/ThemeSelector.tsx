@@ -1,6 +1,7 @@
-import { UI_THEME_CATALOGUE, getUiTheme } from '@wegent/collaboration/theme'
-import type { CSSProperties } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { getUiTheme, UI_THEME_CATALOGUE } from '@wegent/collaboration/theme'
+import type { CSSProperties } from 'react'
 import { resolveAppearanceThemeVariables } from './applyAppearance'
 import type { ResolvedAppearanceMode } from './types'
 import { useAppearance } from './useAppearance'
@@ -10,7 +11,10 @@ export function ThemeSelector({ mode }: { mode: ResolvedAppearanceMode }) {
   const { appearance, setAppearance } = useAppearance()
   const selectedId = mode === 'light' ? appearance.lightThemeId : appearance.darkThemeId
   const selected = getUiTheme(selectedId, mode)
-  const themes = UI_THEME_CATALOGUE.filter(theme => theme.variants[mode])
+  const themes = UI_THEME_CATALOGUE.filter(theme => theme.variants[mode]).map(theme => ({
+    value: theme.id,
+    label: theme.label,
+  }))
   const label =
     mode === 'light'
       ? t('workbench.appearance_light_theme', '浅色配色')
@@ -24,24 +28,19 @@ export function ThemeSelector({ mode }: { mode: ResolvedAppearanceMode }) {
     <div className="min-w-0 space-y-3">
       <label className="grid gap-2 text-sm text-text-primary">
         <span>{label}</span>
-        <select
-          aria-label={label}
-          className="wework-native-select h-11 w-full rounded-lg border border-border bg-background px-3 text-base text-text-primary outline-none keyboard:focus:ring-2 keyboard:focus:ring-focus"
-          data-testid={`appearance-theme-select-${mode}`}
+        <SelectField
           value={selectedId}
-          onChange={event =>
+          options={themes}
+          onChange={themeId =>
             setAppearance({
-              [mode === 'light' ? 'lightThemeId' : 'darkThemeId']: event.target.value,
+              [mode === 'light' ? 'lightThemeId' : 'darkThemeId']: themeId,
               themeOverrides: { [mode]: {} },
             })
           }
-        >
-          {themes.map(theme => (
-            <option key={theme.id} value={theme.id}>
-              {theme.label}
-            </option>
-          ))}
-        </select>
+          accessibleLabel={label}
+          className="wework-native-select h-11 w-full text-base"
+          testId={`appearance-theme-select-${mode}`}
+        />
       </label>
       <div
         aria-hidden="true"

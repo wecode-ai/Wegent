@@ -168,6 +168,11 @@ fn rpc_results_do_not_repeat_native_terminal_events() {
         handler.route_codex_notification(notification("turn/started", "turn-1"));
         let mut completed = notification("turn/completed", "turn-1");
         completed["params"]["turn"]["status"] = json!(status);
+        if status == "failed" {
+            completed["params"]["turn"]["error"] = json!({
+                "message":"server overloaded","codexErrorInfo":"serverOverloaded"
+            });
+        }
         handler.route_codex_notification(completed);
         if next_turn {
             handler.route_codex_notification(notification("turn/started", "turn-2"));
@@ -225,6 +230,13 @@ fn rpc_results_do_not_repeat_native_terminal_events() {
         }
         assert_eq!(terminal.len(), 1, "{status}: {terminal:?}");
         assert_eq!(terminal[0]["payload"]["subtaskId"], "turn-1");
+        if status == "failed" {
+            let data = &terminal[0]["payload"]["data"];
+            assert_eq!(data["type"], "server_overloaded");
+            assert_eq!(data["error"]["code"], data["type"]);
+            assert_eq!(data["error_info"]["category"], "model");
+            assert_eq!(data["error_info"]["retry_policy"], "after_backoff");
+        }
         let _ = fs::remove_dir_all(root);
     }
 }

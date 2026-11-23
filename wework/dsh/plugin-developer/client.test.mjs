@@ -26,16 +26,10 @@ test('publishes a cache-invalidating official Codex plugin version', async () =>
   ])
 })
 
-test('registers translated plugin development actions through the Wework service', async () => {
+test('registers host-rendered plugin development surfaces with their original scopes', async () => {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
   let moduleRegistration
   vm.runInNewContext(source, {
-    Error,
-    JSON,
-    Object,
-    String,
-    console,
-    fetch: async () => ({ json: async () => ({ ok: true }), ok: true }),
     window: {
       __ModuleLoader__: {
         load(value) {
@@ -46,82 +40,37 @@ test('registers translated plugin development actions through the Wework service
   })
   assert.ok(moduleRegistration)
 
-  const useState = value => [value, () => {}]
-  const plugin = moduleRegistration.factory(specifier => {
-    assert.equal(specifier, 'react')
-    return {
-      Fragment: Symbol('Fragment'),
-      createElement(type, props, ...children) {
-        return { type, props: { ...props, children } }
-      },
-      useCallback(callback) {
-        return callback
-      },
-      useEffect() {},
-      useState,
-    }
-  })
   const contributions = []
-  const descriptors = new Map()
-  const context = {
+  const plugin = moduleRegistration.factory(() => {
+    assert.fail('The registration client must not import the separate DSH React runtime')
+  })
+  plugin.apply({
     slots: {
       inject(_slot, register) {
-        const result = register()
-        if (result && Symbol.iterator in result) {
-          for (const _disposer of result) {
-            // Consume generator registrations like the DSH runtime.
-          }
-        }
-      },
-      register(options, component) {
-        contributions.push({
-          component,
-          descriptor: descriptors.get(`${options.name}:${options.id}`),
-          slot: options.name,
-        })
-        return () => {}
+        register()
       },
     },
     wework: {
       contributions: {
         register(_ctx, slot, descriptor) {
-          descriptors.set(`${slot}:${descriptor.id}`, descriptor)
+          contributions.push({ slot, descriptor })
           return () => {}
         },
       },
     },
-  }
-
-  plugin.apply(context)
+  })
 
   assert.equal(contributions.length, 2)
-  const createAction = contributions.find(item => item.slot === 'wework.plugins.action')
-  assert.ok(createAction)
+  const [createAction, debugTab] = contributions
+  assert.equal(createAction.slot, 'wework.plugins.action')
+  assert.equal(createAction.descriptor.id, 'wework-plugin-developer.create')
   assert.equal(createAction.descriptor.labelKey, 'workbench.plugin_development_create')
-  const rendered = createAction.component({
-    onCreate: async () => {},
-    t: (_key, fallback) => fallback,
-  })
-  assert.match(JSON.stringify(rendered), /wework-plugin-developer-create-button/)
-  assert.match(JSON.stringify(rendered), /Create plugin/)
-  const debugTab = contributions.find(item => item.slot === 'wework.workspace.sidebar.tab')
+  assert.equal(createAction.descriptor.module, 'plugins/wework-ui-plugin-developer-create.js')
+  assert.equal(debugTab.slot, 'wework.workspace.sidebar.tab')
+  assert.equal(debugTab.descriptor.id, 'wework-plugin-developer.debug')
+  assert.equal(debugTab.descriptor.module, 'plugins/wework-ui-plugin-developer-debug.js')
   assert.deepEqual([...debugTab.descriptor.when.projectKinds], ['wework-core-dsh-plugin'])
   assert.equal(debugTab.descriptor.when.codexPluginKeys, undefined)
-  const debugPanel = debugTab.component({
-    scope: { cwd: '/workspace/plugin-development-project' },
-    t: (_key, fallback) => fallback,
-    visible: true,
-  })
-  const debugMarkup = JSON.stringify(debugPanel)
-  assert.match(debugMarkup, /wework-plugin-development-debug-target/)
-  assert.match(debugMarkup, /Current project/)
-  assert.match(debugMarkup, /Core DSH/)
-  assert.match(debugMarkup, /Wework debug instance/)
-  assert.match(debugMarkup, /wework-plugin-development-sidebar-start/)
-  assert.match(debugMarkup, /grid grid-cols-2 bg-background/)
-  assert.match(debugMarkup, /col-span-2 flex min-w-0 items-center/)
-  assert.match(debugMarkup, /whitespace-nowrap bg-text-primary/)
-  assert.doesNotMatch(debugMarkup, /wework-plugin-development-diagnostics-toggle/)
 })
 
 test('documents and demonstrates every extension point declared by the Wework host', async () => {

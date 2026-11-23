@@ -1,3 +1,8 @@
+import { matchesRuntimeControlCommand } from '../../../scripts/desktop-control-queue.mjs'
+import {
+  handleRiskyCommandApproval,
+  RISKY_COMMAND_APPROVAL_SCENARIOS,
+} from './risky-command-approval-flow.mjs'
 import { selectedToolCall } from './model-tool-calls.mjs'
 import { completeCommandOnProcessExit } from './process-exit-command.mjs'
 import { processIsAlive } from '../process-lifecycle.mjs'
@@ -907,6 +912,7 @@ class DesktopE2EServer {
         'request_user_input',
         'request_user_input_async',
         'mcp_elicitation',
+        ...RISKY_COMMAND_APPROVAL_SCENARIOS,
         'window_lifecycle',
         'background_completion_restore',
         'background_follow_up_restore',
@@ -1255,6 +1261,19 @@ class DesktopE2EServer {
       this.controlWindowsByClient.has(clientId),
       `Desktop control client ${clientId} is not registered`
     )
+    let usesLegacyRuntimeAcknowledgement = false
+    if (action === 'fetchLocalRuntime' && this.desktopScenario?.usesLegacyRuntimeAcknowledgement) {
+      const installed = JSON.parse(
+        await this.commandForClient(clientId, 'getInstalledAppVersion', 'body')
+      )
+      usesLegacyRuntimeAcknowledgement = this.desktopScenario.usesLegacyRuntimeAcknowledgement(
+        installed.version
+      )
+      assert.ok(
+        this.controlWindowsByClient.has(clientId),
+        `Desktop control client ${clientId} was replaced during package identification`
+      )
+    }
     const id = randomUUID()
     const command = {
       id,
@@ -1274,6 +1293,8 @@ class DesktopE2EServer {
         clientId,
         queuedAt: new Date().toISOString(),
         action,
+        value: command.value,
+        usesLegacyRuntimeAcknowledgement,
         resolve: resolvePromise,
         reject,
         resolveDelivery,
@@ -2180,6 +2201,16 @@ class DesktopE2EServer {
       if (started.clientId !== pending.clientId) {
         json(response, 409, {
           error: `Command ${started.id} belongs to a different desktop control client`,
+        })
+        return true
+      }
+      const legacyAcknowledgement =
+        pending.usesLegacyRuntimeAcknowledgement &&
+        !Object.hasOwn(started, 'action') &&
+        !Object.hasOwn(started, 'value')
+      if (!legacyAcknowledgement && !matchesRuntimeControlCommand(pending, started)) {
+        json(response, 409, {
+          error: `Command ${started.id} does not match the queued Runtime request`,
         })
         return true
       }
@@ -3974,6 +4005,8 @@ class DesktopE2EServer {
       await respondToConcurrentMcpInput(this, body, response, responseId, modelRequest)
       return
     }
+
+    if (handleRiskyCommandApproval(this, body, response, responseId, modelRequest)) return
 
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)

@@ -142,7 +142,8 @@ export function SiteActionsMenu({
       ariaLabel={t('more_actions', '更多操作')}
       testId={`site-more-${site.siteid}`}
       placement="bottom-end"
-      triggerClassName="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+      density="compact"
+      triggerClassName="flex items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
       items={items}
     />
   )
