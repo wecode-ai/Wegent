@@ -87,6 +87,8 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "marketplaceName is required"))?;
         let source_revision = string_field(&params, "sourceRevision")
             .ok_or_else(|| AppIpcError::new("bad_request", "sourceRevision is required"))?;
+        let installations_revision = string_field(&params, "installationsRevision")
+            .ok_or_else(|| AppIpcError::new("bad_request", "installationsRevision is required"))?;
         let confirmed: Vec<String> = serde_json::from_value(params["confirmedPluginIds"].clone())
             .map_err(|_| {
             AppIpcError::new("bad_request", "confirmedPluginIds must be a list")
@@ -99,70 +101,81 @@ impl RuntimeWorkRpcHandler {
         let home = crate::agents::wework_codex_home();
         let marketplace_cache = marketplace_cache_root(&home).join(&marketplace_name);
         let removal = local_connector_auth::MarketplaceRemoval::begin(marketplace_cache.clone())?;
-        let review = async |begin_cleanup: Option<&MarketplaceInstallations>| {
-            let _marketplace = self.bundled_plugin_marketplace_reconciliation.lock().await;
-            let _native = codex_app_server_restart_gate().lock().await;
+        let read_installations = || async {
             let config = self.read_marketplace_config().await?;
-            let installed = confirmed_marketplace_removal(
-                &config,
-                &home,
-                &marketplace_name,
-                &source_revision,
-                &confirmed,
-            )?;
-            if let Some(reviewed) = begin_cleanup {
-                confirm_reviewed_marketplace_packages(reviewed, &installed)?;
-                // Publish the write guard before releasing the native mutation lock.
-                removal.begin_cleanup(&home);
-            }
+            let installed =
+                confirmed_marketplace_removal(&config, &home, &marketplace_name, &source_revision)?;
             Ok::<_, AppIpcError>((config, installed))
         };
-        let (_, reviewed_installations) = review(None).await?;
+        let mut reviewed = {
+            let _marketplace = self.bundled_plugin_marketplace_reconciliation.lock().await;
+            let _native = codex_app_server_restart_gate().lock().await;
+            let (_, installed) = read_installations().await?;
+            confirm_marketplace_plugins(&installed, confirmed)?;
+            confirm_marketplace_installations_revision(&installed, &installations_revision)?;
+            installed
+        };
         // Keep the logout window available even when a QR request is slow.
         removal
             .wait_for_qr_auth(tokio::time::Instant::now() + MARKETPLACE_QR_DRAIN_BUDGET)
             .await?;
-        let (config, installed) = review(Some(&reviewed_installations)).await?;
-
-        // Browser sessions belong to the installation across cache version changes.
-        let plugin_dirs: Vec<_> = installed
-            .keys()
-            .filter_map(|id| id.rsplit_once('@'))
-            .map(|(name, _)| marketplace_cache.join(name))
-            .collect();
-        local_connector_auth::cancel_marketplace_plugin_sessions(&plugin_dirs).await;
-        logout_marketplace_connectors(&config, &installed).await;
-
-        let _marketplace = self.bundled_plugin_marketplace_reconciliation.lock().await;
-        let _native = codex_app_server_restart_gate().lock().await;
-        let current = self.read_marketplace_config().await?;
-        let installed = confirmed_marketplace_removal(
-            &current,
-            &home,
-            &marketplace_name,
-            &source_revision,
-            &confirmed,
-        )?;
-        confirm_reviewed_marketplace_packages(&reviewed_installations, &installed)?;
-        for plugin_id in installed.keys() {
+        let logout_deadline = tokio::time::Instant::now() + MARKETPLACE_LOGOUT_BUDGET;
+        loop {
+            let config = {
+                let _marketplace = self.bundled_plugin_marketplace_reconciliation.lock().await;
+                let _native = codex_app_server_restart_gate().lock().await;
+                let (config, installed) = read_installations().await?;
+                confirm_reviewed_marketplace_packages(&reviewed, &installed)?;
+                if reviewed.is_empty() {
+                    let result = self
+                        .codex_app_server
+                        .request(
+                            "marketplace/remove",
+                            json!({"marketplaceName": marketplace_name}),
+                        )
+                        .await
+                        .map_err(marketplace_management_error)?;
+                    crate::services::capability_activation::notify_changed();
+                    return Ok(result);
+                }
+                // Publish the write guard before releasing the native mutation lock.
+                removal.begin_cleanup(&home);
+                config
+            };
+            let (plugin_id, package) = reviewed.first_key_value().expect("reviewed plugin");
+            let (plugin_name, _) = plugin_id.rsplit_once('@').expect("qualified plugin id");
+            local_connector_auth::cancel_marketplace_plugin_sessions(
+                &marketplace_cache.join(plugin_name),
+            )
+            .await;
+            // Keep the package available for logout. A failed uninstall must
+            // leave every plugin later in the list untouched.
+            if let Some(package) = package
+                .as_ref()
+                .filter(|_| config["config"]["plugins"].get(plugin_id).is_some())
+            {
+                let logout = local_connector_auth::logout_before_plugin_uninstall(
+                    &package.root,
+                    &package.manifest,
+                );
+                if tokio::time::timeout_at(logout_deadline, logout)
+                    .await
+                    .is_err()
+                {
+                    log_executor_event("marketplace connector logout timed out", &[]);
+                }
+            }
+            let _marketplace = self.bundled_plugin_marketplace_reconciliation.lock().await;
+            let _native = codex_app_server_restart_gate().lock().await;
+            let (_, installed) = read_installations().await?;
+            confirm_reviewed_marketplace_packages(&reviewed, &installed)?;
             self.codex_app_server
                 .request("plugin/uninstall", json!({"pluginId": plugin_id}))
                 .await
                 .map_err(marketplace_management_error)?;
+            reviewed.pop_first();
             crate::services::capability_activation::notify_changed();
         }
-        let current = self.read_marketplace_config().await?;
-        confirmed_marketplace_removal(&current, &home, &marketplace_name, &source_revision, &[])?;
-        let result = self
-            .codex_app_server
-            .request(
-                "marketplace/remove",
-                json!({"marketplaceName": marketplace_name}),
-            )
-            .await
-            .map_err(marketplace_management_error)?;
-        crate::services::capability_activation::notify_changed();
-        Ok(result)
     }
 
     pub(super) async fn reconcile_bundled_plugin_marketplace(
@@ -509,9 +522,10 @@ fn configured_marketplace_entries(config: &Value, home: &Path) -> Result<Value, 
         let Some(source) = configured_user_marketplace(config, id) else {
             continue;
         };
-        let installed = marketplace_installations(config, home, id)
+        let inventory = marketplace_installations(config, home, id)
             .map(|items| {
-                items.into_iter().map(|(id, package)| {
+                let revision = marketplace_installations_revision(&items);
+                let listed = items.into_iter().map(|(id, package)| {
                     let (name, _) = id.rsplit_once('@').expect("qualified plugin id");
                     let display = package.as_ref().map(|package| &package.manifest["interface"]["displayName"]);
                     json!({
@@ -519,7 +533,8 @@ fn configured_marketplace_entries(config: &Value, home: &Path) -> Result<Value, 
                         "name": display.and_then(Value::as_str).filter(|value| !value.trim().is_empty()).unwrap_or(name),
                         "version": installed_package_version(package.as_ref()),
                     })
-                }).collect::<Vec<_>>()
+                }).collect::<Vec<_>>();
+                (listed, revision)
             })
             .map_err(|error| {
                 log_executor_event(
@@ -528,11 +543,13 @@ fn configured_marketplace_entries(config: &Value, home: &Path) -> Result<Value, 
                 );
             })
             .ok();
+        let (installed, installations_revision) = inventory.unzip();
         marketplaces.push(json!({
             "id": id,
             "sourceType": source["source_type"],
             "gitRef": source["ref"],
             "sourceRevision": marketplace_source_revision(source),
+            "installationsRevision": installations_revision,
             "installed": installed,
         }));
     }
@@ -547,6 +564,33 @@ fn marketplace_source_revision(source: &Value) -> String {
         source["sparse_paths"]
     ]);
     format!("{:x}", Sha256::digest(identity.to_string()))
+}
+
+fn marketplace_installations_revision(installed: &MarketplaceInstallations) -> String {
+    let mut revision = Sha256::new();
+    for (id, package) in installed {
+        let package = package.as_ref().map(|package| {
+            (
+                package.root.as_os_str().as_encoded_bytes(),
+                &package.manifest,
+            )
+        });
+        revision.update(json!([id, package]).to_string());
+    }
+    format!("{:x}", revision.finalize())
+}
+
+fn confirm_marketplace_installations_revision(
+    installed: &MarketplaceInstallations,
+    confirmed: &str,
+) -> Result<(), AppIpcError> {
+    if marketplace_installations_revision(installed) != confirmed {
+        return Err(AppIpcError::new(
+            "marketplace_installations_changed",
+            "Installed plugins changed since confirmation. Review and try again.",
+        ));
+    }
+    Ok(())
 }
 
 fn confirmed_marketplace_source<'a>(
@@ -569,11 +613,9 @@ fn confirmed_marketplace_removal(
     home: &Path,
     name: &str,
     source_revision: &str,
-    confirmed: &[String],
 ) -> Result<MarketplaceInstallations, AppIpcError> {
     confirmed_marketplace_source(config, name, source_revision)?;
     let installed = marketplace_installations(config, home, name)?;
-    confirm_marketplace_plugins(&installed, confirmed.to_vec())?;
     for plugin_id in installed.keys() {
         if config["layers"]
             .as_array()
@@ -603,25 +645,6 @@ fn confirm_reviewed_marketplace_packages(
         ));
     }
     Ok(())
-}
-
-async fn logout_marketplace_connectors(config: &Value, installed: &MarketplaceInstallations) {
-    let targets = installed.iter().filter_map(|(id, package)| {
-        config["config"]["plugins"].get(id)?;
-        package.as_ref()
-    });
-    // Cleanup is best effort. Keep commands outside native locks and reserve time
-    // for revalidation and uninstall within the existing IPC deadline.
-    let cleanup = stream::iter(targets).for_each_concurrent(4, |package| async move {
-        local_connector_auth::logout_before_plugin_uninstall(&package.root, &package.manifest)
-            .await;
-    });
-    if tokio::time::timeout(MARKETPLACE_LOGOUT_BUDGET, cleanup)
-        .await
-        .is_err()
-    {
-        log_executor_event("marketplace connector logout timed out", &[]);
-    }
 }
 
 fn marketplace_installations(
@@ -1051,63 +1074,119 @@ mod tests {
         });
         let original = &config["layers"][0]["config"]["marketplaces"]["custom"];
         let revision = marketplace_source_revision(original);
-        let confirmed = ["sample@custom".to_owned()];
-        assert!(confirmed_marketplace_removal(
-            &config,
-            home.path(),
-            "custom",
-            &revision,
-            &confirmed
-        )
-        .is_ok());
+        assert!(confirmed_marketplace_removal(&config, home.path(), "custom", &revision).is_ok());
 
         config["layers"][0]["config"]["marketplaces"]["custom"] =
             json!({"source_type": "local", "source": "/another/catalog"});
-        let failure =
-            confirmed_marketplace_removal(&config, home.path(), "custom", &revision, &confirmed)
-                .err()
-                .expect("stale confirmation must not remove the replacement source");
+        let failure = confirmed_marketplace_removal(&config, home.path(), "custom", &revision)
+            .err()
+            .expect("stale confirmation must not remove the replacement source");
         assert_eq!(failure.code, "marketplace_source_changed");
     }
 
     #[cfg(unix)]
-    #[tokio::test]
-    async fn marketplace_removal_starts_waiting_connector_cleanups_concurrently() {
+    #[test]
+    fn marketplace_removal_rejects_replaced_packages_and_stops_cleanup_on_uninstall_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _lock = crate::test_env::lock();
         let home = tempfile::tempdir().unwrap();
-        let mut installed = MarketplaceInstallations::new();
-        let mut config = json!({"config": {"plugins": {}}});
-        for (name, peer) in [("first", "second"), ("second", "first")] {
-            let root = home.path().join(name);
-            fs::create_dir(&root).unwrap();
+        let home_path = home.path().to_str().unwrap();
+        let _executor_home = super::super::tests::ScalarEnv::set("WEGENT_EXECUTOR_HOME", home_path);
+        let _home = super::super::tests::ScalarEnv::set("WEGENT_CODEX_HOME", home_path);
+        fs::write(home.path().join("config.toml"), "").unwrap();
+        let source = json!({"source_type": "local", "source": "/custom"});
+        let config = json!({
+            "config": {"plugins": {
+                "first@custom": {"enabled": true}, "second@custom": {"enabled": true}
+            }},
+            "layers": [{"name": {"type": "user"}, "config": {"marketplaces": {"custom": source}}}]
+        });
+        fs::write(
+            home.path().join("marketplace-test.json"),
+            config.to_string(),
+        )
+        .unwrap();
+        let cache = home.path().join("plugins/cache/custom");
+        let write_package = |name: &str, version: &str| {
+            let root = cache.join(name).join(version);
+            let manifest = json!({"name": name, "version": version, "connectors": [{
+                "slug": "connector", "localAuth": {
+                    "kind": "browser_oauth", "logoutOnUninstall": true,
+                    "health": ["logout.sh"], "start": ["logout.sh"], "logout": ["logout.sh"],
+                }
+            }]});
+            fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+            fs::write(root.join(".codex-plugin/plugin.json"), manifest.to_string()).unwrap();
             fs::write(
                 root.join("logout.sh"),
-                r#"#!/bin/sh
-touch started
-waited=0
-while [ ! -e "../$1/started" ]; do
-    [ "$waited" -lt 50 ] || exit 1
-    waited=$((waited + 1))
-    sleep 0.02
-done
-touch finished
-printf '{"status":"ok"}\n'
-"#,
+                "#!/bin/sh\ntouch logged-out\nprintf '{\"status\":\"ok\"}\\n'\n",
             )
             .unwrap();
-            let manifest = json!({"connectors": [{"slug": "connector", "localAuth": {
-                "kind": "browser_oauth", "logoutOnUninstall": true,
-                "health": ["logout.sh"], "start": ["logout.sh"],
-                "logout": ["logout.sh", peer],
-            }}]});
-            let id = format!("{name}@custom");
-            config["config"]["plugins"][&id] = json!({"enabled": true});
-            installed.insert(id, Some(CachedCodexPlugin { root, manifest }));
-        }
+            root
+        };
+        let first = write_package("first", "1.0.0");
+        let second = write_package("second", "1.0.0");
+        let native = home.path().join("codex.sh");
+        fs::write(
+            &native,
+            crate::test_env::with_codex_bundled_catalog(
+                r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"config/read"'*) printf '{"id":%s,"result":%s}\n' "$id" "$(cat "$CODEX_HOME/marketplace-test.json")" ;;
+    *'"method":"plugin/uninstall"'*)
+      printf '%s\n' "$line" >> "$CODEX_HOME/uninstall-requests"
+      printf '{"id":%s,"error":{"code":-32000,"message":"uninstall failed"}}\n' "$id" ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&native, fs::Permissions::from_mode(0o755)).unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let handler = RuntimeWorkRpcHandler::new("device-1", native.to_str().unwrap());
+                let review = handler.list_configured_marketplaces().await.unwrap();
+                let mut confirmation = json!({
+                    "marketplaceName": "custom",
+                    "sourceRevision": review[0]["sourceRevision"],
+                    "installationsRevision": review[0]["installationsRevision"],
+                    "confirmedPluginIds": ["first@custom", "second@custom"],
+                });
+                let replacement = write_package("first", "2.0.0");
+                let stale = handler
+                    .remove_marketplace_with_plugins(confirmation.clone())
+                    .await
+                    .unwrap_err();
+                assert_eq!(stale.code, "marketplace_installations_changed");
+                assert!(!first.join("logged-out").exists());
+                assert!(!replacement.join("logged-out").exists());
+                let requests = home.path().join("uninstall-requests");
+                assert!(!requests.exists());
 
-        logout_marketplace_connectors(&config, &installed).await;
-
-        assert!(home.path().join("first/finished").is_file());
-        assert!(home.path().join("second/finished").is_file());
+                let refreshed = handler.list_configured_marketplaces().await.unwrap();
+                confirmation["installationsRevision"] =
+                    refreshed[0]["installationsRevision"].clone();
+                let failure = handler
+                    .remove_marketplace_with_plugins(confirmation)
+                    .await
+                    .unwrap_err();
+                assert!(failure.message.contains("uninstall failed"));
+                assert!(replacement.join("logged-out").exists());
+                assert!(second.is_dir());
+                assert!(!second.join("logged-out").exists());
+                let requests = fs::read_to_string(requests).unwrap();
+                assert_eq!(requests.lines().count(), 1);
+                assert!(requests.contains("first@custom"));
+            });
     }
 
     #[test]

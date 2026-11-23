@@ -111,7 +111,13 @@ describe('local plugin source isolation', () => {
   }
 
   test('lists manageable sources without waiting for the installed catalog', async () => {
-    const source = { id: 'custom', sourceType: 'git', sourceRevision: 'rev', installed: [] }
+    const source = {
+      id: 'custom',
+      sourceType: 'git',
+      sourceRevision: 'rev',
+      installationsRevision: 'inventory-rev',
+      installed: [],
+    }
     const original = mocks.request.getMockImplementation()!
     mocks.request.mockImplementation((method, args) => {
       if (method === 'runtime.codex.marketplace.list_configured') return Promise.resolve([source])

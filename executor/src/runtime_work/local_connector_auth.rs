@@ -321,7 +321,9 @@ pub async fn logout(payload: Value) -> Result<Value, AppIpcError> {
         session.plugin_key == plugin_key
             && session.connector_slug == spec.connector_slug
             && (session.plugin_root.as_deref() == Some(&root)
-                || (session.plugin_root.is_some() && session.marketplace_id == marketplace_id))
+                || (marketplace_id.is_some()
+                    && session.plugin_root.is_some()
+                    && session.marketplace_id == marketplace_id))
     })
     .await;
     logout_with_spec(&plugin_root, &spec).await
@@ -366,12 +368,12 @@ async fn logout_with_spec(root: &Path, spec: &LocalAuthSpec) -> Result<Value, Ap
     .await
 }
 
-pub(super) async fn cancel_marketplace_plugin_sessions(plugin_dirs: &[PathBuf]) {
+pub(super) async fn cancel_marketplace_plugin_sessions(plugin_dir: &Path) {
     cancel_browser_auth_sessions(|session| {
         session
             .plugin_root
             .as_deref()
-            .is_some_and(|root| plugin_dirs.iter().any(|dir| root.starts_with(dir)))
+            .is_some_and(|root| root.starts_with(plugin_dir))
     })
     .await;
 }
@@ -1526,6 +1528,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn logout_with_explicit_root_preserves_same_name_session_at_another_root() {
+        let home = tempfile::tempdir().unwrap();
+        let first_root = home.path().join("first");
+        let other_root = home.path().join("other");
+        let plugin_key = format!("plugin-{}", Uuid::new_v4());
+        let connector_slug = "browser-auth";
+        let manifest = json!({"name": plugin_key, "connectors": [{
+            "slug": connector_slug, "localAuth": {
+                "kind": "browser_oauth", "health": ["auth.sh"], "start": ["auth.sh"]
+            }
+        }]});
+        for root in [&first_root, &other_root] {
+            write_plugin_manifest(root);
+            fs::write(root.join(".codex-plugin/plugin.json"), manifest.to_string()).unwrap();
+        }
+        let request = |root: &Path| json!({"pluginKey": plugin_key, "connectorSlug": connector_slug, "pluginRoot": root});
+        let mut ids = Vec::new();
+        for root in [&first_root, &other_root] {
+            let id = Uuid::new_v4().to_string();
+            browser_auth_sessions().lock().await.insert(
+                id.clone(),
+                BrowserAuthSession {
+                    plugin_key: plugin_key.clone(),
+                    connector_slug: connector_slug.into(),
+                    marketplace_id: None,
+                    plugin_root: Some(root.canonicalize().unwrap()),
+                    state: Arc::new(Mutex::new(browser_session_state(
+                        "waiting_browser",
+                        "",
+                        &id,
+                    ))),
+                    task: tokio::spawn(std::future::pending()),
+                },
+            );
+            ids.push(id);
+        }
+
+        assert_eq!(logout(request(&first_root)).await.unwrap()["status"], "ok");
+        let mut first_poll = request(&first_root);
+        first_poll["sessionId"] = json!(ids[0]);
+        let mut other_poll = request(&other_root);
+        other_poll["sessionId"] = json!(ids[1]);
+        assert_eq!(
+            poll(first_poll).await.unwrap_err().code,
+            "local_auth_session_missing"
+        );
+        let unaffected = poll(other_poll.clone()).await;
+        cancel(other_poll).await.unwrap();
+        assert_eq!(unaffected.unwrap()["status"], "waiting_browser");
+    }
+
+    #[tokio::test]
     async fn marketplace_uninstall_cancels_and_blocks_auth_only_in_that_market() {
         let home = tempfile::tempdir().unwrap();
         let cache = home.path().canonicalize().unwrap().join("plugins/cache");
@@ -1588,7 +1642,7 @@ mod tests {
         };
         assert_eq!(active.lock().await["sessionId"], other_id);
         let _removal = MarketplaceRemoval::begin(removing_market).unwrap();
-        cancel_marketplace_plugin_sessions(&[removed_package]).await;
+        cancel_marketplace_plugin_sessions(&removed_package).await;
 
         let blocked = start(payload(&current_root)).await.unwrap_err();
         assert_eq!(blocked.code, "marketplace_removal_in_progress");

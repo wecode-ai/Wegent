@@ -44,7 +44,9 @@ export function PluginMarketplaceManagement({
   const [removing, setRemoving] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
   const marketplaces = snapshot.data ?? []
-  const inventoryUnavailable = marketplaces.some(marketplace => marketplace.installed === null)
+  const inventoryUnavailable = marketplaces.some(
+    marketplace => marketplace.installed === null || !marketplace.installationsRevision
+  )
   const error =
     failure ??
     (snapshot.status === 'error'
@@ -52,12 +54,17 @@ export function PluginMarketplaceManagement({
       : null)
 
   const remove = async (marketplace: ConfiguredCodexMarketplace) => {
-    if (marketplace.installed === null) return
+    if (marketplace.installed === null || !marketplace.installationsRevision) return
     setRemoving(true)
     setFailure(null)
     try {
       const ids = marketplace.installed.map(plugin => plugin.id)
-      await api.deleteMarketplace(marketplace.id, marketplace.sourceRevision, ids)
+      await api.deleteMarketplace(
+        marketplace.id,
+        marketplace.sourceRevision,
+        marketplace.installationsRevision,
+        ids
+      )
       resource.update(items => items?.filter(item => item.id !== marketplace.id))
       onRemoved(marketplace)
     } catch (reason) {
@@ -163,6 +170,7 @@ export function PluginMarketplaceManagement({
                   removing ||
                   snapshot.status !== 'ready' ||
                   marketplace.installed === null ||
+                  !marketplace.installationsRevision ||
                   checkingMarketplaces.has(marketplace.id)
                 }
                 items={[

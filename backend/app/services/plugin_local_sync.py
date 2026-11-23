@@ -54,7 +54,14 @@ def mutate_local_plugin(
     source_device_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Commit account intent, idempotent result in one transaction."""
-    with _rejection_context(db, user_id, instance_id, operation_id, intent_order):
+    with _rejection_context(
+        db,
+        user_id,
+        instance_id,
+        operation_id,
+        intent_order,
+        update_target=target_id if action == "update" else None,
+    ):
         acquire_plugin_write_lock(
             db, user_id, name=f"@operation:{instance_id}:{operation_id}"
         )
@@ -325,7 +332,13 @@ def _guard_intent_order(
 
 @contextmanager
 def _rejection_context(
-    db: Session, user_id: int, instance: str, operation: str, order: int | None
+    db: Session,
+    user_id: int,
+    instance: str,
+    operation: str,
+    order: int | None,
+    *,
+    update_target: int | str | None,
 ) -> Iterator[None]:
     """Identify only known, unaccepted business rejections for this exact request.
 
@@ -358,9 +371,17 @@ def _rejection_context(
                 type(value) is not int for value in orders.values()
             ):
                 raise HTTPException(409, "plugin_write_conflict") from failure
-            # A compacted ID is not proof of nonacceptance. A strictly newer
-            # order cannot have been accepted before any retained watermark.
-            unaccepted = accepted is None and order > max(orders.values(), default=0)
+            # A compacted ID is not proof of nonacceptance. Release updates
+            # bind to one installed ID and reach this rejection after its
+            # order guard. Other targets cannot have accepted this request.
+            if (
+                failure.detail == "PLUGIN_UPDATE_RELEASE_CHANGED"
+                and update_target is not None
+            ):
+                watermark = orders.get(str(update_target), 0)
+            else:
+                watermark = max(orders.values(), default=0)
+            unaccepted = accepted is None and order > watermark
             if unaccepted or failure.detail == "INTENT_SUPERSEDED":
                 failure.headers = {
                     **(failure.headers or {}),

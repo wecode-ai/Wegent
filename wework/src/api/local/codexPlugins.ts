@@ -197,6 +197,7 @@ export interface ConfiguredCodexMarketplace extends Pick<LocalCodexMarketplace, 
   sourceType: 'git' | 'local'
   gitRef: string | null
   sourceRevision: string
+  installationsRevision: string | null
   installed: { id: string; name: string; version: string | null }[] | null
 }
 
@@ -363,7 +364,12 @@ export interface LocalCodexPluginApi {
     id: string,
     sourceRevision: string
   ): Promise<CodexMarketplacePluginVersion[]>
-  deleteMarketplace(id: string, sourceRevision: string, confirmedPluginIds: string[]): Promise<void>
+  deleteMarketplace(
+    id: string,
+    sourceRevision: string,
+    installationsRevision: string,
+    confirmedPluginIds: string[]
+  ): Promise<void>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
   installAvailablePlugin(item: PluginMarketplaceItem): Promise<InstalledPlugin>
@@ -3561,11 +3567,12 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (!Array.isArray(result.versions)) throw new Error('Invalid marketplace versions')
       return result.versions
     },
-    async deleteMarketplace(id, sourceRevision, confirmedPluginIds) {
+    async deleteMarketplace(id, sourceRevision, installationsRevision, confirmedPluginIds) {
       try {
         await codexAppServerRequest('marketplace/remove', {
           marketplaceName: id,
           sourceRevision,
+          installationsRevision,
           confirmedPluginIds,
         })
         if (selectedMarketplaceId() === id) rememberSelectedMarketplaceId('')
