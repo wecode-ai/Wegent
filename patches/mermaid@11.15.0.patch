@@ -117,8 +117,52 @@ index a1b799a9722f2eb677a6d194e5eb1fde67cb45ff..e07cf5ec029ad42399969bbf3cce8dc3
      algorithm: layoutDefinition.algorithm
    });
  }, "render");
+diff --git a/dist/chunks/mermaid.core/diagram-KO2AKTUF.mjs b/dist/chunks/mermaid.core/diagram-KO2AKTUF.mjs
+index dfc1528d19c83e5b2cc576bbc9957f257b771580..b2cc1dae1c7d4638081173cd691aff445c7e9bda 100644
+--- a/dist/chunks/mermaid.core/diagram-KO2AKTUF.mjs
++++ b/dist/chunks/mermaid.core/diagram-KO2AKTUF.mjs
+@@ -592,7 +592,7 @@ if (void 0) {
+ }
+ 
+ // src/diagrams/eventmodeling/renderer.ts
+-import { select } from "d3";
++import { selectSvgElement } from "./chunk-WU5MYG2G.mjs";
+ var DEFAULT_CONFIG = getConfig2();
+ var DEFAULT_EVENTMODELING_CONFIG2 = DEFAULT_CONFIG?.eventmodeling;
+ function renderD3Box(diagram2, diagramProps2) {
+@@ -652,7 +652,7 @@ var draw = /* @__PURE__ */ __name(function(txt, id, ver, diagObj) {
+   }
+   const db2 = diagObj.db;
+   const { themeVariables, eventmodeling: config } = getConfig2();
+-  const diagram2 = select(`[id="${id}"]`);
++  const diagram2 = selectSvgElement(id);
+   const diagramProps2 = db2.getDiagramProps();
+   const state = db2.getState();
+   const arrowheadId = `em-arrowhead-${id}`;
+diff --git a/dist/chunks/mermaid.core/gitGraphDiagram-PVQCEYII.mjs b/dist/chunks/mermaid.core/gitGraphDiagram-PVQCEYII.mjs
+index cd3e6daab582ac3e83011c1954278d749ed51c76..767ba264cf80a0a3c619cea3e67563eed038d857 100644
+--- a/dist/chunks/mermaid.core/gitGraphDiagram-PVQCEYII.mjs
++++ b/dist/chunks/mermaid.core/gitGraphDiagram-PVQCEYII.mjs
+@@ -692,7 +692,7 @@ if (void 0) {
+ }
+ 
+ // src/diagrams/git/gitGraphRenderer.ts
+-import { select } from "d3";
++import { selectSvgElement } from "./chunk-WU5MYG2G.mjs";
+ var LAYOUT_OFFSET = 10;
+ var COMMIT_STEP = 40;
+ var PX = 4;
+@@ -1340,7 +1340,7 @@ var draw = /* @__PURE__ */ __name(function(txt, id, ver, diagObj) {
+   allCommitsDict = db2.getCommits();
+   const branches = db2.getBranchesAsObjArray();
+   dir = db2.getDirection();
+-  const diagram2 = select(`[id="${id}"]`);
++  const diagram2 = selectSvgElement(id);
+   const { look, theme, themeVariables } = getConfig2();
+   const { useGradient, gradientStart, gradientStop, filterColor } = themeVariables;
+   if (useGradient) {
 diff --git a/dist/mermaid.core.mjs b/dist/mermaid.core.mjs
-index 207098ff5f42315d21cd94a3db5b3ed09f1f662d..8476dec6c66a895f4d66ad4026419fa0a06a47bb 100644
+index 207098ff5f42315d21cd94a3db5b3ed09f1f662d..76ce1ce3625648d73853105911fa53317d751390 100644
 --- a/dist/mermaid.core.mjs
 +++ b/dist/mermaid.core.mjs
 @@ -46,6 +46,7 @@ import {
@@ -129,21 +173,122 @@ index 207098ff5f42315d21cd94a3db5b3ed09f1f662d..8476dec6c66a895f4d66ad4026419fa0
    setSiteConfig,
    styles_default,
    themes_default,
-@@ -1200,6 +1201,8 @@ var render = /* @__PURE__ */ __name(async function(id33, text, svgContainingElem
-   const style1 = document.createElement("style");
-   style1.innerHTML = rules;
-   svg.insertBefore(style1, firstChild);
-+  // Shared SVG and MathML probes must use the same document as the diagram.
-+  const restoreMeasurementDocument = setDiagramMeasurementDocument(svg.ownerDocument);
+@@ -1180,35 +1181,42 @@ var render = /* @__PURE__ */ __name(async function(id33, text, svgContainingElem
+     appendDivSvgG(root, id33, enclosingDivID);
+   }
+   let diag;
++  let diagramType;
+   let parseEncounteredException;
++  // Both the parser and the renderer can measure SVG text.
++  const restoreMeasurementDocument = setDiagramMeasurementDocument(root.node().ownerDocument);
    try {
-     await diag.renderer.draw(text, id33, "11.15.0", diag);
-   } catch (e) {
-@@ -1209,6 +1212,8 @@ var render = /* @__PURE__ */ __name(async function(id33, text, svgContainingElem
-       errorRenderer_default.draw(text, id33, "11.15.0");
+-    diag = await Diagram.fromText(text, { title: processed.title });
+-  } catch (error) {
+-    if (config.suppressErrorRendering) {
+-      removeTempElements();
+-      throw error;
++    try {
++      diag = await Diagram.fromText(text, { title: processed.title });
++    } catch (error) {
++      if (config.suppressErrorRendering) {
++        removeTempElements();
++        throw error;
++      }
++      diag = await Diagram.fromText("error");
++      parseEncounteredException = error;
      }
-     throw e;
+-    diag = await Diagram.fromText("error");
+-    parseEncounteredException = error;
+-  }
+-  const element = root.select(enclosingDivID_selector).node();
+-  const diagramType = diag.type;
+-  const svg = element.firstChild;
+-  const firstChild = svg.firstChild;
+-  const diagramClassDefs = diag.renderer.getClasses?.(text, diag);
+-  const rules = createUserStyles(config, diagramType, diagramClassDefs, idSelector);
+-  const style1 = document.createElement("style");
+-  style1.innerHTML = rules;
+-  svg.insertBefore(style1, firstChild);
+-  try {
+-    await diag.renderer.draw(text, id33, "11.15.0", diag);
+-  } catch (e) {
+-    if (config.suppressErrorRendering) {
+-      removeTempElements();
+-    } else {
+-      errorRenderer_default.draw(text, id33, "11.15.0");
++    const element = root.select(enclosingDivID_selector).node();
++    diagramType = diag.type;
++    const svg = element.firstChild;
++    const firstChild = svg.firstChild;
++    const diagramClassDefs = diag.renderer.getClasses?.(text, diag);
++    const rules = createUserStyles(config, diagramType, diagramClassDefs, idSelector);
++    const style1 = svg.ownerDocument.createElement("style");
++    style1.innerHTML = rules;
++    svg.insertBefore(style1, firstChild);
++    try {
++      await diag.renderer.draw(text, id33, "11.15.0", diag);
++    } catch (e) {
++      if (config.suppressErrorRendering) {
++        removeTempElements();
++      } else {
++        errorRenderer_default.draw(text, id33, "11.15.0");
++      }
++      throw e;
+     }
+-    throw e;
 +  } finally {
 +    restoreMeasurementDocument();
    }
    const svgNode = root.select(`${enclosingDivID_selector} svg`);
    const a11yTitle = diag.db.getAccTitle?.();
+@@ -1462,22 +1470,20 @@ var parse2 = /* @__PURE__ */ __name(async (text, parseOptions) => {
+     executeQueue().catch(reject);
+   });
+ }, "parse");
+-var render2 = /* @__PURE__ */ __name((id33, text, container) => {
++var render2 = /* @__PURE__ */ __name((id33, text, container, config) => {
+   return new Promise((resolve, reject) => {
+-    const performCall = /* @__PURE__ */ __name(() => new Promise((res, rej) => {
+-      mermaidAPI.render(id33, text, container).then(
+-        (r) => {
+-          res(r);
+-          resolve(r);
+-        },
+-        (e) => {
+-          log.error("Error parsing", e);
+-          mermaid.parseError?.(e);
+-          rej(e);
+-          reject(e);
++    const performCall = /* @__PURE__ */ __name(async () => {
++      try {
++        if (config !== void 0) {
++          mermaidAPI.initialize(config);
+         }
+-      );
+-    }), "performCall");
++        resolve(await mermaidAPI.render(id33, text, container));
++      } catch (e) {
++        reject(e);
++        log.error("Error parsing", e);
++        mermaid.parseError?.(e);
++      }
++    }, "performCall");
+     executionQueue.push(performCall);
+     executeQueue().catch(reject);
+   });
+diff --git a/dist/mermaid.d.ts b/dist/mermaid.d.ts
+index fa7e88c645dcd1a0bf44b633283d1e72e68d6190..2f8f9af419f32d8147eb4474b5ccf017cd3de4f7 100644
+--- a/dist/mermaid.d.ts
++++ b/dist/mermaid.d.ts
+@@ -147,9 +147,10 @@ declare const parse: typeof mermaidAPI.parse;
+  *    Selector to element in which a div with the graph temporarily will be
+  *   inserted. If one is provided a hidden div will be inserted in the body of the page instead. The
+  *   element will be removed when rendering is completed.
++ * @param config - Configuration to initialize when this render reaches the queue.
+  * @returns Returns the SVG Definition and BindFunctions.
+  */
+-declare const render: typeof mermaidAPI.render;
++declare const render: (id: string, text: string, container?: Element, config?: MermaidConfig) => Promise<RenderResult>;
+ /**
+  * Gets the metadata for all registered diagrams.
+  * Currently only the id is returned.

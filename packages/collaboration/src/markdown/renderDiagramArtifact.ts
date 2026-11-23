@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify'
 import type { DiagramArtifact, DiagramRequest } from './diagramArtifact'
 
-let mermaidQueue: Promise<unknown> = Promise.resolve()
+let conversationDiagramQueue: Promise<unknown> = Promise.resolve()
 let nextId = 1
 
 function unsafeCss(value: string): boolean {
@@ -116,13 +116,6 @@ async function compileMermaid(
   request: DiagramRequest
 ): Promise<DiagramArtifact> {
   const { default: mermaid } = await import('mermaid')
-  // Mermaid's SVG measurements must not flush layout for the application document.
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'sandbox',
-    suppressErrorRendering: true,
-    theme: request.theme === 'dark' ? 'dark' : 'default',
-  })
   const container = document.createElement('div')
   container.inert = true
   container.setAttribute('aria-hidden', 'true')
@@ -130,7 +123,13 @@ async function compileMermaid(
     'position:fixed;inset:0;visibility:hidden;pointer-events:none;contain:strict'
   document.body.append(container)
   try {
-    const result = await mermaid.render(`conversation-diagram-${nextId++}`, request.code, container)
+    const result = await mermaid.render(`conversation-diagram-${nextId++}`, request.code, container, {
+      startOnLoad: false,
+      // Keep SVG measurements outside the application document.
+      securityLevel: 'sandbox',
+      suppressErrorRendering: true,
+      theme: request.theme === 'dark' ? 'dark' : 'default',
+    })
     const markup = sandboxedDocumentMarkup(result.svg)
     return artifactFromSvg(sanitizeDiagramSvg(document, markup, true))
   } finally {
@@ -167,8 +166,8 @@ export function renderDiagramArtifact(
       : compilePlantuml(document, request)
   }
   if (request.kind === 'plantuml') return run()
-  // initialize() and render() must share one queue because Mermaid owns global configuration.
-  const pending = mermaidQueue.then(run)
-  mermaidQueue = pending.catch(() => undefined)
+  // Admit one conversation diagram at a time so scrolled-away work can be discarded.
+  const pending = conversationDiagramQueue.then(run)
+  conversationDiagramQueue = pending.catch(() => undefined)
   return pending
 }

@@ -1,3 +1,6 @@
+import engineeringRenderers from '@file-viewer/preset-engineering'
+import textRenderers from '@file-viewer/preset-lite'
+import FileViewer from '@file-viewer/react'
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterAll, beforeAll, expect, test, vi } from 'vitest'
 import mermaid from 'mermaid'
@@ -165,6 +168,144 @@ test('renders a real Mermaid sequence diagram without leaving its sandbox host m
   expect(measuredDocuments.size).toBe(1)
   expect(measuredDocuments.has(document)).toBe(false)
   expect(document.querySelector('iframe')).toBeNull()
+}, 15_000)
+
+test.each([
+  ['gitGraph', 'gitGraph\n  commit id: "Initial commit"\n  branch feature\n  commit', 'feature'],
+  ['eventmodeling', 'eventmodeling\n  tf 01 evt Start', 'Start'],
+])(
+  'renders %s with measurements in the diagram document',
+  async (_kind, code, label) => {
+    measuredDocuments.clear()
+    const { container } = render(<MarkdownDiagramPreview code={code} language="mermaid" />)
+
+    const [image] = await readyImages(container)
+    expect(artifactSvg(image)).toHaveTextContent(label)
+    expect(measuredDocuments.size).toBe(1)
+    expect(measuredDocuments.has(document)).toBe(false)
+    expect(document.querySelector('iframe')).toBeNull()
+  },
+  15_000
+)
+
+test('keeps the active Mermaid render config while other requests enter the queue', async () => {
+  const conversationContainer = document.body.appendChild(document.createElement('div'))
+  const fileContainer = document.body.appendChild(document.createElement('div'))
+  try {
+    const conversation = mermaid.render(
+      'queued-conversation',
+      'gitGraph\n  commit id: "Conversation"',
+      conversationContainer,
+      { securityLevel: 'sandbox', suppressErrorRendering: true }
+    )
+    const invalid = mermaid.render('queued-invalid', 'invalid Mermaid source', fileContainer, {
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+    })
+    const file = mermaid.render('queued-file', 'flowchart LR\nFile --> Finished', fileContainer, {
+      securityLevel: 'strict',
+    })
+
+    const [conversationResult, invalidResult, fileResult] = await Promise.allSettled([
+      conversation,
+      invalid,
+      file,
+    ])
+    expect(conversationResult).toMatchObject({
+      status: 'fulfilled',
+      value: { svg: expect.stringContaining('<iframe') },
+    })
+    expect(invalidResult.status).toBe('rejected')
+    expect(fileResult).toMatchObject({
+      status: 'fulfilled',
+      value: { svg: expect.stringMatching(/^<svg.*File/s) },
+    })
+    expect(conversationContainer).toBeEmptyDOMElement()
+    expect(fileContainer).toBeEmptyDOMElement()
+  } finally {
+    conversationContainer.remove()
+    fileContainer.remove()
+  }
+}, 15_000)
+
+test('renders a file preview after a conversation diagram renders during its paint wait', async () => {
+  const scheduleFrame = window.requestAnimationFrame.bind(window)
+  const file = new File(['flowchart LR\nFilePreview --> Finished'], 'preview.mmd')
+  const options = { preset: [engineeringRenderers], theme: 'light' as const }
+  let resumeFile: FrameRequestCallback | undefined
+  const frames = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+    if (!resumeFile && document.querySelector('[data-file-viewer-mermaid-isolate]')) {
+      resumeFile = callback
+      return 0
+    }
+    return scheduleFrame(callback)
+  })
+
+  try {
+    const viewer = render(
+      <FileViewer file={file} filename={file.name} type="mermaid" options={options} />
+    )
+    await waitFor(() => expect(resumeFile).toBeDefined())
+
+    const conversation = render(
+      <MarkdownDiagramPreview code={'flowchart LR\nConversation --> Finished'} language="mermaid" />
+    )
+    const [image] = await readyImages(conversation.container)
+    expect(artifactSvg(image)).toHaveTextContent('Conversation')
+
+    frames.mockRestore()
+    scheduleFrame(resumeFile!)
+    await waitFor(() => {
+      expect(viewer.container.querySelector('svg[data-diagram-cache-hit]')).toHaveTextContent(
+        'FilePreview'
+      )
+    })
+  } finally {
+    frames.mockRestore()
+  }
+}, 15_000)
+
+test('renders an embedded Markdown diagram behind a sandboxed Mermaid request', async () => {
+  const renderDiagram = mermaid.render
+  const conversationContainer = document.body.appendChild(document.createElement('div'))
+  const file = new File(
+    ['```mermaid\nflowchart LR\nMarkdownPreview --> Finished\n```'],
+    'preview.md'
+  )
+  let conversation: ReturnType<typeof renderDiagram> | undefined
+  const requests = vi
+    .spyOn(mermaid, 'render')
+    .mockImplementation((id, source, container, config) => {
+      if (id.startsWith('file-viewer-markdown-mermaid-')) {
+        conversation = renderDiagram(
+          'markdown-preview-conversation',
+          'gitGraph\n  commit id: "Conversation"',
+          conversationContainer,
+          { securityLevel: 'sandbox' }
+        )
+      }
+      return renderDiagram(id, source, container, config)
+    })
+
+  try {
+    const view = render(
+      <FileViewer
+        file={file}
+        filename={file.name}
+        type="markdown"
+        options={{ preset: [textRenderers], theme: 'light' }}
+      />
+    )
+    await waitFor(() => {
+      expect(view.container.querySelector('.markdown-mermaid-svg')).toHaveTextContent(
+        'MarkdownPreview'
+      )
+    })
+    expect((await conversation)?.svg).toContain('<iframe')
+  } finally {
+    conversationContainer.remove()
+    requests.mockRestore()
+  }
 }, 15_000)
 
 test('reuses one sanitized image artifact across copies, remounts and full screen with separate theme keys', async () => {
