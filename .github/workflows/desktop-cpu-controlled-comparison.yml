@@ -1,4 +1,4 @@
-name: Desktop CPU controlled comparison
+name: Desktop CPU checkpoint concurrency comparison
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   compare:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 65
     container:
       image: ghcr.io/wecode-ai/wegent-wework-e2e@sha256:f32d12a38ad03e9a247d8c7f6139bebf57a2042b6c71a4aedb15ea936d2fec15
       options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
@@ -27,10 +27,10 @@ jobs:
       CI: "true"
       WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD: "false"
       WEWORK_E2E_ISOLATED_XVFB: "true"
-      WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
       WEWORK_E2E_PARALLEL_SCOPE: core
       WEWORK_E2E_SCREENSHOTS: all
       WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
+      WEWORK_E2E_SEGMENTS: collaboration-milestones,idle-executor-requests,remote-task-access,task-share-as-issue,collaboration-local-agent-dispatch,temporary-chat,plugin-development,runtime-input-answer-persistence,human-interactions-issue,streaming-conversation-switching,codex-notification-isolation,executor-stream-recovery,system-pac
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,22 +41,6 @@ jobs:
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
-      - name: Download build from run 45121823814
-        uses: actions/download-artifact@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: "45121823814"
-          name: wework-desktop-core-e2e-build
-          path: .ci-artifacts/45121823814
-
-      - name: Download build from run 45110721705
-        uses: actions/download-artifact@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: "45110721705"
-          name: wework-desktop-core-e2e-build
-          path: .ci-artifacts/45110721705
-
       - name: Download build from run 45132789147
         uses: actions/download-artifact@v6
         with:
@@ -65,51 +49,51 @@ jobs:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts/45132789147
 
-      - name: Verify and restore all original builds
+      - name: Verify and restore the original build
         run: |
           sha256sum --check <<'CHECKSUMS'
-          c40e8004e7d00c00d1a447781c20a9e6447019c6201a213e215793d78c0a0de3  .ci-artifacts/45121823814/wework-core-e2e-build.tar.zst
-          82a9fc2b14130f04ba50cbaced9c958be5154c55a14ab1bcd3e4185a2daefa27  .ci-artifacts/45110721705/wework-core-e2e-build.tar.zst
           beef9a2ee52bf6e1992fb5c8e424a0a2b7cabef07ae108a1b63d18ae5b4856d9  .ci-artifacts/45132789147/wework-core-e2e-build.tar.zst
           CHECKSUMS
-          for source_run in 45121823814 45110721705 45132789147; do
-            bash .github/scripts/restore-wework-core-e2e-build.sh ".ci-artifacts/$source_run"
-          done
+          bash .github/scripts/restore-wework-core-e2e-build.sh .ci-artifacts/45132789147
 
-      - name: Run each baseline and candidate on this runner
+      - name: Run the original shard with one worker and four workers
         run: |
           set -euo pipefail
           mkdir -p .ci-artifacts/comparison
+          root="$PWD/.ci-artifacts/45132789147/wework-core-e2e-build"
+          export WEWORK_E2E_APP_BIN="$root/electron-app/WeWork"
+          export WEWORK_E2E_EXECUTOR_BIN="$root/electron-app/resources/bin/wegent-executor"
+          export WEWORK_E2E_CODEX_BIN="$root/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex"
+          export WEWORK_E2E_BACKEND_RS_BIN="$root/backend-rs/wegent-backend-rs"
+          export WEWORK_E2E_SOCKET_IO_CLIENT="$root/e2e-client/socket.io-client.cjs"
+          export WEWORK_E2E_YAML_PARSER="$root/e2e-client/yaml.cjs"
+          # Use the same plugin-development diagnostics as the original shard.
+          WEGENT_APP_IPC_ENDPOINT=diagnostic-fd-check WEWORK_E2E_EXECUTOR_REAL_BIN=/usr/bin/test \
+            .github/scripts/run-wework-executor-with-gdb.sh -r /proc/self/fd/3 3</dev/null
+          cp .github/scripts/run-wework-executor-with-gdb.sh "$WEWORK_E2E_EXECUTOR_BIN.gdb"
+          export WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN="$WEWORK_E2E_EXECUTOR_BIN.gdb"
+          segments="$(node .github/scripts/order-wework-linux-e2e.mjs)"
           status=0
-          run_case() {
-            local source_run=$1 checkpoint=$2
-            local root="$PWD/.ci-artifacts/$source_run/wework-core-e2e-build"
-            local evidence="$PWD/.ci-artifacts/comparison/$checkpoint-$source_run"
+          for workers in 1 4; do
+            evidence="$PWD/.ci-artifacts/comparison/workers-$workers"
             mkdir -p "$evidence"
-            WEWORK_E2E_APP_BIN="$root/electron-app/WeWork" \
-              WEWORK_E2E_EXECUTOR_BIN="$root/electron-app/resources/bin/wegent-executor" \
-              WEWORK_E2E_CODEX_BIN="$root/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex" \
-              WEWORK_E2E_BACKEND_RS_BIN="$root/backend-rs/wegent-backend-rs" \
-              WEWORK_E2E_SOCKET_IO_CLIENT="$root/e2e-client/socket.io-client.cjs" \
-              WEWORK_E2E_YAML_PARSER="$root/e2e-client/yaml.cjs" \
+            WEWORK_E2E_PARALLEL_CHECKPOINTS="$workers" \
               WEWORK_E2E_CPU_BENCHMARK_DIR="$evidence" \
               node .github/scripts/run-with-resource-logging.mjs node wework/e2e/desktop/run-checkpoints.mjs \
-              --parallel-segments "$checkpoint" 2>&1 | tee "$evidence/run.log" || status=1
-            if [[ ! -s "$evidence/$checkpoint.json" ]]; then
-              echo "::error::Missing CPU sample for $checkpoint on $source_run"
-              status=1
-            fi
-          }
-          run_case 45121823814 idle-executor-requests
-          run_case 45132789147 idle-executor-requests
-          run_case 45110721705 executor-stream-recovery
-          run_case 45132789147 executor-stream-recovery
+              --parallel-segments "$segments" 2>&1 | tee "$evidence/run.log" || status=1
+            for checkpoint in idle-executor-requests executor-stream-recovery; do
+              if [[ ! -s "$evidence/$checkpoint.json" ]]; then
+                echo "::error::Missing CPU sample for $checkpoint with $workers workers"
+                status=1
+              fi
+            done
+          done
           exit "$status"
 
       - name: Upload comparison logs and samples
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-cpu-controlled-comparison
+          name: desktop-cpu-concurrency-comparison
           path: .ci-artifacts/comparison/
           include-hidden-files: true
