@@ -1024,6 +1024,7 @@ function installDshWindowLabelHeaders(): void {
   session.defaultSession.on('will-download', (_event, item, webContents) => {
     desktopDownloadPolicy.apply(item, webContents)
   })
+  void desktopDownloadPolicy.prepare()
 }
 
 function layoutPrimaryView(): void {
@@ -1554,7 +1555,7 @@ async function updateDesktopPreferences(
     Object.hasOwn(patch, 'browserDownloadDirectory') ||
     Object.hasOwn(patch, 'browserAskBeforeDownload')
   ) {
-    desktopDownloadPolicy.update(updated)
+    void desktopDownloadPolicy.update(updated)
   }
   return updated
 }
@@ -2442,7 +2443,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('runtime-preferences-read', 'started')
   const { preferences: codexSubscriptionPreferences, readable: codexPreferenceReadable } =
     await preferences.readSnapshot()
-  if (codexPreferenceReadable) desktopDownloadPolicy.update(codexSubscriptionPreferences)
+  if (codexPreferenceReadable) void desktopDownloadPolicy.update(codexSubscriptionPreferences)
   logStartupStep('runtime-preferences-read', 'completed')
   // The Electron PreferencesStore returns raw JSON without normalization, so an
   // absent field (e.g. a fresh install or a user who never toggled it) must fall
@@ -3225,7 +3226,7 @@ if (hasSingleInstanceLock) {
         const settings = await preferenceStore.read()
         if (quitting) return
         desktopAppearance.update(settings)
-        desktopDownloadPolicy.update(settings)
+        void desktopDownloadPolicy.update(settings)
         nativeTheme.on('updated', () => desktopAppearance.update())
         logStartupStep('startup-preferences-read', 'completed')
         const saved = settings.mainWindowState

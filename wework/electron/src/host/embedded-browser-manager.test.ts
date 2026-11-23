@@ -1366,6 +1366,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     const policy = new DownloadTargetPolicy({
       defaultDownloadsDirectory: () => downloadsDir,
     })
+    await policy.prepare()
     try {
       const manager = new EmbeddedBrowserManager(
         directory,

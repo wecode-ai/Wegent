@@ -1,4 +1,5 @@
-import { accessSync, constants as fsConstants, existsSync, mkdirSync } from 'node:fs'
+import { constants as fsConstants, existsSync } from 'node:fs'
+import { access, mkdir } from 'node:fs/promises'
 import { basename, isAbsolute, join, parse } from 'node:path'
 
 export interface DownloadPreferences {
@@ -19,12 +20,13 @@ export interface ManagedDownloadItem {
 export interface DownloadUrlTarget {
   id: number
   downloadURL: (url: string) => void
+  once?: (event: 'destroyed', listener: () => void) => unknown
 }
 
 interface DownloadFileSystem {
-  accessSync: (path: string, mode?: number) => void
+  access: (path: string, mode?: number) => Promise<void>
   existsSync: (path: string) => boolean
-  mkdirSync: (path: string, options: { recursive: true }) => unknown
+  mkdir: (path: string, options: { recursive: true }) => Promise<unknown>
 }
 
 export interface DownloadTargetPolicyOptions {
@@ -32,21 +34,15 @@ export interface DownloadTargetPolicyOptions {
   onDownloadCompleted?: (savePath: string) => void
   onDirectoryWarning?: (message: string, error: unknown) => void
   fs?: DownloadFileSystem
-  now?: () => number
-  saveAsTtlMs?: number
+  caseInsensitivePaths?: boolean
 }
 
-interface PendingSaveAsEntry {
-  url: string
-  expiresAt: number
-}
-
-const DEFAULT_SAVE_AS_TTL_MS = 60_000
+const MAX_PENDING_SAVE_AS_PER_TARGET = 64
 
 const DEFAULT_FS: DownloadFileSystem = {
-  accessSync,
+  access,
   existsSync,
-  mkdirSync,
+  mkdir,
 }
 
 export function resolveDownloadPreferences(
@@ -83,17 +79,23 @@ function normalizeMatchUrl(rawUrl: string): string {
   }
 }
 
+function reservationKey(targetPath: string, caseInsensitive: boolean): string {
+  return caseInsensitive ? targetPath.toLowerCase() : targetPath
+}
+
 function findAvailablePath(
   directory: string,
   filename: string,
   activeSavePaths: ReadonlySet<string>,
-  exists: (path: string) => boolean
+  exists: (path: string) => boolean,
+  caseInsensitive: boolean
 ): string {
   const parsed = parse(filename)
   for (let index = 0; ; index += 1) {
     const candidateName = index === 0 ? filename : `${parsed.name} (${index})${parsed.ext}`
     const candidatePath = join(directory, candidateName)
-    if (!exists(candidatePath) && !activeSavePaths.has(candidatePath)) {
+    const key = reservationKey(candidatePath, caseInsensitive)
+    if (!exists(candidatePath) && !activeSavePaths.has(key)) {
       return candidatePath
     }
   }
@@ -105,19 +107,49 @@ export class DownloadTargetPolicy {
     askBeforeDownload: false,
   }
   private readonly activeSavePaths = new Set<string>()
-  private readonly pendingSaveAs = new Map<number, PendingSaveAsEntry[]>()
+  private readonly verifiedDirectories = new Map<string, boolean>()
+  private readonly pendingSaveAs = new Map<number, string[]>()
+  private readonly observedDestroyTargets = new Set<number>()
   private readonly fs: DownloadFileSystem
-  private readonly now: () => number
-  private readonly saveAsTtlMs: number
+  private readonly caseInsensitivePaths: boolean
+  private prepareGeneration = 0
 
   constructor(private readonly options: DownloadTargetPolicyOptions) {
     this.fs = options.fs ?? DEFAULT_FS
-    this.now = options.now ?? Date.now
-    this.saveAsTtlMs = options.saveAsTtlMs ?? DEFAULT_SAVE_AS_TTL_MS
+    this.caseInsensitivePaths =
+      options.caseInsensitivePaths ??
+      (process.platform === 'darwin' || process.platform === 'win32')
   }
 
-  update(preferences: Record<string, unknown>): void {
+  update(preferences: Record<string, unknown>): Promise<void> {
     this.preferences = resolveDownloadPreferences(preferences)
+    return this.prepare()
+  }
+
+  async prepare(): Promise<void> {
+    const generation = ++this.prepareGeneration
+    const preferred = this.preferences.downloadDirectory
+    const fallback = this.resolveFallbackDirectory()
+    const checks: Array<{ directory: string; label: string }> = []
+    if (preferred && isAbsolute(preferred)) {
+      checks.push({ directory: preferred, label: 'custom download directory' })
+    }
+    if (fallback && fallback !== preferred) {
+      checks.push({ directory: fallback, label: 'system downloads directory' })
+    }
+
+    const results = await Promise.all(
+      checks.map(async ({ directory, label }) => ({
+        directory,
+        writable: await this.tryPrepareDirectory(directory, label),
+      }))
+    )
+
+    if (generation !== this.prepareGeneration) return
+    this.verifiedDirectories.clear()
+    for (const { directory, writable } of results) {
+      this.verifiedDirectories.set(directory, writable)
+    }
   }
 
   current(): DownloadPreferences {
@@ -125,11 +157,20 @@ export class DownloadTargetPolicy {
   }
 
   downloadUrlAs(contents: DownloadUrlTarget, url: string): void {
-    const now = this.now()
     const normalizedUrl = normalizeMatchUrl(url)
-    const entries = this.prunePendingSaveAs(contents.id, now)
-    entries.push({ url: normalizedUrl, expiresAt: now + this.saveAsTtlMs })
+    const entries = this.pendingSaveAs.get(contents.id) ?? []
+    entries.push(normalizedUrl)
+    if (entries.length > MAX_PENDING_SAVE_AS_PER_TARGET) {
+      entries.splice(0, entries.length - MAX_PENDING_SAVE_AS_PER_TARGET)
+    }
     this.pendingSaveAs.set(contents.id, entries)
+    if (!this.observedDestroyTargets.has(contents.id) && contents.once) {
+      this.observedDestroyTargets.add(contents.id)
+      contents.once('destroyed', () => {
+        this.pendingSaveAs.delete(contents.id)
+        this.observedDestroyTargets.delete(contents.id)
+      })
+    }
     contents.downloadURL(url)
   }
 
@@ -139,9 +180,10 @@ export class DownloadTargetPolicy {
   ): { mode: 'save-path' | 'save-dialog'; path: string } {
     const promptForSave = this.consumePendingSaveAs(webContents?.id ?? null, item)
     const filename = sanitizeDownloadFilename(item.getFilename())
-    const directory = this.prepareWritableDirectory()
+    const directory = this.selectVerifiedDirectory()
 
     if (!directory) {
+      void this.prepare()
       const defaultPath = this.fallbackDefaultPath(filename)
       item.setSaveDialogOptions({ defaultPath })
       this.attachCompletionHook(item)
@@ -152,7 +194,8 @@ export class DownloadTargetPolicy {
       directory,
       filename,
       this.activeSavePaths,
-      this.fs.existsSync
+      this.fs.existsSync,
+      this.caseInsensitivePaths
     )
 
     if (promptForSave || this.preferences.askBeforeDownload) {
@@ -161,10 +204,11 @@ export class DownloadTargetPolicy {
       return { mode: 'save-dialog', path: candidatePath }
     }
 
-    this.activeSavePaths.add(candidatePath)
+    const reservedKey = reservationKey(candidatePath, this.caseInsensitivePaths)
+    this.activeSavePaths.add(reservedKey)
     item.setSavePath(candidatePath)
     item.once('done', (_event, state) => {
-      this.activeSavePaths.delete(candidatePath)
+      this.activeSavePaths.delete(reservedKey)
       if (state === 'completed') this.notifyCompleted(item, candidatePath)
     })
     return { mode: 'save-path', path: candidatePath }
@@ -182,31 +226,35 @@ export class DownloadTargetPolicy {
     if (savePath) this.options.onDownloadCompleted?.(savePath)
   }
 
-  private prepareWritableDirectory(): string | null {
+  private selectVerifiedDirectory(): string | null {
     const preferred = this.preferences.downloadDirectory
-    if (preferred && isAbsolute(preferred)) {
-      if (this.tryPrepareDirectory(preferred, 'custom download directory')) {
-        return preferred
-      }
+    if (preferred && isAbsolute(preferred) && this.verifiedDirectories.get(preferred) === true) {
+      return preferred
     }
+    const fallback = this.resolveFallbackDirectory()
+    if (fallback && this.verifiedDirectories.get(fallback) === true) {
+      return fallback
+    }
+    return null
+  }
+
+  private resolveFallbackDirectory(): string | null {
     try {
       const fallback = this.options.defaultDownloadsDirectory()
-      if (fallback && this.tryPrepareDirectory(fallback, 'system downloads directory')) {
-        return fallback
-      }
+      return fallback && isAbsolute(fallback) ? fallback : null
     } catch (error) {
       this.options.onDirectoryWarning?.(
         '[downloads] failed to resolve system downloads directory; falling back to save dialog',
         error
       )
+      return null
     }
-    return null
   }
 
-  private tryPrepareDirectory(directory: string, label: string): boolean {
+  private async tryPrepareDirectory(directory: string, label: string): Promise<boolean> {
     try {
-      this.fs.mkdirSync(directory, { recursive: true })
-      this.fs.accessSync(directory, fsConstants.W_OK)
+      await this.fs.mkdir(directory, { recursive: true })
+      await this.fs.access(directory, fsConstants.W_OK)
       return true
     } catch (error) {
       this.options.onDirectoryWarning?.(
@@ -226,26 +274,17 @@ export class DownloadTargetPolicy {
     }
   }
 
-  private prunePendingSaveAs(webContentsId: number, now: number): PendingSaveAsEntry[] {
-    const entries = this.pendingSaveAs.get(webContentsId)
-    if (!entries || entries.length === 0) return []
-    const active = entries.filter(entry => entry.expiresAt >= now)
-    if (active.length === 0) this.pendingSaveAs.delete(webContentsId)
-    else this.pendingSaveAs.set(webContentsId, active)
-    return active
-  }
-
   private consumePendingSaveAs(webContentsId: number | null, item: ManagedDownloadItem): boolean {
     if (webContentsId === null) return false
-    const entries = this.prunePendingSaveAs(webContentsId, this.now())
-    if (entries.length === 0) return false
+    const entries = this.pendingSaveAs.get(webContentsId)
+    if (!entries || entries.length === 0) return false
     const candidateUrls = new Set<string>()
     for (const url of item.getURLChain?.() ?? []) {
       candidateUrls.add(normalizeMatchUrl(url))
     }
     candidateUrls.add(normalizeMatchUrl(item.getURL()))
 
-    const matchIndex = entries.findIndex(entry => candidateUrls.has(entry.url))
+    const matchIndex = entries.findIndex(url => candidateUrls.has(url))
     if (matchIndex === -1) return false
     entries.splice(matchIndex, 1)
     if (entries.length === 0) this.pendingSaveAs.delete(webContentsId)

@@ -52,7 +52,7 @@ describe('sanitizeDownloadFilename', () => {
 })
 
 describe('DownloadTargetPolicy', () => {
-  test('saves directly to system Downloads with disk and concurrent deduplication', async () => {
+  test('saves directly to system Downloads with disk, concurrent, and case-variant deduplication', async () => {
     const downloadsDir = await mkdtemp(join(tmpdir(), 'wework-download-policy-'))
     const onDownloadCompleted = vi.fn()
     try {
@@ -60,10 +60,12 @@ describe('DownloadTargetPolicy', () => {
       const policy = new DownloadTargetPolicy({
         defaultDownloadsDirectory: () => downloadsDir,
         onDownloadCompleted,
+        caseInsensitivePaths: true,
       })
+      await policy.prepare()
 
       const first = new FakeDownloadItem('video.mp4')
-      const second = new FakeDownloadItem('video.mp4')
+      const second = new FakeDownloadItem('Video.MP4')
       const firstResult = policy.apply(first, { id: 1 })
       const secondResult = policy.apply(second, { id: 1 })
 
@@ -73,12 +75,12 @@ describe('DownloadTargetPolicy', () => {
       })
       expect(secondResult).toEqual({
         mode: 'save-path',
-        path: join(downloadsDir, 'video (2).mp4'),
+        path: join(downloadsDir, 'Video (2).MP4'),
       })
       expect(first.setSavePath).toHaveBeenCalledExactlyOnceWith(join(downloadsDir, 'video (1).mp4'))
       expect(first.setSaveDialogOptions).not.toHaveBeenCalled()
       expect(second.setSavePath).toHaveBeenCalledExactlyOnceWith(
-        join(downloadsDir, 'video (2).mp4')
+        join(downloadsDir, 'Video (2).MP4')
       )
 
       first.emit('done', {}, 'completed')
@@ -106,7 +108,7 @@ describe('DownloadTargetPolicy', () => {
       const policy = new DownloadTargetPolicy({
         defaultDownloadsDirectory: () => systemDownloads,
       })
-      policy.update({
+      await policy.update({
         browserDownloadDirectory: customDownloads,
         browserAskBeforeDownload: false,
       })
@@ -119,8 +121,16 @@ describe('DownloadTargetPolicy', () => {
       expect(direct.setSavePath).toHaveBeenCalledWith(join(customDownloads, 'clip.mp4'))
 
       // Explicit Save As prompts once even when askBeforeDownload is false, including redirects.
+      const target = new EventEmitter()
       const downloadURL = vi.fn()
-      policy.downloadUrlAs({ id: 7, downloadURL }, 'https://example.test/start#hash')
+      policy.downloadUrlAs(
+        {
+          id: 7,
+          downloadURL,
+          once: (event, listener) => target.once(event, listener),
+        },
+        'https://example.test/start#hash'
+      )
       expect(downloadURL).toHaveBeenCalledExactlyOnceWith('https://example.test/start#hash')
       const saveAsItem = new FakeDownloadItem('photo.png', 'https://cdn.example.test/final.png', [
         'https://example.test/start',
@@ -139,8 +149,21 @@ describe('DownloadTargetPolicy', () => {
       const nextDirect = new FakeDownloadItem('next.mp4', 'https://example.test/next.mp4')
       expect(policy.apply(nextDirect, { id: 7 }).mode).toBe('save-path')
 
+      // Pending Save As entries are cleared when the owning webContents is destroyed.
+      policy.downloadUrlAs(
+        {
+          id: 7,
+          downloadURL,
+          once: (event, listener) => target.once(event, listener),
+        },
+        'https://example.test/abandoned'
+      )
+      target.emit('destroyed')
+      const afterDestroy = new FakeDownloadItem('late.mp4', 'https://example.test/abandoned')
+      expect(policy.apply(afterDestroy, { id: 7 }).mode).toBe('save-path')
+
       // Enabling browserAskBeforeDownload prompts for every download.
-      policy.update({
+      await policy.update({
         browserDownloadDirectory: customDownloads,
         browserAskBeforeDownload: true,
       })
@@ -158,20 +181,23 @@ describe('DownloadTargetPolicy', () => {
     }
   })
 
-  test('falls back to save dialog when no download directory is writable', () => {
+  test('falls back to save dialog without blocking when no download directory is writable', async () => {
     const warnings: string[] = []
     const policy = new DownloadTargetPolicy({
       defaultDownloadsDirectory: () => '/Users/demo/Downloads',
       onDirectoryWarning: message => warnings.push(message),
       fs: {
-        mkdirSync: () => undefined,
-        accessSync: () => {
+        mkdir: async () => undefined,
+        access: async () => {
           throw Object.assign(new Error('EPERM'), { code: 'EPERM' })
         },
         existsSync: () => false,
       },
     })
-    policy.update({ browserDownloadDirectory: '/Volumes/Missing', browserAskBeforeDownload: false })
+    await policy.update({
+      browserDownloadDirectory: '/Volumes/Missing',
+      browserAskBeforeDownload: false,
+    })
 
     const item = new FakeDownloadItem('video.mp4')
     expect(policy.apply(item, { id: 2 })).toEqual({
