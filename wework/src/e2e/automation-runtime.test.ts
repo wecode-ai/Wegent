@@ -573,6 +573,45 @@ describe('Electron desktop E2E automation', () => {
     }
   )
 
+  test('ignores a polled Runtime command that was already dispatched and completed', async () => {
+    const completed = Promise.withResolvers<void>()
+    const command: DesktopControlCommand = {
+      id: 'delayed-runtime-delivery',
+      action: 'fetchLocalRuntime',
+      selector: 'body',
+      value: JSON.stringify({ url: 'http://127.0.0.1:3000/wework/fixture' }),
+    }
+    const requestRuntime = vi.fn(async (input: nativeRuntime.RuntimeControlInput) => ({
+      id: input.command.id,
+      clientId: input.clientId,
+    }))
+    const verificationWindow = window as Window & { weworkElectronVerification?: unknown }
+    verificationWindow.weworkElectronVerification = { requestRuntime }
+    let polls = 0
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (!url.includes('/commands?')) return new Response('{}')
+      polls++
+      if (polls === 1) return new Response(JSON.stringify(command))
+      if (polls === 2) {
+        // This response was selected before Native acknowledged admission.
+        await completed.promise
+        return new Response(JSON.stringify(command))
+      }
+      return new Response(null, { status: 410 })
+    })
+    try {
+      const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      await vi.waitFor(() => expect(requestRuntime).toHaveBeenCalledOnce())
+      await requestRuntime.mock.results[0].value
+      completed.resolve()
+      await client
+      expect(requestRuntime).toHaveBeenCalledOnce()
+    } finally {
+      completed.resolve()
+      delete verificationWindow.weworkElectronVerification
+    }
+  })
+
   test('registers before polling and stops when the server retires the client', async () => {
     let register!: (response: Response) => void
     const registration = new Promise<Response>(resolve => {

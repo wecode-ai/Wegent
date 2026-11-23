@@ -4344,6 +4344,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
   let commandRequest = pollForCommand()
+  let lastRuntimeCommandId: string | undefined
 
   while (true) {
     try {
@@ -4362,11 +4363,16 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       const diagnostic = { commandId: command.id, action: command.action, clientId }
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
       if (command.action === 'fetchLocalRuntime') {
-        // Native owns admission and reporting, so Renderer scheduling cannot
-        // consume the Runtime action's budget or delay its completed result.
-        void dispatchDesktopRuntimeControl(command, clientId).catch(error => {
-          console.error('[Wework] Desktop E2E Runtime request failed:', error)
-        })
+        // The queue can send its current command again before Native acknowledges
+        // admission. A delayed poll response can arrive after Native has finished.
+        if (lastRuntimeCommandId === command.id) {
+          await waitForDesktopControlTick()
+        } else {
+          lastRuntimeCommandId = command.id
+          void dispatchDesktopRuntimeControl(command, clientId).catch(error => {
+            console.error('[Wework] Desktop E2E Runtime request failed:', error)
+          })
+        }
         commandRequest = pollForCommand()
         continue
       }
