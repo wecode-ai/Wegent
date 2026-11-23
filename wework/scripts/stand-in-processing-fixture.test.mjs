@@ -33,32 +33,6 @@ async function respond(input, { tools = [], kind } = {}) {
 }
 
 describe('stand-in processing model fixture', () => {
-  test('runs the child prompt when Codex renders recalled parent history as a user message', async () => {
-    const output = await respond(
-      [
-        {
-          type: 'message',
-          role: 'user',
-          content: [
-            { type: 'input_text', text: '[tool_result without a matching tool_call]' },
-            {
-              type: 'input_text',
-              text: '{"items":[{"excerpt":"PRIMARY_ORCHESTRATE_TASK_CREATE"}]}',
-            },
-          ],
-        },
-        {
-          type: 'message',
-          role: 'user',
-          content: [{ type: 'input_text', text: 'PRIMARY_CONCRETE_WORK' }],
-        },
-      ],
-      { tools: [{ type: 'custom', name: 'exec' }] }
-    )
-    expect(output).toContain('PRIMARY_CONCRETE_DONE')
-    expect(output).not.toContain('create_task')
-  })
-
   test('continues the existing task when the primary history contains an earlier create request', async () => {
     const output = await respond(
       [
@@ -72,30 +46,34 @@ describe('stand-in processing model fixture', () => {
     expect(output).not.toContain('wework_stand_in__create_task')
   })
 
-  test.each(['string', 'parts', 'agent-output'])(
+  test.each(['string', 'parts', 'agent-output', 'detached-responses-context'])(
     'quoted parent recall (%s) cannot route a read-only worker to create another task',
     async format => {
       const recall =
         '<external_wework.stand-in.recall>{"items":[{"excerpt":"PRIMARY_ORCHESTRATE_TASK_CREATE"}]}</external_wework.stand-in.recall>'
+      const quotedHistory = JSON.stringify({
+        items: [{ excerpt: 'PRIMARY_ORCHESTRATE_TASK_CREATE' }],
+      })
+      const recallItems = {
+        string: { role: 'user', content: recall },
+        parts: { role: 'user', content: [{ type: 'input_text', text: recall }] },
+        'agent-output': {
+          type: 'function_call_output',
+          namespace: 'agent',
+          name: 'weworkstandinrecall',
+          output: quotedHistory,
+        },
+        'detached-responses-context': {
+          type: 'message',
+          role: 'user',
+          content: [
+            { type: 'input_text', text: '[tool_result without a matching tool_call]' },
+            { type: 'input_text', text: quotedHistory },
+          ],
+        },
+      }
       const output = await respond(
-        [
-          {
-            ...(format === 'agent-output'
-              ? {
-                  type: 'function_call_output',
-                  namespace: 'agent',
-                  name: 'weworkstandinrecall',
-                  output: JSON.stringify({
-                    items: [{ excerpt: 'PRIMARY_ORCHESTRATE_TASK_CREATE' }],
-                  }),
-                }
-              : {
-                  role: 'user',
-                  content: format === 'string' ? recall : [{ type: 'input_text', text: recall }],
-                }),
-          },
-          { role: 'user', content: 'PRIMARY_CONCRETE_WORK' },
-        ],
+        [recallItems[format], { role: 'user', content: 'PRIMARY_CONCRETE_WORK' }],
         { tools: [{ type: 'tool_search' }] }
       )
       expect(output).toContain('PRIMARY_CONCRETE_DONE')
