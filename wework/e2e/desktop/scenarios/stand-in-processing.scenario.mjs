@@ -17,6 +17,7 @@ import {
   handleModelMaintenanceRequest,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
+  modelMessageText,
   readRequestBody,
   requestContainsToolOutput,
   responseCompleted,
@@ -28,28 +29,10 @@ const ROLE = 'silent-review'
 const MARKER = 'SILENT_INTAKE_REAL_ASSIGNMENT'
 const FOLLOWUP = 'SILENT_PROGRESS_CHECK'
 
-function processingInput(body) {
-  const input = Array.isArray(body.input) ? body.input : [body.input]
-  return JSON.stringify(
-    input.filter(item => {
-      if (
-        item?.type === 'function_call_output' &&
-        item.namespace === 'agent' &&
-        item.name === 'weworkstandinrecall'
-      )
-        return false
-      const text =
-        typeof item?.content === 'string'
-          ? item.content
-          : (item?.content ?? []).map(part => part?.text ?? '').join('')
-      // Quoted recall remains in the real request, but cannot select a scripted command.
-      return !(
-        item?.role === 'user' &&
-        text.trim().startsWith('<external_wework.stand-in.recall>') &&
-        text.trim().endsWith('</external_wework.stand-in.recall>')
-      )
-    })
-  )
+function processingInput(input) {
+  if (typeof input === 'string') return input
+  // Prior turns and recalled text can quote commands belonging to another task.
+  return modelMessageText(input?.findLast(item => item?.role === 'user'))
 }
 
 export function createDesktopScenario({
@@ -124,7 +107,7 @@ export function createDesktopScenario({
       const body = await readRequestBody(req)
       if (handleModelMaintenanceRequest(body, response)) return true
       if (isReplyPredictionRequest(body)) return false
-      const input = processingInput(body)
+      const input = processingInput(body.input)
       let events = delegatedTaskResultEvents(body)
       if (events) {
         // A result wake is a new host turn, even when its history quotes the original request.
@@ -159,8 +142,11 @@ export function createDesktopScenario({
             toolCallId: readId,
           }).events
         }
-      } else if (input.includes('PRIMARY_ORCHESTRATE_TASK')) {
-        const followup = input.includes('PRIMARY_ORCHESTRATE_TASK_CONTINUE')
+      } else if (
+        input === 'PRIMARY_ORCHESTRATE_TASK_CREATE' ||
+        input === 'PRIMARY_ORCHESTRATE_TASK_CONTINUE'
+      ) {
+        const followup = input === 'PRIMARY_ORCHESTRATE_TASK_CONTINUE'
         const callId = followup ? 'primary-continue-task' : 'primary-create-task'
         if (requestContainsToolOutput(body, callId)) {
           const result = JSON.parse(readMcpToolOutput(body, callId))
@@ -189,15 +175,10 @@ export function createDesktopScenario({
             toolCallId: callId,
           }).events
         }
-      } else if (
-        input.includes('PRIMARY_CONCRETE_WORK') ||
-        input.includes('ORDINARY_PROGRESS_CHECK')
-      ) {
+      } else if (input === 'PRIMARY_CONCRETE_WORK' || input === 'ORDINARY_PROGRESS_CHECK') {
         events = [
           assistantMessage(
-            input.includes('ORDINARY_PROGRESS_CHECK')
-              ? 'ORDINARY_FOLLOWUP_DONE'
-              : 'PRIMARY_CONCRETE_DONE'
+            input === 'ORDINARY_PROGRESS_CHECK' ? 'ORDINARY_FOLLOWUP_DONE' : 'PRIMARY_CONCRETE_DONE'
           ),
         ]
       } else if (input.includes(MARKER) || input.includes(FOLLOWUP)) {
