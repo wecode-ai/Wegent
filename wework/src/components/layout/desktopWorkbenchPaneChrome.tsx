@@ -84,7 +84,7 @@ export function createDesktopWorkbenchPaneChrome(
     rightTitlebarActionsWidth,
     rightPanelTabBarWidth,
     bottomPanelOpen,
-    paneMessages,
+    paneSession,
     currentRuntimeUsesCodex,
     branchNameApi,
     generateBranchName,
@@ -103,7 +103,7 @@ export function createDesktopWorkbenchPaneChrome(
       key={environmentInfoDocked ? 'docked' : 'floating'}
       info={environmentInfo}
       isGitRepository={conversationSummaryIsGitRepository}
-      messages={paneMessages}
+      transcript={paneSession.transcript}
       popoverContainer={environmentInfoPanelElement}
       docked={environmentInfoDocked}
       open={environmentInfoOpen}

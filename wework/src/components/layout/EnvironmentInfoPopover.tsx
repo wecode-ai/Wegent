@@ -20,19 +20,22 @@ import { controlPopup } from '@wegent/collaboration/controls/recipes'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import { GitBranch, Info, Link2 } from 'lucide-react'
-import { memo, useMemo, type ReactNode } from 'react'
+import { memo, useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 import { EnvironmentSummaryOverview } from './EnvironmentSummaryOverview'
 import { TaskSupervisorStatusButton } from './TaskSupervisorControl'
+import type { PaneTranscript } from './workbenchPaneConversationPresentation'
 
 const EMPTY_MESSAGES: readonly WorkbenchMessage[] = []
+const readEmptyMessages = () => EMPTY_MESSAGES
+const ignoreTranscript = () => () => {}
 const EnvironmentContribution = memo(DshContributionSlotSurface)
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
   isGitRepository?: boolean
-  messages?: readonly WorkbenchMessage[]
+  transcript: PaneTranscript
   popoverContainer: HTMLElement | null
   docked?: boolean
   open: boolean
@@ -83,7 +86,7 @@ function gitRepositoryContextValue(
 export function EnvironmentInfoPopover({
   info,
   isGitRepository,
-  messages = EMPTY_MESSAGES,
+  transcript,
   popoverContainer,
   docked = true,
   open,
@@ -115,7 +118,11 @@ export function EnvironmentInfoPopover({
     onOpenChange(next)
     if (next) void onRefresh?.()
   }
-  const visibleMessages = open ? messages : EMPTY_MESSAGES
+  const visibleMessages = useSyncExternalStore(
+    open ? transcript.subscribe : ignoreTranscript,
+    open ? () => transcript.getSnapshot().messages : readEmptyMessages,
+    readEmptyMessages
+  )
   const outputs = useMemo(() => buildConversationOutputs(visibleMessages), [visibleMessages])
   const workspaceIsGitRepository = gitRepositoryContextValue(info, isGitRepository)
   const contribution = useMemo(() => {

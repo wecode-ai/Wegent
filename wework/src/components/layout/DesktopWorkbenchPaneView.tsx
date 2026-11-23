@@ -574,7 +574,7 @@ export function DesktopWorkbenchPaneView({
             item={activeDeliveryItem}
             runtimeTask={currentRuntimeTask}
             runtimeTaskTitle={runtimeTaskTitle}
-            messages={paneSession.messages}
+            transcript={paneSession.transcript}
             deliveryApi={boundProjectSpaceApi}
             onCancel={closeDeliveryDialog}
             onDelivered={finishDelivery}

@@ -242,7 +242,9 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
     get selectedSubagentStatus() {
       return selectedSubagentBlock?.status
     },
-    paneMessages: paneContext.paneSession.messages,
+    get paneMessages() {
+      return paneContext.paneSession.transcript.getSnapshot().messages
+    },
     get feedbackDialogRequest() {
       return paneContext.feedbackDialogRequest
     },
@@ -959,7 +961,6 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
     forkDialogOpen,
     setForkDialogOpen,
     setHasPreviousTurnReview,
-    paneMessages,
     pendingRequestUserInput,
     rightPanelPlanContent,
     paneQueuedMessages,

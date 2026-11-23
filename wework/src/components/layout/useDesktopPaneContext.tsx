@@ -119,6 +119,7 @@ export function useDesktopPaneContext({
     currentRuntimeTask && initialWorkspaceState?.transferredFromBlank ? initialWorkspaceState : null
   const paneSession = useWorkbenchPaneSession({
     currentRuntimeTask,
+    separateTranscript: true,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
   const startupSurfaceReady =

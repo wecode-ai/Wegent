@@ -198,7 +198,12 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
           target,
           method: 'Runtime.evaluate',
           params: {
-            expression: '({ visibility: document.visibilityState, focused: document.hasFocus() })',
+            expression: `(async () => ({
+              activity: await window.weworkElectronLifecycle.getWorkbenchActivity(),
+              visibility: document.visibilityState,
+              focused: document.hasFocus(),
+            }))()`,
+            awaitPromise: true,
             returnByValue: true,
           },
         })
@@ -264,6 +269,7 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
           }
         }
         const before = await windowState()
+        assert.equal(before.activity, 'foreground', 'Measure the foreground presentation path')
         const idleStart = await cpuSnapshot(pids)
         for (let i = 0; i < idleSamples; i++) {
           await sampleHeap('idle')
@@ -320,13 +326,15 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
           singleTaskCpuPercent: cpuPercent(start, end),
           peakObservedJsHeapBytes: Math.max(...samples.map(sample => sample.usedSize)),
         }
+        const after = await windowState()
+        assert.equal(after.activity, 'foreground', 'The presentation path changed during the run')
         const report = {
           measurements,
           heapSamples: samples,
           processSamples,
           historicalTasks: measureHistory ? historyTaskCount : 0,
           rendererPids: pids,
-          window: { before, after: await windowState() },
+          window: { before, after },
           capture,
           limits,
           withinLimits: capture

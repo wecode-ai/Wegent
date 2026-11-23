@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore, type ComponentProps } from 'react'
 import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
@@ -40,6 +40,21 @@ import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { WorktreeCreationStatus } from './WorktreeCreationStatus'
+import type { PaneTranscript } from './workbenchPaneConversationPresentation'
+
+function DesktopTranscript({
+  transcript,
+  ...props
+}: Omit<ComponentProps<typeof ScrollableMessageArea>, 'messages' | 'turns'> & {
+  transcript: PaneTranscript
+}) {
+  const { messages, turns } = useSyncExternalStore(
+    transcript.subscribe,
+    transcript.getSnapshot,
+    transcript.getSnapshot
+  )
+  return <ScrollableMessageArea {...props} messages={messages} turns={turns} />
+}
 
 export function DesktopWorkbenchConversationView({
   model,
@@ -132,7 +147,6 @@ export function DesktopWorkbenchConversationView({
     activeNewChatRuntime,
     activeHarnessDisplayError,
     submitWorkbenchInput,
-    paneMessages,
     workbenchTitle,
     pendingRequestUserInput,
     paneQueuedMessages,
@@ -175,6 +189,7 @@ export function DesktopWorkbenchConversationView({
     clearCurrentGoal,
     showPageTopBar,
   } = model
+  const { messages: paneMessages, transcript } = paneSession
   const hasTask = currentRuntimeTask !== null
   const transcriptLoading = paneSession.transcriptLoading
   const selectionSharingMounted = hasTask && paneVisible && workbenchVisible
@@ -226,8 +241,7 @@ export function DesktopWorkbenchConversationView({
             shareRef={issueShareRef}
             key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
             title={workbenchTitle ?? ''}
-            messages={paneMessages}
-            turns={paneSession.turns}
+            readTranscript={transcript.getSnapshot}
             address={{
               ...currentRuntimeTask,
               workspacePath: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath,
@@ -296,12 +310,11 @@ export function DesktopWorkbenchConversationView({
               className="relative flex min-w-0 flex-col"
               onClick={focusComposerFromConversationClick}
             >
-              <ScrollableMessageArea
+              <DesktopTranscript
                 mcpApp={mcpAppConversationServices}
                 searchActive={paneActive && paneVisible && workbenchVisible}
                 imageTarget={remoteImageTarget}
-                messages={paneMessages}
-                turns={paneSession.turns}
+                transcript={transcript}
                 loading={paneSession.transcriptLoading}
                 transcriptError={paneSession.transcriptError}
                 onRetryTranscript={paneSession.reloadRuntimeTranscript}
@@ -645,7 +658,12 @@ export function DesktopWorkbenchConversationView({
                       }
                 }
                 onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
+                  loadTurnFileChangesDiff(
+                    subtaskId,
+                    transcript.getSnapshot().messages,
+                    fileChanges,
+                    currentRuntimeTask
+                  )
                 }
                 onRevertFileChanges={
                   issueExecutionReadOnly
@@ -653,7 +671,7 @@ export function DesktopWorkbenchConversationView({
                     : (subtaskId, fileChanges) =>
                         revertTurnFileChanges(
                           subtaskId,
-                          paneMessages,
+                          transcript.getSnapshot().messages,
                           fileChanges,
                           currentRuntimeTask
                         )

@@ -14,6 +14,7 @@ import type {
 export interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
   debugSnapshotEnabled?: boolean
+  separateTranscript?: boolean
 }
 
 export interface SendRequestUserInputResponseOptions {

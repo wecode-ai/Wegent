@@ -226,7 +226,7 @@ All desktop checkpoints use a `desktop-control` registry within their result dir
 
 ### Renderer CPU and JS heap benchmark
 
-On macOS, compare the baseline and candidate on the same machine with the same foreground window state and build configuration. The commands launch isolated Electron and the real executor. A test model emits 120 Markdown chunks at 100 ms intervals. The benchmark verifies that the first chunk appears while streaming and waits for the last chunk to appear.
+On macOS, compare the baseline and candidate on the same machine with the same build configuration. The commands launch isolated Electron and the real executor. A test model emits 120 Markdown chunks at 100 ms intervals. The benchmark verifies that the first chunk appears while streaming and waits for the last chunk to appear. The isolated window uses the foreground rendering path without taking desktop focus. The report's `window` records native activity, document visibility, and focus.
 
 ```bash
 pnpm --filter wework ai:verify:electron:build

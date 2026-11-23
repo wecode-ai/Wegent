@@ -20,6 +20,7 @@ export {
 export function useWorkbenchPaneSession({
   currentRuntimeTask,
   debugSnapshotEnabled = true,
+  separateTranscript = false,
 }: WorkbenchPaneSessionOptions) {
   const queueDiagnosticSessionId = useId()
   const { t } = useTranslation('common')
@@ -53,10 +54,12 @@ export function useWorkbenchPaneSession({
       attachmentState,
     ]
   )
-  const [owner, setOwner] = useState(() => createWorkbenchPaneSessionSource(external))
+  const [owner, setOwner] = useState(() =>
+    createWorkbenchPaneSessionSource(external, separateTranscript)
+  )
   let source = owner
   if (!source.matches(external)) {
-    source = createWorkbenchPaneSessionSource(external)
+    source = createWorkbenchPaneSessionSource(external, separateTranscript)
     setOwner(source)
   }
   const subscribe = useCallback(
@@ -70,6 +73,7 @@ export function useWorkbenchPaneSession({
     },
     [external, retainOwner, source]
   )
-  return useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  return useMemo(() => ({ ...snapshot, transcript: source.transcript }), [snapshot, source])
 }
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
