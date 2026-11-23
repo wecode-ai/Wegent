@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import type { SavedImageMarkup } from './ImageEditContext'
 
-const MAX_SAVED_IMAGES = 32
+/** Edited image bytes stay in memory only for previews the user can still reach. */
+const MAX_SAVED_IMAGES = 8
 const savedImages = new Map<number, SavedImageMarkup>()
 /** Maps an attachment produced by a save back to the draft that produced it. */
 const sourceKeys = new Map<number, number>()
