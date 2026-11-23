@@ -81,7 +81,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       setQueuedMessages,
     } = sessionOwner.commands
 
-    const { attachments: draftAttachments, captureAttachments, releaseAttachment } = attachmentState
+    const { attachments: draftAttachments, captureAttachments } = attachmentState
     const { getDraftEditVersion } = sessionOwner.commands
 
     const standalone = options.standaloneAttachments !== undefined
@@ -90,10 +90,6 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       if (!standalone) resetDraftAttachments()
     }
     const submittedAttachmentSourceId = standalone ? options.draftAttachmentSourceId : undefined
-    const cleanupSubmittedAttachmentSource = () => {
-      if (submittedAttachmentSourceId === undefined) return
-      releaseAttachment(submittedAttachmentSourceId)
-    }
     const restoreAttachments = (
       scope: string,
       attachments: ReturnType<typeof captureAttachments>
@@ -226,7 +222,6 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           setGoalDraftActive(false)
           setQueuedMessages(messages => [...messages, baseMessage])
           await sendQueuedMessageAsGuidance(baseMessage, true)
-          cleanupSubmittedAttachmentSource()
           return true
         }
 
@@ -238,7 +233,6 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
           setGoalDraftActive(false)
           setQueuedMessages(messages => [...messages, queuedMessage])
-          cleanupSubmittedAttachmentSource()
           return true
         }
 
@@ -256,7 +250,6 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
           setGoalDraftActive(false)
           clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-          cleanupSubmittedAttachmentSource()
         } else {
           restoreSubmittedInput(inputScopeKey, submittedInput)
           currentAttachments.forEach(attachment =>
@@ -325,7 +318,6 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         },
       })
       if (sent) {
-        cleanupSubmittedAttachmentSource()
         clearSubmittedInput()
         if (!isRuntimeTaskAddress(sent)) {
           appendLocalUserMessage(goalMessage.content, goalMessage.attachments, {
@@ -514,7 +506,6 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           setDraftMessages([])
         }
         clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-        cleanupSubmittedAttachmentSource()
       } else {
         restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
         restoreAttachments(submissionScopeKey, currentAttachments)
@@ -552,13 +543,11 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           restoreAttachments(inputScopeKey, currentAttachments)
         } else {
           clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-          cleanupSubmittedAttachmentSource()
         }
         return sent
       }
       setQueuedMessages(messages => [...messages, queuedMessage])
       clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-      cleanupSubmittedAttachmentSource()
       if (options.guideWhenBusy) {
         await sendQueuedMessageAsGuidance(queuedMessage, true)
       }
@@ -579,7 +568,6 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
     }
     if (result.accepted) {
       clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-      cleanupSubmittedAttachmentSource()
     } else if (isRuntimeTaskBusyError(sendError)) {
       const lifecycleAfterSend = currentRuntimeTask
         ? lifecycleStore.getTask(currentRuntimeTask)
@@ -591,7 +579,6 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       }
       setQueuedMessages(messages => [...messages, queuedMessage])
       clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-      cleanupSubmittedAttachmentSource()
     } else {
       restoreSubmittedInput(inputScopeKey, submittedInput)
       restoreAttachments(inputScopeKey, currentAttachments)

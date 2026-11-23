@@ -67,10 +67,40 @@ export function useImageEditSubmission({
           : undefined,
       async submit(source, edit) {
         let sourceFile: Promise<File> | undefined
-        const loadImage = () => (sourceFile ??= source.loadFile())
+        const loadImage = () => {
+          if (!sourceFile) {
+            sourceFile = source.loadFile().catch(error => {
+              sourceFile = undefined
+              throw error
+            })
+          }
+          return sourceFile
+        }
         const attachments = []
+        let admitted = false
+        let sourcePrepared = false
+        let sourceReleased = false
+        const releaseSource = () => {
+          if (
+            !admitted ||
+            !sourcePrepared ||
+            sourceReleased ||
+            edit.kind !== 'comment' ||
+            !attachmentScope ||
+            source.draftAttachmentId === undefined ||
+            !releaseDraftAttachment
+          )
+            return
+          sourceReleased = true
+          releaseDraftAttachment(attachmentScope, source.draftAttachmentId)
+        }
         if (edit.kind !== 'markup') {
-          attachments.push(prepareAttachmentFile(source.name, source.mimeType, loadImage, upload))
+          attachments.push(
+            prepareAttachmentFile(source.name, source.mimeType, loadImage, upload, () => {
+              sourcePrepared = true
+              releaseSource()
+            })
+          )
         }
         if (edit.kind === 'markup' || edit.kind === 'erase') {
           const name = edit.kind === 'markup' ? 'annotated-image.png' : 'selection-mask.png'
@@ -90,17 +120,8 @@ export function useImageEditSubmission({
             : {}),
         })
         if (!accepted) return false
-        // Start reading the admitted source while a queued turn waits for transport.
-        void loadImage().catch(() => {})
-        if (
-          edit.kind === 'comment' &&
-          attachmentScope &&
-          source.draftAttachmentId !== undefined &&
-          releaseDraftAttachment
-        ) {
-          // The message owns its separately prepared image. Retire only the draft source.
-          releaseDraftAttachment(attachmentScope, source.draftAttachmentId)
-        }
+        admitted = true
+        releaseSource()
         return true
       },
     }

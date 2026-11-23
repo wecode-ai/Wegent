@@ -195,6 +195,62 @@ test.each([
   expect(result.current.attachments).toEqual([newer])
 })
 
+test('retries the real image-edit source read before releasing its draft', async () => {
+  const { resolvePreparingAttachments } = await import('@/lib/runtime-attachments')
+  const source = new File(['image'], 'retry-comment.png', { type: 'image/png' })
+  const loadFile = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('temporary read failure'))
+    .mockResolvedValueOnce(source)
+  const upload = vi.fn().mockResolvedValue({
+    ...attachment,
+    id: 42,
+    filename: 'retry-comment.png',
+    status: 'ready',
+  })
+  let submitted: Attachment[] = []
+  const submit = vi.fn(
+    async (_message: string, options: { standaloneAttachments?: Attachment[] }) => {
+      submitted = options.standaloneAttachments ?? []
+      return true
+    }
+  )
+  const releaseDraftAttachment = vi.fn()
+  const { result } = renderHook(() =>
+    useImageEditSubmission({
+      enabled: true,
+      scope: 'retry-comment',
+      attachmentScope: 'retry-comment-draft',
+      upload,
+      submit,
+      releaseDraftAttachment,
+    })
+  )
+
+  await act(async () => {
+    await expect(
+      result.current!.submit(
+        {
+          name: source.name,
+          mimeType: source.type,
+          loadFile,
+          draftAttachmentId: 10,
+        },
+        { kind: 'comment', comments: [{ x: 50, y: 50, text: 'Retry me' }] }
+      )
+    ).resolves.toBe(true)
+  })
+
+  await expect(resolvePreparingAttachments(submitted)).rejects.toThrow('temporary read failure')
+  expect(releaseDraftAttachment).not.toHaveBeenCalled()
+  const [prepared] = await resolvePreparingAttachments(submitted)
+  await waitFor(() =>
+    expect(releaseDraftAttachment).toHaveBeenCalledExactlyOnceWith('retry-comment-draft', 10)
+  )
+  expect(prepared).toMatchObject({ id: 42, status: 'ready' })
+  expect(loadFile).toHaveBeenCalledTimes(2)
+})
+
 test.each([
   ['unchanged', false, true],
   ['newer', true, false],
@@ -395,7 +451,7 @@ test.each([false, true])(
 )
 
 test.each([true, false])(
-  'sends the appshot group from a main pane image comment and cleans it only after acceptance: %s',
+  'sends the appshot group from a main pane image comment without deleting retained attachments: %s',
   async accepted => {
     const appshot: Attachment = {
       id: 10,
@@ -499,11 +555,11 @@ test.each([true, false])(
     ])
     expect(sendCurrentInput).not.toHaveBeenCalled()
     expect(resetDraftAttachments).not.toHaveBeenCalled()
-    await waitFor(() =>
-      expect(attachments.current.attachments.map(item => item.filename)).toEqual(
-        accepted ? ['newer-draft.png'] : ['appshot.png', 'appshot-context.txt', 'newer-draft.png']
-      )
-    )
+    expect(attachments.current.attachments.map(item => item.filename)).toEqual([
+      'appshot.png',
+      'appshot-context.txt',
+      'newer-draft.png',
+    ])
     expect(remove).not.toHaveBeenCalled()
   }
 )

@@ -692,9 +692,12 @@ test('places an unnumbered draft, numbers saved comments and sends Codex-formatt
     )
     expect(submitComposer).not.toHaveBeenCalled()
     await waitFor(() => expect(close).toHaveBeenCalledOnce())
-    expect(releaseDraftAttachment).toHaveBeenCalledExactlyOnceWith('comment-draft', attachment.id)
+    expect(releaseDraftAttachment).not.toHaveBeenCalled()
     expect(upload).not.toHaveBeenCalled()
     await resolvePreparingAttachments(submit.mock.calls[0]![1].standaloneAttachments)
+    await waitFor(() =>
+      expect(releaseDraftAttachment).toHaveBeenCalledExactlyOnceWith('comment-draft', attachment.id)
+    )
     expect(upload).toHaveBeenCalledExactlyOnceWith(source)
   } finally {
     await i18n.changeLanguage(previousLanguage)

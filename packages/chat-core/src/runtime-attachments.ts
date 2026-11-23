@@ -43,20 +43,27 @@ export function prepareAttachmentFile(
   name: string,
   type: string,
   loadFile: () => Promise<File>,
-  upload: (file: File) => Promise<Attachment>
+  upload: (file: File) => Promise<Attachment>,
+  onPrepared?: (attachment: Attachment) => void
 ): Attachment {
-  const attachment = pendingAttachment({ name, type, size: 0 }, async () => {
-    const file = await loadFile()
-    attachment[preparationFile] = file
-    return upload(file)
-  })
+  const attachment = pendingAttachment(
+    { name, type, size: 0 },
+    async () => {
+      const file = await loadFile()
+      attachment[preparationFile] = file
+      return upload(file)
+    },
+    undefined,
+    onPrepared
+  )
   return attachment
 }
 
 function pendingAttachment(
   metadata: Pick<File, 'name' | 'type' | 'size'>,
   prepare: Promise<Attachment> | (() => Promise<Attachment>),
-  retryFile?: File
+  retryFile?: File,
+  onPrepared?: (attachment: Attachment) => void
 ): PreparingAttachment {
   const { name, type, size } = metadata
   let ready: Promise<Attachment> | undefined
@@ -68,12 +75,14 @@ function pendingAttachment(
     void ready.then(
       result => {
         delete attachment[preparationFile]
-        return Object.assign(attachment, {
+        const prepared = Object.assign(attachment, {
           ...result,
           local_preview_url: result.local_preview_url?.startsWith('blob:')
             ? result.local_path
             : result.local_preview_url,
         })
+        onPrepared?.(prepared)
+        return prepared
       },
       () => {
         attachment.status = 'failed'
