@@ -105,7 +105,7 @@ export async function listVisibleDialogsForPid(pid, timeoutMs = 2_000) {
 async function findMainWindowForPid(pid, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const windows = await listVisibleWindowsForPid(pid, Math.min(2_000, deadline - Date.now()))
+    const windows = await listVisibleWindowsForPid(pid, 2_000)
     for (const windowId of windows) {
       const props = await readWindowProperties(windowId, 1_500)
       if (!props) continue
@@ -165,7 +165,7 @@ async function captureNativeDiagnostics(pid, resultDir, stepName, targetWindowId
 async function waitForWindowToClose(pid, windowId, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const visible = await listVisibleWindowsForPid(pid, Math.min(1_500, deadline - Date.now()))
+    const visible = await listVisibleWindowsForPid(pid, 2_000)
     if (!visible.includes(windowId)) return true
     await new Promise(resolve => setTimeout(resolve, 80))
   }
