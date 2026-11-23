@@ -108,11 +108,8 @@ fn argument_updates(event: &ExecutionEvent, status: &str) -> Map<String, Value> 
 
 /// `_emit_block_updated`'s tool-result update map (`websocket.py:441-453`).
 ///
-/// The source also adds `render_payload` from
-/// `build_interactive_form_render_payload`; that helper needs the
-/// `interactive_form_question` MCP tool module, which this backend has not
-/// migrated, so the field stays absent exactly as for every non-interactive
-/// tool.
+/// The ingress adds `render_payload` for interactive forms before emitting and
+/// persisting the result.
 fn result_updates(event: &ExecutionEvent) -> Map<String, Value> {
     let status = if matches!(
         event.data.get("status").and_then(Value::as_str),

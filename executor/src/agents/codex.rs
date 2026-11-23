@@ -2981,6 +2981,9 @@ async fn run_codex_app_server_turn_with_runtime(
     let mut process = match spawn_codex_app_server(binary, &launch_config, launch_config.auth_mode)
     {
         Ok(child) => {
+            if let Some(pid) = child.id() {
+                fields.push(("process_id", pid.to_string()));
+            }
             log_executor_event("codex app-server started", &fields);
             CodexTurnProcess { child }
         }

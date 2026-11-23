@@ -624,6 +624,24 @@ const INTERACTIVE_FORM_TOOL_MARKER: &str = "interactive_form_question";
 /// The pending form `get_pending_interactive_form` finds, if any.
 pub(super) struct PendingInteractiveForm {
     tool_use_id: String,
+    expires_at_unix_ms: Option<i64>,
+}
+
+fn deferred_form_deadline(tool_output: Option<&Value>) -> Option<i64> {
+    let tool_output = tool_output?;
+    let decoded;
+    let output = if let Some(serialized) = tool_output.as_str() {
+        decoded = serde_json::from_str::<Value>(serialized).ok()?;
+        &decoded
+    } else {
+        tool_output
+    };
+    if output["__deferred_user_input__"].as_bool() != Some(true) {
+        return None;
+    }
+    output["expires_at_unix_ms"]
+        .as_i64()
+        .filter(|deadline| (1..=9_007_199_254_740_991).contains(deadline))
 }
 
 /// `_extract_interactive_form_from_result`'s `reversed(blocks)` scan.
@@ -657,7 +675,10 @@ pub(super) fn pending_form_in_result(result: &Value) -> Option<PendingInteractiv
             .and_then(Value::as_array)
             .is_some_and(|questions| !questions.is_empty())
         {
-            return Some(PendingInteractiveForm { tool_use_id });
+            return Some(PendingInteractiveForm {
+                tool_use_id,
+                expires_at_unix_ms: deferred_form_deadline(block.get("tool_output")),
+            });
         }
     }
     None
@@ -731,7 +752,12 @@ async fn validate_interactive_form_answer_on(
         }
     }
 
-    let Some(pending) = pending else {
+    // Evaluate the newest form only. Expiry does not reopen a superseded form.
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let Some(pending) = pending.filter(|form| {
+        form.expires_at_unix_ms
+            .is_none_or(|deadline| now_ms < deadline)
+    }) else {
         if answer.is_some_and(|answer| !answer.is_empty()) {
             return Ok(Err(error_ack_with_message(
                 "interactive_form_not_pending",
@@ -2126,6 +2152,77 @@ mod tests {
                     queries[0],
                     crate::task_store_statements::subtasks_by_task_desc_statement("subtasks")
                 );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_expired_native_form_allows_a_new_message_and_rejects_a_late_answer() {
+        use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+
+        let answer = json!({"type": INTERACTIVE_FORM_TOOL_MARKER, "tool_use_id": "latest"});
+        for subscription in [false, true] {
+            for (deadline, expired) in [(1, true), (9_007_199_254_740_991_i64, false)] {
+                let fixture = MysqlRows::start(move |_| {
+                    let output = json!({
+                        "__deferred_user_input__": true,
+                        "expires_at_unix_ms": deadline
+                    });
+                    let blocks = json!([
+                        {
+                            "tool_name": INTERACTIVE_FORM_TOOL_MARKER,
+                            "tool_use_id": "older",
+                            "render_payload": {"type": INTERACTIVE_FORM_TOOL_MARKER, "questions": [{}]}
+                        },
+                        {
+                            "tool_name": INTERACTIVE_FORM_TOOL_MARKER,
+                            "tool_use_id": "latest",
+                            "render_payload": {"type": INTERACTIVE_FORM_TOOL_MARKER, "questions": [{}]},
+                            "tool_output": if subscription { json!(output.to_string()) } else { output },
+                        }
+                    ]);
+                    if subscription {
+                        return vec![
+                            ("id", SqlValue::I64(2)),
+                            ("message_id", SqlValue::I64(1)),
+                            ("blocks", SqlValue::Text(blocks.to_string())),
+                        ];
+                    }
+                    let column = |name| crate::task_store_statements::subtask_column_index(name).unwrap();
+                    let mut row = vec![("unused", SqlValue::Null); column("result") + 1];
+                    row[column("role")] = ("subtasks_role", SqlValue::Text("ASSISTANT".to_owned()));
+                    row[column("result")] = (
+                        "subtasks_result",
+                        SqlValue::Text(json!({"blocks": blocks}).to_string()),
+                    );
+                    row
+                })
+                .await;
+                let send = validate_interactive_form_answer_on(
+                    &mut &fixture.mysql,
+                    "subtasks",
+                    42,
+                    None,
+                    subscription,
+                )
+                .await
+                .unwrap();
+                let submit = validate_interactive_form_answer_on(
+                    &mut &fixture.mysql,
+                    "subtasks",
+                    42,
+                    answer.as_object(),
+                    subscription,
+                )
+                .await
+                .unwrap();
+                if expired {
+                    assert!(send.is_ok(), "{send:?}");
+                    assert_eq!(submit.unwrap_err()["error"], "interactive_form_not_pending");
+                } else {
+                    assert_eq!(send.unwrap_err()["error"], "pending_interactive_form");
+                    assert!(submit.is_ok(), "{submit:?}");
+                }
             }
         }
     }

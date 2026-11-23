@@ -303,14 +303,14 @@ async fn nested_targets_do_not_expand_device_or_executor_authority() {
 }
 
 #[tokio::test]
-async fn cloud_batches_use_one_request_and_recover_lost_responses_by_key() {
+async fn cloud_batches_through_api_gateway_recover_lost_responses_by_key() {
     use axum::{routing::post, Json, Router};
     use std::sync::atomic::AtomicUsize;
     let writes = Arc::new(AtomicUsize::new(0));
     let recorded = Arc::new(std::sync::Mutex::new(Value::Null));
     let writes_handler = writes.clone();
     let recorded_handler = recorded.clone();
-    let app=Router::new().route("/mcp/wework-space/sse",post(move |Json(request):Json<Value>|{
+    let backend=Router::new().route("/mcp/wework-space/sse",post(move |Json(request):Json<Value>|{
         let writes=writes_handler.clone();let recorded=recorded_handler.clone();
         async move {
             let args=&request["params"]["arguments"];
@@ -329,9 +329,10 @@ async fn cloud_batches_use_one_request_and_recover_lost_responses_by_key() {
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let gateway = Router::new().nest("/api", backend);
+    let server = tokio::spawn(async move { axum::serve(listener, gateway).await.unwrap() });
     let (_directory, runtime, mut context, _space) = fixture();
-    context.backend_url = Some(url);
+    context.backend_url = Some(format!("{url}/api/v1"));
     context.auth_token = Some("test-token".into());
     let request = json!({"operation_key":"remote","items":(0..3).map(|index|json!({"request_id":index.to_string(),"target":{"space":{"project_store":"backend","space_id":"42"},"item_id":format!("CLOUD-{index}")},"expected_version":1,"patch":{"title":"Changed"}})).collect::<Vec<_>>()});
     let first = invoke(
