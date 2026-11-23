@@ -1,4 +1,4 @@
-import { Check, MessageSquare } from 'lucide-react'
+import { Check, ChevronDown, MessageSquare } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { createStandInImConnectionSource } from './standInImConnectionSource'
@@ -73,7 +73,38 @@ export function StandInImConnections({
   const device = devices.find(row => sameDevice(row.device_id))
   return (
     <section ref={section} aria-label={t('standIn.im.title')} data-testid="stand-in-im-channels">
-      <h3 className="mb-2 text-sm font-medium text-text-secondary">{t('standIn.im.title')}</h3>
+      <div className="flex min-h-9 items-center justify-between gap-2">
+        <h4 className="text-base font-medium">{t('standIn.im.title')}</h4>
+        {!loading && error !== 'load' && (availableToAdd.length > 0 || menuOpen) && (
+          <ActionMenu
+            ariaLabel={t('standIn.im.add_channels')}
+            testId="stand-in-im-add-channels"
+            placement="bottom-end"
+            itemClassName="max-md:min-h-11"
+            density="default"
+            triggerLabel={
+              <>
+                {t('standIn.im.add_channels_action')}
+                <ChevronDown aria-hidden="true" className="h-4 w-4" />
+              </>
+            }
+            triggerClassName="shrink-0 gap-2 px-0 text-sm"
+            onOpenChange={setMenuOpen}
+            items={availableToAdd.map(type => ({
+              label: t('standIn.im.add_channel', { channel: label(type) }),
+              icon: MessageSquare,
+              testId: `stand-in-im-channel-${type}`,
+              onSelect: () => {
+                trigger.current =
+                  section.current?.querySelector<HTMLButtonElement>(
+                    '[data-testid="stand-in-im-add-channels"]'
+                  ) ?? null
+                setChannel(type)
+              },
+            }))}
+          />
+        )}
+      </div>
       {loading && (
         <p
           role="status"
@@ -101,7 +132,7 @@ export function StandInImConnections({
           </Button>
         </div>
       )}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 empty:hidden">
         {channels.map(type => {
           const isConnected = sessions.some(row => row.channel_type === type && connected(row))
           return (
@@ -124,29 +155,6 @@ export function StandInImConnections({
             </Button>
           )
         })}
-        {!loading && error !== 'load' && (availableToAdd.length > 0 || menuOpen) && (
-          <ActionMenu
-            ariaLabel={t('standIn.im.add_channels')}
-            testId="stand-in-im-add-channels"
-            placement="bottom-end"
-            itemClassName="max-md:min-h-11"
-            density="default"
-            triggerClassName="flex items-center justify-center rounded-md text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onOpenChange={setMenuOpen}
-            items={availableToAdd.map(type => ({
-              label: t('standIn.im.add_channel', { channel: label(type) }),
-              icon: MessageSquare,
-              testId: `stand-in-im-channel-${type}`,
-              onSelect: () => {
-                trigger.current =
-                  section.current?.querySelector<HTMLButtonElement>(
-                    '[data-testid="stand-in-im-add-channels"]'
-                  ) ?? null
-                setChannel(type)
-              },
-            }))}
-          />
-        )}
       </div>
       {channel !== null && (
         <StandInImConnectionDialog
