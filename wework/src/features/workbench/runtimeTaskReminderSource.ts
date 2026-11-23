@@ -43,6 +43,13 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
   let observation = 0
   let reconciling = false
   let pending = false
+  function isMemoryReview(item: RuntimeTaskReminderItem): boolean {
+    const latestTask = store.getTask(item.address)?.task
+    return (
+      isStandInMemoryReviewTask(item.task) ||
+      (latestTask != null && isStandInMemoryReviewTask(latestTask))
+    )
+  }
   function deliver(item: RuntimeTaskReminderItem) {
     const epoch = generation
     if (globalThis.localStorage?.getItem('wework:debug-runtime') === '1')
@@ -56,6 +63,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         if (
           epoch !== generation ||
           !listeners.size ||
+          isMemoryReview(item) ||
           !input?.notificationPreferences[runtimeTaskNotificationCategory(item)].system
         )
           return
@@ -103,7 +111,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
               (originalPreferences &&
                 !originalPreferences[runtimeTaskNotificationCategory(item)].system) ||
               isStandInIdentity(item) ||
-              isStandInMemoryReviewTask(item.task) ||
+              isMemoryReview(item) ||
               standInOrigin(item) ||
               !current.notificationPreferences[runtimeTaskNotificationCategory(item)].system ||
               item.lifecycle?.interactionStatus ||
@@ -125,7 +133,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         const visibleItems = current.listedItems.filter(
           item =>
             !isStandInIdentity(item) &&
-            !isStandInMemoryReviewTask(item.task) &&
+            !isMemoryReview(item) &&
             (current.notificationPreferences[runtimeTaskNotificationCategory(item)].in_app ||
               standInOrigin(item))
         )

@@ -185,6 +185,14 @@ export function createDesktopScenario(options) {
           'The scheduler must provision the owner memory arrangement',
           45_000
         )
+        await control.command('clearSystemNotifications', 'body')
+        await control.command('blurMainWindow', 'body')
+        await until(
+          async () => JSON.parse(await control.command('getWindowFocusSnapshot', 'body')),
+          snapshot => snapshot.tracker?.focused === false,
+          'Wework must be unfocused before the memory review starts',
+          options.uiTimeoutMs
+        )
         const run = await rpc('runtime.automations.run_now', { automationId: arrangement.id })
         assert.ok(run.run.id)
         const cases = await until(
@@ -207,8 +215,41 @@ export function createDesktopScenario(options) {
           options.modelResponseTimeoutMs
         )
         assert.equal(pending.training.cases.length, DEMONSTRATIONS.length)
+        const finished = await until(
+          async () =>
+            (
+              await rpc('runtime.automation_runs.list', { automationId: arrangement.id })
+            ).items.find(item => item.id === run.run.id),
+          item => ['succeeded', 'failed', 'cancelled'].includes(item?.status),
+          'The background memory review must finish before checking for alerts',
+          options.modelResponseTimeoutMs
+        )
+        assert.equal(finished.status, 'succeeded', JSON.stringify(finished))
+        assert.ok(finished.taskId, 'The memory review must retain its original task')
         model.verify()
         assert.equal(role(await profile()).prompt, ORIGINAL)
+        const quietSince = Date.now()
+        await until(
+          async () => {
+            const notifications = JSON.parse(
+              await control.command('getSystemNotifications', 'body')
+            )
+            assert.deepEqual(
+              notifications.filter(item =>
+                [finished.taskId, 'stand-in-chat-' + USER + '-role-' + ROLE].includes(
+                  item.address?.taskId
+                )
+              ),
+              [],
+              'Background memory consolidation and its suggested revision must stay silent'
+            )
+            return Date.now() - quietSince
+          },
+          elapsed => elapsed >= 1200,
+          'Observe the native notification channel after the background review',
+          options.uiTimeoutMs
+        )
+        await control.command('focusMainWindow', 'body')
         await openStandInDetails(control)
         await control.command('clickWhenEnabled', testId('stand-in-proposal-open'))
         const card = testId('stand-in-proposal')

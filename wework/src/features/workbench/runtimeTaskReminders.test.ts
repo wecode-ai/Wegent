@@ -20,6 +20,9 @@ vi.mock('./runtimeTaskSystemNotifications', () => ({
   sendSystemNotification: vi.fn(),
 }))
 vi.mock('@/desktop/trayNavigation', () => ({ syncNotificationUnreadCount: vi.fn() }))
+vi.mock('@/desktop/localExecutor', () => ({
+  requestLocalExecutor: vi.fn().mockResolvedValue({ messages: [] }),
+}))
 
 function reminderItem(key: string): RuntimeTaskReminderItem {
   return {
@@ -91,52 +94,96 @@ function notificationItem(deviceId: string): RuntimeTaskReminderItem {
   }
 }
 
-test('keeps memory review results silent with in-app and system reminders enabled', async () => {
-  const send = vi.mocked(sendSystemNotification)
-  send.mockClear()
-  const store = new RuntimeTaskLifecycleStore('memory-review-reminder-test')
-  const item = notificationItem('device-1')
-  const scheduled = {
-    ...item.task,
-    runtimeHandle: { origin: { type: 'stand_in_schedule' } },
+test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
+  'keeps memory review results silent when the origin is available in the %s',
+  async originSource => {
+    const send = vi.mocked(sendSystemNotification)
+    send.mockClear()
+    const store = new RuntimeTaskLifecycleStore('memory-review-reminder-test')
+    const item = notificationItem('device-1')
+    const scheduled = {
+      ...item.task,
+      runtimeHandle: { origin: { type: 'stand_in_schedule' } },
+    }
+    const review = {
+      ...scheduled,
+      taskId: 'memory-review',
+      runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+    }
+    const work = {
+      projects: [],
+      chats: [
+        {
+          ...item.workspace,
+          tasks: [
+            originSource === 'task list' ? review : { ...review, runtimeHandle: undefined },
+            scheduled,
+          ],
+        },
+      ],
+      totalTasks: 2,
+    }
+    const items = collectRuntimeTaskReminderItems(work)
+    store.syncRuntimeWork(work)
+    if (originSource === 'earlier running snapshot') {
+      store.syncRuntimeTask(items[0].address, { ...review, running: true, updatedAt: 1000 })
+      store.syncRuntimeWork({
+        ...work,
+        chats: [
+          {
+            ...work.chats[0],
+            tasks: [
+              {
+                ...items[0].task,
+                running: false,
+                status: 'completed',
+                completedAt: 2000,
+                updatedAt: 2000,
+              },
+              scheduled,
+            ],
+          },
+        ],
+      })
+    } else if (originSource === 'executor snapshot') {
+      store.syncRuntimeTask(items[0].address, review)
+    }
+    const settlingItems = originSource === 'earlier running snapshot' ? items.slice(1) : items
+    for (const { address } of settlingItems) {
+      store.executorStarted(address)
+      store.turnStarted(address, 'turn-1')
+      store.turnSettled(address, 'turn-1', 'succeeded')
+      store.executorSettled(address)
+    }
+    expect([...store.getSnapshot().unreadTaskKeys]).toEqual([items[1].key])
+    const source = createRuntimeTaskReminderSource(store)
+    const stop = source.subscribe(() => {}, {
+      items,
+      listedItems: items,
+      unreadMessageCounts: new Map(),
+      notificationPreferences: {
+        ...defaultNotificationPreferences,
+        tasks: { in_app: true, system: true, im: null },
+        stand_in: { in_app: true, system: true, im: true },
+      },
+    })
+    try {
+      await waitFor(() =>
+        expect(send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            address: expect.objectContaining({ taskId: scheduled.taskId }),
+          })
+        )
+      )
+      expect(send.mock.calls.map(([notification]) => notification.address?.taskId)).toEqual([
+        scheduled.taskId,
+      ])
+      expect([...source.getSnapshot()]).toEqual([items[1].key])
+    } finally {
+      stop()
+    }
   }
-  const review = {
-    ...scheduled,
-    taskId: 'memory-review',
-    runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
-  }
-  const work = {
-    projects: [],
-    chats: [{ ...item.workspace, tasks: [review, scheduled] }],
-    totalTasks: 2,
-  }
-  const items = collectRuntimeTaskReminderItems(work)
-  store.syncRuntimeWork(work)
-  for (const { address } of items) {
-    store.executorStarted(address)
-    store.turnStarted(address, 'turn-1')
-    store.turnSettled(address, 'turn-1', 'succeeded')
-    store.executorSettled(address)
-  }
-  expect([...store.getSnapshot().unreadTaskKeys]).toEqual([items[1].key])
-  const source = createRuntimeTaskReminderSource(store)
-  const stop = source.subscribe(() => {}, {
-    items,
-    listedItems: items,
-    unreadMessageCounts: new Map(),
-    notificationPreferences: {
-      ...defaultNotificationPreferences,
-      stand_in: { in_app: true, system: true, im: true },
-    },
-  })
-  try {
-    expect([...source.getSnapshot()]).toEqual([items[1].key])
-    await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
-    expect(send.mock.calls[0]?.[0].address?.taskId).toBe(scheduled.taskId)
-  } finally {
-    stop()
-  }
-})
+)
 
 test('excludes an existing memory review unread marker when restoring cached remote work', async () => {
   const owner = 'cached-memory-review-reminder-test'

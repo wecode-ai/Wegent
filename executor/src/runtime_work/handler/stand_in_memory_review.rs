@@ -37,25 +37,6 @@ impl RuntimeWorkRpcHandler {
         .map_err(super::stand_in::settings_error)
     }
 
-    pub(super) fn emit_pending_stand_in_ghost(
-        &self,
-        store: &LocalTaskStore,
-        user: i64,
-        role: Option<&str>,
-    ) {
-        let Some(events) = &self.event_tx else { return };
-        match self.stand_in_proposal_on_role_device(store, user, role, false) {
-            Ok(proposal) if proposal["training"].is_object() => {
-                let _ = events.send(json!({
-                    "type":"event","event":"runtime.stand_in.proposal.changed",
-                    "payload":{"deviceId":proposal["training"]["deviceId"],"userId":user,"roleId":role,"proposalId":proposal["id"]}
-                }));
-            }
-            Ok(_) => {}
-            Err(_) => log_executor_event("stand-in learning notification lookup failed", &[]),
-        }
-    }
-
     pub(super) fn memory_review_run_has_work(
         &self,
         store: &LocalTaskStore,

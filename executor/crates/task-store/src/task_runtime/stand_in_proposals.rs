@@ -216,21 +216,6 @@ impl LocalTaskStore {
         Ok(())
     }
 
-    pub fn resolved_proposal_role(
-        &self,
-        user: i64,
-        device: &str,
-        id: &str,
-    ) -> Result<Option<String>, TaskRuntimeError> {
-        let connection = self.connection()?;
-        let sql = if id.starts_with("ghost:") {
-            "SELECT json_extract(metadata,'$.roleId') FROM loop_items WHERE id=?1 AND user_id=?2 AND device_id=?3 AND resource_type='ghost_evaluation'"
-        } else {
-            "SELECT json_extract(metadata,'$.roleId') FROM loop_items WHERE resource_type='stand_in_proposal' AND json_extract(metadata,'$.id')=?1 AND json_extract(metadata,'$.userId')=?2 AND json_extract(metadata,'$.settings.executionDeviceId')=?3"
-        };
-        Ok(connection.query_row(sql, params![id, user, device], |row| row.get(0))?)
-    }
-
     pub fn stand_in_proposal_settings(
         &self,
         user: i64,

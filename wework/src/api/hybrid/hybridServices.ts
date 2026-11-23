@@ -2239,7 +2239,6 @@ function filterRuntimeChatStreamHandlers(
     onRuntimeTransportReplaced: localRuntime ? handlers.onRuntimeTransportReplaced : undefined,
     onIssueShared: localRuntime ? undefined : handlers.onIssueShared,
     onIssueAssignmentsChanged: localRuntime ? undefined : handlers.onIssueAssignmentsChanged,
-    onStandInLearningProposal: route(handlers.onStandInLearningProposal),
     onWeworkNotification: acceptsDevice(undefined) ? handlers.onWeworkNotification : undefined,
     onProjectTaskAssigned: handlers.onProjectTaskAssigned
       ? payload => {
