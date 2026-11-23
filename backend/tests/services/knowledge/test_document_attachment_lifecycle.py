@@ -142,6 +142,22 @@ def test_invalid_source_is_rejected_before_reading_body(
     assert test_db.query(KnowledgeDocument).count() == 0
 
 
+def test_create_discards_user_supplied_conversion_ref(
+    test_db, test_user, test_admin_user, kb, bodies
+) -> None:
+    source = attachment(test_db, test_user.id, bodies)
+    foreign = attachment(test_db, test_admin_user.id, bodies)
+    config = {"converted_attachment_id": foreign.id, "client_note": "keep this"}
+
+    created = create(test_db, test_user, kb, source.id, source_config=config)
+    stored = test_db.get(KnowledgeDocument, created.id)
+
+    assert stored.source_config == {"client_note": "keep this"}
+    assert config == {"converted_attachment_id": foreign.id, "client_note": "keep this"}
+    assert test_db.get(SubtaskContext, stored.attachment_id).user_id == test_user.id
+    assert test_db.get(SubtaskContext, foreign.id).user_id == test_admin_user.id
+
+
 @pytest.mark.parametrize("entry", ["rest", "content"])
 def test_repeated_import_edit_and_delete_have_independent_bodies(
     test_db,

@@ -166,10 +166,10 @@ def test_external_knowledge_mcp_docs_cover_metadata_tools_and_file_endpoint():
     docs = [
         (
             repo_root / "docs/zh/wegent/developer-guide/external-knowledge-mcp.md"
-        ).read_text(),
+        ).read_text(encoding="utf-8"),
         (
             repo_root / "docs/en/wegent/developer-guide/external-knowledge-mcp.md"
-        ).read_text(),
+        ).read_text(encoding="utf-8"),
     ]
 
     for doc in docs:

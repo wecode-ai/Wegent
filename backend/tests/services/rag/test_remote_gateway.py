@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from pydantic import create_model
 
 from app.core.config import settings
 from app.services.rag.gateway_factory import get_rag_gateway
@@ -24,6 +25,7 @@ from app.services.rag.runtime_specs import (
 from shared.models import (
     PresignedUrlContentRef,
     RemoteAuthorizedRetrievalResources,
+    RemoteQueryRequest,
     RemoteRetrievalResourceRef,
     RemoteTestConnectionRequest,
     RetrievalScope,
@@ -31,6 +33,7 @@ from shared.models import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+from shared.models.knowledge_runtime_protocol import KnowledgeRuntimeProtocolModel
 
 
 def _build_response(
@@ -247,7 +250,10 @@ async def test_remote_gateway_index_document_closes_owned_session_before_http(
 
 
 @pytest.mark.asyncio
-async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None:
+@pytest.mark.parametrize("deduplicate", [None, False, True])
+async def test_remote_gateway_query_posts_reference_mode_request(
+    mocker, deduplicate: bool | None
+) -> None:
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -280,6 +286,7 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
         },
         user_id=8,
         max_results=5,
+        **({"deduplicate_by_document": deduplicate} if deduplicate is not None else {}),
         scope=RetrievalScope(document_ids=[10, 11]),
         metadata_condition={"key": "source", "operator": "==", "value": "kb"},
     )
@@ -304,7 +311,7 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
     }
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/query"
-    assert kwargs["json"] == {
+    expected_request = {
         "knowledge_base_ids": [1],
         "user_id": 8,
         "query": "release checklist",
@@ -321,6 +328,27 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
             "value": "kb",
         },
     }
+    if deduplicate:
+        expected_request["deduplicate_by_document"] = True
+    assert kwargs["json"] == expected_request
+
+    if not deduplicate:
+        # The previous receiver has the same query fields except document mode,
+        # and rejects unknown keys before attempting retrieval.
+        previous_request = create_model(
+            "PreviousRemoteQueryRequest",
+            __base__=KnowledgeRuntimeProtocolModel,
+            **{
+                name: (field.annotation, field)
+                for name, field in RemoteQueryRequest.model_fields.items()
+                if name != "deduplicate_by_document"
+            },
+        )
+        assert previous_request.model_validate(kwargs["json"]).query == spec.query
+        assert (
+            RemoteQueryRequest.model_validate(kwargs["json"]).deduplicate_by_document
+            is False
+        )
 
 
 @pytest.mark.asyncio
