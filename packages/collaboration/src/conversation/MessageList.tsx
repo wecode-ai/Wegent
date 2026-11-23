@@ -339,9 +339,27 @@ export const MessageList = memo(function MessageList({
     () => findLastIndex(visibleMessages, message => message.status === 'streaming'),
     [visibleMessages]
   )
+  const sizingKey = (message: WorkbenchMessage) =>
+    message.status === 'streaming' ? undefined : measurementLayout.messages.get(message.id)
+  const readRows = () =>
+    visibleMessages.map(message => ({
+      id: message.id,
+      size: sizingKey(message),
+    }))
+  const [previousRows, setRows] = useState(readRows)
+  const rowsChanged =
+    previousRows.length !== visibleMessages.length ||
+    visibleMessages.some(
+      (message, index) =>
+        message.id !== previousRows[index].id || sizingKey(message) !== previousRows[index].size
+    )
+  const geometryRows = rowsChanged ? readRows() : previousRows
+  if (rowsChanged) setRows(geometryRows)
+  // TanStack rebuilds its geometry when the key reader changes. Streamed text
+  // updates keep the same rows and ResizeObserver supplies their real sizes.
   const getItemKey = useCallback(
-    (index: number) => visibleMessages[index]?.id ?? 'assistant-waiting',
-    [visibleMessages]
+    (index: number) => geometryRows[index]?.id ?? 'assistant-waiting',
+    [geometryRows]
   )
   const estimateSize = useCallback(
     (index: number) =>

@@ -224,6 +224,20 @@ A successful explicit `detach` discards unfinished recording state for that targ
 
 All desktop checkpoints use a `desktop-control` registry within their result directory for on-demand diagnosis of their isolated instance. Native macOS process snapshots read PID parent relationships first, then collect detailed metrics and command lines only for the Electron process tree, keeping unrelated process arguments out of the collection buffer.
 
+### Renderer CPU and JS heap benchmark
+
+On macOS, compare the baseline and candidate on the same machine with the same foreground window state and build configuration. The commands launch isolated Electron and the real executor. A test model emits 120 Markdown chunks at 100 ms intervals. The benchmark verifies that the first chunk appears while streaming and waits for the last chunk to appear.
+
+```bash
+pnpm --filter wework ai:verify:electron:build
+pnpm --filter wework profile:renderer --check
+pnpm --filter wework profile:renderer --capture
+```
+
+- `--check` fails at idle CPU ≥ 10%, single-task CPU ≥ 15%, or sampled peak JS heap ≥ 300 MB (300,000,000 bytes). With no argument, the command reports measurements. CPU is cumulative CPU time across the isolated window renderer PIDs divided by elapsed wall time, with 100% representing one logical core. The idle window is about seven seconds. The task window runs from the start of the model response until the last chunk is visible. The benchmark samples V8 used heap every second without forcing GC.
+- `--capture` uses the existing performance recording and writes `renderer-performance.json` and raw evidence. Recording adds overhead. Run `--check` separately to verify the limits. All modes save `renderer-threshold-measurements.json` in the test directory printed in the console.
+- For long-lived memory growth, switch tasks repeatedly with the same history in an isolated instance, record JS heap usage, and take two heap snapshots in Chromium's Memory panel. Compare object counts and retained sizes, then inspect `Retainers` for reachable paths, including detached DOM, closures, and caches. Detach CDP recording for the target before opening the Memory panel. Keep reports and snapshots local.
+
 ### Diff preview CPU and workbench memory regressions
 
 The diff preview uses Pierre virtualization. Keep line callbacks, render options, annotations and layout metrics stable; owner refreshes or replacement event handlers must not rebuild unchanged code DOM. Actual option, diff and annotation changes must still render. `FileChangesPatchDiff.test.tsx` checks node identity across repeated refreshes and cleanup on unmount with real Pierre instances.

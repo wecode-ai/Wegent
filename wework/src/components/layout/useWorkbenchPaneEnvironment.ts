@@ -16,6 +16,7 @@ import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
+import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -65,6 +66,21 @@ export {
   applySharedChangeRequestSnapshot,
   resolveEnvironmentExecutionDeviceId,
 } from './workbenchPaneEnvironmentHelpers'
+
+function createPaneEnvironmentDiffLoader(
+  source: ReturnType<typeof createWorkbenchPaneEnvironmentSource>,
+  apiOwner: Parameters<typeof source.ownsApi>[0],
+  loadDiff: ReturnType<typeof useWorkbenchPaneContext>['loadEnvironmentDiff'],
+  workspaceError: string | null
+): NonNullable<WorkbenchPaneEnvironment['loadEnvironmentDiff']> {
+  return async (target, mode) => {
+    if (!source.ownsApi(apiOwner)) throw new Error(workspaceError ?? 'Workspace is not ready')
+    const isCurrent = source.captureOwner()
+    const diff = await loadDiff(null, target, mode)
+    if (!isCurrent()) throw new Error('Workspace has changed')
+    return diff
+  }
+}
 
 export function useWorkbenchPaneEnvironment({
   pane,
@@ -187,6 +203,8 @@ export function useWorkbenchPaneEnvironment({
   const preferences = useAppPreferencesState()
   const connection = useContext(CloudConnectionContext)
   const ownerTarget = currentRuntimeTask ? runtimeWorkspaceTarget : projectRuntimeWorkspaceTarget
+  const configuredProjectPath = workspaceProject ? configuredWorkspacePath(workspaceProject) : null
+  const configuredProjectDevice = workspaceProject ? executionDeviceId(workspaceProject) : null
   const ownerDeviceId =
     ownerTarget?.deviceId ??
     selectedProjectDeviceWorkspace?.deviceId ??
@@ -204,36 +222,15 @@ export function useWorkbenchPaneEnvironment({
     ownerTarget?.deviceId,
     ownerTarget?.path,
     ownerTarget?.workspaceSource,
+    ownerTarget ? null : configuredProjectPath,
+    ownerTarget ? null : configuredProjectDevice,
+    ownerTarget ? null : workspaceProject?.config?.workspace?.source,
     selectedProjectDeviceWorkspace?.id,
     ownerDeviceId,
     ownerDevice?.runtime_instance_id,
     ownerDevice?.execution_target_id,
     deviceSource?.deviceId,
     deviceSource?.runtimeInstanceId,
-  ])
-  const metadataKey = JSON.stringify([
-    pane.standaloneChatKey,
-    workspaceProject,
-    runtimeWorkspaceTarget,
-    projectRuntimeWorkspaceTarget,
-    currentRuntimeTask,
-    state.devices.map(device => [
-      device.device_id,
-      device.device_type,
-      device.execution_target_id,
-      device.app_device_id,
-      device.runtime_instance_id,
-      device.socket_device_id,
-      device.is_default,
-      device.status,
-      device.runtime_routes,
-      device.runtime_features,
-    ]),
-    workspaceRoots,
-    selectedWorkspaceProject,
-    activeConversationProject,
-    selectedProjectDeviceWorkspace,
-    conversationSummaryEntries,
   ])
   const sourceInput = useMemo(
     () => ({
@@ -270,9 +267,8 @@ export function useWorkbenchPaneEnvironment({
   }
   const source = scope.source
   const subscribe = useCallback(
-    (listener: () => void) =>
-      source.subscribe(listener, sourceInput, metadataKey, environmentRefreshActive),
-    [source, sourceInput, metadataKey, environmentRefreshActive]
+    (listener: () => void) => source.subscribe(listener, sourceInput, environmentRefreshActive),
+    [source, sourceInput, environmentRefreshActive]
   )
   const {
     environmentInfo,
@@ -366,6 +362,11 @@ export function useWorkbenchPaneEnvironment({
       ? worktreeProbe.availability
       : projectedWorktreeAvailability
   const contributionActionsAvailable = environmentExtensionsAvailable
+  const loadPaneEnvironmentDiff = useMemo(
+    () =>
+      createPaneEnvironmentDiffLoader(source, services, loadEnvironmentDiff, workspaceTargetError),
+    [source, services, loadEnvironmentDiff, workspaceTargetError]
+  )
   const requireContributionActionsAvailable = useCallback(() => {
     if (!source.ownsApi(services)) throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     if (!environmentExtensionsAvailable) throw new Error(t('workbench.extension_unavailable'))
@@ -559,15 +560,7 @@ export function useWorkbenchPaneEnvironment({
     commitAndPushEnvironmentChanges: commitAndPushPaneEnvironmentChanges,
     pushEnvironmentChanges: pushPaneEnvironmentChanges,
     loadEnvironmentDiff:
-      activeWorkspaceTarget && contributionActionsAvailable
-        ? async (target, mode) => {
-            requireContributionActionsAvailable()
-            const isCurrent = source.captureOwner()
-            const diff = await loadEnvironmentDiff(workspaceProject, target, mode)
-            if (!isCurrent()) throw new Error('Workspace has changed')
-            return diff
-          }
-        : undefined,
+      activeWorkspaceTarget && contributionActionsAvailable ? loadPaneEnvironmentDiff : undefined,
     listEnvironmentBranches: listPaneEnvironmentBranches,
     checkoutEnvironmentBranch: checkoutPaneEnvironmentBranch,
     createEnvironmentBranch: createPaneEnvironmentBranch,

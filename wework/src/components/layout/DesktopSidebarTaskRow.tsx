@@ -34,7 +34,7 @@ import {
   X,
 } from 'lucide-react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 
@@ -56,7 +56,7 @@ import {
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { useRuntimeTaskRateLimitWait } from '@/features/workbench/useRuntimeTaskRateLimitWait'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { WorkbenchQueueActionsContext } from '@/features/workbench/workbenchContexts'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
@@ -108,7 +108,7 @@ import {
 import type { ProjectCreateMenuPosition, RuntimeTaskPriorityReason } from './desktopSidebarTypes'
 import { ArchiveConversationsConfirmDialog } from './DesktopSidebarWidgets'
 import type { WorkbenchSplitGroupMembership } from './workbenchSplitGroups'
-export function RuntimeTaskRow({
+export const RuntimeTaskRow = memo(function RuntimeTaskRow({
   nowMs,
   workspace,
   devices,
@@ -172,7 +172,7 @@ export function RuntimeTaskRow({
   const [renameOpen, setRenameOpen] = useState(false)
   const [forceStarting, setForceStarting] = useState(false)
   const [queueReordering, setQueueReordering] = useState(false)
-  const workbench = useContext(WorkbenchContext)
+  const workbench = useContext(WorkbenchQueueActionsContext)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const worktreeTask = isRuntimeWorktreeTask(task)
   const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
@@ -194,7 +194,7 @@ export function RuntimeTaskRow({
         number: splitGroup.displayNumber,
       })
     : null
-  const taskAddress = getRuntimeTaskAddress(workspace, task)
+  const taskAddress = useMemo(() => getRuntimeTaskAddress(workspace, task), [workspace, task])
   const runArchive = useCallback(
     async (options?: ArchiveRuntimeTaskOptions) => {
       setArchiving(true)
@@ -983,7 +983,7 @@ export function RuntimeTaskRow({
       />
     </>
   )
-}
+})
 
 function useRuntimeTaskQueuePaused(address: RuntimeTaskAddress): boolean {
   const stableAddress = useMemo<RuntimeTaskAddress>(

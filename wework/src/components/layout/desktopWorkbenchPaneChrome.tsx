@@ -94,6 +94,24 @@ export function createDesktopWorkbenchPaneChrome(
     toggleRightPanelExpanded,
     toggleBottomPanel,
   } = model
+  const environmentTranscriptProps = {
+    conversationMessages: paneMessages,
+    onOpenConversationWorkspaceFile: openWorkspaceFileFromMessage,
+    environmentInfoFooter:
+      subagentConversations.length > 0 || runningBackgroundTerminals.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          <SubagentEnvironmentSummary
+            blocks={subagentConversations}
+            onOpen={openSubagentOverview}
+          />
+          <BackgroundTerminalsSummary
+            terminals={runningBackgroundTerminals}
+            onOpen={openBackgroundTerminal}
+            onStop={stopBackgroundTerminals}
+          />
+        </div>
+      ) : undefined,
+  }
   const renderWorkspacePanelActions = (
     mode:
       | 'all'
@@ -113,27 +131,12 @@ export function createDesktopWorkbenchPaneChrome(
       workspaceSessionApi={workspaceSessionApi}
       environmentInfo={environmentInfo}
       conversationSummaryIsGitRepository={conversationSummaryIsGitRepository}
-      conversationMessages={paneMessages}
+      {...(mode === 'all' || mode === 'environment' ? environmentTranscriptProps : undefined)}
       environmentInfoPopoverContainer={environmentInfoPopoverContainer}
       environmentInfoVisible={Boolean(currentRuntimeTask)}
       environmentInfoDocked={forceEnvironmentInfoDocked ?? environmentInfoDocked}
       environmentInfoOpen={environmentInfoOpen}
       onEnvironmentInfoOpenChange={setEnvironmentInfoOpen}
-      environmentInfoFooter={
-        subagentConversations.length > 0 || runningBackgroundTerminals.length > 0 ? (
-          <div className="flex flex-col gap-3">
-            <SubagentEnvironmentSummary
-              blocks={subagentConversations}
-              onOpen={openSubagentOverview}
-            />
-            <BackgroundTerminalsSummary
-              terminals={runningBackgroundTerminals}
-              onOpen={openBackgroundTerminal}
-              onStop={stopBackgroundTerminals}
-            />
-          </div>
-        ) : undefined
-      }
       onRefreshEnvironmentInfo={refreshEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
       onCommitAndPushEnvironmentChanges={commitAndPushEnvironmentChanges}
@@ -144,7 +147,6 @@ export function createDesktopWorkbenchPaneChrome(
       onGenerateEnvironmentBranch={branchNameApi ? generateBranchName : undefined}
       environmentBranchNameSource={workbenchTitle ?? undefined}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
-      onOpenConversationWorkspaceFile={path => void openWorkspaceFileFromMessage(path)}
       onDeliver={
         currentRuntimeTask && boundProjectSpaceApi && activeDeliveryItem ? openDelivery : undefined
       }

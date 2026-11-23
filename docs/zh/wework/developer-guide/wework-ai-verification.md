@@ -232,6 +232,20 @@ CPU 录制成功停止后，即使 trace 读取、解析或报告写入失败，
 
 所有桌面 checkpoint 共用结果目录内的 `desktop-control` 注册表，便于按需诊断自己的隔离实例。macOS 原生进程快照先读取 PID 父子关系，再只读取 Electron 进程树的详细指标和命令行，避免全机无关进程的参数撑满采集缓冲区。
 
+### Renderer CPU 和 JS 堆基准
+
+在 macOS 上用同一台机器、相同窗口前台状态和相同构建配置分别测量基线与候选版本。运行以下命令会启动隔离的 Electron 和真实执行器，由测试模型每 100 ms 发送一段 Markdown，共 120 段。脚本确认首段在流式输出期间可见，并等待末段出现在页面上。
+
+```bash
+pnpm --filter wework ai:verify:electron:build
+pnpm --filter wework profile:renderer --check
+pnpm --filter wework profile:renderer --capture
+```
+
+- `--check` 在空闲 CPU ≥ 10%、单任务 CPU ≥ 15% 或采样 JS 堆峰值 ≥ 300 MB（300,000,000 字节）时退出失败。省略参数仅输出测量结果。CPU 按隔离窗口 Renderer PID 的累计 CPU 时间除以墙钟时间计算，100% 代表占用一个逻辑核心。空闲窗口约 7 秒，单任务窗口从模型开始响应到末段可见。V8 堆使用量每秒采样，不强制 GC。
+- `--capture` 复用上面的性能录制，额外生成 `renderer-performance.json` 和原始证据。录制本身会增加开销，阈值验收用 `--check` 单独复测。三种模式的测量报告都保存在控制台列出的测试目录下，文件名为 `renderer-threshold-measurements.json`。
+- 排查长期内存增长时，在同一隔离实例中用相同历史数据反复切换任务后记录 JS 堆，再用 Chromium Memory 面板采集两份堆快照。先比较对象数量和 retained size，再检查 `Retainers` 中仍可达的引用路径，尤其是 detached DOM、回调闭包和缓存。使用 Memory 面板之前先断开同一目标上的 CDP 录制。报告和快照仅保存在本地。
+
 ### 差异预览 CPU 与工作台内存回归
 
 差异预览使用 Pierre 的虚拟化渲染。行事件回调、渲染选项、行注解和布局度量应保持稳定；父组件刷新或更换事件处理函数不应重建未变化的代码 DOM。实际选项、差异内容或行注解变化时仍须更新。`FileChangesPatchDiff.test.tsx` 使用真实 Pierre 实例检查连续刷新时的节点身份及卸载清理。

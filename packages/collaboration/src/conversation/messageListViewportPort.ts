@@ -138,9 +138,10 @@ export function createMessageListViewportPort() {
       capture()
       if (layoutChanged && next.virtual && next.ready) {
         next.scope.getViewportRenders().forEach(render => render())
-        const scroller = next.scrollElementRef?.current
-        previousScrollHeight = scroller?.scrollHeight
+        // The chunk callback can read the native range when it actually needs it.
+        previousScrollHeight = undefined
         if (isConversationDiagnosticsEnabled()) {
+          const scroller = next.scrollElementRef?.current
           recordConversationDiagnostic('virtual-range', {
             ...getConversationDiagnosticContext(node),
             rangeStart: next.virtualizer.range?.startIndex,
@@ -159,10 +160,11 @@ export function createMessageListViewportPort() {
       return () => {
         if (lease !== binding) return
         lease = null
-        // Persist the last committed owner, even if TanStack has already accepted another scope's options.
-        persist()
         queueMicrotask(() => {
           if (lease !== null) return
+          // Replaced refs share the port. Only a real detach saves the last
+          // committed snapshot; a key transition saves it in bind().
+          persist()
           element = null
           input = null
           pending.clear()

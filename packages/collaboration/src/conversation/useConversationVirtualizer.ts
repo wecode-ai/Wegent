@@ -59,7 +59,7 @@ export function useConversationVirtualizer({
     measurements.getSnapshot,
     () => EMPTY_MEASUREMENTS
   )
-  const readOffsetRef = useRef<((offset: number, scrolling: boolean) => void) | null>(null)
+  const readOffsetRef = useRef<((offset: number) => void) | null>(null)
   // A hidden pane has no scroll range and cannot establish an initial offset.
   const enabled = options.enabled && viewportReady
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -76,19 +76,31 @@ export function useConversationVirtualizer({
       const viewport = instance.scrollElement
       // External scroll writes can precede native event delivery and row measurements.
       if (viewport && viewport.scrollTop !== instance.scrollOffset)
-        readOffsetRef.current?.(viewport.scrollTop, false)
+        readOffsetRef.current?.(viewport.scrollTop)
       return (options.measureElement ?? measureElement)(element, entry, instance)
     },
     observeElementOffset: (instance, callback) => {
-      readOffsetRef.current = callback
-      const dispose = observeElementOffset(instance, callback)
+      let acknowledgedOffset: number | undefined
+      const acknowledge = (offset: number) => {
+        if (acknowledgedOffset === offset) return
+        acknowledgedOffset = offset
+        callback(offset, false)
+      }
+      readOffsetRef.current = acknowledge
+      const dispose = observeElementOffset(instance, (offset, scrolling) => {
+        // A native echo of an instant write must not start another scroll cycle.
+        if (acknowledgedOffset === offset) return
+        acknowledgedOffset = undefined
+        callback(offset, scrolling)
+      })
       const element = instance.scrollElement
       const updateDragOffset = () => {
+        acknowledgedOffset = undefined
         if (element) callback(element.scrollTop, true)
       }
       element?.addEventListener(SCROLLBAR_DRAG_POSITION_EVENT, updateDragOffset)
       const stopObservingWrites = element
-        ? observeConversationScrollWrites(element, offset => callback(offset, false))
+        ? observeConversationScrollWrites(element, acknowledge)
         : undefined
       return () => {
         readOffsetRef.current = null
@@ -125,7 +137,7 @@ export function useConversationVirtualizer({
       onScrollAdjustment?.(after - before)
       // Instant writes have already landed. A native scroll event can be delayed
       // or absent, so acknowledge the actual offset before the next commit.
-      if (element && settings.behavior !== 'smooth') readOffsetRef.current?.(after, false)
+      if (element && settings.behavior !== 'smooth') readOffsetRef.current?.(after)
     },
   })
 
