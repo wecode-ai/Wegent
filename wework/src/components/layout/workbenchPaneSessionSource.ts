@@ -25,6 +25,7 @@ import {
 } from './workbenchPaneSessionState'
 import { createPaneSessionFrame, type PaneSessionExternal } from './workbenchPaneSessionFrame'
 import { createPaneSessionView } from './workbenchPaneSessionView'
+import { deferHiddenConversationText } from './workbenchPaneConversationPresentation'
 import type {
   PaneCommandContext,
   PaneCommands,
@@ -69,22 +70,21 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   let unsubscribeSearch: (() => void) | undefined
   let stopWindowActivity: (() => void) | undefined
   let windowActivity: WorkbenchWindowActivity = 'foreground'
+  type Conversation = ReturnType<typeof getRuntimeConversationSnapshot>
   let presentedConversation:
-    | { key: string; snapshot: ReturnType<typeof getRuntimeConversationSnapshot> }
+    | { key: string; current: Conversation; visible: Conversation }
     | undefined
   const readPresentedConversation: typeof getRuntimeConversationSnapshot = address => {
     const key = runtimeConversationKey(address)
-    const snapshot = getRuntimeConversationSnapshot(address)
-    // Withhold incremental text while hidden. Settled turns can trigger actions
-    // such as connector authorization and must reach the pane immediately.
-    if (
-      windowActivity === 'hidden' &&
-      presentedConversation?.key === key &&
-      snapshot.turns.some(turn => turn.status === 'pending' || turn.status === 'streaming')
-    )
-      return presentedConversation.snapshot
-    presentedConversation = { key, snapshot }
-    return snapshot
+    const current = getRuntimeConversationSnapshot(address)
+    const previous = presentedConversation?.key === key ? presentedConversation : undefined
+    let visible = current
+    if (windowActivity === 'hidden' && previous) {
+      if (previous.current === current) return previous.visible
+      visible = deferHiddenConversationText(current, previous.visible)
+    }
+    presentedConversation = { key, current, visible }
+    return visible
   }
   let pendingStreamPresentation = false
   let conversationFrame: number | undefined

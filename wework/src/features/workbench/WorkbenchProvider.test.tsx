@@ -13,6 +13,7 @@ import {
 import { appReference } from '@/components/chat/composer/composerMentionCandidates'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import { MessageList } from '@/components/chat/MessageList'
+import { isRequestUserInputBlock } from '@wegent/chat-core/runtime-user-input'
 import {
   RUNTIME_RETRY_CONTINUATION_PROMPT,
   useWorkbenchPaneSession,
@@ -1904,6 +1905,16 @@ function RuntimePaneSessionIdentityProbe() {
     <div>
       <span data-testid="runtime-session-messages">
         {paneSession.messages.map(message => message.content).join('|')}
+      </span>
+      <span data-testid="runtime-session-turn-statuses">
+        {paneSession.turns.map(turn => `${turn.id}:${turn.status}`).join('|')}
+      </span>
+      <span data-testid="runtime-session-requests">
+        {paneSession.messages
+          .flatMap(message => message.blocks ?? [])
+          .filter(isRequestUserInputBlock)
+          .map(block => `${block.id}:${block.status}`)
+          .join('|')}
       </span>
       <span data-testid="runtime-session-error">{paneSession.error}</span>
       <button type="button" onClick={() => paneSession.setError('local pane event')}>
@@ -13391,7 +13402,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(paneSubscribeCount()).toBe(0)
   })
 
-  test('keeps hidden stream progress out of unrelated pane publications', async () => {
+  test('defers hidden stream text while publishing interaction requests and completed turns', async () => {
     const address = {
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
@@ -13424,6 +13435,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     try {
       const messages = screen.getByTestId('runtime-session-messages')
+      const turnStatuses = screen.getByTestId('runtime-session-turn-statuses')
+      const requests = screen.getByTestId('runtime-session-requests')
       await waitFor(() => expect(messages).toHaveTextContent('loaded transcript'))
       act(() => {
         applyRuntimeConversationAction(address, {
@@ -13454,17 +13467,65 @@ describe('WorkbenchProvider runtime tasks', () => {
       act(() => {
         notifyWindowActivity('hidden')
         applyRuntimeConversationAction(address, {
+          type: 'assistant_started',
+          taskId: address.taskId,
+          subtaskId: 'overlapping-turn',
+        })
+        applyRuntimeConversationAction(address, {
           type: 'assistant_chunk',
           subtaskId: 'hidden-turn',
           itemId: 'hidden-content',
           content: ' with terminal content',
         })
         applyRuntimeConversationAction(address, {
+          type: 'assistant_chunk',
+          subtaskId: 'overlapping-turn',
+          itemId: 'overlapping-content',
+          content: 'overlapping stream progress',
+        })
+        applyRuntimeConversationAction(address, {
+          type: 'block_created',
+          subtaskId: 'overlapping-turn',
+          block: {
+            id: 'hidden-question',
+            type: 'tool',
+            toolName: 'request_user_input',
+            subtaskId: 'overlapping-turn',
+            status: 'pending',
+            createdAt: Date.now(),
+            renderPayload: {
+              kind: 'request_user_input',
+              request_id: 42,
+              questions: [{ id: 'choice', question: 'Continue execution?' }],
+            },
+          },
+        })
+      })
+      expect(requests).toHaveTextContent('hidden-question:pending')
+      expect(messages).toHaveTextContent('hidden stream progress')
+      expect(messages).not.toHaveTextContent('with terminal content')
+      expect(messages).not.toHaveTextContent('overlapping stream progress')
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'block_updated',
+          subtaskId: 'overlapping-turn',
+          blockId: 'hidden-question',
+          updates: { status: 'done' },
+        })
+      })
+      expect(requests).toHaveTextContent('hidden-question:done')
+      act(() => {
+        applyRuntimeConversationAction(address, {
           type: 'assistant_done',
           subtaskId: 'hidden-turn',
         })
       })
+      expect(turnStatuses).toHaveTextContent('hidden-turn:done')
+      expect(turnStatuses).toHaveTextContent('overlapping-turn:streaming')
       expect(messages).toHaveTextContent('hidden stream progress with terminal content')
+      expect(messages).not.toHaveTextContent('overlapping stream progress')
+      act(() => notifyWindowActivity('foreground'))
+      expect(messages).toHaveTextContent('overlapping stream progress')
     } finally {
       unmount()
       window.weworkElectronLifecycle = previousLifecycle
