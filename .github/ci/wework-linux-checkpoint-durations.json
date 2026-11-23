@@ -12,6 +12,10 @@
   "coreShard5Observation": "https://github.com/wecode-ai/Wegent/actions/runs/44515639774/job/135533024027",
   "coreShard8Observation": "https://github.com/wecode-ai/Wegent/actions/runs/44518900937/job/135543221674",
   "coreExtraShard3Observation": "https://github.com/wecode-ai/Wegent/actions/runs/44540607346/job/135620143980",
+  "coreExclusiveCpuCheckpointObservations": [
+    "https://github.com/wecode-ai/Wegent/actions/runs/45143942480",
+    "https://github.com/wecode-ai/Wegent/actions/runs/45146663379"
+  ],
   "workers": 4,
   "scopes": {
     "core": {
@@ -84,7 +88,7 @@
       "dsh-owner-capture": 27,
       "embedded-browser": 170,
       "environment-panel-scroll": 174,
-      "executor-stream-recovery": 57,
+      "executor-stream-recovery": 38,
       "external-content-import": 18,
       "fork-provider-preservation": 37,
       "git-commit-generation": 46,
@@ -98,6 +102,7 @@
       "human-interactions-browser": 130,
       "human-interactions-hidden": 118,
       "human-interactions-issue": 143,
+      "idle-executor-requests": 39,
       "issue-notification-read": 71,
       "issue-reference-open": 63,
       "latest-conversation-history": 42,
