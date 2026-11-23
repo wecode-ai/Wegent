@@ -30,26 +30,24 @@ const FOLLOWUP = 'SILENT_PROGRESS_CHECK'
 
 function processingInput(body) {
   const input = Array.isArray(body.input) ? body.input : [body.input]
-  return JSON.stringify(
-    input.filter(item => {
-      if (
-        item?.type === 'function_call_output' &&
-        item.namespace === 'agent' &&
-        item.name === 'weworkstandinrecall'
-      )
-        return false
-      const text =
-        typeof item?.content === 'string'
-          ? item.content
-          : (item?.content ?? []).map(part => part?.text ?? '').join('')
-      // Quoted recall remains in the real request, but cannot select a scripted command.
-      return !(
-        item?.role === 'user' &&
-        text.trim().startsWith('<external_wework.stand-in.recall>') &&
-        text.trim().endsWith('</external_wework.stand-in.recall>')
-      )
-    })
-  )
+  return input.filter(item => {
+    if (
+      item?.type === 'function_call_output' &&
+      item.namespace === 'agent' &&
+      item.name === 'weworkstandinrecall'
+    )
+      return false
+    const text =
+      typeof item?.content === 'string'
+        ? item.content
+        : (item?.content ?? []).map(part => part?.text ?? '').join('')
+    // Quoted recall remains in the real request, but cannot select a scripted command.
+    return !(
+      item?.role === 'user' &&
+      text.trim().startsWith('<external_wework.stand-in.recall>') &&
+      text.trim().endsWith('</external_wework.stand-in.recall>')
+    )
+  })
 }
 
 export function createDesktopScenario({
@@ -124,9 +122,10 @@ export function createDesktopScenario({
       const body = await readRequestBody(req)
       if (handleModelMaintenanceRequest(body, response)) return true
       if (isReplyPredictionRequest(body)) return false
-      const input = processingInput(body)
+      const messages = processingInput(body)
+      const input = JSON.stringify(messages)
       const latestUserInput = JSON.stringify(
-        body.input?.findLast(item => item.type === 'message' && item.role === 'user')?.content ?? []
+        messages.findLast(item => item?.role === 'user')?.content ?? []
       )
       let events = delegatedTaskResultEvents(body)
       if (events) {
