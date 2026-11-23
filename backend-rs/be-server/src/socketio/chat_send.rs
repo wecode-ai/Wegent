@@ -1567,6 +1567,7 @@ pub async fn handle(
                 team_id: team.id,
                 bot_ids: bots.bot_ids.clone(),
                 new_session,
+                allow_new_session_fallback: payload.task_id.is_some() && !confirming_pipeline,
                 message: payload.message.clone(),
                 interactive_form_answer: payload.interactive_form_answer.clone(),
                 additional_skills: additional_skills.clone(),
