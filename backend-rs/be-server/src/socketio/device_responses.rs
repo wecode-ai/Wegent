@@ -30,6 +30,7 @@ use crate::internal_callback::channel;
 use crate::internal_callback::completion;
 use crate::internal_callback::emitter::{self, StatusUpdatingEmitter};
 use crate::internal_callback::parser;
+use crate::internal_callback::prepare_interactive_form_event;
 use crate::internal_callback::session::publish_callback_event;
 use crate::socketio::device_heartbeat;
 use crate::socketio::runtime::SocketRuntime;
@@ -227,6 +228,7 @@ async fn process_remote_event(
         .await;
     }
 
+    prepare_interactive_form_event(&state.interactive_form, &mut event).await;
     let mut emitter = StatusUpdatingEmitter::new(redis.clone(), task_id, subtask_id);
     let result = emitter.emit(&mut event).await;
     emitter.close().await;

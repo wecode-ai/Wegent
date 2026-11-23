@@ -382,8 +382,13 @@ pub fn acquire(request: &ExecutionRequest) -> Result<Option<HomeLease>, String> 
 fn acquire_at(request: &ExecutionRequest, root: &Path, home: &Path) -> Result<HomeLease, String> {
     prepare_home(request, root, home)?;
     let lock = open_home_lock(home, root)?;
-    lock.try_lock_exclusive()
-        .map_err(|_| "Agent Home already has an active execution".to_owned())?;
+    lock.try_lock_exclusive().map_err(|error| {
+        if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
+            "Agent Home already has an active execution".to_owned()
+        } else {
+            format!("lock agent Home: {error}")
+        }
+    })?;
     let lock = HomeLease(lock);
     bind_task_at(request, root, home)?;
     let active = home.join("runtime/active-task.json");
