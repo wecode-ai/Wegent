@@ -64,10 +64,14 @@ export function createDesktopScenario(options) {
       assert.ok(
         (body.input ?? []).some(
           item =>
-            item.type === 'function_call_output' &&
-            item.namespace === 'agent' &&
-            item.name === 'source' &&
-            item.output === SOURCE_CONTEXT
+            item.type === 'message' &&
+            item.role === 'user' &&
+            Array.isArray(item.content) &&
+            item.content.length === 2 &&
+            item.content[0].type === 'input_text' &&
+            item.content[0].text === '[tool_result without a matching tool_call]' &&
+            item.content[1].type === 'input_text' &&
+            item.content[1].text === SOURCE_CONTEXT
         ),
         'Codex did not retain the untrusted source context'
       )

@@ -17,6 +17,7 @@ import {
   handleModelMaintenanceRequest,
   isReplyPredictionRequest,
   mcpToolRequestEvents,
+  modelMessageText,
   readRequestBody,
   requestContainsToolOutput,
   responseCompleted,
@@ -125,6 +126,7 @@ export function createDesktopScenario({
       if (handleModelMaintenanceRequest(body, response)) return true
       if (isReplyPredictionRequest(body)) return false
       const input = processingInput(body)
+      const latestUser = modelMessageText(body.input?.findLast(item => item.role === 'user'))
       let events = delegatedTaskResultEvents(body)
       if (events) {
         // A result wake is a new host turn, even when its history quotes the original request.
@@ -159,8 +161,11 @@ export function createDesktopScenario({
             toolCallId: readId,
           }).events
         }
-      } else if (input.includes('PRIMARY_ORCHESTRATE_TASK')) {
-        const followup = input.includes('PRIMARY_ORCHESTRATE_TASK_CONTINUE')
+      } else if (
+        latestUser === 'PRIMARY_ORCHESTRATE_TASK_CREATE' ||
+        latestUser === 'PRIMARY_ORCHESTRATE_TASK_CONTINUE'
+      ) {
+        const followup = latestUser === 'PRIMARY_ORCHESTRATE_TASK_CONTINUE'
         const callId = followup ? 'primary-continue-task' : 'primary-create-task'
         if (requestContainsToolOutput(body, callId)) {
           const result = JSON.parse(readMcpToolOutput(body, callId))
@@ -190,12 +195,12 @@ export function createDesktopScenario({
           }).events
         }
       } else if (
-        input.includes('PRIMARY_CONCRETE_WORK') ||
-        input.includes('ORDINARY_PROGRESS_CHECK')
+        latestUser === 'PRIMARY_CONCRETE_WORK' ||
+        latestUser === 'ORDINARY_PROGRESS_CHECK'
       ) {
         events = [
           assistantMessage(
-            input.includes('ORDINARY_PROGRESS_CHECK')
+            latestUser === 'ORDINARY_PROGRESS_CHECK'
               ? 'ORDINARY_FOLLOWUP_DONE'
               : 'PRIMARY_CONCRETE_DONE'
           ),
