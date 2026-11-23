@@ -169,6 +169,7 @@ class SubscriptionTaskCompletionHandler:
                             db, execution, event.task_id
                         )
                     except Exception as cleanup_error:
+                        db.rollback()
                         logger.error(
                             f"[TaskCompletionHandler] Failed to clean runtime for "
                             f"task_id={event.task_id}: {cleanup_error}",
