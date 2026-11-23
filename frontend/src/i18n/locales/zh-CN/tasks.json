@@ -254,8 +254,7 @@
     },
     "suspects": {
       "title": "主要耗时点",
-      "empty": "未发现明显耗时瓶颈。",
-      "meta": "{{category}} · {{status}}"
+      "next_action": "排查建议"
     },
     "suggestions": {
       "inspect_registry": "检查 registry/mirror 或网络",

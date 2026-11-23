@@ -258,8 +258,7 @@
     },
     "suspects": {
       "title": "Top suspects",
-      "empty": "No dominant timing suspects were found.",
-      "meta": "{{category}} · {{status}}"
+      "next_action": "Next action"
     },
     "suggestions": {
       "inspect_registry": "Check registry/mirror or network",
