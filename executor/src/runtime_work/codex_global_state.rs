@@ -269,12 +269,6 @@ impl CodexGlobalProjectIndex {
         self.project_for_path(workspace_path)
     }
 
-    pub fn is_pinned_thread(&self, thread_id: &str) -> bool {
-        self.pinned_thread_ids
-            .iter()
-            .any(|value| value == thread_id)
-    }
-
     pub fn pinned_thread_order(&self, thread_id: &str) -> Option<usize> {
         self.pinned_thread_ids
             .iter()
