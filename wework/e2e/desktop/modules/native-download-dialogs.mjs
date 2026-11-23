@@ -75,8 +75,9 @@ async function listVisibleWindowsForPid(pid, timeoutMs = 2_000) {
   return xdotoolSearch(['--all', '--onlyvisible', '--pid', String(pid)], timeoutMs)
 }
 
-async function listVisiblePopupMenus(timeoutMs = 2_000) {
+async function listVisiblePopupMenus(pid, timeoutMs = 2_000) {
   const candidates = new Set([
+    ...(await listVisibleWindowsForPid(pid, timeoutMs)),
     ...(await xdotoolSearch(['--all', '--onlyvisible', '--classname', '.'], timeoutMs)),
   ])
   const results = []
@@ -234,7 +235,7 @@ export async function triggerEmbeddedBrowserContextMenuItem({
 
   const x = Math.round(webviewRect.left + elementRect.left + elementRect.width / 2)
   const y = Math.round(webviewRect.top + elementRect.top + elementRect.height / 2)
-  const existingPopups = new Set(await listVisiblePopupMenus())
+  const existingPopups = new Set(await listVisiblePopupMenus(pid))
 
   await execute(
     'xdotool',
@@ -252,7 +253,7 @@ export async function triggerEmbeddedBrowserContextMenuItem({
   const menuDeadline = Date.now() + Math.min(timeoutMs, 5_000)
   let menuWindowId = null
   while (Date.now() < menuDeadline) {
-    const popups = await listVisiblePopupMenus(1_500)
+    const popups = await listVisiblePopupMenus(pid, 1_500)
     const created = popups.find(windowId => !existingPopups.has(windowId))
     if (created) {
       menuWindowId = created
@@ -275,7 +276,7 @@ export async function triggerEmbeddedBrowserContextMenuItem({
 
   const closeDeadline = Date.now() + 4_000
   while (Date.now() < closeDeadline) {
-    const popups = await listVisiblePopupMenus(1_500)
+    const popups = await listVisiblePopupMenus(pid, 1_500)
     if (!popups.includes(menuWindowId)) return { menuWindowId, x, y }
     await new Promise(resolve => setTimeout(resolve, 80))
   }
