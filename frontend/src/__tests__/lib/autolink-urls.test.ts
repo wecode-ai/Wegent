@@ -2,72 +2,97 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { autolinkUrls } from '@/lib/autolink-urls'
+import '@testing-library/jest-dom'
+import { render, screen } from '@testing-library/react'
+import { createElement } from 'react'
+import { rehypeAutolinkUrls } from '@/lib/autolink-urls'
 
-describe('autolinkUrls', () => {
-  it('keeps closing bold markers outside bare links', () => {
-    const url = 'https://example.com/shared/task?token=demo_value_'
+// Exercise the real parser because delimiter handling depends on its output.
+const { default: Markdown } = jest.requireActual<typeof import('react-markdown')>(
+  '../../../node_modules/react-markdown/index.js'
+)
+const { default: rehypeRaw } = jest.requireActual<typeof import('rehype-raw')>(
+  '../../../node_modules/rehype-raw/index.js'
+)
 
-    expect(autolinkUrls(`**${url}**`)).toBe(`**[${url}](${url})**`)
+function renderMarkdown(source: string) {
+  return render(createElement(Markdown, { rehypePlugins: [rehypeRaw, rehypeAutolinkUrls] }, source))
+}
+
+describe('rehypeAutolinkUrls', () => {
+  it.each([
+    [
+      '**https://example.com/shared/task?token=demo_value_**',
+      'https://example.com/shared/task?token=demo_value_',
+      '',
+    ],
+    ['**https://example.com**more', 'https://example.com', 'more'],
+    ['**Read https://example.com**more', 'https://example.com', 'more'],
+  ])('renders a bold link in %s', (source, url, suffix) => {
+    const { container } = renderMarkdown(source)
+    const link = screen.getByRole('link', { name: url })
+
+    expect(link).toHaveAttribute('href', url)
+    expect(link.closest('strong')).not.toBeNull()
+    expect(container.querySelector('strong')?.nextSibling?.textContent ?? '').toBe(suffix)
   })
 
-  it('stops bare links before adjacent CJK text and full-width parentheses', () => {
-    expect(autolinkUrls('见 https://example.com/path（说明）')).toBe(
-      '见 [https://example.com/path](https://example.com/path)（说明）'
-    )
-    expect(autolinkUrls('见 https://example.com/path说明')).toBe(
-      '见 [https://example.com/path](https://example.com/path)说明'
-    )
-  })
+  it.each(['https://example.com/search?q=*', 'https://example.com/a**b'])(
+    'preserves literal asterisks in %s',
+    url => {
+      renderMarkdown(url)
 
-  it('keeps explicit Markdown links unchanged', () => {
-    expect(autolinkUrls('[说明](https://example.com/path（说明）)')).toBe(
-      '[说明](https://example.com/path（说明）)'
-    )
+      expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+    }
+  )
+
+  it.each(['（说明）', '说明'])('stops a bare URL before %s', suffix => {
+    const url = 'https://example.com/path'
+    const { container } = renderMarkdown(`见 ${url}${suffix}`)
+
+    expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+    expect(container.textContent).toBe(`见 ${url}${suffix}`)
   })
 
   it.each([
-    '[https://cdn.example.com/file.pdf](https://cdn.example.com/file.pdf)',
+    '[https://example.com/docs](https://example.com/target)',
     '[See https://example.com/docs](https://example.com/target)',
-    '![https://example.com/image.jpeg](https://example.com/image.jpeg)',
     '[**https://example.com/docs**](https://example.com/target)',
     '[Label \\] https://example.com/docs](https://example.com/target)',
     '[Open `]` https://example.com/file.pdf](https://example.com/target)',
-    '[![https://example.com/image.jpeg](https://example.com/image.jpeg)](https://example.com)',
-  ])('does not autolink a URL inside an existing link or image label: %s', source => {
-    expect(autolinkUrls(source)).toBe(source)
-    expect(autolinkUrls(autolinkUrls(source))).toBe(source)
-  })
+    '[![https://example.com/image.jpeg](https://example.com/image.jpeg)](https://example.com/target)',
+    '[https://example.com/docs][target]\n\n[target]: https://example.com/target',
+    '<a href="https://example.com/target">https://example.com/docs</a>',
+  ])('keeps one explicit link in %s', source => {
+    renderMarkdown(`${source}\n\nhttps://example.com/other`)
 
-  it('preserves existing links while autolinking adjacent bare URLs', () => {
-    const existing = '[https://example.com/docs](https://example.com/target)'
-    expect(autolinkUrls(`${existing} and https://example.com/other`)).toBe(
-      `${existing} and [https://example.com/other](https://example.com/other)`
-    )
-  })
-
-  it('does not autolink URLs inside reference-style link labels', () => {
-    const source = '[https://example.com/docs][target]\n\n[target]: /docs'
-    expect(autolinkUrls(source)).toBe(source)
+    const links = screen.getAllByRole('link')
+    expect(links.map(link => link.getAttribute('href'))).toEqual([
+      'https://example.com/target',
+      'https://example.com/other',
+    ])
   })
 
   it.each([
     '`https://example.com/code`',
     '```\nhttps://example.com/code\n```',
-    '<https://example.com/autolink>',
-    '<a href="https://example.com/page">Page</a>',
+    '![https://example.com/image.jpeg](https://example.com/image.jpeg)',
     '<img src="https://example.com/image.jpeg">',
-    '[Guide](https://example.com/guide.pdf "Guide")',
-  ])('preserves code, HTML, and ordinary explicit links: %s', source => {
-    expect(autolinkUrls(source)).toBe(source)
+  ])('leaves code and images without links in %s', source => {
+    renderMarkdown(source)
+
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 
-  it('still autolinks URLs in plain brackets and normal prose', () => {
-    expect(autolinkUrls('[https://example.com/plain]')).toBe(
-      '[[https://example.com/plain](https://example.com/plain)]'
+  it('keeps an angle-bracket autolink and links bare URLs in prose', () => {
+    renderMarkdown(
+      '<https://example.com/explicit> [https://example.com/plain] www.example.com/docs.'
     )
-    expect(autolinkUrls('Read www.example.com/docs.')).toBe(
-      'Read [www.example.com/docs](https://www.example.com/docs).'
-    )
+
+    expect(screen.getAllByRole('link').map(link => link.getAttribute('href'))).toEqual([
+      'https://example.com/explicit',
+      'https://example.com/plain',
+      'https://www.example.com/docs',
+    ])
   })
 })

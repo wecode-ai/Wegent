@@ -279,6 +279,7 @@ it.each([
   '**图片**  \n![北方降雨量 (1).jpeg](https://cdn.example.com/image.jpeg)',
   '**![北方降雨量 (1).jpeg](https://cdn.example.com/image.jpeg)**',
   '**图片**\n[北方降雨量 (1).jpeg](https://cdn.example.com/image.jpeg)',
+  '**图片**\nhttps://cdn.example.com/image.jpeg',
   '<strong><img src="https://cdn.example.com/image.jpeg" alt="Image"></strong>',
 ])('renders an image on its own line or wrapped in formatting: %s', async content => {
   const { container } = render(<DocumentContentViewer {...props} content={content} />)

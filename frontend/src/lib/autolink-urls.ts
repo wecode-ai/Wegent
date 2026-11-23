@@ -1,213 +1,86 @@
-/**
- * Autolink URLs pre-processor for Markdown
- *
- * This module provides a function to convert bare URLs in markdown text
- * to proper markdown link format before rendering.
- *
- * This is needed because remark-gfm-safe excludes the autolink literal
- * feature for iOS 16 Safari compatibility (Safari iOS 16 doesn't support
- * lookbehind assertions used in the original implementation).
- *
- * The pre-processor detects bare URLs and converts them to [url](url) format,
- * while preserving:
- * - URLs already in markdown link format: [text](url)
- * - URLs in image format: ![alt](url)
- * - URLs in code blocks: ```code``` or `inline code`
- * - URLs in HTML anchor tags: <a href="url">
- *
- * @see src/lib/remark-gfm-safe.ts
- */
+import type { Element, Root, RootContent, Text } from 'hast'
 
-/**
- * Regular expression to match URLs
- * Matches http://, https://, and www. URLs, leaving trailing emphasis asterisks outside the match.
- */
+// GFM autolink literals are disabled for iOS 16. Match URLs in parsed text so
+// Markdown emphasis and literal asterisks retain their meaning.
 const URL_REGEX =
-  /(?:https?:\/\/|www\.)[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]*[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF*.,;:!?'")\]}>]/gi
+  /(?:https?:\/\/|www\.)[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]*[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF.,;:!?'")\]}>]/gi
 
-/**
- * Check if a position is inside a code block or inline code
- */
-function isInsideCode(text: string, position: number): boolean {
-  // Check for code blocks (```)
-  let inCodeBlock = false
-  let i = 0
-  while (i < position) {
-    if (text.slice(i, i + 3) === '```') {
-      inCodeBlock = !inCodeBlock
-      i += 3
-    } else {
-      i++
+const NON_LINKABLE_ELEMENTS = new Set([
+  'a',
+  'button',
+  'code',
+  'math',
+  'pre',
+  'script',
+  'style',
+  'svg',
+  'textarea',
+  'title',
+])
+
+function autolinkText(node: Text, source: string): Array<Text | Element> {
+  const children: Array<Text | Element> = []
+  const start = node.position?.start
+  const offset = start?.offset
+  // Keep source positions for consumers that lay out links on their own lines.
+  const sourceOffset =
+    offset !== undefined &&
+    node.position?.end.offset === offset + node.value.length &&
+    source.startsWith(node.value, offset)
+      ? offset
+      : undefined
+  let line = start?.line ?? 1
+  let column = start?.column ?? 1
+  let cursor = 0
+
+  for (const { 0: url, index } of node.value.matchAll(URL_REGEX)) {
+    const before = node.value.slice(cursor, index)
+    if (index > cursor) {
+      children.push({ type: 'text', value: before })
     }
+    const link: Element = {
+      type: 'element',
+      tagName: 'a',
+      properties: { href: /^www\./i.test(url) ? `https://${url}` : url },
+      children: [{ type: 'text', value: url }],
+    }
+    cursor = index + url.length
+    if (sourceOffset !== undefined) {
+      const lines = before.split(/\r\n?|\n/)
+      line += lines.length - 1
+      column = lines.length === 1 ? column + before.length : lines[lines.length - 1].length + 1
+      link.position = {
+        start: { line, column, offset: sourceOffset + index },
+        end: { line, column: column + url.length, offset: sourceOffset + cursor },
+      }
+      column += url.length
+    }
+    children.push(link)
   }
-  if (inCodeBlock) return true
 
-  // Check for inline code (`)
-  // Count backticks before position - if odd, we're inside inline code
-  const textBefore = text.slice(0, position)
-  // Split by escaped backticks and code blocks to only count single backticks
-  const withoutCodeBlocks = textBefore.replace(/```[\s\S]*?```/g, '')
-  const backtickCount = (withoutCodeBlocks.match(/`/g) || []).length
-  return backtickCount % 2 === 1
+  if (cursor === 0) return [node]
+  if (cursor < node.value.length) children.push({ type: 'text', value: node.value.slice(cursor) })
+  return children
 }
 
-/**
- * Check if a URL at the given position is already part of a markdown link
- * Patterns to skip:
- * - [text](url) - markdown link
- * - ![alt](url) - markdown image
- * - <url> - angle bracket URL (auto-linked by markdown)
- * - <a href="url"> - HTML anchor
- */
-function isAlreadyLinked(text: string, urlStart: number, urlEnd: number): boolean {
-  // Check if URL is inside parentheses preceded by ] or ![...]
-  // This handles both [text](url) and ![alt](url)
-  const beforeUrl = text.slice(0, urlStart)
-
-  // Check for markdown link pattern: ](url)
-  if (beforeUrl.endsWith('](')) {
-    return true
-  }
-
-  // Check for markdown link pattern with optional title: ]( url or ]("title" url
-  const parenMatch = beforeUrl.match(/\]\(\s*$/)
-  if (parenMatch) {
-    return true
-  }
-
-  // Check if inside angle brackets: <url>
-  const lastOpenAngle = beforeUrl.lastIndexOf('<')
-  const lastCloseAngle = beforeUrl.lastIndexOf('>')
-  if (lastOpenAngle > lastCloseAngle) {
-    // We're inside angle brackets, check if the closing > comes after the URL
-    const afterUrl = text.slice(urlEnd)
-    if (afterUrl.match(/^[^<]*>/)) {
-      return true
-    }
-  }
-
-  // Check if inside href attribute: href="url" or href='url'
-  const hrefMatch = beforeUrl.match(/href\s*=\s*["']?$/)
-  if (hrefMatch) {
-    return true
-  }
-
-  // Check if inside src attribute: src="url" or src='url' (for images)
-  const srcMatch = beforeUrl.match(/src\s*=\s*["']?$/)
-  if (srcMatch) {
-    return true
-  }
-
-  return false
-}
-
-/**
- * Protect link/image labels too: a URL used as display text is not a bare URL.
- * Match balanced brackets so formatted labels and nested images stay intact.
- */
-function linkLabelRanges(text: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = []
-  const brackets: number[] = []
-  const referenceLabels = new Set(
-    Array.from(text.matchAll(/^ {0,3}\[([^\]]+)\]:/gm), match => normalizeReferenceLabel(match[1]))
-  )
-  for (let index = 0; index < text.length; index++) {
-    if (text[index] === '\\') {
-      index++
-    } else if (text[index] === '`') {
-      let runLength = 1
-      while (text[index + runLength] === '`') runLength++
-      let closingIndex = -1
-      for (let cursor = index + runLength; cursor < text.length; ) {
-        const candidate = text.indexOf('`', cursor)
-        if (candidate === -1) break
-        let candidateLength = 1
-        while (text[candidate + candidateLength] === '`') candidateLength++
-        if (candidateLength === runLength) {
-          closingIndex = candidate
-          break
-        }
-        cursor = candidate + candidateLength
-      }
-      if (closingIndex !== -1) index = closingIndex + runLength - 1
-    } else if (text[index] === '[') {
-      brackets.push(index)
-    } else if (text[index] === ']') {
-      const start = brackets.pop()
-      if (start === undefined) continue
-      if (text[index + 1] === '(') {
-        ranges.push({ start, end: index })
-        continue
-      }
-      const label = text.slice(start + 1, index)
-      if (text[index + 1] === '[') {
-        const referenceEnd = text.indexOf(']', index + 2)
-        if (referenceEnd === -1) continue
-        const reference = text.slice(index + 2, referenceEnd) || label
-        if (referenceLabels.has(normalizeReferenceLabel(reference))) {
-          ranges.push({ start, end: index })
-        }
-      } else if (referenceLabels.has(normalizeReferenceLabel(label))) {
-        ranges.push({ start, end: index })
+function autolinkChildren<Child extends RootContent>(
+  children: Child[],
+  source: string
+): Array<Child | Element | Text> {
+  return children.flatMap<Child | Element | Text>(child => {
+    if (child.type === 'text') return autolinkText(child, source)
+    if (child.type === 'element' && !NON_LINKABLE_ELEMENTS.has(child.tagName)) {
+      const { className } = child.properties
+      if (!Array.isArray(className) || !className.includes('katex')) {
+        child.children = autolinkChildren(child.children, source)
       }
     }
-  }
-  return ranges
+    return [child]
+  })
 }
 
-function normalizeReferenceLabel(label: string): string {
-  return label.trim().replace(/\s+/g, ' ').toLowerCase()
-}
-
-/**
- * Pre-process markdown text to convert bare URLs to markdown link format
- *
- * @param text - The markdown text to process
- * @returns The processed text with bare URLs converted to markdown links
- *
- * @example
- * // Input: "Check out https://example.com for more info"
- * // Output: "Check out [https://example.com](https://example.com) for more info"
- */
-export function autolinkUrls(text: string): string {
-  if (!text) return text
-
-  const matches: Array<{ start: number; end: number; url: string }> = []
-  const labels = linkLabelRanges(text)
-
-  // Find all URL matches
-  let match: RegExpExecArray | null
-  while ((match = URL_REGEX.exec(text)) !== null) {
-    const url = match[0]
-    const start = match.index
-    const end = start + url.length
-
-    // Skip if inside code
-    if (isInsideCode(text, start)) {
-      continue
-    }
-
-    // Skip if already linked
-    if (
-      isAlreadyLinked(text, start, end) ||
-      labels.some(label => start > label.start && end <= label.end)
-    ) {
-      continue
-    }
-
-    matches.push({ start, end, url })
+export function rehypeAutolinkUrls() {
+  return (tree: Root, file: { toString(): string }) => {
+    tree.children = autolinkChildren(tree.children, file.toString())
   }
-
-  // Replace matches from end to start to preserve positions
-  let result = text
-  for (let i = matches.length - 1; i >= 0; i--) {
-    const { start, end, url } = matches[i]
-    // Ensure URL has protocol for the href
-    const href = url.startsWith('www.') ? `https://${url}` : url
-    // Use the original URL as display text, href as the link target
-    const markdownLink = `[${url}](${href})`
-    result = result.slice(0, start) + markdownLink + result.slice(end)
-  }
-
-  return result
 }
