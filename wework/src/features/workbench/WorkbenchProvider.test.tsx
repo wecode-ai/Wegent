@@ -13451,6 +13451,20 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(messages).not.toHaveTextContent('hidden stream progress')
       act(() => notifyWindowActivity('foreground'))
       expect(messages).toHaveTextContent('hidden stream progress')
+      act(() => {
+        notifyWindowActivity('hidden')
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_chunk',
+          subtaskId: 'hidden-turn',
+          itemId: 'hidden-content',
+          content: ' with terminal content',
+        })
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_done',
+          subtaskId: 'hidden-turn',
+        })
+      })
+      expect(messages).toHaveTextContent('hidden stream progress with terminal content')
     } finally {
       unmount()
       window.weworkElectronLifecycle = previousLifecycle

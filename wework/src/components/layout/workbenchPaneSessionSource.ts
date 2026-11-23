@@ -74,10 +74,15 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     | undefined
   const readPresentedConversation: typeof getRuntimeConversationSnapshot = address => {
     const key = runtimeConversationKey(address)
-    // Lifecycle and local UI updates still publish while the transcript is hidden.
-    if (windowActivity === 'hidden' && presentedConversation?.key === key)
-      return presentedConversation.snapshot
     const snapshot = getRuntimeConversationSnapshot(address)
+    // Withhold incremental text while hidden. Settled turns can trigger actions
+    // such as connector authorization and must reach the pane immediately.
+    if (
+      windowActivity === 'hidden' &&
+      presentedConversation?.key === key &&
+      snapshot.turns.some(turn => turn.status === 'pending' || turn.status === 'streaming')
+    )
+      return presentedConversation.snapshot
     presentedConversation = { key, snapshot }
     return snapshot
   }
