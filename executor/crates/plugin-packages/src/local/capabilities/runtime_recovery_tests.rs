@@ -150,16 +150,24 @@ async fn desktop_recovery_projects_only_package_owned_python_mcp_commands() {
     expected["mcpServers"]["managed"]["args"] =
         json!(["plugin-python", "--mcp", "scripts/server.py", "two words"]);
     expected["mcpServers"]["managed"]["startup_timeout_sec"] = json!(970.0);
-    expected["mcpServers"]["managed"].as_object_mut().unwrap().remove("startup_timeout_ms");
+    expected["mcpServers"]["managed"]
+        .as_object_mut()
+        .unwrap()
+        .remove("startup_timeout_ms");
     expected["mcpServers"]["managed"]["env_vars"] = json!([
-        "PLUGIN_OPTION", "WEWORK_PYTHON_RUNTIME_URL", "WEWORK_PYTHON_RUNTIME_TOKEN", "WEGENT_PYTHON_PATH"
+        "PLUGIN_OPTION",
+        "WEWORK_PYTHON_RUNTIME_URL",
+        "WEWORK_PYTHON_RUNTIME_TOKEN",
+        "WEGENT_PYTHON_PATH"
     ]);
     assert_eq!(projected, expected);
     let mut expected_claude = claude_config.clone();
     expected_claude["claude"]["command"] = json!(python);
     expected_claude["claude"]["args"] = json!(["plugin-python", "--mcp", "scripts/server.py"]);
     expected_claude["claude"]["env_vars"] = json!([
-        "WEWORK_PYTHON_RUNTIME_URL", "WEWORK_PYTHON_RUNTIME_TOKEN", "WEGENT_PYTHON_PATH"
+        "WEWORK_PYTHON_RUNTIME_URL",
+        "WEWORK_PYTHON_RUNTIME_TOKEN",
+        "WEGENT_PYTHON_PATH"
     ]);
     let projected_claude: Value =
         serde_json::from_slice(&fs::read(runtime.join("claude-mcp.json")).unwrap()).unwrap();
