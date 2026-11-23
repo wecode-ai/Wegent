@@ -134,6 +134,7 @@ async fn stand_in_device_identity_rpc_distinguishes_local_alias_and_owned_route(
     assert!(!handler.stand_in_role_runs_here(&json!({"executionDeviceId":"app-record-71"})));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, &handler.device_id).unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role(&handler.device_id)]);
     let role = &mut settings["roles"][0];
     role["executionDeviceId"] = json!("app-record-42");
     role["enabled"] = json!(true);
