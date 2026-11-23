@@ -572,6 +572,8 @@ fn request_adapters_keep_tool_results_next_to_their_calls() {
     let call = |id| json!({"type":"function_call","name":"exec","call_id":id,"arguments":"{}"});
     let output = |id| json!({"type":"function_call_output","call_id":id,"output":"done"});
     let boundary = json!({"type":"message","role":"user","content":"Continue"});
+    let search = json!({"type":"tool_search_call","execution":"server","arguments":{}});
+    let search_output = json!({"type":"tool_search_output","execution":"server","tools":[]});
     let input = json!([
         call("exec"),
         commentary(json!([empty])),
@@ -580,6 +582,8 @@ fn request_adapters_keep_tool_results_next_to_their_calls() {
         call("exec_1"),
         output("exec_0"),
         commentary(json!([empty, text])),
+        search,
+        search_output,
         output("exec_1"),
         call("exec_2"),
         commentary(json!([text])),
@@ -593,6 +597,8 @@ fn request_adapters_keep_tool_results_next_to_their_calls() {
         call("exec_0"),
         call("exec_1"),
         output("exec_0"),
+        search,
+        search_output,
         output("exec_1"),
         call("exec_2"),
         commentary(json!([text])),

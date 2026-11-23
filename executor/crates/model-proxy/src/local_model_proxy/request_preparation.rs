@@ -202,6 +202,9 @@ fn group_responses_tool_history(body: &mut Value) {
 
     for index in 0..items.len() {
         let item = &items[index];
+        if chat::is_unlinked_server_tool_search(item) {
+            continue;
+        }
         let call_id = item["call_id"].as_str().filter(|id| !id.is_empty());
         match (item["type"].as_str(), call_id) {
             (Some("function_call" | "custom_tool_call" | "tool_search_call"), Some(id)) => {
