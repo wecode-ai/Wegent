@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
-  createSingleRootLocalProject,
   selectE2EModel,
   fetchJson,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -27,7 +26,7 @@ import {
   shellCommandPollResponse,
 } from '../modules/shell-command-response.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
-import { findRolloutPath } from '../modules/running-history-fixtures.mjs'
+import { waitForSingleProjectByTitle } from '../modules/project-identity-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const MODEL = 'custom-responses-model'
@@ -38,15 +37,15 @@ const TOOL_OK = 'RESPONSES_SHELL_OK'
 const DONE = 'RESPONSES_TOOL_COMPLETED'
 const API_KEY = 'responses-protocol-fixture-key'
 const ERROR = "Unsupported custom tool: 'exec'. Only 'apply_patch' is supported."
-const DETACHED_CONTEXT = 'RESPONSES_HISTORICAL_CONTEXT'
-const TASK_ROW_PREFIX = 'runtime-local-task-row-'
+const PROJECT_KEY = 'responses-compatibility'
+const PROJECT_NAME = 'Responses compatibility'
 
 /** Exercise the real desktop/runtime/Codex chain against a strict model protocol oracle. */
 export function createDesktopScenario({
   electronUserDataDirectory,
-  executorHome,
   workspacePath,
   resultDir,
+  uiTimeoutMs,
 }) {
   const requests = []
   let probeRequests = 0
@@ -54,8 +53,7 @@ export function createDesktopScenario({
   let round = 1
   let cloudEnvironment
   let cloudModelId
-  let restartDesktopApp
-  let replayedDetachedContext = false
+  let convertedWaitingContext = false
   const cloudRequest = (path, options = {}) =>
     fetchJson(`${cloudEnvironment.backendUrl}${path}`, {
       ...options,
@@ -67,9 +65,6 @@ export function createDesktopScenario({
   const artifact = join(workspacePath, 'responses-tool-compatibility.txt')
   return {
     requiresCloudEnvironment: true,
-    setRestartDesktopApp(restart) {
-      restartDesktopApp = restart
-    },
     async prepareCloud(cloud) {
       cloudEnvironment = cloud
       await cloudRequest('/api/admin/setup-complete', { method: 'POST' })
@@ -182,20 +177,16 @@ export function createDesktopScenario({
         return true
       }
       if (round === 2) {
-        const context = body.input.find(item => JSON.stringify(item).includes(DETACHED_CONTEXT))
-        assert.equal(context?.type, 'message', 'Codex must replay the historical context')
-        assert.equal(context.role, 'user')
-        assert.ok(
-          context.content.some(part => part.type === 'input_text' && part.text === DETACHED_CONTEXT)
+        // The executor adds an empty waiting-subscription snapshot when continuing this task.
+        const waitingContext = body.input.find(
+          item =>
+            item.type === 'message' &&
+            item.role === 'user' &&
+            item.content?.[0]?.text === '[tool_result without a matching tool_call]' &&
+            item.content?.[1]?.text === '[]'
         )
-        assert.ok(
-          context.content.some(
-            part =>
-              part.type === 'input_text' &&
-              part.text === '[tool_result without a matching tool_call]'
-          )
-        )
-        replayedDetachedContext = true
+        assert.ok(waitingContext, 'The cloud follow-up must carry the waiting snapshot as context')
+        convertedWaitingContext = true
       }
       const tools = programmaticExecTools(body)
       const rejected = !native && tools.some(tool => tool.type === 'custom')
@@ -305,35 +296,31 @@ export function createDesktopScenario({
         )
         await control.command('click', '[data-testid="provider-editor-cancel"]')
         await control.command('navigate', 'body', { value: '/' })
-        await createSingleRootLocalProject(control, workspacePath, 'Responses compatibility')
+        // Project creation is test setup. Seed it through the real executor so
+        // native folder-picker focus cannot block the Responses check.
+        await control.command('seedLocalProject', 'body', {
+          value: JSON.stringify({
+            projectKey: PROJECT_KEY,
+            name: PROJECT_NAME,
+            path: workspacePath,
+          }),
+        })
+        await reloadMainWindow(control)
+        const { projectId } = await waitForSingleProjectByTitle(
+          control,
+          PROJECT_NAME,
+          'The Responses workspace was missing after seeding',
+          uiTimeoutMs
+        )
+        const projectRow = `[data-testid="project-row-${projectId}"]`
+        await control.command('hover', projectRow)
+        await control.command(
+          'clickWhenEnabled',
+          `${projectRow} [data-testid="project-new-conversation-button"]`
+        )
         await selectE2EModel(control, `local-model:${MODEL_ID}`, MODEL)
-        const before = JSON.parse(await control.command('snapshot', 'body')).testIds
         for (round = 1; round <= 3; round += 1) {
           if (round === 2) {
-            const { testIds } = JSON.parse(await control.command('snapshot', 'body'))
-            const row = testIds.find(id => id.startsWith(TASK_ROW_PREFIX) && !before.includes(id))
-            assert.ok(row, 'The first turn must have a persisted task to continue')
-            await restartDesktopApp({
-              afterStop: async () => {
-                const index = JSON.parse(
-                  await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
-                )
-                const threadId = index.tasks[row.slice(TASK_ROW_PREFIX.length)]?.thread_id
-                assert.ok(threadId, 'The first turn must have a persisted Codex thread')
-                const rollout = await findRolloutPath(
-                  join(executorHome, 'codex', 'sessions'),
-                  threadId
-                )
-                assert.ok(rollout, 'The first turn must have a persisted Codex rollout')
-                const item = {
-                  timestamp: new Date().toISOString(),
-                  type: 'response_item',
-                  payload: { type: 'function_call_output', call_id: '', output: DETACHED_CONTEXT },
-                }
-                await appendFile(rollout, `${JSON.stringify(item)}\n`, 'utf8')
-              },
-            })
-            await control.command('clickWhenEnabled', `[data-testid="${row}"]`)
             await reloadMainWindow(control)
             await selectE2EModel(control, CLOUD_MODEL, 'Portable Responses')
           }
@@ -353,7 +340,7 @@ export function createDesktopScenario({
         }
         assert.ok(requests.length >= 6, 'Local, cloud and native turns must execute real tools')
         assert.ok(requests.every(request => !request.rejected))
-        assert.ok(replayedDetachedContext, 'The cloud follow-up must replay the seeded history')
+        assert.ok(convertedWaitingContext, 'The cloud follow-up must convert the waiting snapshot')
       } catch (error) {
         errors.push(error)
       } finally {
