@@ -21,7 +21,11 @@ import {
   type PaneSessionState,
   type PaneSessionStateActions,
 } from './workbenchPaneSessionState'
-import { createPaneSessionFrame, type PaneSessionExternal } from './workbenchPaneSessionFrame'
+import {
+  createPaneSessionFrame,
+  type PaneSessionExternal,
+  type PaneSessionFrame,
+} from './workbenchPaneSessionFrame'
 import { createPaneSessionView } from './workbenchPaneSessionView'
 import type {
   PaneCommandContext,
@@ -473,6 +477,19 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       publishing = false
     }
   }
+  function reconcileGoal(current: PaneSessionFrame) {
+    if (!isActive()) return
+    const nextScope = [
+      current.runtimeTaskLoadTarget?.key,
+      current.getRuntimeGoal,
+      current.paneStatus.isCreatingTask,
+    ]
+    if (!differs(goalReadScope, nextScope)) return
+    goalReadScope = nextScope
+    goalReaderController.abort()
+    goalReaderController = new AbortController()
+    if (current.runtimeTaskLoadTarget) hydrateRuntimePaneGoal(bind(), goalReaderController.signal)
+  }
   function reconcile() {
     if (!isActive() || reconciling) return
     reconciling = true
@@ -526,14 +543,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
             )
           : undefined
       }
-      const nextGoalReadScope = [current.runtimeTaskLoadTarget?.key, current.getRuntimeGoal]
-      if (differs(goalReadScope, nextGoalReadScope)) {
-        goalReadScope = nextGoalReadScope
-        goalReaderController.abort()
-        goalReaderController = new AbortController()
-        if (current.runtimeTaskLoadTarget)
-          hydrateRuntimePaneGoal(bind(), goalReaderController.signal)
-      }
+      reconcileGoal(current)
       const nextReadScope = [current.runtimeTaskLoadTarget?.key, state.transcriptReloadVersion]
       if (differs(readScope, nextReadScope)) {
         const previousTarget = readScope?.[0]
@@ -617,9 +627,11 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
         })
         let revision = lifecycleStore.getTaskRevision(frame().lifecycleAddress)
         unsubscribeLifecycle = lifecycleStore.subscribe(() => {
-          const nextRevision = lifecycleStore.getTaskRevision(frame().lifecycleAddress)
+          const current = frame()
+          const nextRevision = lifecycleStore.getTaskRevision(current.lifecycleAddress)
           if (revision === nextRevision) return
           revision = nextRevision
+          reconcileGoal(current)
           publish()
         })
       }
