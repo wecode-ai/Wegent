@@ -148,7 +148,6 @@ export interface ProjectWorkControls {
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
   branchName?: string
   branchLoading?: boolean
-  onRefreshBranch?: () => Promise<void>
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>

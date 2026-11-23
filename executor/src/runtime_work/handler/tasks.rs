@@ -1442,7 +1442,21 @@ impl RuntimeWorkRpcHandler {
             self.refresh_identity_conversation_origin(&mut request, link)?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
-        request.new_session = start_new_session;
+        // A prepared local request defaults to a new native session, while a
+        // continuation must resume its thread. Only the Backend's explicit
+        // unproven-session fallback or a user-selected boundary starts fresh.
+        let backend_fallback = request.legacy_session_fallback;
+        request.new_session = start_new_session || backend_fallback;
+        let start_fresh_native_session = request.new_session;
+        log_executor_event(
+            "runtime continuation session selected",
+            &[
+                ("local_task_id", local_task_id.clone()),
+                ("explicit_new_session", start_new_session.to_string()),
+                ("legacy_session_fallback", backend_fallback.to_string()),
+                ("new_session", request.new_session.to_string()),
+            ],
+        );
         if request.runtime_project_key.is_none() {
             request.runtime_project_key = existing_link
                 .as_ref()
@@ -1484,6 +1498,7 @@ impl RuntimeWorkRpcHandler {
             ensure_claude_execution_identity(&local_task_id, &mut request);
             if let Some(session) = existing_link
                 .as_ref()
+                .filter(|_| !start_fresh_native_session)
                 .and_then(|link| link.runtime_handle.get("executorSession"))
             {
                 request.inherited_sessions.insert(0, session.clone());
@@ -1541,12 +1556,13 @@ impl RuntimeWorkRpcHandler {
                 super::super::conversation_sessions::is_identity_conversation(link)
                     && runtime_session_id_from_link(link).is_none()
             });
-        let recovered_link = if retrying_preparation || awaiting_identity_start {
-            None
-        } else {
-            self.recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
-                .await
-        };
+        let recovered_link =
+            if start_fresh_native_session || retrying_preparation || awaiting_identity_start {
+                None
+            } else {
+                self.recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
+                    .await
+            };
         let thread_id = existing_link
             .as_ref()
             .filter(|link| super::super::conversation_sessions::is_identity_conversation(link))
@@ -1562,7 +1578,11 @@ impl RuntimeWorkRpcHandler {
                     .as_ref()
                     .and_then(runtime_session_id_from_link)
             });
-        if thread_id.is_none() && !retrying_preparation && !awaiting_identity_start {
+        if thread_id.is_none()
+            && !(start_fresh_native_session && existing_link.is_some())
+            && !retrying_preparation
+            && !awaiting_identity_start
+        {
             if let Some(result) = self
                 .recover_failed_session_start(existing_link.as_ref(), payload.clone(), activity)
                 .await?
@@ -1604,8 +1624,8 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         let direct_thread_id = thread_id
             .clone()
-            .filter(|_| ephemeral && !start_new_session);
-        let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_new_session);
+            .filter(|_| ephemeral && !start_fresh_native_session);
+        let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_fresh_native_session);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
         payload[super::control::connection_events::OWNER_INPUT] = json!(
             owner_input
@@ -3119,7 +3139,12 @@ impl RuntimeWorkRpcHandler {
                 clear_completed_transcript_messages(&mut link.runtime_handle);
                 clear_transcript_snapshot_messages(&mut link.runtime_handle);
             }
-            if !thread_id.is_empty() || payload["startNewSession"] != true {
+            // Keep the current identity thread until the new thread is bound
+            // so the conversation can archive its native history.
+            if !thread_id.is_empty()
+                || !(request.new_session
+                    && super::super::conversation_sessions::is_identity_conversation(link))
+            {
                 link.thread_id = (!thread_id.is_empty()).then(|| thread_id.to_owned());
             }
             clear_runtime_handle_messages(&mut link.runtime_handle);

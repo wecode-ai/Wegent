@@ -119,7 +119,6 @@ export function EnvironmentInfoPopover({
     read: () => buildConversationOutputs(messages),
   }
   const commandHandlers: Record<string, ((args?: unknown) => unknown) | undefined> = {
-    'environment.refresh': onRefresh,
     'git.commit': args => onCommitChanges?.(commandStringArgument(args, 'message')),
     'git.commit-and-push': args => onCommitAndPushChanges?.(commandStringArgument(args, 'message')),
     'git.push': onPushChanges,
