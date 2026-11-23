@@ -93,6 +93,26 @@ describe('ErrorCard', () => {
     expect(mockGetRecommendedModels).toHaveBeenCalledWith('rate_limit')
   })
 
+  it('offers a current-model retry when the Agent Home is busy', () => {
+    mockGetRecommendedModels.mockReturnValue([getRecommendedModel()])
+    const error = 'Agent Home already has an active execution'
+    render(
+      <ErrorCard
+        error={error}
+        timestamp={1000}
+        message={createErrorMessage(1000, error)}
+        isLastErrorMessage
+        onRetry={jest.fn()}
+      />
+    )
+
+    expect(screen.getByText('errors.agent_home_busy')).toBeInTheDocument()
+    expect(screen.getByTestId('error-card-retry')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('error-card-model-recommend-gemini-2.5-pro')
+    ).not.toBeInTheDocument()
+  })
+
   it('reopens a new last-error instance after switch-model retry fails again', async () => {
     const user = userEvent.setup()
     const onRetryWithModel = jest.fn().mockResolvedValue(true)
