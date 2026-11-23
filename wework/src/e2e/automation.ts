@@ -4365,8 +4365,11 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       if (command.action === 'fetchLocalRuntime') {
         // Native owns admission and reporting, so Renderer scheduling cannot
         // consume the Runtime action's budget or delay its completed result.
-        // The controller can return the queue head again before Native acknowledges it.
-        if (command.id !== lastRuntimeCommandId) {
+        // The queue can send its current command again before Native acknowledges
+        // admission. A delayed poll response can arrive after Native has finished.
+        if (lastRuntimeCommandId === command.id) {
+          await waitForDesktopControlTick()
+        } else {
           lastRuntimeCommandId = command.id
           void dispatchDesktopRuntimeControl(command, clientId).catch(error => {
             console.error('[Wework] Desktop E2E Runtime request failed:', error)

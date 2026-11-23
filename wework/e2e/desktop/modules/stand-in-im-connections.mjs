@@ -60,6 +60,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       assert.equal(binding.target.userId, userId)
       assert.equal(binding.target.deviceId, initial.executionDeviceId)
       await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await captureScreenshot(control, 'im-stand-in-00-channel-settings.png')
       assert.equal(
         await control.command('getElementCount', '[data-testid="stand-in-profile-panel"]'),
@@ -201,6 +202,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('waitFor', '[data-testid="stand-in-primary-open"]')
       await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${roleId}"]`)
       await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       const rolePanel = panel
       await control.command('waitFor', `${rolePanel} ${first}`)
@@ -275,6 +277,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
         'Rebinding must preserve the primary history without copying role input into it'
       )
       await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       await control.command('waitFor', `${panel} ${first}`)
       assert.ok(
@@ -335,6 +338,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await closeConnections()
       await selectWorkbenchTheme(control, { mode: 'dark', themeId: 'wework' })
       await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await captureScreenshot(control, 'im-stand-in-10-channel-settings-dark.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       await waitForPrimaryConnections(2)

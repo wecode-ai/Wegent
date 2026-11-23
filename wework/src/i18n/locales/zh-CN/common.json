@@ -5656,6 +5656,7 @@
     },
     "im": {
       "title": "从聊天工具联系助理",
+      "settings_help": "绑定钉钉等聊天工具的私聊，直接给当前助理发消息。",
       "description": "发送 /chat 可回到 Wegent 聊天；发送 /standin 可再次进入助理模式。切换模式会保留已选助理。",
       "chat_mode": "Wegent 聊天模式",
       "sign_in": "请先连接 Wegent 账号，再回来添加聊天渠道。",
@@ -6039,8 +6040,10 @@
       "self_learning": "助理自主学习",
       "self_learning_help": "从已授权的对话、你的示范和纠正中学习。助理会对比不同答法，发现值得长期采用的改进时请你确认。开启后不会改变代回复设置。",
       "connections": "连接",
-      "connections_help": "选择助理关注的项目、消息和邮件；聊天渠道用于从 IM 联系助理，两者分别配置。",
+      "connections_help": "选择助理要跟进的工作来源，例如项目、钉钉群消息或邮件。",
       "execution_settings": "运行环境",
+      "settings_expand": "展开",
+      "settings_collapse": "收起",
       "execution_settings_help": "设置新工作的默认工作目录和模型；助理聊天的新回合也使用此模型。",
       "execution_device_help": "设备决定可用的连接、目录和模型。切换设备前，请先保存或取消当前修改。",
       "back_to_connections": "返回连接",
@@ -6154,6 +6157,7 @@
     },
     "memory": {
       "title": "记忆",
+      "settings_help": "查看和管理助理在后续对话或指定工作中会参考的长期信息。",
       "help": "选择这条记忆用于与你聊天，还是处理指定项目或钉钉会话的工作。聊天记忆不会用于外部工作。记忆保存在当前设备，可随时修改或删除。",
       "personal": "所有助理（与你聊天时）",
       "role": "{{name}}（与你聊天时）",

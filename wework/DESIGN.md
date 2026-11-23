@@ -474,7 +474,7 @@ may reveal on hover/focus but must remain keyboard accessible.
   not duplicate Search as a primary-navigation list row.
 - Secondary row actions can appear on hover/focus but must not steal the row's
   primary click and must have a keyboard path.
-- Overflowing sidebar lists use a quiet theme-aware `4px` overlay thumb inside an
+- Overflowing sidebar lists use a quiet theme-aware `6px` overlay thumb inside an
   `8px` drag target inset `3px` from the sidebar edge. Show it while the pointer
   is anywhere in the sidebar, a sidebar control has visible keyboard focus, or
   the scrollbar is being dragged; hide it when those interactions end. Scrollbars

@@ -120,6 +120,48 @@ fn sse_regression_terminal_detection_uses_json_type() {
 }
 
 #[tokio::test]
+async fn responses_reject_invalid_completed_calls_before_forwarding_them() {
+    let placeholder = json!({
+        "type":"function_call","id":"fc_valid","name":"","call_id":"","arguments":""
+    });
+    let valid = json!({
+        "type":"function_call","id":"fc_valid","name":"lookup","call_id":"call_valid",
+        "arguments":"{}"
+    });
+    for branch in ["native", "bridge"] {
+        for invalid in [
+            json!({"type":"function_call","id":"fc_fragment","name":"","call_id":"",
+                "arguments":"}"}),
+            json!({"type":"function_call","id":"fc_fragment","name":"lookup","call_id":" ",
+                "arguments":"{}"}),
+        ] {
+            for emit_item_done in [true, false] {
+                let mut events = vec![
+                    json!({"type":"response.output_item.added","item":placeholder}),
+                    json!({"type":"response.output_item.done","item":valid}),
+                ];
+                if emit_item_done {
+                    events.push(json!({"type":"response.output_item.done","item":invalid}));
+                }
+                events.push(json!({"type":"response.completed","response":{"output":[invalid]}}));
+                let input = events
+                    .iter()
+                    .map(|event| multiline_frame(event, "\r\n"))
+                    .collect::<String>();
+                let output = branch_output(branch, &input, 7).await;
+                let events = parsed_events(&output);
+                assert_eq!(events.len(), 3, "{branch}: {output}");
+                assert_eq!(events[0]["type"], "response.output_item.added");
+                assert_eq!(events[1]["item"], valid);
+                assert_eq!(events[2]["type"], "response.failed");
+                assert_eq!(events[2]["response"]["error"]["type"], "upstream_error");
+                assert!(!output.contains("fc_fragment"));
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn sse_regression_false_terminal_headers_do_not_drop_later_chunks() {
     let first = "event: response.completed\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"continue\"}\n\n";
     let last =

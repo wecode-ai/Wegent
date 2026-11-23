@@ -63,6 +63,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       })
       await captureScreenshot(control, 'stand-in-onboarding-skipped.png')
       await control.command('waitFor', selector('stand-in-primary-profile'), { visible: true })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
       await verifyProjectMenuDismissal(control, 'stand-in-primary-execution')
       await control.command('press', selector('stand-in-preferences'), { key: 'Escape' })
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })

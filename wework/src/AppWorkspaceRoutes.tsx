@@ -263,11 +263,6 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
     hasMountedProvider: !iframe,
     hasMountedWorkbench: nativeWorkbenchActive,
   }))
-  // Retained tabs keep their workbench state while hidden. Track each reveal so
-  // the provider can revalidate data that another tab may have changed.
-  const [reveal, setReveal] = useState({ active, revision: 0 })
-  if (reveal.active !== active) setReveal({ active, revision: reveal.revision + (active ? 1 : 0) })
-  const workspaceTabRevealRevision = reveal.revision
   const nextIframe =
     iframe &&
     surfaceHistory.iframe?.src === iframe.src &&
@@ -415,7 +410,6 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
                   : undefined
               }
               workspaceTabId={tab.id}
-              workspaceTabRevealRevision={workspaceTabRevealRevision}
               composerAppsSourceActive={active && !iframe}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}

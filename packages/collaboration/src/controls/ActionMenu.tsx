@@ -76,7 +76,7 @@ export interface MenuPosition {
 }
 
 const itemStyle = controlOption
-const contentStyle = controlPopup + ' min-w-44'
+const contentStyle = controlPopup + ' pointer-events-auto min-w-44'
 
 function MenuEntries({
   items,

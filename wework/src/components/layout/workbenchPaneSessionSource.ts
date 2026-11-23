@@ -9,7 +9,9 @@ import type { RuntimeTranscriptLoader } from '@/types/workbench'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   getRuntimeConversationMessages,
+  getRuntimeConversationSnapshot,
   isRuntimeConversationArchived,
+  runtimeConversationKey,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
@@ -27,6 +29,7 @@ import {
   type PaneSessionFrame,
 } from './workbenchPaneSessionFrame'
 import { createPaneSessionView } from './workbenchPaneSessionView'
+import { deferHiddenConversationText } from './workbenchPaneConversationPresentation'
 import type {
   PaneCommandContext,
   PaneCommands,
@@ -71,6 +74,22 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   let unsubscribeSearch: (() => void) | undefined
   let stopWindowActivity: (() => void) | undefined
   let windowActivity: WorkbenchWindowActivity = 'foreground'
+  type Conversation = ReturnType<typeof getRuntimeConversationSnapshot>
+  let presentedConversation:
+    | { key: string; current: Conversation; visible: Conversation }
+    | undefined
+  const readPresentedConversation: typeof getRuntimeConversationSnapshot = address => {
+    const key = runtimeConversationKey(address)
+    const current = getRuntimeConversationSnapshot(address)
+    const previous = presentedConversation?.key === key ? presentedConversation : undefined
+    let visible = current
+    if (windowActivity === 'hidden' && previous) {
+      if (previous.current === current) return previous.visible
+      visible = deferHiddenConversationText(current, previous.visible)
+    }
+    presentedConversation = { key, current, visible }
+    return visible
+  }
   let pendingStreamPresentation = false
   let conversationFrame: number | undefined
   let conversationTimer: ReturnType<typeof setTimeout> | undefined
@@ -129,7 +148,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     }
     return { read: readTranscript, isCurrent }
   }
-  const frame = () => createPaneSessionFrame(external, state, readPort())
+  const frame = (readConversation = getRuntimeConversationSnapshot) =>
+    createPaneSessionFrame(external, state, readPort(), readConversation)
   const diagnostics = createPaneSessionDiagnostics({ readFrame: frame, isActive })
   const live: PaneTransactionState = {
     browserAnnotationCommandSequence: 0,
@@ -438,7 +458,12 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       return bind().commands.setInput(...args)
     },
   }
-  let snapshot = createPaneSessionView(frame(), commands, search, attachmentCommands)
+  let snapshot = createPaneSessionView(
+    frame(readPresentedConversation),
+    commands,
+    search,
+    attachmentCommands
+  )
   const differs = (previous: readonly unknown[] | undefined, next: readonly unknown[]) =>
     !previous || next.some((value, index) => !Object.is(value, previous[index]))
   function publish() {
@@ -450,7 +475,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     try {
       do {
         publishAgain = false
-        const current = frame()
+        const current = frame(readPresentedConversation)
         if (
           current.runtimeTaskLoadTarget &&
           current.threadGoal &&
@@ -617,7 +642,9 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       if (!started) {
         started = true
         stopWindowActivity = subscribeWorkbenchWindowActivity(activity => {
-          const resumed = activity === 'foreground' && windowActivity !== 'foreground'
+          const resumed =
+            (windowActivity === 'hidden' && activity !== 'hidden') ||
+            (activity === 'foreground' && windowActivity !== 'foreground')
           windowActivity = activity
           if (resumed) flushConversation()
           else if (pendingStreamPresentation) {
@@ -650,6 +677,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
           stopWindowActivity?.()
           stopWindowActivity = undefined
           windowActivity = 'foreground'
+          presentedConversation = undefined
           readScope = undefined
           releaseQueue?.()
           releaseQueue = undefined

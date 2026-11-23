@@ -7,12 +7,25 @@ use serde_json::Value;
 use crate::local::app_ipc::AppIpcError;
 
 use super::{
-    activate_codex_global_project, bool_field, reorder_codex_global_project_thread,
-    reorder_codex_global_projects, set_codex_global_project_appearance,
-    set_codex_global_project_pinned, set_codex_global_thread_pinned, sidebar_mutation_response,
-    string_field, sync_codex_global_remote_projects, workspace_path, CodexGlobalRemoteProject,
+    activate_codex_global_project, bool_field, is_codex_runtime,
+    reorder_codex_global_project_thread, reorder_codex_global_projects,
+    set_codex_global_project_appearance, set_codex_global_project_pinned,
+    set_codex_global_thread_pinned, sidebar_mutation_response, string_field,
+    sync_codex_global_remote_projects, workspace_path, CodexGlobalRemoteProject, RuntimeTaskLink,
     RuntimeWorkRpcHandler,
 };
+
+pub(super) fn apply_sidebar_task_pin(
+    link: &mut RuntimeTaskLink,
+    pinned_thread_order: impl FnOnce(&str) -> Option<usize>,
+) {
+    if is_codex_runtime(&link.runtime) {
+        if let Some(thread_id) = link.thread_id.as_deref() {
+            link.pinned_order = pinned_thread_order(thread_id);
+            link.pinned = link.pinned_order.is_some();
+        }
+    }
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn reorder_sidebar_projects(

@@ -19,6 +19,7 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import {
   StandInSettingsActions,
+  StandInSettingsDisclosure,
   StandInSettingsEntry,
   StandInSettingsError,
   StandInSettingsHeader,
@@ -327,55 +328,53 @@ export function StandInPrimaryProfile({
         </div>
       )}
       {!connections && (
-        <section
-          className="mt-6 space-y-3 border-t border-border pt-5"
-          data-testid="stand-in-primary-execution"
-        >
-          <div>
-            <h3 className="font-medium">{t('standIn.workspace.execution_settings')}</h3>
-            <p className="mt-1 text-xs text-text-secondary">
-              {t('standIn.workspace.execution_settings_help')}
+        <div className="mt-4">
+          <StandInSettingsDisclosure
+            testId="stand-in-primary-execution"
+            label={t('standIn.workspace.execution_settings')}
+            description={t('standIn.workspace.execution_settings_help')}
+          >
+            <StandInComposer
+              draft={role}
+              showPrompt={false}
+              onChange={update => {
+                setDraft(current => {
+                  const next =
+                    typeof update === 'function' ? update({ ...role, ...current }) : update
+                  return {
+                    ...current,
+                    model: next.model,
+                    modelOptions: next.modelOptions,
+                    workspace: next.workspace,
+                  }
+                })
+              }}
+              onSave={async () => {}}
+              disabled={blocked}
+              submitDisabled={blocked}
+              services={services}
+              devices={devices}
+              runtimeWork={runtimeWork}
+              deviceControl={
+                <StandInDeviceSelect
+                  readOnly={deviceReadOnly}
+                  value={settings.executionDeviceId}
+                  currentDeviceId={localDeviceId}
+                  devices={devices}
+                  disabled={blocked || dirty}
+                  onChange={onSelectDevice}
+                />
+              }
+            />
+            <p className="text-xs text-text-secondary">
+              {t('standIn.workspace.execution_device_help')}
             </p>
-          </div>
-          <StandInComposer
-            draft={role}
-            showPrompt={false}
-            onChange={update => {
-              setDraft(current => {
-                const next = typeof update === 'function' ? update({ ...role, ...current }) : update
-                return {
-                  ...current,
-                  model: next.model,
-                  modelOptions: next.modelOptions,
-                  workspace: next.workspace,
-                }
-              })
-            }}
-            onSave={async () => {}}
-            disabled={blocked}
-            submitDisabled={blocked}
-            services={services}
-            devices={devices}
-            runtimeWork={runtimeWork}
-            deviceControl={
-              <StandInDeviceSelect
-                readOnly={deviceReadOnly}
-                value={settings.executionDeviceId}
-                currentDeviceId={localDeviceId}
-                devices={devices}
-                disabled={blocked || dirty}
-                onChange={onSelectDevice}
-              />
-            }
-          />
-          <p className="text-xs text-text-secondary">
-            {t('standIn.workspace.execution_device_help')}
-          </p>
-          <StandInSettingsError
-            error={runtimeError}
-            retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
-          />
-        </section>
+            <StandInSettingsError
+              error={runtimeError}
+              retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
+            />
+          </StandInSettingsDisclosure>
+        </div>
       )}
       <ConfirmDialog
         open={discard}
