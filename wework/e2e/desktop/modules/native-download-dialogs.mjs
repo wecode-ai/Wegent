@@ -5,7 +5,12 @@ import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
 const ACTIVE_WEBVIEW_SELECTOR =
-  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="workspace-browser-electron-webview"]'
+  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="workspace-browser-electron-webview-placeholder"]'
+const POPUP_MENU_WINDOW_TYPES = new Set([
+  '_NET_WM_WINDOW_TYPE_POPUP_MENU',
+  '_NET_WM_WINDOW_TYPE_MENU',
+  '_NET_WM_WINDOW_TYPE_DROPDOWN_MENU',
+])
 
 let diagnosticSequence = 0
 
@@ -77,7 +82,7 @@ async function listVisiblePopupMenus(timeoutMs = 2_000) {
   const results = []
   for (const windowId of candidates) {
     const props = await readWindowProperties(windowId, timeoutMs)
-    if (props?.types.includes('_NET_WM_WINDOW_TYPE_POPUP_MENU')) {
+    if (props?.types.some(type => POPUP_MENU_WINDOW_TYPES.has(type))) {
       results.push(windowId)
     }
   }
