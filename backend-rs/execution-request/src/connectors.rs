@@ -349,10 +349,10 @@ fn append_guidance(
     };
     let block =
         format!("<wegent_connector_apps>\n{authorization}{link_rules}\n</wegent_connector_apps>");
-    if let Some(text) = request.prompt.as_str() {
-        request.prompt = json!(format!("{text}\n\n{block}"));
-    } else if let Some(parts) = request.prompt.as_array_mut() {
-        parts.push(json!({"type": "text", "text": block}));
+    request.system_prompt = format!("{}\n\n{block}", request.system_prompt.trim_end());
+    for bot in request.bot.as_array_mut().into_iter().flatten() {
+        let base = bot["system_prompt"].as_str().unwrap_or("").trim_end();
+        bot["system_prompt"] = json!(format!("{base}\n\n{block}"));
     }
 }
 

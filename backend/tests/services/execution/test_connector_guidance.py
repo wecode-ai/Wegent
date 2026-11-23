@@ -174,10 +174,10 @@ def test_link_rules_forbid_deriving_a_web_url_from_a_deep_link() -> None:
     assert "signs in" in connector_guidance.CONNECTOR_LINK_RULES
 
 
-def test_connector_guidance_travels_with_the_user_turn(
+def test_connector_guidance_composes_with_system_instructions(
     test_db: Session, test_admin_user: User, test_user: User
 ) -> None:
-    """Resumed sessions keep their first system prompt, so guide per turn."""
+    """Connector rules are instructions and must not alter user input."""
     _create_app(test_db, test_admin_user, slug="pending-app")
     section = connector_guidance.build_connector_guidance_section(
         test_db, test_user, mention="pending-app app"
@@ -189,46 +189,17 @@ def test_connector_guidance_travels_with_the_user_turn(
         bot=[{"shell_type": "Chat", "system_prompt": "Bot instructions"}],
     )
 
-    request.prompt = connector_guidance.append_turn_guidance(request.prompt, section)
     apply_execution_guidance(
-        request, ["## Provider configuration required\nprovider-link"]
+        request, ["## Provider configuration required\nprovider-link", section]
     )
 
     assert request.system_prompt.startswith("Base instructions")
     assert request.system_prompt.count(GUIDANCE_START) == 1
     assert "provider-link" in request.system_prompt
-    assert "connector-oauth" not in request.system_prompt
+    assert "wegent://modal/connector-oauth?slug=pending-app" in request.system_prompt
     assert "provider-link" in request.bot[0]["system_prompt"]
-    assert request.prompt.startswith("please inspect it")
-    assert request.prompt.count(connector_guidance.TURN_GUIDANCE_START) == 1
-    assert "wegent://modal/connector-oauth?slug=pending-app" in request.prompt
-
-
-def test_turn_guidance_replaces_the_previous_block() -> None:
-    """A retried or replayed prompt must not accumulate authorization lists."""
-    first = connector_guidance.append_turn_guidance("please inspect it", "first")
-    second = connector_guidance.append_turn_guidance(first, "second")
-
-    assert second.startswith("please inspect it")
-    assert "second" in second
-    assert "first" not in second
-    assert second.count(connector_guidance.TURN_GUIDANCE_START) == 1
-
-
-def test_turn_guidance_appends_to_a_vision_prompt() -> None:
-    """Image turns keep their content blocks and gain a text block."""
-    prompt = [
-        {"type": "input_text", "text": "look at this"},
-        {"type": "input_image", "image_url": "data:image/png;base64,AA"},
-    ]
-
-    updated = connector_guidance.append_turn_guidance(prompt, "authorize me")
-
-    assert updated[0]["text"].startswith("look at this")
-    assert "authorize me" in updated[0]["text"]
-    assert updated[0]["text"].endswith(connector_guidance.TURN_GUIDANCE_END)
-    assert updated[1] == prompt[1]
-    assert len(updated) == 2
+    assert "connector-oauth?slug=pending-app" in request.bot[0]["system_prompt"]
+    assert request.prompt == "please inspect it"
 
 
 def test_static_pending_apps_are_listed_without_mention(
