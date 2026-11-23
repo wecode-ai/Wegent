@@ -24,6 +24,8 @@ The independent checkpoint is registered in an existing Core CI shard and does n
 
 The existing Linux Core CI measures CPU for `idle-executor-requests`, `streaming-conversation-switching`, and `executor-stream-recovery`. The measurement spans the scenario's verification function, including any setup and reloads inside it. For example, the idle scenario's total includes its reload and follow-up verification. CPU time in milliseconds is reported separately for Electron Renderer processes and the main Executor process. Executor child processes are outside the current measurement scope. Both endpoints must identify the same measured processes. Collection failures and process changes are logged as unavailable samples.
 
+Linux Core shards run the idle workbench and Executor stream recovery checkpoints in isolation before starting the shard's parallel checkpoints. This prevents concurrent desktop sessions from inflating the measured processes' CPU time.
+
 [github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) tracks a baseline per checkpoint and runner platform. Scheduled or manually dispatched Wework E2E runs on `main` update the baseline. Pull requests and the merge queue only read it. When an existing shard runs the corresponding checkpoint, CI reports the current value, baseline, and ratio. With a baseline, CI fails when either process uses more than 150% of the baseline CPU time or the checkpoint produces no sample. Before the first baseline, CI can pass and reports any available samples.
 
 ## Periodic plugin recovery E2E

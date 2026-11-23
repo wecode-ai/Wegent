@@ -16,10 +16,17 @@ export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
 
 export const LINUX_CORE_HISTORY_CHECKPOINT = 'running-conversation-history'
 
+const LINUX_CORE_EXCLUSIVE_CHECKPOINTS = new Set([
+  LINUX_CORE_HISTORY_CHECKPOINT,
+  // Concurrent desktop sessions inflate these CPU samples on four-vCPU runners.
+  'idle-executor-requests',
+  'executor-stream-recovery',
+])
+
 export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
   return (
     RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint) ||
-    (linuxCore && checkpoint === LINUX_CORE_HISTORY_CHECKPOINT)
+    (linuxCore && LINUX_CORE_EXCLUSIVE_CHECKPOINTS.has(checkpoint))
   )
 }
 
