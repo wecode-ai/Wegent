@@ -473,6 +473,8 @@ mod tests {
             user_id: 3983,
             json: opaque(serde_json::json!({"spec": {"currentStage": 7}})),
             created_at: None,
+            status: None,
+            status_updated_at: None,
             completed_at: None,
         };
         assert_eq!(current_stage_index(None, &row, 2), 1);
@@ -480,6 +482,8 @@ mod tests {
             user_id: 3983,
             json: opaque(serde_json::json!({"spec": {"currentStage": null}})),
             created_at: None,
+            status: None,
+            status_updated_at: None,
             completed_at: None,
         };
         assert_eq!(current_stage_index(None, &row, 2), 0);
@@ -487,6 +491,8 @@ mod tests {
             user_id: 3983,
             json: opaque(serde_json::json!({"spec": {}})),
             created_at: None,
+            status: None,
+            status_updated_at: None,
             completed_at: None,
         };
         assert_eq!(current_stage_index(None, &row, 3), 0);

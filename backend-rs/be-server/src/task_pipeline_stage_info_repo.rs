@@ -15,6 +15,8 @@ pub struct TaskRow {
     pub user_id: i64,
     pub json: OpaqueJson,
     pub created_at: Option<chrono::NaiveDateTime>,
+    pub status: Option<String>,
+    pub status_updated_at: Option<String>,
     pub completed_at: Option<String>,
 }
 
@@ -28,14 +30,28 @@ pub async fn get_active_task(
 }
 
 fn decode_task_row(row: &MysqlRow) -> MysqlResult<TaskRow> {
+    let json = row.get_required::<brz_mysql::Json<OpaqueJson>>("json")?.0;
+    let status = json
+        .to_value()
+        .pointer("/status/status")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let status_updated_at = json
+        .to_value()
+        .pointer("/status/updatedAt")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let completed_at = json
+        .to_value()
+        .pointer("/status/completedAt")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
     Ok(TaskRow {
         user_id: row.get_required("user_id")?,
-        json: row.get_required::<brz_mysql::Json<OpaqueJson>>("json")?.0,
+        json,
         created_at: wegent_task_store::projection::task_column(row, "created_at"),
-        completed_at: row
-            .get_required::<brz_mysql::Json<OpaqueJson>>("json")
-            .ok()
-            .and_then(|json| json.0.to_value().pointer("/status/completedAt").cloned())
-            .and_then(|value| value.as_str().map(str::to_string)),
+        status,
+        status_updated_at,
+        completed_at,
     })
 }
