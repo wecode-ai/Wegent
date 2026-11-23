@@ -4,6 +4,7 @@ import { createDesktopScenario as createAutomation } from './stand-in-automation
 import { createDesktopScenario as createConversations } from './stand-in-issue-conversations.scenario.mjs'
 import { createDesktopScenario as createDelegation } from './stand-in-issue-delegation.scenario.mjs'
 import { createEventFailureIsolation } from '../modules/stand-in-event-failure-isolation.mjs'
+import { verifyAssignmentBacklogDuringTaskRead } from '../modules/stand-in-assignment-backlog.mjs'
 
 export function createDesktopScenario(options) {
   const notifications = createNotifications(options)
@@ -63,6 +64,7 @@ export function createDesktopScenario(options) {
       await automation.verify(control)
       active = isolation
       await isolation.verify(control, cloudFixture, delegation.diagnostics())
+      await verifyAssignmentBacklogDuringTaskRead(control, cloudFixture, options.uiTimeoutMs)
     },
     diagnostics() {
       return {
