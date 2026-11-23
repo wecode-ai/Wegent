@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -149,125 +148,6 @@ def _decode_tool_output_payloads(tool_output: Any) -> list[dict[str, Any]]:
             payloads.append(value)
 
     return payloads
-
-
-def _knowledge_id(value: Any) -> int | None:
-    if (
-        isinstance(value, str)
-        and value.isascii()
-        and value.isdecimal()
-        and len(value) <= 16
-    ):
-        value = int(value)
-    if type(value) is int and 0 < value <= 2**53 - 1:
-        return value
-    return None
-
-
-def _knowledge_tool_documents(block: dict[str, Any]) -> Iterator[tuple[Any, Any, Any]]:
-    """Yield proven document reads or retrieval hits from trusted tool blocks."""
-    name = block.get("tool_name")
-    if (
-        block.get("type") != "tool"
-        or block.get("status") != "done"
-        or not isinstance(name, str)
-    ):
-        return
-
-    if name == "kb_head" and block.get("tool_protocol") == "function_call":
-        for payload in _decode_tool_output_payloads(block.get("tool_output")):
-            documents = payload.get("documents")
-            if isinstance(documents, list):
-                for document in documents:
-                    if isinstance(document, dict) and document.get("content"):
-                        yield document.get("kb_id"), document.get("id"), document.get(
-                            "name"
-                        )
-        return
-
-    server_label = block.get("server_label")
-    # The persisted MCP block may omit the label while retaining its qualified name.
-    tool_name = name.removeprefix("wegent-knowledge_").removeprefix("wegent-knowledge_")
-    if server_label and server_label != "wegent-knowledge":
-        return
-    if not server_label and tool_name == name:
-        return
-    if tool_name not in {
-        "wegent_kb_read_document_content",
-        "wegent_kb_search_knowledge_base",
-    }:
-        return
-    for payload in _decode_tool_output_payloads(block.get("tool_output")):
-        if "error" in payload:
-            continue
-        if tool_name == "wegent_kb_read_document_content":
-            if isinstance(payload.get("content"), str) and payload["content"]:
-                yield payload.get("kb_id"), payload.get("document_id"), payload.get(
-                    "name"
-                )
-        elif tool_name == "wegent_kb_search_knowledge_base":
-            sources = payload.get("sources")
-            if payload.get("mode") == "rag_retrieval" and isinstance(sources, list):
-                for source in sources:
-                    if isinstance(source, dict):
-                        yield (
-                            source.get("knowledge_base_id"),
-                            source.get("document_id"),
-                            source.get("document_name"),
-                        )
-
-
-def _add_knowledge_document_sources(result: dict[str, Any]) -> None:
-    """Persist openable source identities alongside completed assistant output."""
-    existing = result.get("sources")
-    sources = list(existing) if isinstance(existing, list) else []
-    original_count = len(sources)
-    identities = {
-        (_knowledge_id(source.get("kb_id")), _knowledge_id(source.get("document_id")))
-        for source in sources
-        if isinstance(source, dict)
-    }
-    next_index = (
-        max(
-            (
-                _knowledge_id(source.get("index")) or 0
-                for source in sources
-                if isinstance(source, dict)
-            ),
-            default=0,
-        )
-        + 1
-    )
-
-    blocks = result.get("blocks")
-    for block in blocks if isinstance(blocks, list) else []:
-        if not isinstance(block, dict):
-            continue
-        for raw_kb_id, raw_document_id, title in _knowledge_tool_documents(block):
-            kb_id, document_id = _knowledge_id(raw_kb_id), _knowledge_id(
-                raw_document_id
-            )
-            if (
-                kb_id is None
-                or document_id is None
-                or (kb_id, document_id) in identities
-            ):
-                continue
-            if not isinstance(title, str) or not title.strip():
-                continue
-            sources.append(
-                {
-                    "index": next_index,
-                    "kb_id": kb_id,
-                    "document_id": document_id,
-                    "title": title,
-                }
-            )
-            identities.add((kb_id, document_id))
-            next_index += 1
-
-    if len(sources) > original_count:
-        result["sources"] = sources
 
 
 def _extract_embedded_result_blocks(blocks: Any) -> list[dict[str, Any]]:
@@ -721,9 +601,6 @@ async def collect_completed_result(
             normalized_status.lower(),
             subtask_id,
         )
-
-    if normalized_status == "COMPLETED":
-        _add_knowledge_document_sources(final_result)
 
     embedded_blocks = _extract_embedded_result_blocks(final_result.get("blocks"))
     if embedded_blocks:

@@ -2,10 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
 import pytest
 
 from app.services.chat.trigger import lifecycle
@@ -337,78 +333,3 @@ async def test_collect_completed_result_promotes_mcp_result_blocks(
     assert result is not None
     assert [block["type"] for block in result["blocks"]] == ["tool", "image"]
     assert result["blocks"][1]["image_attachment_ids"] == [40]
-
-
-@pytest.mark.asyncio
-async def test_collect_completed_result_adds_sources_for_successful_knowledge_tools(
-    monkeypatch,
-):
-    existing = {"index": 3, "kb_id": 42, "document_id": 71, "title": "Existing source"}
-    read = {
-        "kb_id": 42,
-        "document_id": 72,
-        "name": "Retrieved document.md",
-        "content": "marker",
-    }
-    native_tool = {
-        "type": "tool",
-        "status": "done",
-        "tool_name": "wegent-knowledge_wegent_kb_read_document_content",
-        "server_label": "",
-    }
-    blocks = [
-        {**native_tool, "tool_output": [{"type": "text", "text": json.dumps(read)}]},
-        {**native_tool, "tool_output": read},
-        {
-            **native_tool,
-            "tool_name": "wegent-knowledge_wegent_kb_search_knowledge_base",
-            "tool_output": {
-                "mode": "rag_retrieval",
-                "sources": [
-                    {
-                        "knowledge_base_id": 42,
-                        "document_id": "73",
-                        "document_name": "Search hit.md",
-                    }
-                ],
-            },
-        },
-        {**native_tool, "status": "error", "tool_output": {**read, "document_id": 99}},
-        {
-            **native_tool,
-            "server_label": "other",
-            "tool_output": {**read, "document_id": 99},
-        },
-        {**native_tool, "tool_output": {**read, "document_id": 99, "content": ""}},
-        {
-            **native_tool,
-            "tool_name": "wegent_kb_read_document_content",
-            "tool_output": {**read, "document_id": 99},
-        },
-    ]
-
-    import app.services.chat.storage as chat_storage
-
-    async def empty_result(_subtask_id: int) -> dict:
-        return {}
-
-    monkeypatch.setattr(lifecycle, "_get_existing_subtask_result", empty_result)
-    monkeypatch.setattr(
-        chat_storage,
-        "session_manager",
-        SimpleNamespace(
-            get_accumulated_content=AsyncMock(return_value="Answer"),
-            finalize_and_get_blocks=AsyncMock(return_value=blocks),
-        ),
-    )
-
-    result = await lifecycle.collect_completed_result(
-        1234, status="COMPLETED", result={"sources": [existing]}
-    )
-
-    assert result is not None
-    assert result["sources"] == [
-        existing,
-        {"index": 4, "kb_id": 42, "document_id": 72, "title": "Retrieved document.md"},
-        {"index": 5, "kb_id": 42, "document_id": 73, "title": "Search hit.md"},
-    ]
