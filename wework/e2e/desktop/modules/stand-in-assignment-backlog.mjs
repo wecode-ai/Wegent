@@ -25,8 +25,10 @@ export async function verifyAssignmentBacklogDuringTaskRead(control, cloud, time
   const popover = '[data-testid="wework-notifications-popover"]'
   const notificationButton = '[data-testid="wework-notifications-button"]'
   await control.command('holdLocalExecutorRequests', 'body', {
-    method: 'runtime.stand_in.assignment',
-    phase: 'after-response',
+    value: JSON.stringify({
+      method: 'runtime.stand_in.assignment',
+      phase: 'after-response',
+    }),
   })
   try {
     const issues = []
@@ -52,7 +54,7 @@ export async function verifyAssignmentBacklogDuringTaskRead(control, cloud, time
     for (const notice of notices) {
       await control.command('waitFor', `[data-testid="wework-notification-${notice.id}"]`)
     }
-    await control.command('awaitLocalExecutorRequestHold', 'body')
+    await control.command('awaitLocalExecutorRequestHold', 'body', { timeoutMs })
 
     const origin = await control.command('getLocationOrigin', 'body')
     const inventory = await requestExecutor(
