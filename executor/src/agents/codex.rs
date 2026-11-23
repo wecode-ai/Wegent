@@ -12,6 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::future::BoxFuture;
 use serde_json::Map;
 use serde_json::{json, Value};
@@ -2675,6 +2676,13 @@ async fn run_codex_app_server_turn_on_shared_client(
                 .as_ref()
                 .expect("initial goal must exist when awaiting its turn");
             let goal_params = thread_goal_set_params(&thread_id, goal)?;
+            // Setting an active Goal can start inference immediately.
+            if let Some(params) = initial_goal_image_params(&thread_id, &request.prompt).await? {
+                client
+                    .request_for_launch_config_once("thread/inject_items", params, &launch_config)
+                    .await?;
+            }
+            ensure_codex_turn_not_cancelled(&mut cancellation)?;
             let goal_response = turn_request_context
                 .request(client, "thread/goal/set", goal_params, &launch_config)
                 .await?;
@@ -3150,24 +3158,8 @@ async fn run_codex_app_server_turn_with_runtime(
         } else {
             None
         };
-        if !request.ephemeral && event_goal_request_id.is_none() {
-            if let Some(goal) = initial_thread_goal.as_ref() {
-                let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                let goal_response = with_rpc_timeout(
-                    "thread/goal/set",
-                    timeout_seconds,
-                    rpc.request("thread/goal/set", goal_params, &mut state),
-                )
-                .await?;
-                sync_goal_status_from_response(&mut state, &goal_response);
-            }
-        }
-
-        let turn_input = turn_input(&request.prompt);
         let auto_approve_mcp_tool_calls = codex_has_full_access(request);
         let mut turn_fields = codex_turn_fields(request, &thread_id);
-        turn_fields.push(("input_items", turn_input.len().to_string()));
-        log_executor_event("codex turn request started", &turn_fields);
         ensure_codex_turn_not_cancelled(&mut cancellation)?;
         // Cancellation owns the complete admission/read sequence, including
         // the Goal snapshot and restoration requests before a turn exists.
@@ -3179,6 +3171,18 @@ async fn run_codex_app_server_turn_with_runtime(
             }
             let (turn_method, turn_params) = if event_goal_request_id.is_some() {
                 ("thread/goal/set", Value::Null)
+            } else if let Some(goal) = initial_thread_goal.as_ref().filter(|_| !request.ephemeral) {
+                let goal_params = thread_goal_set_params(&thread_id, goal)?;
+                if let Some(params) = initial_goal_image_params(&thread_id, &request.prompt).await?
+                {
+                    with_rpc_timeout(
+                        "thread/inject_items",
+                        timeout_seconds,
+                        rpc.request("thread/inject_items", params, &mut state),
+                    )
+                    .await?;
+                }
+                ("thread/goal/set", goal_params)
             } else if let Some(goal) = quota_resume
                 .as_ref()
                 .and_then(|recovery| recovery.goal.as_ref())
@@ -3207,6 +3211,9 @@ async fn run_codex_app_server_turn_with_runtime(
                     )),
                 )
             } else {
+                let turn_input = turn_input(&request.prompt);
+                turn_fields.push(("input_items", turn_input.len().to_string()));
+                log_executor_event("codex turn request started", &turn_fields);
                 (
                     "turn/start",
                     turn_start_params(&thread_id, request, &launch_config, turn_input),
@@ -7175,6 +7182,49 @@ fn provider_switch_boundary_inject_params(thread_id: &str) -> Value {
     })
 }
 
+async fn initial_goal_image_params(
+    thread_id: &str,
+    prompt: &Value,
+) -> Result<Option<Value>, String> {
+    let mut content = Vec::new();
+    let images = prompt
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(turn_image_input);
+    for item in images {
+        let image_url = match item["type"].as_str() {
+            Some("localImage") => {
+                let path = item["path"]
+                    .as_str()
+                    .ok_or("Goal image has no local path")?;
+                let bytes = tokio::fs::read(path)
+                    .await
+                    .map_err(|error| format!("Cannot read Goal image: {error}"))?;
+                let format = image::guess_format(&bytes)
+                    .map_err(|error| format!("Cannot identify Goal image format: {error}"))?;
+                format!(
+                    "data:{};base64,{}",
+                    format.to_mime_type(),
+                    STANDARD.encode(bytes)
+                )
+            }
+            Some("image") => item["url"]
+                .as_str()
+                .ok_or("Goal image has no URL")?
+                .to_owned(),
+            _ => continue,
+        };
+        content.push(json!({"type": "input_image", "image_url": image_url, "detail": "high"}));
+    }
+    Ok((!content.is_empty()).then(|| {
+        json!({
+            "threadId": thread_id,
+            "items": [{"type": "message", "role": "user", "content": content}],
+        })
+    }))
+}
+
 fn thread_goal_set_params(thread_id: &str, goal: &Value) -> Result<Value, String> {
     let objective = goal
         .get("objective")
@@ -7424,16 +7474,9 @@ fn turn_input_item(item: &Value, plugin_skills: &PluginSkillResolver) -> Vec<Val
             .get("text")
             .and_then(Value::as_str)
             .map(|text| text_input_with_structured_mentions(text.to_owned(), plugin_skills)),
-        "input_image" => item
-            .get("image_url")
-            .or_else(|| item.get("url"))
-            .and_then(Value::as_str)
-            .map(|url| vec![json!({"type": "image", "url": url})]),
-        "image" => image_input(item).map(|item| vec![item]),
-        "localImage" | "local_image" => item
-            .get("path")
-            .and_then(Value::as_str)
-            .map(|path| vec![json!({"type": "localImage", "path": path})]),
+        "input_image" | "image" | "localImage" | "local_image" => {
+            turn_image_input(item).map(|item| vec![item])
+        }
         "skill" => match (
             item.get("name").and_then(Value::as_str),
             item.get("path").and_then(Value::as_str),
@@ -7457,6 +7500,22 @@ fn turn_input_item(item: &Value, plugin_skills: &PluginSkillResolver) -> Vec<Val
             .map(|text| text_input_with_structured_mentions(text.to_owned(), plugin_skills)),
     }
     .unwrap_or_default()
+}
+
+fn turn_image_input(item: &Value) -> Option<Value> {
+    match item.get("type").and_then(Value::as_str)? {
+        "input_image" => item
+            .get("image_url")
+            .or_else(|| item.get("url"))
+            .and_then(Value::as_str)
+            .map(|url| json!({"type": "image", "url": url})),
+        "image" => image_input(item),
+        "localImage" | "local_image" => item
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|path| json!({"type": "localImage", "path": path})),
+        _ => None,
+    }
 }
 
 fn image_input(item: &Value) -> Option<Value> {
