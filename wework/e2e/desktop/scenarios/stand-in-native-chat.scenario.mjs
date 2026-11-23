@@ -59,7 +59,11 @@ export function createDesktopScenario(options) {
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
       if (input.includes(NOTIFICATION_REQUEST)) {
-        assert.equal(notificationResponse, undefined, 'The notification request uses one model turn')
+        assert.equal(
+          notificationResponse,
+          undefined,
+          'The notification request uses one model turn'
+        )
         notificationResponse = response
         return true
       }
