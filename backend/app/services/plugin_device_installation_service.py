@@ -254,13 +254,28 @@ class PluginDeviceInstallationService:
     ) -> None:
         for attempt in range(1, DEVICE_SYNC_WRITE_ATTEMPTS + 1):
             try:
+                scopes = self._response_scopes(db, user_id, response, installed_ids)
+                acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
                 if any(
                     item.desired_plugin_snapshot is not None
                     for item in response.results
                 ):
+                    if scopes:
+                        # Acquire the installation rows before the account sync
+                        # fence so a blocked row cannot stall another plugin.
+                        (
+                            db.query(Kind.id)
+                            .filter(
+                                Kind.id.in_(scopes),
+                                Kind.user_id == user_id,
+                                Kind.kind == "InstalledPlugin",
+                                Kind.namespace == "default",
+                            )
+                            .order_by(Kind.id)
+                            .with_for_update()
+                            .all()
+                        )
                     lock_plugin_sync_state(db, user_id, merge=True)
-                scopes = self._response_scopes(db, user_id, response, installed_ids)
-                acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
                 reconcile_plugin_device_rows(db, user_id, installed_ids=scopes)
                 for device_result in response.results:
                     self._record_device_sync_result(

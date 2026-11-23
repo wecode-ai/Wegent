@@ -424,6 +424,63 @@ async fn verify(mysql: MysqlService) {
         }
     }
     verify_resource_invitations(&state).await;
+    verify_shared_due_dates(&state, &mysql).await;
+}
+
+async fn verify_shared_due_dates(state: &AppState, mysql: &MysqlService) {
+    for nullable in [true, false] {
+        if !nullable {
+            mysql
+                .execute(
+                    "UPDATE loop_items SET due_at='1970-01-01 00:00:01' WHERE due_at IS NULL",
+                    (),
+                )
+                .await
+                .unwrap();
+            mysql
+                .execute(
+                    "ALTER TABLE loop_items MODIFY due_at DATETIME(6) NOT NULL",
+                    (),
+                )
+                .await
+                .unwrap();
+        }
+        for (due_date, expected) in [
+            (None, (!nullable).then_some("1970-01-01 00:00:01")),
+            (Some("2026-12-04"), Some("2026-12-04 00:00:00")),
+        ] {
+            let id = share::random_id();
+            let mut body = input("Shared issue", None, vec![]);
+            body.due_at = due_date.map(str::to_owned);
+            let share = share::NewShare {
+                source: serde_json::from_value(json!({
+                    "device_id": "test-device",
+                    "task_id": "test-task",
+                    "title": "Shared conversation",
+                }))
+                .unwrap(),
+                files: vec![],
+                project: Some(ProjectInput {
+                    project_id: "1001".into(),
+                    version: 1,
+                    status: None,
+                }),
+            };
+            create_issue_record(state, 7, body, &id, Some(&share))
+                .await
+                .unwrap();
+            let (project_id, stored_due_at): (String, Option<String>) = mysql
+                .fetch_one(
+                    "SELECT cloud_project_id,DATE_FORMAT(due_at,'%Y-%m-%d %H:%i:%s') \
+                     FROM loop_items WHERE id=?",
+                    (id.as_str(),),
+                )
+                .await
+                .unwrap();
+            assert_eq!(project_id, "1001");
+            assert_eq!(stored_due_at.as_deref(), expected, "nullable={nullable}");
+        }
+    }
 }
 
 #[tokio::test]
