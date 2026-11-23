@@ -11,7 +11,6 @@ import {
 } from './pendingRuntimeTaskArchives'
 import { SidebarConnectionEventStatus } from './SidebarConnectionEventStatus'
 
-import { ActionMenu } from '@/components/common/ActionMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import {
@@ -34,17 +33,22 @@ import {
   X,
 } from 'lucide-react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import { memo, useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  memo,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { createPortal } from 'react-dom'
-import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
+import { RuntimeTaskContextMenu } from './RuntimeTaskContextMenu'
 
 import { Tooltip } from '@/components/ui/tooltip'
 
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-
-import { executeDshCommand } from '@/features/dsh-runtime/dshExtensions'
-import { useDshMenuCommands } from '@/features/dsh-runtime/useDshMenuCommands'
 
 import {
   getRuntimeConversationQueuePaused,
@@ -97,7 +101,6 @@ import { formatRelativeSidebarTime } from './runtimeSidebarTime'
 
 import {
   SIDEBAR_ROW_METADATA_CLASS,
-  dshMenuItemIcon,
   getRuntimeTaskBranch,
   getRuntimeTaskRepositoryLabel,
   getRuntimeWorkspaceDeviceColor,
@@ -172,6 +175,8 @@ export const RuntimeTaskRow = memo(function RuntimeTaskRow({
   const [renameOpen, setRenameOpen] = useState(false)
   const [forceStarting, setForceStarting] = useState(false)
   const [queueReordering, setQueueReordering] = useState(false)
+  const [movePending, setMovePending] = useState(false)
+  const movePendingRef = useRef(false)
   const workbench = useContext(WorkbenchQueueActionsContext)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const worktreeTask = isRuntimeWorktreeTask(task)
@@ -233,7 +238,6 @@ export const RuntimeTaskRow = memo(function RuntimeTaskRow({
   const archiveNoticeOpen = pendingArchive?.noticeOpen === true
   const archiveDisabled =
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
-  const conversationMenuActions = useDshMenuCommands('conversation.context')
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
   const eventTask = taskLifecycle?.task ?? task
   const eventSubscriptions = eventTask.runtimeHandle?.connectionEventSubscriptions
@@ -262,7 +266,6 @@ export const RuntimeTaskRow = memo(function RuntimeTaskRow({
       ? Number(task.queuePosition)
       : null
   const threadId = getRuntimeTaskThreadId(task)
-  const moveTaskMenu = useMoveRuntimeTaskMenu(workspace, task, threadId, stateDeviceId)
   const notificationsSubscribed = isRuntimeTaskNotificationSubscribed(
     imNotificationSettings,
     taskAddress
@@ -810,129 +813,120 @@ export const RuntimeTaskRow = memo(function RuntimeTaskRow({
           </span>
         </div>
       </SidebarHoverCard>
-      <ActionMenu
-        ariaLabel={t('workbench.task_actions')}
-        testId={`runtime-local-task-menu-${task.taskId}`}
-        contextMenuPosition={taskMenuPosition}
-        onContextMenuClose={() => setTaskMenuPosition(null)}
-        triggerClassName="hidden"
-        showTriggerTooltip={false}
-        items={[
-          ...(queued
-            ? [
-                {
-                  label: t('workbench.runtime_task_force_start'),
-                  icon: Sparkles,
-                  testId: `runtime-local-task-menu-force-start-${task.taskId}`,
-                  disabled: !workspace.available || !workbench || forceStarting,
-                  onSelect: forceStartTask,
-                },
-                {
-                  label: t('workbench.runtime_task_queue_move_first'),
-                  icon: ArrowUp,
-                  testId: `runtime-local-task-menu-queue-first-${task.taskId}`,
-                  disabled:
-                    !workspace.available ||
-                    !workbench ||
-                    queueReordering ||
-                    queuePosition === null ||
-                    queuePosition <= 1,
-                  onSelect: () => reorderQueuedTask(1),
-                },
-                {
-                  label: t('workbench.runtime_task_queue_move_up'),
-                  icon: ArrowUp,
-                  testId: `runtime-local-task-menu-queue-up-${task.taskId}`,
-                  disabled:
-                    !workspace.available ||
-                    !workbench ||
-                    queueReordering ||
-                    queuePosition === null ||
-                    queuePosition <= 1,
-                  onSelect: () => reorderQueuedTask((queuePosition ?? 1) - 1),
-                },
-                {
-                  label: t('workbench.runtime_task_queue_move_down'),
-                  icon: ArrowDown,
-                  testId: `runtime-local-task-menu-queue-down-${task.taskId}`,
-                  disabled:
-                    !workspace.available || !workbench || queueReordering || queuePosition === null,
-                  onSelect: () => reorderQueuedTask((queuePosition ?? 1) + 1),
-                },
-              ]
-            : []),
-          {
-            label: marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task'),
-            icon: Pin,
-            testId: `runtime-local-task-menu-pin-${task.taskId}`,
-            disabled: !workspace.available || !threadId || !onSetRuntimeTaskPinned,
-            onSelect: toggleTaskPinned,
-          },
-          {
-            label: t('workbench.rename_chat', '重命名任务'),
-            icon: Edit3,
-            testId: `runtime-local-task-menu-rename-${task.taskId}`,
-            disabled: !workspace.available || !onRenameRuntimeTask,
-            onSelect: () => setRenameOpen(true),
-          },
-          moveTaskMenu,
-          ...conversationMenuActions.map(action => ({
-            label: action.title,
-            icon: dshMenuItemIcon(action.icon),
-            testId: `runtime-local-task-menu-extension-${action.id}-${task.taskId}`,
-            disabled: !workspace.available || !action.enabled,
-            onSelect: async () => {
-              await executeDshCommand(
-                action.command,
-                {
-                  deviceId: taskAddress.deviceId,
-                  taskId: taskAddress.taskId,
-                  workspacePath: taskAddress.workspacePath,
-                },
-                {
-                  menuId: action.id,
-                  menuLocation: 'conversation.context',
-                  source: 'menu',
-                }
-              )
+      {taskMenuPosition && (
+        <RuntimeTaskContextMenu
+          workspace={workspace}
+          task={task}
+          address={taskAddress}
+          threadId={threadId}
+          stateDeviceId={stateDeviceId}
+          position={taskMenuPosition}
+          onClose={() => setTaskMenuPosition(null)}
+          movePending={movePending}
+          setMovePending={setMovePending}
+          movePendingRef={movePendingRef}
+          beforeProject={[
+            ...(queued
+              ? [
+                  {
+                    label: t('workbench.runtime_task_force_start'),
+                    icon: Sparkles,
+                    testId: `runtime-local-task-menu-force-start-${task.taskId}`,
+                    disabled: !workspace.available || !workbench || forceStarting,
+                    onSelect: forceStartTask,
+                  },
+                  {
+                    label: t('workbench.runtime_task_queue_move_first'),
+                    icon: ArrowUp,
+                    testId: `runtime-local-task-menu-queue-first-${task.taskId}`,
+                    disabled:
+                      !workspace.available ||
+                      !workbench ||
+                      queueReordering ||
+                      queuePosition === null ||
+                      queuePosition <= 1,
+                    onSelect: () => reorderQueuedTask(1),
+                  },
+                  {
+                    label: t('workbench.runtime_task_queue_move_up'),
+                    icon: ArrowUp,
+                    testId: `runtime-local-task-menu-queue-up-${task.taskId}`,
+                    disabled:
+                      !workspace.available ||
+                      !workbench ||
+                      queueReordering ||
+                      queuePosition === null ||
+                      queuePosition <= 1,
+                    onSelect: () => reorderQueuedTask((queuePosition ?? 1) - 1),
+                  },
+                  {
+                    label: t('workbench.runtime_task_queue_move_down'),
+                    icon: ArrowDown,
+                    testId: `runtime-local-task-menu-queue-down-${task.taskId}`,
+                    disabled:
+                      !workspace.available ||
+                      !workbench ||
+                      queueReordering ||
+                      queuePosition === null,
+                    onSelect: () => reorderQueuedTask((queuePosition ?? 1) + 1),
+                  },
+                ]
+              : []),
+            {
+              label: marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task'),
+              icon: Pin,
+              testId: `runtime-local-task-menu-pin-${task.taskId}`,
+              disabled: !workspace.available || !threadId || !onSetRuntimeTaskPinned,
+              onSelect: toggleTaskPinned,
             },
-          })),
-          ...(experimentalFeaturesEnabled
-            ? [
-                {
-                  label: notificationActionLabel,
-                  icon: NotificationIcon,
-                  testId: `runtime-local-task-menu-notify-${task.taskId}`,
-                  disabled: notificationsDisabled,
-                  onSelect: () =>
-                    onToggleRuntimeTaskNotification?.(taskAddress, notificationsSubscribed),
-                },
-              ]
-            : []),
-          {
-            label: t('workbench.archive_runtime_task', '归档'),
-            icon: Archive,
-            testId: `runtime-local-task-menu-archive-${task.taskId}`,
-            disabled: archiveDisabled,
-            onSelect: scheduleArchive,
-          },
-        ]}
-      />
-      <TextInputDialog
-        open={renameOpen}
-        title={t('workbench.rename_chat', '重命名会话')}
-        label={t('workbench.chat_name', '会话名称')}
-        description={t('workbench.rename_chat_description', '保持简短且易于识别')}
-        initialValue={task.title}
-        confirmLabel={t('workbench.save', '保存')}
-        cancelLabel={t('workbench.cancel', '取消')}
-        inputTestId={`rename-runtime-local-task-input-${task.taskId}`}
-        confirmTestId={`confirm-rename-runtime-local-task-${task.taskId}`}
-        onClose={() => setRenameOpen(false)}
-        onSubmit={title => {
-          if (workspace.available) return onRenameRuntimeTask?.(taskAddress, title)
-        }}
-      />
+            {
+              label: t('workbench.rename_chat', '重命名任务'),
+              icon: Edit3,
+              testId: `runtime-local-task-menu-rename-${task.taskId}`,
+              disabled: !workspace.available || !onRenameRuntimeTask,
+              onSelect: () => setRenameOpen(true),
+            },
+          ]}
+          afterExtensions={[
+            ...(experimentalFeaturesEnabled
+              ? [
+                  {
+                    label: notificationActionLabel,
+                    icon: NotificationIcon,
+                    testId: `runtime-local-task-menu-notify-${task.taskId}`,
+                    disabled: notificationsDisabled,
+                    onSelect: () =>
+                      onToggleRuntimeTaskNotification?.(taskAddress, notificationsSubscribed),
+                  },
+                ]
+              : []),
+            {
+              label: t('workbench.archive_runtime_task', '归档'),
+              icon: Archive,
+              testId: `runtime-local-task-menu-archive-${task.taskId}`,
+              disabled: archiveDisabled,
+              onSelect: scheduleArchive,
+            },
+          ]}
+        />
+      )}
+      {renameOpen && (
+        <TextInputDialog
+          open
+          title={t('workbench.rename_chat', '重命名会话')}
+          label={t('workbench.chat_name', '会话名称')}
+          description={t('workbench.rename_chat_description', '保持简短且易于识别')}
+          initialValue={task.title}
+          confirmLabel={t('workbench.save', '保存')}
+          cancelLabel={t('workbench.cancel', '取消')}
+          inputTestId={`rename-runtime-local-task-input-${task.taskId}`}
+          confirmTestId={`confirm-rename-runtime-local-task-${task.taskId}`}
+          onClose={() => setRenameOpen(false)}
+          onSubmit={title => {
+            if (workspace.available) return onRenameRuntimeTask?.(taskAddress, title)
+          }}
+        />
+      )}
       {archiveNoticeOpen &&
         createPortal(
           <div
@@ -970,17 +964,19 @@ export const RuntimeTaskRow = memo(function RuntimeTaskRow({
           </div>,
           document.body
         )}
-      <ArchiveConversationsConfirmDialog
-        open={forceArchiveConfirmOpen}
-        title={t('workbench.archive_runtime_task_dirty_worktree_title')}
-        description={t('workbench.archive_runtime_task_dirty_worktree_force_desc')}
-        confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
-        cancelLabel={t('workbench.cancel')}
-        submitting={archiving}
-        testId={`runtime-local-task-force-archive-dialog-${task.taskId}`}
-        onClose={handleCloseForceArchiveConfirm}
-        onConfirm={handleConfirmForceArchive}
-      />
+      {forceArchiveConfirmOpen && (
+        <ArchiveConversationsConfirmDialog
+          open
+          title={t('workbench.archive_runtime_task_dirty_worktree_title')}
+          description={t('workbench.archive_runtime_task_dirty_worktree_force_desc')}
+          confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
+          cancelLabel={t('workbench.cancel')}
+          submitting={archiving}
+          testId={`runtime-local-task-force-archive-dialog-${task.taskId}`}
+          onClose={handleCloseForceArchiveConfirm}
+          onConfirm={handleConfirmForceArchive}
+        />
+      )}
     </>
   )
 })
