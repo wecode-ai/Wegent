@@ -5,6 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createNativeGuidance } from './native-guidance.scenario.mjs'
 import { loadMobileLocalPayloadBuilders } from '../modules/mobile-local-payload-builders.mjs'
+import { isDetachedResponsesContext } from '../modules/model-tool-output.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
@@ -64,13 +65,11 @@ export function createDesktopScenario(options) {
       assert.ok(
         (body.input ?? []).some(
           item =>
-            item.type === 'message' &&
-            item.role === 'user' &&
-            item.content?.[0]?.text === '[tool_result without a matching tool_call]' &&
-            item.content?.[1]?.type === 'input_text' &&
+            isDetachedResponsesContext(item) &&
+            item.content[1]?.type === 'input_text' &&
             item.content[1].text === SOURCE_CONTEXT
         ),
-        'Codex did not retain the untrusted source context'
+        'The Responses proxy did not retain the untrusted source context as a separate message'
       )
       const followUp = text.includes(FOLLOW_UP)
       assert.equal(requests.length, followUp ? 1 : 0, 'The mobile request was duplicated')
