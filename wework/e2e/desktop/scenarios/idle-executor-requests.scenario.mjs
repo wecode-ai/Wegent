@@ -13,12 +13,61 @@ import { verifyPendingInventoryProjection } from '../modules/idle-executor-pendi
 import { verifyStandInDeviceDiscoveryBurst } from '../modules/stand-in-device-discovery-burst.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import { ACTIVE_COMPOSER_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
 import {
   assertIdleExecutorTraffic,
   summarizeExecutorTraffic,
 } from '../modules/idle-executor-requests.mjs'
 
 const OBSERVATION_MS = 6_500
+
+async function verifyTaskTabRetention(control, readTraffic) {
+  const task = '[data-testid="workspace-tab-select-fixed-task"]'
+  const board = '[data-testid="workspace-tab-select-fixed-board"]'
+  const composer = ACTIVE_COMPOSER_SELECTOR
+  const draft = 'Keep this unsent draft when switching tabs'
+  const fullLists = async () =>
+    (await readTraffic()).filter(row => row.method === 'runtime.tasks.list' && !row.pendingOnly)
+  const select = async tab => {
+    await control.command('click', tab)
+    await control.command('waitFor', `${tab}[aria-selected="true"]`, { visible: true })
+  }
+
+  await control.command('restoreMainWindow', 'body')
+  await waitForWindowState(
+    control,
+    snapshot => snapshot.visible === true,
+    'The window did not reopen for the task tab check',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await select(task)
+  await control.command('waitFor', composer, { visible: true })
+  await control.command('fill', composer, { value: draft })
+  try {
+    const beforeBoard = (await fullLists()).length
+    await select(board)
+    await control.command('waitFor', composer, { visible: false })
+    await waitForValue(
+      fullLists,
+      rows =>
+        rows.slice(beforeBoard).filter(row => !row.preferCached && row.status === 200).length >= 2,
+      'The initial collaboration task-list reconciliation did not reach both open tabs',
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+    const beforeReturn = (await fullLists()).length
+    await select(task)
+    await control.command('waitFor', composer, { visible: true, text: draft, stableMs: 500 })
+    assert.equal(await control.command('getValue', composer), draft, 'Task draft was lost')
+    assert.equal(
+      (await fullLists()).length,
+      beforeReturn,
+      'Returning to an open task tab requested the full task list again'
+    )
+  } finally {
+    await select(task)
+    await control.command('fill', composer, { value: '' })
+  }
+}
 
 export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
   return {
@@ -131,6 +180,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         await verifyRuntimeWorkRefreshBurst(control, read)
         await verifyPendingInventoryProjection(control, { executorHome, resultDir })
         await verifyStandInDeviceDiscoveryBurst(control, read)
+        await verifyTaskTabRetention(control, read)
         return { idleExecutorRequests: true, observationMs: OBSERVATION_MS, windows }
       } finally {
         await client({ action: 'detach', target })

@@ -1,4 +1,5 @@
 import { WorkbenchOwnerLeaseContext } from './workbenchContexts'
+import { WorkspaceTabSurface } from '@/AppWorkspaceRoutes'
 import { renderRuntimeTaskLifecycle } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.fixtures'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { clearLocalCodexPluginsReadStateCache } from '@/api/local/codexPlugins'
@@ -31,6 +32,7 @@ import {
   DISCONNECTED_STATE,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
+import { importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 import { writePluginInventory } from '@/features/plugins/pluginInventory'
 import {
   clearPluginMarketplaceCache,
@@ -3106,10 +3108,18 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.subscribeLocalExecutorEvents.mockResolvedValue(vi.fn())
   })
 
-  test('revalidates runtime work when a retained workspace tab is revealed again', async () => {
+  test('keeps the task tab mounted and refreshes work only on a change event', async () => {
+    let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
     const runtimeWorkApi = createRuntimeWorkApiMock()
+    runtimeWorkApi.listRuntimeWork.mockResolvedValueOnce({ projects: [], chats: [], totalTasks: 0 })
     const services = createWorkbenchServices({
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      runtimeWorkApi,
+      chatStream: {
+        subscribe: (handlers: ChatStreamHandlers) => {
+          if (handlers.onRuntimeWorkChanged) onChanged = handlers.onRuntimeWorkChanged
+          return vi.fn()
+        },
+      } as WorkbenchServices['chatStream'],
     })
     const cloudConnectionValue: CloudConnectionContextValue = {
       ...DISCONNECTED_STATE,
@@ -3119,24 +3129,51 @@ describe('WorkbenchProvider runtime tasks', () => {
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
     }
-    const renderTree = (workspaceTabRevealRevision: number) => (
+    const lifecycleStore = new RuntimeTaskLifecycleStore('retained-task-tab')
+    const tab = {
+      id: 'fixed-task',
+      kind: 'task' as const,
+      title: 'Tasks',
+      contentRoute: '/',
+      fixed: true,
+    }
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const renderTree = (active: boolean) => (
       <CloudConnectionContext.Provider value={cloudConnectionValue}>
-        <WorkbenchProvider
-          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        <WorkspaceTabSurface
+          active={active}
+          cloudWebUrl={null}
+          lifecycleStore={lifecycleStore}
+          nativeWorkbenchKind="task"
           services={services}
-          workspaceTabRevealRevision={workspaceTabRevealRevision}
-        >
-          <div />
-        </WorkbenchProvider>
+          tab={tab}
+          user={user}
+        />
       </CloudConnectionContext.Provider>
     )
 
-    const { rerender } = render(renderTree(0))
-    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
+    const module = 'plugins/wework-ui-core-apps.js'
+    window.__WEWORK_DSH_UI_MODULES__ = {
+      ...window.__WEWORK_DSH_UI_MODULES__,
+      [module]: { default: BootstrapProbe },
+    }
+    await importDshUiModule(module)
+    const { rerender } = render(renderTree(true))
+    const workbench = screen.getByTestId('runtime-total')
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    expect(workbench).toHaveTextContent('0')
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledOnce()
 
-    rerender(renderTree(1))
+    await act(async () => rerender(renderTree(false)))
+    expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument()
+    await act(async () => onChanged?.({ taskId: 'runtime-a', deviceId: 'device-1' }))
+    await waitFor(() => expect(workbench).toHaveTextContent('3'))
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
 
-    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+    await act(async () => rerender(renderTree(true)))
+    expect(screen.getByTestId('runtime-total')).toBe(workbench)
+    expect(screen.getByRole('tabpanel')).toContainElement(workbench)
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
   })
 
   test('bootstraps with local app services in local-first runtime mode', async () => {

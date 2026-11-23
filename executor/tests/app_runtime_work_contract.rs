@@ -603,7 +603,12 @@ async fn app_runtime_create_standalone_chat_generates_default_workspace() {
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-chat-codex-home");
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-chat-log", "jsonl"));
-    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(64);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
 
     let created = handler
         .handle_runtime_rpc(json!({
@@ -632,6 +637,11 @@ async fn app_runtime_create_standalone_chat_generates_default_workspace() {
 
     assert_eq!(created["accepted"], true);
     assert_eq!(created["taskId"], "standalone-chat-1");
+    let changed = std::iter::from_fn(|| event_rx.try_recv().ok())
+        .find(|event| event["event"] == "runtime.work.changed")
+        .expect("successful creation must invalidate every subscribed task source");
+    assert_eq!(changed["payload"]["deviceId"], "device-1");
+    assert_eq!(changed["payload"]["taskId"], "standalone-chat-1");
     let workspace_path = created["workspacePath"].as_str().unwrap();
     assert!(workspace_path.contains("/Documents/Codex/"));
     assert!(workspace_path.ends_with("/standalone-chat-1"));

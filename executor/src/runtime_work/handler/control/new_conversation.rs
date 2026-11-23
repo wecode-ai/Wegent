@@ -92,7 +92,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(binding) = binding {
             result["project_space"] = binding
         }
-        if result["accepted"] == true && result["success"] != false {
+        if backend_owned && result["accepted"] == true && result["success"] != false {
             emit_runtime_work_changed(&self.event_tx, &device, &task);
         }
         Ok(result)

@@ -854,6 +854,7 @@ impl RuntimeWorkRpcHandler {
                 link.supervisor = Some(configured);
             }
         }
+        let visible = !link.ephemeral;
         let mut runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         self.schedule_worktree_prune();
@@ -956,6 +957,9 @@ impl RuntimeWorkRpcHandler {
             ),
         }
 
+        if visible {
+            emit_runtime_work_changed(&self.event_tx, &self.device_id, &local_task_id);
+        }
         Ok(json!({
             "success": true,
             "accepted": true,

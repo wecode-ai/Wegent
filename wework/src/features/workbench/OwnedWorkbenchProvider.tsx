@@ -154,7 +154,6 @@ export function OwnedWorkbenchProvider({
   taskRouteActive = false,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
-  workspaceTabRevealRevision = 0,
   workbenchIdentity,
   ownershipKey,
 }: WorkbenchProviderProps & { workbenchIdentity: User; ownershipKey: string }) {
@@ -225,7 +224,6 @@ export function OwnedWorkbenchProvider({
     syncRemoteProjects,
     consumePluginTrials,
     composerAppsSourceActive,
-    workspaceTabRevealRevision,
     onStartupReadyChange,
     marketplaceCacheKey: pluginMarketplaceCacheKey(
       cloudConnection.apiBaseUrl,
