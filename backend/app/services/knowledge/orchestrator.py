@@ -3256,6 +3256,12 @@ class KnowledgeOrchestrator:
         if document.attachment_id:
             # Try to overwrite existing attachment
             try:
+                # A legacy reference does not authorize modifying another owner's body.
+                context_service.get_context(
+                    db=db,
+                    context_id=document.attachment_id,
+                    user_id=document.user_id,
+                )
                 attachment, _ = context_service.overwrite_attachment_internal(
                     db=db,
                     context_id=document.attachment_id,
@@ -3274,7 +3280,7 @@ class KnowledgeOrchestrator:
                 # Create new attachment if overwrite fails
                 attachment, _ = context_service.upload_attachment(
                     db=db,
-                    user_id=user.id,
+                    user_id=document.user_id,
                     filename=document.name,
                     binary_data=content_bytes,
                     subtask_id=0,
@@ -3287,7 +3293,7 @@ class KnowledgeOrchestrator:
             # Create new attachment if no attachment_id exists
             attachment, _ = context_service.upload_attachment(
                 db=db,
-                user_id=user.id,
+                user_id=document.user_id,
                 filename=document.name,
                 binary_data=content_bytes,
                 subtask_id=0,

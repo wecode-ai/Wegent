@@ -4,7 +4,9 @@
 
 """Regression contracts for caller-authorized, independent document bodies."""
 
-from unittest.mock import MagicMock
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -15,6 +17,8 @@ from app.models.subtask_context import ContextStatus, ContextType, SubtaskContex
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeDocumentCreate, KnowledgeDocumentResponse
 from app.services.context import context_service
+from app.services.knowledge.document_read_service import DocumentReadService
+from app.services.knowledge.external_document_access import get_document_access_or_raise
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 
@@ -367,6 +371,118 @@ def test_caller_kb_owner_and_document_attachment_owner_are_distinct(
     assert (
         context_service.get_attachment_binary_data(test_db, second_body) == b"original"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "existing",
+    ["owned", "overwrite_failure", "no_reference", "missing", "foreign", "wrong_type"],
+)
+async def test_manager_web_refresh_preserves_document_attachment_ownership(
+    test_db, test_user, test_admin_user, kb, bodies, monkeypatch, existing
+) -> None:
+    from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+
+    test_admin_user.role = "user"
+    test_db.add(
+        ResourceMember.create(
+            resource_type="KnowledgeBase",
+            resource_id=kb.id,
+            entity_type="user",
+            entity_id=str(test_admin_user.id),
+            role=ResourceRole.Maintainer.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=test_user.id,
+        )
+    )
+    source = attachment(test_db, test_user.id, bodies)
+    if existing == "foreign":
+        source.user_id = test_admin_user.id
+    elif existing == "wrong_type":
+        source.context_type = ContextType.KNOWLEDGE_BASE.value
+    document = KnowledgeDocument(
+        user_id=test_user.id,
+        kind_id=kb.id,
+        attachment_id=(
+            None
+            if existing == "no_reference"
+            else 99999 if existing == "missing" else source.id
+        ),
+        name="page.md",
+        file_extension="md",
+        source_type="web",
+        source_config={"url": "https://example.com/page"},
+        is_active=True,
+    )
+    test_db.add(document)
+    test_db.commit()
+    assert KnowledgeService.can_manage_knowledge_document(
+        test_db, kb.id, test_admin_user.id, test_user.id
+    )
+    if existing in {"foreign", "wrong_type"}:
+        assert not get_document_access_or_raise(
+            test_db, user_id=test_admin_user.id, document_id=document.id
+        ).content_readable
+    if existing == "overwrite_failure":
+        monkeypatch.setattr(
+            context_service,
+            "overwrite_attachment_internal",
+            MagicMock(side_effect=RuntimeError("overwrite unavailable")),
+        )
+    scraped_content = "# Refreshed page\n\nNew body."
+    scraper = SimpleNamespace(
+        scrape_url=AsyncMock(
+            return_value=SimpleNamespace(
+                success=True,
+                content=scraped_content,
+                url="https://example.com/page",
+                title="Page",
+                description=None,
+                scraped_at=datetime.now(timezone.utc),
+            )
+        )
+    )
+    monkeypatch.setattr(
+        "app.services.web_scraper.get_web_scraper_service", lambda: scraper
+    )
+
+    result = await knowledge_orchestrator.refresh_web_document(
+        test_db, test_admin_user, document.id, trigger_indexing=False
+    )
+
+    assert result["success"], result
+    test_db.expire_all()
+    stored = test_db.get(KnowledgeDocument, document.id)
+    body = test_db.get(SubtaskContext, stored.attachment_id)
+    read = DocumentReadService().read_documents(
+        test_db,
+        document_ids=[stored.id],
+        knowledge_base_ids=[kb.id],
+        searchable_only=False,  # Refresh marks the document inactive until indexing.
+    )[0]
+    assert read["content"] == scraped_content
+    assert stored.user_id == body.user_id == test_user.id
+    assert body.subtask_id == 0
+    assert body.context_type == ContextType.ATTACHMENT.value
+    access = get_document_access_or_raise(
+        test_db, user_id=test_admin_user.id, document_id=stored.id
+    )
+    assert access.content_readable
+    assert access.downloadable
+    assert access.attachment.id == body.id
+    assert context_service.get_attachment_binary_data(test_db, body) == (
+        scraped_content.encode("utf-8")
+    )
+    if existing == "owned":
+        assert body.id == source.id
+    else:
+        assert body.id != source.id
+        assert source.extracted_text == "original"
+        assert bodies[1]["original"] == b"original"
+    if existing == "foreign":
+        assert source.user_id == test_admin_user.id
+    elif existing == "wrong_type":
+        assert source.context_type == ContextType.KNOWLEDGE_BASE.value
 
 
 @pytest.mark.parametrize("phase", ["before_commit", "after_commit", "refresh"])
