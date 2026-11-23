@@ -14,6 +14,25 @@ function downloadFixtureHtml() {
   <head>
     <meta charset="utf-8" />
     <title>${DOWNLOAD_FIXTURE_TITLE}</title>
+    <style>
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+        margin: 0;
+        padding: 12px;
+        font: 13px/1.4 sans-serif;
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 16px;
+      }
+      a {
+        display: inline-block;
+        white-space: nowrap;
+      }
+    </style>
   </head>
   <body>
     <h1>${DOWNLOAD_FIXTURE_TITLE}</h1>
