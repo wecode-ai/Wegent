@@ -485,13 +485,21 @@ class PluginMarketplaceService:
         restore_deleted: bool = False,
     ) -> InstalledPlugin:
         if commit:
+            if restore_deleted:
+                # Repair may retain leases after a no-op or release all locks on commit.
+                # Fence it here, then reacquire the catalog below before installation.
+                self.lock_private_plugin_for_install(db, user_id, plugin_id)
             self.reconcile_stale_installed_catalog_refs(
                 db, user_id=user_id, plugin_id=plugin_id
             )
         # Catalog repair may have committed its own transaction.
         from app.services.plugin_write_identity import acquire_installation_write_lock
 
-        plugin = db.get(Plugin, plugin_id)
+        plugin = (
+            self.lock_private_plugin_for_install(db, user_id, plugin_id)
+            if restore_deleted
+            else db.get(Plugin, plugin_id)
+        )
         if plugin is None:
             raise HTTPException(404, "Marketplace plugin not found")
         kind_name = self._kind_name(plugin.catalog_namespace, plugin.slug)
@@ -504,7 +512,7 @@ class PluginMarketplaceService:
             ),
         )
         reclaimed_keys = (
-            self._restore_private_plugin_for_install(db, user_id, plugin_id)
+            self._restore_private_plugin_for_install(db, plugin)
             if restore_deleted
             else []
         )
@@ -552,16 +560,23 @@ class PluginMarketplaceService:
         db.refresh(installed)
         return self._kind_to_installed(installed)
 
-    def _restore_private_plugin_for_install(
+    def lock_private_plugin_for_install(
         self, db: Session, user_id: int, plugin_id: int
-    ) -> list[str]:
+    ) -> Plugin:
+        """Acquire the catalog row before any installation lease on restore."""
         plugin = self._lock_plugin(db, plugin_id)
         if (
             not plugin
             or plugin.owner_user_id != user_id
             or plugin.visibility != "personal"
-            or plugin.status not in {"deleted", "published"}
         ):
+            raise HTTPException(404, "Owned private plugin not found")
+        return plugin
+
+    def _restore_private_plugin_for_install(
+        self, db: Session, plugin: Plugin
+    ) -> list[str]:
+        if plugin.status not in {"deleted", "published"}:
             raise HTTPException(404, "Owned private plugin not found")
         if plugin.status == "published":
             return []

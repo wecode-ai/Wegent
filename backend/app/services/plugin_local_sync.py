@@ -54,6 +54,9 @@ def mutate_local_plugin(
     source_device_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Commit account intent, idempotent result in one transaction."""
+    restore_deleted = (
+        action == "install" and (payload or {}).get("restoreDeleted") is True
+    )
     with _rejection_context(db, user_id, instance_id, operation_id, intent_order):
         acquire_plugin_write_lock(
             db, user_id, name=f"@operation:{instance_id}:{operation_id}"
@@ -93,10 +96,11 @@ def mutate_local_plugin(
         if action in {"install", "ensure_builtin"}:
             # Resolve supersession from owned state before catalog repair can
             # change its identity or fail for a withdrawn catalog entry.
-            if (
+            is_new_operation = (
                 _replay_operation(db, user_id, instance_id, operation_id, request_hash)
                 is None
-            ):
+            )
+            if is_new_operation:
                 _guard_existing_intent(
                     db, user_id, instance_id, action, target_id, intent_order
                 )
@@ -111,6 +115,10 @@ def mutate_local_plugin(
                 catalog = _builtin_catalog_plugin(db, str(target_id))
                 plugin_id = catalog.id if catalog is not None else None
             if plugin_id is not None:
+                if is_new_operation and restore_deleted:
+                    plugin_marketplace_service.lock_private_plugin_for_install(
+                        db, user_id, plugin_id
+                    )
                 plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
                     db,
                     user_id=user_id,
@@ -119,6 +127,14 @@ def mutate_local_plugin(
         acquire_plugin_write_lock(
             db, user_id, name=f"@operation:{instance_id}:{operation_id}"
         )
+        if (
+            restore_deleted
+            and _replay_operation(db, user_id, instance_id, operation_id, request_hash)
+            is None
+        ):
+            plugin_marketplace_service.lock_private_plugin_for_install(
+                db, user_id, int(target_id)
+            )
         acquire_plugin_write_lock(
             db, user_id, name=local_write_name(db, user_id, action, target_id)
         )
@@ -139,7 +155,7 @@ def mutate_local_plugin(
                 user_id=user_id,
                 plugin_id=target_id,
                 release_id=(payload or {}).get("releaseId"),
-                restore_deleted=(payload or {}).get("restoreDeleted") is True,
+                restore_deleted=restore_deleted,
                 commit=False,
             )
         elif action == "ensure_builtin":

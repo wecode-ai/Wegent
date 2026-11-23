@@ -183,6 +183,72 @@ export async function verifyPersonalPublicationDeletion({
   }
 }
 
+export async function verifyInstalledPersonalPluginDeletion({
+  cloud,
+  control,
+  prepareSource,
+  report,
+}) {
+  const name = 'author-installed-delete-e2e'
+  const localId = `${name}@wework-personal`
+  await prepareSource(name)
+  await control.command('uninstallInstalledPlugin', 'body', { value: localId })
+  await openPersonalPlugin(control, { name, id: localId }, { refresh: true })
+  await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-toggle-"]')
+  await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+  const listing = await until(
+    async () =>
+      (await pluginApi(cloud, '/plugins/marketplace')).items.find(item => item.name === name),
+    item => Boolean(item?.latestReleaseId),
+    'The installed-detail deletion fixture did not publish its private release'
+  )
+  const installed = await waitForAuthorCloudInstall(cloud, listing)
+  const source = await snapshotPersonalSource(control, listing)
+  await control.command('click', testId('plugin-detail-back-button'))
+  await control.command('clickWhenEnabled', testId(`plugins-installed-strip-item-${localId}`))
+  await control.command('clickWhenEnabled', testId(`plugin-detail-actions-${localId}`))
+  await control.command('clickWhenEnabled', testId(`plugin-detail-delete-${localId}`))
+  await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('delete-personal-plugin-dialog') &&
+      /将删除云端插件|Delete the cloud plugin/i.test(snapshot.text),
+    'Installed-detail deletion did not resolve its omitted cloud identity'
+  )
+  await assertPersonalSourceUnchanged(source)
+  assert.ok(await accountPlugin(cloud, name), 'Cloud membership disappeared before confirmation')
+  report.confirmedCloudImpact = true
+  await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+  await control.command('waitFor', testId('delete-personal-plugin-dialog'), { visible: false })
+  assert.equal(
+    await pathExists(source.sourcePath),
+    false,
+    'Installed-detail deletion retained source'
+  )
+  assert.equal(
+    await accountPlugin(cloud, name),
+    undefined,
+    'Installed-detail deletion retained membership'
+  )
+  await until(
+    () =>
+      materializedPlugin(
+        cloud.remoteExecutorEnv.WEGENT_EXECUTOR_HOME,
+        installed.metadata.labels.id
+      ),
+    item => !item,
+    'Installed-detail deletion left an active cloud device plugin'
+  )
+  const rows = await cloud.queryDatabase('SELECT status FROM plugins WHERE id=%s', [listing.id])
+  assert.deepEqual(
+    rows.map(row => row.status),
+    ['deleted']
+  )
+  report.deletedSourceAndCloud = true
+  console.log(`[personal-plugin-installed-delete] PASS ${JSON.stringify(report)}`)
+}
+
 async function sourceFiles(root, directory = root) {
   const metadata = await lstat(directory)
   assert.ok(

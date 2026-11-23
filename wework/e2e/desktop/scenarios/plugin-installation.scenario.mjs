@@ -7,7 +7,10 @@ import {
   importPersonalSource,
   verifyPersonalPluginVersionSubmission,
 } from '../modules/plugin-personal-version-flow.mjs'
-import { verifyPersonalPublicationDeletion } from '../modules/plugin-personal-uninstall-flow.mjs'
+import {
+  verifyInstalledPersonalPluginDeletion,
+  verifyPersonalPublicationDeletion,
+} from '../modules/plugin-personal-uninstall-flow.mjs'
 import { resultDir } from '../modules/shared.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { signInDesktopCloud } from '../modules/desktop-cloud-login.mjs'
@@ -24,6 +27,7 @@ export function createDesktopScenario(options) {
   let cloud
   let apiProxy
   const publicationDeletion = {}
+  const installedDeletion = {}
   return {
     ...toggle,
     appEnvironment: {
@@ -88,19 +92,26 @@ export function createDesktopScenario(options) {
       })
       apiProxy = await new TransportFaultProxy(cloud.backendUrl).start()
       await signInDesktopCloud(control, cloud, { backendUrl: apiProxy.url })
+      const prepareSource = async name => {
+        const root = join(resultDir, 'personal-publication-delete-fixture')
+        await mkdir(root, { recursive: true })
+        await importPersonalSource(control, root, '1.0.0', false, name, name)
+      }
       await verifyPersonalPublicationDeletion({
         cloud,
         control,
         apiProxy,
         report: publicationDeletion,
-        prepareSource: async name => {
-          const root = join(resultDir, 'personal-publication-delete-fixture')
-          await mkdir(root, { recursive: true })
-          await importPersonalSource(control, root, '1.0.0', false, name, name)
-        },
+        prepareSource,
+      })
+      await verifyInstalledPersonalPluginDeletion({
+        cloud,
+        control,
+        prepareSource,
+        report: installedDeletion,
       })
     },
-    diagnostics: () => ({ publicationDeletion, requests: apiProxy?.requests }),
+    diagnostics: () => ({ publicationDeletion, installedDeletion, requests: apiProxy?.requests }),
     async cleanup() {
       await apiProxy?.stop()
     },

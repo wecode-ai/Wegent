@@ -253,6 +253,21 @@ async function syncPersonalInstall(
   }
 }
 
+/** Keep account and executor ownership independent of the plugin page's lifetime. */
+export function capturePersonalPluginInstallScope() {
+  const session = readStoredCloudConnection()
+  const device = getKnownLocalExecutorDeviceId()
+  return () => {
+    const current = readStoredCloudConnection()
+    return (
+      current?.apiBaseUrl === session?.apiBaseUrl &&
+      current?.user.id === session?.user.id &&
+      current?.connectedAt === session?.connectedAt &&
+      (!device || getKnownLocalExecutorDeviceId() === device)
+    )
+  }
+}
+
 /** Capture the initiating desktop account. The returned callback never waits on cloud work. */
 export function capturePersonalPluginCloudInstall(
   local: LocalCodexPluginApi,
@@ -260,21 +275,13 @@ export function capturePersonalPluginCloudInstall(
 ) {
   const session = readStoredCloudConnection()
   if (!session || session.apiBaseUrl !== apiBaseUrl || session.user.id !== userId) return undefined
-  const initiatingDevice = getKnownLocalExecutorDeviceId()
-  const accountIsCurrent = () => {
-    const current = readStoredCloudConnection()
-    return (
-      current?.apiBaseUrl === session.apiBaseUrl &&
-      current.user.id === session.user.id &&
-      current.connectedAt === session.connectedAt
-    )
-  }
+  const scopeIsCurrent = capturePersonalPluginInstallScope()
 
   const run = async (source: LocalPluginSource) => {
     const pluginKey = sourceKey(source)
     const device = getKnownLocalExecutorDeviceId()
-    if (!pluginKey || !device || (initiatingDevice && device !== initiatingDevice)) return
-    const isCurrent = () => accountIsCurrent() && getKnownLocalExecutorDeviceId() === device
+    if (!pluginKey || !device) return
+    const isCurrent = () => scopeIsCurrent() && getKnownLocalExecutorDeviceId() === device
     if (!isCurrent()) return
     const key = workKey(device, pluginKey)
     const previous = pending.get(key)

@@ -77,11 +77,10 @@ export function usePluginWorkspaceDeletion({
   }) => {
     const isCurrent = capturePluginScope()
     const normalizedPluginName = input.pluginName.trim().toLowerCase()
+    const cloudPluginId = input.cloudPluginId ?? null
     const publication = matchingPublicationRequests(
       publicationRequests,
-      input.cloudPluginId === null || input.cloudPluginId === undefined
-        ? null
-        : Number(input.cloudPluginId),
+      cloudPluginId === null ? null : Number(cloudPluginId),
       normalizedPluginName
     ).find(candidate => !TERMINAL_PUBLICATION_STATUSES.has(candidate.status))
     const pending = {
@@ -89,9 +88,9 @@ export function usePluginWorkspaceDeletion({
       displayName: input.displayName,
       marketplacePath: input.marketplacePath?.trim() || null,
       installedId: input.installedId ?? null,
-      cloudPluginId: input.cloudPluginId ?? null,
+      cloudPluginId,
       verifyMarketplaceOwner:
-        input.cloudPluginId === null && cloudMarketplaceAvailable && Boolean(cloudToken),
+        cloudPluginId === null && cloudMarketplaceAvailable && Boolean(cloudToken),
       deleteLocalSource: input.deleteLocalSource ?? true,
       impact: null,
       publication: publication ?? null,

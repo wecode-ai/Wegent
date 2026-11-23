@@ -337,20 +337,41 @@ test.each([
   { source: 'disk', switchesAccount: true, authFails: false },
   { source: 'author', switchesAccount: true, authFails: false },
   { source: 'author', switchesAccount: false, authFails: true },
+  { source: 'author', switchesAccount: false, authFails: true, duringAuthorization: true },
+  { source: 'author', switchesAccount: false, authFails: false, duringAuthorization: true },
+  { source: 'author', switchesAccount: true, authFails: true, duringAuthorization: true },
 ] as const)(
-  'settles a $source local commit after departure with account switch=$switchesAccount and auth failure=$authFails',
-  async ({ source, switchesAccount, authFails }) => {
+  'settles a $source local commit after departure with account switch=$switchesAccount, auth failure=$authFails, and pending OAuth=$duringAuthorization',
+  async ({ source, switchesAccount, authFails, duringAuthorization = false }) => {
     const { local, schedule, onInstalled } = fixture()
     const plugin = {
       ...first,
-      spec: { ...first.spec, sourcePayload: { marketplacePath: '/personal' } },
+      spec: {
+        ...first.spec,
+        sourcePayload: { marketplacePath: '/personal' },
+        components: {
+          ...first.spec.components,
+          connectors:
+            authFails || duringAuthorization
+              ? [{ slug: 'test-oauth', authPolicy: 'on_install' as const }]
+              : [],
+        },
+      },
+      status: { ...first.status, localExecution: true },
     }
     const committed = Promise.withResolvers<void>()
     const rollback = Promise.withResolvers<void>()
-    const rollbackAfterAuthFailure = vi.fn(() => rollback.promise)
+    const authorization = Promise.withResolvers<void>()
+    const authorizing = vi.fn()
+    let installedLocally = false
+    const rollbackAfterAuthFailure = vi.fn(async (_plugin, isCurrent: () => boolean) => {
+      if (isCurrent()) installedLocally = false
+      await rollback.promise
+    })
     const nativeInstall = vi.fn(
       async (onCommit?: (source: { pluginName: string; marketplacePath: string }) => void) => {
         await committed.promise
+        installedLocally = true
         onCommit?.({ pluginName: 'first', marketplacePath: '/personal' })
         return plugin
       }
@@ -394,8 +415,11 @@ test.each([
         selectedMarketplacePluginDetail: null,
         isMarketplacePluginUninstalling: () => false,
         ensureMarketplaceConnectors: async () => {
+          authorizing()
+          if (duringAuthorization) await authorization.promise
           if (authFails) throw new Error('Authorization cancelled')
         },
+        ensureLocalConnectorsAfterInstall: async () => {},
         rollbackInstalledPluginAfterAuthFailure: rollbackAfterAuthFailure,
         reconciliationBlocksActions: false,
         syncPersonalPluginInBackground: schedule,
@@ -405,7 +429,10 @@ test.each([
       view.result.current.executeMarketplaceInstall({ item: listing, requiredConnectionNames: [] })
     )
     await vi.waitFor(() => expect(nativeInstall).toHaveBeenCalledOnce())
-    if (authFails) {
+    if (duringAuthorization) {
+      await act(async () => committed.resolve())
+      await vi.waitFor(() => expect(authorizing).toHaveBeenCalledOnce())
+    } else if (authFails) {
       await act(async () => committed.resolve())
       await vi.waitFor(() => expect(rollbackAfterAuthFailure).toHaveBeenCalledOnce())
     }
@@ -414,11 +441,15 @@ test.each([
     if (switchesAccount) saveStoredCloudConnection({ ...session, user: { ...session.user, id: 2 } })
     await act(async () => {
       committed.resolve()
+      authorization.resolve()
       rollback.resolve()
     })
-    if (switchesAccount || authFails) {
+    if (switchesAccount || authFails || duringAuthorization) {
+      if ((authFails || duringAuthorization) && !switchesAccount)
+        await vi.waitFor(() => expect(installedLocally).toBe(false))
       expect(mocks.install).not.toHaveBeenCalled()
       expect(local.linkPersonalPluginRelease).not.toHaveBeenCalled()
+      expect(installedLocally).toBe(switchesAccount)
     } else {
       await vi.waitFor(() => expect(onInstalled).toHaveBeenCalledOnce())
       expect(mocks.install).toHaveBeenCalledExactlyOnceWith(17, undefined)
@@ -432,15 +463,17 @@ test.each([
   { phase: 'publication', settled: false, failed: false },
   { phase: 'publication', settled: true, failed: false },
   { phase: 'publication', settled: false, failed: true },
+  { phase: 'account', settled: true, failed: false, omitCloudId: true },
 ])(
-  'revalidates a local-only delete after $phase with already settled=$settled and failed=$failed',
-  async ({ phase, settled, failed }) => {
+  'revalidates a local-only delete after $phase with already settled=$settled, failed=$failed, and omitted cloud id=$omitCloudId',
+  async ({ phase, settled, failed, omitCloudId = false }) => {
     const { local, schedule, onInstalled } = fixture()
     const release = cloudRelease('first', 17)
     const write = Promise.withResolvers<void>()
     const completing = vi.fn()
     let published = phase === 'account'
     let installed = false
+    let installedLocally = omitCloudId
     mocks.list.mockImplementation(async () => ({ items: published ? [release] : [] }))
     mocks.install.mockImplementation(async () => {
       if (phase === 'account') await write.promise
@@ -496,7 +529,13 @@ test.each([
           getSnapshot: () => ({ installedPlugins: [] }),
           showNotice: vi.fn(),
         },
-        localPluginApi: { ...local, deletePersonalPlugin: deleteSource },
+        localPluginApi: {
+          ...local,
+          deletePersonalPlugin: deleteSource,
+          uninstallInstalledPlugin: async () => {
+            installedLocally = false
+          },
+        },
         pluginApi: {
           listMarketplacePlugins: mocks.list,
           getMarketplacePluginDeleteImpact: async () => impact,
@@ -515,7 +554,7 @@ test.each([
       view.result.current.requestDeletePersonalPlugin({
         pluginName: 'first',
         displayName: 'First',
-        cloudPluginId: null,
+        ...(omitCloudId ? { installedId: 'local-first' } : { cloudPluginId: null }),
       })
     )
     schedule(first)
@@ -533,6 +572,7 @@ test.each([
       })
       expect(deleteSource).not.toHaveBeenCalled()
       expect(deleteCloud).not.toHaveBeenCalled()
+      if (omitCloudId) expect(installedLocally).toBe(true)
     } finally {
       await act(async () => {
         write.resolve()
@@ -550,6 +590,7 @@ test.each([
     expect(published).toBe(true)
     expect(installed).toBe(phase === 'account' || settled)
     expect(deleteSource).not.toHaveBeenCalled()
+    if (omitCloudId) expect(installedLocally).toBe(true)
     expect(view.result.current.pendingPersonalPluginDelete).toMatchObject({
       cloudPluginId: 17,
       impact,
@@ -561,6 +602,7 @@ test.each([
       revokeAndDelete: false,
     })
     expect(deleteSource).toHaveBeenCalledOnce()
+    expect(installedLocally).toBe(false)
   }
 )
 
@@ -608,7 +650,7 @@ test.each([
     await act(async () => view.result.current.confirmDeletePersonalPlugin())
     expect(deleteSource).toHaveBeenCalledTimes(failed ? 0 : 1)
     expect(errorLog).toHaveBeenCalledTimes(failed ? 1 : 0)
-    expect(mocks.list).toHaveBeenCalledTimes(token && cloudPluginId === null ? 1 : 0)
+    expect(mocks.list).toHaveBeenCalledTimes(token ? 1 : 0)
   }
 )
 
