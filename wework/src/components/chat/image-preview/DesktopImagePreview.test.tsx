@@ -666,6 +666,14 @@ test('retains fast brush samples and sends markup with image-relative comments',
     ],
   })
   fireEvent(surface, move)
+  fireEvent(surface, new MouseEvent('lostpointercapture', { bubbles: true }))
+  expect(surface.querySelector('[data-mark-index="0"] path')).toHaveAttribute(
+    'd',
+    expect.stringContaining('M 15 20')
+  )
+  fireEvent.click(screen.getByTestId('attachment-image-edit-undo'))
+  fireEvent(surface, new MouseEvent('pointerdown', { bubbles: true, clientX: 15, clientY: 20 }))
+  fireEvent(surface, move)
   fireEvent(surface, new MouseEvent('pointerup', { bubbles: true, clientX: 45, clientY: 50 }))
   const send = screen.getByTestId('attachment-image-edit-send')
   fireEvent.click(send)
