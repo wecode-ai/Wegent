@@ -140,6 +140,10 @@ export function createDesktopScenario(options) {
         await control.command('focusMainWindow', 'body')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', CHAT)
+        await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
+          text: '后续消息仍在第二段',
+          timeoutMs: options.modelResponseTimeoutMs,
+        })
         await control.command('waitFor', badge, { visible: false })
         active = true
         await send(FIRST)
