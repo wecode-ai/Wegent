@@ -231,6 +231,7 @@ export function useDesktopPaneContext({
   } = useWorkbenchCloudProjectContext({
     active: paneActive && workbenchVisible,
     currentRuntimeTask: currentProjectSpaceRuntimeTask,
+    runtimeTaskCreationPending: paneSession.status.isCreatingTask,
     devices: state.devices,
     currentProjectId: currentProject?.id,
     defaultProjectSpace,
