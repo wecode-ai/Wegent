@@ -237,6 +237,7 @@ export function createDesktopScenario(options) {
       assert.ok(!JSON.stringify(model).includes('modelConfig'))
       try {
         await openStandInSettings(control)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-primary-profile"] [data-testid="model-selector-button"]'
