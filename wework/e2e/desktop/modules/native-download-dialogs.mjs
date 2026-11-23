@@ -239,16 +239,12 @@ export async function triggerEmbeddedBrowserContextMenuItem({
 
   await execute(
     'xdotool',
-    ['mousemove', '--window', mainWindowId, '--sync', String(x), String(y)],
+    ['mousemove', '--window', mainWindowId, String(x), String(y), 'click', '--clearmodifiers', '3'],
     {
       encoding: 'utf8',
       timeout: 3_000,
     }
   )
-  await execute('xdotool', ['click', '--clearmodifiers', '3'], {
-    encoding: 'utf8',
-    timeout: 3_000,
-  })
 
   const menuDeadline = Date.now() + Math.min(timeoutMs, 5_000)
   let menuWindowId = null
