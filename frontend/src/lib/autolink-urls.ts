@@ -36,12 +36,12 @@ function sourcePart<Child extends RootContent>(
   if (node.type === 'text' && decodeText(source.slice(start, end)) === node.value) {
     return { node, start, end }
   }
-  if (
-    node.type === 'element' &&
-    (node.tagName === 'em' || node.tagName === 'strong') &&
-    (source[start] === '*' || source[start] === '_')
-  ) {
-    return { node, start, end }
+  if (node.type === 'element') {
+    const marker = source[start]
+    const isMarkdownFormatting =
+      (node.tagName === 'del' && marker === '~') ||
+      ((node.tagName === 'em' || node.tagName === 'strong') && (marker === '*' || marker === '_'))
+    if (isMarkdownFormatting) return { node, start, end }
   }
 }
 

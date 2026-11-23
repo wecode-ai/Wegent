@@ -14,9 +14,18 @@ const { default: Markdown } = jest.requireActual<typeof import('react-markdown')
 const { default: rehypeRaw } = jest.requireActual<typeof import('rehype-raw')>(
   '../../../node_modules/rehype-raw/index.js'
 )
+const { default: remarkGfmSafe } = jest.requireActual<typeof import('@/lib/remark-gfm-safe')>(
+  '../../lib/remark-gfm-safe.ts'
+)
 
 function renderMarkdown(source: string) {
-  return render(createElement(Markdown, { rehypePlugins: [rehypeRaw, rehypeAutolinkUrls] }, source))
+  return render(
+    createElement(
+      Markdown,
+      { remarkPlugins: [remarkGfmSafe], rehypePlugins: [rehypeRaw, rehypeAutolinkUrls] },
+      source
+    )
+  )
 }
 
 describe('rehypeAutolinkUrls', () => {
@@ -45,6 +54,23 @@ describe('rehypeAutolinkUrls', () => {
     renderMarkdown(url)
 
     expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+  })
+
+  it('preserves paired tildes inside a URL', () => {
+    const url = 'https://example.com/a~~b~~c'
+    const { container } = renderMarkdown(url)
+
+    expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+    expect(container.querySelector('del')).toBeNull()
+  })
+
+  it('keeps surrounding strikethrough outside a URL', () => {
+    const url = 'https://example.com/path'
+    renderMarkdown(`~~${url}~~`)
+    const link = screen.getByRole('link', { name: url })
+
+    expect(link).toHaveAttribute('href', url)
+    expect(screen.getByRole('deletion')).toContainElement(link)
   })
 
   it.each([
