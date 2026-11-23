@@ -416,7 +416,6 @@ export async function verifyGitMarketplaceVersions({ codexHome, control, executo
     await request('marketplace/remove', { marketplaceName })
     const restored = await request('marketplace/add', { source: fixture.url, refName: 'main' })
     await control.command('click', controlId('plugin-management-surface-wework'))
-    await openRemoval(restored)
     const installedPlugin = JSON.parse(await readFile(installedManifest, 'utf8'))
     installedPlugin.connectors.push({
       slug: qrConnector,
@@ -428,6 +427,7 @@ export async function verifyGitMarketplaceVersions({ codexHome, control, executo
       },
     })
     await writeFile(installedManifest, JSON.stringify(installedPlugin))
+    await openRemoval(restored)
     const login = await holdConnectorCommand(installedRoot, executorHome, 'login')
     const polling = auth('poll', { connectorSlug: qrConnector }).then(
       result => ({ result }),
