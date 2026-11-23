@@ -419,7 +419,7 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 
 修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
 
-入口/调用方：[wework/src/features/todo/StandInConnectionSettings.tsx](../../../wework/src/features/todo/StandInConnectionSettings.tsx)；[wework/src/features/todo/StandInScheduleDialog.tsx](../../../wework/src/features/todo/StandInScheduleDialog.tsx)
+入口/调用方：[wework/src/features/todo/StandInConnectionSettings.tsx](../../../wework/src/features/todo/StandInConnectionSettings.tsx)
 
 依赖/委托：hooks: `useAuth`, `useWorkbench`, `useTranslation`；权限相关标识（非授权结论）：`userId`；委托：`MobileSettingsPage`, `ConnectionsSettingsPage`, `ConfirmDialog`, `DesktopSidebar`, `Menu`, `MobileDrawer`, `DesktopCollapsedSidebarToggle`, `AutomationListPane`, `AutomationDetailWorkspace`, `AutomationEmptyState`, `WorkbenchSearchDialog`
 
@@ -457,7 +457,7 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 
 入口/调用方：[wework/src/features/todo/PersonalStandInWorkspace.tsx](../../../wework/src/features/todo/PersonalStandInWorkspace.tsx)
 
-依赖/委托：hooks: `useTranslation`, `useContext`；权限相关标识（非授权结论）：`userId`, `isConnected`, `readOnly`；委托：`StandInProposalCard`, `StandInSettingsEntry`, `UserRound`, `StandInIcon`, `Tooltip`, `SlidersHorizontal`, `StandInConversation`, `StandInDetailsPopover`, `TemporaryChatPanel`, `StandInScheduleDialog`, `StandInReviewDialog`, `StandInWorkList`, `StandInProcessingNotice`, `DialogSurface`, `StandInMemoryPanel`, `StandInPrimaryProfile`, `StandInSettingsPage`, `StandInOnboarding`
+依赖/委托：hooks: `useTranslation`, `useContext`；权限相关标识（非授权结论）：`userId`, `isConnected`, `readOnly`；委托：`StandInProposalCard`, `StandInSettingsEntry`, `UserRound`, `StandInIcon`, `Tooltip`, `SlidersHorizontal`, `StandInConversation`, `StandInDetailsPopover`, `TemporaryChatPanel`, `StandInReviewDialog`, `StandInWorkList`, `StandInProcessingNotice`, `DialogSurface`, `StandInMemoryPanel`, `StandInPrimaryProfile`, `StandInSettingsPage`, `StandInOnboarding`
 
 ### 34. StandInSettingsPage
 

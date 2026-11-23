@@ -60,6 +60,7 @@ import {
 } from './desktopSidebarPriorityView'
 import { useSidebarPaneDragScrollLock } from './useSidebarPaneDragScrollLock'
 import {
+  getRuntimeTaskActivityTime,
   getRuntimeTaskAddress,
   getRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
@@ -79,7 +80,6 @@ import {
   getDesktopSidebarStorageScope,
   getRuntimeTaskPriorityReason,
   getRuntimeTaskPriorityRank,
-  getRuntimeTaskPriorityTime,
   getRuntimeTaskSortableId,
   getRuntimeNotificationKey,
 } from './desktopSidebarHelpers'
@@ -354,7 +354,7 @@ export function useDesktopSidebarModel({
         pinned: Boolean(item.task.pinned),
         pinnedOrder: item.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER,
         priorityRank: item.reason === null ? null : getRuntimeTaskPriorityRank(item.reason),
-        recencyAt: getRuntimeTaskPriorityTime(item.task),
+        recencyAt: getRuntimeTaskActivityTime(item.task),
       })),
     [allPriorityViewTaskItems]
   )
@@ -365,7 +365,7 @@ export function useDesktopSidebarModel({
         .sort(
           (left, right) =>
             getRuntimeTaskPriorityRank(left.reason!) - getRuntimeTaskPriorityRank(right.reason!) ||
-            getRuntimeTaskPriorityTime(right.task) - getRuntimeTaskPriorityTime(left.task)
+            getRuntimeTaskActivityTime(right.task) - getRuntimeTaskActivityTime(left.task)
         ),
     [allPriorityViewTaskItems]
   )
