@@ -397,32 +397,42 @@ def _result_save_fixture(update_side_effect):
     return handler, event, db, dispatch, patches
 
 
-@pytest.mark.parametrize("event_status", ["COMPLETED", "FAILED"])
+@pytest.mark.parametrize(
+    "event_status,is_silent",
+    [("COMPLETED", False), ("FAILED", False), ("COMPLETED", True)],
+)
 @pytest.mark.asyncio
 async def test_cleanup_commit_failure_still_writes_inbox_and_notifies(
     event_status: str,
+    is_silent: bool,
 ) -> None:
-    """A failed cleanup commit must roll back before required result delivery."""
+    """Inbox writeback must not wait for deletion; cleanup errors precede notifications."""
     handler, event, db, _, dispatch, patches = _finished_subscription_fixture(
         event_status=event_status,
         execution_status=BackgroundExecutionStatus.RUNNING.value,
     )
     lifecycle = []
+    entered = asyncio.Event()
+    release = asyncio.Event()
 
     def fail_cleanup_commit() -> None:
-        if not lifecycle:
+        if "prepared" not in lifecycle:
             lifecycle.append("prepared")
             return
         lifecycle.append("cleanup commit")
         raise RuntimeError("cleanup commit failed")
 
     def writeback(*args: Any, **kwargs: Any) -> None:
-        assert lifecycle == ["prepared", "cleanup commit", "rollback"]
         lifecycle.append("inbox")
 
     async def notify(*args: Any, **kwargs: Any) -> None:
-        assert lifecycle == ["prepared", "cleanup commit", "rollback", "inbox"]
+        assert lifecycle == ["inbox", "prepared", "cleanup commit", "rollback"]
         lifecycle.append("notifications")
+
+    async def delayed_delete(*args: Any, **kwargs: Any) -> dict[str, str]:
+        entered.set()
+        await release.wait()
+        return {"status": "success"}
 
     db.commit.side_effect = fail_cleanup_commit
     db.rollback.side_effect = lambda: lifecycle.append("rollback")
@@ -436,6 +446,7 @@ async def test_cleanup_commit_failure_still_writes_inbox_and_notifies(
         patches[5],
         patches[6] as runtime_client_factory,
         patches[7] as executor_service,
+        patch.object(handler, "_is_silent_exit", return_value=is_silent),
         patch.object(handler, "_is_code_wiki_scheduled_update", return_value=False),
         patch(
             "app.services.inbox.result_writeback.write_execution_result_to_message",
@@ -447,21 +458,34 @@ async def test_cleanup_commit_failure_still_writes_inbox_and_notifies(
         runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
         runtime_client_factory.return_value = runtime_client
         executor_service.delete_executor_task_async = AsyncMock(
-            return_value={"status": "success"}
+            side_effect=delayed_delete
         )
-        await handler.on_task_completed(event)
+        operation = asyncio.create_task(handler.on_task_completed(event))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            write_result.assert_called_once()
+            assert lifecycle == ["inbox", "prepared"]
+            dispatch.assert_not_awaited()
+        finally:
+            release.set()
+            await asyncio.wait_for(operation, timeout=2)
 
-    assert lifecycle == [
+    expected_lifecycle = [
+        "inbox",
         "prepared",
         "cleanup commit",
         "rollback",
-        "inbox",
-        "notifications",
     ]
+    if not is_silent:
+        expected_lifecycle.append("notifications")
+    assert lifecycle == expected_lifecycle
     db.rollback.assert_called_once()
     write_result.assert_called_once()
     assert write_result.call_args.kwargs["status"] == event_status
-    dispatch.assert_awaited_once()
+    if is_silent:
+        dispatch.assert_not_awaited()
+    else:
+        dispatch.assert_awaited_once()
     assert update.call_count == 1
 
 

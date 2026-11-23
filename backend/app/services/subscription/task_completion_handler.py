@@ -143,16 +143,6 @@ class SubscriptionTaskCompletionHandler:
                     await self._cleanup_after_status_noop(db, execution, event)
                     return
 
-                if status in (
-                    BackgroundExecutionStatus.COMPLETED,
-                    BackgroundExecutionStatus.COMPLETED_SILENT,
-                    BackgroundExecutionStatus.FAILED,
-                    BackgroundExecutionStatus.CANCELLED,
-                ):
-                    await self._cleanup_finished_subscription_executor(
-                        db, execution, event.task_id
-                    )
-
                 # Write back result to inbox message if this is an inbox-triggered execution
                 # inbox_message_id is NOT NULL DEFAULT 0; 0 means no inbox message
                 if getattr(execution, "inbox_message_id", 0) > 0:
@@ -176,6 +166,16 @@ class SubscriptionTaskCompletionHandler:
                             f"{wb_err}",
                             exc_info=True,
                         )
+
+                if status in (
+                    BackgroundExecutionStatus.COMPLETED,
+                    BackgroundExecutionStatus.COMPLETED_SILENT,
+                    BackgroundExecutionStatus.FAILED,
+                    BackgroundExecutionStatus.CANCELLED,
+                ):
+                    await self._cleanup_finished_subscription_executor(
+                        db, execution, event.task_id
+                    )
 
                 # Skip notifications for silent exits
                 if is_silent_exit:
