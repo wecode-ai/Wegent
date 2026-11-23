@@ -93,34 +93,45 @@ function logCpuSample(checkpoint, phase, sample) {
   )
 }
 
-async function traceCpu(checkpoint, initial, signal) {
+async function traceCpu(record, signal) {
   try {
-    // Probe the sampled processes directly so diagnostics send no extra work to Electron.
     for await (const _ of setInterval(CPU_TRACE_INTERVAL_MS, undefined, { signal, ref: false })) {
-      const sample = await Promise.all(
-        PROCESS_ROLES.map(async role => [
-          role,
-          await Promise.all(
-            initial[role].map(async process => {
-              try {
-                return await readProcessCpu(process)
-              } catch (error) {
-                return { pid: process.pid, error: error.code ?? error.name }
-              }
-            })
-          ),
-        ])
-      )
-      logCpuSample(checkpoint, 'sample', Object.fromEntries(sample))
+      await record()
     }
   } catch (error) {
     if (!signal.aborted) throw error
   }
 }
 
+async function sampleInitialProcesses(initial) {
+  // Probe the sampled processes directly so diagnostics send no extra work to Electron.
+  const roles = await Promise.all(
+    PROCESS_ROLES.map(async role => [
+      role,
+      await Promise.all(
+        initial[role].map(async process => {
+          try {
+            return await readProcessCpu(process)
+          } catch (error) {
+            return { pid: process.pid, error: error.code ?? error.name }
+          }
+        })
+      ),
+    ])
+  )
+  return Object.fromEntries(roles)
+}
+
 export function instrumentDesktopCpuBenchmark(scenario, checkpoint) {
   const directory = process.env.WEWORK_E2E_CPU_BENCHMARK_DIR
   if (!directory || process.platform !== 'linux' || !CHECKPOINTS.has(checkpoint)) return
+
+  let initial
+  async function recordPhase(milestone) {
+    if (!initial) return
+    const sample = await sampleInitialProcesses(initial)
+    logCpuSample(checkpoint, milestone ? 'milestone' : 'sample', { ...sample, milestone })
+  }
 
   const verify = scenario.verify
   scenario.verify = async function (control) {
@@ -136,10 +147,9 @@ export function instrumentDesktopCpuBenchmark(scenario, checkpoint) {
     if (!before) return verify.call(this, control)
 
     logCpuSample(checkpoint, 'before', { ...before, cpuModel: cpus()[0]?.model })
+    initial = before.sample
     const controller = new AbortController()
-    const tracing = observeCpu(checkpoint, () =>
-      traceCpu(checkpoint, before.sample, controller.signal)
-    )
+    const tracing = observeCpu(checkpoint, () => traceCpu(recordPhase, controller.signal))
     try {
       const result = await verify.call(this, control)
       await observeCpu(checkpoint, async () => {
@@ -160,6 +170,8 @@ export function instrumentDesktopCpuBenchmark(scenario, checkpoint) {
     } finally {
       controller.abort()
       await tracing
+      initial = undefined
     }
   }
+  return recordPhase
 }

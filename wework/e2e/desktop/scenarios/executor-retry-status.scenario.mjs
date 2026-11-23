@@ -69,6 +69,7 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await existing.verify(control)
+      await options.recordCpuPhase?.('rate-limit-scenario-start')
       active = true
       try {
         await control.command('click', '[data-testid="new-chat-button"]')
@@ -78,6 +79,7 @@ export function createDesktopScenario(options) {
         await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
         // This fixture deliberately holds the model in HTTP retry backoff.
         await control.command('waitFor', WAIT_STATUS, { timeoutMs: options.modelResponseTimeoutMs })
+        await options.recordCpuPhase?.('rate-limit-wait-visible')
         assert.ok(attempts > 0, 'No real model request reached the rate-limit fixture')
         const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const taskId = state.workbench?.currentRuntimeTask?.taskId
@@ -122,6 +124,7 @@ export function createDesktopScenario(options) {
           taskId,
           'Rate-limit recovery replaced the conversation'
         )
+        await options.recordCpuPhase?.('rate-limit-recovery-verified')
 
         recover = false
         await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: PROMPT })

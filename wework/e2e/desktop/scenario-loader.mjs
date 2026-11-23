@@ -8,7 +8,11 @@ export async function loadDesktopScenario(moduleUrl, options) {
     throw new Error(`Desktop scenario module must export createDesktopScenario: ${moduleUrl}`)
   }
 
-  const scenario = await scenarioModule.createDesktopScenario(options)
-  instrumentDesktopCpuBenchmark(scenario, options.checkpoint)
+  let recordCpuPhase
+  const scenario = await scenarioModule.createDesktopScenario({
+    ...options,
+    recordCpuPhase: name => recordCpuPhase?.(name),
+  })
+  recordCpuPhase = instrumentDesktopCpuBenchmark(scenario, options.checkpoint)
   return scenario
 }

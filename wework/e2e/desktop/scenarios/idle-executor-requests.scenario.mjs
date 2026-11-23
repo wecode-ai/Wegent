@@ -20,7 +20,7 @@ import {
 
 const OBSERVATION_MS = 6_500
 
-export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
+export function createDesktopScenario({ executorHome, recordCpuPhase, resultDir, uiTimeoutMs }) {
   return {
     appEnvironment: {
       WEWORK_E2E_CLOUD_BACKEND_URL: '',
@@ -47,6 +47,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'Executor did not finish reconciling the initial task catalog',
         uiTimeoutMs
       )
+      await recordCpuPhase?.('initial-catalog-reconciled')
       const client = await createDevtoolsClient(resultDir, uiTimeoutMs)
       const targets = await client({ action: 'targets' })
       const main = targets.find(
@@ -107,10 +108,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           uiTimeoutMs
         )
         const observe = async name => {
+          await recordCpuPhase?.(`${name}-observation-start`)
           const start = Date.now()
           // Negative observation window, not a sleep used to infer UI readiness.
           await delay(OBSERVATION_MS)
           windows.push({ name, start, end: Date.now() })
+          await recordCpuPhase?.(`${name}-observation-end`)
           await read()
           await writeDiagnosticFile(join(resultDir, 'idle-executor-requests.json'), {
             rows,
@@ -129,7 +132,9 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         await waitForWorkbenchDebugState(control, empty, 'Idle observation changed task membership')
         assertIdleExecutorTraffic(rows, windows)
         await verifyRuntimeWorkRefreshBurst(control, read)
+        await recordCpuPhase?.('refresh-burst-verified')
         await verifyPendingInventoryProjection(control, { executorHome, resultDir })
+        await recordCpuPhase?.('pending-inventory-verified')
         await verifyStandInDeviceDiscoveryBurst(control, read)
         return { idleExecutorRequests: true, observationMs: OBSERVATION_MS, windows }
       } finally {

@@ -131,6 +131,7 @@ async function waitForDroppedEvent(control, eventName, timeoutMs) {
 
 export function createDesktopScenario({
   captureScreenshot,
+  recordCpuPhase,
   uiTimeoutMs,
   modelResponseTimeoutMs,
   workbenchReadyTimeoutMs,
@@ -196,6 +197,7 @@ export function createDesktopScenario({
       })
 
       const beforeReload = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      await recordCpuPhase?.('partial-stream-rendered')
       const taskId = beforeReload.workbench?.currentRuntimeTask?.taskId
       assert.ok(taskId, 'The streaming conversation must retain its Runtime task')
       const readyCountBeforeReload = control.readyCount
@@ -210,6 +212,7 @@ export function createDesktopScenario({
         ),
       ])
       await waitForRestoredTranscript(control, taskId, workbenchReadyTimeoutMs)
+      await recordCpuPhase?.('transcript-restored')
 
       // Prove that restoring an active turn schedules the executor check, and
       // drop the terminal event only after the old renderer's flags are gone.
@@ -248,6 +251,7 @@ export function createDesktopScenario({
         true,
         'Executor replay did not restore the output completed while the renderer was unavailable'
       )
+      await recordCpuPhase?.('stream-recovery-verified')
       await captureScreenshot(
         control,
         'executor-stream-recovery-01-completed-after-lost-terminal-event.png',
