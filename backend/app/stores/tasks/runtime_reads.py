@@ -156,9 +156,13 @@ class SubtaskRuntimeReads:
                 model.id,
                 model.task_id,
                 model.user_id,
+                model.role,
                 model.executor_name,
                 model.executor_namespace,
                 model.executor_deleted_at,
+                model.status,
+                model.error_message,
+                model.created_at,
                 raiseload=True,
             )
         )
