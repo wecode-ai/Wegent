@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import { readSavedMemories } from '../modules/stand-in-memory-context.mjs'
 import {
   openStandInSettings,
@@ -124,6 +125,7 @@ export function createDesktopScenario({
         userId: USER,
         settings: {
           ...initial,
+          roles: [...initial.roles, standInRoleFixture(initial.executionDeviceId)],
           primary: { enabled: true, prompt: '帮我跟进工作', preferences: '回复简洁，发送前确认' },
         },
       })

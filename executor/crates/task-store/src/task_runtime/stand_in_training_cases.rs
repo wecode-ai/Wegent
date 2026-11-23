@@ -439,6 +439,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("memory.sqlite")).unwrap();
         let mut config = store.personal_stand_in(7, "mac").unwrap();
+        config["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
         let grant = json!({"providerId":"@wegent/dsh-connection-dingtalk/dingtalk","profile":"work","kind":"group","scope":"all","id":"*","name":"All groups","policy":{"automatic":false,"askBeforeAct":true}});
         config["roles"][0]["enabled"] = json!(true);
         config["roles"][0]["connections"] = json!([grant]);

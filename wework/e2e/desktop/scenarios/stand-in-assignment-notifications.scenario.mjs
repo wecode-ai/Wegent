@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -212,7 +213,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         { userId: user.id },
         uiTimeoutMs
       )
-      const template = personal.roles[0]
+      const template = standInRoleFixture(personal.executionDeviceId)
       const roleIds = ['fanout-review', 'fanout-docs']
       personal = await requestExecutor(
         control,

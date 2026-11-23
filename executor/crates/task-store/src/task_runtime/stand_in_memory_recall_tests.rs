@@ -6,6 +6,9 @@ fn role_memory_recall_filters_connection_accounts_and_revocation() {
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     store.materialize_implicit_primary(7, "mac").unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+        "default", "mac"
+    )]);
     let source = json!({"providerId":"@example/calendar/events","profile":"a","kind":"calendar","id":"work","name":"Work","policy":{"automatic":true,"askBeforeAct":true}});
     let mut other = source.clone();
     other["profile"] = json!("b");
@@ -45,6 +48,9 @@ fn role_memory_recall_includes_own_connected_projects_without_borrowing_grants()
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+        "default", "mac"
+    )]);
     let mut role = settings["roles"][0].clone();
     role["id"] = json!("a");
     role["enabled"] = json!(false);

@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -126,7 +127,7 @@ export function createDesktopScenario({
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const params = { projectId: String(project.id), userId: user.id, projectStore: 'cloud' }
       const personal = await rpc('runtime.stand_in.personal.get', { userId: user.id })
-      const initial = personal.roles[0]
+      const initial = standInRoleFixture(personal.executionDeviceId)
       settings = await rpc('runtime.stand_in.personal.save', {
         userId: user.id,
         settings: {

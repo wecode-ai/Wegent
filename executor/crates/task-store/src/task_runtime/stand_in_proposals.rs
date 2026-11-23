@@ -241,7 +241,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("tasks.sqlite");
         let store = LocalTaskStore::open(&path).unwrap();
-        let previous = store.personal_stand_in(7, "mac").unwrap();
+        let mut previous = store.personal_stand_in(7, "mac").unwrap();
+        previous["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
+        let previous = store.save_personal_stand_in(7, "mac", previous).unwrap();
         let owner = json!({"id":"owner-native","revision":1,"taskId":"stand-in-chat-7-primary","userId":7,"deviceId":"mac","roleId":null,"cancelled":false});
         let proposal = store
             .propose_stand_in_settings_with_continuation(
@@ -350,6 +354,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
         let source = json!({"providerId":"@wegent/dsh-connection-git/github","profile":"account","id":"42","kind":"repository","name":"org/repo","subscriptionId":"receiver","generation":"old-generation","policy":{"automatic":true,"askBeforeAct":true}});
         settings["roles"][0]["connections"] = json!([source.clone()]);
         let mut current = source;
@@ -378,6 +385,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
         let source = json!({"providerId":"@wegent/dsh-connection-git/github","profile":"account","id":"42","kind":"repository","name":"org/repo","subscriptionId":"receiver","generation":"old-device-generation","policy":{"automatic":true,"askBeforeAct":true}});
         settings["roles"][0]["connections"] = json!([source.clone()]);
         settings["primary"] =
@@ -423,6 +433,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
         settings["primary"] =
             json!({"enabled":true,"selfLearningEnabled":true,"prompt":"","preferences":""});
         let mut draft = store.save_personal_stand_in(7, "mac", settings).unwrap();

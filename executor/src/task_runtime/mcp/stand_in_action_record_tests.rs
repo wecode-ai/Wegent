@@ -8,6 +8,7 @@ async fn reply_actions_select_exact_versions_without_bypassing_source_authority(
         "kind":"group","id":"group","name":"Group",
         "policy":{"automatic":false,"askBeforeAct":true}});
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["connections"] = json!([source.clone()]);
     store.save_personal_stand_in(7, "mac", settings).unwrap();

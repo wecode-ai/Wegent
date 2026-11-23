@@ -1,3 +1,4 @@
+import { standInRoleFixture } from './stand-in-role-fixture.mjs'
 import {
   openStandInActivity,
   openStandInDetails,
@@ -282,7 +283,7 @@ child.on('exit', (code, signal) => {
               primary: { ...original.primary, enabled: false, prompt: '', preferences: '', model },
               roles: [
                 {
-                  ...original.roles[0],
+                  ...standInRoleFixture(original.executionDeviceId),
                   name: 'CLI 只读连接验证',
                   enabled: false,
                   prompt: '',
@@ -330,7 +331,7 @@ child.on('exit', (code, signal) => {
             primary: { ...original.primary, enabled: true, prompt: '', preferences: '', model },
             roles: [
               {
-                ...original.roles[0],
+                ...standInRoleFixture(original.executionDeviceId),
                 name: 'GitHub 只读验证',
                 enabled: true,
                 prompt: MARKER,

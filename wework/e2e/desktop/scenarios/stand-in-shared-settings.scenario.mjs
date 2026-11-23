@@ -1,3 +1,4 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
@@ -14,6 +15,10 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       const click = id => control.command('clickWhenEnabled', testId(id), { timeoutMs: 5_000 })
       const wait = (selector, options = {}) =>
         control.command('waitFor', selector, { timeoutMs: 5_000, ...options })
+      await seedStandInRoleFixture(
+        (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        USER
+      )
       const initial = await readSettings()
       if (!initial.primary) {
         const primary = { enabled: true, prompt: '跟进工作进展', preferences: '' }
