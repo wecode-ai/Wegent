@@ -55,6 +55,134 @@ export async function deletePersonalPluginListing(request, pluginId) {
   await request(path, 'DELETE', { impactRevision: impact.impactRevision, revokeAndDelete: false })
 }
 
+/** Keep the real first /complete pending until a local-only deletion is confirmed. */
+export async function verifyPersonalPublicationDeletion({
+  cloud,
+  control,
+  apiProxy,
+  prepareSource,
+  report,
+}) {
+  const name = 'author-publication-delete-race-e2e'
+  const status = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.ok(status.ready && status.deviceId, 'The publication fixture requires the local Runtime')
+  await waitForPersonalPluginConnection(control, status.deviceId)
+  await prepareSource(name)
+  const { marketplace } = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
+  assert.ok(marketplace?.path, 'The real personal source marketplace is unavailable')
+  const sourcePath = join(marketplace.path, 'plugins', name)
+  const original = await sourceFiles(sourcePath)
+  assert.equal(await accountPlugin(cloud, name), undefined)
+  await control.command('uninstallInstalledPlugin', 'body', {
+    value: `${name}@wework-personal`,
+  })
+  await control.command('navigate', 'body', { value: '/plugins' })
+  await control.command('waitFor', testId('plugins-search-input'))
+  await control.command('click', testId('plugins-distribution-tab-personal'))
+  await control.command('fill', testId('plugins-search-input'), { value: name })
+  await refreshPluginInventory(control)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
+  )
+  const previousRule = apiProxy.rule
+  const start = apiProxy.requests.length
+  apiProxy.rule = entry =>
+    entry.method === 'POST' && /^\/api\/plugins\/submissions\/\d+\/complete$/.test(entry.path)
+      ? 'pause-request'
+      : previousRule(entry)
+  let completing
+  await control.command('holdLocalExecutorRequests', 'body', {
+    value: JSON.stringify({
+      method: 'executor.plugins.personal.package',
+      phase: 'after-response',
+      maxHeldCount: 1,
+    }),
+  })
+  try {
+    await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-toggle-"]')
+    await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+    await until(
+      async () => JSON.parse(await control.command('getLocalExecutorRequestHoldSnapshot', 'body')),
+      state => state?.heldCount === 1,
+      'First publication did not reach real package creation before deletion preflight'
+    )
+    await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
+    await control.command(
+      'clickWhenEnabled',
+      '[role="menuitem"][data-testid^="plugin-detail-delete-"]'
+    )
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('delete-personal-plugin-dialog') &&
+        /本地插件源码|local source/i.test(snapshot.text),
+      'Deletion preflight did not show the unpublished local source'
+    )
+    await control.command('releaseLocalExecutorRequestHold', 'body')
+    completing = await until(
+      () => apiProxy.requests.slice(start).find(entry => entry.fault === 'pause-request'),
+      entry => typeof entry?.release === 'function',
+      'First private publication did not issue its real /complete request'
+    )
+    const listing = async () =>
+      (await pluginApi(cloud, '/plugins/marketplace')).items.find(item => item.name === name)
+    assert.equal(await listing(), undefined, 'The paused publication was already visible')
+    await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+    await control.command('waitFor', `${testId('plugin-delete-confirm-button')}:disabled`, {
+      stableMs: 250,
+    })
+    assert.deepEqual(
+      await sourceFiles(sourcePath),
+      original,
+      'Deletion removed an in-flight source'
+    )
+    assert.equal(completing.released, undefined)
+    assert.equal(await listing(), undefined)
+    report.waitedForComplete = true
+    assert.equal(completing.release(), true, 'The real publication request was not released')
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('delete-personal-plugin-dialog') &&
+        /将删除云端插件|Delete the cloud plugin/i.test(snapshot.text),
+      'Deletion did not refresh cloud impact after the in-flight publication settled'
+    )
+    const published = await listing()
+    assert.ok(published?.latestReleaseId, 'Deletion did not recheck the newly published release')
+    assert.equal(await accountPlugin(cloud, name), undefined, 'Cancellation installed the plugin')
+    assert.deepEqual(await sourceFiles(sourcePath), original)
+    report.revalidatedPluginId = published.id
+    await control.command('clickWhenEnabled', testId('plugin-delete-confirm-button'))
+    await control.command('waitFor', testId('delete-personal-plugin-dialog'), { visible: false })
+    assert.equal(await pathExists(sourcePath), false, 'Confirmed deletion retained author source')
+    assert.equal(await listing(), undefined, 'Confirmed deletion left the published plugin')
+    assert.equal(await accountPlugin(cloud, name), undefined)
+    const rows = await cloud.queryDatabase('SELECT status FROM plugins WHERE id=%s', [published.id])
+    assert.deepEqual(
+      rows.map(row => row.status),
+      ['deleted']
+    )
+    assert.equal(
+      apiProxy.requests
+        .slice(start)
+        .some(
+          entry =>
+            entry.method === 'POST' &&
+            entry.path === `/api/plugins/marketplace/${published.id}/install`
+        ),
+      false,
+      'Cancelled publication continued with an account installation'
+    )
+    report.deletedSourceAndCloud = true
+    console.log(`[personal-plugin-publication-delete] PASS ${JSON.stringify(report)}`)
+  } finally {
+    apiProxy.rule = previousRule
+    if (completing && !completing.released && !completing.cancelled) completing.release()
+    await control.command('releaseLocalExecutorRequestHold', 'body')
+  }
+}
+
 async function sourceFiles(root, directory = root) {
   const metadata = await lstat(directory)
   assert.ok(

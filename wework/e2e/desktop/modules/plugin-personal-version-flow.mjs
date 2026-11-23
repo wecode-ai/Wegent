@@ -85,7 +85,7 @@ async function createPackage(
   return archivePath
 }
 
-async function importPersonalSource(
+export async function importPersonalSource(
   control,
   root,
   version,

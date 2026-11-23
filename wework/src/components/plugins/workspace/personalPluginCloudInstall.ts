@@ -32,7 +32,7 @@ type AccountApi = ReturnType<typeof createDefaultPluginApi>
 interface BackgroundInstall {
   cancelled: boolean
   isCurrent(): boolean
-  commit?: Promise<void>
+  settled?: Promise<void>
 }
 
 const pending = new Map<string, BackgroundInstall>()
@@ -51,14 +51,14 @@ export function ownedPersonalPluginSourceKey(item: PluginMarketplaceItem | null 
   return item.localPersonalSource?.pluginName ?? item.name
 }
 
-/** Cancel pending work and let an already started write settle before removal preflight. */
+/** Stop later writes and settle publication and installation before removal preflight. */
 export async function cancelPersonalPluginCloudInstall(pluginKey: string | undefined) {
   const device = getKnownLocalExecutorDeviceId()
   if (!pluginKey || !device) return
   const job = pending.get(workKey(device, pluginKey))
   if (!job) return
   job.cancelled = true
-  await job.commit?.catch(() => undefined)
+  await job.settled?.catch(() => undefined)
 }
 
 function sourceKey(source: LocalPluginSource): string | undefined {
@@ -227,34 +227,30 @@ async function syncPersonalInstall(
   requireCurrent()
   const plan = await personalReleasePlan(api, local, plugin, slug, requireCurrent)
   requireCurrent()
-  job.commit = (async () => {
-    if (plan.restoreDeleted) {
-      const response = await api.installMarketplacePluginForAccount(plan.pluginId, undefined, true)
-      const restored = response.plugin
-      requireCurrent()
-      if (restored.spec.pluginId !== plan.pluginId || !restored.spec.releaseId)
-        throw new Error('Restored private plugin identity was not confirmed')
-      await local.linkPersonalPluginRelease(plugin, plan.pluginId, restored.spec.releaseId, {
-        isCurrent: () => !job.cancelled && job.isCurrent(),
-        accountInstall: 'updateRelease',
-      })
-      return
-    }
-    await local.linkPersonalPluginRelease(plugin, plan.pluginId, plan.releaseId, {
-      isCurrent: () => !job.cancelled && job.isCurrent(),
-      accountInstall: plan.firstRelease ? 'updateRelease' : 'keepRelease',
-    })
+  if (plan.restoreDeleted) {
+    const response = await api.installMarketplacePluginForAccount(plan.pluginId, undefined, true)
+    const restored = response.plugin
     requireCurrent()
-    if (!plan.installed) {
-      // The existing account install endpoint delivers to devices in the background.
-      await api.installMarketplacePluginForAccount(
-        plan.pluginId,
-        plan.firstRelease ? plan.releaseId : undefined
-      )
-    }
-  })()
-  await job.commit
-  return true
+    if (restored.spec.pluginId !== plan.pluginId || !restored.spec.releaseId)
+      throw new Error('Restored private plugin identity was not confirmed')
+    await local.linkPersonalPluginRelease(plugin, plan.pluginId, restored.spec.releaseId, {
+      isCurrent: () => !job.cancelled && job.isCurrent(),
+      accountInstall: 'updateRelease',
+    })
+    return
+  }
+  await local.linkPersonalPluginRelease(plugin, plan.pluginId, plan.releaseId, {
+    isCurrent: () => !job.cancelled && job.isCurrent(),
+    accountInstall: plan.firstRelease ? 'updateRelease' : 'keepRelease',
+  })
+  requireCurrent()
+  if (!plan.installed) {
+    // The existing account install endpoint delivers to devices in the background.
+    await api.installMarketplacePluginForAccount(
+      plan.pluginId,
+      plan.firstRelease ? plan.releaseId : undefined
+    )
+  }
 }
 
 /** Capture the initiating desktop account. The returned callback never waits on cloud work. */
@@ -289,14 +285,15 @@ export function capturePersonalPluginCloudInstall(
     try {
       const token = getToken()
       if (!token || !isCurrent()) return attempt.cancel()
-      const installed = await syncPersonalInstall(
+      job.settled = syncPersonalInstall(
         createDefaultPluginApi(apiBaseUrl, token),
         local,
         source,
         pluginKey,
         job
       )
-      if (!installed || job.cancelled || !isCurrent()) return attempt.cancel()
+      await job.settled
+      if (job.cancelled || !isCurrent()) return attempt.cancel()
       attempt.succeed()
       onInstalled()
     } catch (error) {

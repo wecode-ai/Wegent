@@ -64,6 +64,7 @@ beforeEach(() => {
 afterEach(() => {
   clearStoredCloudConnection()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 function fixture() {
@@ -325,19 +326,56 @@ test.each([
   }
 )
 
-test.each([false, true])(
-  'revalidates a local-only delete after its account write with already settled=%s',
-  async settled => {
+test.each([
+  { phase: 'account', settled: false, failed: false },
+  { phase: 'account', settled: true, failed: false },
+  { phase: 'publication', settled: false, failed: false },
+  { phase: 'publication', settled: true, failed: false },
+  { phase: 'publication', settled: false, failed: true },
+])(
+  'revalidates a local-only delete after $phase with already settled=$settled and failed=$failed',
+  async ({ phase, settled, failed }) => {
     const { local, schedule, onInstalled } = fixture()
     const release = cloudRelease('first', 17)
     const write = Promise.withResolvers<void>()
+    const completing = vi.fn()
+    let published = phase === 'account'
     let installed = false
-    mocks.list.mockResolvedValue({ items: [release] })
+    mocks.list.mockImplementation(async () => ({ items: published ? [release] : [] }))
     mocks.install.mockImplementation(async () => {
-      await write.promise
+      if (phase === 'account') await write.promise
       installed = true
     })
-    const deleteSource = vi.fn()
+    if (phase === 'publication') {
+      const archive = new JSZip()
+      archive.file('.codex-plugin/plugin.json', JSON.stringify({ name: 'first', version: '1.0.0' }))
+      local.packageCreatedPlugin.mockResolvedValue(
+        new File([await archive.generateAsync({ type: 'arraybuffer' })], 'first.zip')
+      )
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })))
+      const api = createPluginApi({
+        post: async (path: string) => {
+          if (path.endsWith('/init'))
+            return {
+              submissionId: 11,
+              privateFirstInstall: true,
+              uploadUrl: 'https://plugins.example/upload',
+            }
+          if (path.endsWith('/cancel')) return
+          expect(path).toBe('/plugins/submissions/11/complete')
+          completing()
+          await write.promise
+          if (failed) throw new ApiError('Publication failed', 503)
+          published = true
+          return {
+            plugin: release,
+            submission: { status: 'approved', releaseId: release.latestReleaseId },
+          }
+        },
+      } as unknown as HttpClient)
+      mocks.publish.mockImplementation(api.publishSubmission)
+    }
+    const deleteSource = vi.fn(() => expect(published).toBe(false))
     const impact = {
       pluginId: 17,
       impactRevision: 'current-revision',
@@ -346,6 +384,7 @@ test.each([false, true])(
       sharedTargetCount: 0,
     }
     const deleteCloud = vi.fn(async () => {
+      published = false
       installed = false
     })
     const view = renderHook(() =>
@@ -380,17 +419,36 @@ test.each([false, true])(
       })
     )
     schedule(first)
-    await vi.waitFor(() => expect(mocks.install).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(phase === 'account' ? mocks.install : completing).toHaveBeenCalledOnce()
+    )
     if (settled) {
       write.resolve()
       await vi.waitFor(() => expect(onInstalled).toHaveBeenCalledOnce())
     }
-    await act(async () => {
-      const deletion = view.result.current.confirmDeletePersonalPlugin()
-      write.resolve()
-      await deletion
-    })
-    expect(installed).toBe(true)
+    let deletion: Promise<void> | undefined
+    try {
+      await act(async () => {
+        deletion = view.result.current.confirmDeletePersonalPlugin()
+      })
+      expect(deleteSource).not.toHaveBeenCalled()
+      expect(deleteCloud).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => {
+        write.resolve()
+        await deletion
+      })
+    }
+    if (failed) {
+      expect(published).toBe(false)
+      expect(installed).toBe(false)
+      expect(deleteSource).toHaveBeenCalledOnce()
+      expect(deleteCloud).not.toHaveBeenCalled()
+      expect(view.result.current.pendingPersonalPluginDelete).toBeNull()
+      return
+    }
+    expect(published).toBe(true)
+    expect(installed).toBe(phase === 'account' || settled)
     expect(deleteSource).not.toHaveBeenCalled()
     expect(view.result.current.pendingPersonalPluginDelete).toMatchObject({
       cloudPluginId: 17,

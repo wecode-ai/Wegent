@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createToggleScenario } from './plugin-toggle-persistence.scenario.mjs'
 import {
   authorPluginImportPath,
+  importPersonalSource,
   verifyPersonalPluginVersionSubmission,
 } from '../modules/plugin-personal-version-flow.mjs'
+import { verifyPersonalPublicationDeletion } from '../modules/plugin-personal-uninstall-flow.mjs'
+import { resultDir } from '../modules/shared.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+import { signInDesktopCloud } from '../modules/desktop-cloud-login.mjs'
 import {
   accountPlugin,
   openPlugin,
@@ -16,6 +22,8 @@ import {
 export function createDesktopScenario(options) {
   const toggle = createToggleScenario(options)
   let cloud
+  let apiProxy
+  const publicationDeletion = {}
   return {
     ...toggle,
     appEnvironment: {
@@ -78,6 +86,23 @@ export function createDesktopScenario(options) {
           await toggle.verify(control)
         },
       })
+      apiProxy = await new TransportFaultProxy(cloud.backendUrl).start()
+      await signInDesktopCloud(control, cloud, { backendUrl: apiProxy.url })
+      await verifyPersonalPublicationDeletion({
+        cloud,
+        control,
+        apiProxy,
+        report: publicationDeletion,
+        prepareSource: async name => {
+          const root = join(resultDir, 'personal-publication-delete-fixture')
+          await mkdir(root, { recursive: true })
+          await importPersonalSource(control, root, '1.0.0', false, name, name)
+        },
+      })
+    },
+    diagnostics: () => ({ publicationDeletion, requests: apiProxy?.requests }),
+    async cleanup() {
+      await apiProxy?.stop()
     },
   }
 }
