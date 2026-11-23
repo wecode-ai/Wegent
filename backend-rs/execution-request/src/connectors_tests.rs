@@ -42,6 +42,9 @@ fn request(shell: &str) -> ExecutionRequest {
 #[test]
 fn chat_mounts_static_and_defers_lazy_without_keywords() {
     let mut request = request("Chat");
+    request.system_prompt = "Existing agent instructions.".into();
+    request.history = vec![json!({"role": "assistant", "content": "Previous answer"})];
+    let user_message = request.prompt.clone();
     assemble(
         &mut request,
         &[
@@ -70,6 +73,20 @@ fn chat_mounts_static_and_defers_lazy_without_keywords() {
         "http://backend:8000/api/mcp/connectors/sse"
     );
     assert!(request.bot[0]["mcp_servers"].as_array().unwrap().is_empty());
+    let payload = super::super::dispatch::assemble(&request, true, false);
+    assert_eq!(
+        payload.input,
+        json!([
+            {"role": "assistant", "content": "Previous answer"},
+            {"role": "user", "content": user_message},
+        ])
+    );
+    assert!(
+        payload
+            .instructions
+            .starts_with("Existing agent instructions.\n\n")
+    );
+    assert!(payload.instructions.contains("## Connector tool links"));
 }
 
 #[test]
@@ -155,10 +172,16 @@ fn keyword_phrases_require_all_terms_and_preload_chat_or_direct_coding() {
         for (prompt, matched) in [("WRITE the DOCUMENT", true), ("write a table", false)] {
             let mut request = request(shell);
             request.prompt = json!([{"type": "input_text", "text": prompt}, {"type": "image", "text": "document"}]);
+            let user_message = request.prompt.clone();
             let mut app = app("lazy-app", "lazy", true);
             app.keywords = vec!["write document".into()];
             assemble(&mut request, &[app], false);
             if shell == "Chat" {
+                assert_eq!(request.prompt, user_message);
+                assert_eq!(
+                    request.system_prompt.contains("## Connector tool links"),
+                    matched
+                );
                 assert_eq!(
                     request
                         .preload_skills
@@ -307,6 +330,7 @@ fn selected_provider_skill_gets_one_scope_and_supersedes_personal_mcp() {
 #[test]
 fn unauthorized_apps_have_guidance_but_no_callable_tools() {
     let mut request = request("Chat");
+    let user_message = request.prompt.clone();
     assemble(
         &mut request,
         &[
@@ -317,9 +341,17 @@ fn unauthorized_apps_have_guidance_but_no_callable_tools() {
     );
     assert!(request.mcp_servers.is_empty());
     assert!(request.skill_configs.is_empty());
-    let prompt = request.prompt.as_str().unwrap();
-    assert!(prompt.contains("connector-oauth?slug=static-app"));
-    assert!(!prompt.contains("connector-oauth?slug=lazy-app"));
+    assert_eq!(request.prompt, user_message);
+    assert!(
+        request
+            .system_prompt
+            .contains("connector-oauth?slug=static-app")
+    );
+    assert!(
+        !request
+            .system_prompt
+            .contains("connector-oauth?slug=lazy-app")
+    );
 }
 
 #[test]
@@ -343,9 +375,7 @@ fn static_provider_uses_the_aggregate_once_and_personal_mcp_survives_missing_gra
         );
         assert!(
             !request
-                .prompt
-                .as_str()
-                .unwrap()
+                .system_prompt
                 .contains("connector-oauth?slug=static-app")
         );
     }
