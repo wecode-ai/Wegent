@@ -63,6 +63,7 @@ export interface ComposerToolbarProps {
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
@@ -113,6 +114,7 @@ export function ComposerToolbar({
   goalDraftActive = false,
   onCancelGoalDraft,
   isStreaming = false,
+  showPauseButton = true,
   onPause,
   onSubmit,
   sendButtonTestId = 'send-message-button',
@@ -262,7 +264,7 @@ export function ComposerToolbar({
         {workspaceMenu}
         {renderTrailingActions?.(compact)}
         {showSubmitButton &&
-          (isStreaming && !canSend ? (
+          (showPauseButton && isStreaming && !canSend ? (
             <Tooltip
               label={t('workbench.pause_response', '暂停回复')}
               align="end"

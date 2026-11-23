@@ -57,8 +57,8 @@ test('consumes the Tab that confirms the highlighted @ mention', async () => {
   render(<Harness />)
   const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
   await act(async () => {
-    editor.value = '@auth'
     editor.focus()
+    editor.value = '@auth'
   })
 
   await waitFor(() => {
