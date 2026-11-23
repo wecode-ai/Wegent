@@ -565,6 +565,82 @@ async fn native_completed_backend_fallback_waits_in_scheduler_for_old_process_cl
     assert_completed_send_session_routing(true).await;
 }
 
+#[tokio::test]
+async fn backend_fallback_admits_an_existing_task_without_a_native_thread() {
+    let (handler, root, mut request) = setup("backend-fallback-without-thread");
+    request.legacy_session_fallback = true;
+    handler.store.update_task("task-1", |link| {
+        link.thread_id = None;
+        link.goal_status = None;
+    });
+    let execution = start_test_execution(&handler, "task-1");
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task-1".into(), RuntimeTaskKind::Personal);
+
+    let result = handler
+        .send_message(json!({
+            "taskId": "task-1", "message": "continue", "executionRequest": request,
+            "queueIfBusy": true
+        }))
+        .await
+        .unwrap();
+    assert_eq!(result["accepted"], true);
+    assert_eq!(result["status"], "queued");
+    assert!(handler.remove_queued_turn("task-1").await.unwrap());
+    assert!(handler.finish_local_task_execution("task-1", execution));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn starting_a_backend_fallback_does_not_rebind_an_identity_thread() {
+    let (handler, root, mut request) = setup("backend-fallback-identity");
+    request.new_session = true;
+    request.legacy_session_fallback = true;
+    handler.store.update_task("task-1", |link| {
+        link.goal_status = None;
+        link.runtime_handle["origin"] =
+            json!({"type":"stand_in_identity","userId":7,"deviceId":"mac"});
+        link.runtime_handle["completedTranscriptMessages"] = json!([{"id":"old-message"}]);
+    });
+    assert!(
+        crate::runtime_work::conversation_sessions::is_identity_conversation(
+            &handler.local_task_link("task-1").unwrap()
+        )
+    );
+    handler.start_authorized_turn(
+        SpawnTurnRequest {
+            task_kind: None,
+            local_task_id: "task-1".into(),
+            runtime: "codex".into(),
+            request,
+            send_payload: Some(json!({"taskId":"task-1","message":"continue"})),
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_goal: None,
+        },
+        None,
+    );
+    let link = handler.local_task_link("task-1").unwrap();
+    assert!(link
+        .runtime_handle
+        .get("completedTranscriptMessages")
+        .is_none());
+    assert_eq!(link.thread_id.as_deref(), Some("thread-1"));
+    handler.record_local_task_thread("task-1", "thread-2");
+    let link = handler.local_task_link("task-1").unwrap();
+    assert_eq!(
+        crate::runtime_work::conversation_sessions::thread_ids(&link).unwrap(),
+        ["thread-1", "thread-2"]
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 async fn assert_completed_send_session_routing(backend_fallback: bool) {
     let (handler, root, request) = setup("native-completed-send-cleanup");
     let mut request = request;

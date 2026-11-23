@@ -83,8 +83,13 @@ pub(crate) fn should_start_new_session(
 ) -> bool {
     input.allow_new_session_fallback
         && needs_bindings(input)
-        && inherited_sessions.is_empty()
         && legacy_session_bindings.is_empty()
+        && !inherited_sessions.iter().any(|session| {
+            input
+                .bot_configs
+                .iter()
+                .any(|bot| session_matches_coding_bot(session, bot, true))
+        })
 }
 
 /// The pure half of `_build_session_context`: the listing's persisted
@@ -308,56 +313,11 @@ fn legacy_session_bindings(
     bot_configs: &[Value],
     persisted_sessions: &[Value],
 ) -> Vec<Value> {
-    let engines = [("Codex", "threadId"), ("ClaudeCode", "sessionId")];
-    let mut allowed: Vec<(String, String, &'static str)> = Vec::new();
-    for config in bot_configs {
-        let Some(shell_type) = config.get("shell_type").and_then(Value::as_str) else {
-            continue;
-        };
-        let Some((_, id_field)) = engines.iter().find(|(name, _)| *name == shell_type) else {
-            continue;
-        };
-        let bot_id = config
-            .get("id")
-            .map(wegent_python_compat::json_compat::python_str)
-            .unwrap_or_default();
-        // `str(id).isdigit() and int(id) > 0`: ASCII digits only.
-        if bot_id.is_empty() || !bot_id.bytes().all(|byte| byte.is_ascii_digit()) {
-            continue;
-        }
-        if bot_id.parse::<i64>().map(|id| id <= 0).unwrap_or(true) {
-            continue;
-        }
-        allowed.push((bot_id, shell_type.to_ascii_lowercase(), id_field));
-    }
     let mut bindings = Vec::new();
     for session in persisted_sessions {
-        // `str(session.get("agent", "")).replace(" ", "").lower()`.
-        let engine = session
-            .get("agent")
-            .map(wegent_python_compat::json_compat::python_str)
-            .unwrap_or_default()
-            .replace(' ', "")
-            .to_lowercase();
-        let bot_id = session
-            .get("botId")
-            .map(wegent_python_compat::json_compat::python_str)
-            .unwrap_or_default();
-        let Some((_, _, id_field)) = allowed.iter().find(|(allowed_bot, allowed_engine, _)| {
-            *allowed_bot == bot_id && *allowed_engine == engine
-        }) else {
-            continue;
-        };
-        let Some(session_id) = session.get(*id_field) else {
-            continue;
-        };
-        let Value::String(session_id) = session_id else {
-            continue;
-        };
-        if session_id.is_empty()
-            || !session_id
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        if !bot_configs
+            .iter()
+            .any(|bot| session_matches_coding_bot(session, bot, false))
         {
             continue;
         }
@@ -367,6 +327,36 @@ fn legacy_session_bindings(
         bindings.push(Value::Object(binding));
     }
     bindings
+}
+
+fn session_matches_coding_bot(session: &Value, bot: &Value, allow_unscoped: bool) -> bool {
+    let (engine, id_key) = match bot["shell_type"].as_str() {
+        Some("Codex") => ("codex", "threadId"),
+        Some("ClaudeCode") => ("claudecode", "sessionId"),
+        _ => return false,
+    };
+    let session_agent = session["agent"].as_str().unwrap_or_default();
+    if !session_agent.replace(' ', "").eq_ignore_ascii_case(engine) {
+        return false;
+    }
+    let Some(session_id) = session[id_key].as_str() else {
+        return false;
+    };
+    if session_id.is_empty()
+        || !session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return false;
+    }
+    let Some(session_bot) = session.get("botId") else {
+        // Older fork snapshots can omit the Bot id.
+        return allow_unscoped;
+    };
+    let bot_id = wegent_python_compat::json_compat::python_str(&bot["id"]);
+    bot_id.bytes().all(|byte| byte.is_ascii_digit())
+        && bot_id.parse::<i64>().is_ok_and(|id| id > 0)
+        && bot_id == wegent_python_compat::json_compat::python_str(session_bot)
 }
 
 /// Python truthiness for a decoded JSON value.
@@ -671,6 +661,16 @@ mod tests {
             &inherited,
             &bindings
         ));
+
+        let unrelated_fork = json!({"spec": {"fork": {"runtime": {"sessions": [
+            {"agent": "Codex", "threadId": "codex-thread"},
+            {"agent": "ClaudeCode", "botId": 637589, "sessionId": "other-bot"},
+            {"agent": "ClaudeCode", "botId": 637588, "threadId": "wrong-id"},
+            {"agent": "ClaudeCode", "botId": 637588, "sessionId": "invalid id"}
+        ]}}}});
+        let fork_input = input(&bots, &unrelated_fork, 5831, 5831, false, false, true);
+        let (inherited, bindings) = context_from(&fork_input, Vec::new());
+        assert!(should_start_new_session(&fork_input, &inherited, &bindings));
     }
 
     /// A persisted ClaudeCode session addressed to the request's Bot becomes a

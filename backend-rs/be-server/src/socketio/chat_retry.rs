@@ -429,9 +429,8 @@ async fn reset_subtask_for_retry(
     let mut pending = task_json.clone();
     crate::responses::create::continuation::mark_pending(&mut pending, &local_isoformat());
     let task_payload = python_json_value(&pending);
-    let reset_result = executor_session
-        .map(|session| json!({"executor_session": session}))
-        .unwrap_or_else(|| json!(null));
+    let reset_result =
+        executor_session.map(|session| python_json_value(&json!({"executor_session": session})));
     let reset = state
         .mysql
         .with_transaction(async |transaction| {
@@ -444,7 +443,7 @@ async fn reset_subtask_for_retry(
                     (
                         "PENDING".to_string(),
                         0_i64,
-                        python_json_value(&reset_result),
+                        reset_result,
                         String::new(),
                         now.clone(),
                         payload.subtask_id,
