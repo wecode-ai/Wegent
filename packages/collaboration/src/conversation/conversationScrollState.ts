@@ -690,13 +690,16 @@ export function createConversationScrollState(
       save()
       pointerStepObserved = true
     } else if (state.mode === 'read') handleContentLayoutChange()
-    else follow()
+    else if (motion.frame === null) follow()
   }
   const endInput = () => {
     if (!owned()) return
     const viewport = scrollRef.current
     if (!viewport) return
     if (state.mode === 'drag') return
+    // Each instant step of our smooth follow emits a native scrollend. Only the
+    // final step saves its position; intermediate lag must not show the button.
+    if (!inputActive && state.mode === 'follow' && motion.frame !== null) return
     inputActive = false
     save()
   }

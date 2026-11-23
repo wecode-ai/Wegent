@@ -74,3 +74,47 @@ it('follows the measured transcript end without scrolling into temporary Markdow
   expect(disconnect).toHaveBeenCalledOnce()
   dispose()
 })
+
+it('keeps the scroll button hidden during controller-owned follow steps', () => {
+  vi.stubGlobal(
+    'requestAnimationFrame',
+    vi.fn(() => 1)
+  )
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  const viewport = document.createElement('div')
+  let scrollHeight = 640
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 640 },
+    scrollHeight: { get: () => scrollHeight },
+  })
+  const message = {
+    id: 'reply',
+    role: 'assistant',
+    content: 'Start',
+    status: 'done',
+    createdAt: '',
+  } as const
+  const input = { messages: [message], scrollRef: { current: viewport } }
+  const ports = {
+    scrollRef: input.scrollRef,
+    externalScrollInteractionRef: undefined,
+    contentRef: { current: null },
+    virtualizerRef: { current: null },
+    owner: { lease: null },
+  }
+  const state = createConversationScrollState(null, input)
+  const notify = () => {}
+  const dispose = state.subscribe(notify, input, ports)
+  scrollHeight = 2000
+  const releaseStream = state.subscribe(
+    notify,
+    { ...input, messages: [{ ...message, content: 'Start and continue', status: 'streaming' }] },
+    ports
+  )
+  state.handleContentLayoutChange()
+  expect(state.getSnapshot().motionActive).toBe(true)
+  state.endInput()
+  expect(state.getSnapshot().showScrollButton).toBe(false)
+  releaseStream()
+  dispose()
+})
