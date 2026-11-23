@@ -13,6 +13,10 @@ import {
   verifyBrowserHistoryResume,
 } from './browser-history-resume-regression.mjs'
 import {
+  handleBrowserDownloadHttp,
+  verifyBrowserDownloadPolicy,
+} from './browser-download-policy-regression.mjs'
+import {
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
@@ -682,9 +686,11 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   let cacheResourceRequests = 0
+  const downloadsPath = join(resultDir, 'e2e-downloads')
 
   return {
     appEnvironment: {
+      WEWORK_E2E_DOWNLOADS_DIR: downloadsPath,
       WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
       WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS: '5000',
     },
@@ -693,6 +699,7 @@ export function createDesktopScenario({
     },
     async handleHttp(request, response, url) {
       if (await handleBrowserHistoryModelRequest(request, response, url)) return true
+      if (await handleBrowserDownloadHttp(request, response, url)) return true
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })
         response.end()
@@ -1894,6 +1901,14 @@ export function createDesktopScenario({
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: LOCAL_TOAST_TEXT,
         timeoutMs: uiTimeoutMs,
+      })
+
+      await verifyBrowserDownloadPolicy({
+        bridgeCall,
+        control,
+        downloadsPath,
+        resultDir,
+        uiTimeoutMs,
       })
 
       await writeFile(
