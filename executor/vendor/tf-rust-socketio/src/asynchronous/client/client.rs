@@ -201,7 +201,7 @@ impl Client {
         let mut cleanup = TransportCleanup::new(self.socket.clone());
         let result = self.connect_inner().await;
         if result.is_err() {
-            let _ = self.socket.read().await.disconnect().await;
+            TransportCleanup::disconnect(&self.socket).await;
         }
         cleanup.disarm();
         result

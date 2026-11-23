@@ -119,8 +119,14 @@ Local Executor 的配置优先级是：环境变量、`~/.wegent-executor/device
 | `LOCAL_HEARTBEAT_INTERVAL` | `30` (秒) | 心跳发送间隔 |
 | `LOCAL_HEARTBEAT_TIMEOUT` | `90` (秒) | 心跳超时时间 |
 | `LOCAL_HEARTBEAT_CALL_TIMEOUT` | `15` (秒) | 单次心跳 RPC 响应超时时间 |
-| `LOCAL_RECONNECT_DELAY` | `1` (秒) | 重连初始延迟 |
-| `LOCAL_RECONNECT_MAX_DELAY` | `30` (秒) | 重连最大延迟 |
+| `LOCAL_RECONNECT_DELAY` | `1` (秒) | 网络连接失败时的重连初始延迟 |
+| `LOCAL_RECONNECT_MAX_DELAY` | `30` (秒) | 网络连接失败时的重连最大延迟 |
+
+认证失败或认证限流使用独立的指数退避：30、60、120、240 秒，之后每次最多等待
+300 秒。中间出现网络错误不会重置认证退避；连接稳定后会重置两种退避。
+如果日志提示 `device token is invalid or expired; re-pair this device`，说明设备 token
+无效或已过期，需要重新配对。更新配对配置并重新启动 Executor 后，重试从初始延迟开始。
+被拒绝、超时或取消的连接都会释放底层 WebSocket，避免重试积累空闲连接。
 
 ### Claude Code 相关配置
 

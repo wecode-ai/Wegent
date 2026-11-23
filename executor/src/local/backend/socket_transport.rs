@@ -30,6 +30,7 @@ const NAMESPACE: &str = "/local-executor";
 const NAMESPACE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 mod completed_event_budget;
+mod connection_error;
 
 #[cfg(test)]
 mod completed_event_tests;
@@ -138,7 +139,7 @@ impl SocketIoTransport {
         {
             return;
         }
-        state.take();
+        let connected = state.take();
         // Notify synchronously before a new generation can publish its client.
         let listeners = self
             .close_handlers
@@ -147,6 +148,10 @@ impl SocketIoTransport {
             .clone();
         for listener in listeners {
             listener();
+        }
+        drop(state);
+        if let Some(connected) = connected {
+            let _ = connected.client.disconnect().await;
         }
     }
 }
@@ -173,11 +178,13 @@ impl SocketIoTransport {
         let socket_url = normalize_socket_url(socket_url);
         let (connect_sender, connect_receiver) = oneshot::channel();
         let connect_sender = Arc::new(Mutex::new(Some(connect_sender)));
+        let error_sender = Arc::clone(&connect_sender);
+        let namespace = self.namespace.unwrap_or(NAMESPACE);
         let closed = Arc::new(AtomicBool::new(false));
         let close_transport = self.clone();
         let close_flag = Arc::clone(&closed);
         let mut builder = ClientBuilder::new(socket_url)
-            .namespace(self.namespace.unwrap_or(NAMESPACE))
+            .namespace(namespace)
             .auth(json!({ "token": token }))
             .transport_type(TransportType::Websocket)
             .reconnect(false)
@@ -186,14 +193,20 @@ impl SocketIoTransport {
                 let connect_sender = Arc::clone(&connect_sender);
                 async move {
                     if let Some(sender) = connect_sender.lock().expect("connect lock").take() {
-                        let _ = sender.send(());
+                        let _ = sender.send(Ok(()));
                     }
                 }
                 .boxed()
             })
-            .on("error", |payload: Payload, _socket: Client| {
+            .on("error", move |payload: Payload, _socket: Client| {
+                let error_sender = Arc::clone(&error_sender);
                 async move {
-                    eprintln!("local backend socket error: {payload:?}");
+                    let error = connection_error::setup_error(payload, namespace);
+                    if let Some(sender) = error_sender.lock().expect("connect lock").take() {
+                        let _ = sender.send(Err(error));
+                    } else {
+                        eprintln!("local backend socket error: {error}");
+                    }
                 }
                 .boxed()
             })
@@ -242,10 +255,13 @@ impl SocketIoTransport {
             .connect()
             .await
             .map_err(|error| format_socket_error("connect", None, &error))?;
-        let namespace_result = tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
-            .await
-            .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
-            .map_err(|_| "Socket.IO namespace connection signal was dropped".to_owned());
+        // Keep timeout and channel errors in the same Engine.IO cleanup path.
+        let namespace_result =
+            match tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err("Socket.IO namespace connection signal was dropped".to_owned()),
+                Err(_) => Err("Socket.IO namespace connection timed out".to_owned()),
+            };
         if let Err(error) = namespace_result {
             let _ = socket.disconnect().await;
             return Err(error);

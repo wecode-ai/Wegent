@@ -526,6 +526,7 @@ async fn engineio_disconnect_retains_websocket_until_engine_client_is_dropped() 
 struct PollingState {
     next_session: AtomicUsize,
     reconnected_poll: AtomicBool,
+    fail_connect_send: bool,
     close_received: mpsc::UnboundedSender<()>,
     close_cancelled: mpsc::UnboundedSender<()>,
 }
@@ -538,7 +539,7 @@ struct PollingServer {
 }
 
 impl PollingServer {
-    async fn start() -> Self {
+    async fn start(fail_connect_send: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/", listener.local_addr().unwrap());
         let (received_tx, close_received) = mpsc::unbounded_channel();
@@ -546,6 +547,7 @@ impl PollingServer {
         let state = Arc::new(PollingState {
             next_session: AtomicUsize::new(1),
             reconnected_poll: AtomicBool::new(false),
+            fail_connect_send,
             close_received: received_tx,
             close_cancelled: cancelled_tx,
         });
@@ -621,6 +623,14 @@ async fn serve_polling_request(mut stream: TcpStream, state: Arc<PollingState>) 
     );
     assert_eq!(query.get("EIO").map(|value| value.as_ref()), Some("4"));
     let session = query.get("sid").map(|value| value.as_ref());
+    if state.fail_connect_send
+        && method == "POST"
+        && session == Some("polling-1")
+        && body.starts_with("40/local-executor,")
+    {
+        // Close without a response so the initial namespace send fails.
+        return;
+    }
     if method == "POST" && session == Some("polling-1") && body == "1" {
         state.close_received.send(()).unwrap();
         // Never answer this Close POST. Only cancellation can finish it.
@@ -659,7 +669,7 @@ async fn serve_polling_request(mut stream: TcpStream, state: Arc<PollingState>) 
 
 #[tokio::test]
 async fn hanging_polling_close_does_not_block_terminal_callback_or_reconnect() {
-    let mut server = PollingServer::start().await;
+    let mut server = PollingServer::start(false).await;
     let (connect_tx, mut connected) = mpsc::unbounded_channel();
     let (error_tx, mut errors) = mpsc::unbounded_channel();
     let (close_tx, mut closed) = mpsc::unbounded_channel();
@@ -724,5 +734,32 @@ async fn hanging_polling_close_does_not_block_terminal_callback_or_reconnect() {
     tokio::time::timeout(DEADLINE, client.disconnect())
         .await
         .expect("reconnected session did not disconnect")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn failed_polling_connect_does_not_wait_for_an_unresponsive_close_request() {
+    let mut server = PollingServer::start(true).await;
+    let url = server.url.clone();
+    let mut connecting = tokio::spawn(async move {
+        ClientBuilder::new(url)
+            .namespace("/local-executor")
+            .transport_type(TransportType::Polling)
+            .reconnect(false)
+            .connect()
+            .await
+    });
+    tokio::time::timeout(DEADLINE, server.close_received.recv())
+        .await
+        .expect("failed namespace send must reach Engine.IO cleanup")
+        .unwrap();
+    let result = tokio::time::timeout(DEADLINE, &mut connecting)
+        .await
+        .expect("failed setup must not wait indefinitely for Engine.IO Close")
+        .expect("initial connection task panicked");
+    assert!(result.is_err(), "the initial namespace POST must fail");
+    tokio::time::timeout(DEADLINE, server.close_cancelled.recv())
+        .await
+        .expect("failed setup cleanup must cancel the unresponsive Close POST")
         .unwrap();
 }
