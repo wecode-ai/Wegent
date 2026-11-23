@@ -69,6 +69,7 @@ export const conversationMessages: Record<
     "conversation.user_message.expand": "展开",
     "conversation.message_edit.cancel": "取消",
     "conversation.message_edit.send": "发送",
+    "conversation.message_edit.send_correction": "发送修正",
     "conversation.common.confirm": "确认",
     "conversation.workbench.browser_invalid_url":
       "请输入有效的 http 或 https 地址",
@@ -85,6 +86,7 @@ export const conversationMessages: Record<
     "conversation.message_actions.copy_message": "复制消息",
     "conversation.message_actions.edit": "编辑",
     "conversation.message_actions.edit_message": "编辑消息",
+    "conversation.message_actions.revise_guidance": "修改后继续",
     "conversation.processing_complete": "已处理",
     "conversation.assistant_status.working": "处理中",
     "conversation.assistant_status.working_for": "已处理 {{duration}}",
@@ -426,6 +428,7 @@ export const conversationMessages: Record<
     "conversation.user_message.expand": "Expand",
     "conversation.message_edit.cancel": "Cancel",
     "conversation.message_edit.send": "Send",
+    "conversation.message_edit.send_correction": "Send correction",
     "conversation.common.confirm": "Confirm",
     "conversation.workbench.browser_invalid_url":
       "Enter a valid http or https URL",
@@ -443,6 +446,7 @@ export const conversationMessages: Record<
     "conversation.message_actions.copy_message": "Copy message",
     "conversation.message_actions.edit": "Edit",
     "conversation.message_actions.edit_message": "Edit message",
+    "conversation.message_actions.revise_guidance": "Revise and continue",
     "conversation.processing_complete": "Processed",
     "conversation.assistant_status.working": "Working",
     "conversation.assistant_status.working_for": "Working for {{duration}}",

@@ -305,9 +305,11 @@ Message, scroll-position, and measured-height caches are bounded. Archiving a ta
 
 After restoring a conversation, you can answer an existing MCP form or another runtime request that expects a direct response even while the model catalog is loading or the configured model is unavailable. Sending a new chat message still requires an available model.
 
+<a id="message-actions"></a>
+
 ## Use selected response text
 
-Hover a message for its copy action. A user message shows an edit/pencil action only when editing is supported; change it in the editor and follow its submit/cancel controls. Not every historical or assistant message is editable. Quoting selected text differs from changing the original message.
+Hover a message for its copy action. The latest ordinary user message shows a pencil when editing is supported. If the latest user message was sent as guidance, wait for the response to finish, hover the guidance, and choose **Revise and continue**. Update the text and choose **Send correction** to start the next turn with a new message. The conversation keeps the original guidance and response in its history.
 
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
 

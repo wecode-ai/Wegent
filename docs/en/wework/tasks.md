@@ -262,6 +262,8 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 | Steer the response      | `Command/Ctrl + Enter`         | Adjust the current direction            |
 | Interrupt and send      | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
 
+You can steer the current response with text, images, and files, or send attachments alone. If an attachment is unavailable, the message stays in the queue so you can edit it and retry.
+
 Interrupting stops the current response but does not roll back completed file edits or commands.
 
 While a subagent is running, the composer keeps the Send button visible. Enter a draft to send a follow-up message.

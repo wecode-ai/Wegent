@@ -2514,6 +2514,60 @@ async def test_send_runtime_guidance_dispatches_to_owned_device_without_task_row
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("include_missing", [False, True])
+async def test_send_runtime_guidance_delivers_only_available_attachments(
+    test_db, test_user, monkeypatch, include_missing
+):
+    from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+    from app.schemas.runtime_work import RuntimeGuidanceRequest, RuntimeTaskAddress
+    from app.services import runtime_work_service
+    from app.services.auth import verify_task_token
+
+    attachment = SubtaskContext(
+        subtask_id=0,
+        user_id=test_user.id,
+        context_type=ContextType.ATTACHMENT.value,
+        name="notes.txt",
+        status=ContextStatus.READY.value,
+        type_data={"original_filename": "notes.txt", "mime_type": "text/plain"},
+    )
+    test_db.add(attachment)
+    test_db.commit()
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(return_value={"success": True, "accepted": True})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    result = await runtime_work_service.send_runtime_guidance(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeGuidanceRequest(
+            address=RuntimeTaskAddress(deviceId="device-1", localTaskId="codex-1"),
+            attachmentIds=[
+                attachment.id,
+                *([attachment.id + 1] if include_missing else []),
+            ],
+        ),
+    )
+
+    if include_missing:
+        assert not result.accepted
+        assert result.code == "guidance_attachment_unavailable"
+        rpc.assert_not_awaited()
+    else:
+        assert result.accepted
+        rpc.assert_awaited_once()
+        payload = rpc.await_args.kwargs["payload"]
+        assert payload["attachments"][0]["id"] == attachment.id
+        assert payload["attachmentDownload"]["backendUrl"]
+        token = verify_task_token(payload["attachmentDownload"]["authToken"])
+        assert token is not None and token.user_id == test_user.id
+
+
+@pytest.mark.asyncio
 async def test_send_runtime_guidance_normalizes_runtime_rpc_failure_without_task_rows(
     test_db,
     test_user,

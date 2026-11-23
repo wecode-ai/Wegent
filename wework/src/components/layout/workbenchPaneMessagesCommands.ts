@@ -88,6 +88,8 @@ import type {
 } from './workbenchPaneSessionTypes'
 import type { PaneCommandContext } from './workbenchPaneCommandContext'
 
+type ContinuationOptions = Pick<RuntimePaneQueuedMessage, 'displayContent' | 'attachments'>
+
 export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
   const getRuntimeModelFields = (modelOptionsOverride?: ModelOptions) => {
     const { currentRuntimeTask, projectChat } = sessionOwner.frame
@@ -347,7 +349,10 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     return true
   }
 
-  const dispatchContinuation = async (input: string, displayContent?: string): Promise<boolean> => {
+  const dispatchContinuation = async (
+    input: string,
+    options?: ContinuationOptions
+  ): Promise<boolean> => {
     const { currentRuntimeTask, lifecycleStore, queuedMessageBusyBlocks } = sessionOwner.frame
     const {
       getRuntimeModelFields,
@@ -361,7 +366,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     const message: RuntimePaneQueuedMessage = {
       id: `runtime-retry-continuation-${crypto.randomUUID()}`,
       content: input,
-      ...(displayContent === undefined ? {} : { displayContent }),
+      ...options,
       status: 'queued',
       createdAt: new Date().toISOString(),
       ...getRuntimeModelFields(),
@@ -388,7 +393,10 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     return true
   }
 
-  const sendContinuation = async (input: string, displayContent?: string): Promise<boolean> => {
+  const sendContinuation = async (
+    input: string,
+    options?: ContinuationOptions
+  ): Promise<boolean> => {
     const { currentRuntimeTask } = sessionOwner.frame
     const { dispatchContinuation, setError } = sessionOwner.commands
 
@@ -396,7 +404,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     sessionOwner.live.continuationInFlight = true
     setError(null)
     try {
-      return await dispatchContinuation(input.trim(), displayContent)
+      return await dispatchContinuation(input.trim(), options)
     } catch (error) {
       setError(
         error instanceof Error ? error.message : i18n.t('workbench.project_chat_send_failed')
@@ -427,10 +435,9 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       failedMessageId: message.id,
       failedTurnId: failedMessage.turnId ?? failedMessage.subtaskId ?? null,
     })
-    return sendContinuation(
-      RUNTIME_RETRY_CONTINUATION_PROMPT,
-      i18n.t('workbench.retry_continue_message', '继续')
-    )
+    return sendContinuation(RUNTIME_RETRY_CONTINUATION_PROMPT, {
+      displayContent: i18n.t('workbench.retry_continue_message', '继续'),
+    })
   }
 
   const editLastUserMessageInPane = async (
@@ -445,7 +452,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       paneStatus,
       runtimeTranscriptPageSize,
     } = sessionOwner.frame
-    const { getRuntimeModelFields, setError } = sessionOwner.commands
+    const { getRuntimeModelFields, sendContinuation, setError } = sessionOwner.commands
 
     const submittedContent = content.trim()
     if (!submittedContent) return false
@@ -460,6 +467,13 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     if (!isEditableLastUserMessage(currentMessages, messageIndex)) {
       setError('只能编辑最后一轮已完成的问题')
       return false
+    }
+
+    if (currentMessages[messageIndex]?.runtimeGuidance) {
+      return sendContinuation(
+        i18n.t('workbench.guidance_correction_prompt', { content: submittedContent }),
+        { attachments: message.attachments }
+      )
     }
 
     const previousTurns = getRuntimeConversationTurns(currentRuntimeTask)

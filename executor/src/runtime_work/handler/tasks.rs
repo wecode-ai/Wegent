@@ -2143,11 +2143,15 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "guidance"))
             .map(|value| value.trim().to_owned())
             .unwrap_or_default();
-        let steer_input = guidance_input_items(&message, payload.get("attachments"));
-        if steer_input.is_empty() {
+        let attachments = payload
+            .get("attachments")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if message.is_empty() && attachments.is_empty() && payload.get("attachmentIds").is_none() {
             return Err(AppIpcError::new(
                 "bad_request",
-                "message or image attachment is required",
+                "message or attachment is required",
             ));
         }
         log_executor_event(
@@ -2185,6 +2189,15 @@ impl RuntimeWorkRpcHandler {
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
+        let steer_input = self
+            .prepare_guidance_input(
+                &local_task_id,
+                &guidance_id,
+                &message,
+                &payload,
+                attachments,
+            )
+            .await?;
         let issue_comment = payload["issueCommentId"]
             .as_str()
             .filter(|comment| *comment == guidance_id.as_str());
@@ -2279,6 +2292,13 @@ impl RuntimeWorkRpcHandler {
         match steer_result {
             Ok(turn_id) => {
                 if event_operation.is_none() && issue_comment.is_none() {
+                    self.record_guidance_presentation(
+                        &local_task_id,
+                        &turn_id,
+                        &guidance_id,
+                        &message,
+                        attachments,
+                    );
                     self.set_interaction_status(&local_task_id, None);
                 }
                 if owner_input {
@@ -2313,6 +2333,80 @@ impl RuntimeWorkRpcHandler {
                     error,
                 ))
             }
+        }
+    }
+
+    async fn prepare_guidance_input(
+        &self,
+        task_id: &str,
+        guidance_id: &str,
+        message: &str,
+        payload: &Value,
+        attachments: &[Value],
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let unavailable = |error| AppIpcError::new("guidance_attachment_unavailable", error);
+        if payload["attachmentIds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|id| !attachments.iter().any(|attachment| &attachment["id"] == id))
+            || attachments
+                .iter()
+                .any(|attachment| attachment["id"].as_i64().is_none())
+        {
+            return Err(unavailable(
+                "One or more attachments are unavailable".to_owned(),
+            ));
+        }
+        let download = &payload["attachmentDownload"];
+        let mut request = ExecutionRequest {
+            task_id: task_id.to_owned(),
+            subtask_id: guidance_id.to_owned(),
+            project_workspace_path: self
+                .store
+                .read_task(task_id, |link| link.workspace_path.clone()),
+            auth_token: string_field(download, "authToken"),
+            backend_url: string_field(download, "backendUrl"),
+            prompt: json!(message),
+            ..ExecutionRequest::default()
+        };
+        request
+            .extra
+            .insert("attachments".to_owned(), json!(attachments));
+        let request =
+            crate::agents::runtime_capabilities::prepare_runtime_attachments(request).await;
+        let input = crate::agents::codex_guidance_input(&request)
+            .await
+            .map_err(unavailable)?;
+        if input.is_empty() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "message or attachment is required",
+            ));
+        }
+        Ok(input)
+    }
+
+    fn record_guidance_presentation(
+        &self,
+        task_id: &str,
+        turn_id: &str,
+        guidance_id: &str,
+        message: &str,
+        attachments: &[Value],
+    ) {
+        let payload = json!({"clientUserMessageId": guidance_id, "message": message, "attachments": attachments});
+        if let Some(mut presentation) = user_message_presentation(&payload) {
+            presentation["turnId"] = json!(turn_id);
+            presentation["ensureVisible"] = json!(false);
+            presentation["restoreContent"] = json!(true);
+            presentation["runtimeGuidance"] = json!(true);
+            self.store.update_task(task_id, |link| {
+                append_runtime_handle_user_message_presentation(
+                    &mut link.runtime_handle,
+                    presentation,
+                );
+            });
         }
     }
 

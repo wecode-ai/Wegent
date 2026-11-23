@@ -240,6 +240,9 @@ fn attach_user_message_presentations_for_page(
             .map(|references| presentation_reference_ranges(references, &content))
             .unwrap_or_default();
         if let Some(message) = message.as_object_mut() {
+            if bool_field(&presentation, "runtimeGuidance") == Some(true) {
+                message.insert("runtimeGuidance".to_owned(), json!(true));
+            }
             if restore_content {
                 message.insert("content".to_owned(), Value::String(presentation_content));
                 message.remove("presentationReferences");

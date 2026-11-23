@@ -6413,22 +6413,56 @@ async fn prepare_codex_execution_request(
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
-    let binary_attachment_context =
-        AttachmentPromptProcessor::build_binary_attachment_context(&success);
-    if !binary_attachment_context.is_empty() {
-        request.prompt =
-            append_text_attachment_context(&request.prompt, &binary_attachment_context);
-    }
-    let text_attachment_context =
-        AttachmentPromptProcessor::build_text_attachment_context(&success);
-    if !text_attachment_context.is_empty() {
-        request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
-    }
+    request.prompt = append_codex_attachment_context(request.prompt, &success);
 
     Ok(PreparedCodexExecutionRequest {
         request,
         generated_files,
     })
+}
+
+fn append_codex_attachment_context(mut prompt: Value, attachments: &[AttachmentRecord]) -> Value {
+    let binary_attachment_context =
+        AttachmentPromptProcessor::build_binary_attachment_context(attachments);
+    if !binary_attachment_context.is_empty() {
+        prompt = append_text_attachment_context(&prompt, &binary_attachment_context);
+    }
+    let text_attachment_context =
+        AttachmentPromptProcessor::build_text_attachment_context(attachments);
+    if !text_attachment_context.is_empty() {
+        prompt = append_text_attachment_context(&prompt, &text_attachment_context);
+    }
+    prompt
+}
+
+pub(crate) async fn codex_guidance_input(request: &ExecutionRequest) -> Result<Vec<Value>, String> {
+    let attachments = attachment_records(request);
+    let mut images = Vec::new();
+    for attachment in &attachments {
+        let unavailable = || format!("Attachment unavailable: {}", attachment.original_filename);
+        let path = attachment
+            .local_path
+            .as_deref()
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(unavailable)?;
+        let is_file = tokio::fs::metadata(path)
+            .await
+            .is_ok_and(|metadata| metadata.is_file());
+        if !is_file || attachment.status.as_deref() == Some("failed") {
+            return Err(unavailable());
+        }
+        if is_image_attachment(attachment) {
+            images.push(json!({ "type": "localImage", "path": path }));
+        }
+    }
+    let prompt = append_codex_attachment_context(request.prompt.clone(), &attachments);
+    let text = prompt_text(&prompt);
+    let mut input = Vec::new();
+    if !text.trim().is_empty() {
+        input.push(text_input(text));
+    }
+    input.extend(images);
+    Ok(input)
 }
 
 async fn ensure_codex_mcp_endpoints() -> Result<(), String> {

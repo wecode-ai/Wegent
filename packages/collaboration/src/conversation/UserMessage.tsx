@@ -306,6 +306,7 @@ export function UserMessage({
             transferServices={services.transfers}
             onOpenMentionPlugin={services.onOpenPlugin}
             initialContent={displayContent}
+            correction={message.runtimeGuidance === true}
             submitting={editSubmitting}
             onCancel={onCancelEdit}
             onSubmit={onSubmitEdit}

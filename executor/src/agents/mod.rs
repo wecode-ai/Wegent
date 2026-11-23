@@ -58,9 +58,9 @@ use claude_code::{
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
-    codex_notification_requires_user_input, codex_request_inherits_wework_default,
-    codex_runtime_approval_policy, completed_native_codex_turn,
-    configured_inference_model_provider, executor_home,
+    codex_guidance_input, codex_notification_requires_user_input,
+    codex_request_inherits_wework_default, codex_runtime_approval_policy,
+    completed_native_codex_turn, configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, normalize_reasoning_effort_alias,
     prepare_codex_runtime_notification, reload_skill_configuration, replace_config,
     same_goal_configuration, select_wework_codex_user_instructions, wework_codex_home,

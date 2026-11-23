@@ -6,6 +6,33 @@ use serde_json::json;
 
 use super::*;
 
+#[tokio::test]
+async fn guidance_input_delivers_file_only_and_rejects_missing_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("notes.txt");
+    fs::write(&path, "guidance fixture contents").unwrap();
+    let mut request = ExecutionRequest {
+        prompt: json!(""),
+        ..Default::default()
+    };
+    request.extra.insert(
+        "attachments".to_owned(),
+        json!([{"id": -1, "filename": "notes.txt", "mime_type": "text/plain", "local_path": path}]),
+    );
+
+    let input = codex_guidance_input(&request).await.unwrap();
+    assert_eq!(input.len(), 1);
+    assert!(input[0]["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("guidance fixture contents")));
+
+    fs::remove_file(path).unwrap();
+    assert_eq!(
+        codex_guidance_input(&request).await.unwrap_err(),
+        "Attachment unavailable: notes.txt"
+    );
+}
+
 #[test]
 fn global_mcps_without_backend_context_do_not_enter_native_configuration() {
     let _environment = environment::LaunchEnvironment::new();

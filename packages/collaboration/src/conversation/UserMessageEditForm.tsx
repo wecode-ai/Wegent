@@ -12,6 +12,7 @@ export function UserMessageEditForm({
   transferServices,
   onOpenMentionPlugin,
   initialContent,
+  correction = false,
   submitting,
   onCancel,
   onSubmit,
@@ -20,6 +21,7 @@ export function UserMessageEditForm({
   transferServices?: ComposerTransferServices
   onOpenMentionPlugin?: (reference: PluginReference) => void
   initialContent: string
+  correction?: boolean
   submitting: boolean
   onCancel?: () => void
   onSubmit?: (content: string) => Promise<boolean | void> | boolean | void
@@ -84,7 +86,7 @@ export function UserMessageEditForm({
           onClick={submit}
           className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-base font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {t('message_edit.send')}
+          {t(correction ? 'message_edit.send_correction' : 'message_edit.send')}
         </ControlButton>
       </div>
     </div>
