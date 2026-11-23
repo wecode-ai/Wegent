@@ -1417,7 +1417,8 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         }),
       }
 
-      listener({}, item, contents as unknown as WebContents)
+      const normalEvent = { defaultPrevented: false, preventDefault: vi.fn() }
+      listener(normalEvent, item, contents as unknown as WebContents)
 
       const expectedPath = join(downloadsDir, 'video_123.mp4')
       expect(item.setSavePath).toHaveBeenCalledExactlyOnceWith(expectedPath)
@@ -1428,6 +1429,30 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       })
 
       for (const cb of doneListeners) cb({}, 'completed')
+
+      const preventedEventsStart = events.length
+      const preventedItem = {
+        cancel: vi.fn(),
+        getFilename: () => 'blocked.mp4',
+        getSavePath: () => '',
+        getURL: () => 'https://example.test/blocked.mp4',
+        getURLChain: () => ['https://example.test/blocked.mp4'],
+        getReceivedBytes: () => 0,
+        getTotalBytes: () => 1024,
+        setSavePath: vi.fn(),
+        setSaveDialogOptions: vi.fn(),
+        on: vi.fn(),
+        once: vi.fn(),
+      }
+      const preventedEvent = {
+        defaultPrevented: true,
+        preventDefault: vi.fn(),
+      }
+      listener(preventedEvent, preventedItem, contents as unknown as WebContents)
+      expect(events.slice(preventedEventsStart).some(event => event.type === 'download')).toBe(
+        false
+      )
+      expect(preventedItem.on).not.toHaveBeenCalled()
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

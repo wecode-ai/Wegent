@@ -206,6 +206,7 @@ export class EmbeddedBrowserManager {
     const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
     browserSession.on('will-download', (event, item, webContents) => {
       this.downloadPolicy?.apply(item, webContents, event)
+      if (event.defaultPrevented) return
       const entry = [...this.entries.values()].find(
         candidate => candidate.contents.id === webContents.id
       )

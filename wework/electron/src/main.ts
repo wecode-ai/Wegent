@@ -1559,6 +1559,21 @@ async function togglePopoutWindow(): Promise<void> {
   await showPopoutWindow()
 }
 
+async function waitWithBudget(task: Promise<void>, budgetMs: number): Promise<void> {
+  const safeTask = task.catch(() => {})
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      safeTask,
+      new Promise<void>(resolve => {
+        timer = setTimeout(resolve, budgetMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 async function updateDesktopPreferences(
   patch: Record<string, unknown>,
   expectedTelemetryConsentRevision?: number
@@ -1577,7 +1592,8 @@ async function updateDesktopPreferences(
     Object.hasOwn(patch, 'browserDownloadDirectory') ||
     Object.hasOwn(patch, 'browserAskBeforeDownload')
   ) {
-    await desktopDownloadPolicy.update(updated)
+    // Bound the wait so an unresponsive network share cannot stall preference saves.
+    await waitWithBudget(desktopDownloadPolicy.update(updated), 200)
   }
   return updated
 }

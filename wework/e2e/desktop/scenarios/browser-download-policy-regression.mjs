@@ -17,15 +17,15 @@ function downloadFixtureHtml() {
   </head>
   <body>
     <h1>${DOWNLOAD_FIXTURE_TITLE}</h1>
-    <a id="download-single" href="${DOWNLOAD_FILE_PATH}?name=clip.mp4&body=SINGLE_CLIP_PAYLOAD">Download single</a>
-    <a id="download-concurrent-1" href="${DOWNLOAD_FILE_PATH}?name=clip.mp4&delay=1500&body=CONCURRENT_ONE">Download concurrent 1</a>
-    <a id="download-concurrent-2" href="${DOWNLOAD_FILE_PATH}?name=clip.mp4&delay=1500&body=CONCURRENT_TWO">Download concurrent 2</a>
-    <a id="download-case-1" href="${DOWNLOAD_FILE_PATH}?name=Report.zip&delay=1500&body=CASE_UPPER">Download case 1</a>
-    <a id="download-case-2" href="${DOWNLOAD_FILE_PATH}?name=report.zip&delay=1500&body=CASE_LOWER">Download case 2</a>
-    <a id="download-custom" href="${DOWNLOAD_FILE_PATH}?name=custom.mp4&body=CUSTOM_DIR_PAYLOAD">Download custom</a>
-    <a id="download-after-delete" href="${DOWNLOAD_FILE_PATH}?name=after-delete.mp4&body=SHOULD_PROMPT_DELETE">Download after delete</a>
-    <a id="download-after-unwritable" href="${DOWNLOAD_FILE_PATH}?name=after-unwritable.mp4&body=SHOULD_PROMPT_UNWRITABLE">Download unwritable</a>
-    <a id="download-ask-mode" href="${DOWNLOAD_FILE_PATH}?name=ask-mode.mp4&body=ASK_MODE_PAYLOAD">Download ask mode</a>
+    <a id="download-single" download="clip.mp4" href="${DOWNLOAD_FILE_PATH}?name=clip.mp4&body=SINGLE_CLIP_BYTES">Download single</a>
+    <a id="download-concurrent-1" download="clip.mp4" href="${DOWNLOAD_FILE_PATH}?name=clip.mp4&delay=1500&body=CONCURRENT_ONE">Download concurrent 1</a>
+    <a id="download-concurrent-2" download="clip.mp4" href="${DOWNLOAD_FILE_PATH}?name=clip.mp4&delay=1500&body=CONCURRENT_TWO">Download concurrent 2</a>
+    <a id="download-case-1" download="Report.zip" href="${DOWNLOAD_FILE_PATH}?name=Report.zip&delay=1500&body=CASE_UPPER">Download case 1</a>
+    <a id="download-case-2" download="report.zip" href="${DOWNLOAD_FILE_PATH}?name=report.zip&delay=1500&body=CASE_LOWER">Download case 2</a>
+    <a id="download-custom" download="custom.mp4" href="${DOWNLOAD_FILE_PATH}?name=custom.mp4&body=CUSTOM_DIR_BYTES">Download custom</a>
+    <a id="download-after-missing-dir" download="after-missing-dir.mp4" href="${DOWNLOAD_FILE_PATH}?name=after-missing-dir.mp4&body=SHOULD_PROMPT_MISSING_DIR">Download after missing dir</a>
+    <a id="download-after-unwritable" download="after-unwritable.mp4" href="${DOWNLOAD_FILE_PATH}?name=after-unwritable.mp4&body=SHOULD_PROMPT_UNWRITABLE">Download unwritable</a>
+    <a id="download-ask-mode" download="ask-mode.mp4" href="${DOWNLOAD_FILE_PATH}?name=ask-mode.mp4&body=ASK_MODE_BYTES">Download ask mode</a>
   </body>
 </html>`
 }
@@ -54,6 +54,7 @@ export async function handleBrowserDownloadHttp(request, response, url) {
       'content-disposition': `attachment; filename="${filename}"`,
       'content-length': String(payload.byteLength),
     })
+    response.flushHeaders()
     if (delayMs > 0) {
       await new Promise(resolve => setTimeout(resolve, delayMs))
     }
@@ -114,6 +115,15 @@ async function waitForSaveDialogEvent(logPath, previousCount, timeoutMs, descrip
   )
 }
 
+async function clickDownloadLink(bridgeCall, selector) {
+  const result = await bridgeCall({ action: 'click', selector, timeoutMs: 5_000 })
+  assert.equal(
+    result.ok,
+    true,
+    `Failed to click download link ${selector}: ${JSON.stringify(result)}`
+  )
+}
+
 export async function verifyBrowserDownloadPolicy({
   bridgeCall,
   browserLabel,
@@ -152,10 +162,10 @@ export async function verifyBrowserDownloadPolicy({
     assert.equal(waitResult.ok, true, 'Download fixture did not render')
 
     // 1. Direct download to system Downloads directory with no save dialog.
-    await bridgeCall({ action: 'click', selector: '#download-single', timeoutMs: 5_000 })
+    await clickDownloadLink(bridgeCall, '#download-single')
     await waitForFileContent(
       join(downloadsPath, 'clip.mp4'),
-      'SINGLE_CLIP_PAYLOAD',
+      'SINGLE_CLIP_BYTES',
       uiTimeoutMs,
       'direct embedded-browser download clip.mp4'
     )
@@ -166,8 +176,8 @@ export async function verifyBrowserDownloadPolicy({
     )
 
     // 2. Concurrent duplicate downloads write distinct collision-free files.
-    await bridgeCall({ action: 'click', selector: '#download-concurrent-1', timeoutMs: 5_000 })
-    await bridgeCall({ action: 'click', selector: '#download-concurrent-2', timeoutMs: 5_000 })
+    await clickDownloadLink(bridgeCall, '#download-concurrent-1')
+    await clickDownloadLink(bridgeCall, '#download-concurrent-2')
     const concurrentContents = await waitForCondition(
       async () => {
         const firstPath = join(downloadsPath, 'clip (1).mp4')
@@ -177,18 +187,18 @@ export async function verifyBrowserDownloadPolicy({
           readFile(firstPath, 'utf8'),
           readFile(secondPath, 'utf8'),
         ])
-        if (!first || !second) return null
-        return [first, second].sort()
+        const sorted = [first, second].sort()
+        return sorted[0] === 'CONCURRENT_ONE' && sorted[1] === 'CONCURRENT_TWO' ? sorted : null
       },
       uiTimeoutMs,
       'concurrent duplicate downloads clip (1).mp4 and clip (2).mp4'
     )
     assert.deepEqual(concurrentContents, ['CONCURRENT_ONE', 'CONCURRENT_TWO'])
-    assert.equal(await readFile(join(downloadsPath, 'clip.mp4'), 'utf8'), 'SINGLE_CLIP_PAYLOAD')
+    assert.equal(await readFile(join(downloadsPath, 'clip.mp4'), 'utf8'), 'SINGLE_CLIP_BYTES')
 
     // Concurrent case-variant downloads preserve both payloads without collision.
-    await bridgeCall({ action: 'click', selector: '#download-case-1', timeoutMs: 5_000 })
-    await bridgeCall({ action: 'click', selector: '#download-case-2', timeoutMs: 5_000 })
+    await clickDownloadLink(bridgeCall, '#download-case-1')
+    await clickDownloadLink(bridgeCall, '#download-case-2')
     const caseVariantContents = await waitForCondition(
       async () => {
         const entries = (await readdir(downloadsPath)).filter(name =>
@@ -198,8 +208,8 @@ export async function verifyBrowserDownloadPolicy({
         const contents = await Promise.all(
           entries.map(name => readFile(join(downloadsPath, name), 'utf8'))
         )
-        if (contents.some(value => !value)) return null
-        return contents.sort()
+        const sorted = contents.sort()
+        return sorted[0] === 'CASE_LOWER' && sorted[1] === 'CASE_UPPER' ? sorted : null
       },
       uiTimeoutMs,
       'concurrent case-variant downloads Report.zip and report.zip'
@@ -241,10 +251,10 @@ export async function verifyBrowserDownloadPolicy({
     assert.equal(saveAsEvent.defaultPath, join(downloadsPath, 'saved-via-menu.mp4'))
     assert.equal(existsSync(join(downloadsPath, 'saved-via-menu.mp4')), false)
 
-    await bridgeCall({ action: 'click', selector: '#download-custom', timeoutMs: 5_000 })
+    await clickDownloadLink(bridgeCall, '#download-custom')
     await waitForFileContent(
       join(downloadsPath, 'custom.mp4'),
-      'CUSTOM_DIR_PAYLOAD',
+      'CUSTOM_DIR_BYTES',
       uiTimeoutMs,
       'direct download after one-shot Save As'
     )
@@ -257,27 +267,27 @@ export async function verifyBrowserDownloadPolicy({
         browserAskBeforeDownload: false,
       }),
     })
-    await bridgeCall({ action: 'click', selector: '#download-custom', timeoutMs: 5_000 })
+    await clickDownloadLink(bridgeCall, '#download-custom')
     await waitForFileContent(
       join(customDownloadsDir, 'custom.mp4'),
-      'CUSTOM_DIR_PAYLOAD',
+      'CUSTOM_DIR_BYTES',
       uiTimeoutMs,
       'custom directory download custom.mp4'
     )
 
     await rm(customDownloadsDir, { recursive: true, force: true })
-    const countBeforeDeletePrompt = (await readSaveDialogLog(saveDialogLogPath)).length
-    await bridgeCall({ action: 'click', selector: '#download-after-delete', timeoutMs: 5_000 })
-    const afterDeleteEvent = await waitForSaveDialogEvent(
+    const countBeforeMissingDirPrompt = (await readSaveDialogLog(saveDialogLogPath)).length
+    await clickDownloadLink(bridgeCall, '#download-after-missing-dir')
+    const afterMissingDirEvent = await waitForSaveDialogEvent(
       saveDialogLogPath,
-      countBeforeDeletePrompt,
+      countBeforeMissingDirPrompt,
       uiTimeoutMs,
-      'save dialog after custom download directory was deleted at runtime'
+      'save dialog after custom download directory was removed at runtime'
     )
-    assert.equal(afterDeleteEvent.reason, 'directory-unavailable')
-    assert.equal(afterDeleteEvent.savePath, '')
-    assert.equal(afterDeleteEvent.filename, 'after-delete.mp4')
-    assert.equal(existsSync(join(downloadsPath, 'after-delete.mp4')), false)
+    assert.equal(afterMissingDirEvent.reason, 'directory-unavailable')
+    assert.equal(afterMissingDirEvent.savePath, '')
+    assert.equal(afterMissingDirEvent.filename, 'after-missing-dir.mp4')
+    assert.equal(existsSync(join(downloadsPath, 'after-missing-dir.mp4')), false)
     assert.equal(existsSync(customDownloadsDir), false)
 
     // 6. Unwritable custom directory from the start prompts Save As instead of silently saving to system Downloads.
@@ -289,7 +299,7 @@ export async function verifyBrowserDownloadPolicy({
       }),
     })
     const countBeforeUnwritablePrompt = (await readSaveDialogLog(saveDialogLogPath)).length
-    await bridgeCall({ action: 'click', selector: '#download-after-unwritable', timeoutMs: 5_000 })
+    await clickDownloadLink(bridgeCall, '#download-after-unwritable')
     const unwritableEvent = await waitForSaveDialogEvent(
       saveDialogLogPath,
       countBeforeUnwritablePrompt,
@@ -309,7 +319,7 @@ export async function verifyBrowserDownloadPolicy({
       }),
     })
     const countBeforeAskMode = (await readSaveDialogLog(saveDialogLogPath)).length
-    await bridgeCall({ action: 'click', selector: '#download-ask-mode', timeoutMs: 5_000 })
+    await clickDownloadLink(bridgeCall, '#download-ask-mode')
     const askModeEvent = await waitForSaveDialogEvent(
       saveDialogLogPath,
       countBeforeAskMode,
