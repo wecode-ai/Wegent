@@ -155,6 +155,8 @@ Click the PR/MR status beside a task and choose **Continue fixing with AI** when
 
 ## Add a conversation to a project-space board
 
+When an Issue is linked, the AI uses the conversation for ordinary follow-ups such as confirming a requirement or adding a constraint. It accesses the project space when you explicitly ask it to look up or act on the Issue, or when the current request requires Issue information missing from the conversation.
+
 Runtime task and private conversation titles are independent of the bound Issue title. Runs started from tasks, Issue details, or Collaboration never overwrite an existing Issue title when the conversation title changes. Edit the title in Issue details to rename the Issue.
 
 After enabling Experimental features, open the composer's **+** menu and select **Project space**. Selecting a space opens the **Add to "Project space name"** dialog even before a new task sends its first message. Choose **Create board task** or **Link an existing board task**. Confirmation saves the choice; the first message creates the card or links the selected Issue. Cancelling keeps the previous selection. Select the current space again to change the association choice or target Issue.
