@@ -297,35 +297,6 @@ export function createCachedHistoryTask(source) {
   }
 }
 
-async function readFindShortcutLayout(control) {
-  const descendants = [
-    '[data-testid="desktop-chat-scroll"]',
-    '[data-testid="desktop-chat-scroll-content"]',
-    '[data-testid="runtime-transcript-history-start"]',
-    '[data-conversation-message-list]',
-    '[data-message-row]',
-    '[data-virtual-message-tail]',
-    '[data-testid="desktop-chat-scroll-content-footer"]',
-    '[data-testid="desktop-chat-scroll-sticky-footer"]',
-  ]
-  const selector = [SCROLLER_SELECTOR, ...descendants.map(node => SCROLLER_SELECTOR + ' ' + node)]
-  const [scroller, ...children] = JSON.parse(
-    await control.command('getElementMetrics', selector.join(', '), {
-      value: JSON.stringify({
-        attributeNames: [
-          'data-testid',
-          'data-index',
-          'data-virtual-message-tail',
-          'data-conversation-virtual-range',
-          'style',
-        ],
-      }),
-    })
-  )
-  assert.equal(scroller?.attributes['data-testid'], 'desktop-workbench-content')
-  return { scroller, children }
-}
-
 /** Shared by the CI local-history and project-bound cloud conversation checkpoints. */
 export async function verifyCachedHistorySearch(
   control,
@@ -382,8 +353,7 @@ export async function verifyCachedHistorySearch(
     )
     assert.ok(result.matches.every(match => match.cursor.startsWith('wework-cached-search:')))
   }
-  const beforeLayout = await readFindShortcutLayout(control)
-  const beforeShortcut = beforeLayout.scroller
+  const beforeShortcut = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'Before find')
   // The native key helper scrolls its focus target into view; keep it outside the transcript.
   await control.command(
     'nativePress',
@@ -393,22 +363,7 @@ export async function verifyCachedHistorySearch(
     }
   )
   await control.command('waitFor', OLDER)
-  const afterLayout = await readFindShortcutLayout(control)
-  const afterShortcut = afterLayout.scroller
-  if (afterShortcut.scrollHeight !== beforeShortcut.scrollHeight) {
-    const sample = ({ scroller, children }) =>
-      [scroller, ...children].map(({ attributes, top, height, scrollTop, scrollHeight }) => ({
-        attributes,
-        top,
-        height,
-        scrollTop,
-        scrollHeight,
-      }))
-    console.error(
-      '[cached-history-find-layout]',
-      JSON.stringify({ before: sample(beforeLayout), after: sample(afterLayout) })
-    )
-  }
+  const afterShortcut = await getSingleElementMetrics(control, SCROLLER_SELECTOR, 'After find')
   assert.equal(
     afterShortcut.scrollHeight,
     beforeShortcut.scrollHeight,
