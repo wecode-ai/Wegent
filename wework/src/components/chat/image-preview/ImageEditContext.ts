@@ -47,6 +47,7 @@ export function useScopedImageEditor(scope?: string): ImageEditActions | null {
 
 export interface ImageEditActions {
   scope?: string
+  hasDraftAttachment?(attachmentId: number): boolean
   saveMarkup?(
     attachmentId: number,
     loadFile: () => Promise<File>,

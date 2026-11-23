@@ -35,6 +35,10 @@ export function useScopedComposerAttachments(
     (attachment: Attachment) => addExistingAttachmentForScope(scope, attachment),
     [addExistingAttachmentForScope, scope]
   )
+  const getAttachment = useCallback(
+    (id: number) => state.attachments.find(attachment => attachment.id === id),
+    [state.attachments]
+  )
   const removeAttachment = useCallback(
     (id: number) => removeAttachmentForScope(scope, id),
     [removeAttachmentForScope, scope]
@@ -59,6 +63,7 @@ export function useScopedComposerAttachments(
     captureAttachments,
     handleFileSelect,
     addExistingAttachment,
+    getAttachment,
     removeAttachment,
     releaseAttachment,
     dismissAttachmentError,

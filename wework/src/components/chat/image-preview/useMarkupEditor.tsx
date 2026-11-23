@@ -30,7 +30,7 @@ const tools = [
 ] as const
 type Tool = (typeof tools)[number]['id'] | MarkupShape
 const controlClass =
-  'grid size-8 shrink-0 place-items-center rounded-md hover:bg-white/15 aria-pressed:bg-white/20 disabled:opacity-50'
+  'grid size-8 shrink-0 place-items-center rounded-md hover:bg-white/15 aria-pressed:bg-white/20 disabled:opacity-50 max-md:size-11'
 
 type Gesture =
   | { kind: 'draw'; pointerId: number; stroke: MarkupStroke }
@@ -329,7 +329,7 @@ export function useMarkupEditor(
         >
           <Input
             autoFocus
-            className="w-36 bg-transparent px-1 text-sm"
+            className="w-36 bg-transparent px-1 text-sm max-md:min-h-11"
             data-testid="attachment-image-markup-text-input"
             aria-label={t('image_preview.markup_text')}
             value={textDraft.text}
@@ -338,7 +338,7 @@ export function useMarkupEditor(
           <ControlButton
             type="submit"
             variant="primary"
-            className="rounded-md px-1.5"
+            className="rounded-md px-1.5 max-md:min-h-11 max-md:min-w-11"
             data-testid="attachment-image-markup-save-text"
             disabled={!textDraft.text.trim() || busy}
           >
@@ -397,7 +397,7 @@ export function useMarkupEditor(
       </SelectRoot>
       <Input
         type="color"
-        className="size-7 shrink-0"
+        className="size-7 shrink-0 max-md:size-11"
         aria-label={t('image_preview.markup_color')}
         data-testid="attachment-image-markup-color"
         value={color}
@@ -406,7 +406,7 @@ export function useMarkupEditor(
       />
       <Input
         type="range"
-        className="w-16 shrink-0 accent-white"
+        className="w-16 shrink-0 accent-white max-md:min-h-11"
         aria-label={t(
           tool === 'eraser' ? 'image_preview.brush_size' : 'image_preview.markup_width'
         )}

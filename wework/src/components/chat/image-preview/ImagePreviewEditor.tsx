@@ -48,7 +48,7 @@ const tools = [
   { id: 'erase', icon: Eraser },
 ] as const
 const actionClass =
-  'flex min-h-8 shrink-0 items-center gap-1.5 rounded-md px-2 hover:bg-white/15 focus-visible:outline focus-visible:outline-2 disabled:opacity-50 max-md:min-h-11'
+  'flex min-h-8 shrink-0 items-center gap-1.5 rounded-md px-2 hover:bg-white/15 focus-visible:outline focus-visible:outline-2 disabled:opacity-50 max-md:min-h-11 max-md:min-w-11'
 
 export function useImagePreviewEditor(
   submit: (edit: ImageEdit, reset: () => void) => void,
@@ -432,7 +432,7 @@ export function useImagePreviewEditor(
                 max={12}
                 step={0.5}
                 value={String(brushWidth)}
-                className="w-20 accent-white"
+                className="w-20 accent-white max-md:min-h-11"
                 aria-label={t('image_preview.brush_size')}
                 data-testid="attachment-image-erase-brush-size"
                 disabled={busy}

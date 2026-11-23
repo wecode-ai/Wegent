@@ -18,12 +18,14 @@ export function useImageEditSubmission({
   submit,
   replaceImageAttachment,
   releaseDraftAttachment,
+  getDraftAttachment,
 }: {
   enabled: boolean
   scope?: string
   attachmentScope?: string
   upload?: (file: File) => Promise<Attachment>
   releaseDraftAttachment?: (scope: string, attachmentId: number) => void
+  getDraftAttachment?: (attachmentId: number) => Attachment | undefined
   replaceImageAttachment?: (
     scope: string,
     id: number,
@@ -42,6 +44,8 @@ export function useImageEditSubmission({
     if (!enabled || !upload) return null
     return {
       scope,
+      hasDraftAttachment: attachmentId =>
+        getDraftAttachment ? Boolean(getDraftAttachment(attachmentId)) : true,
       saveMarkup:
         attachmentScope && replaceImageAttachment
           ? async (attachmentId, loadFile, edit, signal) => {
@@ -76,9 +80,15 @@ export function useImageEditSubmission({
           }
           return sourceFile
         }
+        const existingDraftAttachment =
+          source.draftAttachmentId === undefined
+            ? undefined
+            : getDraftAttachment?.(source.draftAttachmentId)
+        const reuseExistingSource =
+          edit.kind === 'comment' && existingDraftAttachment?.status === 'ready'
         const attachments = []
         let admitted = false
-        let sourcePrepared = false
+        let sourcePrepared = reuseExistingSource
         let sourceReleased = false
         const releaseSource = () => {
           if (
@@ -95,12 +105,16 @@ export function useImageEditSubmission({
           releaseDraftAttachment(attachmentScope, source.draftAttachmentId)
         }
         if (edit.kind !== 'markup') {
-          attachments.push(
-            prepareAttachmentFile(source.name, source.mimeType, loadImage, upload, () => {
-              sourcePrepared = true
-              releaseSource()
-            })
-          )
+          if (reuseExistingSource) {
+            attachments.push({ ...existingDraftAttachment, image_markup_comments: undefined })
+          } else {
+            attachments.push(
+              prepareAttachmentFile(source.name, source.mimeType, loadImage, upload, () => {
+                sourcePrepared = true
+                releaseSource()
+              })
+            )
+          }
         }
         if (edit.kind === 'markup' || edit.kind === 'erase') {
           const name = edit.kind === 'markup' ? 'annotated-image.png' : 'selection-mask.png'
@@ -133,6 +147,7 @@ export function useImageEditSubmission({
     upload,
     replaceImageAttachment,
     releaseDraftAttachment,
+    getDraftAttachment,
     t,
     locale,
   ])

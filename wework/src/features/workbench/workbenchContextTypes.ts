@@ -297,6 +297,8 @@ export interface WorkbenchContextValue {
       comments: NonNullable<Attachment['image_markup_comments']>,
       signal: AbortSignal
     ) => Promise<Attachment | null>
+    getAttachment: (attachmentId: number) => Attachment | undefined
+    getAttachmentForScope: (scopeKey: string, attachmentId: number) => Attachment | undefined
     removeAttachment: (attachmentId: number) => Promise<void>
     removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
     releaseAttachment: (attachmentId: number) => void

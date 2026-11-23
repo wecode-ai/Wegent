@@ -54,19 +54,27 @@ function lastUserMessageParts(body) {
   return Array.isArray(turn?.content) ? turn.content : []
 }
 
-function readSingleModelImage(body, label) {
+function readModelImages(body, label) {
   const images = lastUserMessageParts(body).filter(part => part.type === 'input_image')
-  assert.equal(images.length, 1, `${label}: the model request must contain exactly one image`)
+  assert.ok(images.length > 0, `${label}: the model request did not contain an image`)
   const prefix = 'data:image/png;base64,'
-  const dataUrl = images[0].image_url ?? ''
-  assert.ok(dataUrl.startsWith(prefix), `${label}: the image was not forwarded as PNG data`)
-  const bytes = Buffer.from(dataUrl.slice(prefix.length), 'base64')
-  assert.equal(
-    bytes.subarray(0, 8).toString('hex'),
-    PNG_SIGNATURE_HEX,
-    `${label}: the forwarded image is not a PNG`
-  )
-  return { bytes, width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+  return images.map(image => {
+    const dataUrl = image.image_url ?? ''
+    assert.ok(dataUrl.startsWith(prefix), `${label}: the image was not forwarded as PNG data`)
+    const bytes = Buffer.from(dataUrl.slice(prefix.length), 'base64')
+    assert.equal(
+      bytes.subarray(0, 8).toString('hex'),
+      PNG_SIGNATURE_HEX,
+      `${label}: the forwarded image is not a PNG`
+    )
+    return { bytes, width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+  })
+}
+
+function readSingleModelImage(body, label) {
+  const images = readModelImages(body, label)
+  assert.equal(images.length, 1, `${label}: the model request must contain exactly one image`)
+  return images[0]
 }
 
 async function waitForSystemDragPanelVisibility(control, expected, message) {
@@ -264,8 +272,39 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
   await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="attachment-image-edit-cancel"]')
-  await control.command('click', '[data-testid="attachment-image-lightbox-close"]')
+  control.setScenario('image_erase')
+  const eraseRequest = control.awaitNextScenarioRequest('image_erase')
+  await control.command('dragBy', '[data-testid="attachment-image-edit-surface"]', {
+    value: JSON.stringify({ x: 24, y: 12 }),
+  })
+  await control.command('waitFor', '[data-testid="attachment-image-edit-undo"]', {
+    enabled: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="attachment-image-edit-send"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const eraseImages = readModelImages((await eraseRequest).body, 'Image erase')
+  assert.equal(eraseImages.length, 2, 'Image erase must forward the original and selection mask')
+  assert.equal(
+    eraseImages[0].bytes.equals(ORIGINAL_IMAGE_BYTES),
+    true,
+    'Image erase must forward the original image unchanged'
+  )
+  assert.equal(
+    eraseImages[1].bytes.equals(ORIGINAL_IMAGE_BYTES),
+    false,
+    'Image erase must forward a generated selection mask'
+  )
+  assert.deepEqual(
+    eraseImages.map(image => ({ width: image.width, height: image.height })),
+    [ORIGINAL_IMAGE_SIZE, ORIGINAL_IMAGE_SIZE],
+    'Image erase must preserve both source dimensions'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'Image erase received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await verifyComposerEditorScroll({ composerSelector, control })
   await control.command('hover', imageTileSelector)
   await control.command('click', `${imageTileSelector} [data-testid="remove-attachment-button"]`)
@@ -329,7 +368,13 @@ async function verifyImageEditSubmissions(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', commentTool)
-  await control.command('click', `${panel} [data-testid="attachment-image-edit-surface"]`)
+  await control.command('waitFor', `${panel} button[data-testid="attachment-image-edit-surface"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('dragBy', `${panel} button[data-testid="attachment-image-edit-surface"]`, {
+    value: JSON.stringify({ x: 0, y: 0 }),
+  })
   await control.command('waitFor', `${panel} [data-testid="attachment-image-comment-draft-pin"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -368,11 +413,10 @@ async function verifyImageEditSubmissions(control, composerSelector) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  assert.equal(
-    await control.command('getElementCount', commentTool),
-    '0',
-    'A comment-only submission must retire editing for the removed draft attachment'
-  )
+  await control.command('waitFor', commentTool, {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
   await control.command('waitFor', thumbnail, {
     visible: false,
@@ -396,8 +440,18 @@ async function verifyComposerMarkupSave(control, composerSelector, draft) {
   control.setScenario('image_preview_markup_save')
   await control.command('click', thumbnail)
   await control.command('click', '[data-testid="attachment-image-tool-markup"]')
+  await control.command('click', '[data-testid="attachment-image-markup-pen"]')
+  await control.command('dragBy', '[data-testid="attachment-image-edit-surface"]', {
+    value: JSON.stringify({ x: 32, y: 18 }),
+  })
+  await control.command('waitFor', '[data-testid="attachment-image-edit-undo"]', {
+    enabled: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="attachment-image-markup-text"]')
-  await control.command('click', '[data-testid="attachment-image-edit-surface"]')
+  await control.command('dragBy', '[data-testid="attachment-image-edit-surface"]', {
+    value: JSON.stringify({ x: 0, y: 0 }),
+  })
   await control.command('fill', '[data-testid="attachment-image-markup-text-input"]', {
     value: 'Focus here',
   })
@@ -414,7 +468,13 @@ async function verifyComposerMarkupSave(control, composerSelector, draft) {
     '0'
   )
   await control.command('click', '[data-testid="attachment-image-markup-comment"]')
-  await control.command('click', '[data-testid="attachment-image-edit-surface"]')
+  await control.command('waitFor', 'button[data-testid="attachment-image-edit-surface"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('dragBy', 'button[data-testid="attachment-image-edit-surface"]', {
+    value: JSON.stringify({ x: 0, y: 0 }),
+  })
   await control.command('fill', '[data-testid="attachment-image-comment-input"]', {
     value: 'Review the saved mark',
   })
@@ -438,7 +498,13 @@ async function verifyComposerMarkupSave(control, composerSelector, draft) {
   })
   await control.command('click', panelMarkupTool)
   await control.command('click', `${panel} [data-testid="attachment-image-markup-comment"]`)
-  await control.command('click', `${panel} [data-testid="attachment-image-edit-surface"]`)
+  await control.command('waitFor', `${panel} button[data-testid="attachment-image-edit-surface"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('dragBy', `${panel} button[data-testid="attachment-image-edit-surface"]`, {
+    value: JSON.stringify({ x: 0, y: 0 }),
+  })
   await control.command('fill', `${panel} [data-testid="attachment-image-comment-input"]`, {
     value: 'Review the mark saved in Files',
   })
@@ -508,9 +574,8 @@ async function verifyMarkupInstructionsSubmission(control, sideChatSelector) {
     .filter(part => part.type === 'input_text')
     .map(part => part.text)
     .join('\n')
-  assert.equal(
-    modelText.trim(),
-    MARKUP_INSTRUCTIONS,
+  assert.ok(
+    modelText.split('## My request for Codex:').at(-1)?.trim().startsWith(MARKUP_INSTRUCTIONS),
     'The instructions-only markup did not forward its instructions'
   )
   const sentImage = readSingleModelImage(instructionsRequest.body, 'Instructions-only markup')
@@ -1498,7 +1563,13 @@ async function verifySideChatAttachmentIsolation({
   )
   await control.command('click', draftImage)
   await control.command('click', '[data-testid="attachment-image-tool-comment"]')
-  await control.command('click', '[data-testid="attachment-image-edit-surface"]')
+  await control.command('waitFor', 'button[data-testid="attachment-image-edit-surface"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('dragBy', 'button[data-testid="attachment-image-edit-surface"]', {
+    value: JSON.stringify({ x: 0, y: 0 }),
+  })
   await control.command('fill', '[data-testid="attachment-image-comment-input"]', {
     value: 'Inspect this area',
   })

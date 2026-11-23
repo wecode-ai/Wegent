@@ -195,6 +195,56 @@ test.each([
   expect(result.current.attachments).toEqual([newer])
 })
 
+test('reuses a ready remote draft attachment for a comment-only image edit', async () => {
+  const existing: Attachment = {
+    ...attachment,
+    id: 77,
+    filename: 'remote-draft.png',
+    status: 'ready',
+    local_path: '/tmp/remote-draft.png',
+    image_markup_comments: [{ x: 10, y: 20, text: 'Existing' }],
+  }
+  const source = new File(['image'], 'remote-draft.png', { type: 'image/png' })
+  const upload = vi.fn()
+  let submitted: Attachment[] = []
+  const submit = vi.fn(
+    async (_message: string, options: { standaloneAttachments?: Attachment[] }) => {
+      submitted = options.standaloneAttachments ?? []
+      return true
+    }
+  )
+  const releaseDraftAttachment = vi.fn()
+  const { result } = renderHook(() =>
+    useImageEditSubmission({
+      enabled: true,
+      scope: 'reuse-remote',
+      attachmentScope: 'reuse-remote-draft',
+      upload,
+      submit,
+      releaseDraftAttachment,
+      getDraftAttachment: id => (id === 77 ? existing : undefined),
+    })
+  )
+
+  await act(async () => {
+    await expect(
+      result.current!.submit(
+        {
+          name: source.name,
+          mimeType: source.type,
+          loadFile: async () => source,
+          draftAttachmentId: 77,
+        },
+        { kind: 'comment', comments: [{ x: 50, y: 50, text: 'New' }] }
+      )
+    ).resolves.toBe(true)
+  })
+
+  expect(submitted).toEqual([expect.objectContaining({ id: 77, image_markup_comments: undefined })])
+  expect(upload).not.toHaveBeenCalled()
+  expect(releaseDraftAttachment).toHaveBeenCalledExactlyOnceWith('reuse-remote-draft', 77)
+})
+
 test('retries the real image-edit source read before releasing its draft', async () => {
   const { resolvePreparingAttachments } = await import('@/lib/runtime-attachments')
   const source = new File(['image'], 'retry-comment.png', { type: 'image/png' })

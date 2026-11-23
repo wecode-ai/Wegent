@@ -10,7 +10,7 @@ import type { ImageComment, ImagePoint } from './imageEdit'
 export type ImageCommentDraft = ImageComment & { index?: number }
 
 const pinClass =
-  'absolute z-[1] grid size-7 -translate-y-full place-items-center rounded-full rounded-bl-sm bg-blue-600 text-xs font-medium text-white ring-1 ring-white'
+  'absolute z-[1] grid size-7 -translate-y-full place-items-center rounded-full rounded-bl-sm bg-blue-600 text-xs font-medium text-white ring-1 ring-white max-md:size-11'
 
 function pointStyle(point: ImagePoint) {
   return { left: `${point.x}%`, top: `${point.y}%` }
@@ -140,7 +140,7 @@ export function ImageCommentSurface({
               <Input
                 autoFocus
                 data-testid="attachment-image-comment-input"
-                className="min-w-0 flex-1 bg-transparent px-2 text-sm outline-none"
+                className="min-w-0 flex-1 bg-transparent px-2 text-sm outline-none max-md:min-h-11"
                 aria-label={t('image_preview.comment')}
                 placeholder={t('image_preview.comment_placeholder')}
                 value={draft.text}
@@ -152,7 +152,7 @@ export function ImageCommentSurface({
                 autoFocus
                 rows={3}
                 data-testid="attachment-image-comment-input"
-                className="w-full resize-none bg-transparent px-2 py-1 text-sm outline-none"
+                className="w-full resize-none bg-transparent px-2 py-1 text-sm outline-none max-md:min-h-11"
                 aria-label={t('image_preview.edit_comment', { number: editingIndex + 1 })}
                 value={draft.text}
                 disabled={busy}
@@ -171,7 +171,7 @@ export function ImageCommentSurface({
                   <Button
                     type="button"
                     data-testid="attachment-image-comment-delete"
-                    className="grid size-7 place-items-center rounded-full text-muted-foreground hover:bg-muted"
+                    className="grid size-7 place-items-center rounded-full text-muted-foreground hover:bg-muted max-md:size-11"
                     aria-label={t('image_preview.delete')}
                     disabled={busy}
                     onClick={() => onDelete(editingIndex)}
@@ -181,7 +181,7 @@ export function ImageCommentSurface({
                   <Button
                     type="button"
                     data-testid="attachment-image-comment-cancel"
-                    className="ml-auto rounded-full px-2 py-1 text-sm hover:bg-muted"
+                    className="ml-auto min-h-7 rounded-full px-2 py-1 text-sm hover:bg-muted max-md:min-h-11 max-md:min-w-11"
                     disabled={busy}
                     onClick={() => onDraft(null)}
                   >
@@ -192,7 +192,7 @@ export function ImageCommentSurface({
               <ControlButton
                 type="submit"
                 variant="primary"
-                className="min-h-7 rounded-full px-2 text-sm disabled:opacity-40"
+                className="min-h-7 rounded-full px-2 text-sm disabled:opacity-40 max-md:min-h-11 max-md:min-w-11"
                 data-testid="attachment-image-comment-save"
                 disabled={busy || !draft.text.trim()}
               >

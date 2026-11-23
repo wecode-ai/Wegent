@@ -28,13 +28,14 @@ import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { AttachmentPreviewContext } from '../AttachmentPreviewContext'
-import { ImageEditContext, useScopedImageEditor, type SavedImageMarkup } from './ImageEditContext'
+import { ImageEditContext, useScopedImageEditor } from './ImageEditContext'
 import { useImagePreviewEditor } from './ImagePreviewEditor'
+import { publishSavedImageMarkup } from './savedImageMarkupStore'
 import type { ImageEdit } from './imageEdit'
 
 const zoomLevels = [25, 50, 100, 150, 200]
 const buttonClass =
-  'flex min-h-9 shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 text-sm shadow-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 disabled:opacity-50 max-md:min-h-11'
+  'flex min-h-9 shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 text-sm shadow-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 disabled:opacity-50 max-md:min-h-11 max-md:min-w-11'
 
 type DesktopImagePreviewProps = Omit<AttachmentImageLightboxProps<Attachment>, 'attachment'> & {
   attachment: Pick<Attachment, 'mime_type'> &
@@ -50,8 +51,9 @@ export function DesktopImagePreview(
 
 interface InlineImageEditorProps {
   editorScope?: string
-  onMarkupSaved?: (saved: SavedImageMarkup) => void
-  onComposerAttachmentConsumed?: () => void
+  /** Stable composer attachment identity that shares saved markup between previews. */
+  sourceDraftAttachmentId?: number
+  onEditCompleted?: () => void
 }
 
 export function InlineDesktopImagePreview(
@@ -63,8 +65,8 @@ export function InlineDesktopImagePreview(
 function ImagePreviewDialog({
   inline = false,
   editorScope,
-  onMarkupSaved,
-  onComposerAttachmentConsumed,
+  sourceDraftAttachmentId,
+  onEditCompleted,
   attachment,
   fromComposer,
   url,
@@ -86,8 +88,14 @@ function ImagePreviewDialog({
   const openPanel = useContext(AttachmentPreviewContext)
   const submissionContext = useContext(ImageEditContext)
   const inlineEditor = useScopedImageEditor(inline ? editorScope : undefined)
-  const editSubmission = inline ? inlineEditor : submissionContext
   const composerAttachmentId = fromComposer ? attachment.id : undefined
+  const availableEditor = inline ? inlineEditor : submissionContext
+  const editSubmission =
+    availableEditor &&
+    (composerAttachmentId === undefined ||
+      availableEditor.hasDraftAttachment?.(composerAttachmentId) !== false)
+      ? availableEditor
+      : null
   const [zoom, setZoom] = useState<number | null>(null)
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
   const viewport = useRef<HTMLDivElement>(null)
@@ -180,11 +188,12 @@ function ImagePreviewDialog({
           )
       if (request.current !== submission) return
       if (result) {
+        const markupSourceId = sourceDraftAttachmentId ?? composerAttachmentId
+        if (typeof result !== 'boolean' && markupSourceId !== undefined)
+          publishSavedImageMarkup(markupSourceId, result)
         if (inline) {
-          if (typeof result !== 'boolean') onMarkupSaved?.(result)
-          if (composerAttachmentId !== undefined && edit.kind === 'comment')
-            onComposerAttachmentConsumed?.()
           resetEditor()
+          onEditCompleted?.()
         } else onClose?.()
       } else setError(errorMessage)
     } catch {

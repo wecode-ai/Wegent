@@ -827,6 +827,7 @@ export function TemporaryChatPanel({
     submit: send,
     replaceImageAttachment: attachmentSelection.replaceImageAttachmentForScope,
     releaseDraftAttachment: attachmentSelection.releaseAttachmentForScope,
+    getDraftAttachment: attachmentSelection.getAttachment,
   })
   const pendingRequest =
     focusedRequest === undefined

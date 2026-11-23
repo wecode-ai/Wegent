@@ -863,6 +863,8 @@ export function OwnedWorkbenchProvider({
     addExistingAttachment: attachmentSelection.addExistingAttachment,
     addExistingAttachmentForScope: attachmentSelection.addExistingAttachmentForScope,
     replaceImageAttachmentForScope: attachmentSelection.replaceImageAttachmentForScope,
+    getAttachment: attachmentSelection.getAttachment,
+    getAttachmentForScope: attachmentSelection.getAttachmentForScope,
     removeAttachment: attachmentSelection.removeAttachment,
     removeAttachmentForScope: attachmentSelection.removeAttachmentForScope,
     releaseAttachment: attachmentSelection.releaseAttachment,

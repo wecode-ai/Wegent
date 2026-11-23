@@ -78,7 +78,13 @@ test('resolves the live image editor and retains saved preview state across File
       editorScope: 'nested-side-chat',
     },
   }
-  const editor = { submit, saveMarkup, scope: 'nested-side-chat' }
+  let draftPresent = true
+  const editor = {
+    submit,
+    saveMarkup,
+    scope: 'nested-side-chat',
+    hasDraftAttachment: () => draftPresent,
+  }
   const panel = (actions: typeof editor | null = editor) => (
     <ImageEditProvider actions={actions}>
       <button type="button" data-testid="composer-action">
@@ -107,8 +113,13 @@ test('resolves the live image editor and retains saved preview state across File
     fireEvent.change(screen.getByTestId('attachment-image-comment-input'), {
       target: { value: 'Keep with the draft' },
     })
-    fireEvent.click(screen.getByTestId('attachment-image-edit-save'))
+    const save = screen.getByTestId('attachment-image-edit-save')
+    save.focus()
+    fireEvent.click(save)
     expect(await screen.findByRole('region', { name: 'marked.png' })).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-attachment-preview-panel')).toHaveFocus()
+    )
     expect(saveMarkup).toHaveBeenCalledExactlyOnceWith(
       -1,
       expect.any(Function),
@@ -126,10 +137,12 @@ test('resolves the live image editor and retains saved preview state across File
       'Keep with the draft'
     )
     fireEvent.click(screen.getByTestId('attachment-image-edit-cancel'))
-    view.rerender(panel(null))
+    draftPresent = false
+    view.rerender(panel())
     await waitFor(() =>
       expect(screen.queryByTestId('attachment-image-tool-background')).not.toBeInTheDocument()
     )
+    draftPresent = true
     view.rerender(panel())
     expect(await screen.findByTestId('attachment-image-tool-background')).toBeInTheDocument()
     expect(screen.getByTestId('attachment-image-side-viewer')).toBe(savedViewer)
@@ -143,6 +156,8 @@ test('resolves the live image editor and retains saved preview state across File
     fireEvent.click(screen.getByTestId('attachment-image-comment-save'))
     fireEvent.click(screen.getByTestId('attachment-image-edit-send'))
     expect(submit).toHaveBeenCalledTimes(2)
+    draftPresent = false
+    view.rerender(panel())
     await waitFor(() =>
       expect(screen.queryByTestId('attachment-image-tool-background')).not.toBeInTheDocument()
     )

@@ -7,36 +7,13 @@ import type {
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Download } from 'lucide-react'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { InlineDesktopImagePreview } from '@/components/chat/image-preview/DesktopImagePreview'
-import {
-  useScopedImageEditor,
-  type SavedImageMarkup,
-} from '@/components/chat/image-preview/ImageEditContext'
+import { useScopedImageEditor } from '@/components/chat/image-preview/ImageEditContext'
+import { useSavedImageMarkup } from '@/components/chat/image-preview/savedImageMarkupStore'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { workspaceFilePreviewKind } from './workspaceFileTypes'
-
-const consumedImageSources = new WeakSet<WorkspaceAttachmentPreviewSource>()
-const savedImageBySource = new WeakMap<WorkspaceAttachmentPreviewSource, SavedImageMarkup>()
-const savedImageListeners = new WeakMap<WorkspaceAttachmentPreviewSource, Set<() => void>>()
-
-function subscribeSavedImage(source: WorkspaceAttachmentPreviewSource, listener: () => void) {
-  let listeners = savedImageListeners.get(source)
-  if (!listeners) {
-    listeners = new Set()
-    savedImageListeners.set(source, listeners)
-  }
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-    if (listeners.size === 0) savedImageListeners.delete(source)
-  }
-}
-
-function storeSavedImage(source: WorkspaceAttachmentPreviewSource, saved: SavedImageMarkup) {
-  savedImageBySource.set(source, saved)
-  for (const listener of savedImageListeners.get(source) ?? []) listener()
-}
 
 export function WorkspaceAttachmentPreview({
   source,
@@ -45,17 +22,15 @@ export function WorkspaceAttachmentPreview({
 }) {
   const { t } = useTranslation('common')
   const [revision, setRevision] = useState(0)
+  const viewerContainer = useRef<HTMLElement>(null)
+  const [focusRequest, setFocusRequest] = useState(0)
+  useFocusRequest(viewerContainer, focusRequest, {
+    enabled: focusRequest > 0,
+    preventScroll: true,
+  })
   const [failedImage, setFailedImage] = useState<File | null>(null)
-  const [, setConsumedRevision] = useState(0)
-  const subscribeSaved = useCallback(
-    (listener: () => void) => subscribeSavedImage(source, listener),
-    [source]
-  )
-  const saved = useSyncExternalStore(
-    subscribeSaved,
-    () => savedImageBySource.get(source) ?? null,
-    () => null
-  )
+  const originalDraftAttachmentId = source.image?.draftAttachmentId
+  const saved = useSavedImageMarkup(originalDraftAttachmentId)
   const resource = useMemo(
     () =>
       createAsyncResource(
@@ -85,7 +60,11 @@ export function WorkspaceAttachmentPreview({
   const file = snapshot.data?.file ?? null
   const draftAttachmentId = saved?.attachmentId ?? source.image?.draftAttachmentId
   const scopedEditor = useScopedImageEditor(source.image?.editorScope)
-  const editor = consumedImageSources.has(source) ? null : scopedEditor
+  const editor =
+    draftAttachmentId === undefined ||
+    scopedEditor?.hasDraftAttachment?.(draftAttachmentId) !== false
+      ? scopedEditor
+      : null
   const text = snapshot.data?.text ?? null
   const error =
     snapshot.status === 'error'
@@ -98,6 +77,8 @@ export function WorkspaceAttachmentPreview({
 
   return (
     <section
+      ref={viewerContainer}
+      tabIndex={-1}
       data-testid="composer-attachment-preview-panel"
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
     >
@@ -109,17 +90,11 @@ export function WorkspaceAttachmentPreview({
             image_markup_comments: saved?.comments ?? source.image?.comments ?? [],
           }}
           fromComposer={draftAttachmentId !== undefined}
+          sourceDraftAttachmentId={originalDraftAttachmentId}
           filename={file.name}
           localPath={saved ? null : source.image?.localPath}
           editorScope={editor?.scope}
-          onMarkupSaved={result => {
-            const savedResult = { ...result, source }
-            storeSavedImage(source, savedResult)
-          }}
-          onComposerAttachmentConsumed={() => {
-            consumedImageSources.add(source)
-            setConsumedRevision(value => value + 1)
-          }}
+          onEditCompleted={() => setFocusRequest(value => value + 1)}
           url={snapshot.data.imageUrl}
           loading={false}
           loadFile={async () => file}

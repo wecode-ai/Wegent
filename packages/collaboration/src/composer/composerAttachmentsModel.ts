@@ -500,6 +500,11 @@ export function createComposerAttachmentsModel(
     discardAttachments(targetScopeKey, attachmentsForScope(targetScopeKey, attachmentId))
   }
 
+  const getAttachmentForScope = (targetScopeKey: string, attachmentId: number) =>
+    (stateByScope[targetScopeKey] ?? emptyAttachmentState()).attachments.find(
+      item => item.id === attachmentId
+    )
+
   const removeAttachmentForScope = async (targetScopeKey: string, attachmentId: number) => {
     const attachmentsToRemove = attachmentsForScope(targetScopeKey, attachmentId)
     discardAttachments(targetScopeKey, attachmentsToRemove)
@@ -560,6 +565,7 @@ export function createComposerAttachmentsModel(
       attachmentSourcesByScope.get(scopeKey)?.get(attachmentId)?.file
     const removeAttachment = (attachmentId: number) =>
       removeAttachmentForScope(scopeKey, attachmentId)
+    const getAttachment = (attachmentId: number) => getAttachmentForScope(scopeKey, attachmentId)
     const releaseAttachment = (attachmentId: number) =>
       releaseAttachmentForScope(scopeKey, attachmentId)
     const resetAttachments = () => resetAttachmentsForScope(scopeKey)
@@ -585,6 +591,8 @@ export function createComposerAttachmentsModel(
       addExistingSourceAttachment,
       addExistingAttachmentForScope,
       replaceImageAttachmentForScope,
+      getAttachment,
+      getAttachmentForScope,
       removeAttachment,
       removeAttachmentForScope,
       releaseAttachment,

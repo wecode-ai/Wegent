@@ -88,6 +88,8 @@ export function DesktopWorkbenchPaneView({
     submit: model.submitPaneInput,
     replaceImageAttachment: model.projectChat.replaceImageAttachmentForScope,
     releaseDraftAttachment: model.projectChat.releaseAttachmentForScope,
+    getDraftAttachment: attachmentId =>
+      model.projectChat.getAttachmentForScope(model.paneSession.scopeKey, attachmentId),
   })
   const {
     workbenchVisible,
