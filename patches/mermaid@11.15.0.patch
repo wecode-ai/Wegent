@@ -1,5 +1,67 @@
+diff --git a/dist/chunks/mermaid.core/chunk-5ZQYHXKU.mjs b/dist/chunks/mermaid.core/chunk-5ZQYHXKU.mjs
+index f45cff617716f8b503dfa520016a22b1cfe4b224..bde3361f9ef1fa71111465c746564c16b23a5487 100644
+--- a/dist/chunks/mermaid.core/chunk-5ZQYHXKU.mjs
++++ b/dist/chunks/mermaid.core/chunk-5ZQYHXKU.mjs
+@@ -1,6 +1,7 @@
+ import {
+   assignWithDepth_default,
+   common_default,
++  getDiagramMeasurementDocument,
+   detectType,
+   directiveRegex,
+   sanitizeDirective
+@@ -414,7 +415,7 @@ var calculateTextDimensions = memoize(
+     const fontFamilies = ["sans-serif", fontFamily];
+     const lines = text.split(common_default.lineBreakRegex);
+     const dims = [];
+-    const body = select("body");
++    const body = select(getDiagramMeasurementDocument().body);
+     if (!body.remove) {
+       return { width: 0, height: 0, lineHeight: 0 };
+     }
+diff --git a/dist/chunks/mermaid.core/chunk-CSCIHK7Q.mjs b/dist/chunks/mermaid.core/chunk-CSCIHK7Q.mjs
+index e63b9d05eaf145de7abb1898586645cc3686df34..daded9dd51fe034b79d03f10ad4df883c14a5328 100644
+--- a/dist/chunks/mermaid.core/chunk-CSCIHK7Q.mjs
++++ b/dist/chunks/mermaid.core/chunk-CSCIHK7Q.mjs
+@@ -5011,15 +5011,24 @@ var processSet = /* @__PURE__ */ __name((input) => {
+ var isMathMLSupported = /* @__PURE__ */ __name(() => window.MathMLElement !== void 0, "isMathMLSupported");
+ var katexRegex = /\$\$(.*)\$\$/g;
+ var hasKatex = /* @__PURE__ */ __name((text) => (text.match(katexRegex)?.length ?? 0) > 0, "hasKatex");
++var diagramMeasurementDocument;
++function getDiagramMeasurementDocument() {
++  return diagramMeasurementDocument ?? document;
++}
++function setDiagramMeasurementDocument(nextDocument) {
++  const previous = diagramMeasurementDocument;
++  diagramMeasurementDocument = nextDocument;
++  return () => { diagramMeasurementDocument = previous; };
++}
+ var calculateMathMLDimensions = /* @__PURE__ */ __name(async (text, config2) => {
+-  const divElem = document.createElement("div");
++  const measurementDocument = getDiagramMeasurementDocument();
++  const divElem = measurementDocument.createElement("div");
+   divElem.innerHTML = await renderKatexSanitized(text, config2);
+   divElem.id = "katex-temp";
+   divElem.style.visibility = "hidden";
+   divElem.style.position = "absolute";
+   divElem.style.top = "0";
+-  const body = document.querySelector("body");
+-  body?.insertAdjacentElement("beforeend", divElem);
++  measurementDocument.body?.append(divElem);
+   const dim = { width: divElem.clientWidth, height: divElem.clientHeight };
+   divElem.remove();
+   return dim;
+@@ -5349,6 +5358,8 @@ export {
+   parseGenericTypes,
+   hasKatex,
+   calculateMathMLDimensions,
++  getDiagramMeasurementDocument,
++  setDiagramMeasurementDocument,
+   renderKatexSanitized,
+   common_default,
+   frontMatterRegex,
 diff --git a/dist/chunks/mermaid.core/chunk-KSCS5N6A.mjs b/dist/chunks/mermaid.core/chunk-KSCS5N6A.mjs
-index f707220..b20e51b 100644
+index f7072201caae3853dc7e950cb8dfdc94607e04fe..b20e51bc26674e2545926462e386651cd004a956 100644
 --- a/dist/chunks/mermaid.core/chunk-KSCS5N6A.mjs
 +++ b/dist/chunks/mermaid.core/chunk-KSCS5N6A.mjs
 @@ -111,8 +111,9 @@ var addEdgeMarker = /* @__PURE__ */ __name((svgPath, position, arrowType, url, i
@@ -15,7 +77,7 @@ index f707220..b20e51b 100644
          const coloredMarker = originalMarker.cloneNode(true);
          coloredMarker.id = coloredMarkerId;
 diff --git a/dist/chunks/mermaid.core/chunk-LZXEDZCA.mjs b/dist/chunks/mermaid.core/chunk-LZXEDZCA.mjs
-index a1b799a..e07cf5e 100644
+index a1b799a9722f2eb677a6d194e5eb1fde67cb45ff..e07cf5ec029ad42399969bbf3cce8dc30980cdf0 100644
 --- a/dist/chunks/mermaid.core/chunk-LZXEDZCA.mjs
 +++ b/dist/chunks/mermaid.core/chunk-LZXEDZCA.mjs
 @@ -58,6 +58,27 @@ var registerDefaultLayoutLoaders = /* @__PURE__ */ __name(() => {
@@ -55,3 +117,33 @@ index a1b799a..e07cf5e 100644
      algorithm: layoutDefinition.algorithm
    });
  }, "render");
+diff --git a/dist/mermaid.core.mjs b/dist/mermaid.core.mjs
+index 207098ff5f42315d21cd94a3db5b3ed09f1f662d..8476dec6c66a895f4d66ad4026419fa0a06a47bb 100644
+--- a/dist/mermaid.core.mjs
++++ b/dist/mermaid.core.mjs
+@@ -46,6 +46,7 @@ import {
+   sanitizeCss,
+   saveConfigFromInitialize,
+   setConfig,
++  setDiagramMeasurementDocument,
+   setSiteConfig,
+   styles_default,
+   themes_default,
+@@ -1200,6 +1201,8 @@ var render = /* @__PURE__ */ __name(async function(id33, text, svgContainingElem
+   const style1 = document.createElement("style");
+   style1.innerHTML = rules;
+   svg.insertBefore(style1, firstChild);
++  // Shared SVG and MathML probes must use the same document as the diagram.
++  const restoreMeasurementDocument = setDiagramMeasurementDocument(svg.ownerDocument);
+   try {
+     await diag.renderer.draw(text, id33, "11.15.0", diag);
+   } catch (e) {
+@@ -1209,6 +1212,8 @@ var render = /* @__PURE__ */ __name(async function(id33, text, svgContainingElem
+       errorRenderer_default.draw(text, id33, "11.15.0");
+     }
+     throw e;
++  } finally {
++    restoreMeasurementDocument();
+   }
+   const svgNode = root.select(`${enclosingDivID_selector} svg`);
+   const a11yTitle = diag.db.getAccTitle?.();

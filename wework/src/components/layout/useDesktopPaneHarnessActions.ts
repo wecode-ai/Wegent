@@ -52,7 +52,7 @@ interface Input {
   currentRuntimeTask: RuntimeTaskAddress | null
   currentProject: WorkbenchPaneIdentity['currentProject']
   paneModelChat: ProjectChatControls
-  paneInput: string
+  getPaneInput: () => string
   setPaneInput: ReturnType<typeof useWorkbenchPaneSession>['setInput']
   newChatRuntime: 'codex' | LocalHarnessId
   localHarnessModelKeys: Partial<Record<LocalHarnessId, string | null>>
@@ -91,7 +91,7 @@ export function useDesktopPaneHarnessActions({
   currentRuntimeTask,
   currentProject,
   paneModelChat,
-  paneInput,
+  getPaneInput,
   setPaneInput,
   newChatRuntime,
   localHarnessModelKeys,
@@ -472,7 +472,7 @@ export function useDesktopPaneHarnessActions({
       })
     }
 
-    const prompt = (value ?? paneInput).trim()
+    const prompt = (value ?? getPaneInput()).trim()
     if (!prompt || centralHarnessStarting) return
     if (!selectedHarnessAvailable || !centralHarnessCwd || !selectedHarnessPreference) {
       const harnessName = newChatRuntime === 'codex' ? '' : localHarnessLabel(newChatRuntime)

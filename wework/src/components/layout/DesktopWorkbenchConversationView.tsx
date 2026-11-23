@@ -15,7 +15,7 @@ import { localHarnessLabel } from '@/lib/local-harness'
 import { cn } from '@/lib/utils'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ChevronRight, Loader2, MessageCircle } from 'lucide-react'
-import { BufferedChatInput } from './BufferedChatInput'
+import { ScopedDraftChatInput } from './BufferedChatInput'
 import { CentralHarnessTerminal } from './CentralHarnessTerminal'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DESKTOP_MESSAGE_LIST_CLASS, DESKTOP_MESSAGE_LIST_WIDTH_CLASS } from './desktopChatLayout'
@@ -506,13 +506,13 @@ export function DesktopWorkbenchConversationView({
                                       }
                                     />
                                   )}
-                                  <BufferedChatInput
+                                  <ScopedDraftChatInput
                                     alwaysShowComposerToolbar={alwaysShowComposerToolbar}
                                     autoFocus
                                     insertion={conversationSelectionInsertion}
-                                    value={paneSession.input}
-                                    replaceDraftKey={paneSession.replaceDraftKey}
-                                    onChange={paneSession.setInput}
+                                    draftStore={paneSession.draftStore}
+                                    draftScope={paneSession.scopeKey}
+                                    writeDraft={paneSession.setInputForScope}
                                     onDraftEdit={paneSession.onDraftEdit}
                                     onSubmit={submitPaneInput}
                                     disabled={composerDisabled || !paneVisible || !workbenchVisible}
@@ -761,13 +761,13 @@ export function DesktopWorkbenchConversationView({
                       hideAvailableUpdates
                       className="mb-3"
                     />
-                    <BufferedChatInput
+                    <ScopedDraftChatInput
                       alwaysShowComposerToolbar={alwaysShowComposerToolbar}
                       showProjectWorkBar={presentation !== 'popout'}
                       autoFocus
-                      value={paneSession.input}
-                      replaceDraftKey={paneSession.replaceDraftKey}
-                      onChange={paneSession.setInput}
+                      draftStore={paneSession.draftStore}
+                      draftScope={paneSession.scopeKey}
+                      writeDraft={paneSession.setInputForScope}
                       onDraftEdit={() => {
                         paneSession.onDraftEdit()
                         setCentralHarnessError(null)

@@ -13,7 +13,7 @@ patchedDependencies:
   '@file-viewer/renderer-drawing@2.1.26': 96f8d20757dde512edb9d888a64aee9a18ab063435284f5e2cba69ef422f1e0c
   '@ui-sdk/core@0.1.0-beta.10': 094ff83e027272062f9ab53ba87a26cb18a96a9eb1e5dee80861f6576d1bf8e7
   '@xterm/xterm@6.0.0': b38db80fd1709677fc969ffc8691a371d0fa4131a20c4a6f46968c2279918cdb
-  mermaid@11.15.0: 2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3
+  mermaid@11.15.0: e233c2915fa45c5dd457e59d242fa49675daf47f12a982a44ccb4093da65aea1
 
 importers:
 
@@ -309,7 +309,7 @@ importers:
         version: 2.0.0
       mermaid:
         specifier: ^11.4.0
-        version: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+        version: 11.15.0(patch_hash=e233c2915fa45c5dd457e59d242fa49675daf47f12a982a44ccb4093da65aea1)
       micromark-extension-gfm-footnote:
         specifier: 2.1.0
         version: 2.1.0
@@ -548,7 +548,7 @@ importers:
         version: 1.17.0(react@19.2.7)
       mermaid:
         specifier: 11.15.0
-        version: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+        version: 11.15.0(patch_hash=e233c2915fa45c5dd457e59d242fa49675daf47f12a982a44ccb4093da65aea1)
       plantuml-encoder:
         specifier: 1.4.0
         version: 1.4.0
@@ -799,7 +799,7 @@ importers:
         version: 1.5.0
       mermaid:
         specifier: 11.15.0
-        version: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+        version: 11.15.0(patch_hash=e233c2915fa45c5dd457e59d242fa49675daf47f12a982a44ccb4093da65aea1)
       plantuml-encoder:
         specifier: 1.4.0
         version: 1.4.0
@@ -11174,7 +11174,7 @@ snapshots:
     dependencies:
       '@excalidraw/markdown-to-text': 0.1.2
       '@mermaid-js/parser': 0.6.3
-      mermaid: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+      mermaid: 11.15.0(patch_hash=e233c2915fa45c5dd457e59d242fa49675daf47f12a982a44ccb4093da65aea1)
       nanoid: 4.0.2
 
   '@excalidraw/random-username@1.1.0': {}
@@ -11304,7 +11304,7 @@ snapshots:
     dependencies:
       '@file-viewer/core': 2.1.26
       '@panzoom/panzoom': 4.6.2
-      mermaid: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+      mermaid: 11.15.0(patch_hash=e233c2915fa45c5dd457e59d242fa49675daf47f12a982a44ccb4093da65aea1)
       plantuml-encoder: 1.4.0
       roughjs: 4.6.6
 
@@ -11401,7 +11401,7 @@ snapshots:
       diff2html: 3.4.56
       highlight.js: 11.11.1
       marked: 18.0.6
-      mermaid: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+      mermaid: 11.15.0(patch_hash=e233c2915fa45c5dd457e59d242fa49675daf47f12a982a44ccb4093da65aea1)
       pako: 2.1.0
 
   '@file-viewer/renderer-typst@2.1.26':
@@ -18195,7 +18195,7 @@ snapshots:
 
   merge2@1.4.1: {}
 
-  mermaid@11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3):
+  mermaid@11.15.0(patch_hash=e233c2915fa45c5dd457e59d242fa49675daf47f12a982a44ccb4093da65aea1):
     dependencies:
       '@braintree/sanitize-url': 7.1.2
       '@iconify/utils': 3.1.3
@@ -20075,7 +20075,7 @@ snapshots:
       hast-util-to-jsx-runtime: 2.3.6
       html-url-attributes: 3.0.1
       marked: 17.0.6
-      mermaid: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+      mermaid: 11.15.0(patch_hash=e233c2915fa45c5dd457e59d242fa49675daf47f12a982a44ccb4093da65aea1)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
       rehype-harden: 1.1.8

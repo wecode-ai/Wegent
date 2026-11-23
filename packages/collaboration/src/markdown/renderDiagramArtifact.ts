@@ -99,27 +99,40 @@ function artifactFromSvg(svg: SVGSVGElement): DiagramArtifact {
   }
 }
 
+function sandboxedDocumentMarkup(markup: string): string {
+  const iframe = new DOMParser().parseFromString(markup, 'text/html').querySelector('iframe')
+  const source = iframe?.getAttribute('src')
+  const prefix = 'data:text/html;charset=UTF-8;base64,'
+  if (!source?.startsWith(prefix)) throw new Error('Missing sandboxed diagram document')
+
+  const bytes = Uint8Array.from(atob(source.slice(prefix.length)), character =>
+    character.charCodeAt(0)
+  )
+  return new TextDecoder().decode(bytes)
+}
+
 async function compileMermaid(
   document: Document,
   request: DiagramRequest
 ): Promise<DiagramArtifact> {
   const { default: mermaid } = await import('mermaid')
+  // Mermaid's SVG measurements must not flush layout for the application document.
   mermaid.initialize({
     startOnLoad: false,
-    securityLevel: 'strict',
+    securityLevel: 'sandbox',
     suppressErrorRendering: true,
     theme: request.theme === 'dark' ? 'dark' : 'default',
   })
   const container = document.createElement('div')
   container.inert = true
   container.setAttribute('aria-hidden', 'true')
-  container.setAttribute('data-file-viewer-mermaid-isolate', '')
   container.style.cssText =
-    'position:fixed;inset:0;visibility:hidden;pointer-events:none;contain:layout style paint'
+    'position:fixed;inset:0;visibility:hidden;pointer-events:none;contain:strict'
   document.body.append(container)
   try {
     const result = await mermaid.render(`conversation-diagram-${nextId++}`, request.code, container)
-    return artifactFromSvg(sanitizeDiagramSvg(document, result.svg, true))
+    const markup = sandboxedDocumentMarkup(result.svg)
+    return artifactFromSvg(sanitizeDiagramSvg(document, markup, true))
   } finally {
     container.remove()
   }

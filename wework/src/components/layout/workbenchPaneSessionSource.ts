@@ -165,9 +165,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     get mounted() {
       return isActive()
     },
-    get inputRevision() {
-      return state.inputRevision
-    },
+    inputRevision: 0,
     get activeInputScope() {
       return currentInputScope()
     },
@@ -615,8 +613,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       external = next
       accountId ??= next.workbench.state.user?.id
       listeners.add(listener)
-      if (previousInputScope !== currentInputScope())
-        state = { ...state, inputRevision: state.inputRevision + 1 }
+      if (previousInputScope !== currentInputScope()) live.inputRevision += 1
       const chat = next.workbench.projectChat
       const inputScope = currentInputScope()
       const signature = [
@@ -626,8 +623,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
         next.currentRuntimeTask?.workspacePath,
         next.workbench.state.runtimeWork,
         inputScope,
-        chat.inputByScope[inputScope],
-        chat.getInputRevisionForScope(inputScope),
+        chat.draftStore,
+        chat.setInputForScope,
         chat.composerErrorByScope?.[inputScope],
         chat.composerError,
         chat.goalDraftActiveByScope?.[inputScope],

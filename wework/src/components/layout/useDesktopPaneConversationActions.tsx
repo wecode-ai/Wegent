@@ -67,6 +67,7 @@ export function useDesktopPaneConversationActions({
     },
     [runtimeWorkApi, t]
   )
+  const { getInput } = paneSession
   const sendPaneInputWithContext = useCallback(
     async (
       value?: string,
@@ -83,7 +84,7 @@ export function useDesktopPaneConversationActions({
       const sourcePaneKey = paneKey
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
-      const description = value ?? paneSession.input
+      const description = value ?? getInput()
       const draftEditVersion = getDraftEditVersion()
       const cloudSubmission = prepareSubmission(description)
       const discardTransfers: Array<() => void> = []
@@ -118,7 +119,7 @@ export function useDesktopPaneConversationActions({
       paneKey,
       currentRuntimeTask,
       pendingSupervisorConfig,
-      paneSession.input,
+      getInput,
       getDraftEditVersion,
       prepareSubmission,
       sendPaneInput,

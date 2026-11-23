@@ -43,7 +43,7 @@ export interface WeworkCollaborationPlatformProps {
   workspaceActive?: boolean
   homeDraft: Pick<
     WorkbenchContextValue['projectChat'],
-    'inputByScope' | 'setInputForScope' | 'getInputRevisionForScope' | 'personalHomeTaskDraftStore'
+    'draftStore' | 'setInputForScope' | 'personalHomeTaskDraftStore'
   >
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
