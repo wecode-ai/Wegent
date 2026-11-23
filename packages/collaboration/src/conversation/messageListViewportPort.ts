@@ -94,7 +94,25 @@ export function createMessageListViewportPort() {
   }
   return {
     chunkLayout,
-    bind(node: HTMLDivElement, next: ViewportInput) {
+    attach(node: HTMLDivElement) {
+      const binding = Symbol('message-list-viewport')
+      lease = binding
+      element = node
+      return () => {
+        if (lease !== binding) return
+        lease = null
+        queueMicrotask(() => {
+          if (lease !== null) return
+          persist()
+          element = null
+          input = null
+          pending.clear()
+        })
+      }
+    },
+    update(next: ViewportInput) {
+      const node = element
+      if (!node || !attached()) return
       const layoutChanged =
         !input ||
         input.scope !== next.scope ||
@@ -115,9 +133,6 @@ export function createMessageListViewportPort() {
         measurements = null
         uncacheable.clear()
       }
-      const binding = Symbol('message-list-viewport')
-      lease = binding
-      element = node
       input = next
       if (!next.virtual || next.ready) {
         const chunks = [...(pending.get(next.scope) ?? [])]
@@ -155,19 +170,6 @@ export function createMessageListViewportPort() {
           })
         }
         next.onLayoutChange?.()
-      }
-      return () => {
-        if (lease !== binding) return
-        lease = null
-        queueMicrotask(() => {
-          if (lease !== null) return
-          // Replaced refs share the port. Only a real detach saves the last
-          // committed snapshot; a key transition saves it in bind().
-          persist()
-          element = null
-          input = null
-          pending.clear()
-        })
       }
     },
   }

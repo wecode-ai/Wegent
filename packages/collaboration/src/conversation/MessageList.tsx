@@ -6,7 +6,7 @@ import {
   shouldHideFailedAssistantContent,
   getDisplayProcessingBlocks,
 } from './assistantMessagePresentation'
-import { Fragment, memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, memo, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useDocumentEvent, useWindowEvent, useElementTypography } from '../dom-events'
 import {
   createMessageTextSelectionState,
@@ -475,16 +475,27 @@ export const MessageList = memo(function MessageList({
   })
   useWindowEvent('scroll', () => selectionState.update(true), {
     capture: true,
-    enabled: observeSelection,
+    enabled: observeSelection && (isTextSelectionActive || textSelection !== null),
   })
   useWindowEvent('blur', () => selectionState.update(), {
     enabled: observeSelection,
   })
-  const attachList = (element: HTMLDivElement | null) => {
-    listRef.current = element
-    if (!element) return
-    const release = selectionState.attach(element)
-    const releaseViewport = viewportPort.bind(element, {
+  const attachList = useCallback(
+    (element: HTMLDivElement | null) => {
+      listRef.current = element
+      if (!element) return
+      const release = selectionState.attach(element)
+      const releaseViewport = viewportPort.attach(element)
+      return () => {
+        listRef.current = null
+        release()
+        releaseViewport()
+      }
+    },
+    [selectionState, viewportPort]
+  )
+  useLayoutEffect(() => {
+    viewportPort.update({
       scope: markdownWindowingState.scope,
       virtual: virtualMessages,
       ready: virtualLayoutReady,
@@ -500,12 +511,7 @@ export const MessageList = memo(function MessageList({
       measureRows,
       onLayoutChange: onVirtualLayoutChange,
     })
-    return () => {
-      listRef.current = null
-      release()
-      releaseViewport()
-    }
-  }
+  })
 
   const applySelectionAction = (action: (text: string) => void) => {
     if (!textSelection) return
