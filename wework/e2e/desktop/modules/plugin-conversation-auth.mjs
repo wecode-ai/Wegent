@@ -127,9 +127,9 @@ export async function verifyConversationQrAuthorization({
         action: 'logout',
       }),
     })
+  const readTestIds = async () => JSON.parse(await control.command('snapshot', 'body')).testIds
   const assertNoCard = async message => {
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-    assert.ok(!snapshot.testIds.includes('connector-auth-card'), message)
+    assert.ok(!(await readTestIds()).includes('connector-auth-card'), message)
   }
   const assertNoContinuation = () => {
     for (const state of authModel.cases.values()) {
@@ -257,7 +257,10 @@ export async function verifyConversationQrAuthorization({
       stableMs: 1000,
     })
     await assertNoCard('Discussing the authorization parser opened a login card')
-    await control.command('waitForHidden', testId('chat-input-error'))
+    assert.ok(
+      !(await readTestIds()).includes('chat-input-error'),
+      'Discussing the authorization parser displayed an error notice'
+    )
     assertNoContinuation()
 
     await writeFile(healthFailure, 'fail')
@@ -271,7 +274,12 @@ export async function verifyConversationQrAuthorization({
     assertNoContinuation()
     await control.command('waitFor', testId('chat-input-error'), { text: slug })
     await control.command('clickWhenEnabled', testId('dismiss-chat-input-error'))
-    await control.command('waitForHidden', testId('chat-input-error'))
+    await waitForValue(
+      readTestIds,
+      ids => !ids.includes('chat-input-error'),
+      10_000,
+      () => 'The plugin health error notice remained visible after dismissal'
+    )
     assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
     await rm(healthFailure)
     await sendOrdinary()
