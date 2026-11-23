@@ -228,20 +228,9 @@ export interface TaskTimingCategory {
   duration_ms: number
 }
 
-export interface TaskTimingTopSuspect {
-  span_id: string
-  label: string
-  category: string
-  turn_id: string
-  duration_ms?: number | null
-  status: string
-  suggestion: string
-}
-
 export interface TaskTimingSpan {
   id: number
   subtask_id?: number | null
-  turn_id: string
   parent_span_id: string
   span_id: string
   kind: string
@@ -265,7 +254,6 @@ export interface TaskTimingResponse {
   session_end_at_ms?: number | null
   triage: TaskTimingCategory[]
   coverage: TaskTimingCategory[]
-  top_suspects: TaskTimingTopSuspect[]
   spans: TaskTimingSpan[]
   has_spans?: boolean
 }

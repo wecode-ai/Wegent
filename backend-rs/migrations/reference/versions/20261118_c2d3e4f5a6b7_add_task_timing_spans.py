@@ -22,7 +22,6 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("task_id", sa.BigInteger(), nullable=False),
         sa.Column("subtask_id", sa.BigInteger(), nullable=True),
-        sa.Column("turn_id", sa.String(length=100), nullable=False, server_default=""),
         sa.Column(
             "parent_span_id", sa.String(length=100), nullable=False, server_default=""
         ),

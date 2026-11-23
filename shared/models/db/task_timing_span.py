@@ -57,7 +57,6 @@ class TaskTimingSpan(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     task_id = Column(BigInteger, nullable=False)
     subtask_id = Column(BigInteger, nullable=True)
-    turn_id = Column(String(100), nullable=False, default="", server_default="")
     parent_span_id = Column(String(100), nullable=False, default="", server_default="")
     span_id = Column(String(100), nullable=False)
     kind = Column(String(32), nullable=False)

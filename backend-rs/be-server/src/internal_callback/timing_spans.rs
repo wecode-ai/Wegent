@@ -12,11 +12,10 @@ use serde_json::{Value, json};
 use super::event::ExecutionEvent;
 
 const INSERT_SPAN_SQL: &str = "INSERT INTO task_timing_spans \
-    (task_id, subtask_id, turn_id, parent_span_id, span_id, kind, actor_id, actor_type, actor_label, status, start_at_ms, end_at_ms, duration_ms, clock, source, metadata) \
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    (task_id, subtask_id, parent_span_id, span_id, kind, actor_id, actor_type, actor_label, status, start_at_ms, end_at_ms, duration_ms, clock, source, metadata) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     ON DUPLICATE KEY UPDATE \
     subtask_id = IF(subtask_id IS NULL, VALUES(subtask_id), subtask_id), \
-    turn_id = IF(turn_id = '', VALUES(turn_id), turn_id), \
     parent_span_id = IF(parent_span_id = '', VALUES(parent_span_id), parent_span_id), \
     actor_id = IF(actor_id = '', VALUES(actor_id), actor_id), \
     actor_type = IF(actor_type = '', VALUES(actor_type), actor_type), \
@@ -108,7 +107,6 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
                 (
                     event.task_id,
                     Some(event.subtask_id),
-                    event.subtask_id.to_string(),
                     span.parent_span_id.as_deref().unwrap_or(""),
                     span.span_id.as_str(),
                     span.kind,
@@ -708,7 +706,7 @@ mod tests {
             .iter()
             .filter(|write| write.sql.contains("INSERT INTO task_timing_spans"));
         assert_eq!(start_inserts.clone().count(), 3);
-        assert!(start_inserts.all(|write| write.args == 16));
+        assert!(start_inserts.all(|write| write.args == 15));
 
         persist_callback_timing(&capture, &done, None, None)
             .await
@@ -719,7 +717,7 @@ mod tests {
             .iter()
             .filter(|write| write.sql.contains("INSERT INTO task_timing_spans"));
         assert_eq!(span_inserts.clone().count(), 7);
-        assert!(span_inserts.all(|write| write.args == 16));
+        assert!(span_inserts.all(|write| write.args == 15));
 
         let next_started = parser::shared()
             .parse(
