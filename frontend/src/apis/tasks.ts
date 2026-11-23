@@ -226,6 +226,8 @@ export interface TaskSkillsResponse {
 export interface TaskTimingCategory {
   kind: string
   duration_ms: number
+  sample_count: number
+  observed: boolean
 }
 
 export interface TaskTimingSpan {
@@ -249,7 +251,10 @@ export interface TaskTimingSpan {
 export interface TaskTimingResponse {
   task_id: number
   owner_user_id: number
+  task_status: string
   wall_time_ms?: number | null
+  observed_ms?: number | null
+  unobserved_ms?: number | null
   session_start_at_ms?: number | null
   session_end_at_ms?: number | null
   triage: TaskTimingCategory[]
