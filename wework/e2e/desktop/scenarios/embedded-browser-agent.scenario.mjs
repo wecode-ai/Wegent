@@ -328,6 +328,27 @@ async function verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs) 
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
 }
 
+async function verifyWaitTimeoutWithoutApproval(bridgeCall, control, timeoutMs) {
+  const result = await bridgeCall({
+    action: 'waitFor',
+    options: { condition: { textVisible: 'WEWORK_APPROVAL_ABSENT_TEXT' } },
+    timeoutMs: 100,
+  })
+  assert.equal(result.ok, false, JSON.stringify(result))
+  assert.equal(result.error?.code, 'wait_timeout', JSON.stringify(result))
+  await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, {
+    text: 'AI 等待页面就绪超时',
+    timeoutMs,
+  })
+  for (const selector of [BROWSER_AGENT_APPROVE_SELECTOR, BROWSER_AGENT_REJECT_SELECTOR]) {
+    await control.command('waitFor', selector, { visible: false, timeoutMs })
+  }
+
+  const inspected = await bridgeCall({ action: 'inspect' })
+  assert.ok(inspected.inspectText.includes('Code editor'))
+  await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, { visible: false, timeoutMs })
+}
+
 async function beginEditorApproval(invoke, control, text, timeoutMs, previousId = '') {
   let completed = false
   const pending = invoke({ action: 'fill', selector: '#script-editor', text }).then(
@@ -1691,6 +1712,7 @@ export function createDesktopScenario({
               })
             )
         )
+        await verifyWaitTimeoutWithoutApproval(bridgeCall, control, uiTimeoutMs)
         await verifyBrowserFullControl(
           control,
           bridgeCall,
