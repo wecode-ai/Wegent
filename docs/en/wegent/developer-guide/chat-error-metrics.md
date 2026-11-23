@@ -27,9 +27,11 @@ validate/dispatch/prepare/model/tool/stream/persist, with unknown where evidence
 
 The Rust Backend exposes three cumulative process counters alongside existing metrics:
 
-    wegent_chat_runs_total{outcome,entrypoint,shell,execution_mode}
-    wegent_chat_run_failures_total{error_category,error_code,stage,entrypoint,shell,execution_mode}
-    wegent_chat_requests_total{outcome,entrypoint}
+```text
+wegent_chat_runs_total{outcome,entrypoint,shell,execution_mode}
+wegent_chat_run_failures_total{error_category,error_code,stage,entrypoint,shell,execution_mode}
+wegent_chat_requests_total{outcome,entrypoint}
+```
 
 A run is one assistant execution attempt; multiple Bots count separately. Outcomes
 are success/failed/cancelled, and request admission is accepted/rejected.
@@ -63,13 +65,19 @@ or database migration.
 
 Failures per second by cause:
 
-    sum by (error_category, error_code) (rate(wegent_chat_run_failures_total[5m]))
+```promql
+sum by (error_category, error_code) (rate(wegent_chat_run_failures_total[5m]))
+```
 
 Failure ratio, excluding deliberate cancellations:
 
-    sum(rate(wegent_chat_runs_total{outcome="failed"}[5m]))
-    / clamp_min(sum(rate(wegent_chat_runs_total{outcome=~"success|failed"}[5m])), 1e-9)
+```promql
+sum(rate(wegent_chat_runs_total{outcome="failed"}[5m]))
+/ clamp_min(sum(rate(wegent_chat_runs_total{outcome=~"success|failed"}[5m])), 1e-9)
+```
 
 Skills conflicts in the last hour:
 
-    sum(increase(wegent_chat_run_failures_total{error_code="skills_unmanaged_entries"}[1h]))
+```promql
+sum(increase(wegent_chat_run_failures_total{error_code="skills_unmanaged_entries"}[1h]))
+```
