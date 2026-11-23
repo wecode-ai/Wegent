@@ -66,8 +66,12 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     assistantSend?(input: {
       message: string
       clientUserMessageId: string
+      attachmentIds?: number[]
       interruptWhenBusy?: boolean
-      runtimeOptions?: { modelId?: string }
+      runtimeOptions?: {
+        modelId?: string
+        attachments?: import('@/types/api').Attachment[]
+      }
     }): Promise<{ sent: boolean; error?: string | null }>
     onHistorySourceAvailabilityChange?(value: boolean): void
   }) => {
@@ -197,6 +201,7 @@ describe('private discussion pane', () => {
       modelId: 'model-1',
       conversationContext: 'private_discussion',
       queueIfBusy: true,
+      attachments: [],
     })
   })
 
@@ -218,6 +223,7 @@ describe('private discussion pane', () => {
       clientUserMessageId: 'local-owner-request',
       conversationContext: 'private_discussion',
       queueIfBusy: true,
+      attachments: [],
     })
   })
 
@@ -254,6 +260,133 @@ describe('private discussion pane', () => {
         clientUserMessageId: 'queued-request',
       })
     ).resolves.toEqual({ sent: true, queued: true })
+  })
+
+  it('resolves a deferred attachment before sending the private discussion', async () => {
+    const { prepareAttachmentFile } = await import('@/lib/runtime-attachments')
+    const remoteSource = new File(['remote'], 'deferred.png', { type: 'image/png' })
+    const localSource = new File(['local'], 'local.png', { type: 'image/png' })
+    const uploads: Array<(value: import('@/types/api').Attachment) => void> = []
+    const upload = vi.fn(
+      () =>
+        new Promise<import('@/types/api').Attachment>(resolve => {
+          uploads.push(resolve)
+        })
+    )
+    const remote = prepareAttachmentFile(
+      remoteSource.name,
+      remoteSource.type,
+      async () => remoteSource,
+      upload
+    )
+    const local = prepareAttachmentFile(
+      localSource.name,
+      localSource.type,
+      async () => localSource,
+      upload
+    )
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+
+    const sending = panelProps.assistantSend({
+      message: 'Send the deferred image',
+      clientUserMessageId: 'deferred-attachment-request',
+      runtimeOptions: { attachments: [remote, local] },
+    })
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2))
+    expect(mocks.runtimeApiSend).not.toHaveBeenCalled()
+
+    uploads[0]({
+      id: 42,
+      filename: remoteSource.name,
+      file_size: remoteSource.size,
+      mime_type: remoteSource.type,
+      file_extension: '.png',
+      created_at: '',
+      status: 'ready',
+    })
+    uploads[1]({
+      id: 43,
+      filename: localSource.name,
+      file_size: localSource.size,
+      mime_type: localSource.type,
+      file_extension: '.png',
+      created_at: '',
+      status: 'ready',
+      local_path: '/tmp/deferred.png',
+    })
+    await expect(sending).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiSend).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        attachmentIds: [42],
+        attachments: [expect.objectContaining({ local_path: '/tmp/deferred.png' })],
+      })
+    )
+  })
+
+  it('reports attachment preparation failures without sending the private discussion', async () => {
+    const { prepareAttachmentFile } = await import('@/lib/runtime-attachments')
+    const source = new File(['image'], 'failed.png', { type: 'image/png' })
+    const pending = prepareAttachmentFile(
+      source.name,
+      source.type,
+      async () => source,
+      async () => {
+        throw new Error('attachment staging failed')
+      }
+    )
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+
+    await expect(
+      panelProps.assistantSend({
+        message: 'This must stay failed',
+        clientUserMessageId: 'failed-attachment-request',
+        runtimeOptions: { attachments: [pending] },
+      })
+    ).resolves.toEqual({ sent: false, error: 'attachment staging failed' })
+    expect(mocks.runtimeApiSend).not.toHaveBeenCalled()
+  })
+
+  it('drops a pending local attachment after it resolves to a remote ID', async () => {
+    const { prepareAttachmentFile } = await import('@/lib/runtime-attachments')
+    const source = new File(['image'], 'remote.png', { type: 'image/png' })
+    let finishUpload!: (value: import('@/types/api').Attachment) => void
+    const pending = prepareAttachmentFile(
+      source.name,
+      source.type,
+      async () => source,
+      () =>
+        new Promise(resolve => {
+          finishUpload = resolve
+        })
+    )
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+
+    const sending = panelProps.assistantSend({
+      message: 'Send the uploaded image',
+      clientUserMessageId: 'remote-attachment-request',
+      runtimeOptions: { attachments: [pending] },
+    })
+    await waitFor(() => expect(finishUpload).toBeTypeOf('function'))
+    finishUpload({
+      id: 44,
+      filename: source.name,
+      file_size: source.size,
+      mime_type: source.type,
+      file_extension: '.png',
+      created_at: '',
+      status: 'ready',
+    })
+
+    await expect(sending).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiSend).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ attachmentIds: [44], attachments: [] })
+    )
   })
 
   it('uses task context and the original source history without a second embedded pane heading', () => {
@@ -456,6 +589,7 @@ describe('private discussion pane', () => {
         clientUserMessageId: 'native-owner-request',
         conversationContext: 'private_discussion',
         queueIfBusy: true,
+        attachments: [],
       })
       expect(createAssistantPublication).not.toHaveBeenCalled()
       expect(props.project.current_user_id).toBe(7)

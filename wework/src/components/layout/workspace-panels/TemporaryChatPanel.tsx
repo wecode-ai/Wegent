@@ -1,6 +1,10 @@
 import { useScopedDraft } from '@/features/workbench/scopedDraftStore'
 import { sendTemporaryConversationMessage } from './temporaryChatConversationSend'
 import { sendTemporaryChatMessage } from './temporaryChatSend'
+import { ImageEditProvider } from '@/components/chat/image-preview/ImageEditContext'
+import { hasImageMarkupComments } from '@/components/chat/image-preview/imageEdit'
+import { useImageEditSubmission } from '../useImageEditSubmission'
+import type { RuntimePaneSendOptions } from '../workbenchPaneSessionTypes'
 import type { TemporaryChatPanelProps } from './temporaryChatPanelTypes'
 import { createTemporaryChatSession } from './temporaryChatSession'
 import { useEditorFocusRequest } from '@wegent/collaboration/dom-events'
@@ -567,7 +571,10 @@ export function TemporaryChatPanel({
     )
   }
 
-  const send = (valueOverride?: string, options: ChatSubmitOptions = {}) =>
+  const send = (
+    valueOverride?: string,
+    options: ChatSubmitOptions & Pick<RuntimePaneSendOptions, 'standaloneAttachments'> = {}
+  ) =>
     sendTemporaryChatMessage(
       {
         address,
@@ -627,7 +634,7 @@ export function TemporaryChatPanel({
     const message = conversationQueue.take(id)
     if (!message) return
     sessionCommands.noteDraftEdit()
-    setInput(message.content)
+    setInput(message.imageMarkupDraftText ?? message.content)
     setReplaceDraftKey(current => current + 1)
     sideChatProjectChat.resetAttachments()
     message.attachments?.forEach(sideChatProjectChat.addExistingAttachment)
@@ -814,6 +821,16 @@ export function TemporaryChatPanel({
     [sourceMessageId, focusRequestKey]
   )
 
+  const imageEditSubmission = useImageEditSubmission({
+    enabled: active && !readOnly && scopedHistory.available,
+    scope: JSON.stringify([instanceId, address?.deviceId, address?.taskId]),
+    attachmentScope: instanceId,
+    upload: services.attachmentApi?.uploadAttachment,
+    submit: send,
+    replaceImageAttachment: attachmentSelection.replaceImageAttachmentForScope,
+    releaseDraftAttachment: attachmentSelection.releaseAttachmentForScope,
+    getDraftAttachment: attachmentSelection.getAttachment,
+  })
   const pendingRequest =
     focusedRequest === undefined
       ? pendingRequestUserInputPayload(presentation.messages, hiddenRequestUserInputIds)
@@ -826,7 +843,7 @@ export function TemporaryChatPanel({
   const submittingInput =
     pendingRequest &&
     (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
-  return (
+  const layout = (
     <TemporaryConversationLayout
       messageCount={presentation.messages.length}
       loading={historyLoading}
@@ -908,7 +925,9 @@ export function TemporaryChatPanel({
                   showExecutionTools={showExecutionTools}
                   showModelSelector
                   pluginPickerIconOnly
-                  requireText
+                  requireText={
+                    goalDraftActive || !hasImageMarkupComments(sideChatProjectChat.attachments)
+                  }
                   error={modelError ?? error}
                   placeholder={placeholder}
                   variant="desktop"
@@ -1010,4 +1029,5 @@ export function TemporaryChatPanel({
       />
     </TemporaryConversationLayout>
   )
+  return <ImageEditProvider actions={imageEditSubmission}>{layout}</ImageEditProvider>
 }
