@@ -811,7 +811,10 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
     let selected = server_cancel.requests();
     let resolved = selected
         .iter()
-        .position(|request| normalize(&request.sql) == normalize(&model::execution_by_id()))
+        .position(|request| {
+            normalize(&request.sql)
+                == normalize(&format!("{} FOR UPDATE", model::execution_by_id()))
+        })
         .expect("fallback reloads the originally selected execution");
     let cleanup = selected
         .iter()
@@ -862,7 +865,7 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
     );
     assert_eq!(
         normalize(&reads[0].sql),
-        normalize(&model::execution_by_id())
+        normalize(&format!("{} FOR UPDATE", model::execution_by_id()))
     );
     assert_eq!(reads[0].first_integer, Some(execution.id));
     assert!(

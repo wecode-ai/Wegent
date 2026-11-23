@@ -20,6 +20,7 @@ fn application_defaults(
             .job_allowlist
             .insert(super::device::RETENTION_JOB.to_owned());
         configuration.job_allowlist.extend([
+            super::cleanup::COMPLETION_CLEANUP.to_owned(),
             super::robot::managed_jobs::SCAN.to_owned(),
             super::robot::managed_jobs::EXECUTE.to_owned(),
         ]);
@@ -44,6 +45,7 @@ mod tests {
         assert_eq!(
             application_defaults(configuration(), false).job_allowlist,
             [
+                super::super::cleanup::COMPLETION_CLEANUP.to_owned(),
                 super::super::device::RETENTION_JOB.to_owned(),
                 super::super::robot::managed_jobs::SCAN.to_owned(),
                 super::super::robot::managed_jobs::EXECUTE.to_owned(),

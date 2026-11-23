@@ -327,7 +327,8 @@ fn cleanup_task_row() -> Row {
             "json",
             SqlValue::Bytes(
                 serde_json::to_vec(&json!({
-                    "metadata":{"labels":{"autoDeleteExecutor":"true"}}
+                    "metadata":{"labels":{"autoDeleteExecutor":"true"}},
+                    "status":{"status":"COMPLETED"}
                 }))
                 .unwrap(),
             ),
@@ -375,6 +376,8 @@ async fn held_delete_releases_the_only_connection_for_delivery_and_later_handler
                 && !sql.contains("subtasks_0030")
             {
                 cleanup_task_row()
+            } else if sql.starts_with("SELECT id FROM subtasks_0030") {
+                vec![("id", SqlValue::I64(42))]
             } else if sql.contains("FROM ")
                 && sql.contains("subtasks_0030")
                 && sql.contains("executor_deleted_at")
@@ -438,13 +441,19 @@ async fn held_delete_releases_the_only_connection_for_delivery_and_later_handler
             let _ = wait_release.await;
             http_reply(&mut stream, r#"{"success":true}"#).await;
         });
-        let app = crate::app_test_support::app(mysql.clone());
+        let lease = crate::sql_test_support::redis_lease::RedisLease::start().await;
+        let mut app = crate::app_test_support::app(mysql.clone());
+        Arc::get_mut(&mut app).unwrap().redis = Some(
+            brz_redis::RedisService::single(&lease.address)
+                .await
+                .unwrap(),
+        );
         let redis = NoRedis::default();
         let execution = execution();
         let event = TaskCompletedEvent {
             task_id: execution.task_id,
             user_id: execution.user_id,
-            subtask_id: 0,
+            subtask_id: 42,
             status: "COMPLETED",
             result: None,
             error: None,
@@ -482,7 +491,7 @@ async fn held_delete_releases_the_only_connection_for_delivery_and_later_handler
                     .iter()
                     .rposition(|request| {
                         request.sql.contains("FROM subtasks_0030")
-                            && request.sql.contains("executor_deleted_at = false")
+                            && request.sql.contains("executor_deleted_at=false")
                     })
                     .expect("cleanup prepared runtime references");
                 assert!(

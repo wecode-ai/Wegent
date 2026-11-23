@@ -152,19 +152,39 @@ async fn fail_unsaved_result<M: Mysql, R: Redis>(
             // Preserved-history subscriptions can bind a newer run to this task
             // while the failed write rolls back. Keep the original run identity.
             let execution: Option<Execution> = transaction
-                .fetch_optional(model::execution_by_id(), (id,))
+                .fetch_optional(format!("{} FOR UPDATE", model::execution_by_id()), (id,))
                 .await?;
-            let Some(execution) = execution else {
+            let Some(mut execution) = execution else {
                 return Ok(None);
             };
-            let applied =
-                state::transition_in(transaction, execution.id, "FAILED", None, Some(message))
-                    .await?;
+            if !bind_recovered_execution(transaction, &mut execution, event).await? {
+                return Ok(None);
+            }
+            let applied = state::transition_execution_in(
+                transaction,
+                execution.id,
+                "FAILED",
+                None,
+                Some(message),
+            )
+            .await?;
             Ok(Some((execution, applied)))
         })
         .await;
     match outcome {
-        Ok(Some((_, Some(applied)))) => Some(applied),
+        Ok(Some((_, Some(applied)))) => {
+            // The guarded FAILED state is committed before retrying the CRD
+            // write that may have caused the original result transaction to fail.
+            if let Err(error) = mysql
+                .with_transaction(async |tx| {
+                    state::update_statistics_in(tx, &applied, "", message).await
+                })
+                .await
+            {
+                tracing::error!(%error, execution_id=applied.id, "FAILED run committed; subscription statistics reconciliation failed");
+            }
+            Some(applied)
+        }
         Ok(Some((execution, None))) => {
             release_after_status_noop(ctx, mysql, execution, event).await;
             None
@@ -220,7 +240,14 @@ async fn release_finished_executor<M: Mysql, R: Redis>(
 ) {
     match mysql
         .with_transaction(async |tx| {
-            cleanup::prepare_subscription(tx, ctx.tables, execution, event.task_id).await
+            cleanup::prepare_subscription(
+                tx,
+                ctx.tables,
+                execution,
+                event.task_id,
+                event.subtask_id,
+            )
+            .await
         })
         .await
     {
@@ -282,19 +309,36 @@ async fn recover_scheduled_execution<T: MysqlTransaction>(
     let Some(mut execution) = execution else {
         return Ok(None);
     };
-    if execution.task_id != 0 && execution.task_id != event.task_id {
-        return Ok(None);
+    Ok(bind_recovered_execution(transaction, &mut execution, event)
+        .await?
+        .then_some(execution))
+}
+
+/// Preserve matching links and reject another task or owner before status CAS.
+async fn bind_recovered_execution<T: MysqlTransaction>(
+    tx: &mut T,
+    execution: &mut Execution,
+    event: &TaskCompletedEvent<'_>,
+) -> MysqlResult<bool> {
+    if execution.user_id != event.user_id
+        || (execution.task_id != 0 && execution.task_id != event.task_id)
+    {
+        return Ok(false);
     }
     if execution.task_id == 0 {
-        transaction
-            .execute(
-                "UPDATE background_executions SET task_id=? WHERE id=? AND task_id=0 AND status IN ('PENDING','RUNNING')",
-                (event.task_id, id),
-            )
-            .await?;
+        if !matches!(execution.status.as_str(), "PENDING" | "RUNNING") {
+            return Ok(false);
+        }
+        let bound = tx.execute(
+            "UPDATE background_executions SET task_id=? WHERE id=? AND user_id=? AND task_id=0 AND status IN ('PENDING','RUNNING')",
+            (event.task_id, execution.id, event.user_id),
+        ).await?;
+        if bound.rows_affected == 0 {
+            return Ok(false);
+        }
         execution.task_id = event.task_id;
     }
-    Ok(Some(execution))
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -452,6 +496,10 @@ mod tests {
         statements: std::sync::Arc<std::sync::Mutex<Vec<crate::sql_test_support::Query>>>,
         attempts: std::sync::Arc<std::sync::Mutex<usize>>,
         fail_at: Option<usize>,
+        reader: Option<brz_mysql::MysqlService>,
+        fail_statistics: bool,
+        failed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        bound: std::sync::Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl TransactionCapture {
@@ -468,8 +516,12 @@ mod tests {
                 statements: std::sync::Arc::clone(&self.statements),
                 attempts: std::sync::Arc::clone(&self.attempts),
                 fail_at: self.fail_at,
-                reader: None,
+                reader: self.reader.clone(),
                 fail_runtime_page: false,
+                fail_task_read: false,
+                fail_statistics: self.fail_statistics,
+                failed: self.failed.clone(),
+                bound: self.bound.clone(),
             }
         }
 
@@ -492,6 +544,10 @@ mod tests {
         fail_at: Option<usize>,
         reader: Option<brz_mysql::MysqlService>,
         fail_runtime_page: bool,
+        fail_task_read: bool,
+        fail_statistics: bool,
+        failed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        bound: std::sync::Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl CapturedTransaction {
@@ -525,7 +581,22 @@ mod tests {
                 return Err(brz_mysql::MysqlError::RowNotFound);
             }
             drop(attempts);
-            self.record(sql, &arguments);
+            self.record(sql.as_ref(), &arguments);
+            if self.fail_statistics && sql.as_ref().starts_with("UPDATE kinds") {
+                return Err(brz_mysql::MysqlError::RowNotFound);
+            }
+            if sql
+                .as_ref()
+                .starts_with("UPDATE background_executions SET status")
+            {
+                self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            if sql
+                .as_ref()
+                .starts_with("UPDATE background_executions SET task_id")
+            {
+                self.bound.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
             Ok(brz_mysql::MysqlExecution {
                 rows_affected: 1,
                 last_insert_id: 0,
@@ -543,6 +614,9 @@ mod tests {
             T: brz_mysql::FromMysqlRow + Send,
         {
             self.record(sql.as_ref(), &arguments);
+            if self.fail_task_read {
+                return Err(brz_mysql::MysqlError::RowNotFound);
+            }
             if let Some(reader) = &self.reader {
                 return reader.fetch_optional(sql, arguments).await;
             }
@@ -586,6 +660,111 @@ mod tests {
                 return Err(brz_mysql::MysqlError::RowNotFound);
             }
             Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn unsaved_result_recovery_commits_failed_and_binding_despite_statistics_error() {
+        use crate::internal_callback::completion::subscription::boundary_tests::{
+            execution_row, subscription_row,
+        };
+        use crate::sql_test_support::mysql_rows::Value;
+        use std::sync::atomic::Ordering;
+        let mut capture = TransactionCapture {
+            fail_statistics: true,
+            ..Default::default()
+        };
+        let failed = capture.failed.clone();
+        let bound = capture.bound.clone();
+        let rows = crate::sql_test_support::mysql_rows::MysqlRows::start_results(move |sql| {
+            let row = if sql.contains("FROM background_executions") {
+                let mut row = execution_row(if failed.load(Ordering::SeqCst) {
+                    "FAILED"
+                } else {
+                    "RUNNING"
+                });
+                for (name, value) in &mut row {
+                    if *name == "task_id" {
+                        *value = Value::I64(if bound.load(Ordering::SeqCst) {
+                            501_652_180_355_339
+                        } else {
+                            0
+                        });
+                    }
+                }
+                row
+            } else {
+                subscription_row()
+            };
+            (row.clone(), vec![row])
+        })
+        .await;
+        capture.reader = Some(rows.mysql.clone());
+        let redis = NoRedis;
+        let manager = manager();
+        let ctx = Completion {
+            app: None,
+            mysql: &capture,
+            redis: &redis,
+            tables: tables(),
+            executor_manager: &manager,
+        };
+        let event = TaskCompletedEvent {
+            task_id: 501_652_180_355_339,
+            subtask_id: 42,
+            user_id: 3650,
+            status: "COMPLETED",
+            result: None,
+            error: None,
+        };
+        let changed = fail_unsaved_result(&ctx, &capture, &event, Some(2_539_501), "Data too long")
+            .await
+            .expect("statistics cannot prevent committed failure");
+        assert_eq!(changed.status, "FAILED");
+        assert_eq!(changed.task_id, event.task_id);
+        assert_eq!(
+            capture.transaction_count(),
+            2,
+            "status and statistics use separate boundaries"
+        );
+        let statements = capture.statements();
+        let bind = statements
+            .iter()
+            .position(|q| {
+                q.sql
+                    .starts_with("UPDATE background_executions SET task_id")
+            })
+            .unwrap();
+        let status = statements
+            .iter()
+            .position(|q| q.sql.starts_with("UPDATE background_executions SET status"))
+            .unwrap();
+        let stats = statements
+            .iter()
+            .position(|q| q.sql.starts_with("UPDATE kinds"))
+            .unwrap();
+        assert!(bind < status && status < stats);
+        assert!(statements[status].sql.contains("version = ?"));
+        assert!(
+            !statements.iter().any(|q| q.sql.contains("ORDER BY")),
+            "never select a newer execution"
+        );
+        // Conflicting ownership and an unbound terminal row cannot be restored.
+        let mut transaction = capture.transaction();
+        for (task_id, user_id, status) in [
+            (7, 3650, "RUNNING"),
+            (0, 7, "RUNNING"),
+            (0, 3650, "CANCELLED"),
+        ] {
+            let mut execution = changed.clone();
+            execution.task_id = task_id;
+            execution.user_id = user_id;
+            execution.status = status.into();
+            assert!(
+                !bind_recovered_execution(&mut transaction, &mut execution, &event)
+                    .await
+                    .unwrap()
+            );
         }
     }
 
@@ -746,8 +925,11 @@ mod tests {
 
         // The first runtime-page failure must abort preparation too, rather
         // than pretending the eligible runtime list is successfully empty.
-        let rows = crate::sql_test_support::mysql_rows::MysqlRows::start(|_| {
+        let rows = crate::sql_test_support::mysql_rows::MysqlRows::start(|sql| {
             use crate::sql_test_support::mysql_rows::Value;
+            if sql.starts_with("SELECT id FROM subtasks_0030") {
+                return vec![("id", Value::I64(42))];
+            }
             vec![
                 ("id", Value::I64(42)),
                 ("user_id", Value::I64(7)),
@@ -757,7 +939,7 @@ mod tests {
                 (
                     "json",
                     Value::Bytes(
-                        br#"{"metadata":{"labels":{"autoDeleteExecutor":"true"}}}"#.to_vec(),
+                        br#"{"metadata":{"labels":{"autoDeleteExecutor":"true"}},"status":{"status":"COMPLETED"}}"#.to_vec(),
                     ),
                 ),
                 ("is_active", Value::I8(1)),
@@ -781,6 +963,13 @@ mod tests {
             result: None,
             error: None,
         };
+        transaction.fail_task_read = true;
+        assert!(matches!(
+            cleanup::prepare_auto_delete(&mut transaction, tables(), &event).await,
+            Err(brz_mysql::MysqlError::RowNotFound)
+        ));
+        assert_eq!(capture.update_attempts(), 0);
+        transaction.fail_task_read = false;
         assert!(matches!(
             cleanup::prepare_auto_delete(&mut transaction, tables(), &event).await,
             Err(brz_mysql::MysqlError::RowNotFound)
@@ -789,7 +978,8 @@ mod tests {
             capture
                 .statements()
                 .last()
-                .is_some_and(|query| query.sql.contains("executor_deleted_at = false"))
+                .is_some_and(|query| query.sql.contains("executor_deleted_at")
+                    && query.sql.contains("message_id <="))
         );
         assert_eq!(capture.update_attempts(), 0);
         transaction.fail_runtime_page = false;
