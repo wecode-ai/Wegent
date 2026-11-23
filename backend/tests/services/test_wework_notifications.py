@@ -123,7 +123,13 @@ def test_issue_creation_and_invitation_schedule_im_once(
 ):
     project = _make_project(test_db, test_user)
     member = _make_member(test_db, project, "invitee", BaseRole.Developer)
-    values = LoopItemCreate(title="New Issue", request_id="new-issue")
+    assignee = _make_member(test_db, project, "silent-assignee", BaseRole.Developer)
+    values = LoopItemCreate(
+        title="New Issue",
+        request_id="new-issue",
+        assignee_user_id=assignee.id,
+        notify_assignee=False,
+    )
     issue = loop_item_service.create(test_db, project.id, test_user.id, values)
     issue_id = issue.id
     assert (

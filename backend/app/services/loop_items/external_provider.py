@@ -353,7 +353,12 @@ class ExternalLoopItemProvider:
             db, user_id=user_id, actor_user_id=user_id, target=target, created=True
         )
         assignee = self._assignee_from_labels(labels)
-        if assignee and assignee["type"] == "user" and assignee["id"] != str(user_id):
+        if (
+            values.notify_assignee
+            and assignee
+            and assignee["type"] == "user"
+            and assignee["id"] != str(user_id)
+        ):
             notify_issue_participation(
                 db, user_id=int(assignee["id"]), actor_user_id=user_id, target=target
             )

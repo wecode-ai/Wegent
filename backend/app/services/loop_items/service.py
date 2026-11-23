@@ -1027,10 +1027,6 @@ class LoopItemService:
             notify_issue_participation(
                 db, user_id=user_id, actor_user_id=user_id, target=target, created=True
             )
-        if not assignee_notified and item.assignee_user_id not in (None, user_id):
-            notify_issue_participation(
-                db, user_id=item.assignee_user_id, actor_user_id=user_id, target=target
-            )
         if commit:
             db.commit()
             db.refresh(item)
