@@ -69,6 +69,11 @@ local list and apply later results in the background. To diagnose a long wait, c
 When `model-loading.log` contains `runtime.inventory.slow`, it reports the time spent reading the
 Executor identity, requesting the list, and verifying the identity again.
 
+At startup, Wework limits concurrent forwarding of pending assignment notifications to leave local
+connections available for foreground requests such as the task list. If identity verification is
+slow, compare request dispatch and response times in `executor-transport.log` from the same period
+to identify local request queueing.
+
 ## Conversation export remains on packaging
 
 In the desktop log directory, inspect `dsh-core-runtime.log` for `[wework-conversation-export]` and the export task ID. Finalization logs report the start, completion, or failure of document sync, asset sync, packaging, and destination replacement, including stage duration and asset count. They omit file paths and contents. A stage with only a start event identifies the file operation to investigate; the packaging message alone does not establish that the export has failed.

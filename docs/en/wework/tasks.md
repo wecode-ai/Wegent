@@ -24,6 +24,8 @@ When a red error notice appears above the task composer, select **Dismiss notice
 
 ### Persistent-goal status and controls
 
+When you send a goal draft with images, a Codex model that supports image input receives them in the goal's first turn.
+
 After creating a Goal, inspect its status bar near the composer. Hover or focus it for **Edit goal** and **Delete goal**. The right-side action offers **Pause goal** or **Start goal**, depending on status. Pause a persistent goal explicitly, then decide whether the current reply also needs interruption; stopping one reply does not mean the persistent goal is paused.
 
 Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
