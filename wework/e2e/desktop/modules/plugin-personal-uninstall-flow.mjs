@@ -49,6 +49,12 @@ export async function uploadPersonalVersionFixture({
   return initialized
 }
 
+export async function deletePersonalPluginListing(request, pluginId) {
+  const path = `/plugins/marketplace/${pluginId}`
+  const impact = await request(`${path}/delete-impact`)
+  await request(path, 'DELETE', { impactRevision: impact.impactRevision, revokeAndDelete: false })
+}
+
 async function sourceFiles(root, directory = root) {
   const metadata = await lstat(directory)
   assert.ok(
@@ -240,8 +246,7 @@ export async function verifyUnlinkedOldPersonalPackageReinstall({
     'The cloud device did not remove the old-package reinstall fixture'
   )
   const path = `/plugins/marketplace/${plugin.id}`
-  const impact = await request(`${path}/delete-impact`)
-  await request(path, 'DELETE', { impactRevision: impact.impactRevision, revokeAndDelete: false })
+  await deletePersonalPluginListing(request, plugin.id)
   const response = await fetch(`${cloud.backendUrl}/api/plugins/submissions/init`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },

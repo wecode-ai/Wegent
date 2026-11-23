@@ -38,6 +38,7 @@ import {
   waitForAuthorCloudInstall,
   personalVersionSlug as slug,
   uploadPersonalVersionFixture as uploadVersionFixture,
+  deletePersonalPluginListing,
   verifyUnlinkedOldPersonalPackageReinstall,
 } from './plugin-personal-uninstall-flow.mjs'
 
@@ -305,13 +306,6 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
         'Navigation fixture did not remove the previous account install'
       )
       const retainedInstallId = install.metadata.labels.id
-      const pluginPath = `/plugins/marketplace/${listing.id}`
-      const impact = await request(`${pluginPath}/delete-impact`)
-      await request(pluginPath, 'DELETE', {
-        impactRevision: impact.impactRevision,
-        revokeAndDelete: false,
-      })
-      assert.equal(await getListing(name), undefined, 'Deleted source remained in the catalog')
       await control.command('clickIfPresent', testId('plugin-detail-back-button'))
       await refreshPluginInventory(control)
       await control.command('fill', testId('plugins-search-input'), { value: name })
@@ -326,8 +320,16 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
       try {
         await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-toggle-"]')
         await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
-        const held = JSON.parse(await control.command('awaitLocalExecutorRequestHold', 'body'))
+        const held = await until(
+          async () =>
+            JSON.parse(await control.command('getLocalExecutorRequestHoldSnapshot', 'body')),
+          snapshot => snapshot?.heldCount === 1,
+          'Author reinstall did not commit before page departure'
+        )
         assert.equal(held.heldCount, 1, 'Author reinstall did not commit before page departure')
+        assert.equal(await accountPlugin(cloud, name), undefined)
+        await deletePersonalPluginListing(request, listing.id)
+        assert.equal(await getListing(name), undefined, 'Deleted source remained in the catalog')
         await control.command('navigate', 'body', { value: '/' })
         await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
       } finally {

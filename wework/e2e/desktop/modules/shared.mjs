@@ -1523,7 +1523,7 @@ async function createSingleRootLocalProject(
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
     value: workspacePath,
   })
-  await control.command('nativePress', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
   await waitForFolderPathReady(control, workspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
