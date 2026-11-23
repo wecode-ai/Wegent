@@ -438,6 +438,36 @@ async fn codex_cancelling_a_pending_form_cleans_up_the_process_and_rejects_stale
 }
 
 #[tokio::test]
+async fn codex_expiring_a_pending_form_releases_the_agent_home() {
+    let _lock = env_lock().await;
+    let fixture = Fixture::new("question");
+    let engine = fixture.engine();
+    let request = fixture.request("first");
+    let (outcome, events) = execute(&engine, request.clone()).await;
+    assert_waiting(outcome);
+    let answer = form_answer(&request, &form_call(&events), "answer");
+    let pid = fixture.messages()[0]["pid"].as_i64().unwrap() as i32;
+    let mut next = fixture.request("next");
+    next.task_id.push_str("-next");
+    assert_eq!(
+        execute(&engine, next.clone()).await.0,
+        ExecutionOutcome::Failed {
+            message: "Agent Home already has an active execution".to_owned(),
+        }
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(5 * 60 + 1)).await;
+    tokio::time::resume();
+    wait_for_process_exit(pid).await;
+
+    assert_failed(execute(&engine, answer).await.0);
+    assert!(rpc_answers(&fixture.messages()).is_empty());
+    assert_waiting(execute(&engine, next.clone()).await.0);
+    assert!(engine.cancel_pending(&next.task_id, None).is_some());
+}
+
+#[tokio::test]
 async fn codex_cancelling_a_pending_form_terminates_its_tool_child_process() {
     let _lock = env_lock().await;
     #[cfg(target_os = "linux")]

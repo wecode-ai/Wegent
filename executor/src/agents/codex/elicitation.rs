@@ -7,8 +7,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::{json_scalar_field, json_string_field, message_params};
 use crate::logging::log_executor_event;
 
-pub(super) const FORM_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const FORM_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const URL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+pub(super) fn native_user_input_timeout() -> Duration {
+    std::env::var("WEGENT_CODEX_USER_INPUT_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(FORM_TIMEOUT)
+}
 
 fn now_ms() -> u64 {
     SystemTime::now()
