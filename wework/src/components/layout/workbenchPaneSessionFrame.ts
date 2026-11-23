@@ -65,7 +65,8 @@ export interface PaneTranscriptReader {
 export function createPaneSessionFrame(
   external: PaneSessionExternal,
   state: PaneSessionState,
-  reader: PaneTranscriptReader
+  reader: PaneTranscriptReader,
+  readConversation: typeof getRuntimeConversationSnapshot
 ) {
   const { currentRuntimeTask, debugSnapshotEnabled } = external
   const queueDiagnosticSessionId = external.queueDiagnosticSessionId
@@ -178,7 +179,7 @@ export function createPaneSessionFrame(
     runtimeTaskLoadTarget !== null && transcriptLoadingMoreBeforeKey === runtimeTaskLoadTarget.key
   const draftMessages = state.draftMessages
   const conversation = runtimeTaskLoadTarget
-    ? getRuntimeConversationSnapshot(runtimeTaskLoadTarget.address)
+    ? readConversation(runtimeTaskLoadTarget.address)
     : EMPTY_RUNTIME_CONVERSATION_SNAPSHOT
   const {
     goal: threadGoal,

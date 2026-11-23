@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { cpus } from 'node:os'
 import { join } from 'node:path'
+import { setInterval } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { waitForClosedStartupSplash } from './modules/native-window-state.mjs'
 
@@ -12,6 +14,7 @@ const CHECKPOINTS = new Set([
   'executor-stream-recovery',
 ])
 const PROCESS_ROLES = ['Renderer', 'Executor']
+const CPU_TRACE_INTERVAL_MS = 5_000
 
 export function readLinuxCpuCounters(pid, stat) {
   // comm is parenthesized and can itself contain spaces and closing parentheses.
@@ -32,6 +35,10 @@ export function readLinuxCpuCounters(pid, stat) {
   return { pid, startedAt, ticks: userTicks + systemTicks }
 }
 
+async function readProcessCpu({ pid }) {
+  return readLinuxCpuCounters(pid, await readFile(`/proc/${pid}/stat`, 'utf8'))
+}
+
 async function sampleCpu(control) {
   const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
   const renderers = snapshot.processes.filter(
@@ -42,11 +49,9 @@ async function sampleCpu(control) {
   )
   assert.ok(renderers.length, 'No Electron Renderer was reported')
   assert.equal(executors.length, 1, 'Expected one desktop Executor')
-  const read = async ({ pid }) =>
-    readLinuxCpuCounters(pid, await readFile(`/proc/${pid}/stat`, 'utf8'))
   const [Renderer, Executor] = await Promise.all([
-    Promise.all(renderers.map(read)),
-    Promise.all(executors.map(read)),
+    Promise.all(renderers.map(readProcessCpu)),
+    Promise.all(executors.map(readProcessCpu)),
   ])
   return { Renderer, Executor }
 }
@@ -82,6 +87,37 @@ async function observeCpu(checkpoint, collect) {
   }
 }
 
+function logCpuSample(checkpoint, phase, sample) {
+  console.log(
+    `[desktop-e2e-cpu] ${JSON.stringify({ checkpoint, phase, at: Date.now(), ...sample })}`
+  )
+}
+
+async function traceCpu(checkpoint, initial, signal) {
+  try {
+    // Probe the sampled processes directly so diagnostics send no extra work to Electron.
+    for await (const _ of setInterval(CPU_TRACE_INTERVAL_MS, undefined, { signal, ref: false })) {
+      const sample = await Promise.all(
+        PROCESS_ROLES.map(async role => [
+          role,
+          await Promise.all(
+            initial[role].map(async process => {
+              try {
+                return await readProcessCpu(process)
+              } catch (error) {
+                return { pid: process.pid, error: error.code ?? error.name }
+              }
+            })
+          ),
+        ])
+      )
+      logCpuSample(checkpoint, 'sample', Object.fromEntries(sample))
+    }
+  } catch (error) {
+    if (!signal.aborted) throw error
+  }
+}
+
 export function instrumentDesktopCpuBenchmark(scenario, checkpoint) {
   const directory = process.env.WEWORK_E2E_CPU_BENCHMARK_DIR
   if (!directory || process.platform !== 'linux' || !CHECKPOINTS.has(checkpoint)) return
@@ -97,10 +133,18 @@ export function instrumentDesktopCpuBenchmark(scenario, checkpoint) {
       const startTicks = Math.ceil(uptime * ticksPerSecond)
       return { sample: await sampleCpu(control), ticksPerSecond, startTicks }
     })
-    const result = await verify.call(this, control)
-    if (before) {
+    if (!before) return verify.call(this, control)
+
+    logCpuSample(checkpoint, 'before', { ...before, cpuModel: cpus()[0]?.model })
+    const controller = new AbortController()
+    const tracing = observeCpu(checkpoint, () =>
+      traceCpu(checkpoint, before.sample, controller.signal)
+    )
+    try {
+      const result = await verify.call(this, control)
       await observeCpu(checkpoint, async () => {
         const after = await sampleCpu(control)
+        logCpuSample(checkpoint, 'after', { sample: after })
         const metrics = desktopCpuMetrics(
           before.sample,
           after,
@@ -112,7 +156,10 @@ export function instrumentDesktopCpuBenchmark(scenario, checkpoint) {
           flag: 'wx',
         })
       })
+      return result
+    } finally {
+      controller.abort()
+      await tracing
     }
-    return result
   }
 }

@@ -215,6 +215,8 @@ export interface SourceReference {
   title: string
   /** Knowledge base ID */
   kb_id?: number | null
+  /** Document ID for an internal knowledge base source. */
+  document_id?: number
   /** Provider-specific source ID */
   source_id?: string
   /** Provider source type */

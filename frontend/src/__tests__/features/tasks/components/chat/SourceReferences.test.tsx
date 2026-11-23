@@ -22,6 +22,47 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 describe('SourceReferences', () => {
+  it('opens a local source using its own KB and document IDs and preserves external URLs', () => {
+    render(
+      <SourceReferences
+        sources={[
+          { index: 1, title: 'same.md', kb_id: 42, document_id: 71 },
+          { index: 2, title: 'same.md', kb_id: 42, document_id: 72 },
+          {
+            index: 3,
+            title: 'External',
+            kb_id: 42,
+            document_id: 73,
+            source_uri: 'https://example.com/citation',
+          },
+          { index: 4, title: 'Unresolved', kb_id: 42 },
+          {
+            index: 5,
+            title: 'Provider reference',
+            source_type: 'external_provider',
+            kb_id: 42,
+            document_id: 74,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getAllByRole('link', { name: 'sourceReferences.openSource: same.md' })).toEqual([
+      expect.objectContaining({
+        href: expect.stringContaining('/knowledge/document/42?view=documents&documentId=71'),
+      }),
+      expect.objectContaining({
+        href: expect.stringContaining('/knowledge/document/42?view=documents&documentId=72'),
+      }),
+    ])
+    expect(
+      screen.getByRole('link', { name: 'sourceReferences.openSource: External' })
+    ).toHaveAttribute('href', 'https://example.com/citation')
+    expect(
+      screen.queryByRole('link', { name: /Unresolved|Provider reference/ })
+    ).not.toBeInTheDocument()
+  })
+
   it('does not fall back to ignored ids when detailed statuses have zero ignored sources', () => {
     render(
       <SourceReferences

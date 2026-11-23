@@ -565,6 +565,54 @@ fn rejects_invalid_chat_request() {
 }
 
 #[test]
+fn request_adapters_keep_tool_results_next_to_their_calls() {
+    let text = json!({"type":"output_text","text":"Checking history","annotations":[]});
+    let empty = json!({"type":"output_text","text":"","annotations":[]});
+    let commentary = |content| json!({"type":"message","role":"assistant","content":content});
+    let call = |id| json!({"type":"function_call","name":"exec","call_id":id,"arguments":"{}"});
+    let output = |id| json!({"type":"function_call_output","call_id":id,"output":"done"});
+    let boundary = json!({"type":"message","role":"user","content":"Continue"});
+    let input = json!([
+        call("exec"),
+        commentary(json!([empty])),
+        output("exec"),
+        call("exec_0"),
+        call("exec_1"),
+        output("exec_0"),
+        commentary(json!([empty, text])),
+        output("exec_1"),
+        call("exec_2"),
+        commentary(json!([text])),
+        boundary,
+        output("exec_2")
+    ]);
+    let expected = json!([
+        call("exec"),
+        output("exec"),
+        commentary(json!([text])),
+        call("exec_0"),
+        call("exec_1"),
+        output("exec_0"),
+        output("exec_1"),
+        call("exec_2"),
+        commentary(json!([text])),
+        boundary,
+        output("exec_2")
+    ]);
+    let body = serde_json::to_vec(&json!({"model":"test-model","input":input})).unwrap();
+    let (prepared, _, _) = prepare_request("openai-responses", false, None, &body).unwrap();
+    let prepared: Value = serde_json::from_slice(&prepared).unwrap();
+    assert_eq!(prepared["input"], expected);
+
+    let ordered_body = serde_json::to_vec(&json!({"model":"test-model","input":expected})).unwrap();
+    for api_format in ["openai-chat-completions", "anthropic-messages"] {
+        let (actual, _, _) = prepare_request(api_format, false, None, &body).unwrap();
+        let (expected, _, _) = prepare_request(api_format, false, None, &ordered_body).unwrap();
+        assert_eq!(actual, expected, "{api_format}");
+    }
+}
+
+#[test]
 fn normalizes_cross_protocol_history_ids_for_native_responses_models() {
     let body = cross_protocol_history_with_invalid_ids();
 

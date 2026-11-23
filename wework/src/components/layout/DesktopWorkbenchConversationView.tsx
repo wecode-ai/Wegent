@@ -175,6 +175,7 @@ export function DesktopWorkbenchConversationView({
     clearCurrentGoal,
     showPageTopBar,
   } = model
+  const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
   const selectionSharingMounted = Boolean(currentRuntimeTask && paneVisible && workbenchVisible)
   return (
     <TaskDetailScrollArea
@@ -558,6 +559,7 @@ export function DesktopWorkbenchConversationView({
                                       )
                                     }
                                     isStreaming={paneIsBusy}
+                                    showPauseButton={showPauseButton}
                                     onPause={pauseCurrentResponse}
                                     onCompactContext={
                                       currentRuntimeUsesCodex ||
@@ -859,6 +861,7 @@ export function DesktopWorkbenchConversationView({
                       }
                       onSelectCloudProject={handleSelectCloudProject}
                       isStreaming={paneIsBusy}
+                      showPauseButton={showPauseButton}
                       onPause={pauseCurrentResponse}
                       onCompactContext={
                         activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
