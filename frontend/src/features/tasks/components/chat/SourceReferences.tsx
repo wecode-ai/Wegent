@@ -15,6 +15,7 @@ import React from 'react'
 import { ExternalLink, FileText } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RetrievalSummaryPayload, SourceReference } from '@/types/socket'
+import { parseKnowledgeBaseId } from '@/utils/knowledgeUrl'
 
 export type ExternalSourceOpener = (source: SourceReference) => React.ReactNode
 
@@ -59,6 +60,16 @@ function isHttpUrl(sourceUri?: string): boolean {
   }
 }
 
+function getInternalDocumentHref(source: SourceReference): string | undefined {
+  if (source.source_id || (source.source_type && source.source_type !== 'internal')) {
+    return undefined
+  }
+  const knowledgeBaseId = parseKnowledgeBaseId(String(source.kb_id ?? ''))
+  const documentId = parseKnowledgeBaseId(String(source.document_id ?? ''))
+  if (knowledgeBaseId === null || documentId === null) return undefined
+  return `/knowledge/document/${knowledgeBaseId}?view=documents&documentId=${documentId}`
+}
+
 function SourceReferenceItem({
   source,
   openLabel,
@@ -72,15 +83,19 @@ function SourceReferenceItem({
   const sourceUri = source.source_uri
   const opener = source.source_type ? getExternalSourceOpener(source.source_type) : undefined
 
-  if (isHttpUrl(sourceUri)) {
+  const internalHref = opener ? undefined : getInternalDocumentHref(source)
+  const href = isHttpUrl(sourceUri) ? sourceUri : internalHref
+
+  if (href) {
     return (
       <a
-        href={sourceUri}
+        href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-text-secondary hover:text-primary hover:underline inline-flex items-center gap-1 max-w-md"
-        title={sourceUri}
-        aria-label={openLabel}
+        className="text-text-secondary hover:text-primary hover:underline inline-flex min-h-11 min-w-11 max-w-md items-center gap-1 md:min-h-0 md:min-w-0"
+        title={sourceUri || label}
+        data-testid={href === internalHref ? 'knowledge-source-reference' : undefined}
+        aria-label={`${openLabel}: ${label}`}
       >
         <span className="truncate">{label}</span>
         <ExternalLink className="w-3 h-3 shrink-0" />
