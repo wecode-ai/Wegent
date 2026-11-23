@@ -1905,6 +1905,10 @@ function RuntimePaneSessionIdentityProbe() {
       <span data-testid="runtime-session-messages">
         {paneSession.messages.map(message => message.content).join('|')}
       </span>
+      <span data-testid="runtime-session-error">{paneSession.error}</span>
+      <button type="button" onClick={() => paneSession.setError('local pane event')}>
+        publish a pane error
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -13385,6 +13389,72 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     expect(globalSubscribeCount()).toBe(1)
     expect(paneSubscribeCount()).toBe(0)
+  })
+
+  test('keeps hidden stream progress out of unrelated pane publications', async () => {
+    const address = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    }
+    let notifyWindowActivity: (activity: unknown) => void = () => undefined
+    const previousLifecycle = window.weworkElectronLifecycle
+    window.weworkElectronLifecycle = {
+      ...previousLifecycle,
+      onSystemResume: () => () => undefined,
+      getWorkbenchActivity: async () => 'foreground',
+      onWorkbenchActivityChanged: listener => {
+        notifyWindowActivity = listener
+        return () => {
+          notifyWindowActivity = () => undefined
+        }
+      },
+    }
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'loaded transcript' }],
+      } satisfies RuntimeTranscriptResponse),
+    })
+    const { unmount } = renderWorkbench(
+      <RuntimePaneSessionIdentityProbe />,
+      createWorkbenchServices({ runtimeWorkApi })
+    )
+    try {
+      const messages = screen.getByTestId('runtime-session-messages')
+      await waitFor(() => expect(messages).toHaveTextContent('loaded transcript'))
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_started',
+          taskId: address.taskId,
+          subtaskId: 'hidden-turn',
+        })
+        notifyWindowActivity('hidden')
+      })
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_chunk',
+          subtaskId: 'hidden-turn',
+          itemId: 'hidden-content',
+          content: 'hidden stream progress',
+        })
+      })
+      expect(
+        getRuntimeConversationMessages(address)
+          .map(message => message.content)
+          .join('|')
+      ).toContain('hidden stream progress')
+      await userEvent.click(screen.getByText('publish a pane error'))
+      expect(screen.getByTestId('runtime-session-error')).toHaveTextContent('local pane event')
+      expect(messages).not.toHaveTextContent('hidden stream progress')
+      act(() => notifyWindowActivity('foreground'))
+      expect(messages).toHaveTextContent('hidden stream progress')
+    } finally {
+      unmount()
+      window.weworkElectronLifecycle = previousLifecycle
+    }
   })
 
   test('clears the task plan progress when starting a new chat', async () => {

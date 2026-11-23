@@ -9,7 +9,9 @@ import type { RuntimeTranscriptLoader } from '@/types/workbench'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   getRuntimeConversationMessages,
+  getRuntimeConversationSnapshot,
   isRuntimeConversationArchived,
+  runtimeConversationKey,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
@@ -67,6 +69,18 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   let unsubscribeSearch: (() => void) | undefined
   let stopWindowActivity: (() => void) | undefined
   let windowActivity: WorkbenchWindowActivity = 'foreground'
+  let presentedConversation:
+    | { key: string; snapshot: ReturnType<typeof getRuntimeConversationSnapshot> }
+    | undefined
+  const readPresentedConversation: typeof getRuntimeConversationSnapshot = address => {
+    const key = runtimeConversationKey(address)
+    // Lifecycle and local UI updates still publish while the transcript is hidden.
+    if (windowActivity === 'hidden' && presentedConversation?.key === key)
+      return presentedConversation.snapshot
+    const snapshot = getRuntimeConversationSnapshot(address)
+    presentedConversation = { key, snapshot }
+    return snapshot
+  }
   let pendingStreamPresentation = false
   let conversationFrame: number | undefined
   let conversationTimer: ReturnType<typeof setTimeout> | undefined
@@ -125,7 +139,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     }
     return { read: readTranscript, isCurrent }
   }
-  const frame = () => createPaneSessionFrame(external, state, readPort())
+  const frame = (readConversation = getRuntimeConversationSnapshot) =>
+    createPaneSessionFrame(external, state, readPort(), readConversation)
   const diagnostics = createPaneSessionDiagnostics({ readFrame: frame, isActive })
   const live: PaneTransactionState = {
     browserAnnotationCommandSequence: 0,
@@ -434,7 +449,12 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       return bind().commands.setInput(...args)
     },
   }
-  let snapshot = createPaneSessionView(frame(), commands, search, attachmentCommands)
+  let snapshot = createPaneSessionView(
+    frame(readPresentedConversation),
+    commands,
+    search,
+    attachmentCommands
+  )
   const differs = (previous: readonly unknown[] | undefined, next: readonly unknown[]) =>
     !previous || next.some((value, index) => !Object.is(value, previous[index]))
   function publish() {
@@ -446,7 +466,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     try {
       do {
         publishAgain = false
-        const current = frame()
+        const current = frame(readPresentedConversation)
         if (
           current.runtimeTaskLoadTarget &&
           current.threadGoal &&
@@ -607,7 +627,9 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       if (!started) {
         started = true
         stopWindowActivity = subscribeWorkbenchWindowActivity(activity => {
-          const resumed = activity === 'foreground' && windowActivity !== 'foreground'
+          const resumed =
+            (windowActivity === 'hidden' && activity !== 'hidden') ||
+            (activity === 'foreground' && windowActivity !== 'foreground')
           windowActivity = activity
           if (resumed) flushConversation()
           else if (pendingStreamPresentation) {
@@ -638,6 +660,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
           stopWindowActivity?.()
           stopWindowActivity = undefined
           windowActivity = 'foreground'
+          presentedConversation = undefined
           readScope = undefined
           releaseQueue?.()
           releaseQueue = undefined
