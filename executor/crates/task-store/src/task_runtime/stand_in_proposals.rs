@@ -241,11 +241,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("tasks.sqlite");
         let store = LocalTaskStore::open(&path).unwrap();
-        let mut previous = store.personal_stand_in(7, "mac").unwrap();
-        previous["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
-            "default", "mac"
-        )]);
-        let previous = store.save_personal_stand_in(7, "mac", previous).unwrap();
+        let previous = store.personal_stand_in(7, "mac").unwrap();
         let owner = json!({"id":"owner-native","revision":1,"taskId":"stand-in-chat-7-primary","userId":7,"deviceId":"mac","roleId":null,"cancelled":false});
         let proposal = store
             .propose_stand_in_settings_with_continuation(
@@ -312,7 +308,11 @@ mod tests {
     fn new_role_proposal_preserves_existing_settings_until_explicit_confirmation() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
-        let previous = store.personal_stand_in(7, "mac").unwrap();
+        let mut previous = store.personal_stand_in(7, "mac").unwrap();
+        previous["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
+        let previous = store.save_personal_stand_in(7, "mac", previous).unwrap();
         let mut settings = previous.clone();
         let mut role = settings["roles"][0].clone();
         role["id"] = json!("atlas-followup");

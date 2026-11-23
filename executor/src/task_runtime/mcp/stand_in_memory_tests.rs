@@ -554,7 +554,8 @@ async fn stand_in_review_has_only_generic_read_tools_and_other_schedules_have_no
 fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.db")).unwrap();
-    let settings = store.personal_stand_in(7, "mac").unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     let primary = StandInMcpIdentity {
         task_id: "primary".into(),

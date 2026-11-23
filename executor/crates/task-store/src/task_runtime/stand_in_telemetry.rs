@@ -619,11 +619,12 @@ mod tests {
     #[test]
     fn stand_in_telemetry_configuration_diff_ignores_versions_and_rolls_back_proposals() {
         let (_root, store) = fixture();
-        store.configure_stand_in_telemetry(7, true, None).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
         settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
             "default", "mac"
         )]);
+        let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
         settings["roles"][0]["enabled"] = json!(true);
         let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
         assert_eq!(facts(&store, 7).len(), 1);
