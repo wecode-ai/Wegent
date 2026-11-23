@@ -414,10 +414,7 @@ const MixedContentView = memo(function MixedContentView({
                 task_id: formTaskId,
                 subtask_id: formSubtaskId,
                 questions: parsedQuestions,
-                tool_output:
-                  typeof block.tool_output === 'object' && block.tool_output !== null
-                    ? (block.tool_output as Record<string, unknown>)
-                    : null,
+                tool_output: parseRecord(block.tool_output),
               }
               return {
                 type: 'interactive_form_question' as const,

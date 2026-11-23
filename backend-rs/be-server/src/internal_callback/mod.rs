@@ -356,7 +356,7 @@ async fn deliver_terminal_callback(
     Ok(published)
 }
 
-async fn prepare_interactive_form_event(
+pub(crate) async fn prepare_interactive_form_event(
     registry: &crate::InteractiveFormRegistry,
     event: &mut event::ExecutionEvent,
 ) {

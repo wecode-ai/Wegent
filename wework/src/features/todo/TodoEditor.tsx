@@ -450,7 +450,7 @@ export function TodoEditor(props: TodoEditorProps) {
             projectStore: props.project?.project_store ?? 'backend',
             projectId: props.project?.id ?? props.item.cloud_project_id,
           }}
-          bindings={props.initialTaskBindings ?? []}
+          bindings={props.initialTaskBindings}
           onLinked={() => setTaskLinkRevision(value => value + 1)}
         />
       ) : undefined,
