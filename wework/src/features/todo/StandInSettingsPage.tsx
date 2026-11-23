@@ -49,19 +49,27 @@ import {
   StandInSettingsError,
   StandInSettingsHeader,
   StandInSettingsPanel,
+  StandInSettingsShortcuts,
+  type StandInSettingsShortcut,
 } from './StandInSettingsLayout'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 
-type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
+type View =
+  | 'project'
+  | 'main'
+  | 'connections'
+  | 'advanced'
+  | 'create'
+  | StandInSettingsShortcut['id']
 export interface StandInSettingsHandle {
   requestClose(): void
   requestLeave(action: () => void): void
 }
 
 interface StandInSettingsPageProps {
-  management?: ReactNode
+  shortcuts?: StandInSettingsShortcut[]
   footerLeading?: ReactNode
   api: SharedWorkspaceApi
   projects: CollaborationProject[]
@@ -89,7 +97,7 @@ export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps)
 
 /** Edit one device-owned stand-in draft and persist it only after an explicit save. */
 function StandInSettingsEditor({
-  management,
+  shortcuts,
   footerLeading,
   projects,
   services,
@@ -227,6 +235,7 @@ function StandInSettingsEditor({
     view === 'advanced'
   )
 
+  const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
   const openView = (next: View) => {
     setRoleNameError(false)
     setHistory(current => [...current, { view, draft }])
@@ -454,7 +463,9 @@ function StandInSettingsEditor({
                     testId: 'stand-in-path-advanced',
                   },
                 ]
-              : []),
+              : shortcutPage
+                ? [{ label: shortcutPage.label, testId: 'stand-in-path-tool' }]
+                : []),
         ]}
         title={
           initialProject && (view === 'project' || view === 'create')
@@ -593,64 +604,64 @@ function StandInSettingsEditor({
                     updateRole(role.id, current => ({ ...current, selfLearningEnabled }))
                   }
                 />
-                <div>
-                  <StandInSettingsEntry
-                    label={t('standIn.workspace.connections')}
-                    description={t('standIn.workspace.connections_help')}
-                    testId="stand-in-connections-open"
-                    disabled={saving}
-                    onClick={() => openView('connections')}
-                  />
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 pt-2 text-xs text-text-secondary">
-                    {(projectConfigured || !!role.connections?.length) && (
-                      <span data-testid="stand-in-source-summary">
-                        {projectConfigured &&
-                          `${t('standIn.personal.collaboration')} · ${t(
-                            role.collaboration.allProjects
-                              ? 'standIn.personal.connected_all'
-                              : 'standIn.personal.connected_selected',
-                            { count: included.length }
-                          )}`}
-                        {projectConfigured && !!role.connections?.length && ' · '}
-                        {!!role.connections?.length &&
-                          t('standIn.workspace.source_connections', {
-                            count: role.connections.length,
-                          })}
-                        {projectConfigured &&
-                          !role.collaboration.enabled &&
-                          receivingSources &&
-                          ` · ${t('standIn.workspace.connection_receiving_paused')}`}
-                      </span>
-                    )}
-                    {!receivingSources && (
-                      <span data-testid="stand-in-sources-empty">
-                        {t(
-                          projectConfigured || role.connections?.length
-                            ? 'standIn.personal.no_receiving_sources'
-                            : 'standIn.personal.no_sources'
-                        )}
-                      </span>
-                    )}
-                  </div>
-                </div>
+                <StandInSettingsEntry
+                  label={t('standIn.workspace.connections')}
+                  description={t('standIn.workspace.connections_help')}
+                  testId="stand-in-connections-open"
+                  disabled={saving}
+                  onClick={() => openView('connections')}
+                  summary={
+                    <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      {(projectConfigured || !!role.connections?.length) && (
+                        <span data-testid="stand-in-source-summary">
+                          {projectConfigured &&
+                            `${t('standIn.personal.collaboration')} · ${t(
+                              role.collaboration.allProjects
+                                ? 'standIn.personal.connected_all'
+                                : 'standIn.personal.connected_selected',
+                              { count: included.length }
+                            )}`}
+                          {projectConfigured && !!role.connections?.length && ' · '}
+                          {!!role.connections?.length &&
+                            t('standIn.workspace.source_connections', {
+                              count: role.connections.length,
+                            })}
+                          {projectConfigured &&
+                            !role.collaboration.enabled &&
+                            receivingSources &&
+                            ` · ${t('standIn.workspace.connection_receiving_paused')}`}
+                        </span>
+                      )}
+                      {!receivingSources && (
+                        <span data-testid="stand-in-sources-empty">
+                          {t(
+                            projectConfigured || role.connections?.length
+                              ? 'standIn.personal.no_receiving_sources'
+                              : 'standIn.personal.no_sources'
+                          )}
+                        </span>
+                      )}
+                    </span>
+                  }
+                />
               </>
             )}
             {(view === 'main' || view === 'create') && (
-              <div className="space-y-2">
-                <StandInSettingsEntry
-                  testId="stand-in-advanced-open"
-                  disabled={saving}
-                  onClick={() => openView('advanced')}
-                  label={t('standIn.workspace.execution_settings')}
-                  description={t('standIn.workspace.execution_settings_help')}
-                />
-                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 px-3 text-sm">
-                  <span className="text-text-secondary">
-                    {t('standIn.personal.execution_device')}
-                  </span>
-                  {deviceControl}
-                </div>
-              </div>
+              <StandInSettingsEntry
+                testId="stand-in-advanced-open"
+                disabled={saving}
+                onClick={() => openView('advanced')}
+                label={t('standIn.workspace.execution_settings')}
+                description={t('standIn.workspace.execution_settings_help')}
+                footer={
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-sm">
+                    <span className="text-text-secondary">
+                      {t('standIn.personal.execution_device')}
+                    </span>
+                    {deviceControl}
+                  </div>
+                }
+              />
             )}
             {view === 'connections' && (
               <StandInConnectionSettings
@@ -742,8 +753,11 @@ function StandInSettingsEditor({
               }}
             />
           </div>
-          {view === 'main' && management}
-          {!scheduleDirty && (
+          {view === 'main' && (
+            <StandInSettingsShortcuts shortcuts={shortcuts} disabled={saving} onOpen={openView} />
+          )}
+          {shortcutPage?.content}
+          {!scheduleDirty && !shortcutPage && (
             <StandInSettingsActions
               prefix="stand-in"
               busy={saving}
