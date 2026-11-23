@@ -67,6 +67,7 @@ export function useConversationVirtualizer({
     // Row measurements may compensate scroll and commit new layout synchronously.
     // Keep those writes together, outside the browser's ResizeObserver delivery.
     useAnimationFrameWithResizeObserver: true,
+    useScrollendEvent: true,
     ...options,
     enabled,
     scrollMargin: prefix,

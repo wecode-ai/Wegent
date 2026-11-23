@@ -129,7 +129,7 @@ export interface MessageListProps {
 const EMPTY_TURNS: RuntimeConversationTurn[] = []
 const EMPTY_DEVICES: NonNullable<MessageListProps['devices']> = []
 const VIRTUAL_MESSAGE_OVERSCAN = 2
-const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
+const FULLY_RENDERED_MESSAGE_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
 const MESSAGE_LIST_PADDING_BOTTOM_PX = 8
@@ -288,18 +288,25 @@ export const MessageList = memo(function MessageList({
     !resolvedMessages.some(
       message => message.role === 'assistant' && message.status === 'streaming'
     )
-  const virtualMessages = virtualize && scrollElementRef !== undefined
+  const rowCount = visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0)
+  const hasViewportRows = virtualize && scrollElementRef !== undefined
+  // The complete list already fits within the virtualizer's render budget.
+  // Keep the same row nodes and let the browser size them directly.
+  const virtualMessages = hasViewportRows && rowCount > FULLY_RENDERED_MESSAGE_COUNT
   // Validate the actual column before hydrating sizes or preparing the transcript.
   const virtualLayoutReady = virtualMessages && layoutWidth > 0
-  const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
+  const virtualMeasurementKey =
+    virtualMessages && conversationKey != null ? String(conversationKey) : null
   const measurementLayout = useMemo(
     () => ({
       key: layoutKey,
       messages: new Map(
-        visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
+        virtualMessages
+          ? visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
+          : []
       ),
     }),
-    [layoutKey, visibleMessages]
+    [layoutKey, visibleMessages, virtualMessages]
   )
   const initialMeasurementsCache = useMemo(
     () =>
@@ -370,10 +377,7 @@ export const MessageList = memo(function MessageList({
   )
   const rangeExtractor = useCallback(
     (range: VirtualRange) => {
-      const indexes =
-        range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
-          ? Array.from({ length: range.count }, (_, index) => index)
-          : defaultRangeExtractor(range)
+      const indexes = defaultRangeExtractor(range)
       const forcedIndexes = [
         ...new Set([forcedVirtualMessageIndex, streamingVirtualMessageIndex]),
       ].filter(index => index >= 0 && !indexes.includes(index))
@@ -388,7 +392,7 @@ export const MessageList = memo(function MessageList({
     scrollMargin,
     viewportReady,
   } = useConversationVirtualizer({
-    count: visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0),
+    count: rowCount,
     enabled: virtualLayoutReady,
     getItemKey,
     estimateSize,
@@ -591,9 +595,9 @@ export const MessageList = memo(function MessageList({
               ),
             } satisfies CSSProperties,
           }))
-        : visibleMessages.map((_, index) => ({
+        : Array.from({ length: rowCount }, (_, index) => ({
             index,
-            key: visibleMessages[index].id,
+            key: visibleMessages[index]?.id ?? 'assistant-waiting',
             style: undefined,
           }))
       ).map(row => {
@@ -603,8 +607,8 @@ export const MessageList = memo(function MessageList({
           return (
             <article
               key={row.key}
-              data-index={index}
-              data-message-row
+              data-index={hasViewportRows ? index : undefined}
+              data-message-row={hasViewportRows ? true : undefined}
               style={row.style}
               className="min-w-0"
               data-testid="message-assistant-waiting"
@@ -681,7 +685,7 @@ export const MessageList = memo(function MessageList({
           </MarkdownWindowingDisabledContext.Provider>
         )
         const gap = renderGapAfterMessage?.(message, nextMessage)
-        return virtualMessages ? (
+        return hasViewportRows ? (
           <div key={row.key} data-index={index} data-message-row style={row.style}>
             {searchableArticle}
             {gap}
@@ -708,11 +712,6 @@ export const MessageList = memo(function MessageList({
             ),
           }}
         />
-      )}
-      {!virtualMessages && shouldShowWaitingIndicator && (
-        <article className="min-w-0" data-testid="message-assistant-waiting">
-          <AssistantThinkingIndicator />
-        </article>
       )}
     </div>
   )
