@@ -7,6 +7,9 @@ import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
+import { createNotificationCenterSummary } from '@/features/notifications/notificationCenterSummary'
+import { readCachedRemoteRuntimeWork, writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
+import { serializeTaskKeys } from './runtimeTaskLifecycle/taskKeyStorage'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 
 vi.mock('@/desktop/windowFocus', () => ({
@@ -16,6 +19,7 @@ vi.mock('@/desktop/windowFocus', () => ({
 vi.mock('./runtimeTaskSystemNotifications', () => ({
   sendSystemNotification: vi.fn(),
 }))
+vi.mock('@/desktop/trayNavigation', () => ({ syncNotificationUnreadCount: vi.fn() }))
 vi.mock('@/desktop/localExecutor', () => ({
   requestLocalExecutor: vi.fn().mockResolvedValue({ messages: [] }),
 }))
@@ -151,7 +155,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       store.turnSettled(address, 'turn-1', 'succeeded')
       store.executorSettled(address)
     }
-    expect(store.getSnapshot().unreadTaskKeys).toContain(items[0].key)
+    expect([...store.getSnapshot().unreadTaskKeys]).toEqual([items[1].key])
     const source = createRuntimeTaskReminderSource(store)
     const stop = source.subscribe(() => {}, {
       items,
@@ -180,6 +184,57 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
     }
   }
 )
+
+test('excludes an existing memory review unread marker when restoring cached remote work', async () => {
+  const owner = 'cached-memory-review-reminder-test'
+  const item = notificationItem('remote-device')
+  const review = {
+    ...item.task,
+    taskId: 'memory-review',
+    runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true, userId: 7 } },
+  }
+  const work = {
+    projects: [],
+    chats: [{ ...item.workspace, tasks: [review, item.task] }],
+    totalTasks: 2,
+  }
+  const unreadStorageKey = `wework.runtimeTaskLifecycle.${owner}.unread.v2`
+  localStorage.setItem(
+    unreadStorageKey,
+    serializeTaskKeys(collectRuntimeTaskReminderItems(work).map(({ key }) => key))
+  )
+  writeCachedRemoteRuntimeWork(owner, work)
+  const cachedWork = readCachedRemoteRuntimeWork(owner)
+  expect(cachedWork.chats[0]?.tasks[0]?.runtimeHandle).toEqual({
+    origin: { type: 'stand_in_schedule', memoryReview: true },
+  })
+  const store = new RuntimeTaskLifecycleStore(owner)
+  store.syncRuntimeWork(cachedWork)
+  const { result, unmount } = renderHook(() =>
+    useRuntimeTaskReminders({
+      runtimeWork: cachedWork,
+      lifecycleStore: store,
+      lifecycleSnapshot: store.getSnapshot(),
+    })
+  )
+  const bell = createNotificationCenterSummary()
+  const stop = bell.subscribe(() => {}, {
+    taskSource: result.current,
+    collaborationUnreadCount: 0,
+    generalInbox: null,
+  })
+  try {
+    expect(bell.getSnapshot().unreadCount).toBe(1)
+    expect(bell.getSnapshot().unreadTasks.map(({ task }) => task.taskId)).toEqual([
+      item.task.taskId,
+    ])
+    expect(localStorage.getItem(unreadStorageKey)).toBe(serializeTaskKeys([item.key]))
+  } finally {
+    stop()
+    unmount()
+    await act(async () => {})
+  }
+})
 
 test('notifies once when an unread completion survives a device alias migration', async () => {
   localStorage.setItem(

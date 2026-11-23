@@ -9,6 +9,7 @@ import { recordReleaseDiagnostic } from './release-diagnostics.js'
 export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
+const MANAGED_PLUGIN_COPY_BATCH_SIZE = 4
 const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-app-wework', 'wework-app'],
   ['@wegent/dsh-electron-host', 'wework-electron-host'],
@@ -430,11 +431,22 @@ async function prepareProfile(options: {
   )
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
   await ensureCoreWorkspace(workspacePath)
-  for (const packageName of managedDependencyNames) {
-    const source = options.runtime.pluginRoots[packageName]
-    const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
-    await rm(destination, { recursive: true, force: true })
-    await copyManagedPlugin(source, destination)
+  for (
+    let start = 0;
+    start < managedDependencyNames.length;
+    start += MANAGED_PLUGIN_COPY_BATCH_SIZE
+  ) {
+    const results = await Promise.allSettled(
+      managedDependencyNames
+        .slice(start, start + MANAGED_PLUGIN_COPY_BATCH_SIZE)
+        .map(async name => {
+          const destination = join(profileRoot, 'node_modules', ...name.split('/'))
+          await rm(destination, { recursive: true, force: true })
+          await copyManagedPlugin(options.runtime.pluginRoots[name], destination)
+        })
+    )
+    const failure = results.find(result => result.status === 'rejected')
+    if (failure) throw failure.reason
   }
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
