@@ -91,25 +91,6 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       logRuntimeChatTerminalEvent(event, matchedSubscriptionCount, subscriptionEntries.length)
     }
     for (const [subscriptionId, subscription] of subscriptionEntries) {
-      if (event.event === 'runtime.stand_in.proposal.changed') {
-        const { deviceId, userId, roleId, proposalId } = event.payload
-        if (
-          typeof deviceId === 'string' &&
-          deviceId &&
-          typeof userId === 'number' &&
-          Number.isSafeInteger(userId) &&
-          (roleId == null || typeof roleId === 'string') &&
-          typeof proposalId === 'string' &&
-          proposalId
-        )
-          subscription.handlers.onStandInLearningProposal?.({
-            deviceId,
-            userId,
-            roleId: roleId ?? undefined,
-            proposalId,
-          })
-        continue
-      }
       if (event.event === 'wework.notification.created') {
         subscription.handlers.onWeworkNotification?.()
         continue
@@ -577,7 +558,6 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onProjectTaskAssigned ||
     handlers.onIssueShared ||
     handlers.onIssueAssignmentsChanged ||
-    handlers.onStandInLearningProposal ||
     handlers.onWeworkNotification
   )
 }

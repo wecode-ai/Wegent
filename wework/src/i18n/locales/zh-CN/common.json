@@ -6035,7 +6035,6 @@
       "profile_instructions_help": "这些说明由主助理与场景角色共享。具体角色可以有自己的职责。",
       "self_learning": "助理自主学习",
       "self_learning_help": "从已授权的对话、你的示范和纠正中学习。助理会对比不同答法，发现值得长期采用的改进时请你确认。开启后不会改变代回复设置。",
-      "self_learning_proposal_ready": "助理有一项职责改进建议，点击查看依据和答复对比。",
       "connections": "连接",
       "connections_help": "选择助理关注的项目、消息和邮件；聊天渠道用于从 IM 联系助理，两者分别配置。",
       "execution_settings": "运行环境",
