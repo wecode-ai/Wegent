@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { waitForClosedStartupSplash } from './modules/native-window-state.mjs'
 
 const execute = promisify(execFile)
 const CHECKPOINTS = new Set([
@@ -50,19 +51,24 @@ async function sampleCpu(control) {
   return { Renderer, Executor }
 }
 
-export function desktopCpuMetrics(before, after, ticksPerSecond) {
+export function desktopCpuMetrics(before, after, ticksPerSecond, startTicks) {
   assert.ok(Number.isSafeInteger(ticksPerSecond) && ticksPerSecond > 0, 'Invalid CLK_TCK')
   return PROCESS_ROLES.map(role => {
     const initial = new Map(before[role].map(process => [process.pid, process]))
-    assert.equal(initial.size, after[role].length, `${role} process count changed`)
     let ticks = 0
     for (const process of after[role]) {
       const start = initial.get(process.pid)
+      if (!start && role === 'Renderer') {
+        assert.ok(process.startedAt >= startTicks, 'Renderer was missing from the initial sample')
+        ticks += process.ticks
+        continue
+      }
       assert.ok(start && start.startedAt === process.startedAt, `${role} process identity changed`)
       assert.ok(process.ticks >= start.ticks, `${role} CPU counter moved backwards`)
       ticks += process.ticks - start.ticks
       initial.delete(process.pid)
     }
+    assert.equal(initial.size, 0, `${role} process disappeared during measurement`)
     return { name: `${role} CPU time`, unit: 'ms', value: (ticks * 1000) / ticksPerSecond }
   })
 }
@@ -83,14 +89,24 @@ export function instrumentDesktopCpuBenchmark(scenario, checkpoint) {
   const verify = scenario.verify
   scenario.verify = async function (control) {
     const before = await observeCpu(checkpoint, async () => {
+      // The startup splash owns a short-lived renderer outside these workloads.
+      await waitForClosedStartupSplash(control)
       const { stdout } = await execute('getconf', ['CLK_TCK'], { timeout: 2000 })
-      return { sample: await sampleCpu(control), ticksPerSecond: Number(stdout.trim()) }
+      const ticksPerSecond = Number(stdout.trim())
+      const uptime = Number((await readFile('/proc/uptime', 'utf8')).split(' ')[0])
+      const startTicks = Math.ceil(uptime * ticksPerSecond)
+      return { sample: await sampleCpu(control), ticksPerSecond, startTicks }
     })
     const result = await verify.call(this, control)
     if (before) {
       await observeCpu(checkpoint, async () => {
         const after = await sampleCpu(control)
-        const metrics = desktopCpuMetrics(before.sample, after, before.ticksPerSecond)
+        const metrics = desktopCpuMetrics(
+          before.sample,
+          after,
+          before.ticksPerSecond,
+          before.startTicks
+        )
         await mkdir(directory, { recursive: true })
         await writeFile(join(directory, `${checkpoint}.json`), `${JSON.stringify(metrics)}\n`, {
           flag: 'wx',
