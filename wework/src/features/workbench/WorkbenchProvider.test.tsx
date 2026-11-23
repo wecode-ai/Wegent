@@ -1283,7 +1283,10 @@ function ProjectSendProbe({
 
   return (
     <div>
-      <span data-testid="current-runtime-task-address">
+      <span
+        data-testid="current-runtime-task-address"
+        data-thread-id={currentRuntimeTask?.threadId}
+      >
         {currentRuntimeTask
           ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
           : 'none'}
@@ -7554,13 +7557,16 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('does not rewrite Codex project state when opening an existing task', async () => {
+  test('opens a listed task with its thread identity without rewriting Codex project state', async () => {
     const activateRuntimeProject = vi.fn().mockResolvedValue({
       accepted: true,
       deviceId: 'device-1',
     })
+    const runtimeWork = createRuntimeWork()
+    runtimeWork.projects[0]!.deviceWorkspaces[0]!.tasks[0]!.threadId = 'listed-thread'
     const runtimeWorkApi = createRuntimeWorkApiMock({
       activateRuntimeProject,
+      listRuntimeWork: vi.fn().mockResolvedValue(runtimeWork),
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
@@ -7574,6 +7580,11 @@ describe('WorkbenchProvider runtime tasks', () => {
         'device-1:runtime-a'
       )
     )
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveAttribute(
+      'data-thread-id',
+      'listed-thread'
+    )
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledOnce()
     expect(activateRuntimeProject).not.toHaveBeenCalled()
   })
 

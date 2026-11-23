@@ -216,17 +216,19 @@ export function useWorkbenchRuntimeTasks({
           ) ?? runtimeProjectToProject(runtimeProjectWork))
         : (options?.fallbackProject ?? null)
       const listed = findRuntimeTask(state.runtimeWork, address)
-      const cached = listed ?? lifecycleStore.getTask(address)?.task
+      const cached = listed ? undefined : lifecycleStore.getTask(address)?.task
+      let openingAddress = address
+      if (listed?.threadId && !address.threadId) {
+        openingAddress = { ...address, threadId: listed.threadId }
+      } else if (cached) {
+        openingAddress = taskAddressWithMetadata(address, cached)
+      }
 
       writeLastProjectId(ownershipKey, project?.id ?? null)
-      openRuntimeTaskView(
-        !listed && cached ? taskAddressWithMetadata(address, cached) : address,
-        project,
-        {
-          markOpened: !openedRuntimeTaskKeysRef.current.has(getRuntimeTaskRouteKey(address)),
-          navigate: true,
-        }
-      )
+      openRuntimeTaskView(openingAddress, project, {
+        markOpened: !openedRuntimeTaskKeysRef.current.has(getRuntimeTaskRouteKey(address)),
+        navigate: true,
+      })
       if (listed) return
       const stillOpening = () => {
         const route = parseRuntimeTaskRoute(

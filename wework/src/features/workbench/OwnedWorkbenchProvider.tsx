@@ -747,6 +747,7 @@ export function OwnedWorkbenchProvider({
   const runtimeMessaging = useWorkbenchRuntimeMessaging({
     state,
     dispatch,
+    workspaceTabId,
     executorClient,
     services: resolvedServices,
     runtimeTasks,

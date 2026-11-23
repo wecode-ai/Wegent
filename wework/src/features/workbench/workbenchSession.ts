@@ -235,7 +235,7 @@ export function createWorkbenchSession(
     if (!running) {
       running = true
       state.activate()
-      streams = createWorkbenchSessionStreams(owner)
+      streams = createWorkbenchSessionStreams(owner, tabId)
       stopState = state.subscribe(schedule)
       stopInventory = subscribePluginMarketplaceCache(snapshot => {
         if (snapshot && snapshot.cacheKey !== inputs().marketplaceCacheKey) return
