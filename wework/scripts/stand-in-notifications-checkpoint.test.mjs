@@ -97,12 +97,17 @@ function restoredIssueControl({ exit = Promise.resolve(), closeError } = {}) {
   let issueMounted = true
   let issueVisible = true
   let inboxOpen = false
-  let closeStarted
-  const closing = new Promise(resolve => {
-    closeStarted = resolve
+  let removalStarted
+  const removing = new Promise(resolve => {
+    removalStarted = resolve
+  })
+  let inboxOpened
+  const opened = new Promise(resolve => {
+    inboxOpened = resolve
   })
   return {
-    closing,
+    removing,
+    opened,
     get inboxOpen() {
       return inboxOpen
     },
@@ -116,12 +121,12 @@ function restoredIssueControl({ exit = Promise.resolve(), closeError } = {}) {
       ) {
         if (closeError) throw closeError
         issueVisible = false
-        closeStarted()
       } else if (
         action === 'waitFor' &&
         selector === `${content}:not(:has([data-testid="cloud-todo-detail"]))`
       ) {
         assert.equal(issueVisible, false)
+        removalStarted()
         await exit
         issueMounted = false
       } else if (
@@ -130,6 +135,7 @@ function restoredIssueControl({ exit = Promise.resolve(), closeError } = {}) {
       ) {
         // Programmatic clicks can open an inbox still covered by the modal layer.
         inboxOpen = true
+        inboxOpened()
       } else if (
         action === 'clickWhenEnabled' &&
         selector === '[data-testid="wework-notifications-category-collaboration"]'
@@ -155,26 +161,36 @@ test('reload recovery makes the notification icon hit dismiss the inbox instead 
   await control.command('waitFor', popover, { visible: false })
 })
 
-test('reload recovery waits for full Issue removal after its exit frame becomes invisible', async () => {
-  let finishExit
-  const exit = new Promise(resolve => {
-    finishExit = resolve
-  })
-  const control = restoredIssueControl({ exit })
-  const reopening = openNotificationInboxAfterReload(control, content, 'PRJ261E6109-1')
-  try {
-    await Promise.race([control.closing, reopening])
-    assert.equal(
-      control.inboxOpen,
-      false,
-      'The modal must release its layer before reopening the inbox'
-    )
-  } finally {
-    finishExit()
+test(
+  'reload recovery waits for full Issue removal after its exit frame becomes invisible',
+  { timeout: 1000 },
+  async () => {
+    let finishExit
+    const exit = new Promise(resolve => {
+      finishExit = resolve
+    })
+    const control = restoredIssueControl({ exit })
+    const reopening = openNotificationInboxAfterReload(control, content, 'PRJ261E6109-1')
+    try {
+      await Promise.race([control.removing, reopening])
+      await Promise.race([
+        control.opened.then(() => {
+          throw new Error('The inbox opened while Issue removal was pending')
+        }),
+        new Promise(resolve => setTimeout(resolve, 50)),
+      ])
+      assert.equal(
+        control.inboxOpen,
+        false,
+        'The modal must release its layer before reopening the inbox'
+      )
+    } finally {
+      finishExit()
+    }
+    await reopening
+    assert.equal(control.inboxOpen, true)
   }
-  await reopening
-  assert.equal(control.inboxOpen, true)
-})
+)
 
 test('reload recovery propagates failed Issue closing without opening an obscured inbox', async () => {
   const control = restoredIssueControl({ closeError: new Error('Issue close failed') })
