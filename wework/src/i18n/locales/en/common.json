@@ -6040,7 +6040,6 @@
       "profile_instructions_help": "Shared by your main stand-in and scenario roles. Each role can have its own responsibilities.",
       "self_learning": "Assistant learning",
       "self_learning_help": "Learn from authorized conversations, your examples and corrections. The assistant compares possible responses and asks you to review lasting improvements. Reply settings are managed separately.",
-      "self_learning_proposal_ready": "Your assistant has a suggested change. Review the evidence and compare the responses.",
       "connections": "Connections",
       "connections_help": "Choose projects, messages and email for the assistant to follow. IM chat channels are configured separately.",
       "execution_settings": "Execution environment",

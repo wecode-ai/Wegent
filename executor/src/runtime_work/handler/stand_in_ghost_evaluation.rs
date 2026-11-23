@@ -412,8 +412,7 @@ impl Evaluation<'_> {
                 )
                 .map_err(settings_error);
         }
-        if self
-            .store
+        self.store
             .propose_trained_ghost(
                 self.user,
                 device,
@@ -424,12 +423,8 @@ impl Evaluation<'_> {
                 &self.evidence,
                 &json!(evaluations),
             )
-            .map_err(settings_error)?
-        {
-            self.handler
-                .emit_pending_stand_in_ghost(self.store, self.user, role);
-        }
-        Ok(())
+            .map(|_| ())
+            .map_err(settings_error)
     }
 }
 

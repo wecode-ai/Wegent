@@ -211,9 +211,6 @@ impl RuntimeWorkRpcHandler {
                 .resolve_stand_in_proposal(user, &device, id, accept, prepared)
                 .map_err(settings_error)?;
             drop(_guard);
-            if let Ok(role) = store.resolved_proposal_role(user, &device, id) {
-                self.emit_pending_stand_in_ghost(&store, user, role.as_deref());
-            }
             if let Err(error) = self.flush_stand_in_proposal_continuations().await {
                 log_executor_event(
                     "stand-in proposal continuation deferred",
