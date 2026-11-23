@@ -14,7 +14,8 @@ export function createNativeContextMenuActions(
   contents: WebContents,
   openLinkInNewTab: (url: string) => void = url => {
     void shell.openExternal(url)
-  }
+  },
+  saveUrlAs?: (url: string) => void
 ): NativeContextMenuActions {
   return {
     copyLink: url => clipboard.writeText(url),
@@ -55,6 +56,7 @@ export function createNativeContextMenuActions(
       console.error(`[context-menu] ${action} failed`, error)
     },
     resolveImageContext: params => resolveRendererImageContext(contents, params),
+    ...(saveUrlAs ? { saveUrlAs } : {}),
     showItemInFolder: path => shell.showItemInFolder(path),
   }
 }

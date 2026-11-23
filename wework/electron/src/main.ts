@@ -76,6 +76,7 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
+import { DownloadTargetPolicy } from './host/download-target-policy.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
 import { DesktopAppearanceController } from './host/appearance-theme.js'
@@ -382,6 +383,13 @@ let processExplorerWindow: BrowserWindow | null = null
 const desktopAppearance = new DesktopAppearanceController({
   nativeTheme,
   windows: () => [mainWindow, processExplorerWindow, ...workspaceWindows.values()],
+})
+const desktopDownloadPolicy = new DownloadTargetPolicy({
+  defaultDownloadsDirectory: () => downloadsDirectory(),
+  onDownloadCompleted: savePath => {
+    if (process.platform === 'darwin') app.dock?.downloadFinished(savePath)
+  },
+  onDirectoryWarning: (message, error) => console.warn(message, error),
 })
 let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
@@ -897,8 +905,10 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     installContextMenu(
       guestContents,
       'browser',
-      createNativeContextMenuActions(guestContents, url =>
-        browserManager.requestPopupTab(pending.label, url)
+      createNativeContextMenuActions(
+        guestContents,
+        url => browserManager.requestPopupTab(pending.label, url),
+        url => desktopDownloadPolicy.downloadUrlAs(guestContents, url)
       )
     )
   })
@@ -1010,6 +1020,9 @@ function installDshWindowLabelHeaders(): void {
           : details.requestHeaders
       ),
     })
+  })
+  session.defaultSession.on('will-download', (_event, item, webContents) => {
+    desktopDownloadPolicy.apply(item, webContents)
   })
 }
 
@@ -1536,6 +1549,12 @@ async function updateDesktopPreferences(
   const updated = await desktopPreferences.update(patch, expectedTelemetryConsentRevision)
   if (Object.hasOwn(patch, 'appearanceMode') || Object.hasOwn(patch, 'appearanceThemeSnapshot')) {
     desktopAppearance.update(updated)
+  }
+  if (
+    Object.hasOwn(patch, 'browserDownloadDirectory') ||
+    Object.hasOwn(patch, 'browserAskBeforeDownload')
+  ) {
+    desktopDownloadPolicy.update(updated)
   }
   return updated
 }
@@ -2423,6 +2442,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('runtime-preferences-read', 'started')
   const { preferences: codexSubscriptionPreferences, readable: codexPreferenceReadable } =
     await preferences.readSnapshot()
+  if (codexPreferenceReadable) desktopDownloadPolicy.update(codexSubscriptionPreferences)
   logStartupStep('runtime-preferences-read', 'completed')
   // The Electron PreferencesStore returns raw JSON without normalization, so an
   // absent field (e.g. a fresh install or a user who never toggled it) must fall
@@ -2479,7 +2499,8 @@ async function configureDesktopRuntime(): Promise<void> {
     event => {
       desktopHostEvents.publish('browser.event', { ...event })
     },
-    openSchemeInMainWindow
+    openSchemeInMainWindow,
+    desktopDownloadPolicy
   )
   browserAnnotations = new BrowserAnnotationController({
     browser: embeddedBrowser,
@@ -3204,6 +3225,7 @@ if (hasSingleInstanceLock) {
         const settings = await preferenceStore.read()
         if (quitting) return
         desktopAppearance.update(settings)
+        desktopDownloadPolicy.update(settings)
         nativeTheme.on('updated', () => desktopAppearance.update())
         logStartupStep('startup-preferences-read', 'completed')
         const saved = settings.mainWindowState

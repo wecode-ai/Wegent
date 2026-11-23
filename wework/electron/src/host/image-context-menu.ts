@@ -66,6 +66,7 @@ export interface NativeContextMenuActions {
   reloadPage: () => void
   reportError: (action: string, error: unknown) => void
   resolveImageContext: (params: NativeContextMenuParams) => Promise<ImageContext | null>
+  saveUrlAs?: (url: string) => void
   showItemInFolder: (path: string) => void
 }
 
@@ -274,7 +275,8 @@ function browserImageMenuItems(
       },
       {
         label: labels.saveImageAs,
-        click: () => contents.downloadURL(sourceUrl),
+        click: () =>
+          actions.saveUrlAs ? actions.saveUrlAs(sourceUrl) : contents.downloadURL(sourceUrl),
       }
     )
   }
@@ -348,7 +350,13 @@ function showBrowserContextMenu(
     ]
     if (hasSelection) copyGroup.push(copyMenuItem(contents, labels))
     groups.push(copyGroup)
-    groups.push([{ label: labels.saveLinkAs, click: () => contents.downloadURL(linkUrl) }])
+    groups.push([
+      {
+        label: labels.saveLinkAs,
+        click: () =>
+          actions.saveUrlAs ? actions.saveUrlAs(linkUrl) : contents.downloadURL(linkUrl),
+      },
+    ])
     if (isImage) {
       groups.push(browserImageMenuItems(contents, params, actions, labels))
     }

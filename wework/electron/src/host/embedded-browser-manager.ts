@@ -23,6 +23,7 @@ import {
   type BrowserHistorySearch,
 } from './browser-history-store.js'
 import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
+import type { DownloadTargetPolicy } from './download-target-policy.js'
 import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { BrowserScriptEvaluator } from './browser-script-evaluator.js'
@@ -198,11 +199,13 @@ export class EmbeddedBrowserManager {
     private readonly onEvent: (event: BrowserHostEvent) => void = () => {},
     private readonly openWeworkScheme: (url: string) => void = url => {
       void shell.openExternal(url)
-    }
+    },
+    private readonly downloadPolicy?: Pick<DownloadTargetPolicy, 'apply'>
   ) {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
     const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
     browserSession.on('will-download', (_event, item, webContents) => {
+      this.downloadPolicy?.apply(item, webContents)
       const entry = [...this.entries.values()].find(
         candidate => candidate.contents.id === webContents.id
       )

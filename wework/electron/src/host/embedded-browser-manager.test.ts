@@ -12,6 +12,7 @@ import {
   FakeWebContents,
 } from '../../test-fixtures/embedded-browser.js'
 import { EmbeddedBrowserManager, type BrowserHostEvent } from './embedded-browser-manager.js'
+import { DownloadTargetPolicy } from './download-target-policy.js'
 
 describe('EmbeddedBrowserManager lifecycle', () => {
   beforeEach(() => {
@@ -1354,6 +1355,78 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       expect(contents.closeDevTools).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('applies the download target policy before tracking embedded browser downloads', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-download-'))
+    const downloadsDir = join(directory, 'downloads')
+    const events: BrowserHostEvent[] = []
+    const policy = new DownloadTargetPolicy({
+      defaultDownloadsDirectory: () => downloadsDir,
+    })
+    try {
+      const manager = new EmbeddedBrowserManager(
+        directory,
+        event => events.push(event),
+        undefined,
+        policy
+      )
+      const contents = new FakeWebContents()
+      contents.loadURL.mockImplementation(async url => {
+        contents.commitUrl(url)
+      })
+      manager.attach('workspace-browser', contents as unknown as WebContents)
+      await manager.open({
+        label: 'workspace-browser',
+        url: 'https://example.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+
+      const willDownloadCall = electronMocks.browserSession.on.mock.calls.find(
+        ([eventName]) => eventName === 'will-download'
+      )
+      const listener = willDownloadCall?.[1] as (
+        event: unknown,
+        item: unknown,
+        webContents: WebContents
+      ) => void
+      expect(listener).toBeTypeOf('function')
+
+      let savePath = ''
+      const doneListeners: Array<(event: unknown, state: string) => void> = []
+      const item = {
+        getFilename: () => 'video_123.mp4',
+        getSavePath: () => savePath,
+        getURL: () => 'https://example.test/video_123.mp4',
+        getURLChain: () => ['https://example.test/video_123.mp4'],
+        getReceivedBytes: () => 0,
+        getTotalBytes: () => 1024,
+        setSavePath: vi.fn((path: string) => {
+          savePath = path
+        }),
+        setSaveDialogOptions: vi.fn(),
+        on: vi.fn(),
+        once: vi.fn((event: string, cb: (event: unknown, state: string) => void) => {
+          if (event === 'done') doneListeners.push(cb)
+        }),
+      }
+
+      listener({}, item, contents as unknown as WebContents)
+
+      const expectedPath = join(downloadsDir, 'video_123.mp4')
+      expect(item.setSavePath).toHaveBeenCalledExactlyOnceWith(expectedPath)
+      expect(item.setSaveDialogOptions).not.toHaveBeenCalled()
+      expect(events.find(event => event.type === 'download')?.payload).toMatchObject({
+        status: 'started',
+        path: expectedPath,
+      })
+
+      for (const cb of doneListeners) cb({}, 'completed')
+    } finally {
       await rm(directory, { recursive: true, force: true })
     }
   })
