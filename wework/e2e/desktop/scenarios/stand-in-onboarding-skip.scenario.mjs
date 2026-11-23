@@ -65,7 +65,11 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await control.command('waitFor', selector('stand-in-primary-profile'), { visible: true })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
       await verifyProjectMenuDismissal(control, 'stand-in-path-advanced')
-      await control.command('press', selector('project-work-button'), { key: 'Escape' })
+      await control.command(
+        'press',
+        `${selector('stand-in-primary-execution')} ${selector('project-work-button')}`,
+        { key: 'Escape' }
+      )
       await control.command('waitFor', selector('stand-in-preferences'), { visible: true })
       await control.command('press', selector('stand-in-preferences'), { key: 'Escape' })
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
