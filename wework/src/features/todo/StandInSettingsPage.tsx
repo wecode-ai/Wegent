@@ -393,6 +393,11 @@ function StandInSettingsEditor({
   const receivingSources = Boolean(
     role?.enabled && ((projectConfigured && role.collaboration.enabled) || role.connections?.length)
   )
+  const canDeleteRole =
+    initialProfileId &&
+    !initialProject &&
+    view === 'main' &&
+    saved?.roles.some(row => row.id === role?.id)
 
   const deviceControl = role && (
     <StandInDeviceSelect
@@ -671,38 +676,36 @@ function StandInSettingsEditor({
               />
             )}
             {view === 'advanced' && (
-              <StandInComposer
-                key={role.id}
-                draft={role}
-                onChange={update =>
-                  updateRole(role.id, current =>
-                    typeof update === 'function'
-                      ? (update(current) as StandInRole)
-                      : (update as StandInRole)
-                  )
-                }
-                onSave={async () => {
-                  await save()
-                }}
-                disabled={saving}
-                submitDisabled={saving}
-                showPrompt={false}
-                deviceControl={deviceControl}
-                runtimeWork={runtimeWork}
-                devices={devices}
-                services={services}
-              />
-            )}
-            {view === 'advanced' && (
-              <p className="text-xs text-text-secondary">
-                {t('standIn.personal.device_change_help')}
-              </p>
-            )}
-            {view === 'advanced' && (
-              <StandInSettingsError
-                error={runtimeError}
-                retry={{ testId: 'stand-in-role-environment-retry', onClick: retryRuntimeWork }}
-              />
+              <>
+                <StandInComposer
+                  key={role.id}
+                  draft={role}
+                  onChange={update =>
+                    updateRole(role.id, current =>
+                      typeof update === 'function'
+                        ? (update(current) as StandInRole)
+                        : (update as StandInRole)
+                    )
+                  }
+                  onSave={async () => {
+                    await save()
+                  }}
+                  disabled={saving}
+                  submitDisabled={saving}
+                  showPrompt={false}
+                  deviceControl={deviceControl}
+                  runtimeWork={runtimeWork}
+                  devices={devices}
+                  services={services}
+                />
+                <p className="text-xs text-text-secondary">
+                  {t('standIn.personal.device_change_help')}
+                </p>
+                <StandInSettingsError
+                  error={runtimeError}
+                  retry={{ testId: 'stand-in-role-environment-retry', onClick: retryRuntimeWork }}
+                />
+              </>
             )}
             <StandInSettingsError
               error={state.error}
@@ -745,24 +748,22 @@ function StandInSettingsEditor({
               prefix="stand-in"
               busy={saving}
               leading={
-                view === 'main' && (
+                (footerLeading || canDeleteRole) && (
                   <>
                     {footerLeading}
-                    {initialProfileId &&
-                      !initialProject &&
-                      saved?.roles.some(row => row.id === role.id) && (
-                        <ControlButton
-                          type="button"
-                          data-testid="stand-in-role-delete"
-                          disabled={saving || loading}
-                          onClick={() => setConfirmDelete(true)}
-                          variant="destructive-ghost"
-                          size="sm"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          {t('standIn.personal.delete_role')}
-                        </ControlButton>
-                      )}
+                    {canDeleteRole && (
+                      <ControlButton
+                        type="button"
+                        data-testid="stand-in-role-delete"
+                        disabled={saving || loading}
+                        onClick={() => setConfirmDelete(true)}
+                        variant="destructive-ghost"
+                        size="sm"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        {t('standIn.personal.delete_role')}
+                      </ControlButton>
+                    )}
                   </>
                 )
               }

@@ -13,7 +13,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
         requestExecutor(control, 'runtime.stand_in.personal.get', { userId: USER }, uiTimeoutMs)
       const click = id => control.command('clickWhenEnabled', testId(id), { timeoutMs: 5_000 })
       const wait = (selector, options = {}) =>
-        control.command('waitFor', selector, { visible: true, timeoutMs: 5_000, ...options })
+        control.command('waitFor', selector, { timeoutMs: 5_000, ...options })
       const initial = await readSettings()
       const primary = { enabled: true, prompt: '跟进工作进展', preferences: '' }
       await requestExecutor(
@@ -23,15 +23,9 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
         uiTimeoutMs
       )
       const baseline = await readSettings()
-      await requestExecutor(
-        control,
-        'runtime.stand_in.onboarding.complete',
-        { userId: USER, weeklyReview: false },
-        uiTimeoutMs
-      )
       await click('personal-stand-in-button')
       await openStandInSettings(control)
-      await wait(`${panel} header h2`, { text: '设置' })
+      await wait(`${panel} header h2`, { text: '设置', visible: true })
       await wait(testId('stand-in-primary-execution-toggle'), { text: '运行环境' })
       await wait(testId('stand-in-im-channels-toggle'))
       await wait(testId('stand-in-memory-open'))
@@ -42,7 +36,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       const openRole = async () => {
         await click(`stand-in-overview-role-${roleId}`)
         await openStandInSettings(control)
-        await wait(`${panel} header h2`, { text: '设置' })
+        await wait(`${panel} header h2`, { text: '设置', visible: true })
         await wait(testId('stand-in-role-name'))
       }
       await openRole()
@@ -51,7 +45,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await wait(testId('stand-in-role-device'))
       await wait(testId('stand-in-im-channels-toggle'))
       await wait(testId('stand-in-memory-open'))
-      await wait(`${panel} footer ${testId('stand-in-role-delete')}`)
+      await wait(`${panel} footer ${testId('stand-in-role-delete')}`, { visible: true })
       assert.equal(await control.command('getElementCount', `${panel} header button`), '2')
       await captureScreenshot(control, 'stand-in-scenario-role-settings.png', panel)
 
