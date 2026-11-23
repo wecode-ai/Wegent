@@ -422,7 +422,16 @@ async fn spawn_mock_manager(
 async fn workspace_root_and_executor_file_proxy_via_executor_manager() {
     let mysql =
         brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test").unwrap();
-    let state = crate::app_test_support::app(mysql);
+    let state = DeviceArtifactState {
+        task_store: std::sync::Arc::new(wegent_task_store::task_store::DefaultTaskStore::new(
+            mysql.clone(),
+        )),
+        mysql,
+        redis: None,
+        socketio_rpc: None,
+        auth: config(),
+        attachment_http: brz_http::Client::builder().build().unwrap(),
+    };
     let source = models::Source {
         executor_name: "executor-original".into(),
         executor_namespace: "wegent-pod".into(),

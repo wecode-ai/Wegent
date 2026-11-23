@@ -56,7 +56,7 @@ pub(super) async fn workspace_root(
 }
 
 pub(super) async fn workspace_root_via_manager(
-    state: &AppState,
+    state: &DeviceArtifactState,
     manager: &str,
     source: &Source,
     query: &ArtifactQuery,
@@ -114,12 +114,14 @@ fn manager_url() -> String {
     std::env::var("EXECUTOR_MANAGER_URL")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| crate::executor_manager::DEFAULT_EXECUTOR_MANAGER_URL.to_owned())
+        .unwrap_or_else(|| {
+            wegent_executor_manager::executor_manager::DEFAULT_EXECUTOR_MANAGER_URL.to_owned()
+        })
 }
 
 /// Read an artifact through executor-manager instead of the container address.
 pub(super) async fn manager_artifact_request(
-    state: &AppState,
+    state: &DeviceArtifactState,
     source: &Source,
     query: &ArtifactQuery,
     timeout: Duration,
@@ -129,7 +131,7 @@ pub(super) async fn manager_artifact_request(
 }
 
 pub(super) async fn manager_artifact_request_at(
-    state: &AppState,
+    state: &DeviceArtifactState,
     manager: &str,
     source: &Source,
     query: &ArtifactQuery,

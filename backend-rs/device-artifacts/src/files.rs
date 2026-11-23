@@ -157,7 +157,7 @@ async fn executor_file(
 
 #[cfg(test)]
 pub(super) async fn executor_file_via_manager(
-    state: &AppState,
+    state: &DeviceArtifactState,
     manager: &str,
     source: &Source,
     task_id: i64,
