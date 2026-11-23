@@ -32,6 +32,14 @@ function processingInput(body) {
   const input = Array.isArray(body.input) ? body.input : [body.input]
   return JSON.stringify(
     input.filter(item => {
+      // Adapted tool context is quoted data, not a scripted user command.
+      if (
+        item?.role === 'user' &&
+        Array.isArray(item.content) &&
+        item.content[0]?.type === 'input_text' &&
+        item.content[0]?.text === '[tool_result without a matching tool_call]'
+      )
+        return false
       if (
         item?.type === 'function_call_output' &&
         item.namespace === 'agent' &&
