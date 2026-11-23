@@ -10,6 +10,7 @@ export interface PendingInteractiveForm {
   toolUseId: string
   taskId: number
   subtaskId: number
+  expiresAt?: number
 }
 
 interface MessageLike {
@@ -26,6 +27,31 @@ const parseRecord = (value: unknown): Record<string, unknown> | null => {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
+}
+
+export function interactiveFormDeadline(toolOutput: unknown): number | undefined {
+  let output = toolOutput
+  if (typeof output === 'string') {
+    try {
+      output = JSON.parse(output) as unknown
+    } catch {
+      return undefined
+    }
+  }
+  const result = parseRecord(output)
+  const deadline = result?.expires_at_unix_ms
+  if (
+    result?.__deferred_user_input__ === true &&
+    typeof deadline === 'number' &&
+    Number.isSafeInteger(deadline) &&
+    deadline > 0
+  ) {
+    return deadline
+  }
+}
+
+export function isInteractiveFormExpired(form: PendingInteractiveForm): boolean {
+  return form.expiresAt !== undefined && Date.now() >= form.expiresAt
 }
 
 const getPendingFormFromBlock = (block: unknown): PendingInteractiveForm | null => {
@@ -52,10 +78,12 @@ const getPendingFormFromBlock = (block: unknown): PendingInteractiveForm | null 
 
   if (!toolUseId) return null
 
+  const expiresAt = interactiveFormDeadline(blockRecord.tool_output)
   return {
     toolUseId,
     taskId,
     subtaskId,
+    ...(expiresAt !== undefined && { expiresAt }),
   }
 }
 
