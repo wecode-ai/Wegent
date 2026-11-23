@@ -2,6 +2,7 @@ import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries
 import { ApiError } from '@/api/http'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import { createPersonalHomeTaskDraftStore } from './personalHomeTaskDrafts'
+import { createScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
@@ -527,10 +528,11 @@ function deferred<T>() {
 }
 
 function createHomeDraft() {
+  const draftStore = createScopedDraftStore()
   return {
-    inputByScope: {},
-    setInputForScope: vi.fn(),
-    getInputRevisionForScope: vi.fn(() => 0),
+    draftStore,
+    setInputForScope: draftStore.setValue,
+    getInputRevisionForScope: draftStore.getRevision,
     personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
   }
 }

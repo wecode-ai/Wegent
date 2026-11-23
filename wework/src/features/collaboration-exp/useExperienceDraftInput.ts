@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
+import { useScopedDraftRevision, useScopedDraftValue } from '@/features/workbench/scopedDraftStore'
 import { privateDraftPersistence } from './private/privateDraftPersistence'
 import { ExperienceDraftSession } from './experienceDraftSession'
 
@@ -41,7 +42,9 @@ export function useExperienceDraftInput({
     change.current = onChange
   }, [onChange])
   const [error, setError] = useState<unknown>(null)
-  const { replaceInputs, getRevision } = drafts
+  const { replaceInputs } = drafts
+  const value = useScopedDraftValue(drafts.store, inputKey)
+  const revision = useScopedDraftRevision(drafts.store, inputKey)
   const apply = useCallback(
     (value: string, cause: unknown) => {
       replaceInputs({ [inputKey]: value })
@@ -69,8 +72,8 @@ export function useExperienceDraftInput({
     }
   }
   return {
-    value: drafts.inputs[inputKey] ?? '',
-    revision: getRevision(inputKey),
+    value,
+    revision,
     getValue: () => session.value,
     persistenceError: error,
     setValue: (value: string) => session.update(value),

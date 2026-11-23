@@ -76,6 +76,7 @@ import {
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
+import { useScopedDraftValue } from '@/features/workbench/scopedDraftStore'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { getChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
@@ -330,7 +331,7 @@ export interface WeworkCollaborationPlatformProps {
   workspaceActive?: boolean
   homeDraft: Pick<
     WorkbenchContextValue['projectChat'],
-    'inputByScope' | 'setInputForScope' | 'getInputRevisionForScope' | 'personalHomeTaskDraftStore'
+    'draftStore' | 'setInputForScope' | 'getInputRevisionForScope' | 'personalHomeTaskDraftStore'
   >
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
@@ -1620,6 +1621,13 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     [cloudConnection.isConnected, cloudConnection.token, templateBackend]
   )
   const templateScope = `${templateBackend}:${cloudConnection.user?.id ? 'account' : 'local'}:${templateOwnerId}`
+  const issueHomeScope = `collaboration-home:${templateScope}`
+  const issueHomeProjectScope = `collaboration-home-project:${templateScope}`
+  const issueHomeDraftValue = useScopedDraftValue(props.homeDraft.draftStore, issueHomeScope)
+  const issueHomeProjectDraft = useScopedDraftValue(
+    props.homeDraft.draftStore,
+    issueHomeProjectScope
+  )
   const independentIssueSelection =
     independentSelection.scope === templateScope ? independentSelection.selection : undefined
   const setIndependentIssueSelection = (selection: string | null | undefined) =>
@@ -2205,18 +2213,12 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             },
             accountScope: templateScope,
             issueHomeDraft: {
-              getRevision: () =>
-                props.homeDraft.getInputRevisionForScope(`collaboration-home:${templateScope}`),
-              projectId:
-                props.homeDraft.inputByScope[`collaboration-home-project:${templateScope}`] ?? null,
+              getRevision: () => props.homeDraft.getInputRevisionForScope(issueHomeScope),
+              projectId: issueHomeProjectDraft || null,
               onSelectProject: projectId =>
-                props.homeDraft.setInputForScope(
-                  `collaboration-home-project:${templateScope}`,
-                  projectId
-                ),
-              value: props.homeDraft.inputByScope[`collaboration-home:${templateScope}`] ?? '',
-              onChange: value =>
-                props.homeDraft.setInputForScope(`collaboration-home:${templateScope}`, value),
+                props.homeDraft.setInputForScope(issueHomeProjectScope, projectId),
+              value: issueHomeDraftValue,
+              onChange: value => props.homeDraft.setInputForScope(issueHomeScope, value),
             },
             templateStore,
             templateNavigation: true,

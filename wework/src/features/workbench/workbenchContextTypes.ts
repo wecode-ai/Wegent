@@ -2,6 +2,7 @@ import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/envi
 import type { PersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import type { ScopedDraftStore } from './scopedDraftStore'
 import type { ModelSelectionDiagnostics } from './modelSelectionDiagnostics'
 import type {
   Attachment,
@@ -225,8 +226,11 @@ export interface WorkbenchContextValue {
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
     scopeKey: string
-    inputByScope: Readonly<Record<string, string>>
+    draftScopeKey: string
+    draftStore: ScopedDraftStore
     goalDraftActiveByScope: Readonly<Record<string, boolean>>
+    getInput(): string
+    replaceInputForScope(scopeKey: string, value: string): void
     personalHomeTaskDraftStore: PersonalHomeTaskDraftStore
     setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
     models: UnifiedModel[]
@@ -240,7 +244,6 @@ export interface WorkbenchContextValue {
     isModelCatalogReady: boolean
     isModelSelectionReady: boolean
     onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
-    input: string
     composerError?: string | null
     composerErrorByScope?: Readonly<Record<string, string>>
     trialTemplates: PluginPathComponent[]

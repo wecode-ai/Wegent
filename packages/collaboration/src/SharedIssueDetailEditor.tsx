@@ -697,6 +697,22 @@ export type TodoEditorProps = {
   onWorkflowPlanChanged?: () => void | Promise<void>;
 } & (TodoEditorCreateProps | TodoEditorEditProps);
 
+let cloudTodoCreatePanelCount = 0;
+
+function useCloudTodoCreatePanelBodyState(active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    cloudTodoCreatePanelCount += 1;
+    document.body.setAttribute("data-wework-cloud-todo-create-panel", "");
+    return () => {
+      cloudTodoCreatePanelCount -= 1;
+      if (cloudTodoCreatePanelCount === 0) {
+        document.body.removeAttribute("data-wework-cloud-todo-create-panel");
+      }
+    };
+  }, [active]);
+}
+
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
 // local draft and stages attachments until the item exists; edit mode loads the
 // sections that require an item id (children, collaborators, executions,
@@ -711,6 +727,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const createProps = props.mode === "create" ? props : null;
   const editProps = props.mode === "edit" ? props : null;
   const isCreate = createProps !== null;
+  useCloudTodoCreatePanelBodyState(isCreate);
   const canStartWork =
     !isCreate && props.canStartWork !== false && Boolean(props.onCreateTask);
   const editable = isCreate || editProps?.editable === true;

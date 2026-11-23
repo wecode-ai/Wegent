@@ -259,8 +259,9 @@ export function SystemDragBridge() {
   const addSelectionToConversation = () => {
     if (!managedSelection) return
     const current = latest.current
-    const nextInput = current.projectChat.input
-      ? `${current.projectChat.input}\n${managedSelection.text}`
+    const currentInput = current.projectChat.getInput()
+    const nextInput = currentInput
+      ? `${currentInput}\n${managedSelection.text}`
       : managedSelection.text
     current.projectChat.setInput(nextInput)
     setManagedSelection(null)
@@ -274,7 +275,10 @@ export function SystemDragBridge() {
     })
   }
 
-  const apply = async (payload: SystemDropPayload, input = latest.current.projectChat.input) => {
+  const apply = async (
+    payload: SystemDropPayload,
+    input = latest.current.projectChat.getInput()
+  ) => {
     const current = latest.current
     let nextInput = input
     if (payload.text?.trim()) {

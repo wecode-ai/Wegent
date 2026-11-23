@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, render, renderHook } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import {
@@ -8,6 +8,7 @@ import {
   stageWorkspaceTabTransfer,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
 import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
+import { createScopedDraftStore, useScopedDraftValue } from './scopedDraftStore'
 
 beforeEach(() => localStorage.clear())
 afterEach(cleanup)
@@ -27,18 +28,19 @@ test.each(['', 'Unsent objective'])(
     const destination = renderHook(() => useWorkspaceTabDraftInput('goal-source'), {
       wrapper: StrictMode,
     })
-    expect(destination.result.current.inputs['task-a'] ?? '').toBe(text)
-    expect(destination.result.current.inputs['task-b']).toBe('Ordinary draft')
+    const destinationInputs = destination.result.current.store.getInputsSnapshot()
+    expect(destinationInputs['task-a'] ?? '').toBe(text)
+    expect(destinationInputs['task-b']).toBe('Ordinary draft')
     expect(destination.result.current.goalDraftActiveByScope).toEqual({ 'task-a': true })
     expect(consumeWorkspaceTabTransfer('goal-source')).toBeNull()
 
     act(() => destination.result.current.setGoalDraftActiveForScope('task-a', false))
     stageWorkspaceTabTransfer('goal-source')
     expect(consumeWorkspaceTabTransfer('goal-source')).toEqual({
-      draftInputByScope: destination.result.current.inputs,
+      draftInputByScope: destinationInputs,
       goalDraftActiveByScope: {},
     })
-    expect(destination.result.current.inputs['task-a'] ?? '').toBe(text)
+    expect(destination.result.current.store.getValue('task-a') ?? '').toBe(text)
   }
 )
 
@@ -56,13 +58,38 @@ test('replaces returned goal modes in a mounted owner without changing other tab
   stageWorkspaceTabTransfer('goal-returned')
   act(() => acceptWorkspaceTabTransfer('goal-returned'))
 
-  expect(owner.result.current.inputs).toEqual({ 'new-task': 'Returned objective' })
+  expect(owner.result.current.store.getInputsSnapshot()).toEqual({
+    'new-task': 'Returned objective',
+  })
   expect(owner.result.current.goalDraftActiveByScope).toEqual({ 'new-task': true })
   expect(other.result.current.goalDraftActiveByScope).toEqual({ 'other-task': true })
 
   publishWorkspaceTabTransferState('goal-returned', { draftInputByScope: {} })
   stageWorkspaceTabTransfer('goal-returned')
   act(() => acceptWorkspaceTabTransfer('goal-returned'))
-  expect(owner.result.current.inputs).toEqual({})
+  expect(owner.result.current.store.getInputsSnapshot()).toEqual({})
   expect(owner.result.current.goalDraftActiveByScope).toEqual({})
+})
+
+test('keeps parent renders independent from scoped draft changes', () => {
+  const store = createScopedDraftStore()
+  let parentRenders = 0
+  let childRenders = 0
+
+  function DraftValue() {
+    const value = useScopedDraftValue(store, 'scope')
+    childRenders += 1
+    return <span data-testid="draft-value">{value}</span>
+  }
+
+  function Parent() {
+    parentRenders += 1
+    return <DraftValue />
+  }
+
+  render(<Parent />)
+  expect(parentRenders).toBe(1)
+  act(() => store.setValue('scope', 'next draft'))
+  expect(parentRenders).toBe(1)
+  expect(childRenders).toBeGreaterThan(1)
 })

@@ -297,7 +297,7 @@ import type {
 } from '@/types/api'
 import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
 import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
-import { BufferedChatInput } from './BufferedChatInput'
+import { ScopedDraftChatInput } from './BufferedChatInput'
 import { CentralHarnessTerminal } from './CentralHarnessTerminal'
 import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
@@ -1294,7 +1294,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     project: currentProject,
   })
   const sendPaneInput = paneSession.send
-  const paneInput = paneSession.input
+  const getPaneInput = paneSession.getInput
   const setPaneInput = paneSession.setInput
   const replacePaneInput = paneSession.replaceInput
   const getDraftEditVersion = paneSession.getDraftEditVersion
@@ -1539,7 +1539,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const sourcePaneKey = paneKeyRef.current
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
-      const description = value ?? paneSession.input
+      const description = value ?? getPaneInput()
       const draftEditVersion = getDraftEditVersion()
       const cloudSubmission = prepareSubmission(description)
       return sendPaneInput(value, {
@@ -1564,7 +1564,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       currentRuntimeTask,
       getDraftEditVersion,
-      paneSession.input,
+      getPaneInput,
       pendingSupervisorConfig,
       prepareSubmission,
       sendPaneInput,
@@ -2781,7 +2781,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
     }
 
-    const prompt = (value ?? paneInput).trim()
+    const prompt = (value ?? getPaneInput()).trim()
     if (!prompt || centralHarnessStarting) return
     if (!selectedHarnessAvailable || !centralHarnessCwd || !selectedHarnessPreference) {
       const harnessName = newChatRuntime === 'codex' ? '' : localHarnessLabel(newChatRuntime)
@@ -5668,13 +5668,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                           }
                                         />
                                       )}
-                                      <BufferedChatInput
+                                      <ScopedDraftChatInput
                                         alwaysShowComposerToolbar={alwaysShowComposerToolbar}
                                         autoFocus
                                         insertion={conversationSelectionInsertion}
-                                        value={paneSession.input}
-                                        replaceDraftKey={paneSession.replaceDraftKey}
-                                        onChange={paneSession.setInput}
+                                        draftSource={paneSession.draftSource}
                                         onDraftEdit={paneSession.onDraftEdit}
                                         onSubmit={submitPaneInput}
                                         disabled={
@@ -5916,13 +5914,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           hideAvailableUpdates
                           className="mb-3"
                         />
-                        <BufferedChatInput
+                        <ScopedDraftChatInput
                           alwaysShowComposerToolbar={alwaysShowComposerToolbar}
                           showProjectWorkBar={presentation !== 'popout'}
                           autoFocus
-                          value={paneSession.input}
-                          replaceDraftKey={paneSession.replaceDraftKey}
-                          onChange={paneSession.setInput}
+                          draftSource={paneSession.draftSource}
                           onDraftEdit={() => {
                             paneSession.onDraftEdit()
                             setCentralHarnessError(null)

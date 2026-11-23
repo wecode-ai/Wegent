@@ -49,7 +49,7 @@ import {
   pendingRequestUserInputResponses,
 } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
-import { BufferedChatInput } from './BufferedChatInput'
+import { ScopedDraftChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
@@ -539,9 +539,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         ) : null
                       }
                     >
-                      <BufferedChatInput
-                        value={paneSession.input}
-                        onChange={paneSession.setInput}
+                      <ScopedDraftChatInput
+                        draftSource={paneSession.draftSource}
                         onDraftEdit={paneSession.clearError}
                         onSubmit={submitPaneInput}
                         disabled={composerDisabled}
@@ -638,9 +637,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 compact
                 className="mb-2"
               />
-              <BufferedChatInput
-                value={paneSession.input}
-                onChange={paneSession.setInput}
+              <ScopedDraftChatInput
+                draftSource={paneSession.draftSource}
                 onDraftEdit={paneSession.clearError}
                 onSubmit={submitPaneInput}
                 disabled={composerDisabled}

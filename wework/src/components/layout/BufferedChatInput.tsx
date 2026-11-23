@@ -17,6 +17,11 @@ import {
 import { recordComposerDiagnostic } from '@/components/chat/composer/composerDiagnostics'
 import { subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import {
+  useScopedDraftReplaceRevision,
+  useScopedDraftValue,
+  type ScopedDraftStore,
+} from '@/features/workbench/scopedDraftStore'
+import {
   consumeWorkbenchComposerFocusRequest,
   hasWorkbenchComposerFocusRequest,
   WORKBENCH_COMPOSER_FOCUS_EVENT,
@@ -28,7 +33,7 @@ export interface BufferedChatInputInsertion {
   text: string
 }
 
-interface BufferedChatInputProps extends ChatInputProps {
+export interface BufferedChatInputProps extends ChatInputProps {
   // Return { appliedSynchronously: true } when the owner queues the value before returning.
   onChange: (value: string) => unknown
   inputRef?: Ref<ChatInputHandle>
@@ -458,6 +463,34 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onSubmit={handleSubmit}
+    />
+  )
+})
+
+export interface ScopedDraftSource {
+  store: ScopedDraftStore
+  scopeKey: string
+  write(value: string): unknown
+}
+
+/** Subscribe only the active composer to its scoped draft store. */
+export const ScopedDraftChatInput = memo(function ScopedDraftChatInput({
+  draftSource,
+  ...props
+}: Omit<BufferedChatInputProps, 'value' | 'onChange' | 'replaceDraftKey'> & {
+  draftSource: ScopedDraftSource
+}) {
+  const { store, scopeKey, write } = draftSource
+  const value = useScopedDraftValue(store, scopeKey)
+  const replaceDraftKey = useScopedDraftReplaceRevision(store, scopeKey)
+  const onChange = useCallback((nextValue: string) => write(nextValue), [write])
+
+  return (
+    <BufferedChatInput
+      {...props}
+      value={value}
+      replaceDraftKey={replaceDraftKey}
+      onChange={onChange}
     />
   )
 })

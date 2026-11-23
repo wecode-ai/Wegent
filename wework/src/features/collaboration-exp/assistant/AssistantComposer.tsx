@@ -74,7 +74,7 @@ function AssistantComposerSession({
   const draft = useExperienceDraftInput({
     accountKey,
     scopeKey,
-    initialValue: projectChat.inputByScope[scopeKey] ?? '',
+    initialValue: projectChat.draftStore.getValue(scopeKey),
     onChange: next => projectChat.setInputForScope(scopeKey, next),
   })
   const { value, setValue } = draft

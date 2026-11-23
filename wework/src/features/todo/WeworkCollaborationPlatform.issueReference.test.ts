@@ -1,6 +1,7 @@
 import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 
 import { createPersonalHomeTaskDraftStore } from './personalHomeTaskDrafts'
+import { createScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 
 import {
   CloudConnectionContext,
@@ -107,10 +108,11 @@ function createLocalDetailServices() {
 }
 
 function createHomeDraft() {
+  const draftStore = createScopedDraftStore()
   return {
-    inputByScope: {},
-    setInputForScope: vi.fn(),
-    getInputRevisionForScope: vi.fn(() => 0),
+    draftStore,
+    setInputForScope: draftStore.setValue,
+    getInputRevisionForScope: draftStore.getRevision,
     personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
   }
 }

@@ -364,6 +364,7 @@ function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
 }
 
 function emitDebugPanelVisibility(expanded: boolean) {
+  document.body.toggleAttribute('data-wework-debug-dialog-open', expanded)
   setEmbeddedBrowserOcclusion(DEBUG_PANEL_OCCLUSION_ID, expanded)
   window.dispatchEvent(
     new CustomEvent(DEBUG_PANEL_VISIBILITY_EVENT, {

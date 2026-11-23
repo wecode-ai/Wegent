@@ -314,10 +314,14 @@ export function useWorkbenchPaneSession({
     resetAttachments,
     dismissAttachmentError,
   } = attachmentState
-  const input = projectChat.inputByScope[inputScopeKey] ?? ''
+  const draftStore = projectChat.draftStore
+  const getInput = useCallback(
+    () => draftStore.getValue(inputScopeKey),
+    [draftStore, inputScopeKey]
+  )
   const setInputForScope = projectChat.setInputForScope
+  const replaceDraftInputForScope = projectChat.replaceInputForScope
   const getInputRevisionForScope = projectChat.getInputRevisionForScope
-  const sharedInputRevision = getInputRevisionForScope(inputScopeKey)
   const mountedRef = useRef(false)
   useLayoutEffect(() => {
     mountedRef.current = true
@@ -325,21 +329,17 @@ export function useWorkbenchPaneSession({
       mountedRef.current = false
     }
   }, [])
-  const [inputRevision, setInputRevision] = useState(0)
   const inputRevisionRef = useRef(0)
   const draftEditVersionsRef = useRef(new Map<string, number>())
-  const [replaceDraftKey, setReplaceDraftKey] = useState(0)
   const activeInputScopeRef = useRef(inputScopeKey)
   useLayoutEffect(() => {
     if (activeInputScopeRef.current === inputScopeKey) return
     activeInputScopeRef.current = inputScopeKey
     inputRevisionRef.current += 1
-    setInputRevision(inputRevisionRef.current)
   }, [inputScopeKey])
   const scopedSetInput = useCallback(
     (value: string) => {
       inputRevisionRef.current += 1
-      setInputRevision(inputRevisionRef.current)
       setInputForScope(inputScopeKey, value)
       return { appliedSynchronously: true } as const
     },
@@ -347,13 +347,11 @@ export function useWorkbenchPaneSession({
   )
   const replaceInputForScope = useCallback(
     (scopeKey: string, value: string) => {
-      setInputForScope(scopeKey, value)
+      replaceDraftInputForScope(scopeKey, value)
       if (!mountedRef.current || activeInputScopeRef.current !== scopeKey) return
       inputRevisionRef.current += 1
-      setInputRevision(inputRevisionRef.current)
-      setReplaceDraftKey(key => key + 1)
     },
-    [setInputForScope]
+    [replaceDraftInputForScope]
   )
   const replaceInput = useCallback(
     (value: string) => replaceInputForScope(inputScopeKey, value),
@@ -1814,20 +1812,20 @@ export function useWorkbenchPaneSession({
   const send: (inputOverride?: string, options?: RuntimePaneSendOptions) => Promise<boolean> =
     useCallback(
       async (inputOverride, options = {}) => {
-        const submittedInput = (inputOverride ?? input).trim()
+        const submittedInput = (inputOverride ?? getInput()).trim()
         const submittedDraftEditVersion = options.draftEditVersion ?? getDraftEditVersion()
         const restoreRevisions = new Map([
           [
             inputScopeKey,
             {
-              shared: sharedInputRevision,
+              shared: getInputRevisionForScope(inputScopeKey),
               edits: submittedDraftEditVersion,
             },
           ],
         ])
         // Capture the rendered revision, before asynchronous submission preparation.
-        let submittedInputRevision = inputRevision
-        let submittedSharedInputRevision = sharedInputRevision
+        let submittedInputRevision = inputRevisionRef.current
+        let submittedSharedInputRevision = getInputRevisionForScope(inputScopeKey)
         const ownsSubmittedInput = () =>
           getInputRevisionForScope(inputScopeKey) === submittedSharedInputRevision &&
           inputRevisionRef.current === submittedInputRevision &&
@@ -1858,7 +1856,7 @@ export function useWorkbenchPaneSession({
         debugComposerEvent('pane-send-called', {
           hasSubmittedValue: inputOverride !== undefined,
           submittedValue: textMetrics(inputOverride),
-          stateInput: textMetrics(input),
+          stateInput: textMetrics(getInput()),
           submittedInput: textMetrics(submittedInput),
           attachmentsCount: currentAttachments.length,
           codeCommentsCount: codeCommentContexts.length,
@@ -2306,9 +2304,7 @@ export function useWorkbenchPaneSession({
         goalDraftActive,
         getRuntimeModelFields,
         setGoalDraftActive,
-        input,
-        inputRevision,
-        sharedInputRevision,
+        getInput,
         getInputRevisionForScope,
         getDraftEditVersion,
         inputScopeKey,
@@ -2472,7 +2468,7 @@ export function useWorkbenchPaneSession({
       if (currentRuntimeTask) {
         logRuntimeQueueStage(currentRuntimeTask, 'queue-resume-requested', {
           source: 'resume-with-input',
-          hasInput: Boolean((inputOverride ?? input).trim()),
+          hasInput: Boolean((inputOverride ?? getInput()).trim()),
           hasInterruptedGuidance: Boolean(interruptedGuidance),
         })
       }
@@ -2496,7 +2492,7 @@ export function useWorkbenchPaneSession({
         return
       }
 
-      const submittedInput = (inputOverride ?? input).trim()
+      const submittedInput = (inputOverride ?? getInput()).trim()
       const combinedMessage = {
         ...interruptedGuidance,
         content: [interruptedGuidance.content, submittedInput].filter(Boolean).join('\n\n'),
@@ -2507,7 +2503,7 @@ export function useWorkbenchPaneSession({
     },
     [
       currentRuntimeTask,
-      input,
+      getInput,
       lifecycleStore,
       queueController,
       queuedMessageScopeKey,
@@ -2591,7 +2587,7 @@ export function useWorkbenchPaneSession({
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage || queuedMessage.runtimeQueued) return
       queuedMessageBusyBlocks.delete(id)
-      const submittedInput = input.trim()
+      const submittedInput = getInput().trim()
       const currentAttachments = attachmentState.attachments
       const combinedMessage: RuntimePaneQueuedMessage = {
         ...queuedMessage,
@@ -2627,7 +2623,7 @@ export function useWorkbenchPaneSession({
     [
       addExistingAttachmentForScope,
       attachmentState.attachments,
-      input,
+      getInput,
       inputScopeKey,
       getInputRevisionForScope,
       getDraftEditVersion,
@@ -2896,7 +2892,7 @@ export function useWorkbenchPaneSession({
         queuedMessages,
         guidanceMessages,
         codeCommentContextCount: codeCommentContexts.length,
-        inputLength: input.length,
+        inputLength: getInput().length,
         transcript: {
           loading: transcriptLoading,
           hasMoreBefore: transcriptHasMoreBefore,
@@ -2928,10 +2924,10 @@ export function useWorkbenchPaneSession({
     guidanceMessages,
     codeCommentContexts,
     browserAnnotationCommand,
-    input,
+    getInput,
     setInput,
     replaceInput,
-    replaceDraftKey,
+    draftSource: { store: draftStore, scopeKey: inputScopeKey, write: scopedSetInput },
     onDraftEdit,
     getDraftEditVersion,
     error,

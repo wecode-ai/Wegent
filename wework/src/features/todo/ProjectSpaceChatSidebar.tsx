@@ -119,7 +119,7 @@ function ProjectSpaceConversationFrame(props: ComponentProps<typeof TemporaryCha
   const [instanceId] = useState(props.instanceId)
   const draftKey = `pane:${props.instanceId}`
   const draftKeyRef = useRef(draftKey)
-  const [value, setValue] = useState(() => projectChat.inputByScope[draftKey] ?? '')
+  const [value, setValue] = useState(() => projectChat.draftStore.getValue(draftKey))
   const writeDraft = projectChat.setInputForScope
   useLayoutEffect(() => {
     const previousKey = draftKeyRef.current

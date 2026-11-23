@@ -14,8 +14,19 @@
   }
 }
 
-/* DSH paints text-field outlines too; pointer focus uses its dedicated token. */
-html[data-input-modality='pointer'] body :focus-visible {
+/* DSH paints text-field outlines too; pointer focus uses its dedicated token.
+   Our ProseMirror composers paint their own focus state and must not be
+   invalidated on every selection change. */
+html[data-input-modality='pointer']
+  body
+  :where(
+    input,
+    textarea,
+    select,
+    [contenteditable='true'],
+    [contenteditable=''],
+    [contenteditable='plaintext-only']
+  ):not(.composer-prosemirror-editor):focus-visible {
   --dsw-focus-ring-color: transparent;
 }
 
@@ -37,12 +48,12 @@ input.content-find-input:focus-visible {
 
 /* Native drag regions intercept clicks even beneath renderer overlays. */
 body[data-wework-anchor-popover-open] .electron-titlebar-drag-region,
-body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
+body[data-wework-debug-dialog-open] .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }
 
 /* Chromium can omit promoted sidebar overlays from a backdrop filter. */
-body:has([data-testid='cloud-todo-create-panel'])
+body[data-wework-cloud-todo-create-panel]
   :is([data-testid='desktop-sidebar'], [data-testid='collaboration-platform-sidebar'])
   svg {
   filter: blur(2px);

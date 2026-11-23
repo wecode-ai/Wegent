@@ -5,12 +5,13 @@ import { expect, it, vi } from 'vitest'
 import { ProjectSpaceChatSidebar } from '@/features/todo/ProjectSpaceChatSidebar'
 import type { CloudProject } from '@/api/deliveries'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { ScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 
 // Reuse the real TemporaryChatPanel/composer harness and its service fixtures.
 interface DraftHarness {
   realComposer: boolean
   runtimeWork: { projects: unknown[]; chats: unknown[]; totalTasks: number } | null
-  inputByScope: Record<string, string>
+  draftStore: ScopedDraftStore
   createTask: { mockReturnValueOnce(value: Promise<RuntimeTaskAddress | false>): unknown }
 }
 
@@ -98,8 +99,8 @@ export function registerProjectSpaceChatDraftTests(mocks: DraftHarness) {
         expect(screen.getByTestId('chat-message-input')).toBe(editor)
         expect(editor).toHaveValue(nextDraft)
         await act(() => vi.advanceTimersByTimeAsync(301))
-        expect(mocks.inputByScope[`${instancePrefix}device-1:new-task`]).toBe(nextDraft)
-        expect(mocks.inputByScope[`${instancePrefix}new`]).toBeUndefined()
+        expect(mocks.draftStore.getValue(`${instancePrefix}device-1:new-task`)).toBe(nextDraft)
+        expect(mocks.draftStore.getValue(`${instancePrefix}new`)).toBe('')
 
         mocks.runtimeWork = {
           projects: [],
@@ -122,7 +123,9 @@ export function registerProjectSpaceChatDraftTests(mocks: DraftHarness) {
         expect(screen.getByTestId('chat-message-input')).toHaveValue(nextDraft)
         fireEvent.click(screen.getByTestId('project-space-chat-new'))
         expect(screen.getByTestId('chat-message-input')).toHaveValue('')
-        expect(mocks.inputByScope[`${instancePrefix}device-1:other-task`]).toBe('Other draft')
+        expect(mocks.draftStore.getValue(`${instancePrefix}device-1:other-task`)).toBe(
+          'Other draft'
+        )
       } finally {
         vi.useRealTimers()
       }
@@ -137,7 +140,7 @@ export function registerProjectSpaceChatDraftTests(mocks: DraftHarness) {
       await act(async () => complete(false))
       expect(editor).toHaveValue(nextDraft)
       await act(() => vi.advanceTimersByTimeAsync(301))
-      expect(mocks.inputByScope[`${instancePrefix}new`]).toBe(nextDraft)
+      expect(mocks.draftStore.getValue(`${instancePrefix}new`)).toBe(nextDraft)
     } finally {
       vi.useRealTimers()
     }
@@ -168,7 +171,7 @@ export function registerProjectSpaceChatDraftTests(mocks: DraftHarness) {
         await act(async () => complete(address))
         expect(screen.getByTestId('chat-message-input')).toBe(activeEditor)
         expect(activeEditor).toHaveValue('Keep the active draft')
-        expect(mocks.inputByScope[`${instancePrefix}device-1:new-task`]).toBeUndefined()
+        expect(mocks.draftStore.getValue(`${instancePrefix}device-1:new-task`)).toBe('')
       } finally {
         vi.useRealTimers()
       }

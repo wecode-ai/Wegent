@@ -363,6 +363,7 @@ export function HoverCard({
     >
       {children}
       {displayedOpen &&
+        // Keep portal insertion from invalidating styles across the sidebar transcript.
         createPortal(
           <div
             ref={cardRef}
@@ -379,7 +380,7 @@ export function HoverCard({
               window.queueMicrotask(pin)
             }}
             className={cn(
-              'fixed z-[78] max-h-[calc(100vh-1rem)] overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-background p-3 text-xs text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+              'fixed z-[78] max-h-[calc(100vh-1rem)] overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-background p-3 text-xs text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)] [contain:style]',
               interactive ? 'pointer-events-auto' : 'pointer-events-none',
               pinned && 'pr-10',
               cardClassName

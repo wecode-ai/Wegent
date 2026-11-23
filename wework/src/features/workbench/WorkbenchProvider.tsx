@@ -72,7 +72,15 @@ import type {
   User,
   UserPreferences,
 } from '@/types/api'
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react'
 import {
   getProjectWorkPreferenceKey,
   readProjectWorkPreference,
@@ -457,12 +465,13 @@ function OwnedWorkbenchProvider({
     standaloneChatKey: state.standaloneChatKey,
   })
   const {
-    inputs: draftInputByScope,
+    store: draftInputStore,
     setInput: writeDraftInputForScope,
     getRevision: getInputRevisionForScope,
     goalDraftActiveByScope,
     setGoalDraftActiveForScope,
   } = useWorkspaceTabDraftInput(workspaceTabId)
+  const replaceDraftInputForScope = draftInputStore.replaceValue
   const [personalHomeTaskDraftStore] = useState(createPersonalHomeTaskDraftStore)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
@@ -472,7 +481,10 @@ function OwnedWorkbenchProvider({
   const [trialPluginAppByScope, setTrialPluginAppByScope] = useState<
     Record<string, LocalDeviceApp>
   >({})
-  const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
+  const getDraftInput = useCallback(
+    () => draftInputStore.getValue(projectChatScopeKey),
+    [draftInputStore, projectChatScopeKey]
+  )
   const composerError = composerErrorByScope[projectChatScopeKey] ?? null
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
@@ -936,9 +948,12 @@ function OwnedWorkbenchProvider({
         scopeKey: projectChatScopeKey,
         standaloneChatKey: state.standaloneChatKey,
         availableModelNames: modelSelection.models.map(model => model.name),
-        currentInputLength: draftInput.length,
+        currentInputLength: draftInputStore.getValue(projectChatScopeKey).length,
         scopedInputLengths: Object.fromEntries(
-          Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
+          Object.entries(draftInputStore.getInputsSnapshot()).map(([scopeKey, value]) => [
+            scopeKey,
+            value.length,
+          ])
         ),
         attachmentCount: attachmentSelection.attachments.length,
         contextUsagePercent: currentContextUsage
@@ -1044,7 +1059,7 @@ function OwnedWorkbenchProvider({
   const startNewProjectChat = useStartNewProjectChat({
     state,
     attachmentSelection,
-    draftInputByScope,
+    draftInputStore,
     projectSelectionStartedRef,
     ownershipKey,
     dispatch,
@@ -1561,7 +1576,7 @@ function OwnedWorkbenchProvider({
     ) => {
       const sent = await runtimeMessaging.sendCurrentInput(inputOverride, options)
       if (sent) {
-        recordPluginUsageFromInput(inputOverride ?? draftInputByScope[projectChatScopeKey] ?? '')
+        recordPluginUsageFromInput(inputOverride ?? draftInputStore.getValue(projectChatScopeKey))
       }
       return sent
     }
@@ -1718,11 +1733,14 @@ function OwnedWorkbenchProvider({
   const projectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
-      inputByScope: draftInputByScope,
+      draftScopeKey: projectChatScopeKey,
+      draftStore: draftInputStore,
       goalDraftActiveByScope,
       personalHomeTaskDraftStore,
       setGoalDraftActiveForScope,
       getInputRevisionForScope,
+      getInput: getDraftInput,
+      replaceInputForScope: replaceDraftInputForScope,
       models: conversationModels,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
@@ -1735,7 +1753,6 @@ function OwnedWorkbenchProvider({
       isModelSelectionReady:
         modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
       onModelSelectorOpenChange: handleModelSelectorOpenChange,
-      input: draftInput,
       composerError,
       composerErrorByScope,
       trialTemplates,
@@ -1802,8 +1819,9 @@ function OwnedWorkbenchProvider({
       attachmentSelection.uploadingFiles,
       projectChatScopeKey,
       requestTaskComposerCatalogs,
-      draftInput,
-      draftInputByScope,
+      draftInputStore,
+      getDraftInput,
+      replaceDraftInputForScope,
       goalDraftActiveByScope,
       personalHomeTaskDraftStore,
       setGoalDraftActiveForScope,

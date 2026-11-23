@@ -440,16 +440,21 @@ export function TemporaryChatPanel({
   )
   const draftScopeKey = `pane:${instanceId}`
   const [initialDraftScope] = useState(draftScopeKey)
+  const storedDraft = projectChat.draftStore.getValue(draftScopeKey)
+  const hasStoredDraft = draftScopeKey in projectChat.draftStore.getInputsSnapshot()
   const [inputState, setInputState] = useState(() => ({
     scopeKey: draftScopeKey,
-    value: projectChat.inputByScope[draftScopeKey] ?? initialInput,
+    value: hasStoredDraft ? storedDraft : initialInput,
   }))
   const input =
     draft?.value ??
     (inputState.scopeKey === draftScopeKey
       ? inputState.value
-      : (projectChat.inputByScope[draftScopeKey] ??
-        (initialDraftScope === draftScopeKey ? initialInput : '')))
+      : hasStoredDraft
+        ? storedDraft
+        : initialDraftScope === draftScopeKey
+          ? initialInput
+          : '')
   if (inputState.scopeKey !== draftScopeKey) {
     setInputState({ scopeKey: draftScopeKey, value: input })
   }

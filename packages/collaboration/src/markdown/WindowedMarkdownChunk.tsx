@@ -285,12 +285,13 @@ export function WindowedMarkdownChunk({
     []
   )
 
+  // A mounting chunk must not invalidate styles outside its own Markdown subtree.
   return (
     <div
       ref={attachChunk}
       data-markdown-window-chunk
       data-markdown-chunk-index={chunkIndex}
-      className="flow-root"
+      className="flow-root [contain:style]"
       style={shouldRender ? undefined : { minHeight: reservedHeight }}
     >
       {shouldRender ? (

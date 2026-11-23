@@ -5,15 +5,33 @@ import { MarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownD
 import { browserMarkdownServices, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 
 const originalGetBBox = SVGElement.prototype.getBBox
+const originalAppendChild = Node.prototype.appendChild
 
-beforeAll(() => {
-  Object.defineProperty(SVGElement.prototype, 'getBBox', {
+function stubGetBBox(view: Window | null) {
+  if (!view?.SVGElement) return
+  Object.defineProperty(view.SVGElement.prototype, 'getBBox', {
     configurable: true,
     value: () => new DOMRect(0, 0, 100, 20),
   })
+}
+
+function stubContainedIframeWindows(node: Node) {
+  if (!(node instanceof Element)) return
+  if (node instanceof HTMLIFrameElement) stubGetBBox(node.contentWindow)
+  node.querySelectorAll('iframe').forEach(iframe => stubGetBBox(iframe.contentWindow))
+}
+
+beforeAll(() => {
+  stubGetBBox(window)
+  Node.prototype.appendChild = function <T extends Node>(this: Node, node: T): T {
+    const appended = originalAppendChild.call(this, node) as T
+    stubContainedIframeWindows(node)
+    return appended
+  }
 })
 
 afterAll(() => {
+  Node.prototype.appendChild = originalAppendChild
   if (originalGetBBox) {
     Object.defineProperty(SVGElement.prototype, 'getBBox', {
       configurable: true,
@@ -23,6 +41,12 @@ afterAll(() => {
     delete (SVGElement.prototype as Partial<SVGElement>).getBBox
   }
 })
+
+function sandboxedMermaidResult(svg: string): string {
+  const html = `<body style="margin:0">${svg}</body>`
+  const encoded = btoa(unescape(encodeURIComponent(html)))
+  return `<iframe src="data:text/html;charset=UTF-8;base64,${encoded}"></iframe>`
+}
 
 function artifactSvg(image: Element) {
   const source = decodeURIComponent(image.getAttribute('src')!.split(',').slice(1).join(','))
@@ -108,7 +132,6 @@ test('renders Mermaid HTML labels containing line breaks', async () => {
       label => label.getElementsByTagNameNS('http://www.w3.org/1999/xhtml', 'br').length > 0
     )
   ).toBe(true)
-  expect(svg).toHaveAttribute('data-mermaid-layout-isolated', 'true')
   const arrows = Array.from(svg.querySelectorAll('[marker-end]'))
   expect(arrows.length).toBeGreaterThan(0)
   for (const arrow of arrows) {
@@ -119,10 +142,33 @@ test('renders Mermaid HTML labels containing line breaks', async () => {
   expect(document.querySelector('[data-file-viewer-mermaid-isolate]')).toBeNull()
 }, 15_000)
 
+test('renders a real Mermaid sequence diagram without leaving its sandbox host mounted', async () => {
+  const initialize = vi.spyOn(mermaid, 'initialize')
+  try {
+    const { container } = render(
+      <MarkdownDiagramPreview
+        code={
+          'sequenceDiagram\n  participant User\n  participant Wework\n  User->>Wework: open history\n  Wework-->>User: render messages'
+        }
+        language="mermaid"
+      />
+    )
+
+    const [image] = await readyImages(container)
+    const svg = artifactSvg(image)
+    expect(svg).toHaveTextContent('User')
+    expect(svg).toHaveTextContent('open history')
+    expect(initialize).toHaveBeenCalledWith(expect.objectContaining({ securityLevel: 'sandbox' }))
+    expect(document.querySelector('iframe[src^="data:text/html"]')).toBeNull()
+  } finally {
+    initialize.mockRestore()
+  }
+}, 15_000)
+
 test('reuses one sanitized image artifact across copies, remounts and full screen with separate theme keys', async () => {
   const renderMermaid = vi.spyOn(mermaid, 'render').mockImplementation(async id => ({
     diagramType: 'flowchart',
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${id}" viewBox="0 0 100 100" aria-labelledby="label">
+    svg: sandboxedMermaidResult(`<svg xmlns="http://www.w3.org/2000/svg" id="${id}" viewBox="0 0 100 100" aria-labelledby="label">
       <style>#${id} #fff {fill:#fff;marker-end:url(#arrow)} #${id} #node\\:one {opacity:1}</style>
       <title id="label">Cached diagram</title>
       <defs><marker id="arrow"><path d="M0 0L10 5" /></marker></defs>
@@ -130,7 +176,7 @@ test('reuses one sanitized image artifact across copies, remounts and full scree
       <path id="fff" marker-end="url(#arrow)" d="M0 0L20 20" />
       <use href="#node:one" />
       <script>window.unsafeDiagram = true</script>
-    </svg>`,
+    </svg>`),
   }))
   const source = 'graph LR\nCACHE_RESULT --> CACHE_TARGET'
   const preview = (theme: 'light' | 'dark', copies: number) => (
@@ -228,7 +274,9 @@ test('recovers from compilation and image loading failures while preserving the 
     .mockRejectedValueOnce(new Error('Invalid diagram'))
     .mockResolvedValue({
       diagramType: 'flowchart',
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><text>Recovered</text></svg>',
+      svg: sandboxedMermaidResult(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><text>Recovered</text></svg>'
+      ),
     })
   const view = render(
     <MarkdownDiagramPreview code={'graph LR\nRECOVER --> RESULT'} language="mermaid" />

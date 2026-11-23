@@ -124,6 +124,7 @@ import { createRuntimeUserMessage } from './runtimeUserMessage'
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 import { useWorkbench } from './useWorkbench'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
+import { useScopedDraftValue } from './scopedDraftStore'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 
 const localExecutorMocks = vi.hoisted(() => ({
@@ -1232,7 +1233,8 @@ function RemoteRuntimeCacheProbe() {
 
 function PluginTrialInputProbe({ testId }: { testId: string }) {
   const { paneSession } = useWorkbenchProbeSession()
-  return <span data-testid={testId}>{paneSession.input}</span>
+  const input = useScopedDraftValue(paneSession.draftSource.store, paneSession.draftSource.scopeKey)
+  return <span data-testid={testId}>{input}</span>
 }
 
 function ProjectSendProbe({
@@ -1245,6 +1247,10 @@ function ProjectSendProbe({
   onPreparedEnvironmentOptimisticOpen?: (address: RuntimeTaskAddress) => void
 } = {}) {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
+  const composerInput = useScopedDraftValue(
+    paneSession.draftSource.store,
+    paneSession.draftSource.scopeKey
+  )
   const taskLifecycle = useRuntimeTaskLifecycle(currentRuntimeTask)
   const imageAttachment = createImageAttachment()
   const localImageAttachment = createLocalImageAttachment()
@@ -1283,7 +1289,7 @@ function ProjectSendProbe({
           'none'}
       </span>
       <span data-testid="standalone-chat-key">{workbench.state.standaloneChatKey}</span>
-      <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="composer-input">{composerInput}</span>
       <span data-testid="project-browser-annotation-command">
         {paneSession.browserAnnotationCommand
           ? `${paneSession.browserAnnotationCommand.sequence}:${paneSession.browserAnnotationCommand.reason}`
@@ -2400,6 +2406,10 @@ function RuntimeGoalStatusProbe({ address }: { address: RuntimeTaskAddress }) {
 
 function RuntimeModelSelectionProbe() {
   const workbench = useWorkbench()
+  const runtimeDraft = useScopedDraftValue(
+    workbench.projectChat.draftStore,
+    workbench.projectChat.draftScopeKey
+  )
   const mimoModel = workbench.projectChat.models.find(model => model.name === 'local-model:mimo')
   const gptModel = workbench.projectChat.models.find(model => model.name === 'gpt-5.5')
   const backgroundTaskModel = workbench.projectChat.resolveRuntimeTaskModelSelection({
@@ -2415,7 +2425,7 @@ function RuntimeModelSelectionProbe() {
       <span data-testid="runtime-model-task">
         {workbench.state.currentRuntimeTask?.taskId ?? ''}
       </span>
-      <span data-testid="runtime-model-draft">{workbench.projectChat.input}</span>
+      <span data-testid="runtime-model-draft">{runtimeDraft}</span>
       <span data-testid="background-task-selected-model">
         {backgroundTaskModel.selectedModel?.name ?? ''}
       </span>
@@ -2498,6 +2508,10 @@ function RuntimeModelSelectionProbe() {
 
 function FollowUpProbe() {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
+  const composerInput = useScopedDraftValue(
+    paneSession.draftSource.store,
+    paneSession.draftSource.scopeKey
+  )
   const imageAttachment = createImageAttachment()
   const localImageAttachment = createLocalImageAttachment()
   const firstQueuedMessage = paneSession.queuedMessages[0]
@@ -2513,7 +2527,7 @@ function FollowUpProbe() {
 
   return (
     <div>
-      <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="composer-input">{composerInput}</span>
       <span data-testid="pane-session-error">{paneSession.error ?? ''}</span>
       <span data-testid="queued-messages">
         {paneSession.queuedMessages
@@ -2919,6 +2933,10 @@ function ComposerDirectorySendProbe({ message }: { message: string }) {
 
 function StartSkillChatProbe() {
   const workbench = useWorkbench()
+  const skillChatDraft = useScopedDraftValue(
+    workbench.projectChat.draftStore,
+    workbench.projectChat.draftScopeKey
+  )
   const [result, setResult] = useState('not-started')
 
   return (
@@ -2933,7 +2951,7 @@ function StartSkillChatProbe() {
       </span>
       <span data-testid="skill-chat-key">{workbench.state.standaloneChatKey}</span>
       <span data-testid="skill-chat-start-result">{result}</span>
-      <span data-testid="skill-chat-input">{workbench.projectChat.input}</span>
+      <span data-testid="skill-chat-input">{skillChatDraft}</span>
       <button
         type="button"
         onClick={() =>
