@@ -12,7 +12,6 @@ import { StandInImConnectionDialog } from './StandInImConnectionDialog'
 
 const CHANNELS = ['dingtalk', 'telegram', 'discord', 'weibo'] as const
 
-/** Channel entry points live in the identity popover, outside profile forms. */
 export function StandInImConnections({
   services,
   deviceId,
@@ -47,7 +46,7 @@ export function StandInImConnections({
     source.getSnapshot
   )
   const trigger = useRef<HTMLButtonElement | null>(null)
-  const section = useRef<HTMLElement | null>(null)
+  const content = useRef<HTMLDivElement | null>(null)
   const focusTarget = useRef<HTMLElement | null>(null)
   const [focusRequest, setFocusRequest] = useState<object>()
   useFocusRequest(focusTarget, focusRequest, {
@@ -72,9 +71,8 @@ export function StandInImConnections({
       : (sessions.find(row => row.channel_type === type)?.channel_label ?? type)
   const device = devices.find(row => sameDevice(row.device_id))
   return (
-    <section ref={section} aria-label={t('standIn.im.title')} data-testid="stand-in-im-channels">
-      <div className="flex min-h-9 items-center justify-between gap-2">
-        <h4 className="text-base font-medium">{t('standIn.im.title')}</h4>
+    <div ref={content} className="space-y-2">
+      <div className="flex justify-end empty:hidden">
         {!loading && error !== 'load' && (availableToAdd.length > 0 || menuOpen) && (
           <ActionMenu
             ariaLabel={t('standIn.im.add_channels')}
@@ -96,7 +94,7 @@ export function StandInImConnections({
               testId: `stand-in-im-channel-${type}`,
               onSelect: () => {
                 trigger.current =
-                  section.current?.querySelector<HTMLButtonElement>(
+                  content.current?.querySelector<HTMLButtonElement>(
                     '[data-testid="stand-in-im-add-channels"]'
                   ) ?? null
                 setChannel(type)
@@ -174,14 +172,14 @@ export function StandInImConnections({
           onClose={() => {
             // Release the popover's inert state before restoring its trigger focus.
             const availableTrigger = Array.from(
-              section.current?.querySelectorAll('button') ?? []
+              content.current?.querySelectorAll('button') ?? []
             ).find(button => button.dataset.testid === `stand-in-im-channel-${channel}`)
             focusTarget.current =
               availableTrigger ??
-              section.current?.querySelector<HTMLButtonElement>(
+              content.current?.querySelector<HTMLButtonElement>(
                 '[data-testid="stand-in-im-add-channels"]'
               ) ??
-              section.current?.querySelector<HTMLButtonElement>(
+              content.current?.querySelector<HTMLButtonElement>(
                 '[data-testid="stand-in-im-discovery-retry"]'
               ) ??
               (trigger.current?.isConnected ? trigger.current : null)
@@ -190,6 +188,6 @@ export function StandInImConnections({
           }}
         />
       )}
-    </section>
+    </div>
   )
 }

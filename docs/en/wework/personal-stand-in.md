@@ -104,7 +104,7 @@ The **My stand-in** button in collaboration project headers also carries a **Bet
 
 ## Connect IM conversations
 
-Open **My stand-in** in the sidebar, select the primary identity or a scenario role, then click **Stand-in details → Manage stand-in**. The **Chat with the assistant in IM** section shows channels with existing private conversations; click one to view or manage its connection. Channels without a conversation (**DingTalk, Telegram, Discord, or Weibo**) appear under **Add → the channel**. Stand-ins and tasks share these existing IM connections without a separate task channel choice. It names the destination stand-in and execution device and lists only private conversations from that channel. When there are multiple conversations, select one, then choose **Connect to “stand-in name”**. After success, choose **Done** to return to Manage stand-in. Connections take effect immediately without saving profile settings. Cloud sign-in is required to connect.
+Open **My stand-in** in the sidebar, select the primary identity or a scenario role, then click **Stand-in details → Manage stand-in**. Use **Connections** to choose work sources for the assistant to follow, such as projects, DingTalk group messages or email. To message this assistant directly from a messaging app, expand **Chat with the assistant in IM**. It shows channels with existing private conversations; click one to view or manage its connection. Channels without a conversation (**DingTalk, Telegram, Discord, or Weibo**) appear under **Add → the channel**. Stand-ins and tasks share these existing IM connections without a separate task channel choice. It names the destination stand-in and execution device and lists only private conversations from that channel. When there are multiple conversations, select one, then choose **Connect to “stand-in name”**. After success, choose **Done** to return to Manage stand-in. Connections take effect immediately without saving profile settings. Cloud sign-in is required to connect.
 
 If that channel has no registered private conversations, the dialog explains how to send **`/bind`** to your configured bot, then select **Refresh conversations**. This does not install a bot or authorize a platform account. A failed list request shows an error and **Refresh conversations** directly in the details popover, rather than claiming no connections exist. Use the connect action to retry a failed save. A failed refresh preserves conversations already loaded. An offline execution device has a separate notice; Connected means the routing configuration has been saved.
 
@@ -115,6 +115,8 @@ New messages enter the selected stand-in’s existing persistent conversation. O
 <a id="conversational-configuration"></a>
 
 ## Manual and conversational configuration
+
+In the primary stand-in settings, **Execution environment** starts collapsed. Expand it to view the device and select the local project, workspace and model. Saved settings apply to the default working directory and model for new work and to the model for new stand-in chat turns.
 
 Edit responsibilities and shared preferences in the primary profile, and role responsibilities and sources in the role profile. Preferences can be edited or deleted. Changes take effect only after saving.
 
