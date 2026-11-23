@@ -119,9 +119,19 @@ export function useMessageRowMeasurements(
       return
     }
     initializedList.current = list
-    // Restore with actual sizes in the first visible commit. Measuring subsequent
-    // ranges outside the commit lets newly exposed rows converge without recursion.
-    measureAttachedRows(changed, list, virtualizer)
+    // Cached rows already have geometry for this layout. Give their Markdown
+    // time to mount before replacing those measurements with the current DOM.
+    const unmeasured: HTMLElement[] = []
+    const cached: HTMLElement[] = []
+    for (const row of changed) {
+      const key = virtualizer.options.getItemKey(Number(row.dataset.index))
+      const batch = virtualizer.itemSizeCache.has(key) ? cached : unmeasured
+      batch.push(row)
+    }
+    if (cached.length > 0) measureRows(cached)
+    // Measure uncached rows in their first commit. Any newly exposed range
+    // follows the normal batched path to avoid recursive React updates.
+    if (unmeasured.length > 0) measureAttachedRows(unmeasured, list, virtualizer)
   })
   const measureRow = useCallback((row: HTMLElement) => measureRows([row]), [measureRows])
   return { measureRow, measureRows }
