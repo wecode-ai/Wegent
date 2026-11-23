@@ -5,6 +5,9 @@ import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import type { TaskSource } from './NotificationTaskSourceContext'
 
+// Leave room on the shared local HTTP transport for interactive requests.
+const MAX_CONCURRENT_ASSIGNMENT_DELIVERIES = 2
+
 interface AssignmentObservation {
   inbox: WeworkInbox | null
   source: TaskSource | null
@@ -33,6 +36,7 @@ export function createStandInAssignmentDelivery(accountKey: string) {
   const receipts = new Map<string, DeliveryReceipt>()
   let input: AssignmentObservation | undefined
   let observing = false
+  let activeDeliveries = 0
   let readRevision = 0
   let pendingIdentity: object | undefined
   let retryAfterIdentity = false
@@ -79,6 +83,7 @@ export function createStandInAssignmentDelivery(accountKey: string) {
     const userId = current?.userId
     if (
       !observing ||
+      activeDeliveries >= MAX_CONCURRENT_ASSIGNMENT_DELIVERIES ||
       pendingIdentity ||
       getDesktopWindowLabel() !== 'main' ||
       !api ||
@@ -133,6 +138,7 @@ export function createStandInAssignmentDelivery(accountKey: string) {
               retryAt: 0,
             }
             receipts.set(key, receipt)
+            activeDeliveries++
             console.info('[Stand-in] Forwarding assignment notification', {
               notificationId: notification.id,
               projectId: notification.projectId,
@@ -153,7 +159,6 @@ export function createStandInAssignmentDelivery(accountKey: string) {
                 if (receipts.get(key) !== receipt) return
                 if (receipt.reconsiderAfterPending) {
                   receipts.delete(key)
-                  retryCurrentAssignments()
                   return
                 }
                 receipt.status = 'accepted'
@@ -168,7 +173,6 @@ export function createStandInAssignmentDelivery(accountKey: string) {
                 })
                 if (receipt.reconsiderAfterPending) {
                   receipts.delete(key)
-                  retryCurrentAssignments()
                   return
                 }
                 receipt.status = 'failed'
@@ -177,6 +181,11 @@ export function createStandInAssignmentDelivery(accountKey: string) {
                   Date.now() + Math.min(5_000 * 2 ** Math.min(receipt.failures - 1, 6), 300_000)
                 if (observing && input?.userId === userId) wakeAt(receipt.retryAt)
               })
+              .finally(() => {
+                activeDeliveries--
+                retryCurrentAssignments()
+              })
+            if (activeDeliveries >= MAX_CONCURRENT_ASSIGNMENT_DELIVERIES) return
           }
       })
       .catch(error => {

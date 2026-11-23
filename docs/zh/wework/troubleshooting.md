@@ -47,6 +47,9 @@ sidebar_position: 10
 `renderer-startup-ready`。如果 `model-loading.log` 中有 `runtime.inventory.slow`，可以查看
 读取执行器身份、请求列表和复核身份各阶段的耗时。
 
+启动时，收件箱积压的指派通知会分批转发，为任务列表等前台请求留出本地连接。复核身份较慢时，
+可对照同一时段 `executor-transport.log` 中的请求发起和响应时间，判断是否有本地请求排队。
+
 ## 排查发布包的升级与回滚
 
 使用发布工作流的诊断重放时，`app.log` 中的 `[desktop-e2e-startup]` 记录实际进程、
