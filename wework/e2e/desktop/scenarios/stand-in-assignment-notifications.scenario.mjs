@@ -1,4 +1,3 @@
-import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -213,7 +212,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         { userId: user.id },
         uiTimeoutMs
       )
-      const template = standInRoleFixture(personal.executionDeviceId)
+      const template = personal.roles.find(role => role.id === settings.id)
+      assert.ok(template?.collaboration.enabled, 'The project role must retain its intake scope')
       const roleIds = ['fanout-review', 'fanout-docs']
       personal = await requestExecutor(
         control,

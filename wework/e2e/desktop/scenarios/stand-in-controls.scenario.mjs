@@ -53,13 +53,18 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       const open = () => openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       const cancel = () => discardStandInDraft(control)
 
+      const initial = await read()
       await open()
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-auto"]'), '0')
       await control.command('fill', PROMPT, { value: 'Discarded initial draft' })
       await editProjectSource(control, true)
       assert.equal((await read()).enabled, false, 'First activation requires saving settings')
       await cancel()
-      assert.equal((await read()).version, 0, 'Cancel must not create a configuration')
+      assert.deepEqual(
+        await read(),
+        initial,
+        'Cancel must leave the seeded configuration unchanged'
+      )
 
       await open()
       await control.command('fill', PROMPT, { value: 'Saved manual settings' })

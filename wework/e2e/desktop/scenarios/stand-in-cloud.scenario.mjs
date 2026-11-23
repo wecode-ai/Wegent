@@ -256,9 +256,10 @@ export function createDesktopScenario({
         assert.ok(currentDevice)
         assert.notEqual(currentDevice, REMOTE_DOCKER_DEVICE_ID)
         await stopBoundStandIn(control, uiTimeoutMs)
+        // Seed before the bound device's settings are loaded by the renderer.
+        await seedStandInRoleFixture(rpc, user.id)
         await bindStoppedStandIn(control, user.id, REMOTE_DOCKER_DEVICE_ID, uiTimeoutMs)
         await finishStandInOnboarding(control)
-        await seedStandInRoleFixture(rpc, user.id)
         const remoteDraft = await rpc('runtime.stand_in.get', settingsParams())
         await control.command('navigate', 'body', {
           value: `/stand-in?${new URLSearchParams({ deviceId: REMOTE_DOCKER_DEVICE_ID, profileId: remoteDraft.id, settingsRequest: crypto.randomUUID() })}`,
