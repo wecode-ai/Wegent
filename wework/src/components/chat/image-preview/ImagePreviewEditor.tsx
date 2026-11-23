@@ -1,5 +1,5 @@
 import { Input } from '@ui-sdk/react/input'
-import { Button } from '@ui-sdk/react/button'
+import { Button } from '@wegent/collaboration/markdown/Button'
 import { useRef, useState, type PointerEvent } from 'react'
 import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import {
@@ -363,10 +363,8 @@ export function useImagePreviewEditor(
             </span>
             <Button
               type="button"
-              className={cn(
-                actionClass,
-                'rounded-xl bg-text-primary text-background hover:bg-text-primary/90'
-              )}
+              variant="primary"
+              className={cn(actionClass, 'rounded-xl')}
               data-testid="attachment-image-edit-send"
               ref={sendCommentsButton}
               disabled={busy || !currentComments.length}
@@ -460,12 +458,8 @@ export function useImagePreviewEditor(
             </Button>
             <Button
               type="button"
-              className={cn(
-                actionClass,
-                mode === 'markup' &&
-                  saveMarkup &&
-                  'rounded-xl bg-text-primary text-background hover:bg-text-primary/90'
-              )}
+              variant={mode === 'markup' && saveMarkup ? 'primary' : undefined}
+              className={cn(actionClass, mode === 'markup' && saveMarkup && 'rounded-xl')}
               data-testid={
                 mode === 'markup' && saveMarkup
                   ? 'attachment-image-edit-save'

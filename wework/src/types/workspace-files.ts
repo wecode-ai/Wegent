@@ -1,4 +1,5 @@
 export type { CodeCommentContext } from '@wegent/chat-core/code-comment'
+import type { ImageEditActions } from '@/components/chat/image-preview/ImageEditContext'
 import type { ImageComment } from '@/components/chat/image-preview/imageEdit'
 
 import type {
@@ -73,7 +74,7 @@ export interface WorkspaceAttachmentPreviewSource {
   image?: {
     localPath?: string | null
     draftAttachmentId?: number
-    editorScope?: string
+    editor?: ImageEditActions
     comments?: ImageComment[]
   }
 }

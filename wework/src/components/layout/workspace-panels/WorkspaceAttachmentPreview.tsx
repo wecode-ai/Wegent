@@ -7,14 +7,13 @@ import type {
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Download } from 'lucide-react'
-import { useContext, useMemo, useState, useSyncExternalStore } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import { InlineDesktopImagePreview } from '@/components/chat/image-preview/DesktopImagePreview'
-import {
-  ImageEditContext,
-  type SavedImageMarkup,
-} from '@/components/chat/image-preview/ImageEditContext'
+import type { SavedImageMarkup } from '@/components/chat/image-preview/ImageEditContext'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { workspaceFilePreviewKind } from './workspaceFileTypes'
+
+const savedImageBySource = new WeakMap<WorkspaceAttachmentPreviewSource, SavedImageMarkup>()
 
 export function WorkspaceAttachmentPreview({
   source,
@@ -22,13 +21,13 @@ export function WorkspaceAttachmentPreview({
   source: WorkspaceAttachmentPreviewSource
 }) {
   const { t } = useTranslation('common')
-  const editContext = useContext(ImageEditContext)
   const [revision, setRevision] = useState(0)
   const [failedImage, setFailedImage] = useState<File | null>(null)
   const [savedImage, setSavedImage] = useState<
     (SavedImageMarkup & { source: WorkspaceAttachmentPreviewSource }) | null
   >(null)
-  const saved = savedImage?.source === source ? savedImage : null
+  const saved =
+    savedImage?.source === source ? savedImage : (savedImageBySource.get(source) ?? null)
   const resource = useMemo(
     () =>
       createAsyncResource(
@@ -57,10 +56,7 @@ export function WorkspaceAttachmentPreview({
   )
   const file = snapshot.data?.file ?? null
   const draftAttachmentId = saved?.attachmentId ?? source.image?.draftAttachmentId
-  const editorScope = source.image?.editorScope
-  const canEditImage = Boolean(
-    editContext && editorScope !== undefined && editContext.scope === editorScope
-  )
+  const editor = source.image?.editor
   const text = snapshot.data?.text ?? null
   const error =
     snapshot.status === 'error'
@@ -86,8 +82,12 @@ export function WorkspaceAttachmentPreview({
           fromComposer={draftAttachmentId !== undefined}
           filename={file.name}
           localPath={saved ? null : source.image?.localPath}
-          editorScope={canEditImage ? editorScope : undefined}
-          onMarkupSaved={canEditImage ? result => setSavedImage({ ...result, source }) : undefined}
+          imageEditor={editor}
+          onMarkupSaved={result => {
+            const savedResult = { ...result, source }
+            savedImageBySource.set(source, savedResult)
+            setSavedImage(savedResult)
+          }}
           url={snapshot.data.imageUrl}
           loading={false}
           loadFile={async () => file}

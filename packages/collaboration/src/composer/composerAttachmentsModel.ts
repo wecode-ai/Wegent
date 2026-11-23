@@ -92,18 +92,14 @@ export function includeDraftAttachmentGroup({
       attachment.id !== source.id &&
       !submittedIds.has(attachment.id)
   )
-  return submittedAttachments
-    .map((attachment, index) =>
-      index === 0
-        ? {
-            ...attachment,
-            ui_group_id: source.ui_group_id,
-            ui_group_role: source.ui_group_role,
-            ui_kind: source.ui_kind,
-          }
-        : attachment
-    )
-    .concat(companions)
+  const [admitted] = submittedAttachments
+  if (!admitted) return submittedAttachments
+  Object.assign(admitted, {
+    ui_group_id: source.ui_group_id,
+    ui_group_role: source.ui_group_role,
+    ui_kind: source.ui_kind,
+  })
+  return submittedAttachments.concat(companions)
 }
 
 export function createComposerAttachmentsModel(

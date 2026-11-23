@@ -784,7 +784,7 @@ sequenceDiagram
         Viewer->>Pane: Submit edit instruction and pending attachments
         Pane->>Pane: Admit message or queue entry and preserve unrelated draft contents
         opt Comment-only send from a composer attachment
-            Pane->>Pane: Retain the source image for dispatch and remove its draft attachment
+            Pane->>Pane: Retain the source image for dispatch and remove its admitted attachment group from the draft
         end
         Pane->>Pane: Stage original image, marks or selection
     end

@@ -4,7 +4,6 @@ import { expect, test, vi } from 'vitest'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 import type { WorkspaceAttachmentPreviewSource } from '@/types/workspace-files'
 import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
-import { ImageEditContext } from '@/components/chat/image-preview/ImageEditContext'
 
 vi.mock('@/lib/blobDownload', () => ({ saveBlobToDownloads: vi.fn() }))
 vi.mock('./WorkspaceFilePreview', () => ({
@@ -54,7 +53,7 @@ test('isolates a late attachment read from the new preview source', async () => 
   expect(nextLoad).toHaveBeenCalledOnce()
 })
 
-test('keeps image edits available in Files without trapping focus or reloading the source', async () => {
+test('keeps an explicit image editor and saved preview across Files remounts', async () => {
   const load = vi.fn(async () => new Blob(['image'], { type: 'image/png' }))
   const submit = vi.fn().mockResolvedValue(true)
   const comments = [{ x: 50, y: 50, text: 'Keep with the draft' }]
@@ -75,18 +74,18 @@ test('keeps image edits available in Files without trapping focus or reloading t
     ...source('image.png', load),
     image: {
       draftAttachmentId: -1,
-      editorScope: 'side-chat',
+      editor: { submit, saveMarkup, scope: 'nested-side-chat' },
     },
   }
-  const panel = (scope: string) => (
-    <ImageEditContext.Provider value={{ submit, saveMarkup, scope }}>
+  const panel = () => (
+    <>
       <button type="button" data-testid="composer-action">
         Composer
       </button>
       <WorkspaceAttachmentPreview source={attachment} />
-    </ImageEditContext.Provider>
+    </>
   )
-  const view = render(panel('side-chat'))
+  const view = render(panel())
   try {
     const viewer = await screen.findByTestId('attachment-image-side-viewer')
     expect(viewer).not.toHaveAttribute('aria-modal')
@@ -125,12 +124,22 @@ test('keeps image edits available in Files without trapping focus or reloading t
       'Keep with the draft'
     )
     fireEvent.click(screen.getByTestId('attachment-image-edit-cancel'))
-    view.rerender(panel('other-task'))
-    expect(screen.queryByTestId('attachment-image-tool-background')).not.toBeInTheDocument()
+    view.rerender(panel())
+    expect(screen.getByTestId('attachment-image-tool-background')).toBeInTheDocument()
     expect(screen.getByTestId('attachment-image-side-viewer')).toBe(savedViewer)
     expect(load).toHaveBeenCalledOnce()
+
     view.unmount()
-    expect(revoke.mock.calls).toEqual([['blob:panel-image'], ['blob:panel-image']])
+    const remounted = render(panel())
+    expect(await screen.findByRole('region', { name: 'marked.png' })).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('attachment-image-tool-comment'))
+    expect(screen.getByTestId('attachment-image-comment-pin')).toHaveAttribute(
+      'title',
+      'Keep with the draft'
+    )
+    expect(load).toHaveBeenCalledOnce()
+    remounted.unmount()
+    expect(revoke).toHaveBeenCalledTimes(3)
   } finally {
     vi.unstubAllGlobals()
   }

@@ -189,9 +189,6 @@ export async function sendTemporaryChatMessage(
   const restoreAttachments = () => {
     if (!standalone) currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
   }
-  const restoreInput = () => {
-    if (!standalone) setInput(current => current || draftText)
-  }
   resetAttachments()
   const initialGoal =
     !standalone && goalDraftActive
@@ -235,7 +232,6 @@ export async function sendTemporaryChatMessage(
       const pending = conversationQueue.getSnapshot().find(item => item.id === queuedMessage.id)
       if (!sent && pending?.status !== 'queued') {
         setError(pending?.error || t('workbench.project_chat_send_failed'))
-        if (!transactionalDraft) restoreInput()
         restoreAttachments()
         return false
       }
@@ -245,7 +241,6 @@ export async function sendTemporaryChatMessage(
       return true
     } catch (cause) {
       setError(getErrorMessage(cause, t('workbench.project_chat_send_failed')))
-      if (!transactionalDraft) restoreInput()
       restoreAttachments()
       return false
     } finally {
@@ -313,7 +308,6 @@ export async function sendTemporaryChatMessage(
         : current => current.filter(currentMessage => currentMessage.id !== queuedMessage.id)
     )
     updateAddress(null)
-    if (nativeConversation) restoreInput()
     setSending(false)
     restoreAttachments()
     return false

@@ -391,6 +391,16 @@ async function verifyComposerMarkupSave(control, composerSelector, draft) {
   control.setScenario('image_preview_markup_save')
   await control.command('click', thumbnail)
   await control.command('click', '[data-testid="attachment-image-tool-markup"]')
+  await control.command('click', '[data-testid="attachment-image-markup-text"]')
+  await control.command('click', '[data-testid="attachment-image-edit-surface"]')
+  await control.command('fill', '[data-testid="attachment-image-markup-text-input"]', {
+    value: 'Focus here',
+  })
+  await control.command('click', '[data-testid="attachment-image-markup-save-text"]')
+  await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
+    text: 'Focus here',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   assert.equal(
     await control.command(
       'getElementCount',
@@ -1458,6 +1468,18 @@ async function verifySideChatAttachmentIsolation({
     value: IMAGE_ARTIFACT_BASE64,
   })
   const draftImage = `${sideChatSelector} [data-testid="attachment-image-preview-button"]`
+  await control.command('waitFor', draftImage, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', draftImage)
+  await control.command('click', '[data-testid="attachment-image-open-in-panel"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="attachment-image-side-viewer"] [data-testid="attachment-image-tool-comment"]',
+    { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
   await control.command('waitFor', draftImage, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

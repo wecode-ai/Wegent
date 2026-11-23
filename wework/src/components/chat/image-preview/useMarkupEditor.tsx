@@ -1,5 +1,5 @@
 import { Input } from '@ui-sdk/react/input'
-import { Button } from '@ui-sdk/react/button'
+import { Button } from '@wegent/collaboration/markdown/Button'
 import { SelectTrigger } from '@ui-sdk/react/select'
 import { SelectContent, SelectItem, SelectRoot } from '@wegent/collaboration/controls/SelectParts'
 import { useId, useRef, useState, type PointerEvent } from 'react'
@@ -336,7 +336,8 @@ export function useMarkupEditor(
           />
           <Button
             type="submit"
-            className="rounded-md bg-blue-600 px-1.5 text-white"
+            variant="primary"
+            className="rounded-md px-1.5"
             data-testid="attachment-image-markup-save-text"
             disabled={!textDraft.text.trim() || busy}
           >

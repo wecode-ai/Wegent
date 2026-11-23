@@ -28,7 +28,7 @@ import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { AttachmentPreviewContext } from '../AttachmentPreviewContext'
-import { ImageEditContext, type SavedImageMarkup } from './ImageEditContext'
+import { ImageEditContext, type ImageEditActions, type SavedImageMarkup } from './ImageEditContext'
 import { useImagePreviewEditor } from './ImagePreviewEditor'
 import type { ImageEdit } from './imageEdit'
 
@@ -49,7 +49,7 @@ export function DesktopImagePreview(
 }
 
 interface InlineImageEditorProps {
-  editorScope?: string
+  imageEditor?: ImageEditActions | null
   onMarkupSaved?: (saved: SavedImageMarkup) => void
 }
 
@@ -61,7 +61,7 @@ export function InlineDesktopImagePreview(
 
 function ImagePreviewDialog({
   inline = false,
-  editorScope,
+  imageEditor,
   onMarkupSaved,
   attachment,
   fromComposer,
@@ -83,10 +83,7 @@ function ImagePreviewDialog({
   const { t } = useTranslation('common')
   const openPanel = useContext(AttachmentPreviewContext)
   const submissionContext = useContext(ImageEditContext)
-  const editSubmission =
-    !inline || (editorScope !== undefined && submissionContext?.scope === editorScope)
-      ? submissionContext
-      : null
+  const editSubmission = inline ? (imageEditor ?? null) : submissionContext
   const composerAttachmentId = fromComposer ? attachment.id : undefined
   const [zoom, setZoom] = useState<number | null>(null)
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
@@ -369,7 +366,7 @@ function ImagePreviewDialog({
                   image: {
                     localPath,
                     draftAttachmentId: composerAttachmentId,
-                    editorScope: editSubmission?.scope,
+                    editor: editSubmission ?? undefined,
                     comments: attachment.image_markup_comments ?? [],
                   },
                 })

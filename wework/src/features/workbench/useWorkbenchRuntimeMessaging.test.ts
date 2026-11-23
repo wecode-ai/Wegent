@@ -226,23 +226,21 @@ test('sends an appshot image and hidden companion for a draft image comment', as
     attachments.current.addExistingAttachment(appshot)
     attachments.current.addExistingAttachment(companion)
   })
-  const sendRuntimePaneMessage = vi.fn().mockResolvedValue(true)
+  const enqueue = vi.fn()
+  const context = temporarySendContext({
+    instanceId: 'appshot-comment',
+    attachments: attachments.current.attachments,
+    captureAttachmentsForScope: attachments.current.captureAttachmentsForScope,
+    resetAttachments: attachments.current.resetAttachments,
+    addExistingAttachment: attachments.current.addExistingAttachment,
+    sendRuntimePaneMessage: vi.fn(),
+  })
+  context.busy = true
+  context.conversationQueue.enqueue = enqueue
   const send = (
     message: string,
     options: { standaloneAttachments?: Attachment[]; draftAttachmentSourceId?: number }
-  ) =>
-    sendTemporaryChatMessage(
-      temporarySendContext({
-        instanceId: 'appshot-comment',
-        attachments: attachments.current.attachments,
-        captureAttachmentsForScope: attachments.current.captureAttachmentsForScope,
-        resetAttachments: attachments.current.resetAttachments,
-        addExistingAttachment: attachments.current.addExistingAttachment,
-        sendRuntimePaneMessage,
-      }),
-      message,
-      options
-    )
+  ) => sendTemporaryChatMessage(context, message, options)
   const upload = vi.fn(async (file: File) => ({
     ...appshot,
     id: 42,
@@ -279,16 +277,21 @@ test('sends an appshot image and hidden companion for a draft image comment', as
     ).resolves.toBe(true)
   })
 
-  const [request] = sendRuntimePaneMessage.mock.calls[0]!
-  expect(request.message).toMatch(/Existing pin/)
-  expect(request.message).toMatch(/New pin/)
-  expect(request.attachments?.map((item: Attachment) => item.filename)).toEqual([
+  const [queued] = enqueue.mock.calls[0]!
+  expect(queued.content).toMatch(/Existing pin/)
+  expect(queued.content).toMatch(/New pin/)
+  expect(queued.attachments.map((item: Attachment) => item.filename)).toEqual([
     'appshot.png',
     'appshot-context.txt',
   ])
   expect(
-    (await resolvePreparingAttachments(request.attachments)).map(item => item.local_path)
+    (await resolvePreparingAttachments(queued.attachments)).map(item => item.local_path)
   ).toEqual(['/tmp/appshot-comment.png', '/tmp/appshot-context.txt'])
+  expect(queued.attachments[0]).toMatchObject({
+    id: 42,
+    status: 'ready',
+    local_path: '/tmp/appshot-comment.png',
+  })
   await waitFor(() => expect(attachments.current.attachments).toEqual([]))
   expect(remove).not.toHaveBeenCalled()
 })

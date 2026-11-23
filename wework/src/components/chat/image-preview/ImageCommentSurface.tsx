@@ -1,6 +1,6 @@
 import { Textarea } from '@ui-sdk/react/textarea'
 import { Input } from '@ui-sdk/react/input'
-import { Button } from '@ui-sdk/react/button'
+import { Button } from '@wegent/collaboration/markdown/Button'
 import { useRef, useState, type PointerEvent } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -80,13 +80,9 @@ export function ImageCommentSurface({
         }}
         onPointerUp={event => {
           const pointer = start.current
+          if (!pointer || pointer.pointerId !== event.pointerId) return
           start.current = null
-          if (
-            !pointer ||
-            pointer.pointerId !== event.pointerId ||
-            Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 8
-          )
-            return
+          if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 8) return
           switchDraft({ ...pointAt(event), text: '' })
         }}
         onClick={event => {
@@ -194,7 +190,8 @@ export function ImageCommentSurface({
               )}
               <Button
                 type="submit"
-                className="min-h-7 rounded-full bg-text-primary px-2 text-sm text-background disabled:opacity-40"
+                variant="primary"
+                className="min-h-7 rounded-full px-2 text-sm disabled:opacity-40"
                 data-testid="attachment-image-comment-save"
                 disabled={busy || !draft.text.trim()}
               >
