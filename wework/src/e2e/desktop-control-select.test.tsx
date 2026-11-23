@@ -127,6 +127,7 @@ describe('selectDesktopControlOption', () => {
 import '../../../packages/collaboration/src/test/setup'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@ui-sdk/react/select'
 import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import * as SelectParts from '@wegent/collaboration/controls/SelectParts'
 import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
 import { desktopControlSelectionValue, selectDesktopControlChoice } from './desktop-control-select'
 
@@ -225,6 +226,76 @@ for (const kind of ['select', 'combobox', 'raw'] as const) {
     }
   )
 }
+
+test('selects a cloud device by ID from the lazy grouped project picker', async () => {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const cloudDeviceId = 'wework-e2e-cloud-device'
+  const dockerDeviceId = 'wework-e2e-remote-docker-device'
+  let completeDeviceLoad!: () => void
+  const devicesLoaded = new Promise<void>(resolve => {
+    completeDeviceLoad = resolve
+  })
+  function DevicePicker() {
+    const [value, setValue] = useState(dockerDeviceId)
+    const [loaded, setLoaded] = useState(false)
+    return (
+      <SelectParts.SelectRoot
+        value={value}
+        onValueChange={next => next !== null && setValue(next)}
+        onOpenChange={open => {
+          if (open) void devicesLoaded.then(() => setLoaded(true))
+        }}
+      >
+        <SelectParts.SelectTrigger data-testid="standalone-remote-device-select" />
+        <SelectParts.SelectContent>
+          <SelectParts.SelectGroup>
+            <SelectParts.SelectGroupLabel>云设备</SelectParts.SelectGroupLabel>
+            {loaded && (
+              <SelectParts.SelectItem value={cloudDeviceId}>
+                云设备 · Wework E2E Cloud Device · 127.0.0.1
+              </SelectParts.SelectItem>
+            )}
+          </SelectParts.SelectGroup>
+          <SelectParts.SelectGroup>
+            <SelectParts.SelectGroupLabel>远程 Docker 设备</SelectParts.SelectGroupLabel>
+            <SelectParts.SelectItem value={dockerDeviceId}>
+              远程 Docker 设备 · Wework E2E Remote Docker Device · 127.0.0.1
+            </SelectParts.SelectItem>
+          </SelectParts.SelectGroup>
+        </SelectParts.SelectContent>
+      </SelectParts.SelectRoot>
+    )
+  }
+  try {
+    await act(async () => root.render(<DevicePicker />))
+    const trigger = container.querySelector<HTMLElement>(
+      '[data-testid="standalone-remote-device-select"]'
+    )!
+    const selection = selectDesktopControlChoice(trigger, cloudDeviceId).catch((error: unknown) =>
+      String(error)
+    )
+    // Keep the requested device pending past the agent's opening frames.
+    const loaded = new Promise<void>(resolve => {
+      const waitForOpen = () => {
+        if (trigger.getAttribute('aria-expanded') !== 'true') {
+          requestAnimationFrame(waitForOpen)
+          return
+        }
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      }
+      requestAnimationFrame(waitForOpen)
+    })
+    await loaded
+    await act(async () => completeDeviceLoad())
+    expect(await selection).toBe('云设备 · Wework E2E Cloud Device · 127.0.0.1')
+    expect(await desktopControlSelectionValue(trigger)).toBe(cloudDeviceId)
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
+})
 
 test('clears an SDK selection when the list offers an empty value', async () => {
   const fixture = await sdkFixture('raw')
