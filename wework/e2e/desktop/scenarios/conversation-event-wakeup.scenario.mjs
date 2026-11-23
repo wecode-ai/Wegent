@@ -42,12 +42,13 @@ const CONTROL_MCP_IDLE_TTL_MS = 1000
 function latestWaitingSubscriptions(body) {
   const snapshot = body.input.findLast(
     item =>
-      item.type === 'function_call_output' &&
-      item.namespace === 'agent' &&
-      item.name === 'weworkconnectioneventswaiting'
+      item.type === 'message' &&
+      item.role === 'user' &&
+      item.content?.[0]?.text === '[tool_result without a matching tool_call]'
   )
   assert.ok(snapshot, 'The model must receive a waiting subscription snapshot')
-  return JSON.parse(snapshot.output)
+  assert.equal(snapshot.content[1]?.type, 'input_text', 'The snapshot must be model-visible text')
+  return JSON.parse(snapshot.content[1].text)
 }
 
 export function createDesktopScenario(options, { controlContextOnly = false } = {}) {
