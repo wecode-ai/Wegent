@@ -141,6 +141,9 @@ async def run() -> None:
                 _make_user(db, role)
                 for role in ("owner", "initial", "later", "outsider")
             ]
+            for user in users:
+                user.git_info = {}
+                user.preferences = "{}"
             user_ids.extend(user.id for user in users)
             channel = _messager_channel(
                 channel_id=CHANNEL_ID,
