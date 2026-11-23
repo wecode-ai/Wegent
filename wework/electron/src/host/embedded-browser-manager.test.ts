@@ -1400,6 +1400,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       let savePath = ''
       const doneListeners: Array<(event: unknown, state: string) => void> = []
       const item = {
+        cancel: vi.fn(),
         getFilename: () => 'video_123.mp4',
         getSavePath: () => savePath,
         getURL: () => 'https://example.test/video_123.mp4',

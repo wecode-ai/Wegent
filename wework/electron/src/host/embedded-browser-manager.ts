@@ -200,12 +200,12 @@ export class EmbeddedBrowserManager {
     private readonly openWeworkScheme: (url: string) => void = url => {
       void shell.openExternal(url)
     },
-    private readonly downloadPolicy?: Pick<DownloadTargetPolicy, 'apply'>
+    private readonly downloadPolicy?: Pick<DownloadTargetPolicy, 'apply' | 'downloadUrlAs'>
   ) {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
     const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
-    browserSession.on('will-download', (_event, item, webContents) => {
-      this.downloadPolicy?.apply(item, webContents)
+    browserSession.on('will-download', (event, item, webContents) => {
+      this.downloadPolicy?.apply(item, webContents, event)
       const entry = [...this.entries.values()].find(
         candidate => candidate.contents.id === webContents.id
       )
@@ -1222,6 +1222,15 @@ export class EmbeddedBrowserManager {
     if (download.path) await rm(download.path, { force: true })
     this.emitDownload(download, 'deleted')
     this.downloads.delete(id)
+  }
+
+  saveUrlAs(label: string, url: string): void {
+    const entry = this.required(label)
+    if (this.downloadPolicy) {
+      this.downloadPolicy.downloadUrlAs(entry.contents, url)
+      return
+    }
+    entry.contents.downloadURL(url)
   }
 
   layoutAll(): void {

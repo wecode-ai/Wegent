@@ -1,5 +1,5 @@
-import { constants as fsConstants, existsSync } from 'node:fs'
-import { access, mkdir } from 'node:fs/promises'
+import { accessSync, constants as fsConstants, existsSync, statSync } from 'node:fs'
+import { access, mkdir, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, parse } from 'node:path'
 
 export interface DownloadPreferences {
@@ -7,7 +7,10 @@ export interface DownloadPreferences {
   askBeforeDownload: boolean
 }
 
+export type SaveDialogReason = 'ask-before-download' | 'save-as' | 'directory-unavailable'
+
 export interface ManagedDownloadItem {
+  cancel: () => void
   getFilename: () => string
   getSavePath: () => string
   getURL: () => string
@@ -15,6 +18,17 @@ export interface ManagedDownloadItem {
   setSavePath: (path: string) => void
   setSaveDialogOptions: (options: { defaultPath?: string }) => void
   once: (event: 'done', listener: (event: unknown, state: string) => void) => unknown
+}
+
+export interface SaveDialogRequestEvent {
+  defaultPath: string
+  filename: string
+  item: ManagedDownloadItem
+  preventDefault?: () => void
+  reason: SaveDialogReason
+  url: string
+  urlChain: string[]
+  webContentsId: number | null
 }
 
 export interface DownloadUrlTarget {
@@ -25,13 +39,17 @@ export interface DownloadUrlTarget {
 
 interface DownloadFileSystem {
   access: (path: string, mode?: number) => Promise<void>
+  accessSync: (path: string, mode?: number) => void
   existsSync: (path: string) => boolean
   mkdir: (path: string, options: { recursive: true }) => Promise<unknown>
+  stat: (path: string) => Promise<{ isDirectory: () => boolean }>
+  statSync: (path: string) => { isDirectory: () => boolean }
 }
 
 export interface DownloadTargetPolicyOptions {
   defaultDownloadsDirectory: () => string
   onDownloadCompleted?: (savePath: string) => void
+  onSaveDialogRequested?: (event: SaveDialogRequestEvent) => void
   onDirectoryWarning?: (message: string, error: unknown) => void
   fs?: DownloadFileSystem
   caseInsensitivePaths?: boolean
@@ -41,8 +59,11 @@ const MAX_PENDING_SAVE_AS_PER_TARGET = 64
 
 const DEFAULT_FS: DownloadFileSystem = {
   access,
+  accessSync,
   existsSync,
   mkdir,
+  stat,
+  statSync,
 }
 
 export function resolveDownloadPreferences(
@@ -124,35 +145,25 @@ export class DownloadTargetPolicy {
 
   update(preferences: Record<string, unknown>): Promise<void> {
     this.preferences = resolveDownloadPreferences(preferences)
-    return this.prepare()
+    return this.prepare({ createMissing: true })
   }
 
-  async prepare(): Promise<void> {
+  async prepare(options: { createMissing?: boolean } = {}): Promise<void> {
+    const createMissing = options.createMissing ?? true
     const generation = ++this.prepareGeneration
     this.preparing = true
     try {
-      const preferred = this.preferences.downloadDirectory
-      const fallback = this.resolveFallbackDirectory()
-      const checks: Array<{ directory: string; label: string }> = []
-      if (preferred && isAbsolute(preferred)) {
-        checks.push({ directory: preferred, label: 'custom download directory' })
+      const target = this.configuredTargetDirectory()
+      if (!target) {
+        if (generation === this.prepareGeneration) this.verifiedDirectories.clear()
+        return
       }
-      if (fallback && fallback !== preferred) {
-        checks.push({ directory: fallback, label: 'system downloads directory' })
-      }
-
-      const results = await Promise.all(
-        checks.map(async ({ directory, label }) => ({
-          directory,
-          writable: await this.tryPrepareDirectory(directory, label),
-        }))
-      )
-
+      const writable = createMissing
+        ? await this.tryPrepareDirectory(target.directory, target.label)
+        : await this.tryCheckExistingDirectory(target.directory, target.label)
       if (generation !== this.prepareGeneration) return
       this.verifiedDirectories.clear()
-      for (const { directory, writable } of results) {
-        this.verifiedDirectories.set(directory, writable)
-      }
+      this.verifiedDirectories.set(target.directory, writable)
     } finally {
       if (generation === this.prepareGeneration) {
         this.preparing = false
@@ -184,22 +195,37 @@ export class DownloadTargetPolicy {
 
   apply(
     item: ManagedDownloadItem,
-    webContents?: { id: number } | null
-  ): { mode: 'save-path' | 'save-dialog'; path: string } {
-    const promptForSave = this.consumePendingSaveAs(webContents?.id ?? null, item)
+    webContents?: { id: number } | null,
+    willDownloadEvent?: { preventDefault: () => void } | null
+  ): { mode: 'save-path' | 'save-dialog'; path: string; reason?: SaveDialogReason } {
+    const webContentsId = webContents?.id ?? null
+    const promptForSave = this.consumePendingSaveAs(webContentsId, item)
     const filename = sanitizeDownloadFilename(item.getFilename())
-    const directory = this.selectVerifiedDirectory()
+    const selection = this.selectVerifiedDirectory()
 
-    if (!directory) {
-      if (!this.preparing) void this.prepare()
+    if (!selection.directory) {
+      if (!this.preparing) {
+        // Re-verify existing directory status asynchronously without recreating a deleted directory.
+        void this.prepare({ createMissing: selection.status === 'pending' })
+      }
       const defaultPath = this.fallbackDefaultPath(filename)
-      item.setSaveDialogOptions({ defaultPath })
-      this.attachCompletionHook(item)
-      return { mode: 'save-dialog', path: defaultPath }
+      const reason: SaveDialogReason = promptForSave
+        ? 'save-as'
+        : this.preferences.askBeforeDownload
+          ? 'ask-before-download'
+          : 'directory-unavailable'
+      return this.requestSaveDialog(
+        item,
+        filename,
+        defaultPath,
+        reason,
+        webContentsId,
+        willDownloadEvent
+      )
     }
 
     const candidatePath = findAvailablePath(
-      directory,
+      selection.directory,
       filename,
       this.activeSavePaths,
       this.fs.existsSync,
@@ -207,9 +233,15 @@ export class DownloadTargetPolicy {
     )
 
     if (promptForSave || this.preferences.askBeforeDownload) {
-      item.setSaveDialogOptions({ defaultPath: candidatePath })
-      this.attachCompletionHook(item)
-      return { mode: 'save-dialog', path: candidatePath }
+      const reason: SaveDialogReason = promptForSave ? 'save-as' : 'ask-before-download'
+      return this.requestSaveDialog(
+        item,
+        filename,
+        candidatePath,
+        reason,
+        webContentsId,
+        willDownloadEvent
+      )
     }
 
     const reservedKey = reservationKey(candidatePath, this.caseInsensitivePaths)
@@ -220,6 +252,31 @@ export class DownloadTargetPolicy {
       if (state === 'completed') this.notifyCompleted(item, candidatePath)
     })
     return { mode: 'save-path', path: candidatePath }
+  }
+
+  private requestSaveDialog(
+    item: ManagedDownloadItem,
+    filename: string,
+    defaultPath: string,
+    reason: SaveDialogReason,
+    webContentsId: number | null,
+    willDownloadEvent?: { preventDefault: () => void } | null
+  ): { mode: 'save-dialog'; path: string; reason: SaveDialogReason } {
+    item.setSaveDialogOptions({ defaultPath })
+    this.attachCompletionHook(item)
+    this.options.onSaveDialogRequested?.({
+      defaultPath,
+      filename,
+      item,
+      ...(typeof willDownloadEvent?.preventDefault === 'function'
+        ? { preventDefault: () => willDownloadEvent.preventDefault() }
+        : {}),
+      reason,
+      url: item.getURL(),
+      urlChain: item.getURLChain?.() ?? [item.getURL()],
+      webContentsId,
+    })
+    return { mode: 'save-dialog', path: defaultPath, reason }
   }
 
   private attachCompletionHook(item: ManagedDownloadItem): void {
@@ -234,19 +291,51 @@ export class DownloadTargetPolicy {
     if (savePath) this.options.onDownloadCompleted?.(savePath)
   }
 
-  private selectVerifiedDirectory(): string | null {
+  private configuredTargetDirectory(): { directory: string; label: string } | null {
     const preferred = this.preferences.downloadDirectory
-    if (preferred && isAbsolute(preferred)) {
-      const status = this.verifiedDirectories.get(preferred)
-      if (status === true) return preferred
-      // Do not silently save to the system directory while a new custom directory is still being verified.
-      if (status === undefined) return null
+    if (preferred !== null) {
+      if (!isAbsolute(preferred)) return null
+      return { directory: preferred, label: 'custom download directory' }
     }
     const fallback = this.resolveFallbackDirectory()
-    if (fallback && this.verifiedDirectories.get(fallback) === true) {
-      return fallback
+    if (!fallback) return null
+    return { directory: fallback, label: 'system downloads directory' }
+  }
+
+  private selectVerifiedDirectory(): {
+    directory: string | null
+    status: 'ready' | 'pending' | 'unavailable'
+  } {
+    const target = this.configuredTargetDirectory()
+    if (!target) return { directory: null, status: 'unavailable' }
+    const cached = this.verifiedDirectories.get(target.directory)
+    if (cached === undefined) return { directory: null, status: 'pending' }
+    if (cached === false) return { directory: null, status: 'unavailable' }
+    if (!this.isDirectoryWritableNow(target.directory, target.label)) {
+      this.verifiedDirectories.set(target.directory, false)
+      return { directory: null, status: 'unavailable' }
     }
-    return null
+    return { directory: target.directory, status: 'ready' }
+  }
+
+  private isDirectoryWritableNow(directory: string, label: string): boolean {
+    try {
+      if (!this.fs.statSync(directory).isDirectory()) {
+        this.options.onDirectoryWarning?.(
+          `[downloads] ${label} is no longer a directory (${directory}); prompting save dialog`,
+          new Error('Target path is not a directory')
+        )
+        return false
+      }
+      this.fs.accessSync(directory, fsConstants.W_OK)
+      return true
+    } catch (error) {
+      this.options.onDirectoryWarning?.(
+        `[downloads] ${label} is no longer writable (${directory}); prompting save dialog`,
+        error
+      )
+      return false
+    }
   }
 
   private resolveFallbackDirectory(): string | null {
@@ -265,11 +354,28 @@ export class DownloadTargetPolicy {
   private async tryPrepareDirectory(directory: string, label: string): Promise<boolean> {
     try {
       await this.fs.mkdir(directory, { recursive: true })
+      const info = await this.fs.stat(directory)
+      if (!info.isDirectory()) throw new Error('Target path is not a directory')
       await this.fs.access(directory, fsConstants.W_OK)
       return true
     } catch (error) {
       this.options.onDirectoryWarning?.(
-        `[downloads] ${label} is unavailable (${directory}); falling back`,
+        `[downloads] ${label} is unavailable (${directory}); prompting save dialog`,
+        error
+      )
+      return false
+    }
+  }
+
+  private async tryCheckExistingDirectory(directory: string, label: string): Promise<boolean> {
+    try {
+      const info = await this.fs.stat(directory)
+      if (!info.isDirectory()) return false
+      await this.fs.access(directory, fsConstants.W_OK)
+      return true
+    } catch (error) {
+      this.options.onDirectoryWarning?.(
+        `[downloads] ${label} remains unavailable (${directory}); prompting save dialog`,
         error
       )
       return false

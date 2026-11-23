@@ -56,7 +56,7 @@ import {
 } from 'electron'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { release } from 'node:os'
@@ -388,6 +388,28 @@ const desktopDownloadPolicy = new DownloadTargetPolicy({
   defaultDownloadsDirectory: () => downloadsDirectory(),
   onDownloadCompleted: savePath => {
     if (process.platform === 'darwin') app.dock?.downloadFinished(savePath)
+  },
+  onSaveDialogRequested: event => {
+    const logPath =
+      process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL
+        ? process.env.WEWORK_E2E_DOWNLOAD_SAVE_DIALOG_LOG?.trim()
+        : ''
+    if (!logPath) return
+    appendFileSync(
+      logPath,
+      `${JSON.stringify({
+        defaultPath: event.defaultPath,
+        filename: event.filename,
+        reason: event.reason,
+        savePath: event.item.getSavePath(),
+        url: event.url,
+        urlChain: event.urlChain,
+        webContentsId: event.webContentsId,
+      })}\n`,
+      'utf8'
+    )
+    event.preventDefault?.()
+    event.item.cancel()
   },
   onDirectoryWarning: (message, error) => console.warn(message, error),
 })
@@ -1021,8 +1043,8 @@ function installDshWindowLabelHeaders(): void {
       ),
     })
   })
-  session.defaultSession.on('will-download', (_event, item, webContents) => {
-    desktopDownloadPolicy.apply(item, webContents)
+  session.defaultSession.on('will-download', (event, item, webContents) => {
+    desktopDownloadPolicy.apply(item, webContents, event)
   })
   void desktopDownloadPolicy.prepare()
 }
@@ -1555,7 +1577,7 @@ async function updateDesktopPreferences(
     Object.hasOwn(patch, 'browserDownloadDirectory') ||
     Object.hasOwn(patch, 'browserAskBeforeDownload')
   ) {
-    void desktopDownloadPolicy.update(updated)
+    await desktopDownloadPolicy.update(updated)
   }
   return updated
 }
@@ -2070,7 +2092,10 @@ function installIpc(): void {
   })
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
     const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
-    if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
+    if (downloadsPath) {
+      app.setPath('downloads', resolve(downloadsPath))
+      void desktopDownloadPolicy.prepare()
+    }
     ipcMain.handle('e2e:runtime-request', (event, input) => {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')

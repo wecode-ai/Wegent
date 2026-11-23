@@ -127,6 +127,7 @@ export const HOST_CAPABILITIES = [
   'e2e.getWindowBackgroundPolicy',
   'e2e.activateTray',
   'e2e.setMainWindowSize',
+  'e2e.embeddedBrowserSaveUrlAs',
   'e2e.verifyEmbeddedBrowserDetachedInspector',
   'filesystem.inspectPaths',
   'filesystem.readFileChunk',

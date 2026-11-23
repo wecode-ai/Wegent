@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
@@ -11,6 +12,7 @@ import {
 
 class FakeDownloadItem extends EventEmitter implements ManagedDownloadItem {
   private savePath = ''
+  readonly cancel = vi.fn()
   readonly setSavePath = vi.fn((path: string) => {
     this.savePath = path
   })
@@ -153,6 +155,7 @@ describe('DownloadTargetPolicy', () => {
       expect(policy.apply(saveAsItem, { id: 7 })).toEqual({
         mode: 'save-dialog',
         path: join(customDownloads, 'photo.png'),
+        reason: 'save-as',
       })
       expect(saveAsItem.setSavePath).not.toHaveBeenCalled()
       expect(saveAsItem.setSaveDialogOptions).toHaveBeenCalledExactlyOnceWith({
@@ -185,6 +188,7 @@ describe('DownloadTargetPolicy', () => {
       expect(policy.apply(prompted, { id: 7 })).toEqual({
         mode: 'save-dialog',
         path: join(customDownloads, 'ask.mp4'),
+        reason: 'ask-before-download',
       })
       expect(prompted.setSavePath).not.toHaveBeenCalled()
       expect(prompted.setSaveDialogOptions).toHaveBeenCalledExactlyOnceWith({
@@ -195,34 +199,109 @@ describe('DownloadTargetPolicy', () => {
     }
   })
 
-  test('falls back to save dialog without blocking when no download directory is writable', async () => {
-    const warnings: string[] = []
-    const policy = new DownloadTargetPolicy({
-      defaultDownloadsDirectory: () => '/Users/demo/Downloads',
-      onDirectoryWarning: message => warnings.push(message),
-      fs: {
-        mkdir: async () => undefined,
-        access: async () => {
-          throw Object.assign(new Error('EPERM'), { code: 'EPERM' })
-        },
-        existsSync: () => false,
-      },
-    })
-    await policy.update({
-      browserDownloadDirectory: '/Volumes/Missing',
-      browserAskBeforeDownload: false,
-    })
+  test('prompts Save As instead of silently falling back to system Downloads when custom directory is unwritable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-download-unwritable-'))
+    const systemDownloads = join(root, 'system')
+    const blockingFile = join(root, 'not-a-directory')
+    await mkdir(systemDownloads, { recursive: true })
+    await writeFile(blockingFile, 'file')
+    try {
+      const policy = new DownloadTargetPolicy({
+        defaultDownloadsDirectory: () => systemDownloads,
+      })
+      await policy.prepare()
+      await policy.update({
+        browserDownloadDirectory: join(blockingFile, 'nested'),
+        browserAskBeforeDownload: false,
+      })
 
-    const item = new FakeDownloadItem('video.mp4')
-    expect(policy.apply(item, { id: 2 })).toEqual({
-      mode: 'save-dialog',
-      path: join('/Users/demo/Downloads', 'video.mp4'),
-    })
-    expect(item.setSavePath).not.toHaveBeenCalled()
-    expect(item.setSaveDialogOptions).toHaveBeenCalledExactlyOnceWith({
-      defaultPath: join('/Users/demo/Downloads', 'video.mp4'),
-    })
-    expect(warnings).toHaveLength(2)
+      const item = new FakeDownloadItem('video.mp4')
+      expect(policy.apply(item, { id: 2 })).toEqual({
+        mode: 'save-dialog',
+        path: join(systemDownloads, 'video.mp4'),
+        reason: 'directory-unavailable',
+      })
+      expect(item.setSavePath).not.toHaveBeenCalled()
+      expect(item.setSaveDialogOptions).toHaveBeenCalledExactlyOnceWith({
+        defaultPath: join(systemDownloads, 'video.mp4'),
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test('detects runtime directory deletion and permission revocation without reusing stale cache or recreating the directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-download-runtime-loss-'))
+    const systemDownloads = join(root, 'system')
+    const customDownloads = join(root, 'custom')
+    await mkdir(systemDownloads, { recursive: true })
+    await mkdir(customDownloads, { recursive: true })
+    try {
+      let revoked = false
+      const policy = new DownloadTargetPolicy({
+        defaultDownloadsDirectory: () => systemDownloads,
+        fs: {
+          access: async path => {
+            if (revoked && path === customDownloads) {
+              throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+            }
+          },
+          accessSync: path => {
+            if (revoked && path === customDownloads) {
+              throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+            }
+          },
+          existsSync,
+          mkdir: async path => mkdir(path, { recursive: true }),
+          stat: async path => (await import('node:fs/promises')).stat(path),
+          statSync: path => ({ isDirectory: () => existsSync(path) }),
+        },
+      })
+      await policy.update({
+        browserDownloadDirectory: customDownloads,
+        browserAskBeforeDownload: false,
+      })
+
+      // Initial download works while directory is healthy.
+      const healthy = new FakeDownloadItem('healthy.mp4')
+      expect(policy.apply(healthy, { id: 5 })).toEqual({
+        mode: 'save-path',
+        path: join(customDownloads, 'healthy.mp4'),
+      })
+
+      // Revoking permissions at runtime immediately triggers save dialog.
+      revoked = true
+      const afterRevoke = new FakeDownloadItem('revoked.mp4')
+      expect(policy.apply(afterRevoke, { id: 5 })).toEqual({
+        mode: 'save-dialog',
+        path: join(systemDownloads, 'revoked.mp4'),
+        reason: 'directory-unavailable',
+      })
+      expect(afterRevoke.setSavePath).not.toHaveBeenCalled()
+
+      // Restoring permissions and re-verifying recovers automatic saves.
+      revoked = false
+      await policy.prepare({ createMissing: false })
+      const recovered = new FakeDownloadItem('recovered.mp4')
+      expect(policy.apply(recovered, { id: 5 })).toEqual({
+        mode: 'save-path',
+        path: join(customDownloads, 'recovered.mp4'),
+      })
+
+      // Deleting the custom directory at runtime immediately prompts and does not recreate it.
+      await rm(customDownloads, { recursive: true, force: true })
+      const afterDelete = new FakeDownloadItem('deleted.mp4')
+      expect(policy.apply(afterDelete, { id: 5 })).toEqual({
+        mode: 'save-dialog',
+        path: join(systemDownloads, 'deleted.mp4'),
+        reason: 'directory-unavailable',
+      })
+      expect(afterDelete.setSavePath).not.toHaveBeenCalled()
+      await policy.prepare({ createMissing: false })
+      expect(existsSync(customDownloads)).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   test('prompts instead of saving to system Downloads while a new custom directory check is pending', async () => {
@@ -240,7 +319,10 @@ describe('DownloadTargetPolicy', () => {
           }
         },
         access: async () => undefined,
+        accessSync: () => undefined,
         existsSync: () => false,
+        stat: async () => ({ isDirectory: () => true }),
+        statSync: () => ({ isDirectory: () => true }),
       },
     })
     await policy.prepare()
@@ -254,6 +336,7 @@ describe('DownloadTargetPolicy', () => {
     expect(policy.apply(duringCheck, { id: 3 })).toEqual({
       mode: 'save-dialog',
       path: join(systemDir, 'pending.mp4'),
+      reason: 'directory-unavailable',
     })
     expect(duringCheck.setSavePath).not.toHaveBeenCalled()
 
