@@ -1156,7 +1156,7 @@ const MessageBubble = memo(
                       className="inline-flex shrink-0 items-center gap-1 rounded-full bg-fill-tert px-2 py-0.5 text-text-secondary"
                     >
                       <Ban className="h-3 w-3" aria-hidden="true" />
-                      {t('messages.status_cancelled')}
+                      {t('chat:messages.status_cancelled')}
                     </span>
                   )}
                   {msg.isRecovered && (

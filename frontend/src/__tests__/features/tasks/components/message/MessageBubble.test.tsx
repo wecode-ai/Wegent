@@ -311,7 +311,7 @@ describe('MessageBubble', () => {
     )
 
     expect(screen.getByText('Partial but complete answer')).toBeVisible()
-    expect(screen.getByRole('status')).toHaveTextContent('messages.status_cancelled')
+    expect(screen.getByRole('status')).toHaveTextContent('chat:messages.status_cancelled')
     expect(mockBubbleTools).toHaveBeenCalledWith(
       expect.objectContaining({ showSaveToKnowledge: true })
     )
@@ -338,7 +338,7 @@ describe('MessageBubble', () => {
 
     rerender(<MessageBubble {...props} msg={{ ...msg, subtaskStatus: 'CANCELLED' }} />)
     expect(screen.queryByTestId('reasoning-display')).not.toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('messages.status_cancelled')
+    expect(screen.getByRole('status')).toHaveTextContent('chat:messages.status_cancelled')
   })
 
   it('re-renders when save action presence changes but ignores callback identity changes', () => {

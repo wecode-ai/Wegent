@@ -220,6 +220,7 @@ const MixedContentView = memo(function MixedContentView({
   processingMessage,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
+  const isCancelled = taskStatus === 'CANCELLED'
   const isTerminalFailure = ['FAILED', 'CANCELLED'].includes(taskStatus?.toUpperCase() || '')
   // Extract tools from thinking (legacy mode)
   const { toolGroups } = useToolExtraction(thinking)
@@ -713,7 +714,7 @@ const MixedContentView = memo(function MixedContentView({
             <ReasoningDisplay
               key={item.blockId}
               reasoningContent={item.content}
-              isStreaming={item.status === 'streaming'}
+              isStreaming={!isCancelled && item.status === 'streaming'}
             />
           )
         } else if (item.type === 'image') {
@@ -791,6 +792,7 @@ const MixedContentView = memo(function MixedContentView({
               defaultExpanded={false}
               count={count}
               mergedTools={mergedTools}
+              taskStatus={taskStatus}
             />
           )
         }
