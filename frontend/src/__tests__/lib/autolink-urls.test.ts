@@ -37,12 +37,27 @@ describe('rehypeAutolinkUrls', () => {
     expect(container.querySelector('strong')?.nextSibling?.textContent ?? '').toBe(suffix)
   })
 
-  it.each(['https://example.com/search?q=*', 'https://example.com/a**b'])(
-    'preserves literal asterisks in %s',
-    url => {
-      renderMarkdown(url)
+  it.each([
+    'https://example.com/search?q=*',
+    'https://example.com/a**b',
+    'https://example.com/a*b*c',
+  ])('preserves literal asterisks in %s', url => {
+    renderMarkdown(url)
+
+    expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+  })
+
+  it.each([
+    ['a&#40;b&#41;c', 'a(b)c'],
+    ['a&#40;b&#41;', 'a(b)'],
+  ])(
+    'keeps punctuation encoded as %s and literal brackets outside the link',
+    (encoded, decoded) => {
+      const url = `https://example.com/search?q=${decoded}`
+      const { container } = renderMarkdown(`[https://example.com/search?q=${encoded}]`)
 
       expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+      expect(container.textContent).toBe(`[${url}]`)
     }
   )
 

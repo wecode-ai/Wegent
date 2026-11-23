@@ -280,6 +280,7 @@ it.each([
   '**![北方降雨量 (1).jpeg](https://cdn.example.com/image.jpeg)**',
   '**图片**\n[北方降雨量 (1).jpeg](https://cdn.example.com/image.jpeg)',
   '**图片**\nhttps://cdn.example.com/image.jpeg',
+  'AT&amp;T\nhttps://cdn.example.com/image.jpeg',
   '<strong><img src="https://cdn.example.com/image.jpeg" alt="Image"></strong>',
 ])('renders an image on its own line or wrapped in formatting: %s', async content => {
   const { container } = render(<DocumentContentViewer {...props} content={content} />)
@@ -307,15 +308,17 @@ it('renders separate resources on consecutive lines without losing the surroundi
   expect(screen.getByText('End')).toBeInTheDocument()
 })
 
-it.each([`Read **${markdown}** now.`, `# ${markdown}`, `| File |\n| --- |\n| ${markdown} |`])(
-  'preserves compact links in prose, headings, and tables: %s',
-  async content => {
-    render(<DocumentContentViewer {...props} content={content} />)
+it.each([
+  `Read **${markdown}** now.`,
+  `# ${markdown}`,
+  `| File |\n| --- |\n| ${markdown} |`,
+  `AT&amp;T ${href}`,
+])('preserves compact links in prose, headings, and tables: %s', async content => {
+  render(<DocumentContentViewer {...props} content={content} />)
 
-    expect(await screen.findByTestId('document-link-preview-trigger')).toBeInTheDocument()
-    expect(screen.queryByTestId('document-link-preview-card')).not.toBeInTheDocument()
-  }
-)
+  expect(await screen.findByTestId('document-link-preview-trigger')).toBeInTheDocument()
+  expect(screen.queryByTestId('document-link-preview-card')).not.toBeInTheDocument()
+})
 
 it('preserves ordinary image and paragraph rendering outside restricted documents', async () => {
   const { container } = render(
