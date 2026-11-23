@@ -28,6 +28,7 @@ import {
   createdPluginSlugFromKey,
   findPackableCreatedPlugin,
   isPackableCreatedPlugin,
+  personalPluginListingType,
 } from '../pluginOwnerLocalPackage'
 import { withPublishedPluginCloudLink } from '../publishedPluginIdentity'
 import {
@@ -109,20 +110,6 @@ export function usePluginWorkspacePublishing({
     return pluginMarketplaceState.items.find(
       item => item.accessRole === 'owner' && createdPluginSlugFromKey(item.name) === slug
     )
-  }
-
-  const listingTypeForPlugin = (plugin: InstalledPluginItem): 'plugin' | 'skill' => {
-    const components = plugin.raw.spec.components
-    const isSingleSkill =
-      components.skills.length === 1 &&
-      components.commands.length === 0 &&
-      components.agents.length === 0 &&
-      components.mcps.length === 0 &&
-      components.hooks.length === 0 &&
-      components.lsps.length === 0 &&
-      components.monitors.length === 0 &&
-      components.bins.length === 0
-    return isSingleSkill ? 'skill' : 'plugin'
   }
 
   const integratePersonalPublication = async (
@@ -320,7 +307,7 @@ export function usePluginWorkspacePublishing({
             slug: createdPluginSlug(plugin),
             displayName: plugin.name,
             version: plugin.version || '0.1.0',
-            listingType: listingTypeForPlugin(plugin),
+            listingType: personalPluginListingType(plugin.raw),
             purpose: 'restricted_share',
             visibility: 'personal',
             targets: [],
@@ -370,7 +357,7 @@ export function usePluginWorkspacePublishing({
                 sourcePluginId,
                 slug: createdPluginSlug(plugin),
                 displayName: plugin.name,
-                listingType: listingTypeForPlugin(plugin),
+                listingType: personalPluginListingType(plugin.raw),
                 ...snapshotMetadata,
               },
               request.operationAttemptId
@@ -399,7 +386,7 @@ export function usePluginWorkspacePublishing({
         slug: createdPluginSlug(plugin),
         displayName: plugin.name,
         version: plugin.version || '0.1.0',
-        listingType: listingTypeForPlugin(plugin),
+        listingType: personalPluginListingType(plugin.raw),
         purpose: 'restricted_share',
         visibility: request.visibility,
         targets: request.targets,

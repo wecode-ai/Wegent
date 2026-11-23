@@ -12,6 +12,12 @@ import {
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
 import { isLocalMarketplaceItem, localMarketplaceDedupeKey } from '../marketplaceCatalogMerge'
 
+function localSourceIdentity(item: PluginMarketplaceItem): string | undefined {
+  if (isLocalMarketplaceItem(item)) return localMarketplaceDedupeKey(item)
+  if (item.visibility === 'personal' && item.accessRole === 'owner' && item.localPersonalSource)
+    return `personal:${item.localPersonalSource.pluginName.trim().toLowerCase()}`
+}
+
 export function findMarketplaceItemForPluginReference(
   items: PluginMarketplaceItem[],
   reference: PluginReference | null | undefined
@@ -86,19 +92,15 @@ export function usePluginDetailSelection({
       item => item.id === selectedMarketplacePluginId
     )
     if (direct) return direct
-    // Disk and native listings represent the same local resource with different
-    // row IDs. Reuse the catalog's scoped identity, never a cloud name match.
+    // Background publication can replace the same author source's disk-only row.
     const matches = localIdentity
-      ? pluginMarketplaceState.items.filter(
-          item => isLocalMarketplaceItem(item) && localMarketplaceDedupeKey(item) === localIdentity
-        )
+      ? pluginMarketplaceState.items.filter(item => localSourceIdentity(item) === localIdentity)
       : []
     return matches.length === 1 ? matches[0] : null
   }, [localIdentity, pluginMarketplaceState.items, selectedMarketplacePluginId])
-  const selectedLocalIdentity =
-    selectedMarketplacePlugin && isLocalMarketplaceItem(selectedMarketplacePlugin)
-      ? localMarketplaceDedupeKey(selectedMarketplacePlugin)
-      : undefined
+  const selectedLocalIdentity = selectedMarketplacePlugin
+    ? localSourceIdentity(selectedMarketplacePlugin)
+    : undefined
   if (localSelection.key !== selectionKey || localSelection.identity !== selectedLocalIdentity) {
     setLocalSelection({ key: selectionKey, identity: selectedLocalIdentity })
   }
