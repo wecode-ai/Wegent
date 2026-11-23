@@ -13,7 +13,7 @@ async fn redacted_cloud_commit_still_requires_current_backend_authority() {
     let denied_backend = denied.clone();
     let backend_writes = writes.clone();
     let app = Router::new().route(
-        "/mcp/wework-space/sse",
+        "/api/mcp/wework-space/sse",
         post(move |Json(request): Json<Value>| {
             let denied = denied_backend.clone();
             let writes = backend_writes.clone();
