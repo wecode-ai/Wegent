@@ -44,6 +44,20 @@ function statusFor(machine: RuntimeTaskMachine, messages: WorkbenchMessage[] = [
 }
 
 describe('runtime pane status from task lifecycle machine', () => {
+  test('distinguishes optimistic task creation from sending in an existing task', () => {
+    const machine = new RuntimeTaskMachine(runtimeAddress)
+    machine.dispatch({ type: 'send_requested' })
+    expect(statusFor(machine).isCreatingTask).toBe(true)
+    machine.dispatch({ type: 'send_accepted' })
+    expect(statusFor(machine).isCreatingTask).toBe(false)
+
+    const existing = new RuntimeTaskMachine(runtimeAddress)
+    existing.dispatch({ type: 'executor_snapshot_received', address: runtimeAddress, task: task() })
+    existing.dispatch({ type: 'send_requested' })
+    expect(statusFor(existing).isSubmitting).toBe(true)
+    expect(statusFor(existing).isCreatingTask).toBe(false)
+  })
+
   test('shows streaming only when the machine owns an active turn', () => {
     const machine = new RuntimeTaskMachine(runtimeAddress)
     machine.dispatch({ type: 'turn_started' })
