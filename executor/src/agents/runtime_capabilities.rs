@@ -2337,7 +2337,10 @@ pub(crate) fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
         url::Url::parse(backend_url.trim()).map_err(|_| "invalid backend API URL".to_owned())?;
     let base_path = backend.path().trim_end_matches('/');
     // Normalize the backend root; API routes provide their own /api prefix.
-    let root = base_path.strip_suffix("/api").unwrap_or(base_path);
+    let root = base_path
+        .strip_suffix("/api/v1")
+        .or_else(|| base_path.strip_suffix("/api"))
+        .unwrap_or(base_path);
     backend.set_path(&format!("{root}/"));
     backend
         .join(path.trim_start_matches('/'))
@@ -2447,6 +2450,11 @@ mod tests {
                 "https://backend.example/wework/api/?old=value#fragment",
                 "/api/v1/kinds/skills?namespace=default",
                 "https://backend.example/wework/api/v1/kinds/skills?namespace=default",
+            ),
+            (
+                "https://backend.example/wework/api/v1/",
+                "/api/mcp/wework-space/sse",
+                "https://backend.example/wework/api/mcp/wework-space/sse",
             ),
         ] {
             assert_eq!(api_url(base, path).unwrap(), expected);
