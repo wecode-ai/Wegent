@@ -52,6 +52,17 @@ async function assertInboxReady(control) {
   )
 }
 
+export async function openNotificationInboxAfterReload(control, content, issueId) {
+  // Reload restores the Issue in the board route before the inbox can receive pointer hits.
+  const issue = `${content} [data-testid="cloud-todo-detail"]`
+  await control.command('waitFor', issue, { text: issueId })
+  await control.command('clickWhenEnabled', `${content} [data-testid="cloud-todo-detail-close"]`)
+  await control.command('waitFor', issue, { visible: false })
+  // The clipped exit frame can be invisible while its modal layer still owns hit testing.
+  await control.command('waitFor', `${content}:not(:has([data-testid="cloud-todo-detail"]))`)
+  await openCollaborationNotifications(control)
+}
+
 export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
@@ -234,7 +245,7 @@ export function createDesktopScenario({
       )
 
       await reloadMainWindow(control, 'The stand-in notifications renderer did not reconnect')
-      await openCollaborationNotifications(control)
+      await openNotificationInboxAfterReload(control, CONTENT, issue.id)
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
       })

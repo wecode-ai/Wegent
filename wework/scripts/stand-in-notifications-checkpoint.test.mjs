@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
-import { createDesktopScenario } from '../e2e/desktop/scenarios/stand-in-notifications.scenario.mjs'
+import {
+  createDesktopScenario,
+  openNotificationInboxAfterReload,
+} from '../e2e/desktop/scenarios/stand-in-notifications.scenario.mjs'
 import { verifyNarrowImMenu } from '../e2e/desktop/modules/stand-in-im-menu-layout.mjs'
 
 test('stand-in IM native keyboard runs in the foreground without competing for native focus', () => {
@@ -85,3 +88,99 @@ for (const [description, options, error] of [
     assert.equal(control.calls.at(-1).action, 'setMainWindowSize')
     assert.equal(control.calls.at(-1).options.value, control.previous)
   })
+
+const content = '[data-workspace-tab-content][aria-hidden="false"]'
+const issue = `${content} [data-testid="cloud-todo-detail"]`
+const popover = '[data-testid="wework-notifications-popover"]'
+
+function restoredIssueControl({ exit = Promise.resolve(), closeError } = {}) {
+  let issueMounted = true
+  let issueVisible = true
+  let inboxOpen = false
+  let closeStarted
+  const closing = new Promise(resolve => {
+    closeStarted = resolve
+  })
+  return {
+    closing,
+    get inboxOpen() {
+      return inboxOpen
+    },
+    async command(action, selector, options) {
+      if (action === 'waitFor' && selector === issue) {
+        if (options.visible === false) assert.equal(issueVisible, false)
+        else assert.equal(options.text, 'PRJ261E6109-1')
+      } else if (
+        action === 'clickWhenEnabled' &&
+        selector.endsWith('[data-testid="cloud-todo-detail-close"]')
+      ) {
+        if (closeError) throw closeError
+        issueVisible = false
+        closeStarted()
+      } else if (
+        action === 'waitFor' &&
+        selector === `${content}:not(:has([data-testid="cloud-todo-detail"]))`
+      ) {
+        assert.equal(issueVisible, false)
+        await exit
+        issueMounted = false
+      } else if (
+        action === 'clickWhenEnabled' &&
+        selector === '[data-testid="wework-notifications-button"]'
+      ) {
+        // Programmatic clicks can open an inbox still covered by the modal layer.
+        inboxOpen = true
+      } else if (
+        action === 'clickWhenEnabled' &&
+        selector === '[data-testid="wework-notifications-category-collaboration"]'
+      ) {
+        assert.equal(inboxOpen, true)
+      } else if (action === 'clickAt') {
+        assert.deepEqual(JSON.parse(options.value), { x: 927, y: 128 })
+        if (!issueMounted) inboxOpen = false
+        // Both the covered Issue and the notification have this title in CI.
+        return '在通知内继续处理助理任务'
+      } else if (action === 'waitFor' && selector === popover) {
+        assert.equal(options.visible, false)
+        if (inboxOpen) throw new Error(`Timed out waiting for selector "${popover}"; visible=true`)
+      } else throw new Error(`Unexpected ${action} for ${selector}`)
+    },
+  }
+}
+
+test('reload recovery makes the notification icon hit dismiss the inbox instead of hitting the restored Issue', async () => {
+  const control = restoredIssueControl()
+  await openNotificationInboxAfterReload(control, content, 'PRJ261E6109-1')
+  await control.command('clickAt', 'body', { value: JSON.stringify({ x: 927, y: 128 }) })
+  await control.command('waitFor', popover, { visible: false })
+})
+
+test('reload recovery waits for full Issue removal after its exit frame becomes invisible', async () => {
+  let finishExit
+  const exit = new Promise(resolve => {
+    finishExit = resolve
+  })
+  const control = restoredIssueControl({ exit })
+  const reopening = openNotificationInboxAfterReload(control, content, 'PRJ261E6109-1')
+  try {
+    await Promise.race([control.closing, reopening])
+    assert.equal(
+      control.inboxOpen,
+      false,
+      'The modal must release its layer before reopening the inbox'
+    )
+  } finally {
+    finishExit()
+  }
+  await reopening
+  assert.equal(control.inboxOpen, true)
+})
+
+test('reload recovery propagates failed Issue closing without opening an obscured inbox', async () => {
+  const control = restoredIssueControl({ closeError: new Error('Issue close failed') })
+  await assert.rejects(
+    openNotificationInboxAfterReload(control, content, 'PRJ261E6109-1'),
+    /Issue close failed/
+  )
+  assert.equal(control.inboxOpen, false)
+})
