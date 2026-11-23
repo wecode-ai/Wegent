@@ -391,7 +391,6 @@ async def build_execution_request(
             web_runtime_guidance_enabled,
         )
         from app.services.execution.connector_guidance import (
-            append_turn_guidance,
             build_connector_guidance_section,
         )
         from app.services.execution.provider_guidance import (
@@ -411,9 +410,7 @@ async def build_execution_request(
                 provider_skills=set(provider_skills),
             )
             if connector_section:
-                # The list depends on this message and resumed sessions keep
-                # their first system prompt, so deliver it with the turn.
-                request.prompt = append_turn_guidance(request.prompt, connector_section)
+                sections.append(connector_section)
         apply_execution_guidance(request, sections)
         return request
 

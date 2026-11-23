@@ -122,7 +122,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 
 这四个服务不再使用 provider 配置弹窗，也不再注入"打开配置弹窗"的引导。内置 App 默认使用 `toolLoadingMode: lazy`，并带有钉钉服务关键词；消息命中关键词时提前 preload 对应 `wegent-connector-<slug>` Skill，否则由模型按需 `load_skill`。未授权时仍由对话内的 Connector 授权链接引导。OAuth 授权、工具发现和白名单校验保持原有 Connector 流程不变。Wegent Web 的"设置 → 集成"不再展示钉钉 provider 卡片，改用"应用连接"卡片。
 
-授权列表依赖当前这条消息（懒加载应用只有命中关键词才会出现），因此它被追加到当轮用户消息的 `<wegent_connector_apps>` 块中，而不是系统提示词：续跑的会话（Claude Code `--resume`、Codex thread）会保留首轮的系统提示词，否则列表会被固定在会话的第一条消息上。
+授权列表根据当前消息动态计算，通过执行请求和机器人的系统提示词发送，不再追加到用户消息中；用户输入和可见对话保持原样。
 
 **历史 API Key 配置保持兼容**：如果用户此前为这些服务保存过个人 Streamable HTTP 地址（形如 `https://mcp-gw.dingtalk.com/server/<token>?key=<key>`），运行时仍保留 Skill 的 `mcpServers` 占位符并在构建请求时沿用该地址，不会要求重新授权，对话引导也不会提示授权。只有没有个人地址时，工具才来自 Connector App；一旦该 Connector App 完成 OAuth 授权，则由它接管工具面，避免同一批工具重复暴露。
 

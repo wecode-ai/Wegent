@@ -305,6 +305,31 @@ fn selected_provider_skill_gets_one_scope_and_supersedes_personal_mcp() {
 }
 
 #[test]
+fn connector_rules_preserve_multimodal_user_input() {
+    for shell in ["Chat", "Codex", "ClaudeCode"] {
+        for mode in ["static", "lazy"] {
+            let mut request = request(shell);
+            let input = json!([
+                {"type": "input_text", "text": "write document"},
+                {"type": "input_image", "image_url": "https://example.invalid/image"}
+            ]);
+            request.prompt = input.clone();
+            request.system_prompt = "Base instructions".into();
+            request.bot[0]["system_prompt"] = json!("Bot instructions");
+            let mut connector = app("app", mode, true);
+            connector.keywords = vec!["write document".into()];
+            assemble(&mut request, &[connector], false);
+            assert_eq!(request.prompt, input);
+            assert!(request.system_prompt.starts_with("Base instructions"));
+            assert!(request.system_prompt.contains("## Connector tool links"));
+            let bot_prompt = request.bot[0]["system_prompt"].as_str().unwrap();
+            assert!(bot_prompt.starts_with("Bot instructions"));
+            assert!(bot_prompt.contains("## Connector tool links"));
+        }
+    }
+}
+
+#[test]
 fn unauthorized_apps_have_guidance_but_no_callable_tools() {
     let mut request = request("Chat");
     assemble(
@@ -317,7 +342,11 @@ fn unauthorized_apps_have_guidance_but_no_callable_tools() {
     );
     assert!(request.mcp_servers.is_empty());
     assert!(request.skill_configs.is_empty());
-    let prompt = request.prompt.as_str().unwrap();
+    assert_eq!(
+        request.prompt,
+        json!("Invoke echo once without mentioning a connector")
+    );
+    let prompt = &request.system_prompt;
     assert!(prompt.contains("connector-oauth?slug=static-app"));
     assert!(!prompt.contains("connector-oauth?slug=lazy-app"));
 }
@@ -343,9 +372,7 @@ fn static_provider_uses_the_aggregate_once_and_personal_mcp_survives_missing_gra
         );
         assert!(
             !request
-                .prompt
-                .as_str()
-                .unwrap()
+                .system_prompt
                 .contains("connector-oauth?slug=static-app")
         );
     }
