@@ -226,7 +226,7 @@ export interface WorkbenchContextValue {
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
     scopeKey: string
-    inputByScope: Readonly<Record<string, string>>
+    draftStore: import('./scopedDraftStore').ScopedDraftStore
     goalDraftActiveByScope: Readonly<Record<string, boolean>>
     personalHomeTaskDraftStore: PersonalHomeTaskDraftStore
     setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
@@ -241,7 +241,6 @@ export interface WorkbenchContextValue {
     isModelCatalogReady: boolean
     isModelSelectionReady: boolean
     onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
-    input: string
     composerError?: string | null
     composerErrorByScope?: Readonly<Record<string, string>>
     trialTemplates: PluginPathComponent[]
@@ -280,7 +279,7 @@ export interface WorkbenchContextValue {
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
-    getInputRevisionForScope: (scopeKey: string) => number
+    replaceInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
@@ -560,9 +559,4 @@ export interface WorkbenchProviderProps {
   syncCoreDshModels?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
-  /**
-   * Increments whenever a retained workspace tab is revealed again. Providers
-   * revalidate their per-tab runtime-work snapshot when it changes.
-   */
-  workspaceTabRevealRevision?: number
 }

@@ -8,7 +8,6 @@ import { BranchPicker } from './branch-selector/BranchPicker'
 interface BranchSelectorProps {
   currentBranch?: string
   loading?: boolean
-  onRefresh?: () => Promise<void>
   onListBranches: () => Promise<string[]>
   onCheckoutBranch: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
@@ -23,7 +22,6 @@ const BRANCH_NAME_GENERATION_TIMEOUT_MS = 30_000
 export function BranchSelector({
   currentBranch,
   loading = false,
-  onRefresh,
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
@@ -156,7 +154,6 @@ export function BranchSelector({
         triggerTestId={prefix + '-branch-' + (variant === 'environment' ? 'row' : 'button')}
         accessibleLabel={t('workbench.environment_branch_menu', '切换分支')}
         onListBranches={onListBranches}
-        onRefresh={onRefresh}
         onChoose={handleCheckout}
         busy={action !== 'idle'}
         error={createFormOpen ? null : error}

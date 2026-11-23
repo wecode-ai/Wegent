@@ -37,7 +37,7 @@ async fn verify_owner<M: Mysql>(
     let owned: Option<OwnedPlugin> = mysql
         .fetch_optional(
             "SELECT id FROM plugins WHERE owner_user_id = ? AND id = ? \
-             AND status <> 'deleted' LIMIT 1",
+             AND (status <> 'deleted' OR visibility = 'personal') LIMIT 1",
             (user_id, plugin_id),
         )
         .await
@@ -68,7 +68,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn owner_lookup_is_scoped_to_the_current_user_without_shareability_filters() {
+    async fn owner_lookup_keeps_deleted_personal_sources_scoped_to_the_current_user() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
 
         assert!(verify_owner(&mysql, 71, 42).await.is_err());
@@ -78,8 +78,11 @@ mod tests {
         assert_eq!(queries[0].first_integer, Some(71));
         assert_eq!(queries[0].args, 2);
         assert!(queries[0].sql.contains("owner_user_id = ? AND id = ?"));
-        assert!(queries[0].sql.contains("status <> 'deleted'"));
-        assert!(!queries[0].sql.contains("visibility"));
+        assert!(
+            queries[0]
+                .sql
+                .contains("(status <> 'deleted' OR visibility = 'personal')")
+        );
         assert!(!queries[0].sql.contains("status = 'published'"));
     }
 

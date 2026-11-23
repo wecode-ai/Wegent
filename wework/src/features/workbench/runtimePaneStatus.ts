@@ -17,6 +17,7 @@ export interface RuntimePaneStatus {
     status: string | null
   }
   isSubmitting: boolean
+  isCreatingTask: boolean
   isAwaitingAssistant: boolean
   isAssistantStreaming: boolean
   isResponseActive: boolean
@@ -77,6 +78,7 @@ export function deriveRuntimePaneStatus({
       status: lifecycle?.task?.status?.trim().toLowerCase() || null,
     },
     isSubmitting,
+    isCreatingTask: isSubmitting && (!lifecycle?.task || lifecycle.task.status === 'creating'),
     isAwaitingAssistant,
     isAssistantStreaming,
     isResponseActive,

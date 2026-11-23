@@ -16,6 +16,7 @@ import { createElementFrameSampler } from './element-frame-metrics'
 import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
   testLocalModelConnection,
@@ -2373,6 +2374,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value || undefined,
         })
       )
+    case 'triggerBlobDownload': {
+      const input = JSON.parse(command.value ?? '{}') as { content?: string; filename?: string }
+      if (!input.filename?.trim()) throw new Error('triggerBlobDownload requires filename')
+      await saveBlobToDownloads(
+        new Blob([input.content ?? ''], { type: 'application/octet-stream' }),
+        input.filename
+      )
+      return ''
+    }
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
@@ -4326,6 +4336,7 @@ async function postDesktopControlStarted(
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
+  let lastRuntimeCommandId: string | undefined
   const pollForCommand = () => {
     recordDesktopControlPhase('poll-started')
     return fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
@@ -4364,9 +4375,16 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       if (command.action === 'fetchLocalRuntime') {
         // Native owns admission and reporting, so Renderer scheduling cannot
         // consume the Runtime action's budget or delay its completed result.
-        void dispatchDesktopRuntimeControl(command, clientId).catch(error => {
-          console.error('[Wework] Desktop E2E Runtime request failed:', error)
-        })
+        // The queue can send its current command again before Native acknowledges
+        // admission. A delayed poll response can arrive after Native has finished.
+        if (lastRuntimeCommandId === command.id) {
+          await waitForDesktopControlTick()
+        } else {
+          lastRuntimeCommandId = command.id
+          void dispatchDesktopRuntimeControl(command, clientId).catch(error => {
+            console.error('[Wework] Desktop E2E Runtime request failed:', error)
+          })
+        }
         commandRequest = pollForCommand()
         continue
       }

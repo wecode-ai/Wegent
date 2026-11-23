@@ -1517,7 +1517,7 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         if let Some(payload) = turn.send_payload.as_ref() {
-            if payload["startNewSession"] != true {
+            if !turn.request.new_session {
                 if let Some(link) = self
                     .local_task_link(&turn.local_task_id)
                     .filter(super::super::conversation_sessions::is_identity_conversation)

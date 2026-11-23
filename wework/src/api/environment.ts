@@ -682,12 +682,20 @@ async function loadProjectEnvironmentUncached(
     const branchNamePromise = traceEnvironmentOperation(diagnostics, 'git_branch', () =>
       runGitCommand(api, deviceId, 'git_branch', path)
     )
-    const shortStatPromise = traceEnvironmentOperation(diagnostics, 'git_diff', () =>
+    const diffPromise = traceEnvironmentOperation(diagnostics, 'git_diff', () =>
       loadBranchDiffShortStat(api, deviceId, path)
-    )
-    const porcelainPromise = traceEnvironmentOperation(diagnostics, 'git_status', () =>
-      runGitCommand(api, deviceId, 'git_status_porcelain', path)
-    ).catch(() => '')
+    ).then(async shortStat => {
+      // A successful shortstat includes only tracked changes. Inspect pending
+      // files only when shortstat is unavailable, such as before the first commit.
+      if (shortStat !== null) return parseGitShortStat(shortStat)
+
+      const porcelain = await traceEnvironmentOperation(diagnostics, 'git_status', () =>
+        runGitCommand(api, deviceId, 'git_status_porcelain', path)
+      ).catch(() => '')
+      const lines = porcelain.split('\n').filter(line => line.trim().length > 0)
+      const additions = porcelainHasTrackedChanges(lines) ? 0 : lines.length
+      return { additions: `+${additions}`, deletions: '-0' }
+    })
     const remoteUrlPromise = traceEnvironmentOperation(diagnostics, 'git_remote', () =>
       runGitCommand(api, deviceId, 'git_remote_url', path)
     ).catch(() => '')
@@ -708,25 +716,7 @@ async function loadProjectEnvironmentUncached(
         return branchInfo
       }
     )
-    const [branchInfo, shortStat, porcelain] = await Promise.all([
-      branchInfoPromise,
-      shortStatPromise,
-      porcelainPromise,
-    ])
-    const diff = parseGitShortStat(shortStat ?? '')
-    const porcelainLines = porcelain.split('\n').filter(line => line.trim().length > 0)
-
-    // git diff --shortstat counts changed lines of tracked files, which is the
-    // same basis code hosting uses, so untracked files never inflate the line
-    // counts. Only a repository without any commit baseline falls back to the
-    // pending file count; a committed repository keeps the (empty) shortstat.
-    if (
-      shortStat === null &&
-      porcelainLines.length > 0 &&
-      !porcelainHasTrackedChanges(porcelainLines)
-    ) {
-      diff.additions = `+${porcelainLines.length}`
-    }
+    const [branchInfo, diff] = await Promise.all([branchInfoPromise, diffPromise])
 
     logEnvironmentLoad(diagnostics, 'completed', { branchName: branchInfo.branchName })
     return { ...branchInfo, ...diff }

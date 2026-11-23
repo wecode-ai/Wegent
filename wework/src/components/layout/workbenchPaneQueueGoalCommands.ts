@@ -122,7 +122,7 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
   ) => {
     const {
       currentRuntimeTask,
-      input,
+      getInput,
       lifecycleStore,
       queueController,
       queuedMessageScopeKey,
@@ -134,7 +134,7 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
     if (currentRuntimeTask) {
       logRuntimeQueueStage(currentRuntimeTask, 'queue-resume-requested', {
         source: 'resume-with-input',
-        hasInput: Boolean((inputOverride ?? input).trim()),
+        hasInput: Boolean((inputOverride ?? getInput()).trim()),
         hasInterruptedGuidance: Boolean(interruptedGuidance),
       })
     }
@@ -158,7 +158,7 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
       return
     }
 
-    const submittedInput = (inputOverride ?? input).trim()
+    const submittedInput = (inputOverride ?? getInput()).trim()
     const combinedMessage = {
       ...interruptedGuidance,
       content: [interruptedGuidance.content, submittedInput].filter(Boolean).join('\n\n'),
@@ -240,7 +240,7 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
     const {
       addExistingAttachment,
       attachmentState,
-      input,
+      getInput,
       inputScopeKey,
       getInputRevisionForScope,
       queuedMessageBusyBlocks,
@@ -253,7 +253,7 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
     const queuedMessage = queuedMessages.find(message => message.id === id)
     if (!queuedMessage || queuedMessage.runtimeQueued) return
     queuedMessageBusyBlocks.delete(id)
-    const submittedInput = input.trim()
+    const submittedInput = getInput().trim()
     const currentAttachments = attachmentState.attachments
     const markupMessage = composeImageMarkupMessage(
       submittedInput,

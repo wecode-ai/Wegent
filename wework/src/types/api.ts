@@ -1572,6 +1572,8 @@ export interface PluginSubmissionInitRequest {
   targets?: PluginAccessTarget[]
   allowCopy?: boolean
   releaseNotes?: string | null
+  privateFirstInstall?: boolean
+  restoreDeleted?: boolean
 }
 
 export interface PluginSubmissionInitResponse {
@@ -1579,6 +1581,7 @@ export interface PluginSubmissionInitResponse {
   pluginId: number
   releaseId: number
   purpose?: 'marketplace_publish' | 'restricted_share'
+  privateFirstInstall?: boolean
   uploadUrl: string
   expiresAt: string
 }

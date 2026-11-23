@@ -224,7 +224,7 @@ export function createWorkbenchCloudProjectContextSource(
     const scope = contextIdentity(address)
     const revision = ++lookupRevision
     const valid = () => current(scope) && revision === lookupRevision && input.active
-    if (!address || !input.active) return
+    if (!address || !input.active || input.runtimeTaskCreationPending) return
     if (!contextApis().length && !address.projectSession && !projectSpaceForRuntimeTask(address)) {
       try {
         const items = await hydrateLocalWorkItems(input.userId)
@@ -416,7 +416,7 @@ export function createWorkbenchCloudProjectContextSource(
         pendingTodoItem: pending?.item ?? null,
       })
     }
-    const keys = [input.active, scope, task()?.deviceId, input.t]
+    const keys = [input.active, scope, task()?.deviceId, input.runtimeTaskCreationPending, input.t]
     if (!lookupKeys || keys.some((value, index) => value !== lookupKeys![index])) {
       lookupKeys = keys
       void resolve()

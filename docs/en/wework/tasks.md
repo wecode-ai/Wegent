@@ -268,6 +268,8 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
 
+While a subagent is running, the composer keeps the Send button visible. Enter a draft to send a follow-up message.
+
 ### Answer AI questions
 
 Question cards show the full question above the answer field. Long questions wrap, and oversized cards scroll. Questions without options remain visible while you type. Enter your answer in the field labeled “Type your answer”, then click **Submit**.

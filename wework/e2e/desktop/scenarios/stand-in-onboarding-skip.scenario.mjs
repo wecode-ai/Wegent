@@ -55,23 +55,21 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await control.command('waitFor', selector('stand-in-conversation'), { visible: true })
       assert.equal(await control.command('getElementCount', selector('stand-in-onboarding')), '0')
       await control.command('clickWhenEnabled', selector('stand-in-details-open'))
-      await control.command('waitFor', selector('stand-in-details-work-sources'), {
-        text: '尚未配置工作来源',
-        visible: true,
-      })
+      assert.equal(await control.command('getElementCount', selector('stand-in-im-channels')), '0')
+      await control.command('clickWhenEnabled', selector('stand-in-settings-open'))
       await control.command('waitFor', selector('stand-in-im-channels'), {
         text: '从聊天工具联系助理',
         visible: true,
       })
       await captureScreenshot(control, 'stand-in-onboarding-skipped.png')
-      await control.command('clickWhenEnabled', selector('stand-in-details-work-sources'))
       await control.command('waitFor', selector('stand-in-primary-profile'), { visible: true })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
       await verifyProjectMenuDismissal(control, 'stand-in-primary-execution')
       await control.command('press', selector('stand-in-preferences'), { key: 'Escape' })
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
       assert.equal(await control.command('getActiveElementTestId', 'body'), 'stand-in-details-open')
       await control.command('clickWhenEnabled', selector('stand-in-details-open'))
-      await control.command('clickWhenEnabled', selector('stand-in-details-work-sources'))
+      await control.command('clickWhenEnabled', selector('stand-in-settings-open'))
       await control.command('clickWhenEnabled', selector('stand-in-primary-connections-open'))
       await control.command('waitFor', selector('stand-in-connection-configured-filter'), {
         text: '已配置 0',

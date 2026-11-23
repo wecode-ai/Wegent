@@ -213,6 +213,57 @@ test.describe('Provider-native Wegent knowledge access', () => {
     await expectMarkers(page, expectedMarkers)
   })
 
+  test('CORE-06 opens the actual knowledge document from a restored answer', async ({
+    page,
+    request,
+  }) => {
+    const document = fixture.documents.a1
+    const prompt = `${TEST_PREFIX} Find the marker in the selected source document.`
+    await configureToolScenario(request, prompt, [
+      {
+        toolCalls: [{ toolName: READ_DOCUMENT_TOOL, arguments: { document_id: document.id } }],
+      },
+      { responseContent: `The document marker is ${PROVIDER_NATIVE_MARKERS.a1}.` },
+    ])
+
+    const knowledgePage = new ProviderNativeKnowledgePage(page)
+    await knowledgePage.selectWholeKnowledgeBase(
+      fixture.knowledgeBase.id,
+      fixture.knowledgeBase.name
+    )
+    const taskId = await sendAndWait(knowledgePage, page, request, prompt)
+    let sourcePage: Page | undefined
+    try {
+      await expectMarkers(page, [PROVIDER_NATIVE_MARKERS.a1])
+
+      const citation = page
+        .getByTestId('knowledge-source-reference')
+        .filter({ hasText: document.name })
+      const href = `/knowledge/document/${fixture.knowledgeBase.id}?view=documents&documentId=${document.id}`
+      await expect(citation).toHaveAttribute('href', href, { timeout: 10000 })
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await expect(citation).toHaveAttribute('href', href, { timeout: 15000 })
+      const [destination] = await Promise.all([
+        page.waitForEvent('popup', { timeout: 10000 }),
+        citation.click(),
+      ])
+      sourcePage = destination
+      await expect(sourcePage).toHaveURL(
+        url =>
+          url.searchParams.get('kb') === String(fixture.knowledgeBase.id) &&
+          url.searchParams.get('documentId') === String(document.id),
+        { timeout: 15000 }
+      )
+      await expect(sourcePage.getByRole('dialog')).toContainText(document.name, { timeout: 15000 })
+    } finally {
+      await sourcePage?.close()
+      const deleteResponse = await request.delete(`${API_BASE_URL}/api/tasks/${taskId}`, {
+        headers: authHeaders(),
+      })
+      expect(deleteResponse.ok(), await deleteResponse.text()).toBeTruthy()
+    }
+  })
+
   test('E2E-A2-002 selects a folder including descendants', async ({ page, request }) => {
     const prompt = `${TEST_PREFIX} 输出新版方案和旧版方案的唯一断言标记与结论。`
     await configureToolScenario(request, prompt, [

@@ -7,6 +7,7 @@ interface SidebarHoverCardProps {
   content: ReactNode
   testId: string
   interactive?: boolean
+  disabled?: boolean
   cardClassName?: string
 }
 
@@ -15,12 +16,14 @@ export function SidebarHoverCard({
   content,
   testId,
   interactive = false,
+  disabled = false,
   cardClassName,
 }: SidebarHoverCardProps) {
   return (
     <HoverCard
       testId={testId}
       interactive={interactive}
+      disabled={disabled}
       content={content}
       cardClassName={cn('w-[310px]', cardClassName)}
       estimatedWidth={cardClassName?.includes('w-[320px]') ? 320 : 310}

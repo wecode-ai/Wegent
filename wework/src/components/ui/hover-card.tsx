@@ -13,6 +13,7 @@ interface HoverCardProps {
   content: ReactNode
   testId: string
   interactive?: boolean
+  disabled?: boolean
   openOnFocus?: boolean
   pinOnInteraction?: boolean
   pinOnInteractionSelector?: string
@@ -32,6 +33,7 @@ export function HoverCard({
   content,
   testId,
   interactive = false,
+  disabled = false,
   openOnFocus = false,
   pinOnInteraction = false,
   pinOnInteractionSelector,
@@ -43,6 +45,7 @@ export function HoverCard({
   estimatedWidth = 310,
 }: HoverCardProps) {
   const [open, setOpen] = useState(false)
+  if (disabled && open) setOpen(false)
   const [internalPinned, setInternalPinned] = useState(false)
   const pinned = controlledPinned ?? internalPinned
   const updatePinned = (next: boolean) => {
@@ -56,7 +59,8 @@ export function HoverCard({
   }
   return (
     <UiHoverCard
-      open={open || pinned}
+      open={!disabled && (open || pinned)}
+      disabled={disabled}
       delay={450}
       closeDelay={120}
       onOpenChange={(next, details) => {

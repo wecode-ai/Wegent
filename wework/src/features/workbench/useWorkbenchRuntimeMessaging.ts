@@ -235,6 +235,7 @@ interface UseWorkbenchRuntimeMessagingOptions {
   ) => RuntimeTaskModelSelectionControls
   skillSelection: RuntimeMessagingSkillSelection
   refreshWorkLists: () => Promise<void>
+  workspaceTabId?: string
 }
 
 export function runtimeSendError(error: unknown, fallback: string): string {
@@ -364,6 +365,7 @@ export function useWorkbenchRuntimeMessaging({
   resolveRuntimeTaskModelSelection,
   skillSelection,
   refreshWorkLists,
+  workspaceTabId,
 }: UseWorkbenchRuntimeMessagingOptions) {
   const sendAttemptsRef = useRef(new Map<string, number>())
   const appPreferences = useAppPreferencesState()
@@ -1573,10 +1575,10 @@ export function useWorkbenchRuntimeMessaging({
           execution_target: telemetryExecutionTarget(address.deviceId, state.devices),
         })
         if (!options?.ephemeral) {
-          void notifyMainRuntimeWorkChanged({
-            deviceId: address.deviceId,
-            taskId: address.taskId,
-          }).catch(error => {
+          void notifyMainRuntimeWorkChanged(
+            { deviceId: address.deviceId, taskId: address.taskId },
+            workspaceTabId
+          ).catch(error => {
             console.warn('[Wework] Failed to notify main window about runtime task creation', {
               deviceId: address.deviceId,
               taskId: address.taskId,
@@ -1672,6 +1674,7 @@ export function useWorkbenchRuntimeMessaging({
       state.runtimeWork,
       state.selectedDeviceWorkspaceId,
       state.standaloneChatKey,
+      workspaceTabId,
     ]
   )
 

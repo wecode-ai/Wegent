@@ -15,7 +15,6 @@ interface AnchorPopoverProps {
   header?: ReactNode
   wide?: boolean
   profile?: boolean
-  suspended?: boolean
   onBodyScroll?: (scrollTop: number) => void
   bodyRef?: Ref<HTMLDivElement>
 }
@@ -29,7 +28,6 @@ export function AnchorPopover({
   header,
   wide = false,
   profile = false,
-  suspended = false,
   onBodyScroll,
   bodyRef,
 }: AnchorPopoverProps) {
@@ -53,13 +51,12 @@ export function AnchorPopover({
   return (
     <Popover
       open
-      dismissible={!suspended}
+      dismissible
       onOpenChange={(next, details) => {
         if (next) return
         details.cancel()
         // Focus can move during a child dialog's teardown. The anchor owns its own toggle.
         if (
-          suspended ||
           details.reason === 'focus-out' ||
           details.reason === 'window-blur' ||
           (details.reason === 'outside-press' && details.event?.composedPath().includes(anchor))
@@ -79,14 +76,14 @@ export function AnchorPopover({
         finalFocus={() => (anchor.isConnected ? anchor : null)}
         data-testid={testId}
         aria-label={title}
-        inert={suspended}
-        aria-hidden={suspended || undefined}
         className={
           theme.className +
-          ' electron-titlebar-interactive-region flex flex-col overflow-hidden z-system-popover max-w-[calc(100vw-2rem)] max-h-[var(--available-height)] border border-border bg-popover text-text-primary shadow-lg ' +
+          ' electron-titlebar-interactive-region flex flex-col overflow-hidden z-system-popover max-w-[calc(100vw-2rem)] border border-border bg-popover text-text-primary shadow-lg ' +
           (profile
-            ? 'w-75 rounded-2xl'
-            : (wide ? 'w-[374px] ' : 'w-70 ') + 'rounded-xl ' + (header ? '' : 'p-1'))
+            ? 'w-[374px] max-h-[min(640px,var(--available-height))] rounded-xl'
+            : (wide ? 'w-[374px] ' : 'w-70 ') +
+              'max-h-[var(--available-height)] rounded-xl ' +
+              (header ? '' : 'p-1'))
         }
       >
         {header ??
