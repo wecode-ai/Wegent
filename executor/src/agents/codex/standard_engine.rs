@@ -30,7 +30,7 @@ use crate::{
 };
 
 use super::{
-    elicitation::FORM_TIMEOUT,
+    elicitation::native_user_input_timeout,
     mcp_form::{deferred_form, form_item},
     resolve_codex_binary, run_codex_app_server_turn_with_cancel, CodexAppServerTurn,
     CodexAppServerTurnOptions, CodexNotification,
@@ -589,9 +589,9 @@ impl Interaction {
             question_ids.push(id.to_owned());
         }
         let now_ms = super::current_epoch_millis() as u64;
-        let expires_at_unix_ms = payload["expiresAtUnixMs"]
-            .as_u64()
-            .unwrap_or_else(|| now_ms + FORM_TIMEOUT.as_millis() as u64);
+        let expires_at_unix_ms = payload["expiresAtUnixMs"].as_u64().unwrap_or_else(|| {
+            now_ms.saturating_add(native_user_input_timeout().as_millis() as u64)
+        });
         let remaining = Duration::from_millis(expires_at_unix_ms.saturating_sub(now_ms));
         let deadline = Instant::now()
             .checked_add(remaining)

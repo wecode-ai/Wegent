@@ -9,9 +9,13 @@
  */
 
 import { APIRequestContext, Page, expect, test, type Route } from '@playwright/test'
+import { spawnSync } from 'node:child_process'
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
+import { startLocalCodexDevice } from '../../utils/artifact-device-fixture'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
 import {
   assertCodexPhaseTransition,
@@ -106,6 +110,23 @@ type DeviceResponseEvent = {
 // in the flow still reaches the real Backend.
 async function loseRealResponse(route: Route): Promise<void> {
   await route.abort('failed')
+}
+
+function codexProcessExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    throw error
+  }
+}
+
+function canAcquireHomeLock(lock: string): boolean {
+  const probe = spawnSync('flock', ['-n', '-E', '75', lock, 'true'], { timeout: 3_000 })
+  if (probe.error) throw probe.error
+  expect([0, 75], probe.stderr.toString()).toContain(probe.status)
+  return probe.status === 0
 }
 
 test.describe.configure({ mode: 'serial', timeout: 180_000 })
@@ -1043,6 +1064,168 @@ test.describe('Agent conversation regression', () => {
     await form.getByTestId('ask-user-submit').click()
     await expect(page.getByTestId('messages-container')).toContainText(reply, { timeout: 30_000 })
     await waitForBackendTerminal(request, taskId)
+  })
+
+  test('device Codex expires an unanswered native question and releases its Home', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const timeoutMs = 20_000
+    const device = await startLocalCodexDevice(request, token, testInfo, timeoutMs)
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => API_BASE_URL,
+      getToken: () => token,
+      namespace: '/chat',
+    })
+    const entry = `/devices/chat?deviceId=${device.targetId}`
+    const prompt = makeContextToken('device_codex_expiry')
+    const questionId = 'lease_choice'
+    const question = 'Should this device turn continue?'
+    const nextPrompt = makeContextToken('device_codex_after_expiry')
+    const nextReply = `Same Home resumed work ${nextPrompt}`
+    const agentsRoot = join(device.workbenchHome, 'agents')
+    const readHomeLocks = async () =>
+      (await readdir(agentsRoot, { recursive: true })).filter(
+        name => basename(name) === '.execution.lock'
+      )
+    const readTask = async (id: number) => {
+      const response = await request.get(`${API_BASE_URL}/api/tasks/${id}`, {
+        headers: authHeaders(),
+        timeout: 5_000,
+      })
+      expect(response.status()).toBe(200)
+      return (await response.json()) as {
+        subtasks: Array<{
+          id: number
+          result?: {
+            blocks?: Array<{ tool_name?: string; tool_use_id?: string; tool_output?: unknown }>
+          }
+        }>
+      }
+    }
+    try {
+      await configureToolScenario(request, prompt, [
+        {
+          toolCalls: [
+            {
+              toolName: 'request_user_input',
+              arguments: {
+                questions: [
+                  {
+                    id: questionId,
+                    header: 'Device turn',
+                    question,
+                    options: [
+                      { label: 'Continue', description: 'Resume the original turn.' },
+                      { label: 'Stop', description: 'Leave the turn unanswered.' },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ])
+      await configureStreamRule(request, nextPrompt, nextReply, 0)
+      await openTaskPage(page, entry, deviceCodexTeam.id, 'task')
+      await expect(page.getByTestId('device-chat-target-select')).toHaveValue(device.targetId)
+      await sendMessage(page, prompt)
+      const taskId = await waitForTaskId(page)
+      createdTaskIds.add(taskId)
+      const form = page.getByTestId('ask-user-form')
+      await expect(form).toContainText(question, { timeout: 30_000 })
+      const submit = form.getByTestId('ask-user-submit')
+      await expect(submit).toBeVisible({ timeout: 5_000 })
+      await waitForBackendTerminal(request, taskId, 8_000)
+      const pending = await readTask(taskId)
+      const assistant = pending.subtasks.at(-1)!
+      const block = assistant.result?.blocks?.find(
+        item => item.tool_name === 'interactive_form_question'
+      )
+      const toolUseId = block?.tool_use_id
+      expect(toolUseId).toBeTruthy()
+      const output = (
+        typeof block?.tool_output === 'string' ? JSON.parse(block.tool_output) : block?.tool_output
+      ) as { expires_at_unix_ms?: number } | undefined
+      expect(output?.expires_at_unix_ms).toBeGreaterThan(Date.now())
+      expect(output?.expires_at_unix_ms).toBeLessThanOrEqual(Date.now() + timeoutMs)
+      const log = await readFile(device.logPath, 'utf8')
+      const started = log
+        .split('\n')
+        .find(
+          line =>
+            line.includes('codex app-server started') &&
+            line.includes(`subtask_id=${assistant.id} `)
+        )
+      const pid = Number(started?.match(/\bprocess_id=(\d+)/)?.[1])
+      expect(pid, 'The suspended turn must have a real Codex app-server PID').toBeGreaterThan(0)
+      expect(codexProcessExists(pid), 'Codex must be alive while the form is pending').toBe(true)
+      const locks = await readHomeLocks()
+      expect(locks, 'This isolated executor must have exactly one Agent Home').toHaveLength(1)
+      const lock = join(agentsRoot, locks[0])
+      const originalInode = (await stat(lock)).ino
+      expect(canAcquireHomeLock(lock), 'The pending turn must hold its Home lock').toBe(false)
+
+      await test.step('Expire the form and release the Codex process and Home lock', async () => {
+        await expect(form).toContainText('This question has expired', {
+          timeout: timeoutMs + 5_000,
+        })
+        await expect(submit).toHaveCount(0)
+        await expect
+          .poll(() => codexProcessExists(pid), {
+            timeout: 5_000,
+            message: 'The exact Codex app-server process must exit after expiration',
+          })
+          .toBe(false)
+        expect((await stat(lock)).ino).toBe(originalInode)
+        expect(canAcquireHomeLock(lock), 'The original Home lock must be available').toBe(true)
+      })
+
+      await test.step('Complete a new task on the same device and Agent Home', async () => {
+        await openTaskPage(page, entry, deviceCodexTeam.id, 'task')
+        await sendMessage(page, nextPrompt)
+        const nextTaskId = await waitForTaskId(page)
+        createdTaskIds.add(nextTaskId)
+        expect(nextTaskId).not.toBe(taskId)
+        await expect(page.getByTestId('messages-container')).toContainText(nextReply, {
+          timeout: 30_000,
+        })
+        await waitForBackendTerminal(request, nextTaskId, 10_000)
+        expect(await readHomeLocks()).toEqual(locks)
+        expect((await stat(lock)).ino).toBe(originalInode)
+      })
+
+      await test.step('Reject an answer to the expired form without creating a turn', async () => {
+        await client.ensureConnected()
+        const ack = await client
+          .getRawSocket()!
+          .timeout(5_000)
+          .emitWithAck('chat:send', {
+            task_id: taskId,
+            team_id: deviceCodexTeam.id,
+            device_id: device.targetId,
+            task_type: 'task',
+            message: 'Continue',
+            interactive_form_answer: {
+              type: 'interactive_form_question',
+              success: true,
+              status: 'answered',
+              tool_use_id: toolUseId,
+              task_id: taskId,
+              subtask_id: assistant.id,
+              answers: { [questionId]: 'Continue' },
+              message: 'Continue',
+            },
+          })
+        expect(ack).toMatchObject({ error: 'interactive_form_not_pending' })
+        expect((await readTask(taskId)).subtasks.map(item => item.id)).toEqual(
+          pending.subtasks.map(item => item.id)
+        )
+      })
+    } finally {
+      client.dispose()
+      await device.close()
+    }
   })
 
   test('traditional executor Responses stream completes and inherits its device', async ({
@@ -2975,7 +3158,11 @@ test.describe('Agent conversation regression', () => {
     return taskId
   }
 
-  async function waitForBackendTerminal(request: APIRequestContext, taskId: number): Promise<void> {
+  async function waitForBackendTerminal(
+    request: APIRequestContext,
+    taskId: number,
+    timeout = RESPONSE_TIMEOUT_MS
+  ): Promise<void> {
     await expect
       .poll(
         async () => {
@@ -3001,7 +3188,7 @@ test.describe('Agent conversation regression', () => {
         },
         {
           message: `Task ${taskId} should reach a terminal status`,
-          timeout: RESPONSE_TIMEOUT_MS,
+          timeout,
         }
       )
       .toBe('COMPLETED')
