@@ -170,7 +170,9 @@ executor 验证工具结果保留、无重复用户消息、自动恢复与取�
 
 ### Codex 外部上下文转换
 
-Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。发往 Chat Completions 或 Anthropic Messages 前，executor 在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍分别通过 `tool_call_id` 或 `tool_use_id` 与原调用配对。
+Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。executor 为 Responses、Chat Completions 和 Anthropic Messages 转换请求时，会在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍通过各自协议的调用 ID 与原调用配对。
+
+Responses 适配会添加 `[tool_result without a matching tool_call]` 来源标记，并保留原生 `input_image` 和 `input_file` 内容块。
 
 ### Codex 子代理消息转换
 
