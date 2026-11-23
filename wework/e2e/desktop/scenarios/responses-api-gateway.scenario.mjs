@@ -17,6 +17,8 @@ const CONNECTOR_PROMPT = `RESPONSES_GATEWAY_FOLLOW_UP_${process.pid}`
 const CONNECTOR_RESULT = `CONNECTOR_GUIDANCE_COMPLETED_${process.pid}`
 const CONNECTOR_SLUG = `responses-guidance-${process.pid}`
 const CONNECTOR_GUIDANCE = '<wegent_connector_apps>'
+const CURRENT_TIME_REMINDER =
+  /^<system-reminder><CurrentTime>\d{4}-\d{2}-\d{2} \d{2}:\d{2}<\/CurrentTime><\/system-reminder>$/
 const RUNTIME_PROMPT = `RESPONSES_GATEWAY_RUNTIME_${process.pid}`
 const RUNTIME_RESULT = `NATIVE_RUNTIME_COMPLETED_${process.pid}`
 
@@ -402,7 +404,9 @@ export function createDesktopScenario({
         recorded.userPrompts = userMessages.map(({ content }) =>
           typeof content === 'string'
             ? [content]
-            : content.filter(part => part.type === 'text').map(part => part.text)
+            : content
+                .filter(part => part.type === 'text' && !CURRENT_TIME_REMINDER.test(part.text))
+                .map(part => part.text)
         )
         recorded.guidanceInUserMessages = userMessages.some(({ content }) =>
           JSON.stringify(content).includes(CONNECTOR_GUIDANCE)
