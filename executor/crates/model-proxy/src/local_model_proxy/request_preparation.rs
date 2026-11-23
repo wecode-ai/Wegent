@@ -276,6 +276,7 @@ fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
     };
     let items = match input {
         Value::Array(items) => {
+            discard_nameless_function_calls(items);
             items.retain_mut(retain_responses_input_item);
             items.as_mut_slice()
         }
@@ -313,6 +314,44 @@ fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
             }
         }
     }
+}
+
+fn discard_nameless_function_calls(items: &mut Vec<Value>) {
+    let mut invalid_ids: HashSet<_> = items
+        .iter()
+        .filter(|item| nameless_function_call(item))
+        .map(|item| item["call_id"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    if invalid_ids.is_empty() {
+        return;
+    }
+
+    // A callable item can still own an ID also used by a malformed item.
+    for item in items.iter().filter(|item| {
+        matches!(
+            item["type"].as_str(),
+            Some("function_call" | "custom_tool_call" | "tool_search_call")
+        ) && !nameless_function_call(item)
+    }) {
+        invalid_ids.remove(item["call_id"].as_str().unwrap_or_default());
+    }
+    items.retain(|item| {
+        if nameless_function_call(item) {
+            return false;
+        }
+        let call_id = item["call_id"].as_str().unwrap_or_default();
+        // Codex can carry detached context as a function result with an empty ID.
+        item["type"] != "function_call_output"
+            || !invalid_ids.contains(call_id)
+            || (call_id.is_empty() && item["output"] != "unsupported call: ")
+    });
+}
+
+pub(super) fn nameless_function_call(item: &Value) -> bool {
+    item["type"] == "function_call"
+        && !item["name"]
+            .as_str()
+            .is_some_and(|name| !name.trim().is_empty())
 }
 
 fn retain_responses_input_item(item: &mut Value) -> bool {

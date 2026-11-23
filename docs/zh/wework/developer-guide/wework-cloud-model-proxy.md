@@ -89,6 +89,8 @@ OpenAI Responses 上游在 `auto` 和 `standard` 模式下会收到 `type: "mess
 
 Responses 转为普通 function 工具、转为 Chat Completions 或转为 Anthropic Messages 时，代理将服务端工具搜索结果合并到出站工具目录，并从会话历史中省略没有 `call_id` 的服务端搜索调用与结果。已配对的常规工具调用和结果保留原有 ID 和顺序。原生 Responses 透传保留完整搜索历史。
 
+普通 Responses 与工具桥接共用已完成函数调用的校验。工具名或 `call_id` 缺失时，代理在转发该调用前返回 `response.failed`，日志只记录缺失字段的计数。续轮请求也会清理历史中的空名函数调用及其失败结果，并保留独立上下文。显式透传使用独立的转发路径。
+
 协议适配前，代理移除 assistant 消息中的空 `output_text` 文本块。若该消息因此没有剩余内容，代理会省略整条消息。若完整的工具调用及其结果之间夹有 assistant 消息，代理将这些消息移到该组工具调用之前。
 
 所有模型流共用 executor 的 SSE 分帧和数据解析模块，包括 Responses 工具桥接、普通 Responses、透传检查、Chat Completions、Anthropic Messages、工具历史记录和 Harness 适配器。解析按流中的先后顺序处理 LF、CRLF 和 CR 边界，跨块 CRLF 仍作为一个换行；拼接同一事件的全部 `data:` 行，并在网络块之间保留未完整接收的 UTF-8 字符。Responses 的工具分发和终态识别以 JSON `type` 为准，不依赖可选的 SSE `event:` 字段；重写事件时替换全部旧数据行，同时保留事件元数据。透传检查和历史记录不会修改转发的数据块。

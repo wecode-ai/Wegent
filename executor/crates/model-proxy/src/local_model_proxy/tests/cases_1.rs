@@ -613,6 +613,40 @@ fn request_adapters_keep_tool_results_next_to_their_calls() {
 }
 
 #[test]
+fn request_adapters_discard_nameless_function_calls_and_their_rejections() {
+    let call = |id, call_id, name| json!({"type":"function_call","id":id,"call_id":call_id,"name":name,"arguments":"{}"});
+    let output = |id, text| json!({"type":"function_call_output","call_id":id,"output":text});
+    let request = |input: Vec<Value>| {
+        serde_json::to_vec(&json!({"model":"test-model","input":input})).unwrap()
+    };
+    let normalized_empty_id = normalized_responses_api_id("");
+    let valid_call = call("fc_valid", "exec_0", "exec");
+    let valid_output = output("exec_0", "done");
+    let detached_context = output("", "external context");
+    let actual = request(vec![
+        valid_call.clone(),
+        call("fc_bad_1", &normalized_empty_id, ""),
+        call("fc_bad_2", &normalized_empty_id, ""),
+        call("fc_bad_3", "", ""),
+        valid_output.clone(),
+        output(&normalized_empty_id, "unsupported call: "),
+        output(&normalized_empty_id, "unsupported call: "),
+        output("", "unsupported call: "),
+        detached_context.clone(),
+    ]);
+    let expected = request(vec![valid_call, valid_output, detached_context]);
+    for api_format in [
+        "openai-responses",
+        "openai-chat-completions",
+        "anthropic-messages",
+    ] {
+        let (actual, _, _) = prepare_request(api_format, false, None, &actual).unwrap();
+        let (expected, _, _) = prepare_request(api_format, false, None, &expected).unwrap();
+        assert_eq!(actual, expected, "{api_format}");
+    }
+}
+
+#[test]
 fn normalizes_cross_protocol_history_ids_for_native_responses_models() {
     let body = cross_protocol_history_with_invalid_ids();
 
