@@ -224,7 +224,7 @@ export function createWorkbenchCloudProjectContextSource(
     const scope = contextIdentity(address)
     const revision = ++lookupRevision
     const valid = () => current(scope) && revision === lookupRevision && input.active
-    if (!address || !input.active) return
+    if (!address || !input.active || input.runtimeTaskCreationPending) return
     if (!contextApis().length && !address.projectSession && !projectSpaceForRuntimeTask(address)) {
       try {
         const items = await hydrateLocalWorkItems(input.userId)
@@ -291,20 +291,25 @@ export function createWorkbenchCloudProjectContextSource(
             '关联项目空间失败'
           ),
         })
-      logRuntimeTaskCreateStage('project-space-context-failed', {
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        error: error instanceof Error ? error.message : String(error),
-        elapsedMs: Math.round(performance.now() - started),
-        causes:
-          error instanceof AggregateError
-            ? error.errors.map(cause => (cause instanceof Error ? cause.message : String(cause)))
-            : undefined,
-      })
-      console.warn('[Wework] Failed to resolve project-space context for task', {
-        task: address,
-        error,
-      })
+      logRuntimeTaskCreateStage(
+        'project-space-context-failed',
+        {
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          elapsedMs: Math.round(performance.now() - started),
+          causes:
+            error instanceof AggregateError
+              ? error.errors.map(cause =>
+                  cause instanceof Error
+                    ? { message: cause.message, stack: cause.stack }
+                    : { message: String(cause) }
+                )
+              : undefined,
+        },
+        'warn'
+      )
     }
   }
   const bindPending = () => {
@@ -411,7 +416,7 @@ export function createWorkbenchCloudProjectContextSource(
         pendingTodoItem: pending?.item ?? null,
       })
     }
-    const keys = [input.active, scope, task()?.deviceId, input.t]
+    const keys = [input.active, scope, task()?.deviceId, input.runtimeTaskCreationPending, input.t]
     if (!lookupKeys || keys.some((value, index) => value !== lookupKeys![index])) {
       lookupKeys = keys
       void resolve()

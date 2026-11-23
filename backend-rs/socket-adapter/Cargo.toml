@@ -1,0 +1,27 @@
+[package]
+name = "wegent-socket-adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Socket.IO emitters and Redis adapter delivery"
+
+[features]
+test-support = []
+
+[dependencies]
+async-trait.workspace = true
+brz-socket-io.workspace = true
+http.workspace = true
+hyper.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+wegent-socket-events.workspace = true
+wegent-terminal.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+http-body-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

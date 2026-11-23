@@ -102,7 +102,7 @@ async function collectBranch(ctx, platform, source, checkpoint) {
 export function createProvider(platform) {
   const providerId = GIT_PACKAGE + platform
   return {
-    readSource: createGitSourceReader(platform, parseProfile),
+    readSource: createGitSourceReader(platform, parseProfile, canonicalCommentId, personalTarget),
     async check() {
       // A GitLab instance is selected before checking its account; catalog reads
       // must not accidentally probe gitlab.com for an enterprise-only user.

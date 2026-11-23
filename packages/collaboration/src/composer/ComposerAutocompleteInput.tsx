@@ -95,6 +95,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   scrollContainerClassName,
   nativeEmptyCaret = false,
   skillMenuClassName = 'w-[min(28rem,calc(100vw-2rem))]',
+  slashMenuClassName = skillMenuClassName,
   disableAutocomplete = false,
   onKeyDown,
   onPasteFiles,
@@ -920,7 +921,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
           label={
             modelMenuOpen ? t('workbench.search_models') : t('workbench.slash_command_menu_title')
           }
-          className={skillMenuClassName}
+          className={showSlashMenu && !modelMenuOpen ? slashMenuClassName : skillMenuClassName}
           onClose={restoreEditor => {
             if (modelMenuOpen) closeSlashModelMenu(restoreEditor)
             else closeAutocompleteMenu()

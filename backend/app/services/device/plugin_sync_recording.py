@@ -81,14 +81,15 @@ def record_versioned_result(
     removed_ids = {
         item["installed_plugin_id"] for item in payload.get("removed_plugins") or []
     }
-    rows = (
-        db.query(PluginDeviceInstallation)
-        .filter_by(
-            user_id=user_id,
-            device_id=result.device_id,
-        )
-        .all()
+    rows_query = db.query(PluginDeviceInstallation).filter_by(
+        user_id=user_id,
+        device_id=result.device_id,
     )
+    if installed_ids is not None:
+        rows_query = rows_query.filter(
+            PluginDeviceInstallation.installed_kind_id.in_(installed_ids)
+        )
+    rows = rows_query.all()
     if (payload.get("plugin_sync") or {}).get("complete"):
         removed_ids.update(
             row.installed_kind_id

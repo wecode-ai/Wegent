@@ -210,6 +210,34 @@ const _: () = {
         )
     }
 };
+use wegent_plugin_runtime::plugin_account_auth;
+
+async fn plugin_auth_reply(
+    app: &AppState,
+    session: &DeviceSession,
+    socket_id: &str,
+    operation: &str,
+    data: &Value,
+) -> Reply<Value> {
+    let session = session.snapshot();
+    let identity = plugin_account_auth::SocketIdentity {
+        user_id: session.user_id,
+        device_id: session.device.device_id.as_deref(),
+        runtime_instance_id: session.device.runtime_instance_id.as_deref(),
+    };
+    Reply::payload(
+        plugin_account_auth::exchange(
+            &app.mysql,
+            app.redis.as_ref(),
+            identity,
+            socket_id,
+            operation,
+            data,
+        )
+        .await,
+    )
+}
+
 /// A `plugin.auth.*` export whose body is `plugin_auth_broker.exchange`.
 macro_rules! plugin_auth {
     ($event:literal, $name:ident, $operation:expr) => {
@@ -220,16 +248,7 @@ macro_rules! plugin_auth {
             #[context] context: &ConnectionContext,
             #[inject(app)] app: &Arc<AppState>,
         ) -> Result<Reply<Value>, ClientError> {
-            Ok(Reply::payload(
-                crate::plugin_account_auth::exchange(
-                    app,
-                    &session.snapshot(),
-                    context.id(),
-                    $operation,
-                    &data,
-                )
-                .await?,
-            ))
+            Ok(plugin_auth_reply(app, session, context.id(), $operation, &data).await)
         }
     };
 }
@@ -237,7 +256,7 @@ macro_rules! plugin_auth {
 plugin_auth!(
     "plugin.auth.local_lifecycle",
     local_lifecycle,
-    crate::plugin_account_auth::LOCAL_LIFECYCLE
+    plugin_account_auth::LOCAL_LIFECYCLE
 );
 /// `on_plugin_auth_automatic`: `exchange(operation="automatic")`.
 #[brz_socket_io::event("plugin.auth.automatic", namespace = "/local-executor")]
@@ -247,56 +266,46 @@ async fn automatic(
     #[context] context: &ConnectionContext,
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
-    Ok(Reply::payload(
-        crate::plugin_account_auth::exchange(
-            app,
-            &session.snapshot(),
-            context.id(),
-            crate::plugin_account_auth::AUTOMATIC,
-            &data,
-        )
-        .await?,
-    ))
+    Ok(plugin_auth_reply(
+        app,
+        session,
+        context.id(),
+        plugin_account_auth::AUTOMATIC,
+        &data,
+    )
+    .await)
 }
-plugin_auth!(
-    "plugin.auth.prepare",
-    prepare,
-    crate::plugin_account_auth::PREPARE
-);
+plugin_auth!("plugin.auth.prepare", prepare, plugin_account_auth::PREPARE);
 plugin_auth!(
     "plugin.auth.transfer.stage",
     transfer_stage,
-    crate::plugin_account_auth::TRANSFER_STAGE
+    plugin_account_auth::TRANSFER_STAGE
 );
 plugin_auth!(
     "plugin.auth.transfer.prepare",
     transfer_prepare,
-    crate::plugin_account_auth::TRANSFER_PREPARE
+    plugin_account_auth::TRANSFER_PREPARE
 );
 plugin_auth!(
     "plugin.auth.transfer.finish",
     transfer_finish,
-    crate::plugin_account_auth::TRANSFER_FINISH
+    plugin_account_auth::TRANSFER_FINISH
 );
 plugin_auth!(
     "plugin.auth.transfer.abort",
     transfer_abort,
-    crate::plugin_account_auth::TRANSFER_ABORT
+    plugin_account_auth::TRANSFER_ABORT
 );
-plugin_auth!(
-    "plugin.auth.execute",
-    execute,
-    crate::plugin_account_auth::EXECUTE
-);
+plugin_auth!("plugin.auth.execute", execute, plugin_account_auth::EXECUTE);
 plugin_auth!(
     "plugin.auth.oauth.begin",
     oauth_begin,
-    crate::plugin_account_auth::OAUTH_BEGIN
+    plugin_account_auth::OAUTH_BEGIN
 );
 plugin_auth!(
     "plugin.auth.oauth.finish",
     oauth_finish,
-    crate::plugin_account_auth::OAUTH_FINISH
+    plugin_account_auth::OAUTH_FINISH
 );
 /// `on_plugin_auth_oauth_revocations`: `exchange(operation="oauth_revocations")`.
 #[brz_socket_io::event("plugin.auth.oauth.revocations", namespace = "/local-executor")]
@@ -306,33 +315,27 @@ async fn oauth_revocations(
     #[context] context: &ConnectionContext,
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
-    Ok(Reply::payload(
-        crate::plugin_account_auth::exchange(
-            app,
-            &session.snapshot(),
-            context.id(),
-            crate::plugin_account_auth::OAUTH_REVOCATIONS,
-            &data,
-        )
-        .await?,
-    ))
+    Ok(plugin_auth_reply(
+        app,
+        session,
+        context.id(),
+        plugin_account_auth::OAUTH_REVOCATIONS,
+        &data,
+    )
+    .await)
 }
 plugin_auth!(
     "plugin.auth.oauth.revoke_begin",
     oauth_revoke_begin,
-    crate::plugin_account_auth::OAUTH_REVOKE_BEGIN
+    plugin_account_auth::OAUTH_REVOKE_BEGIN
 );
 plugin_auth!(
     "plugin.auth.oauth.revoke_finish",
     oauth_revoke_finish,
-    crate::plugin_account_auth::OAUTH_REVOKE_FINISH
+    plugin_account_auth::OAUTH_REVOKE_FINISH
 );
-plugin_auth!(
-    "plugin.auth.enroll",
-    enroll,
-    crate::plugin_account_auth::ENROLL
-);
-plugin_auth!("plugin.auth.read", read, crate::plugin_account_auth::READ);
+plugin_auth!("plugin.auth.enroll", enroll, plugin_account_auth::ENROLL);
+plugin_auth!("plugin.auth.read", read, plugin_account_auth::READ);
 /// `on_runtime_tasks_pull`: one Executor-owned execution claim plus its due
 /// workspace cleanup intents.
 #[brz_socket_io::event("runtime.tasks.pull", namespace = "/local-executor")]
@@ -542,15 +545,14 @@ mod tests {
     #[tokio::test]
     async fn late_terminal_ack_releases_the_subtask_turn() {
         let (runtime, _workers) = SocketRuntime::new();
+        let mut device = crate::socketio::session::DeviceSessionState::default();
+        device.device_id = Some("device".into());
         let session = SessionSnapshot {
             user_id: 7,
             user_name: "device-owner".into(),
             auth_type: "jwt",
             client_ip: None,
-            device: crate::socketio::session::DeviceSessionState {
-                device_id: Some("device".into()),
-                ..Default::default()
-            },
+            device,
         };
         let input = json!({"task_id":41,"subtask_id":42,"data":{}});
         let turn = reserve_response_turn(&runtime, &session, "response.completed", &input).unwrap();
@@ -607,15 +609,14 @@ mod tests {
         use std::task::Poll;
 
         let (runtime, _workers) = SocketRuntime::new();
+        let mut device = crate::socketio::session::DeviceSessionState::default();
+        device.device_id = Some("test-device".into());
         let session = SessionSnapshot {
             user_id: 7,
             user_name: "test-user".into(),
             auth_type: "jwt",
             client_ip: None,
-            device: crate::socketio::session::DeviceSessionState {
-                device_id: Some("test-device".into()),
-                ..Default::default()
-            },
+            device,
         };
         let receive = |event, payload: Value| {
             reserve_response_turn(&runtime, &session, event, &payload)

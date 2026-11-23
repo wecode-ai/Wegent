@@ -70,7 +70,7 @@ fn memory_recall_drops_revoked_sources_but_owner_can_still_delete_records() {
     }))
     .unwrap();
     let identity = stand_in_identity(&request).unwrap();
-    let search = || memory_call(&store, &identity, "search_memories", json!({})).unwrap();
+    let search = || memory_call(None, &store, &identity, "search_memories", json!({})).unwrap();
     assert_eq!(search()["items"], json!([saved]));
     assert_eq!(
         store
@@ -91,6 +91,7 @@ fn memory_recall_drops_revoked_sources_but_owner_can_still_delete_records() {
         .is_empty());
     assert_eq!(store.stand_in_memories(7).unwrap(), vec![saved.clone()]);
     memory_call(
+        None,
         &store,
         &identity,
         "forget_memory",
@@ -567,6 +568,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
         coordinator_batch: None,
     };
     let personal = memory_call(
+        None,
         &store,
         &primary,
         "remember",
@@ -578,6 +580,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
         ..primary.clone()
     };
     assert!(memory_call(
+        None,
         &store,
         &role,
         "forget_memory",
@@ -585,6 +588,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     )
     .is_err());
     assert!(memory_call(
+        None,
         &store,
         &role,
         "remember",
@@ -592,6 +596,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     )
     .is_err());
     let saved = memory_call(
+        None,
         &store,
         &role,
         "remember",
@@ -600,6 +605,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     .unwrap();
     assert_eq!(saved["scope"], json!({"kind":"role","roleId":"default"}));
     let found = memory_call(
+        None,
         &store,
         &role,
         "search_memories",
@@ -608,6 +614,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     .unwrap();
     assert_eq!(found["items"].as_array().unwrap().len(), 1);
     memory_call(
+        None,
         &store,
         &role,
         "forget_memory",
@@ -616,6 +623,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     .unwrap();
     assert_eq!(store.stand_in_memories(7).unwrap().len(), 1);
     assert!(memory_call(
+        None,
         &store,
         &role,
         "remember",
@@ -627,6 +635,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
         ..role
     };
     assert!(memory_call(
+        None,
         &store,
         &external,
         "remember",

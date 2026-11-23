@@ -158,6 +158,9 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             match self.current_arrangement(&run) {
+                Ok(ref arrangement) if memory_review(arrangement) && run.trigger != "manual"
+                    && run.status == AutomationRunStatus::Pending
+                    && !self.memory_review_run_has_work(store, &run)? => {}
                 Ok(_) => facts.push(json!({"id":run.id,"userId":user,"roleId":binding.role_id,"automationId":run.automation_id,"automationVersion":binding.automation_version,"taskId":binding.task_id,"scheduledFor":run.scheduled_for})),
                 Err(error) => self.settle_arrangement(&run, AutomationRunStatus::NeedsAttention, None, Some(error.message))?,
             }
@@ -236,7 +239,7 @@ impl RuntimeWorkRpcHandler {
         Ok(automation)
     }
 
-    fn settle_arrangement(
+    pub(super) fn settle_arrangement(
         &self,
         run: &AutomationRun,
         status: AutomationRunStatus,
@@ -247,6 +250,14 @@ impl RuntimeWorkRpcHandler {
             .settle_coordinated_run(&run.id, status, task, error)
             .map_err(arrangement_error)?;
         self.emit_automation_runs_changed(&run.automation_id, &run.id);
+        if status == AutomationRunStatus::Succeeded
+            && self
+                .automation_store
+                .get(&run.automation_id)
+                .is_some_and(|entry| memory_review(&entry))
+        {
+            self.start_stand_in_ghost_evaluation(run);
+        }
         Ok(())
     }
 
@@ -378,14 +389,15 @@ impl RuntimeWorkRpcHandler {
         payload["message"] = json!(automation.prompt);
         payload["commandId"] = json!(command_id(run));
         payload["clientUserMessageId"] = json!(command_id(run));
-        payload = self.prepare_stand_in_schedule(&automation, payload).await?;
+        let (mut payload, ask_before_act) =
+            self.prepare_stand_in_schedule(&automation, payload).await?;
         super::automation_rpc::add_automation_context(
             &mut payload,
             &automation.id,
             &run.id,
             run.scheduled_for,
         );
-        payload["executionRequest"]["standInSchedule"] = json!({"id":automation.id,"version":automation.version,"runId":run.id,"scheduledFor":run.scheduled_for,"userId":binding.user_id,"roleId":binding.role_id,"settingsVersion":settings["version"],"manual":run.trigger=="manual","claimedOneTime":matches!(automation.schedule, crate::runtime_work::automations::AutomationSchedule::OneTime { .. }),"continuation":matches!(automation.conversation_mode,ConversationMode::ContinueThread)});
+        payload["executionRequest"]["standInSchedule"] = json!({"id":automation.id,"version":automation.version,"runId":run.id,"scheduledFor":run.scheduled_for,"userId":binding.user_id,"roleId":binding.role_id,"settingsVersion":settings["version"],"manual":run.trigger=="manual","claimedOneTime":matches!(automation.schedule, crate::runtime_work::automations::AutomationSchedule::OneTime { .. }),"continuation":matches!(automation.conversation_mode,ConversationMode::ContinueThread),"askBeforeAct":ask_before_act});
         let response = match automation.conversation_mode {
             ConversationMode::Independent => self.create_task(payload).await?,
             ConversationMode::ContinueThread => self.send_message_from_event(payload).await?,

@@ -240,12 +240,24 @@ impl RuntimeWorkRpcHandler {
                     }
                     Ok(page)
                 });
-            observation["attempted_at"] = json!(now_ms());
-            observation["next_poll_at"] = json!(now_ms() + super::poll_schedule::INTERVAL_MS);
+            let attempted_at = now_ms();
+            let default_poll_at = attempted_at + super::poll_schedule::INTERVAL_MS;
+            observation["attempted_at"] = json!(attempted_at);
+            observation["next_poll_at"] = json!(default_poll_at);
             observation["collection_cycle"] = json!(tick);
             let collected = result.is_ok();
             match result {
                 Ok(page) => {
+                    // An explicit deadline starts another cycle only after this page is committed.
+                    if source["providerId"] == "@wegent/dsh-connection-git/github"
+                        && source["observeCurrentStatus"] == true
+                        && page["errorCode"].is_null()
+                    {
+                        if let Some(deadline) = page["nextPollAt"].as_i64() {
+                            observation["next_poll_at"] =
+                                json!(deadline.clamp(attempted_at, default_poll_at));
+                        }
+                    }
                     let events = page["events"].as_array().unwrap();
                     let mut retained = observation["events"]
                         .as_array()
@@ -322,6 +334,110 @@ mod tests {
     use super::*;
 
     mod merge_readiness;
+
+    #[test]
+    fn github_ci_deadlines_publish_status_and_wake_only_on_completion() {
+        use crate::runtime_work::handler::control::tests::EnvGuard;
+        use futures_util::FutureExt;
+
+        let _guard = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::home(root.path().to_str().unwrap());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+        let app = axum::Router::new().route(
+            "/wework/connections/v1/rpc",
+            axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+                assert_eq!(body["method"], "collectObservation");
+                let step = body["input"]["checkpoint"]["step"].as_u64().unwrap();
+                let at = chrono::Utc::now().to_rfc3339();
+                let status = if step < 2 { "PENDING" } else { "SUCCESS" };
+                let events = if step == 1 {
+                    json!([])
+                } else {
+                    json!([{"id":format!("status-{step}"),"at":at,
+                        "external":{"eventType":"tracked.status",
+                            "payload":{"statusCheckRollup":{"state":status}}}}])
+                };
+                axum::Json(json!({"ok":true,"result":{
+                    "events":events,"nextCheckpoint":{"step":step+1},
+                    "nextPollAt":if step == 0 {json!(now_ms())} else if step == 1 {json!(now_ms()+15_000)} else {Value::Null},
+                    "resourceStates":[{"data":{"statusCheckRollup":{"state":status}}}]
+                }}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
+        handler.configure_connection_host(json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)})).unwrap();
+        let path = handler.event_subscription_path();
+        let source = json!({"providerId":"@wegent/dsh-connection-git/github",
+            "kind":"repository","transport":"cli",
+            "observeCurrentStatus":true,"enabledAfter":chrono::Utc::now().to_rfc3339()});
+        handler
+            .save_event_subscription(
+                "wait",
+                &json!({
+                    "observation_id":"pr","status":"armed","source":source,"task_id":"task",
+                    "initial_sequence":0,"after_sequence":0,
+                    "match":{"/external/payload/statusCheckRollup/state":"SUCCESS"}
+                }),
+            )
+            .unwrap();
+        event_store::transact(&path, |state| {
+            state["observations"]["pr"] =
+                json!({"source":source,"checkpoint":{"step":0},"sequence":0,"events":[]});
+            Ok(())
+        })
+        .unwrap();
+
+        handler.poll_connection_observation_sources().await.unwrap();
+        let pending = handler.stored_event_observation("pr").unwrap();
+        assert_eq!(
+            pending["resource_states"][0]["data"]["statusCheckRollup"]["state"],
+            "PENDING"
+        );
+        assert_eq!(pending["next_poll_at"], pending["attempted_at"]);
+        handler.poll_connection_observation_sources().await.unwrap();
+        let checks = handler.stored_event_observation("pr").unwrap();
+        assert_eq!(checks["checkpoint"]["step"], 2);
+        assert!(handler
+            .connection_observation_wakeup
+            .notified()
+            .now_or_never()
+            .is_none());
+        handler.poll_connection_observation_sources().await.unwrap();
+        assert_eq!(handler.stored_event_observation("pr").unwrap(), checks);
+
+        event_store::transact(&path, |state| {
+            state["observations"]["pr"]["next_poll_at"] = json!(now_ms());
+            Ok(())
+        })
+        .unwrap();
+        handler.poll_connection_observation_sources().await.unwrap();
+        let done = handler.stored_event_observation("pr").unwrap();
+        assert_eq!(
+            done["resource_states"][0]["data"]["statusCheckRollup"]["state"],
+            "SUCCESS"
+        );
+        assert!(handler
+            .connection_observation_wakeup
+            .notified()
+            .now_or_never()
+            .is_some());
+        event_store::transact(&path, |state| {
+            assert_eq!(state["operations"]["wait"]["status"], "pending");
+            assert_eq!(state["operations"]["wait"]["events"][0]["id"], "status-2");
+            Ok(())
+        })
+        .unwrap();
+        server.abort();
+            });
+    }
 
     #[test]
     fn retained_completion_inside_activation_window_is_captured_once() {

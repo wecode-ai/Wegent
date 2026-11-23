@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { createServer } from 'node:http'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import { handleConnectionRpc } from './rpc.js'
@@ -49,6 +50,31 @@ test('requires both loopback transport and the private host token', async () => 
   assert.equal(accepted.status, 200)
   assert.deepEqual(accepted.response, { ok: true, result: { items: [] } })
 })
+
+test(
+  'returns 413 and closes the authenticated private HTTP connection',
+  { timeout: 2000 },
+  async t => {
+    const closed = Promise.withResolvers()
+    let calls = 0
+    const server = createServer((req, res) => {
+      req.socket.once('close', closed.resolve)
+      return handleConnectionRpc(req, res, 'secret', () => calls++)
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    t.after(() => new Promise(resolve => server.close(resolve)))
+    const response = await fetch(`http://127.0.0.1:${server.address().port}`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' },
+      body: new Uint8Array(1024 * 1024 + 1),
+    })
+    assert.equal(response.status, 413)
+    assert.equal(response.headers.get('connection'), 'close')
+    assert.equal((await response.json()).error.code, 'request_too_large')
+    await closed.promise
+    assert.equal(calls, 0)
+  }
+)
 
 test('only collection errors expose a bounded retry delay without adding retries', async () => {
   for (const method of [

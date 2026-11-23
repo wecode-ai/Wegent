@@ -7,4 +7,5 @@
 #![forbid(unsafe_code)]
 
 pub mod http_trust;
+pub mod public_download;
 pub mod url_ssrf;

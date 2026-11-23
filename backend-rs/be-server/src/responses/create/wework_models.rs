@@ -463,7 +463,7 @@ pub(super) async fn cloud_model_config(
         .and_then(Value::as_i64)
         .unwrap_or(0);
     let (config, spec) = crate::llm_proxy::resolve_model_config_with_spec(
-        state,
+        &state.llm_model_lookup(),
         &user,
         &selection.model_name,
         &selection.model_type,
@@ -536,7 +536,7 @@ pub(super) async fn cloud_model_config(
         }
     }
     crate::responses::create::runtime_config::apply_user_runtime_config(
-        state,
+        &state.mysql,
         &mut model_config,
         i64::from(user.id),
         Some(&user.preferences),

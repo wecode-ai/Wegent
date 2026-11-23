@@ -490,6 +490,7 @@ export function createHybridWorkbenchServices(
   let rememberedAppDeviceRegistrations: DeviceInfo[] = []
   let rememberedCloudDevicesRevision = 0
   let nextCloudDevicesRevision = 1
+  let unscopedLocalDevicesRequest: Promise<DeviceInfo[]> | null = null
   let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
   const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
   const localModels = createModelCatalog('local', async (signal, forceRefresh) => {
@@ -735,12 +736,20 @@ export function createHybridWorkbenchServices(
     isLocalDeviceId(deviceId) ? localServices.deviceApi : cloudServices.deviceApi
   const routeByAddress = (address: RuntimeTaskAddress) => runtimeApi(address.deviceId)
 
-  const listLocalDevices = async (signal?: AbortSignal) => {
+  const fetchLocalDevices = async (signal?: AbortSignal) => {
     const devices = signal
       ? await localServices.deviceApi.listDevices({ signal })
       : await localServices.deviceApi.listDevices()
     rememberLocalDevices(devices)
     return devices
+  }
+  const listLocalDevices = (signal?: AbortSignal) => {
+    if (signal) return fetchLocalDevices(signal)
+    // Concurrent route misses should share the live device and capability read.
+    unscopedLocalDevicesRequest ??= fetchLocalDevices().finally(() => {
+      unscopedLocalDevicesRequest = null
+    })
+    return unscopedLocalDevicesRequest
   }
   const fetchCloudDevices = async (signal?: AbortSignal) => {
     const revision = nextCloudDevicesRevision
@@ -1962,6 +1971,9 @@ export function createHybridWorkbenchServices(
       async memories(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).memories(userId, deviceId)
       },
+      async reworkReport(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).reworkReport(userId, deviceId, roleId)
+      },
       async memoryRules(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).memoryRules(userId, deviceId)
       },
@@ -2065,12 +2077,16 @@ export function createHybridWorkbenchServices(
       async proposal(userId, deviceId, roleId) {
         return (await standInApiForDevice(deviceId)).proposal(userId, deviceId, roleId)
       },
-      async resolveProposal(userId, deviceId, proposalId, accept) {
+      async latestAppliedGhost(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).latestAppliedGhost(userId, deviceId, roleId)
+      },
+      async resolveProposal(userId, deviceId, proposalId, accept, undoVersion) {
         return (await standInApiForDevice(deviceId)).resolveProposal(
           userId,
           deviceId,
           proposalId,
-          accept
+          accept,
+          undoVersion
         )
       },
       async notifyAssignment(projectId, issueId, assignmentId, userId, deviceId) {

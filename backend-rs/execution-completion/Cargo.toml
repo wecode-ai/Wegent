@@ -1,0 +1,25 @@
+[package]
+name = "wegent-execution-completion"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Committed execution transitions, result collection, and delivery leases"
+
+[dependencies]
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["macros", "time"] }
+tracing.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-execution-runtime.workspace = true
+wegent-protocol.workspace = true
+wegent-python-compat.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+futures-util = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt", "net", "time"] }
+wegent-backend-test-support.workspace = true

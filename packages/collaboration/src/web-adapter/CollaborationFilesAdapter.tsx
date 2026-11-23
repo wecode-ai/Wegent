@@ -1,4 +1,5 @@
 import { Button as ControlButton } from '../markdown/Button'
+import { useMemo } from 'react'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -56,7 +57,7 @@ export function CollaborationFilesAdapter({
   project: CollaborationProject
   locale: CollaborationLocale
 }) {
-  const filesApi = createSharedWorkspaceFilesViewApi(api)
+  const filesApi = useMemo(() => createSharedWorkspaceFilesViewApi(api), [api])
 
   return (
     <CollaborationFilesView

@@ -1,10 +1,15 @@
+import { createPortal } from 'react-dom'
 import { Button } from '@wegent/collaboration/markdown/Button'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { usePanelData, type TaskIssueShareDraft } from '@wegent/collaboration/platform'
 import type { SharedIssueTarget } from '@/api/personalIssues'
 import { Link2, Share2 } from 'lucide-react'
-import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import type {
+  WorkbenchMessage,
+  RuntimeConversationTurn,
+} from '@wegent/chat-core/runtime-conversation'
 import {
+  type ConversationShareSelectionContext,
   getAssistantRenderProjection,
   getUserMessageTextProjection,
 } from '@wegent/collaboration/conversation'
@@ -24,7 +29,19 @@ import { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcri
 
 export type { TaskIssueShareDraft } from '@wegent/collaboration/platform'
 
-function shareExcerpts(messages: WorkbenchMessage[]): TaskIssueShareDraft['excerpts'] {
+function shareExcerpts(
+  messages: WorkbenchMessage[],
+  turns: RuntimeConversationTurn[] = []
+): TaskIssueShareDraft['excerpts'] {
+  const positions = new Map(
+    turns.flatMap(turn =>
+      turn.items.flatMap(item =>
+        turn.position !== undefined && item.position !== undefined
+          ? [[`${turn.id}:${item.id}`, [turn.position, item.position] as [number, number]] as const]
+          : []
+      )
+    )
+  )
   return messages.flatMap(message => {
     if (message.status !== 'done' || message.contentTruncated || message.role === 'system')
       return []
@@ -32,7 +49,9 @@ function shareExcerpts(messages: WorkbenchMessage[]): TaskIssueShareDraft['excer
       message.role === 'assistant'
         ? getAssistantRenderProjection(message).content.trim()
         : getUserMessageTextProjection(message.content).content.trim()
-    return content ? [{ id: message.id, role: message.role, content }] : []
+    const itemId = message.runtimeItemId ?? message.runtimeDisplayItems?.[0]?.id
+    const order = positions.get(`${message.turnId}:${itemId}`)
+    return content ? [{ id: message.id, role: message.role, content, order }] : []
   })
 }
 
@@ -52,7 +71,8 @@ const SHARE_HISTORY_PAGE_SIZE = 1
 function readShareHistory(read: ReadSharePage) {
   async function first() {
     const page = await read({ afterCursor: 'start', limit: 1 })
-    const excerpt = shareExcerpts(projectRuntimePaneTranscript(page).messages)[0]
+    const transcript = projectRuntimePaneTranscript(page)
+    const excerpt = shareExcerpts(transcript.messages, transcript.turns)[0]
     if (page.historyUnavailable || (!excerpt && page.hasMoreAfter))
       throw new Error('The beginning of the conversation is unavailable')
     return excerpt
@@ -65,8 +85,9 @@ function readShareHistory(read: ReadSharePage) {
       (page.hasMoreBefore && (!page.beforeCursor || page.beforeCursor === cursor))
     )
       throw new Error('Conversation history is unavailable')
+    const transcript = projectRuntimePaneTranscript(page)
     return {
-      excerpts: shareExcerpts(projectRuntimePaneTranscript(page).messages),
+      excerpts: shareExcerpts(transcript.messages, transcript.turns),
       beforeCursor: page.hasMoreBefore ? (page.beforeCursor ?? null) : null,
     }
   }
@@ -82,15 +103,25 @@ function openIssue(issue: SharedIssueTarget) {
   )
 }
 
+export interface TaskIssueShareHandle {
+  openSelection(text: string, context: ConversationShareSelectionContext): void
+}
+
 export function TaskIssueShare({
+  shareRef,
+  toolbarContainer,
   title,
   messages,
+  turns,
   address,
   readWorkspaceFileChunk,
   readHistoryPage,
 }: {
+  toolbarContainer: HTMLElement | null
+  shareRef?: Ref<TaskIssueShareHandle>
   title: string
   messages: WorkbenchMessage[]
+  turns: RuntimeConversationTurn[]
   address: { deviceId: string; taskId: string; workspacePath?: string | null }
   readWorkspaceFileChunk?: ReadWorkspaceFileChunk
   readHistoryPage?(
@@ -126,138 +157,173 @@ export function TaskIssueShare({
     historyRequest.current = null
     setDraft(null)
   }
+  const openShare = (selection?: string, context?: ConversationShareSelectionContext) => {
+    setLinksOpen(false)
+    setProjectIssue(null)
+    const sourceTitle = Array.from(title.trim()).slice(0, 255).join('')
+    const sourceMessages = context?.messages ?? messages
+    const sourceTurns = context?.turns ?? turns
+    const excerpts = shareExcerpts(messages, turns)
+    const sourceExcerpts =
+      sourceMessages === messages && sourceTurns === turns
+        ? excerpts
+        : shareExcerpts(sourceMessages, sourceTurns)
+    const sourceMessage =
+      context && sourceMessages.find(message => message.id === context.messageId)
+    const selectedExcerpt =
+      selection && context && sourceMessage
+        ? {
+            excerpt: {
+              id: sourceMessage.id,
+              role: sourceMessage.role,
+              content: context.content,
+              order: sourceExcerpts.find(excerpt => excerpt.id === sourceMessage.id)?.order,
+            },
+            start: context.start,
+            end: context.start + selection.length,
+            followingMessageIds: sourceMessages
+              .slice(sourceMessages.indexOf(sourceMessage) + 1)
+              .map(message => message.id),
+          }
+        : undefined
+    historyRequest.current?.abort()
+    const requestId = crypto.randomUUID()
+    const controller = new AbortController()
+    historyRequest.current = controller
+    const history = readHistoryPage
+      ? readShareHistory(request => readHistoryPage(request, controller.signal))
+      : undefined
+    const last = excerpts.slice(-1)
+    setDraft({
+      requestId,
+      source: { device_id: address.deviceId, task_id: address.taskId, title: sourceTitle },
+      title: sourceTitle,
+      conversationFiles: taskIssueConversationFiles(
+        messages,
+        address,
+        readWorkspaceFileChunk,
+        fetchAttachment
+      ),
+      excerpts: history ? last : excerpts,
+      history,
+      selectedExcerpt,
+    })
+    void history?.first().then(
+      first =>
+        setDraft(current =>
+          current?.requestId === requestId && first && first.id !== last[0]?.id
+            ? { ...current, excerpts: [first, ...last] }
+            : current
+        ),
+      () =>
+        setDraft(current =>
+          current?.requestId === requestId ? { ...current, historyUnavailable: true } : current
+        )
+    )
+  }
+  useImperativeHandle(shareRef, () => ({ openSelection: openShare }))
   const label = t('taskIssueShare.action')
 
   return (
-    <div className="relative ml-auto flex shrink-0 items-center gap-1">
-      {(Boolean(links?.length) || linksError !== undefined || linksOpen) && (
-        <>
-          <Button
-            variant="unstyled"
-            showTooltip={false}
-            type="button"
-            ref={linksTrigger}
-            data-testid="task-linked-issues"
-            aria-expanded={linksOpen}
-            title={t('taskIssueShare.linkedIssues')}
-            aria-label={t('taskIssueShare.linkedIssues')}
-            onClick={() => setLinksOpen(open => !open)}
-            className="flex h-11 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted md:h-7"
-          >
-            <Link2 className="h-4 w-4" aria-hidden="true" />
-            {links?.length || null}
-          </Button>
-          {linksOpen && (
-            <ul className="absolute right-0 top-full z-popover mt-1 grid w-64 gap-1 rounded-lg border border-border bg-popover p-1 shadow-md">
-              {(linksError !== undefined || linksLoading) && (
-                <li className="flex items-center justify-between gap-2 px-2 py-1 text-sm">
-                  <span role="status">
-                    {t(
-                      linksLoading ? 'independentIssues.loading' : 'taskIssueShare.linksUnavailable'
+    <>
+      {toolbarContainer &&
+        createPortal(
+          <div className="relative ml-auto flex shrink-0 items-center gap-1">
+            {(Boolean(links?.length) || linksError !== undefined || linksOpen) && (
+              <>
+                <Button
+                  variant="unstyled"
+                  showTooltip={false}
+                  type="button"
+                  ref={linksTrigger}
+                  data-testid="task-linked-issues"
+                  aria-expanded={linksOpen}
+                  title={t('taskIssueShare.linkedIssues')}
+                  aria-label={t('taskIssueShare.linkedIssues')}
+                  onClick={() => setLinksOpen(open => !open)}
+                  className="flex h-11 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted md:h-7"
+                >
+                  <Link2 className="h-4 w-4" aria-hidden="true" />
+                  {links?.length || null}
+                </Button>
+                {linksOpen && (
+                  <ul className="absolute right-0 top-full z-popover mt-1 grid w-64 gap-1 rounded-lg border border-border bg-popover p-1 shadow-md">
+                    {(linksError !== undefined || linksLoading) && (
+                      <li className="flex items-center justify-between gap-2 px-2 py-1 text-sm">
+                        <span role="status">
+                          {t(
+                            linksLoading
+                              ? 'independentIssues.loading'
+                              : 'taskIssueShare.linksUnavailable'
+                          )}
+                        </span>
+                        <Button
+                          variant="unstyled"
+                          showTooltip={false}
+                          type="button"
+                          data-testid="task-linked-issues-retry"
+                          className="min-h-8 rounded px-2 hover:bg-muted"
+                          aria-disabled={linksLoading}
+                          onClick={event => {
+                            if (linksLoading) return
+                            if (document.activeElement === event.currentTarget)
+                              linksTrigger.current?.focus()
+                            void refreshLinks()
+                          }}
+                        >
+                          {t('independentIssues.retry')}
+                        </Button>
+                      </li>
                     )}
-                  </span>
-                  <Button
-                    variant="unstyled"
-                    showTooltip={false}
-                    type="button"
-                    data-testid="task-linked-issues-retry"
-                    className="min-h-8 rounded px-2 hover:bg-muted"
-                    aria-disabled={linksLoading}
-                    onClick={event => {
-                      if (linksLoading) return
-                      if (document.activeElement === event.currentTarget)
-                        linksTrigger.current?.focus()
-                      void refreshLinks()
-                    }}
-                  >
-                    {t('independentIssues.retry')}
-                  </Button>
-                </li>
-              )}
-              {!linksLoading && linksError === undefined && !links?.length && (
-                <li role="status" className="px-2 py-1 text-sm text-text-secondary">
-                  {t('taskIssueShare.noLinkedIssues')}
-                </li>
-              )}
-              {links?.map(issue => (
-                <li key={issue.id}>
-                  <Button
-                    variant="unstyled"
-                    showTooltip={false}
-                    type="button"
-                    data-testid={`task-linked-issue-${issue.id}`}
-                    className="min-h-11 w-full truncate rounded px-2 text-left text-sm hover:bg-muted md:min-h-8"
-                    title={issue.title}
-                    onClick={() => {
-                      if (openIssue(issue)) setLinksOpen(false)
-                    }}
-                  >
-                    {issue.title}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
-      <Button
-        variant="unstyled"
-        showTooltip={false}
-        type="button"
-        data-testid="task-share-as-issue"
-        aria-label={label}
-        title={label}
-        className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:h-7"
-        onClick={() => {
-          setLinksOpen(false)
-          setProjectIssue(null)
-          const sourceTitle = Array.from(title.trim()).slice(0, 255).join('')
-          const excerpts = shareExcerpts(messages)
-          historyRequest.current?.abort()
-          const requestId = crypto.randomUUID()
-          const controller = new AbortController()
-          historyRequest.current = controller
-          const history = readHistoryPage
-            ? readShareHistory(request => readHistoryPage(request, controller.signal))
-            : undefined
-          const last = excerpts.slice(-1)
-          setDraft({
-            requestId,
-            source: { device_id: address.deviceId, task_id: address.taskId, title: sourceTitle },
-            title: sourceTitle,
-            conversationFiles: taskIssueConversationFiles(
-              messages,
-              address,
-              readWorkspaceFileChunk,
-              fetchAttachment
-            ),
-            excerpts: history ? last : excerpts,
-            history,
-          })
-          void history?.first().then(
-            first =>
-              setDraft(current =>
-                current?.requestId === requestId && first && first.id !== last[0]?.id
-                  ? { ...current, excerpts: [first, ...last] }
-                  : current
-              ),
-            () =>
-              setDraft(current =>
-                current?.requestId === requestId
-                  ? { ...current, historyUnavailable: true }
-                  : current
-              )
-          )
-        }}
-      >
-        <Share2 className="h-4 w-4" aria-hidden="true" />
-        <span
-          data-testid="task-share-as-issue-label"
-          className="hidden [@container_(min-width:480px)]:inline"
-        >
-          {label}
-        </span>
-      </Button>
+                    {!linksLoading && linksError === undefined && !links?.length && (
+                      <li role="status" className="px-2 py-1 text-sm text-text-secondary">
+                        {t('taskIssueShare.noLinkedIssues')}
+                      </li>
+                    )}
+                    {links?.map(issue => (
+                      <li key={issue.id}>
+                        <Button
+                          variant="unstyled"
+                          showTooltip={false}
+                          type="button"
+                          data-testid={`task-linked-issue-${issue.id}`}
+                          className="min-h-11 w-full truncate rounded px-2 text-left text-sm hover:bg-muted md:min-h-8"
+                          title={issue.title}
+                          onClick={() => {
+                            if (openIssue(issue)) setLinksOpen(false)
+                          }}
+                        >
+                          {issue.title}
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+            <Button
+              variant="unstyled"
+              showTooltip={false}
+              type="button"
+              data-testid="task-share-as-issue"
+              aria-label={label}
+              title={label}
+              className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:h-7"
+              onClick={() => {
+                openShare()
+              }}
+            >
+              <Share2 className="h-4 w-4" aria-hidden="true" />
+              <span
+                data-testid="task-share-as-issue-label"
+                className="hidden [@container_(min-width:480px)]:inline"
+              >
+                {label}
+              </span>
+            </Button>
+          </div>,
+          toolbarContainer
+        )}
       {draft && !apis && (
         <CloudConnectionDialog
           open
@@ -311,6 +377,6 @@ export function TaskIssueShare({
             : undefined
         }
       />
-    </div>
+    </>
   )
 }

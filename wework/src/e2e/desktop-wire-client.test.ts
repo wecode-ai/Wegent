@@ -40,6 +40,7 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
       '.github/scripts/node-async-resource-diagnostics.mjs',
       'wework/electron/src/runtime/release-preparation-progress.mjs',
       'wework/scripts/ai-verify-devtools.mjs',
+      'wework/scripts/desktop-control-queue.mjs',
       'wework/scripts/lib/extract-runtime-archive.mjs',
       'wework/scripts/lib/windows-native-runtime.mjs',
       'packages/chat-core/package.json',

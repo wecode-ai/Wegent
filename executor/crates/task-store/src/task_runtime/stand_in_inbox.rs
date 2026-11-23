@@ -669,6 +669,7 @@ impl LocalTaskStore {
         record["workId"] = work["id"].clone();
         record["source"] = source.clone();
         record["dispatchStatus"] = json!(status);
+        record["dispatchFailureCount"] = json!(0);
         if status == "needs_grouping" {
             work["error"] = json!(error);
         }
@@ -676,6 +677,14 @@ impl LocalTaskStore {
         refresh_work(&connection, &mut work)?;
         connection.commit()?;
         Ok(work)
+    }
+
+    pub const STAND_IN_DISPATCH_FAILURE_LIMIT: u64 = 3;
+
+    pub fn stand_in_dispatch_failure_count(record: &Value, legacy_failed: bool) -> u64 {
+        record["dispatchFailureCount"]
+            .as_u64()
+            .unwrap_or(u64::from(legacy_failed))
     }
 
     pub fn update_stand_in_dispatch(
@@ -695,6 +704,15 @@ impl LocalTaskStore {
             let mut message = read_record(&connection, id, "stand_in_message")?
                 .filter(|message| message["userId"] == user && message["workId"] == work["id"])
                 .ok_or(TaskRuntimeError::TaskNotFound)?;
+            let failures = Self::stand_in_dispatch_failure_count(
+                &message,
+                message["dispatchStatus"] == "failed",
+            );
+            if status == "failed" {
+                message["dispatchFailureCount"] = json!(failures.saturating_add(1));
+            } else if message["dispatchStatus"] == "failed" {
+                message["dispatchFailureCount"] = json!(failures);
+            }
             message["dispatchStatus"] = json!(status);
             write_record(&connection, id, "stand_in_message", &message)?;
         }
@@ -766,10 +784,17 @@ impl LocalTaskStore {
             }
             message["workId"] = destination["id"].clone();
             // Organization never authorizes replay of completed effects.
-            if matches!(
-                message["dispatchStatus"].as_str(),
-                Some("pending" | "needs_grouping" | "failed")
-            ) {
+            let failed = message["dispatchStatus"] == "failed";
+            let failures = Self::stand_in_dispatch_failure_count(message, failed);
+            if failed {
+                message["dispatchFailureCount"] = json!(failures);
+            }
+            if failures < Self::STAND_IN_DISPATCH_FAILURE_LIMIT
+                && matches!(
+                    message["dispatchStatus"].as_str(),
+                    Some("pending" | "needs_grouping" | "failed")
+                )
+            {
                 message["dispatchStatus"] = json!("pending");
             }
             write_record(&connection, id, "stand_in_message", message)?;
@@ -784,6 +809,45 @@ impl LocalTaskStore {
 #[cfg(test)]
 mod organization_tests {
     use super::*;
+
+    #[test]
+    fn dispatch_failures_survive_reopening_and_regrouping() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "review",
+                &json!({"id":"group","profile":"owner","kind":"group"}),
+                &json!({"id":"one","text":"First"}),
+                None,
+            )
+            .unwrap();
+        let id = work["id"].as_str().unwrap();
+        let record = store.stand_in_messages(7, id).unwrap().remove(0);
+        let ids = [record["recordId"].as_str().unwrap().to_owned()];
+        for _ in 0..LocalTaskStore::STAND_IN_DISPATCH_FAILURE_LIMIT {
+            store
+                .update_stand_in_dispatch(7, id, &ids, "sending", None)
+                .unwrap();
+            store
+                .update_stand_in_dispatch(7, id, &ids, "failed", Some("Dispatch failed"))
+                .unwrap();
+        }
+        drop(store);
+        let store = LocalTaskStore::open(path).unwrap();
+        let destination = store.organize_stand_in_messages(7, id, &ids, None).unwrap();
+        let message = store
+            .stand_in_messages(7, destination["id"].as_str().unwrap())
+            .unwrap()
+            .remove(0);
+        assert_eq!(message["dispatchStatus"], "failed");
+        assert_eq!(
+            message["dispatchFailureCount"],
+            LocalTaskStore::STAND_IN_DISPATCH_FAILURE_LIMIT
+        );
+    }
 
     #[test]
     fn batch_merge_and_undo_are_atomic_preserve_effects_and_isolate_owners() {

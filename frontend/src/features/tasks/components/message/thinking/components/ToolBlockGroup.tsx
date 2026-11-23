@@ -30,8 +30,7 @@ export const ToolBlockGroup = memo(function ToolBlockGroup({
   const { t } = useTranslation('chat')
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
 
-  // Check if task is still running
-  const isRunning = isRunningStatus(taskStatus)
+  const isRunning = taskStatus !== 'CANCELLED' && (isRunningStatus(taskStatus) || !group.isComplete)
 
   // Count total tools
   const totalCount = group.tools.length
@@ -50,14 +49,14 @@ export const ToolBlockGroup = memo(function ToolBlockGroup({
             <ChevronRight className="h-4 w-4 text-text-muted" />
           )}
           <span className="text-sm font-medium text-text-primary">
-            {isRunning || !group.isComplete
+            {isRunning
               ? t('chat:messages.using_tools') || 'Using Tools'
               : t('chat:messages.used_tools') || 'Used Tools'}{' '}
             ({totalCount} {t('chat:messages.times') || 'times'})
           </span>
         </div>
         {/* Show status badge only when running - pulse animation on text */}
-        {(isRunning || !group.isComplete) && (
+        {isRunning && (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">
             <span className="animate-pulse">{t('thinking.running') || '执行中'}</span>
           </span>
@@ -68,7 +67,12 @@ export const ToolBlockGroup = memo(function ToolBlockGroup({
       {isExpanded && (
         <div className="p-3 space-y-2 bg-base">
           {group.tools.map(tool => (
-            <ToolBlock key={tool.toolUseId} tool={tool} defaultExpanded={false} />
+            <ToolBlock
+              key={tool.toolUseId}
+              tool={tool}
+              defaultExpanded={false}
+              taskStatus={taskStatus}
+            />
           ))}
         </div>
       )}

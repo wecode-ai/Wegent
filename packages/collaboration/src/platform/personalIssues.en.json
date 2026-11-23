@@ -149,6 +149,8 @@
     "do_myself": "Me"
   },
   "taskIssueShare": {
+    "shareWholeMessage": "Share whole message",
+    "shareSelectionOnly": "Share selected text only",
     "noLinkedIssues": "No linked issues",
     "fileUnavailable": "Could not read “{{name}}”. Deselect it or restore the file and try again.",
     "participantsOptional": "Participants (optional)",

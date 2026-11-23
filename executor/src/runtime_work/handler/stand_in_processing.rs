@@ -544,6 +544,12 @@ impl RuntimeWorkRpcHandler {
                 }
                 Ok(None) => continue,
                 Err(error) => {
+                    if action["kind"] == "create_work" {
+                        let failures =
+                            LocalTaskStore::stand_in_dispatch_failure_count(&action, false)
+                                .saturating_add(1);
+                        action["dispatchFailureCount"] = json!(failures);
+                    }
                     action["status"] = json!("failed");
                     action["error"] = json!({"code":error.code,"message":error.message});
                 }

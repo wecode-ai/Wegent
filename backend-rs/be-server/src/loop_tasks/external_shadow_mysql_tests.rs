@@ -139,10 +139,7 @@ impl Fixture {
         .await
         .unwrap();
         mysql
-            .execute(
-                include_str!("../../tests/fixtures/loop_items_nullable.sql"),
-                (),
-            )
+            .execute(wegent_backend_test_support::LOOP_ITEMS_NULLABLE_SQL, ())
             .await
             .unwrap();
         for sql in include_str!("../../tests/fixtures/assignment_access.sql")

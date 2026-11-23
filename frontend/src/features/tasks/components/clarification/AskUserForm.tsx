@@ -20,6 +20,8 @@ import type {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useOptionalTaskSession } from '../../session/TaskSession'
 import type { UnifiedMessage } from '@wegent/chat-core'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
+import { interactiveFormDeadline } from '../chat/interactiveFormPending'
 
 const EMPTY_MESSAGES = new Map<string, UnifiedMessage>()
 
@@ -246,8 +248,8 @@ export default function AskUserForm({
     return messages[currentMessageIndex]?.status === 'streaming'
   }, [messages, currentMessageIndex])
 
-  // Combined read-only state: either streaming (task not done yet) or already submitted
-  const isReadOnly = isCurrentMessageStreaming || isSubmitted
+  const isExpired = useDeadlineExpired(interactiveFormDeadline(data.tool_output))
+  const isReadOnly = isCurrentMessageStreaming || isSubmitted || isExpired
 
   // Initialize default values (auto-select recommended options)
   useEffect(() => {
@@ -475,8 +477,12 @@ export default function AskUserForm({
         })}
       </div>
 
-      {/* Submit button - hidden after submitted, disabled while streaming */}
-      {!isSubmitted && (
+      {isExpired && !isSubmitted && (
+        <p className="text-sm text-muted-foreground" role="status">
+          {t('ask_user_question.expired')}
+        </p>
+      )}
+      {!isSubmitted && !isExpired && (
         <div className="flex justify-end pt-2">
           <Button
             variant="secondary"

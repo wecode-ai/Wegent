@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
-import { CLOUD_DEVICE_ID, fetchJson, selectE2EModel } from '../modules/shared.mjs'
+import {
+  CLOUD_DEVICE_ID,
+  fetchJson,
+  selectE2EModel,
+  waitForLogPattern,
+} from '../modules/shared.mjs'
 import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 import {
   assistantMessage,
@@ -38,7 +43,13 @@ const DEPENDENCY_WORK = [
 const VERIFIED_WINDOW = '周四 14:00 开放窗口。'
 const DEPENDENCY_FINAL = '值班从周四 14:00 开始。'
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelResponseTimeoutMs }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  modelResponseTimeoutMs,
+  resultDir,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+}) {
   let cloud
   let roleId
   let taskId
@@ -217,6 +228,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       })
       const userId = user.id
       const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
+      await waitForLogPattern(join(resultDir, 'executor.log'), /local backend registered /, {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       const { deviceId } = await rpc('runtime.stand_in.device_identity', {})
       const active = await rpc('runtime.stand_in.binding', {
         operation: 'bind',

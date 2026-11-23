@@ -44,7 +44,15 @@ export type TaskIssueShareDraft = {
   requestId: string
   source: SharedIssueSource
   conversationFiles: TaskIssueConversationFile[]
-  excerpts: Pick<WorkbenchMessage, 'id' | 'role' | 'content'>[]
+  excerpts: (Pick<WorkbenchMessage, 'id' | 'role' | 'content'> & {
+    order?: [turnPosition: number, itemPosition: number]
+  })[]
+  selectedExcerpt?: {
+    excerpt: TaskIssueShareDraft['excerpts'][number]
+    start: number
+    end: number
+    followingMessageIds: string[]
+  }
   historyUnavailable?: boolean
   history?: {
     earlier(cursor?: string): Promise<{
@@ -99,7 +107,10 @@ export interface IndependentIssueInput {
 
 export async function resolveMovedPersonalIssue(
   reason: unknown,
-  readProjectIssue: () => Promise<{ cloud_project_id?: string | number | null; can_view_detail?: boolean }>
+  readProjectIssue: () => Promise<{
+    cloud_project_id?: string | number | null
+    can_view_detail?: boolean
+  }>
 ): Promise<string | null> {
   if (!(reason instanceof Error) || !('status' in reason) || reason.status !== 404) return null
   const issue = await readProjectIssue().catch(() => null)
@@ -247,4 +258,6 @@ export function createPersonalIssuesApi<Project>(client: PersonalIssueTransport)
     },
   }
 }
-export type PersonalIssuesApi<Project = unknown> = ReturnType<typeof createPersonalIssuesApi<Project>>
+export type PersonalIssuesApi<Project = unknown> = ReturnType<
+  typeof createPersonalIssuesApi<Project>
+>

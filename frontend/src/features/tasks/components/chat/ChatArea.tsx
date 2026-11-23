@@ -67,6 +67,7 @@ import { useChatStatusIndicator } from '@/features/tasks/hooks/useChatStatusIndi
 import {
   buildInteractiveFormCancellation,
   findPendingInteractiveForm,
+  isInteractiveFormExpired,
 } from './interactiveFormPending'
 import {
   parseQuickLaunchIntent,
@@ -1941,7 +1942,11 @@ function ChatAreaContent({
       if (!trimmedMessage && !hasAttachments && !chatState.shouldHideChatInput) return
       markTeamSelectionInitialized(selectedTeam)
 
-      if (pendingInteractiveForm && !options?.interactiveFormAnswer) {
+      if (
+        pendingInteractiveForm &&
+        !isInteractiveFormExpired(pendingInteractiveForm) &&
+        !options?.interactiveFormAnswer
+      ) {
         setPendingFormReplacementMessage(trimmedMessage)
         setPendingFormReplacementOptions(options ?? null)
         setIsPendingFormReplacementOpen(true)
@@ -2069,18 +2074,19 @@ function ChatAreaContent({
 
     setIsPendingFormReplacementConfirming(true)
     try {
-      const cancellation = buildInteractiveFormCancellation(
-        pendingInteractiveForm,
-        pendingFormReplacementMessage
-      )
+      const cancellation = isInteractiveFormExpired(pendingInteractiveForm)
+        ? null
+        : buildInteractiveFormCancellation(pendingInteractiveForm, pendingFormReplacementMessage)
       const options = pendingFormReplacementOptions
       setPendingFormReplacementMessage(null)
       setPendingFormReplacementOptions(null)
       setIsPendingFormReplacementOpen(false)
-      await streamHandlers.handleSendMessage(cancellation.message, {
-        ...options,
-        interactiveFormAnswer: cancellation.answer,
-      })
+      await streamHandlers.handleSendMessage(
+        cancellation?.message ?? pendingFormReplacementMessage,
+        cancellation
+          ? { ...options, interactiveFormAnswer: cancellation.answer }
+          : (options ?? undefined)
+      )
     } finally {
       setIsPendingFormReplacementConfirming(false)
     }

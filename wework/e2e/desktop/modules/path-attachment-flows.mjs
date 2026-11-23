@@ -31,6 +31,7 @@ import {
   mkdir,
   pathToFileURL,
   resultDir,
+  selectE2EModel,
   withTimeout,
   writeFile,
 } from './shared.mjs'
@@ -126,9 +127,17 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
   await control.command('fill', composerSelector, { value: '' })
   const oversizedPaste = 'test '.repeat(5001)
   await control.command('pasteText', composerSelector, { value: oversizedPaste })
-  await control.command('waitFor', '[data-testid="attachment-text-open-button"]', {
+  const textPreviewTrigger = '[data-testid="attachment-text-open-button"]'
+  await control.command('waitFor', textPreviewTrigger, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    await control.command('getComputedStyleValue', textPreviewTrigger, {
+      value: 'background-color',
+    }),
+    'rgba(0, 0, 0, 0)',
+    'The preview button must leave the pasted text visible'
+  )
   assert.equal(
     JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)).testIds.includes(
       'show-text-attachment-button'
@@ -425,9 +434,17 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     mimeType: 'text/csv',
     value: Buffer.from('test,value\none,two\n').toString('base64'),
   })
-  await control.command('waitFor', '[data-testid="attachment-document-preview-button"]', {
+  const documentPreviewTrigger = '[data-testid="attachment-document-preview-button"]'
+  await control.command('waitFor', documentPreviewTrigger, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    await control.command('getComputedStyleValue', documentPreviewTrigger, {
+      value: 'background-color',
+    }),
+    'rgba(0, 0, 0, 0)',
+    'The preview button must leave the pasted document icon and filename visible'
+  )
   await control.command('fill', composerSelector, { value: 'test retained attachment draft' })
   await control.command('pasteFile', composerSelector, {
     filename: 'test-empty-file.txt',
@@ -453,7 +470,7 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     'Dismissing a failed attachment removed the valid attachment'
   )
   await control.command('fill', composerSelector, { value: '' })
-  await control.command('click', '[data-testid="attachment-document-preview-button"]')
+  await control.command('click', documentPreviewTrigger)
   await control.command('waitFor', '[data-testid="composer-attachment-preview-panel"]', {
     text: 'test-preview.csv',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -587,6 +604,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await selectE2EModel(control)
   await control.command('fill', composerSelector, {
     value: taskPrompt,
   })

@@ -413,7 +413,7 @@ async fn create_assistant_dispatch(
                 if let Some(notification) =
                     crate::background_jobs::project::notifications::direct_human_on(
                         tx,
-                        state,
+                        &state.mysql,
                         &locked_project,
                         &assigned_root,
                         manager,
@@ -541,7 +541,7 @@ async fn create_assistant_dispatch(
                     if let Some(notification) =
                         crate::background_jobs::project::notifications::direct_human_on(
                             tx,
-                            state,
+                            &state.mysql,
                             &locked_project,
                             &assigned,
                             assignment.user_id,
@@ -654,7 +654,7 @@ async fn enqueue_wegent_agent(
     })?;
     let owner = issue.assignee_user_id;
     let agent = crate::background_jobs::project::authority::agent(
-        state,
+        &state.mysql,
         &project.id,
         agent_id,
         owner,
@@ -713,7 +713,7 @@ async fn enqueue_wegent_agent(
     .await?;
     crate::background_jobs::project::notifications::execution_on(
         tx,
-        state,
+        &state.mysql,
         project,
         issue,
         execution.id,

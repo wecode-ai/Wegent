@@ -5,10 +5,15 @@ use sha2::{Digest, Sha256};
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
 use connections::validate_connections;
-pub use connections::{stand_in_collection_connection, stand_in_connection};
+pub use connections::{
+    connection_memory_scope, issue_training_source, source_collection_namespace, source_namespace,
+    source_provider, stand_in_collection_connection, stand_in_connection, training_memory_scope,
+    training_source_granted,
+};
 
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
 pub const EMAIL_PROVIDER: &str = "@wegent/dsh-connection-runtime/email";
+pub const ISSUE_COMMENTS_PROVIDER: &str = "wework/issue-comments";
 
 fn implicit_primary() -> Value {
     json!({"enabled":true,"prompt":"","preferences":""})
@@ -145,41 +150,6 @@ fn migrate_identity_connections(identity: &mut Value) -> Result<bool, TaskRuntim
     }
     object.insert("connections".into(), legacy);
     Ok(true)
-}
-
-pub fn source_provider(source: &Value) -> &str {
-    // Historical work/source records retain their identity and are read without re-keying.
-    source["providerId"].as_str().unwrap_or(DINGTALK_PROVIDER)
-}
-
-pub fn source_namespace(source: &Value) -> Value {
-    if source_provider(source) == DINGTALK_PROVIDER {
-        source["profile"].clone()
-    } else {
-        let mut namespace =
-            json!({"providerId":source_provider(source),"profile":source["profile"]});
-        if let Some(transport) = source.get("transport") {
-            namespace["transport"] = transport.clone();
-        }
-        namespace
-    }
-}
-
-/// Collection partitions are provider-owned cursors, never resource permissions.
-pub fn source_collection_namespace(source: &Value) -> Value {
-    let namespace = source_namespace(source);
-    match source.get("collectionKey") {
-        Some(key) => json!({"source":namespace,"collectionKey":key}),
-        None => namespace,
-    }
-}
-
-pub fn connection_memory_scope(source: &Value) -> Value {
-    if source_provider(source) == DINGTALK_PROVIDER {
-        json!({"kind":"dingtalk","id":source["id"],"profile":source["profile"],"conversationKind":source["kind"]})
-    } else {
-        json!({"kind":"connection","providerId":source_provider(source),"id":source["id"],"profile":source["profile"],"resourceKind":source["kind"]})
-    }
 }
 
 pub(super) fn empty_role(id: &str, device: &str) -> Value {
@@ -375,6 +345,9 @@ pub(super) fn validate_role(role: &Value) -> Result<(), TaskRuntimeError> {
         || role["name"].as_str().is_none()
         || role["prompt"].as_str().is_none()
         || role["enabled"].as_bool().is_none()
+        || role
+            .get("selfLearningEnabled")
+            .is_some_and(|v| !v.is_boolean())
         || !role["executionDeviceId"]
             .as_str()
             .is_some_and(|id| !id.trim().is_empty())
@@ -550,6 +523,16 @@ impl LocalTaskStore {
         Ok(settings)
     }
 
+    /// Preserve configured role routes while authenticating learning and delivery evidence.
+    pub fn configured_personal_stand_in(
+        &self,
+        user: i64,
+        device: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        let connection = self.connection()?;
+        read_personal(&connection, user, device)
+    }
+
     /// Reconcile execution-owned identity and permission migrations only when needed.
     pub fn personal_stand_in(&self, user: i64, device: &str) -> Result<Value, TaskRuntimeError> {
         let mut connection = self.connection()?;
@@ -673,6 +656,9 @@ impl LocalTaskStore {
         }
         if let Some(primary) = value.get("primary") {
             if !primary["enabled"].is_boolean()
+                || primary
+                    .get("selfLearningEnabled")
+                    .is_some_and(|v| !v.is_boolean())
                 || !primary["prompt"].is_string()
                 || !primary["preferences"].is_string()
             {
@@ -717,6 +703,11 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
+        super::stand_in_ghost_proposals::retire_stale_candidates(
+            connection,
+            user,
+            &value["version"],
+        )?;
         super::stand_in_inbox::queue_removed_git_connections(connection, user, &previous, &value)?;
         super::stand_in_processing::update_processing_configuration(
             connection, user, &previous, &value,

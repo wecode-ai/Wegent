@@ -1,6 +1,11 @@
 //! Exercise the production metric cohort against MySQL's DATETIME(0) rounding.
 use super::*;
 
+fn at(hour: i64) -> NaiveDateTime {
+    DateTime::from_timestamp(1_800_000_000 + hour * 3600, 0)
+        .unwrap()
+        .naive_utc()
+}
 #[tokio::test]
 #[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
 async fn precise_completion_window_survives_second_precision_storage() -> anyhow::Result<()> {
@@ -16,7 +21,7 @@ async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
             (),
         )
         .await?;
-    let edge = tests::at(168);
+    let edge = at(168);
     let recent = edge + Duration::milliseconds(800);
     let as_of = edge + Duration::milliseconds(900);
     let before_window = recent - Duration::days(7);
@@ -59,7 +64,7 @@ async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
                     id,
                     parent,
                     status,
-                    tests::at(0),
+                    at(0),
                     completed,
                     deleted,
                     Json(

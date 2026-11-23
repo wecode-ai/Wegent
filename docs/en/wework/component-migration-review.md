@@ -419,7 +419,7 @@ Source conclusion: Composes list/detail workspaces, ConfirmDialog and MobileDraw
 
 Remediation: no separately confirmed source defect recorded for this file; delegated boundaries are not accepted by implication.
 
-Entry/caller: [wework/src/features/todo/StandInConnectionSettings.tsx](../../../wework/src/features/todo/StandInConnectionSettings.tsx)；[wework/src/features/todo/StandInScheduleDialog.tsx](../../../wework/src/features/todo/StandInScheduleDialog.tsx)
+Entry/caller: [wework/src/features/todo/StandInConnectionSettings.tsx](../../../wework/src/features/todo/StandInConnectionSettings.tsx)
 
 Dependencies/delegation: hooks: `useAuth`, `useWorkbench`, `useTranslation`；Permission-related identifiers (not authorization evidence): `userId`；Delegates: `MobileSettingsPage`, `ConnectionsSettingsPage`, `ConfirmDialog`, `DesktopSidebar`, `Menu`, `MobileDrawer`, `DesktopCollapsedSidebarToggle`, `AutomationListPane`, `AutomationDetailWorkspace`, `AutomationEmptyState`, `WorkbenchSearchDialog`
 
@@ -457,7 +457,7 @@ Remediation: no separately confirmed source defect recorded for this file; deleg
 
 Entry/caller: [wework/src/features/todo/PersonalStandInWorkspace.tsx](../../../wework/src/features/todo/PersonalStandInWorkspace.tsx)
 
-Dependencies/delegation: hooks: `useTranslation`, `useContext`；Permission-related identifiers (not authorization evidence): `userId`, `isConnected`, `readOnly`；Delegates: `StandInProposalCard`, `StandInSettingsEntry`, `UserRound`, `StandInIcon`, `Tooltip`, `SlidersHorizontal`, `StandInConversation`, `StandInDetailsPopover`, `TemporaryChatPanel`, `StandInScheduleDialog`, `StandInReviewDialog`, `StandInWorkList`, `StandInProcessingNotice`, `DialogSurface`, `StandInMemoryPanel`, `StandInPrimaryProfile`, `StandInSettingsPage`, `StandInOnboarding`
+Dependencies/delegation: hooks: `useTranslation`, `useContext`；Permission-related identifiers (not authorization evidence): `userId`, `isConnected`, `readOnly`；Delegates: `StandInProposalCard`, `StandInSettingsEntry`, `UserRound`, `StandInIcon`, `Tooltip`, `SlidersHorizontal`, `StandInConversation`, `StandInDetailsPopover`, `TemporaryChatPanel`, `StandInReviewDialog`, `StandInWorkList`, `StandInProcessingNotice`, `DialogSurface`, `StandInMemoryPanel`, `StandInPrimaryProfile`, `StandInSettingsPage`, `StandInOnboarding`
 
 ### 34. StandInSettingsPage
 

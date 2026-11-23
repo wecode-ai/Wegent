@@ -14,7 +14,7 @@ import {
   resolveStoredWorkspacePaths,
 } from '@/lib/workspace-path-transfer'
 import { applyWorkspacePathTransfer } from '@/components/chat/composer/composerPathTransfer'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import {
   prepareSelectedTextDrag,
   type SelectedTextChangedDetail,
@@ -307,9 +307,18 @@ export function createSystemDragSelectionSource() {
           enabled = preferences.systemDragEnabled
       })
       .catch(error => console.error('[Wework] Failed to read system drag preferences:', error))
+    let retry: ReturnType<typeof setTimeout> | undefined
     let pending = false
+    let dirty = false
     const takePending = async () => {
-      if (pending || disposed || !observed()) return
+      if (disposed || !observed()) return
+      if (pending) {
+        dirty = true
+        return
+      }
+      dirty = false
+      clearTimeout(retry)
+      retry = undefined
       pending = true
       try {
         const payloads = await invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending', {
@@ -317,16 +326,23 @@ export function createSystemDragSelectionSource() {
         })
         if (!disposed && observed()) payloads.forEach(handlePayload)
       } catch (error) {
-        if (!disposed) reportTransferError(error)
+        if (!disposed) {
+          reportTransferError(error)
+          retry = setTimeout(() => void takePending(), 1_000)
+        }
       } finally {
         pending = false
+        if (dirty) void takePending()
       }
     }
+    const unsubscribe = subscribeDesktopHostEvents(event => {
+      if (event.type === 'systemDrag.pending') void takePending()
+    })
     void takePending()
-    const poll = window.setInterval(() => void takePending(), 250)
     stop = () => {
       disposed = true
-      window.clearInterval(poll)
+      clearTimeout(retry)
+      unsubscribe()
       frames.forEach(frame => cancelAnimationFrame(frame))
       frames.clear()
       timers.forEach(timer => clearTimeout(timer))

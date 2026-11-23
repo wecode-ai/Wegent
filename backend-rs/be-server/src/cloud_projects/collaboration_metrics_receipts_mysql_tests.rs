@@ -1,5 +1,6 @@
 //! Replay the production receipt transaction and reads against isolated MySQL.
 use super::super::*;
+use brz_mysql::MysqlTransaction;
 use v2::{ContributionBasis, Evidence, Fact, Window};
 
 async fn append(
@@ -198,7 +199,7 @@ async fn receipt_uses_the_deployed_schema() -> anyhow::Result<()> {
         )?;
         let original = record("production-schema-review", "root");
         let barrier = tokio::sync::Barrier::new(2);
-        let concurrent = async || writers.with_transaction(async |mut tx| {
+        let concurrent = async || writers.with_transaction(async |tx| {
             // Establish both snapshots before either writer wins the Issue
             // lock. Replay must read the winner's committed receipt.
             let _: Vec<(String,)> = tx.fetch_all("SELECT id FROM loop_items WHERE id='root'", ()).await?;

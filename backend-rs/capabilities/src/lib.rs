@@ -23,6 +23,7 @@ pub mod shell_lookup;
 pub mod skills_unified;
 pub mod state;
 pub mod task_skills;
+pub mod user_cache;
 
 brz_http_server::registry!(
     dependencies(state: Arc<state::AppState>),

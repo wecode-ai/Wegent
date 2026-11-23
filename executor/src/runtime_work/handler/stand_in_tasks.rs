@@ -48,6 +48,9 @@ impl RuntimeWorkRpcHandler {
         ) {
             return self.memory_progress_operation(&identity, name, &args).await;
         }
+        if name == "save_training_case" {
+            return self.save_training_case(&identity, &args).await;
+        }
         if name == "remember_from_conversation" {
             return self.remember_from_conversation(&identity, &args).await;
         }

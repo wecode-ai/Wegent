@@ -3,9 +3,12 @@
 use super::super::loop_repository::LoopItemRepository;
 use super::super::{assignments::list_assignment_items, auth::FlexibleUser};
 use super::*;
+use brz_http_server::StatusCode;
+use brz_mysql::{FromMysqlRow, MysqlTransaction};
 use serde_json::{Value, json};
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
+use wegent_project_coordination::loop_tasks::assignment_events::active_events;
 
 #[derive(Clone, Copy)]
 enum Schema {
@@ -16,10 +19,7 @@ enum Schema {
 
 async fn seed(mysql: &MysqlService, schema: Schema) {
     mysql
-        .execute(
-            include_str!("../../tests/fixtures/loop_items_nullable.sql"),
-            (),
-        )
+        .execute(wegent_backend_test_support::LOOP_ITEMS_NULLABLE_SQL, ())
         .await
         .unwrap();
     let sentinel = !matches!(schema, Schema::Nullable);
@@ -173,7 +173,7 @@ async fn assert_listing_without_index_or_write_locks(mysql: &MysqlService) -> Va
     // A normal assignment writer owns these locks until the listing completes.
     let listing = mysql
         .with_transaction(async |tx| {
-            let _: Vec<IndexRow> = tx
+            let _: Vec<(String,)> = tx
                 .fetch_all(
                     "SELECT id FROM loop_items WHERE id = 'issue-1'
                      OR loop_item_id = 'issue-1' FOR UPDATE",

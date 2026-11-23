@@ -25,8 +25,11 @@ use wegent_terminal::RoomBinding as _;
 use super::callback_sequencer::{
     CallbackSequencer, InFlightRegistry, PublishSink, SequencedCallback,
 };
-use super::device_sync::{ArgsTuple, adapter_emit_job, run_rpc_worker};
-use super::runtime::{EXECUTOR_NAMESPACE, SocketEmitters, SocketRuntime, SocketRuntimeWorkers};
+use super::runtime::{
+    DEVICE_COMMAND_ACK_LIMITS, EXECUTOR_NAMESPACE, SocketEmitters, SocketRuntime,
+    SocketRuntimeWorkers,
+};
+use wegent_socket_adapter::redis_adapter::{ArgsTuple, adapter_emit_job, run_rpc_worker};
 
 use engineio_poll_client::{EventPacket, PollClient};
 use tokio::sync::Mutex as AsyncMutex;
@@ -587,6 +590,7 @@ fn install_capability_callbacks(
         Arc::new(AsyncMutex::new(rpc_jobs)),
         emitters,
         sequencer,
+        DEVICE_COMMAND_ACK_LIMITS,
     ));
     published
 }

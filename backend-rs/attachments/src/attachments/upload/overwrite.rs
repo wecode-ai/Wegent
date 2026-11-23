@@ -29,6 +29,7 @@ use std::sync::Arc;
 
 use brz_mysql::{MysqlError, MysqlResult, MysqlTransaction, MysqlValue, MysqlValueWriter};
 use serde_json::{Map, Value};
+use wegent_backend_persistence::request_sql::StatementArgs;
 
 use super::backend::StoreObjectRequest;
 use super::store::{OverwriteContextRow, refresh_context, type_data_json};
@@ -279,7 +280,7 @@ fn with_encryption(mut type_data: Map<String, Value>, encrypt: bool) -> Map<Stri
 /// here so the transaction boundaries stay identical.
 pub struct Preflush {
     pub sql: String,
-    pub params: Vec<Param>,
+    pub params: StatementArgs,
 }
 
 /// `_overwrite_attachment_impl`'s result: the refreshed row the caller renders

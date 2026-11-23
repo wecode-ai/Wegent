@@ -286,7 +286,7 @@ pub(super) async fn notify_on(
         .await?;
     let result = notifications::execution_on(
         tx,
-        app,
+        &app.mysql,
         &project,
         &issue,
         row.id,

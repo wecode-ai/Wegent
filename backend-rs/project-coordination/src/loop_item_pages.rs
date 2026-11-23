@@ -51,6 +51,7 @@ mod execution;
 mod page_cache;
 pub mod projection;
 mod provider;
+pub use provider::get_issue;
 
 use projection::{LoopItemResponse, issue_response};
 use provider::{ProviderError, request_issue_page};

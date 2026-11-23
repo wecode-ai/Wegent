@@ -96,6 +96,11 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.memory.list" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "list") })
             }
+            "runtime.stand_in.memory.rework_report" => boxed_rpc(move || async move {
+                let user = super::runtime_owner::runtime_user(&payload)?;
+                let role = super::stand_in_tasks::required(&payload, "roleId")?;
+                self.role_rework_report(user, role, None).await
+            }),
             "runtime.stand_in.memory.save" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "save") })
             }

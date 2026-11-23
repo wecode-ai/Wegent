@@ -1577,6 +1577,7 @@ impl RuntimeWorkRpcHandler {
             self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
             return;
         }
+        let witness = crate::task_runtime::mcp::begin_stand_in_turn_witness(&mut turn.request);
         let recovery_turn = turn.clone();
         let recovery_account = codex_accounts::quota_account_identity(&turn.request);
         let owner_input = turn
@@ -1673,6 +1674,7 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
+            let _witness = witness;
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let mut scheduled_turn_guard = ScheduledTurnGuard::new(
                 handler.clone(),
@@ -1803,6 +1805,10 @@ impl RuntimeWorkRpcHandler {
                     ) {
                         return;
                     }
+                    crate::task_runtime::mcp::observe_stand_in_turn_boundary(
+                        &active_turn_request,
+                        Some(&turn_id),
+                    );
                     active_turn_handler
                         .start_queue_run(&active_turn_local_task_id, &active_turn_request);
                     *callback_hook_turn
@@ -1895,7 +1901,12 @@ impl RuntimeWorkRpcHandler {
             let finished_turn_handler = handler.clone();
             let finished_turn_local_task_id = turn_local_task_id.clone();
             let finished_turn_presentation = Arc::clone(&pending_turn_presentation);
+            let finished_turn_request = request.clone();
             let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                crate::task_runtime::mcp::observe_stand_in_turn_boundary(
+                    &finished_turn_request,
+                    None,
+                );
                 *finished_turn_presentation
                     .lock()
                     .expect("turn presentation lock should not be poisoned") = None;
@@ -2460,6 +2471,17 @@ impl RuntimeWorkRpcHandler {
                 self.register_codex_thread_workspace_root(&thread_id, &event_request, false);
                 let response_item_id = turn.response_item_id;
                 let response_value_origin = turn.response_value_origin;
+                if response_value_origin == crate::agents::CodexResponseValueOrigin::Final
+                    && matches!(&turn.outcome, ExecutionOutcome::Completed {content} if !content.trim().is_empty())
+                {
+                    self.record_identity_completion(
+                        local_task_id,
+                        request,
+                        active_turn,
+                        response_item_id.as_deref(),
+                        turn.completed_at_ms,
+                    );
+                }
                 match turn.outcome {
                     ExecutionOutcome::Completed { .. }
                     | ExecutionOutcome::Cancelled { .. }

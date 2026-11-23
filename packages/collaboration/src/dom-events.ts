@@ -547,6 +547,7 @@ function observeElementGeometry(
   publish: (value: GeometrySnapshot) => void
 ) {
   let active = true
+  let frame: number | null = null
   const update = () => {
     if (!active) return
     publish({
@@ -574,8 +575,16 @@ function observeElementGeometry(
   return {
     nodes,
     update,
+    scheduleUpdate() {
+      if (frame !== null) return
+      frame = window.requestAnimationFrame(() => {
+        frame = null
+        update()
+      })
+    },
     stop() {
       active = false
+      if (frame !== null) window.cancelAnimationFrame(frame)
       observer?.disconnect()
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
@@ -611,8 +620,11 @@ export function useElementGeometry(
     ) {
       binding.current?.stop()
       binding.current = observeElementGeometry(nodes, publish)
+      binding.current.update()
+    } else {
+      // Repeated commits must not force layout between unrelated DOM writes.
+      binding.current.scheduleUpdate()
     }
-    binding.current.update()
   })
   useLayoutEffect(
     () => () => {
@@ -667,7 +679,11 @@ function observeElementTypography(
   const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
   resize?.observe(element)
   const mutation = typeof MutationObserver === 'undefined' ? null : new MutationObserver(update)
-  mutation?.observe(root, { attributes: true, attributeFilter: ['style', 'class'] })
+  const themeScope = element.closest('.collaboration-theme')
+  const styleChanges = { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] }
+  mutation?.observe(root, styleChanges)
+  mutation?.observe(element, styleChanges)
+  if (themeScope) mutation?.observe(themeScope, styleChanges)
   const fontsLoaded = () => {
     if (!active) return
     advanceFontRevision()
@@ -675,10 +691,10 @@ function observeElementTypography(
     queueMicrotask(update)
   }
   fonts?.addEventListener('loadingdone', fontsLoaded)
+  update()
   return {
     element,
     propertyKey: JSON.stringify(propertyNames),
-    update,
     stop() {
       active = false
       resize?.disconnect()
@@ -726,7 +742,6 @@ export function useElementTypography(
         publish
       )
     }
-    binding.current.update()
   })
   useLayoutEffect(
     () => () => {

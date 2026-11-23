@@ -171,14 +171,15 @@ export function ErrorCard({
   )
 
   const recommendationErrorType = errorType?.trim() || parsedError.type
+  const isAgentHomeBusy = parsedError.type === 'agent_home_busy'
 
   const recommendedModels = useMemo(
-    () => getRecommendedModels(recommendationErrorType),
-    [recommendationErrorType, getRecommendedModels]
+    () => (isAgentHomeBusy ? [] : getRecommendedModels(recommendationErrorType)),
+    [isAgentHomeBusy, recommendationErrorType, getRecommendedModels]
   )
 
   const showNewConversation = NEW_CONVERSATION_ERROR_TYPES.has(parsedError.type)
-  const showRetry = !!onRetry && !areRecommendationsLoading
+  const showRetry = !!onRetry && (isAgentHomeBusy || !areRecommendationsLoading)
 
   const hintKey = useMemo(() => {
     const key = ERROR_HINT_KEYS[parsedError.type]

@@ -24,10 +24,11 @@ use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, Redis, RedisResu
 mod persist_callback_lifecycle_tests;
 
 use self::persist_callback_lifecycle_tests::verify_terminal_callbacks;
-use super::{commit_subtask_running, mark_subtask_running, running_transition_statements};
+use super::{commit_subtask_running, mark_subtask_running};
 use crate::internal_callback::completion::{Completion, Tables};
 use crate::sql_test_support::mysql_pool_server;
 use crate::sql_test_support::mysql_rows::{MysqlRows, Value as MysqlValue};
+use wegent_execution_completion::persist::running_transition_statements;
 
 /// Deployment shard policy for the test: every `{{subtasks}}` template renders
 /// the recorded physical table. The production policy lives in the internal
@@ -190,9 +191,14 @@ async fn the_running_transition_locks_the_parent_task_on_its_shard_first() {
         // read fails and the transition stops before the contexts read and the
         // status write.
         assert!(
-            mark_subtask_running(&ctx, 801_406_538_674_541, 801_406_538_674_542, None)
-                .await
-                .is_err()
+            mark_subtask_running(
+                &ctx.storage(),
+                801_406_538_674_541,
+                801_406_538_674_542,
+                None
+            )
+            .await
+            .is_err()
         );
 
         stop.send(()).unwrap();
@@ -396,7 +402,7 @@ async fn verify_obsolete_dispatches(writer: &MysqlService, tables: Tables) -> an
     };
     assert!(
         super::persist_completed_result(
-            &ctx,
+            &ctx.storage(),
             12,
             43,
             "FAILED",
@@ -439,7 +445,7 @@ async fn verify_obsolete_dispatches(writer: &MysqlService, tables: Tables) -> an
         assert_eq!(rejected.status(), http::StatusCode::GONE);
         assert!(
             super::persist_completed_result(
-                &ctx,
+                &ctx.storage(),
                 12,
                 43,
                 "FAILED",
@@ -476,7 +482,7 @@ async fn verify_obsolete_dispatches(writer: &MysqlService, tables: Tables) -> an
     writer
         .execute("UPDATE subtasks SET status = 'CANCELLED' WHERE id = 43", ())
         .await?;
-    super::update_task_status(&ctx, 12, 43).await;
+    super::update_task_status(&ctx.storage(), 12, 43).await;
     let task: brz_mysql::Json<Value> = writer
         .fetch_one("SELECT json FROM tasks WHERE id = 12", ())
         .await?;

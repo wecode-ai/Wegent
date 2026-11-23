@@ -11,12 +11,14 @@ use sha2::{Digest, Sha256};
 
 use crate::board_snapshot::repository::BoardSnapshotRepository;
 use crate::delivery_storage;
-use crate::loop_item_attachments::{handler::require_item_view_access, repository::get_task_item};
 use crate::loop_node_storage;
 use crate::loop_tasks::{
     auth::FlexibleUser, http_error::HttpError, loop_repository::has_permission,
 };
 use crate::state::AppState;
+use wegent_project_coordination::loop_item_attachments::{
+    handler::require_item_view_access, repository::get_task_item,
+};
 
 #[cfg(test)]
 #[path = "delivery_update_tests.rs"]
@@ -229,7 +231,7 @@ async fn update_delivery(
         .await
         .map_err(HttpError::internal)?
         .ok_or_else(HttpError::todo_not_found)?;
-    require_item_view_access(state, &item, user.id).await?;
+    require_item_view_access(&state.mysql, &item, user.id).await?;
     let project_id = item
         .cloud_project_id
         .parse()

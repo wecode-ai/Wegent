@@ -39,9 +39,11 @@ none、unknown。阶段仅使用有明确证据的 validate/dispatch/prepare/mod
 
 三个进程累计 Counter 接入 Rust Backend 原有 /metrics：
 
-    wegent_chat_runs_total{outcome,entrypoint,shell,execution_mode}
-    wegent_chat_run_failures_total{error_category,error_code,stage,entrypoint,shell,execution_mode}
-    wegent_chat_requests_total{outcome,entrypoint}
+```text
+wegent_chat_runs_total{outcome,entrypoint,shell,execution_mode}
+wegent_chat_run_failures_total{error_category,error_code,stage,entrypoint,shell,execution_mode}
+wegent_chat_requests_total{outcome,entrypoint}
+```
 
 执行单位是一次助手执行尝试，多机器人分别计数。结果为 success/failed/cancelled，
 请求准入为 accepted/rejected。entrypoint 限定为 web/wework/api/automation/other；
@@ -69,13 +71,19 @@ JSON 解析。Wework API 以设备确认准入为 accepted，等待输出失败�
 
 每秒最终失败数：
 
-    sum by (error_category, error_code) (rate(wegent_chat_run_failures_total[5m]))
+```promql
+sum by (error_category, error_code) (rate(wegent_chat_run_failures_total[5m]))
+```
 
 失败率（分母排除主动取消）：
 
-    sum(rate(wegent_chat_runs_total{outcome="failed"}[5m]))
-    / clamp_min(sum(rate(wegent_chat_runs_total{outcome=~"success|failed"}[5m])), 1e-9)
+```promql
+sum(rate(wegent_chat_runs_total{outcome="failed"}[5m]))
+/ clamp_min(sum(rate(wegent_chat_runs_total{outcome=~"success|failed"}[5m])), 1e-9)
+```
 
 最近一小时的 Skills 管理冲突次数：
 
-    sum(increase(wegent_chat_run_failures_total{error_code="skills_unmanaged_entries"}[1h]))
+```promql
+sum(increase(wegent_chat_run_failures_total{error_code="skills_unmanaged_entries"}[1h]))
+```

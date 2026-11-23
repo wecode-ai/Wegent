@@ -41,12 +41,13 @@ export function createEmailSender(accounts, storage, network = { imapSession, sm
         JSON.stringify([source.profile, source.id, messageId, workId, to, subject, text, reply])
       )
       .digest('hex')
+    const outboundId = `<${key}@wework.local>`
     const previous = await storage.get(key)
     if (previous) {
-      if (previous === 'sent') return { status: 'sent', duplicate: true }
+      if (previous === 'sent') return { status: 'sent', messageId: outboundId, duplicate: true }
       throw mailError('email_send_unknown')
     }
-    const mail = { from: account.email, to, subject, text, messageId: `<${key}@wework.local>` }
+    const mail = { from: account.email, to, subject, text, messageId: outboundId }
     if (reply) {
       const [validity, uid] = messageId.split(':')
       if (!/^\d+$/.test(validity) || !/^\d+$/.test(uid)) throw mailError()
@@ -78,7 +79,11 @@ export function createEmailSender(accounts, storage, network = { imapSession, sm
       if (result.rejected?.length || result.accepted?.length !== 1)
         throw mailError('email_send_unknown')
       await storage.set(key, 'sent')
-      return { status: 'sent' }
+      return {
+        status: 'sent',
+        messageId: mail.messageId,
+        ...(mail.inReplyTo && { inReplyTo: mail.inReplyTo }),
+      }
     } catch (error) {
       if (
         [
