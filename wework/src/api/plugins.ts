@@ -23,7 +23,7 @@ import type {
   PluginSubmissionInitResponse,
 } from '@/types/api'
 import { sha256Hex } from './fileHash'
-import type { HttpClient } from './http'
+import { ApiError, type HttpClient } from './http'
 import { resolveApiUrl } from './resolveApiUrl'
 import { readInstalledPluginsForUninstall, uninstallCloudPlugin } from './pluginUninstall'
 
@@ -105,6 +105,8 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
     const normalized = deviceId?.trim()
     return normalized ? `?device_id=${encodeURIComponent(normalized)}` : ''
   }
+  const requestMarketplaceInstall = (id: string | number, query: string) =>
+    client.post<PluginMarketplaceInstallResponse>(`/plugins/marketplace/${id}/install${query}`)
   const initSubmission = async (
     data: PluginSubmissionInitRequest
   ): Promise<PluginSubmissionInitResponse> => {
@@ -183,11 +185,18 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client.get(`/plugins/marketplace${suffix}`)
     },
-    installMarketplacePlugin(
+    installMarketplacePlugin(id: string | number, deviceId?: string) {
+      return requestMarketplaceInstall(id, deviceQuery(deviceId))
+    },
+    installMarketplacePluginForAccount(
       id: string | number,
-      deviceId?: string
-    ): Promise<PluginMarketplaceInstallResponse> {
-      return client.post(`/plugins/marketplace/${id}/install${deviceQuery(deviceId)}`)
+      releaseId?: number,
+      restoreDeleted = false
+    ) {
+      const query = new URLSearchParams()
+      if (releaseId != null) query.set('release_id', String(releaseId))
+      if (restoreDeleted) query.set('restore_deleted', 'true')
+      return requestMarketplaceInstall(id, query.size ? `?${query}` : '')
     },
     updateMarketplacePlugin(
       installedId: string | number,
@@ -354,9 +363,13 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         | 'targets'
         | 'allowCopy'
         | 'releaseNotes'
-      >
+        | 'privateFirstInstall'
+        | 'restoreDeleted'
+      >,
+      requireCurrent?: () => void
     ): Promise<PluginSubmissionCompleteResponse> {
       const sha256 = await sha256Hex(file)
+      requireCurrent?.()
       const initialized = await initSubmission({
         ...metadata,
         filename: file.name,
@@ -364,6 +377,14 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         sizeBytes: file.size,
       })
       try {
+        requireCurrent?.()
+        if (metadata.privateFirstInstall && initialized.privateFirstInstall !== true) {
+          throw new ApiError(
+            'The server did not confirm first private plugin publication',
+            409,
+            'PRIVATE_FIRST_INSTALL_UNSUPPORTED'
+          )
+        }
         const uploadTransport = globalThis.fetch.bind(globalThis)
         const upload = await uploadTransport(initialized.uploadUrl, {
           method: 'PUT',
@@ -371,6 +392,7 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
           body: file,
         })
         if (!upload.ok) throw new Error(`Plugin upload failed with HTTP ${upload.status}`)
+        requireCurrent?.()
         return await client.post<PluginSubmissionCompleteResponse>(
           `/plugins/submissions/${initialized.submissionId}/complete`
         )

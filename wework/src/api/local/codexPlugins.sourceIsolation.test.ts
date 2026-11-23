@@ -35,6 +35,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   ensureBundledPluginMarketplaceRegistered: async () => {},
   getKnownLocalExecutorDeviceId: () => mocks.deviceId,
   getInitializedBundledPluginMarketplace: () => mocks.bundled,
+  resumeBundledPluginUpdates: () => {},
 }))
 
 describe('local plugin source isolation', () => {
@@ -84,6 +85,128 @@ describe('local plugin source isolation', () => {
       throw new Error(`Unexpected source ${source}`)
     })
   })
+
+  test('installs a disk-only personal plugin using its marketplace manifest', async () => {
+    const api = createLocalCodexPluginApi()
+    const [diskItem] = await listPersonalMarketplacePluginsFromDisk()
+    const original = mocks.request.getMockImplementation()!
+    mocks.request.mockImplementation(async (method, params) => {
+      if (method === 'codex.app_server_request' && params.method === 'plugin/install') {
+        if (params.params.marketplacePath !== '/personal/.agents/plugins/marketplace.json')
+          throw new Error('failed to read marketplace file: Is a directory')
+        return {}
+      }
+      if (method === 'codex.app_server_request' && params.method === 'plugin/read')
+        return { plugin: { summary: marketplace.plugins[0] } }
+      if (method === 'executor.plugins.manifest.read') return {}
+      return original(method, params)
+    })
+
+    const onCommit = vi.fn()
+    await expect(api.installAvailablePlugin(diskItem!, onCommit)).resolves.toMatchObject({
+      spec: { source: { pluginKey: 'personal-tool' } },
+    })
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith({
+      pluginName: 'personal-tool',
+      marketplacePath: '/personal',
+    })
+  })
+
+  test.each([false, true])(
+    'reports an author source commit after its observer leaves only when committed=%s',
+    async localCommitted => {
+      const api = createLocalCodexPluginApi()
+      const [diskItem] = await listPersonalMarketplacePluginsFromDisk()
+      const native = Promise.withResolvers<{ localCommitted: boolean }>()
+      const dispatched = vi.fn()
+      const onCommit = vi.fn()
+      let current = true
+      const original = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation((method, params) => {
+        if (method === 'executor.plugins.links.list')
+          return Promise.resolve([{ localPluginName: 'personal-tool', cloudPluginId: 17 }])
+        if (method === 'runtime.codex.plugin.install_local_first') {
+          dispatched()
+          return native.promise
+        }
+        return original(method, params)
+      })
+      const install = api.installPersonalPluginSource(
+        {
+          ...diskItem!,
+          id: 17,
+          accessRole: 'owner',
+          localPersonalSource: { pluginName: 'personal-tool', marketplacePath: '/personal' },
+        },
+        () => current,
+        onCommit
+      )
+      const rejected = expect(install).rejects.toThrow(
+        localCommitted ? 'Plugin account changed' : 'did not commit'
+      )
+      await vi.waitFor(() => expect(dispatched).toHaveBeenCalledOnce())
+      current = false
+      native.resolve({ localCommitted })
+      await rejected
+      expect(onCommit.mock.calls).toEqual(
+        localCommitted
+          ? [
+              [
+                expect.objectContaining({
+                  pluginName: 'personal-tool',
+                  marketplacePath: '/personal',
+                }),
+              ],
+            ]
+          : []
+      )
+    }
+  )
+
+  test.each([false, true])(
+    'passes the existing-release link guard to Native when device changed=%s',
+    async deviceChanged => {
+      const api = createLocalCodexPluginApi()
+      const { items } = await api.listInstalledPlugins({ requireComplete: true })
+      const plugin = items.find(item => item.spec.source.pluginKey === 'personal-tool')!
+      const originalRequest = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation(async (method, params) => {
+        if (method === 'executor.plugins.links.link') return null
+        return originalRequest(method, params)
+      })
+      const migrate = vi.spyOn(api, 'ensureCreatedPluginInWeworkPersonal')
+      if (deviceChanged) mocks.deviceId = 'device-b'
+      const link = api.linkPersonalPluginRelease(plugin, 17, 42, {
+        isCurrent: () => mocks.deviceId === 'device-a',
+        accountInstall: 'keepRelease',
+      })
+      if (deviceChanged) {
+        await expect(link).rejects.toThrow('Plugin account changed')
+      } else {
+        await link
+      }
+      expect(migrate).not.toHaveBeenCalled()
+      const writes = mocks.request.mock.calls.filter(
+        ([method]) => method === 'executor.plugins.links.link'
+      )
+      expect(writes).toEqual(
+        !deviceChanged
+          ? [
+              [
+                'executor.plugins.links.link',
+                {
+                  marketplacePath: '/personal',
+                  localPluginName: 'personal-tool',
+                  cloudPluginId: 17,
+                  cloudReleaseId: 42,
+                  accountInstall: 'keepRelease',
+                },
+              ],
+            ]
+          : []
+      )
+    }
+  )
 
   function consumeSnapshot(state: LocalCodexPluginsState, expected: string[]) {
     expected = [...expected].sort()

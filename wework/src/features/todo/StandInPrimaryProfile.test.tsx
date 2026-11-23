@@ -67,12 +67,17 @@ test('a model change keeps the unified instructions for a profile without learni
   expect(screen.getByTestId('stand-in-preferences')).toHaveValue(
     'Ask for evidence\n\nPrivate context'
   )
+  const environment = screen.getByTestId('stand-in-primary-execution-toggle')
+  expect(environment).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
+  fireEvent.click(environment)
   fireEvent.click(screen.getByTestId('model-selector-button'))
   const modelOption = `model-option-${runnerModelKey(model)}`
   if (!screen.queryByTestId(modelOption)) {
     fireEvent.click(await screen.findByTestId('model-group-codex-provider:fixture'))
   }
   fireEvent.click(await screen.findByTestId(modelOption))
+  fireEvent.click(environment)
   expect(save()).toMatchObject({
     prompt: '',
     preferences: 'Ask for evidence\n\nPrivate context',

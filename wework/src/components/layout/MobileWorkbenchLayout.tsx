@@ -48,7 +48,7 @@ import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowLeftRight, Bot, Menu } from 'lucide-react'
 import { memo, useCallback, useRef, useState } from 'react'
-import { BufferedChatInput } from './BufferedChatInput'
+import { ScopedDraftChatInput } from './BufferedChatInput'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
@@ -175,6 +175,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsBusy = paneSession.status.isBusy
+  const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const runtimeTaskSummary = findRuntimeTask(state.runtimeWork, currentRuntimeTask)
   const currentRuntimeUsesCodex =
@@ -539,10 +540,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         ) : null
                       }
                     >
-                      <BufferedChatInput
-                        value={paneSession.input}
-                        onChange={paneSession.setInput}
-                        onDraftEdit={paneSession.clearError}
+                      <ScopedDraftChatInput
+                        draftStore={paneSession.draftStore}
+                        draftScope={paneSession.scopeKey}
+                        writeDraft={paneSession.setInputForScope}
+                        onDraftEdit={paneSession.onDraftEdit}
                         onSubmit={submitPaneInput}
                         disabled={composerDisabled}
                         submitDisabled={paneSession.status.isSubmitting}
@@ -558,6 +560,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         guidanceMessages={paneGuidanceMessages}
                         codeComments={paneSession.codeCommentContexts}
                         isStreaming={paneIsBusy}
+                        showPauseButton={showPauseButton}
                         onPause={() => void paneSession.pauseCurrentResponse()}
                         onCompactContext={
                           currentRuntimeUsesCodex
@@ -639,10 +642,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 compact
                 className="mb-2"
               />
-              <BufferedChatInput
-                value={paneSession.input}
-                onChange={paneSession.setInput}
-                onDraftEdit={paneSession.clearError}
+              <ScopedDraftChatInput
+                draftStore={paneSession.draftStore}
+                draftScope={paneSession.scopeKey}
+                writeDraft={paneSession.setInputForScope}
+                onDraftEdit={paneSession.onDraftEdit}
                 onSubmit={submitPaneInput}
                 disabled={composerDisabled}
                 submitDisabled={paneSession.status.isSubmitting}
@@ -658,6 +662,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsBusy}
+                showPauseButton={showPauseButton}
                 onPause={() => void paneSession.pauseCurrentResponse()}
                 onCompactContext={
                   currentRuntimeUsesCodex ? () => void paneSession.compactContext() : undefined

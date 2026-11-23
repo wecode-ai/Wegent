@@ -45,21 +45,13 @@ export function createPaneCoreCommands(sessionOwner: PaneCommandContext) {
 
   const scopedSetInput = (value: string) => {
     const { inputScopeKey, setInputForScope } = sessionOwner.frame
-    const { setInputRevision } = sessionOwner.actions
-
-    setInputRevision(revision => revision + 1)
+    sessionOwner.live.inputRevision += 1
     setInputForScope(inputScopeKey, value)
     return { appliedSynchronously: true } as const
   }
 
   const replaceInputForScope = (scopeKey: string, value: string) => {
-    const { setInputForScope } = sessionOwner.frame
-    const { setInputRevision, setReplaceDraftKey } = sessionOwner.actions
-
-    setInputForScope(scopeKey, value)
-    if (!sessionOwner.live.mounted || sessionOwner.live.activeInputScope !== scopeKey) return
-    setInputRevision(revision => revision + 1)
-    setReplaceDraftKey(key => key + 1)
+    sessionOwner.frame.projectChat.replaceInputForScope(scopeKey, value)
   }
 
   const replaceInput = (value: string) => {

@@ -55,6 +55,7 @@ import {
 import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
+import { ownedPersonalPluginSourceKey } from './workspace/personalPluginCloudInstall'
 
 export type PluginManagementTab = 'codex' | 'core-dsh' | 'marketplaces'
 interface SourceOptions {
@@ -412,7 +413,9 @@ export function createPluginManagementSource({
       })
       return
     }
+    const marketplaceItem = findMarketplaceItemForInstalled(plugin, snapshot.marketplaceItems)
     void uninstallPluginIdentities(plugin.raw, id, snapshot.currentDeviceId || undefined, {
+      personalSourceKey: ownedPersonalPluginSourceKey(marketplaceItem),
       readLocalInstalled: () =>
         localPluginApi.listInstalledPlugins({ refresh: true, requireComplete: true }),
       readCloudInstalled: () => cloudPluginApi.readInstalledPluginsForUninstall(),
@@ -424,7 +427,6 @@ export function createPluginManagementSource({
     })
       .then(outcome => {
         if (!isCurrent()) return
-        const marketplaceItem = findMarketplaceItemForInstalled(plugin, snapshot.marketplaceItems)
         removePluginMarketplaceInstallation(cacheKey, {
           installedIds: [id, plugin.id, linkedCloudInstalledPluginId(plugin.raw)],
           marketplaceItemIds: [

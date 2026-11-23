@@ -52,6 +52,23 @@ describe('runtimeWorkSync', () => {
     dispose?.()
   })
 
+  test('refreshes other open tabs without reloading the tab that created the task', async () => {
+    getDesktopWindowLabelMock.mockReturnValue('main')
+    const source = vi.fn().mockResolvedValue(undefined)
+    const other = vi.fn().mockResolvedValue(undefined)
+    const disposeSource = await installMainRuntimeWorkChangedListener(source, 'board')
+    const disposeOther = await installMainRuntimeWorkChangedListener(other, 'task')
+
+    try {
+      await notifyMainRuntimeWorkChanged({ deviceId: 'local-device', taskId: 'task-1' }, 'board')
+      expect(other).toHaveBeenCalledOnce()
+      expect(source).not.toHaveBeenCalled()
+    } finally {
+      disposeSource?.()
+      disposeOther?.()
+    }
+  })
+
   test('does not install the refresh listener in a popout window', () => {
     getDesktopWindowLabelMock.mockReturnValue('popout-window')
 

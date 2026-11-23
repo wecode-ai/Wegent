@@ -16,6 +16,8 @@ import type { IssueHomeOwner } from './issueHomeOwners'
 import type { CollaborationPlatformHostAdapter } from './types'
 import type { PlatformMessages } from './platformMessages'
 
+const subscribeLocalDraft = () => () => {}
+
 export function IssueHomeLauncher({
   draft,
   messages,
@@ -52,7 +54,12 @@ export function IssueHomeLauncher({
   renderTaskComposer?: CollaborationPlatformHostAdapter['renderIssueComposer']
 }) {
   const [localContent, setLocalContent] = useState('')
-  const content = draft?.value ?? localContent
+  const readContent = () => draft?.value ?? localContent
+  const content = useSyncExternalStore(
+    draft?.subscribe ?? subscribeLocalDraft,
+    readContent,
+    readContent
+  )
   const contentRevision = draft?.getRevision()
   const setContent = draft?.onChange ?? setLocalContent
   const composerRef = useRef<ComposerInputHandle>(null)

@@ -45,9 +45,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       compactRuntimePaneTask,
       currentRuntimeTask,
       goalDraftActive,
-      input,
-      inputRevision,
-      sharedInputRevision,
+      getInput,
       getInputRevisionForScope,
       inputScopeKey,
       lifecycleStore,
@@ -79,7 +77,9 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
     const { captureAttachments } = attachmentState
     const { getDraftEditVersion } = sessionOwner.commands
 
+    const input = getInput()
     const submittedInput = (inputOverride ?? input).trim()
+    const sharedInputRevision = getInputRevisionForScope(inputScopeKey)
     const submittedDraftEditVersion = options.draftEditVersion ?? getDraftEditVersion()
     const restoreRevisions = new Map([
       [
@@ -90,13 +90,14 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         },
       ],
     ])
-    // Capture the rendered revision, before asynchronous submission preparation.
-    let submittedInputRevision = inputRevision
+    // Capture draft and pane ownership before asynchronous submission preparation.
+    let submittedInputRevision = sessionOwner.live.inputRevision
     let submittedSharedInputRevision = sharedInputRevision
     const ownsSubmittedInput = () =>
       getInputRevisionForScope(inputScopeKey) === submittedSharedInputRevision &&
       sessionOwner.live.inputRevision === submittedInputRevision &&
-      sessionOwner.live.activeInputScope === inputScopeKey
+      sessionOwner.live.activeInputScope === inputScopeKey &&
+      getDraftEditVersion() === submittedDraftEditVersion
     const clearSubmittedInput = () => {
       if (!sessionOwner.live.mounted || !ownsSubmittedInput()) return
       setInput('')

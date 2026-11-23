@@ -37,7 +37,7 @@ import { standInProcessingFailure } from './standInProcessingFailure'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
-import { StandInSettingsEntry } from './StandInSettingsLayout'
+import { StandInSettingsDisclosure, StandInSettingsEntry } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
@@ -332,29 +332,36 @@ export function StandInOverviewPage({
     processingFailure.message ??
     (processing.status?.awaitingUser ? t('standIn.processing.needs_input') : null)
   const management = (
-    <section data-testid="stand-in-settings-tools" className="mt-6 space-y-4">
+    <section data-testid="stand-in-settings-tools" className="mt-4 space-y-4">
       {active && deviceId && (profile === 'primary' || profile === 'role') && (
-        <StandInImConnections
-          services={props.services}
-          devices={props.devices}
-          deviceId={deviceId}
-          roleId={profile === 'role' ? roleId : undefined}
-          name={
-            profile === 'role' && role
-              ? standInRoleName(
-                  role,
-                  Math.max(0, roles.indexOf(role)),
-                  t('standIn.personal.default_role')
-                )
-              : t('standIn.title')
-          }
-          onOpenChange={setImDialogOpen}
-        />
+        <StandInSettingsDisclosure
+          testId="stand-in-im-channels"
+          label={t('standIn.im.title')}
+          description={t('standIn.im.settings_help')}
+        >
+          <StandInImConnections
+            services={props.services}
+            devices={props.devices}
+            deviceId={deviceId}
+            roleId={profile === 'role' ? roleId : undefined}
+            name={
+              profile === 'role' && role
+                ? standInRoleName(
+                    role,
+                    Math.max(0, roles.indexOf(role)),
+                    t('standIn.personal.default_role')
+                  )
+                : t('standIn.title')
+            }
+            onOpenChange={setImDialogOpen}
+          />
+        </StandInSettingsDisclosure>
       )}
       {api && saved && (
         <StandInSettingsEntry
           testId="stand-in-memory-open"
           label={t('standIn.memory.title')}
+          description={t('standIn.memory.settings_help')}
           disabled={false}
           onClick={() => leavePanel(() => openProfile('memory'))}
         />

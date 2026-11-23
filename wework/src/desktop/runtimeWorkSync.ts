@@ -11,14 +11,22 @@ export interface RuntimeWorkChangedPayload {
 }
 
 export async function notifyMainRuntimeWorkChanged(
-  payload: RuntimeWorkChangedPayload
+  payload: RuntimeWorkChangedPayload,
+  sourceTabId?: string
 ): Promise<void> {
-  if (getDesktopWindowLabel() !== 'popout-window') return
-  window.localStorage.setItem(RUNTIME_WORK_CHANGED_EVENT, JSON.stringify(payload))
+  const label = getDesktopWindowLabel()
+  if (label === 'popout-window') {
+    window.localStorage.setItem(RUNTIME_WORK_CHANGED_EVENT, JSON.stringify(payload))
+  } else if (label === MAIN_WINDOW_LABEL && sourceTabId) {
+    window.dispatchEvent(
+      new CustomEvent<string>(RUNTIME_WORK_CHANGED_EVENT, { detail: sourceTabId })
+    )
+  }
 }
 
 export function installMainRuntimeWorkChangedListener(
-  refreshRuntimeWork: () => Promise<void>
+  refreshRuntimeWork: () => Promise<void>,
+  tabId?: string
 ): Promise<UnlistenFn> | null {
   if (getDesktopWindowLabel() !== MAIN_WINDOW_LABEL) return null
   const onStorage = (event: StorageEvent) => {
@@ -32,6 +40,19 @@ export function installMainRuntimeWorkChangedListener(
       })
     })
   }
+  const onTabChange = (event: Event) => {
+    if (!tabId || (event as CustomEvent<string>).detail === tabId) return
+    void refreshRuntimeWork().catch(error => {
+      console.warn(
+        '[Wework] Failed to refresh runtime work after a task changed in another tab',
+        error
+      )
+    })
+  }
   window.addEventListener('storage', onStorage)
-  return Promise.resolve(() => window.removeEventListener('storage', onStorage))
+  window.addEventListener(RUNTIME_WORK_CHANGED_EVENT, onTabChange)
+  return Promise.resolve(() => {
+    window.removeEventListener('storage', onStorage)
+    window.removeEventListener(RUNTIME_WORK_CHANGED_EVENT, onTabChange)
+  })
 }

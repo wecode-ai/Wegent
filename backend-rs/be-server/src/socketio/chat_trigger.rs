@@ -50,6 +50,9 @@ pub(crate) struct ChatTurn {
     pub team_id: i64,
     pub bot_ids: Vec<i64>,
     pub new_session: bool,
+    /// Continuations may start a fresh native session when no authenticated
+    /// prior session evidence exists.
+    pub allow_new_session_fallback: bool,
     pub message: String,
     pub interactive_form_answer: Option<Value>,
     pub additional_skills: Vec<Value>,
@@ -447,6 +450,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
             executor_namespace: &turn.executor_namespace,
             executor_deleted: false,
             new_session: turn.new_session,
+            allow_new_session_fallback: turn.allow_new_session_fallback,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
             // `request_preparation.py:751-755`: the frontend client origin
@@ -667,6 +671,7 @@ mod tests {
             team_id: 6,
             bot_ids: vec![7],
             new_session: false,
+            allow_new_session_fallback: false,
             message: "hi".into(),
             interactive_form_answer: None,
             additional_skills: Vec::new(),

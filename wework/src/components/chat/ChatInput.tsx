@@ -148,7 +148,6 @@ export interface ProjectWorkControls {
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
   branchName?: string
   branchLoading?: boolean
-  onRefreshBranch?: () => Promise<void>
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
@@ -230,6 +229,7 @@ export interface ChatInputProps {
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
   contextHeader?: ReactNode
@@ -369,6 +369,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     onSelectExternalMention,
     onSelectCloudProject,
     isStreaming = false,
+    showPauseButton,
     onPause,
     showWorkspaceMenu,
     contextHeader,
@@ -800,6 +801,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             onListLocalSkills={controls.listLocalSkills}
             onListLocalApps={controls.listLocalApps}
             isStreaming={isStreaming}
+            showPauseButton={showPauseButton}
             onPause={onPause}
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
@@ -928,6 +930,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
           modelSelectorOverride={modelSelectorOverride}
           isStreaming={isStreaming}
+          showPauseButton={showPauseButton}
           onPause={onPause}
           projectPhrases={projectQuickPhrases}
         />

@@ -60,6 +60,7 @@ impl PersonalInstallation {
             local_plugin_name: "demo".into(),
             cloud_plugin_id: 7,
             cloud_release_id,
+            account_install: None,
         })
         .unwrap();
     }

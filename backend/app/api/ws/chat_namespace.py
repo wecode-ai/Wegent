@@ -1277,6 +1277,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                             user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
                             auth_token=auth_token,  # Pass original JWT token from WebSocket session
                             previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
+                            allow_new_session_fallback=bool(payload.task_id)
+                            and payload.action != "pipeline:confirm",
                         )
                     except Exception as e:
                         logger.exception(
@@ -1741,6 +1743,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             await trigger_ai_response_unified(
                 namespace=self,
                 **dispatch_args_or_error,
+                allow_new_session_fallback=True,
             )
         except Exception as e:
             from sqlalchemy.exc import SQLAlchemyError

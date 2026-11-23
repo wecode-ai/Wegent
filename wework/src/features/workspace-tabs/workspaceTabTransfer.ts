@@ -22,7 +22,8 @@ export function publishWorkspaceTabTransferState(
 }
 
 export function stageWorkspaceTabTransfer(tabId: string): void {
-  const state = liveStateByTabId.get(tabId)
+  const live = liveStateByTabId.get(tabId)
+  const state = live ? { ...live } : null
   diagnoseTransfer('stage', tabId, state ?? null)
   if (!state) return
   localStorage.setItem(transferStorageKey(tabId), JSON.stringify(state))
