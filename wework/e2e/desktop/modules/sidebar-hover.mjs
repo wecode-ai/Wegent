@@ -9,16 +9,10 @@ export async function verifyProjectMenuPointerInput(control, projectId, timeoutM
   await control.command('contextMenu', row)
   await control.command('waitFor', item, { timeoutMs })
 
-  await withProjectRenderer(async (client, target) => {
+  const point = await withProjectRenderer(async (client, target) => {
     const command = (method, params) => client({ action: 'command', target, method, params })
-    const mouse = (type, point, button = 'none') =>
-      command('Input.dispatchMouseEvent', {
-        ...point,
-        type,
-        button,
-        clickCount: button === 'none' ? 0 : 1,
-      })
-    await mouse('mouseMoved', { x: 1, y: 1 })
+    const movePointer = (x, y) => command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+    await movePointer(1, 1)
     const {
       result: {
         value: { x, y, hit, pointerEvents },
@@ -38,12 +32,12 @@ export async function verifyProjectMenuPointerInput(control, projectId, timeoutM
       hit,
       `Project menu item must receive pointer input outside the row (${pointerEvents})`
     )
-    await mouse('mouseMoved', { x, y })
+    await movePointer(x, y)
     await control.command('waitFor', `${item}[data-highlighted]`, { timeoutMs })
-    await mouse('mousePressed', { x, y }, 'left')
-    await mouse('mouseReleased', { x, y }, 'left')
+    return { x, y }
   })
 
+  await control.command('clickAt', 'body', { value: JSON.stringify(point) })
   await control.command('waitFor', dialog, { visible: true, timeoutMs })
   await control.command('click', '[data-testid="close-local-project-edit-dialog"]')
   await control.command('waitFor', dialog, { visible: false, timeoutMs })
