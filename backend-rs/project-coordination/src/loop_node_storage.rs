@@ -4,6 +4,8 @@ use std::collections::HashSet;
 
 use brz_mysql::{FromMysqlRow, MysqlResult, MysqlTransaction};
 
+pub const MYSQL_UNSET_DATETIME_SQL: &str = "'1970-01-01 00:00:01'";
+
 pub async fn required_columns<T: MysqlTransaction>(tx: &mut T) -> MysqlResult<HashSet<String>> {
     #[derive(FromMysqlRow)]
     struct RequiredColumn {
@@ -36,7 +38,7 @@ pub fn insert_sql(columns: &[&str], values: &[&str], required: &HashSet<String>)
         ),
         (
             "start_at due_at linked_at unlinked_at completed_at delivered_at deleted_at",
-            "'1970-01-01 00:00:01'",
+            MYSQL_UNSET_DATETIME_SQL,
         ),
         ("source_task_snapshot metadata", "'{}'"),
     ] {

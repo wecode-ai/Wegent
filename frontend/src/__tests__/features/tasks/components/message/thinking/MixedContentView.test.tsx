@@ -1100,6 +1100,25 @@ describe('MixedContentView', () => {
     expect(indicator.querySelectorAll('.animate-pulse')).toHaveLength(0)
   })
 
+  it('keeps existing reasoning visible without streaming after cancellation', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="CANCELLED"
+        theme="light"
+        blocks={[
+          { id: 'reasoning', type: 'thinking', content: 'Partial reasoning', status: 'streaming' },
+        ]}
+      />
+    )
+
+    const reasoning = screen.getByTestId('inline-thinking-block')
+    expect(reasoning).toHaveTextContent('Partial reasoning')
+    expect(reasoning).toHaveAttribute('data-streaming', 'false')
+    expect(screen.queryByTestId('streaming-wait-indicator')).not.toBeInTheDocument()
+  })
+
   it('renders guidance blocks in mixed content', () => {
     render(
       <MixedContentView

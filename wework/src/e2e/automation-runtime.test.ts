@@ -369,6 +369,28 @@ describe('Electron desktop E2E automation', () => {
     }
   )
 
+  test('dispatches each Runtime control command once even if a poll redelivers it', async () => {
+    const requestRuntime = vi.fn().mockResolvedValue(undefined)
+    const verificationWindow = window as Window & { weworkElectronVerification?: unknown }
+    verificationWindow.weworkElectronVerification = { requestRuntime }
+    const command = { id: 'runtime-request', action: 'fetchLocalRuntime', value: '{}' }
+    const polls = [command, command, { ...command, id: 'next-request' }]
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (!url.includes('/commands?')) return Response.json({})
+      const next = polls.shift()
+      return next ? Response.json(next) : new Response(null, { status: 410 })
+    })
+    try {
+      await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      expect(requestRuntime.mock.calls.map(([input]) => input.command.id)).toEqual([
+        'runtime-request',
+        'next-request',
+      ])
+    } finally {
+      delete verificationWindow.weworkElectronVerification
+    }
+  })
+
   test('delivers a Runtime result while Renderer ACK and IPC continuations are blocked', async () => {
     const nativeFetch = globalThis.fetch
     const control = new DesktopE2EServer('/workspace')

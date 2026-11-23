@@ -3,6 +3,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Automation } from '@/types/automation'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Bell,
@@ -16,6 +17,7 @@ import {
   Plus,
   Search,
 } from 'lucide-react'
+import { useRef } from 'react'
 import type { AutomationDraft } from './automationDraft'
 import { formatScheduleSummary } from './formatScheduleSummary'
 export type StatusFilter = 'all' | 'active' | 'paused'
@@ -26,6 +28,7 @@ export function AutomationListPane({
   query,
   statusFilter,
   selectedAutomationId,
+  rowFocusRequest,
   locale,
   loading,
   loadFailed = false,
@@ -45,6 +48,7 @@ export function AutomationListPane({
   query: string
   statusFilter: StatusFilter
   selectedAutomationId: string | null
+  rowFocusRequest?: { id: string }
   locale: string
   loading: boolean
   error: string | null
@@ -136,6 +140,7 @@ export function AutomationListPane({
                 automation={automation}
                 locale={locale}
                 selected={selectedAutomationId === automation.id}
+                focusRequest={rowFocusRequest?.id === automation.id ? rowFocusRequest : undefined}
                 onOpen={() => onSelect(automation)}
               />
             ))}
@@ -386,17 +391,22 @@ function AutomationRow({
   automation,
   locale,
   selected,
+  focusRequest,
   onOpen,
 }: {
   automation: Automation
   locale: string
   selected: boolean
+  focusRequest?: object
   onOpen: () => void
 }) {
   const { t } = useTranslation('common')
+  const trigger = useRef<HTMLButtonElement>(null)
+  useFocusRequest(trigger, focusRequest, { enabled: Boolean(focusRequest) })
   return (
     <article data-testid={`automation-row-${automation.id}`}>
       <ControlButton
+        ref={trigger}
         variant="unstyled"
         type="button"
         data-testid={`automation-open-${automation.id}`}

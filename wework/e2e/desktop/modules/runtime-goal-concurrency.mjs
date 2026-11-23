@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
-import { waitForCompletedRuntimeTaskThread } from './runtime-task-evidence.mjs'
+import { waitForCompletedOwnerTaskThread } from './runtime-task-evidence.mjs'
 import {
   assistantMessage,
   createSse,
@@ -51,6 +51,12 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
       const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
       assert.ok(model)
       const capacity = () => rpc(control, 'runtime.capacity.get', {})
+      const waitForCompletedThread = taskId =>
+        waitForCompletedOwnerTaskThread(
+          async id => (await rpc(control, 'runtime.tasks.get', { taskId: id })).task,
+          taskId,
+          uiTimeoutMs
+        )
       const waitRequests = count =>
         waitForValue(
           async () => requests,
@@ -123,8 +129,7 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
         await waitRequests(3)
         assert.deepEqual(requests, [taskIds[0], taskIds[0], taskIds[1]])
         releases[2]()
-        for (const taskId of taskIds)
-          await waitForCompletedRuntimeTaskThread(control, taskId, uiTimeoutMs)
+        for (const taskId of taskIds) await waitForCompletedThread(taskId)
         await waitForValue(
           capacity,
           state => state.active === 0 && state.queued === 0,
@@ -186,8 +191,7 @@ export function createGoalConcurrencyVerification({ workspacePath, uiTimeoutMs }
         )
         assert.deepEqual((await capacity()).categories.personal.active_task_ids, [taskIds[0]])
         releases[replacementIndex]()
-        for (const taskId of taskIds)
-          await waitForCompletedRuntimeTaskThread(control, taskId, uiTimeoutMs)
+        for (const taskId of taskIds) await waitForCompletedThread(taskId)
         await waitForValue(
           capacity,
           state => state.active === 0 && state.queued === 0,
