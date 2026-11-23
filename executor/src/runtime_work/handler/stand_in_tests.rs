@@ -281,7 +281,8 @@ async fn redirected_role_polls_only_existing_local_issue_work() {
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["executionDeviceId"] = json!("remote");
     settings["roles"][0]["collaboration"]["enabled"] = json!(true);
-    settings["roles"][0]["collaboration"]["policy"]["immediate"] = json!(false);
+    settings["roles"][0]["collaboration"]["policy"] =
+        json!({"automatic":true,"askBeforeAct":true,"immediate":false});
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     let project = store
         .create_project(serde_json::from_value(json!({"name":"Redirected local work"})).unwrap())
