@@ -7,7 +7,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { createTagDraft } from '@wegent/collaboration'
-import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
 import { dequal } from 'dequal'
 import type { ReactNode, Ref } from 'react'
@@ -23,6 +22,7 @@ import {
   StandInSettingsEntry,
   StandInSettingsError,
   StandInSettingsHeader,
+  StandInSettingsPanel,
 } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
@@ -162,19 +162,13 @@ export function StandInPrimaryProfile({
     else navigation.requestLeave(action)
   }
   const close = () => requestLeave(onClose)
-  const dialogRef = useRef<HTMLDivElement>(null)
   useImperativeHandle(ref, () => ({ requestClose: close, requestLeave }))
   return (
-    <DialogSurface
+    <StandInSettingsPanel
+      testId="stand-in-primary-profile"
       onClose={close}
       suspended={discard}
-      render={
-        <div
-          ref={dialogRef}
-          className={`flex h-full min-h-0 flex-col px-5 ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
-          data-testid="stand-in-primary-profile"
-        />
-      }
+      calendarOpen={calendarOpen}
     >
       <StandInSettingsHeader
         path={[
@@ -438,6 +432,6 @@ export function StandInPrimaryProfile({
           )}
         </StandInSettingsActions>
       )}
-    </DialogSurface>
+    </StandInSettingsPanel>
   )
 }

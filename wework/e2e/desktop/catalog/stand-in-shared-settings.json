@@ -1,0 +1,5 @@
+{
+  "order": 35100,
+  "scenario": "./scenarios/stand-in-shared-settings.scenario.mjs",
+  "scenarioOnly": true
+}
