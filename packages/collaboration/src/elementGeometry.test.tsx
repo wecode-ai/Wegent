@@ -2,7 +2,12 @@
 import { act, useRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { useElementGeometry, useElementTypography, type GeometrySnapshot } from './dom-events'
+import {
+  createBodyFlagRef,
+  useElementGeometry,
+  useElementTypography,
+  type GeometrySnapshot,
+} from './dom-events'
 
 let root: Root
 let container: HTMLDivElement
@@ -76,6 +81,16 @@ test('measures attached refs before display and retains native subscriptions acr
   expect(observers[0].observe).toHaveBeenCalledExactlyOnceWith(
     container.querySelector('[data-anchor]')
   )
+})
+
+test('retains the body flag until every overlapping surface unmounts', () => {
+  const ref = createBodyFlagRef('data-test-overlay')
+  act(() => root.render([<div key="first" ref={ref} />, <div key="second" ref={ref} />]))
+  expect(document.body.hasAttribute('data-test-overlay')).toBe(true)
+  act(() => root.render([<div key="second" ref={ref} />]))
+  expect(document.body.hasAttribute('data-test-overlay')).toBe(true)
+  act(() => root.render(null))
+  expect(document.body.hasAttribute('data-test-overlay')).toBe(false)
 })
 
 test('updates from observed geometry changes and captured descendant scrolls', () => {

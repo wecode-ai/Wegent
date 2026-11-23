@@ -9,10 +9,15 @@ import { readRawRequestBody } from '../e2e/desktop/modules/response-protocol.mjs
 import {
   ACTIVE_WORKBENCH_SELECTOR as pane,
   COMPOSER_SELECTOR as composer,
+  assistantMessage,
+  responseCompleted,
+  responseCreated,
   sse,
   streamingEvents,
   textDeltaEvents,
+  waitForBottom,
 } from '../e2e/desktop/modules/streaming-text-fixture.mjs'
+import { waitForWorkbenchDebugState } from '../e2e/desktop/modules/workspace-flows.mjs'
 import {
   createDevtoolsClient,
   startPerformanceRecording,
@@ -28,10 +33,12 @@ const idleSamples = 7
 const sampleIntervalMs = 1000
 const streamPieces = 120
 const streamIntervalMs = 100
+const historyPrompt = 'WEWORK_RENDERER_BENCHMARK_HISTORY_'
+const historyTaskCount = 16
 const limits = {
   idleCpuPercent: 10,
   singleTaskCpuPercent: 15,
-  peakObservedJsHeapBytes: 300_000_000,
+  peakObservedJsHeapBytes: 200_000_000,
 }
 
 async function rendererPids(control) {
@@ -114,7 +121,11 @@ async function emitStream(response) {
 
 export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
   const capture = process.env.WEWORK_RENDERER_PROFILE_CAPTURE === 'true'
+  const measureProcesses = process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
+  const measureHistory = process.env.WEWORK_RENDERER_PROFILE_HISTORY === 'true'
   const samples = []
+  const processSamples = []
+  let historyIndex = 0
   let ready = false
   let started = false
   let finished = false
@@ -123,13 +134,31 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
   return {
     async handleHttp(request, response, url) {
       if (
-        !ready ||
         started ||
         request.method !== 'POST' ||
         !['/v1/responses', '/responses'].includes(url.pathname)
       )
         return false
-      if (!(await readRawRequestBody(request)).includes(prompt)) return false
+      if (!ready && !historyIndex) return false
+      const body = await readRawRequestBody(request)
+      if (!ready && body.includes(historyPrompt + historyIndex)) {
+        const id = 'wework-profile-history-' + historyIndex
+        const content = Array.from(
+          { length: 72 },
+          (_, index) =>
+            `### Record ${index + 1}\n\nSaved result for task ${historyIndex}. This paragraph represents a persisted assistant turn.\n`
+        ).join('\n')
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(id),
+            assistantMessage(`${content}\n${id}`, 'final_answer'),
+            responseCompleted(id),
+          ])
+        )
+        return true
+      }
+      if (!ready || !body.includes(prompt)) return false
       if (started) return false
       started = true
       start = await cpuSnapshot(pids)
@@ -163,6 +192,18 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
           !entry.url.includes('startup-splash')
       )?.id
       assert.ok(target, 'The isolated main renderer was not found')
+      const windowState = async () => {
+        const { result } = await client({
+          action: 'command',
+          target,
+          method: 'Runtime.evaluate',
+          params: {
+            expression: '({ visibility: document.visibilityState, focused: document.hasFocus() })',
+            returnByValue: true,
+          },
+        })
+        return result.value
+      }
       const sampleHeap = async phase => {
         const { usedSize } = await client({
           action: 'command',
@@ -173,16 +214,67 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
         samples.push({ phase, at: Date.now(), usedSize })
       }
       const reportPath = join(resultDir, 'renderer-performance.json')
+      const sampleProcesses = async phase => {
+        const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+        processSamples.push({
+          phase,
+          at: snapshot.capturedAt,
+          incomplete: Boolean(snapshot.collectingSystemProcesses),
+          degradation: snapshot.degraded?.map(entry => entry.code) ?? [],
+          processes: snapshot.processes.map(process => ({
+            pid: process.pid,
+            parentPid: process.parentPid,
+            kind: process.kind,
+            source: process.source,
+            owner: process.owner?.key ?? null,
+            cpuPercent: process.cpuPercent,
+            memoryBytes: process.memoryBytes,
+            idleWakeupsPerSecond: process.idleWakeupsPerSecond,
+          })),
+        })
+      }
       let recording = false
       try {
+        if (measureHistory) {
+          const taskIds = new Set()
+          while (taskIds.size < historyTaskCount) {
+            historyIndex = taskIds.size + 1
+            await control.command('fill', composer, { value: historyPrompt + historyIndex })
+            await control.command('press', composer, { key: 'Enter' })
+            await observeText(
+              client,
+              target,
+              'wework-profile-history-' + historyIndex,
+              textTimeoutMs
+            )
+            const snapshot = await waitForWorkbenchDebugState(
+              control,
+              snapshot => {
+                const id = snapshot.pane?.currentRuntimeTask?.taskId
+                return id && !taskIds.has(id) && snapshot.pane?.status?.isBusy === false
+              },
+              `Historical task ${historyIndex} did not settle`,
+              textTimeoutMs
+            )
+            taskIds.add(snapshot.pane.currentRuntimeTask.taskId)
+            await sampleHeap('history')
+            await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]', {
+              visible: true,
+              timeoutMs: uiTimeoutMs,
+            })
+            await control.command('waitFor', composer, { visible: true, timeoutMs: uiTimeoutMs })
+          }
+        }
+        const before = await windowState()
         const idleStart = await cpuSnapshot(pids)
         for (let i = 0; i < idleSamples; i++) {
           await sampleHeap('idle')
           await setTimeout(sampleIntervalMs)
         }
         const idleEnd = await cpuSnapshot(pids)
+        if (measureProcesses) await sampleProcesses('idle')
         if (capture) {
-          await startPerformanceRecording(client, resultDir, target)
+          await startPerformanceRecording(client, resultDir, target, { styleInvalidations: true })
           recording = true
         }
 
@@ -192,6 +284,13 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
             while (!controller.signal.aborted) {
               await setTimeout(sampleIntervalMs, undefined, { signal: controller.signal })
               await sampleHeap('running')
+              if (
+                measureProcesses &&
+                start &&
+                performance.now() - start.time >= 6000 &&
+                processSamples.length === 1
+              )
+                await sampleProcesses('running')
             }
           } catch (error) {
             if (error.name !== 'AbortError') throw error
@@ -215,7 +314,9 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
         if (sampling.status === 'rejected') throw sampling.reason
         const end = interaction.value
         assert.ok(start, 'The isolated model stream did not start')
+        await waitForBottom(control, 'The streamed conversation', uiTimeoutMs)
         await sampleHeap('settled')
+        if (measureProcesses) await sampleProcesses('settled')
         const measurements = {
           idleCpuPercent: cpuPercent(idleStart, idleEnd),
           singleTaskCpuPercent: cpuPercent(start, end),
@@ -224,7 +325,10 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
         const report = {
           measurements,
           heapSamples: samples,
+          processSamples,
+          historicalTasks: measureHistory ? historyTaskCount : 0,
           rendererPids: pids,
+          window: { before, after: await windowState() },
           capture,
           limits,
           withinLimits: capture
@@ -257,13 +361,17 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
 async function main() {
   const args = process.argv.slice(2)
   if (args.includes('--help')) {
-    console.log('Usage: pnpm --filter wework profile:renderer [--capture | --check] (macOS)')
+    console.log(
+      'Usage: pnpm --filter wework profile:renderer [--capture | --check] [--history] [--processes] (macOS)'
+    )
     return
   }
   assert.equal(process.platform, 'darwin', 'Renderer CPU counters require macOS')
   assert.ok(
-    args.length <= 1 && args.every(arg => ['--capture', '--check'].includes(arg)),
-    'Use --capture or --check'
+    new Set(args).size === args.length &&
+      args.every(arg => ['--capture', '--check', '--history', '--processes'].includes(arg)) &&
+      !(args.includes('--capture') && args.includes('--check')),
+    'Use --capture or --check, with optional --history and --processes'
   )
   const contents = fileURLToPath(
     new URL(
@@ -292,6 +400,8 @@ async function main() {
       WEWORK_E2E_DESKTOP_SCENARIO_MODULE: import.meta.url,
       WEWORK_RENDERER_PROFILE_CAPTURE: String(args.includes('--capture')),
       WEWORK_RENDERER_PROFILE_CHECK: String(args.includes('--check')),
+      WEWORK_RENDERER_PROFILE_HISTORY: String(args.includes('--history')),
+      WEWORK_RENDERER_PROFILE_PROCESSES: String(args.includes('--processes')),
     },
   })
   process.exitCode = await new Promise((resolve, reject) => {

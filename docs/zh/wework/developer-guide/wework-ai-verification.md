@@ -239,12 +239,28 @@ CPU 录制成功停止后，即使 trace 读取、解析或报告写入失败，
 ```bash
 pnpm --filter wework ai:verify:electron:build
 pnpm --filter wework profile:renderer --check
+pnpm --filter wework profile:renderer --history --check
 pnpm --filter wework profile:renderer --capture
+pnpm --filter wework profile:renderer --processes
 ```
 
-- `--check` 在空闲 CPU ≥ 10%、单任务 CPU ≥ 15% 或采样 JS 堆峰值 ≥ 300 MB（300,000,000 字节）时退出失败。省略参数仅输出测量结果。CPU 按隔离窗口 Renderer PID 的累计 CPU 时间除以墙钟时间计算，100% 代表占用一个逻辑核心。空闲窗口约 7 秒，单任务窗口从模型开始响应到末段可见。V8 堆使用量每秒采样，不强制 GC。
+- `--check` 在空闲 CPU ≥ 10%、单任务 CPU ≥ 15% 或采样 JS 堆峰值 ≥ 200 MB（200,000,000 字节）时退出失败。省略参数仅输出测量结果。CPU 按隔离窗口 Renderer PID 的累计 CPU 时间除以墙钟时间计算，100% 代表占用一个逻辑核心。空闲窗口约 7 秒，单任务窗口从模型开始响应到末段可见。V8 堆使用量每秒采样，不强制 GC。
 - `--capture` 复用上面的性能录制，额外生成 `renderer-performance.json` 和原始证据。录制本身会增加开销，阈值验收用 `--check` 单独复测。三种模式的测量报告都保存在控制台列出的测试目录下，文件名为 `renderer-threshold-measurements.json`。
+- `--history` 在测量前依次完成 16 个真实持久化会话，逐个记录堆使用量，然后在同一 Renderer 启动基准任务。它使用可复现的测试模型结果，报告中的 `historicalTasks` 标明会话数量。
+- `--processes` 记录空闲、流式中段和任务完成后的进程树快照。用 `processSamples` 分别检查主进程、Renderer、GPU、执行器及其子进程。进程快照 CPU 为操作系统或 Electron 的采样值，阈值验收使用单独运行的 `--check`。共享内存页可能出现在多个进程的统计中，进程内存应逐项阅读。
 - 排查长期内存增长时，在同一隔离实例中用相同历史数据反复切换任务后记录 JS 堆，再用 Chromium Memory 面板采集两份堆快照。先比较对象数量和 retained size，再检查 `Retainers` 中仍可达的引用路径，尤其是 detached DOM、回调闭包和缓存。使用 Memory 面板之前先断开同一目标上的 CDP 录制。报告和快照仅保存在本地。
+
+### 工作台资源预算
+
+以下是稳定运行的单窗口工作台建议预算，用于发现回归。启动、更新、索引、嵌入浏览器、文件预览和本地模型需要按各自的负载记录。
+
+| 场景 | 建议长期目标 | 测量要点 |
+| --- | --- | --- |
+| 可见窗口空闲 | Renderer 约 1–3% CPU，桌面 UI 进程合计约 5% 以内 | 等启动收敛后记录可见和后台状态。进程 CPU 按逻辑核心计算，同时检查后台唤醒。 |
+| 单任务纯文本流式输出 | Renderer 约 8–12% CPU | 模型以每秒 10 段输出时，8–12% 对应每秒 80–120 ms 的 Renderer CPU 时间。保持首段可见、后续持续更新、滚动跟随和手动阅读锚点。 |
+| 单窗口 JS 堆 | 新会话约 100 MB，带常用历史约 120–160 MB | 对比同一数据集、采样频率和阶段。历史翻页仍从持久化记录读取，反复切换任务后堆使用量应能趋于稳定。 |
+
+主进程负责窗口、IPC 和运行时协调，GPU 进程负责合成与绘制，执行器和任务子进程负责模型连接、命令和工具执行。普通文字流式任务增加的数据量有限，全页样式失效或常驻任务驱动整页重渲染都值得排查。工具密集型任务应单独记录执行器、任务子进程及磁盘活动。通过系统进程指标区分 Renderer 的 JS 堆、Renderer 的原生内存、GPU 资源和其他进程内存。进程 CPU 指标也不描述 GPU 利用率。 [Electron 进程指标](https://www.electronjs.org/docs/latest/api/app#appgetappmetrics) [Chrome DevTools 内存分析](https://developer.chrome.com/docs/devtools/memory-problems)
 
 ### 差异预览 CPU 与工作台内存回归
 

@@ -231,12 +231,28 @@ On macOS, compare the baseline and candidate on the same machine with the same f
 ```bash
 pnpm --filter wework ai:verify:electron:build
 pnpm --filter wework profile:renderer --check
+pnpm --filter wework profile:renderer --history --check
 pnpm --filter wework profile:renderer --capture
+pnpm --filter wework profile:renderer --processes
 ```
 
-- `--check` fails at idle CPU ≥ 10%, single-task CPU ≥ 15%, or sampled peak JS heap ≥ 300 MB (300,000,000 bytes). With no argument, the command reports measurements. CPU is cumulative CPU time across the isolated window renderer PIDs divided by elapsed wall time, with 100% representing one logical core. The idle window is about seven seconds. The task window runs from the start of the model response until the last chunk is visible. The benchmark samples V8 used heap every second without forcing GC.
+- `--check` fails at idle CPU ≥ 10%, single-task CPU ≥ 15%, or sampled peak JS heap ≥ 200 MB (200,000,000 bytes). With no argument, the command reports measurements. CPU is cumulative CPU time across the isolated window renderer PIDs divided by elapsed wall time, with 100% representing one logical core. The idle window is about seven seconds. The task window runs from the start of the model response until the last chunk is visible. The benchmark samples V8 used heap every second without forcing GC.
 - `--capture` uses the existing performance recording and writes `renderer-performance.json` and raw evidence. Recording adds overhead. Run `--check` separately to verify the limits. All modes save `renderer-threshold-measurements.json` in the test directory printed in the console.
+- `--history` completes 16 persisted conversations in sequence and samples the heap after each one, then starts the benchmark task in the same renderer. It uses reproducible test model responses. `historicalTasks` records the conversation count in the report.
+- `--processes` records app process snapshots while idle, mid-stream, and after completion. Inspect `processSamples` for the main process, renderer, GPU, executor, and child processes. The snapshots report OS or Electron CPU samples. Run `--check` separately for threshold verification. Shared memory pages may appear in multiple per-process measurements.
 - For long-lived memory growth, switch tasks repeatedly with the same history in an isolated instance, record JS heap usage, and take two heap snapshots in Chromium's Memory panel. Compare object counts and retained sizes, then inspect `Retainers` for reachable paths, including detached DOM, closures, and caches. Detach CDP recording for the target before opening the Memory panel. Keep reports and snapshots local.
+
+### Workbench resource budget
+
+These proposed targets describe a steady-state single-window workbench. Profile startup, updates, indexing, embedded browsing, file previews, and local models under their own workloads.
+
+| Scenario | Longer-term target | What to measure |
+| --- | --- | --- |
+| Visible window at idle | About 1–3% renderer CPU and about 5% or less across desktop UI processes | Measure visible and background states after startup settles. Express CPU relative to a logical core and check background wakeups. |
+| One plain-text streaming task | About 8–12% renderer CPU | At ten chunks per second, this gives the renderer 80–120 ms of CPU time per second. Watch first and continuing text presentation, bottom following, and manual reading anchors. |
+| Single-window JS heap | About 100 MB for a new conversation and about 120–160 MB with typical history | Compare the same dataset, cadence, and phase. History stays available from persistent storage. The heap should stabilize after repeated task switches. |
+
+The main process handles windows, IPC and runtime coordination. The GPU process handles compositing and rendering. The executor and task subprocesses handle model connections, commands and tools. Plain-text streaming adds limited data, so document-wide style invalidation and full-page work on each update warrant investigation. For tool-heavy tasks, measure executor and subprocess activity and disk usage separately. Read JS heap, native renderer memory, GPU resources and other process memory as separate measurements. GPU-process CPU measures CPU time. [Electron process metrics](https://www.electronjs.org/docs/latest/api/app#appgetappmetrics) [Chrome DevTools memory diagnostics](https://developer.chrome.com/docs/devtools/memory-problems)
 
 ### Diff preview CPU and workbench memory regressions
 

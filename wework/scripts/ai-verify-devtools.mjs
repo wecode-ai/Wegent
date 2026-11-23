@@ -77,7 +77,12 @@ export async function collectProtocolEvents(client, target, after = 0) {
   }
 }
 
-export async function startPerformanceRecording(client, directory, target) {
+export async function startPerformanceRecording(
+  client,
+  directory,
+  target,
+  { styleInvalidations = false } = {}
+) {
   const statePath = join(directory, `performance-${target}.json`)
   try {
     await readFile(statePath)
@@ -97,7 +102,15 @@ export async function startPerformanceRecording(client, directory, target) {
     await command('Profiler.start')
     profiling = true
     await command('Tracing.start', {
-      categories: 'devtools.timeline,v8,blink.user_timing,disabled-by-default-devtools.timeline',
+      categories: [
+        'devtools.timeline',
+        'v8',
+        'blink.user_timing',
+        'disabled-by-default-devtools.timeline',
+        ...(styleInvalidations
+          ? ['disabled-by-default-devtools.timeline.invalidationTracking']
+          : []),
+      ].join(','),
       transferMode: 'ReturnAsStream',
     })
     tracing = true

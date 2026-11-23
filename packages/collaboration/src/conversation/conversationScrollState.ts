@@ -47,7 +47,6 @@ export interface ConversationScrollInput {
   autoScrollSuspended?: boolean
   initialScrollPosition?: 'restore' | 'latest'
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
-  geometry: unknown
 }
 type ScrollConfiguration = Omit<
   ConversationScrollInput,
@@ -225,12 +224,17 @@ export function createConversationScrollState(
     if (!owned()) return
     const viewport = scrollRef.current
     if (!viewport) return
+    const currentOffset = viewport.scrollTop
+    if (top === currentOffset) {
+      readerState.lastScrollPosition = currentOffset
+      return
+    }
+    // The follow controller already owns the frame loop and clamps its target
+    // against the measured virtual and native ranges. Avoid starting a second
+    // reconciliation loop in TanStack for each step of that same motion.
+    readVirtualizer()?.cancelScroll()
     command = true
-    const engine = readVirtualizer()
-    if (engine) {
-      engine.cancelScroll()
-      engine.scrollToOffset(top, { behavior: 'auto' })
-    } else
+    try {
       recordConversationScrollWrite(
         viewport,
         CONVERSATION_SCROLL_WRITE_SOURCE.controllerBottom,
@@ -240,7 +244,9 @@ export function createConversationScrollState(
           else viewport.scrollTop = top
         }
       )
-    command = false
+    } finally {
+      command = false
+    }
     readerState.lastScrollPosition = viewport.scrollTop
   }
   const save = (measuredDistanceFromBottomPx?: number) => {
@@ -384,6 +390,29 @@ export function createConversationScrollState(
       handleContentLayoutChange()
     })
   }
+  let layoutObserver: ResizeObserver | null = null
+  let observedViewport: HTMLDivElement | null = null
+  let observedContent: HTMLDivElement | null = null
+  function stopObservingLayout() {
+    layoutObserver?.disconnect()
+    layoutObserver = null
+    observedViewport = null
+    observedContent = null
+  }
+  function observeLayout() {
+    const viewport = scrollRef.current
+    const content = contentRef.current
+    if (viewport === observedViewport && content === observedContent) return
+    stopObservingLayout()
+    if (!viewport || !content || typeof ResizeObserver === 'undefined') return
+    // Scroll handling only needs size changes. Reading and publishing both
+    // bounds on every scroll step also rerenders the entire transcript.
+    layoutObserver = new ResizeObserver(handleVirtualLayoutChange)
+    layoutObserver.observe(viewport)
+    layoutObserver.observe(content)
+    observedViewport = viewport
+    observedContent = content
+  }
   const preserveScrollPositionForNextLayout = () => {
     if (!owned()) return
     cancelMotion()
@@ -467,6 +496,7 @@ export function createConversationScrollState(
       interaction: externalScrollInteractionRef?.current ?? null,
     })
     if (!owned()) return
+    observeLayout()
     if (previousViewport !== state.viewport) cancelMotion()
     const changed =
       !previousInput ||
@@ -479,8 +509,7 @@ export function createConversationScrollState(
     else if (
       refresh ||
       previousViewport !== state.viewport ||
-      previousInteraction !== state.interaction ||
-      previousInput.geometry !== next.geometry
+      previousInteraction !== state.interaction
     )
       handleContentLayoutChange()
   }
@@ -741,6 +770,7 @@ export function createConversationScrollState(
       setConversationScrollSnapshot(currentScrollKey, lastSnapshot.snapshot)
   }
   function stop() {
+    stopObservingLayout()
     cancelMotion()
     reader.dispose()
     persist()
@@ -785,6 +815,7 @@ export function createConversationScrollState(
       return () => {
         if (contentLease !== lease) return
         contentLease = null
+        stopObservingLayout()
         if (ports.owner.lease === lease) {
           ports.owner.lease = null
           if (contentRef.current === node) contentRef.current = null

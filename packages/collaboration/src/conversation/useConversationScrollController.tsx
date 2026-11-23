@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import { useDOMEvent, useWindowEvent, useElementGeometry } from '../dom-events'
+import { useDOMEvent, useWindowEvent } from '../dom-events'
 import type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
 import { scrollPositionKey } from './conversationScrollGeometry'
 import { useConversationFooterHeight } from './useConversationFooterHeight'
@@ -61,8 +61,6 @@ export function useConversationScrollController(options: Options) {
     }),
     [scrollRef, externalScrollInteractionRef]
   )
-  const geometryTargets = useMemo(() => [scrollRef, contentNode], [scrollRef])
-  const geometry = useElementGeometry(geometryTargets)
   const input = useMemo<ConversationScrollInput>(
     () => ({
       messages,
@@ -73,7 +71,6 @@ export function useConversationScrollController(options: Options) {
       onLoadTranscriptGap,
       autoScrollSuspended,
       initialScrollPosition,
-      geometry,
     }),
     [
       messages,
@@ -84,7 +81,6 @@ export function useConversationScrollController(options: Options) {
       onLoadTranscriptGap,
       autoScrollSuspended,
       initialScrollPosition,
-      geometry,
     ]
   )
   const initialConfiguration = {
@@ -94,7 +90,6 @@ export function useConversationScrollController(options: Options) {
     onLoadTranscriptGap,
     autoScrollSuspended,
     initialScrollPosition,
-    geometry,
   }
   const [owner, setOwner] = useState(() => ({
     key: currentScrollKey,

@@ -22,6 +22,26 @@ import { isImeComposingEvent } from '@wegent/chat-core/ime'
 export { focusEditorTarget } from './editorFocus'
 export type { EditorFocusTarget, EditorFocusGuard } from './editorFocus'
 
+/** Keep a document-level style flag for the lifetime of each mounted owner. */
+export function createBodyFlagRef(attribute: string) {
+  const ownersByBody = new WeakMap<HTMLElement, number>()
+  return (element: HTMLElement | null) => {
+    if (!element) return
+    const body = element.ownerDocument.body
+    const owners = ownersByBody.get(body) ?? 0
+    ownersByBody.set(body, owners + 1)
+    if (owners === 0) body.setAttribute(attribute, '')
+    return () => {
+      const remaining = (ownersByBody.get(body) ?? 1) - 1
+      if (remaining > 0) ownersByBody.set(body, remaining)
+      else {
+        ownersByBody.delete(body)
+        body.removeAttribute(attribute)
+      }
+    }
+  }
+}
+
 export interface DomEventOptions extends AddEventListenerOptions {
   enabled?: boolean
 }
