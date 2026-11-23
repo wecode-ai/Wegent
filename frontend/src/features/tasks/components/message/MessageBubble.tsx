@@ -465,6 +465,8 @@ const MessageBubble = memo(
 
     // Determine if this is a user-type message (for styling purposes)
     const isUserTypeMessage = msg.type === 'user'
+    const isCancelled = !isUserTypeMessage && msg.subtaskStatus === 'CANCELLED'
+    const isWaitingForContent = !isCancelled && (isWaiting || msg.isWaiting)
 
     // Determine if this message should be right-aligned (current user's message)
     // For group chat: only current user's messages are right-aligned
@@ -527,8 +529,7 @@ const MessageBubble = memo(
       msg.subtaskStatus === 'RUNNING' ||
       msg.subtaskStatus === 'PENDING' ||
       msg.subtaskStatus === 'PROCESSING' ||
-      isWaiting ||
-      msg.isWaiting
+      isWaitingForContent
 
     const inlineThinkingBlocks = React.useMemo(
       () =>
@@ -575,15 +576,16 @@ const MessageBubble = memo(
     const explicitReasoningContent =
       msg.reasoningContent || msg.result?.reasoning_content || inlineThinkingContent
     const waitingReasoningContent =
-      !explicitReasoningContent && !isUserTypeMessage && (isWaiting || msg.isWaiting)
+      !explicitReasoningContent && !isUserTypeMessage && isWaitingForContent
         ? waitingMessage || t('tasks:streaming_wait.thinking') || '正在思考'
         : ''
     const displayReasoningContent = explicitReasoningContent || waitingReasoningContent
     const isUsingReasoningWaitDisplay = Boolean(waitingReasoningContent)
     const isDisplayReasoningStreaming =
-      Boolean(msg.isReasoningStreaming) ||
-      inlineThinkingBlocks.some(block => block.status === 'streaming') ||
-      isUsingReasoningWaitDisplay
+      !isCancelled &&
+      (Boolean(msg.isReasoningStreaming) ||
+        inlineThinkingBlocks.some(block => block.status === 'streaming') ||
+        isUsingReasoningWaitDisplay)
 
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase()
@@ -1148,6 +1150,15 @@ const MessageBubble = memo(
                   {headerIcon}
                   <span className="font-semibold">{headerLabel}</span>
                   {timestampLabel && <span>{timestampLabel}</span>}
+                  {isCancelled && (
+                    <span
+                      role="status"
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-fill-tert px-2 py-0.5 text-text-secondary"
+                    >
+                      <Ban className="h-3 w-3" aria-hidden="true" />
+                      {t('messages.status_cancelled')}
+                    </span>
+                  )}
                   {msg.isRecovered && (
                     <span className="text-primary text-xs">
                       ({t('messages.recovered') || '已恢复'})
@@ -1218,7 +1229,7 @@ const MessageBubble = memo(
                 displayGeneratedMedia={!isUserTypeMessage}
               />
               {/* Show waiting indicator when streaming but no content yet */}
-              {isWaiting || msg.isWaiting ? (
+              {isWaitingForContent ? (
                 isUsingReasoningWaitDisplay ? null : (
                   <StreamingWaitIndicator isWaiting={true} message={waitingMessage} />
                 )
