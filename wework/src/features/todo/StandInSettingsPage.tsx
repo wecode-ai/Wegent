@@ -502,6 +502,35 @@ function StandInSettingsEditor({
         }
         close={onCancel ? { testId: 'stand-in-close', onClick: closeSettings } : undefined}
       />
+      {!loading && draft && initialProject && (view === 'project' || view === 'create') && (
+        <div className={view === 'create' ? 'mb-4' : undefined}>
+          <StandInProjectSetup
+            project={initialProject}
+            roles={draft.roles.filter(row => view !== 'create' || row.id !== role?.id)}
+            projectRoleId={projectRoleId}
+            role={role}
+            onOpenSettings={
+              onOpenPersonalSettings && role
+                ? () => onOpenPersonalSettings(role.id, draft.executionDeviceId)
+                : undefined
+            }
+            saving={saving}
+            creating={view === 'create'}
+            onChoose={value => {
+              if (value === '__new') createRole()
+              else {
+                if (view === 'create') {
+                  const previous = history.at(-1)?.draft
+                  if (previous) setDraft(previous)
+                  setHistory(current => current.slice(0, -1))
+                }
+                setSelectedId(value)
+                setView('project')
+              }
+            }}
+          />
+        </div>
+      )}
       {loading ? (
         <p role="status" className="px-5 py-8 text-text-secondary">
           {t('standIn.loading')}
@@ -509,33 +538,6 @@ function StandInSettingsEditor({
       ) : draft && role ? (
         <>
           <div className={calendarOpen ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
-            {initialProject && (view === 'project' || view === 'create') && (
-              <StandInProjectSetup
-                project={initialProject}
-                roles={draft.roles.filter(row => view !== 'create' || row.id !== role.id)}
-                projectRoleId={projectRoleId}
-                role={role}
-                onOpenSettings={
-                  onOpenPersonalSettings
-                    ? () => onOpenPersonalSettings(role.id, draft.executionDeviceId)
-                    : undefined
-                }
-                saving={saving}
-                creating={view === 'create'}
-                onChoose={value => {
-                  if (value === '__new') createRole()
-                  else {
-                    if (view === 'create') {
-                      const previous = history.at(-1)?.draft
-                      if (previous) setDraft(previous)
-                      setHistory(current => current.slice(0, -1))
-                    }
-                    setSelectedId(value)
-                    setView('project')
-                  }
-                }}
-              />
-            )}
             {(view === 'main' || view === 'create') && (
               <label className="grid gap-2">
                 <span className="text-text-secondary">

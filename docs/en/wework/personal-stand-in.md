@@ -367,6 +367,8 @@ Alternatively, connect the apps you use, select **Continue**, review the scope, 
 
 The header explains that My assistant coordinates work while specialist roles focus on particular responsibilities. Check operational status under **Stand-in details**. Use **Manage stand-in → Connections** to configure the selected identity’s intake scope. **Manage stand-in → Chat with the assistant in IM** binds existing private conversations.
 
+After first-time setup, the header shows only **My stand-in**. Select **+** in the header to add a role for a specific kind of work. Existing roles remain available in the header.
+
 Review the selected connections before choosing Get started. This saves the connections and enables the primary stand-in. Without connections, you can still chat; there are simply no app updates to analyze yet. Add connections later in settings. Closing the introduction does not save connection drafts, and unsaved changes require a discard confirmation. Account authorization still uses the existing sign-in flow.
 
 Setup creates no scheduled work. The question-mark entry keeps examples for daily briefings, meeting preparation, project follow-up, DingTalk replies, and weekly reviews. Choosing an example only inserts an editable conversation draft; confirm sources and schedules after sending it.

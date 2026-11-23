@@ -467,7 +467,8 @@ fn primary_project_bindings_without_intake_migrate_without_adding_project_grants
 fn invalid_legacy_project_bindings_cannot_be_removed_by_a_successful_save() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
-    let initial = store.personal_stand_in(7, "mac").unwrap();
+    let mut initial = store.personal_stand_in(7, "mac").unwrap();
+    initial["roles"] = json!([wegent_executor_test_support::stand_in_role("mac")]);
     let saved = store.save_personal_stand_in(7, "mac", initial).unwrap();
     for project in [
         json!({"id":"one","store":"unknown"}),
