@@ -1,3 +1,4 @@
+import { useScopedDraft } from '@/features/workbench/scopedDraftStore'
 import { sendTemporaryConversationMessage } from './temporaryChatConversationSend'
 import { sendTemporaryChatMessage } from './temporaryChatSend'
 import type { TemporaryChatPanelProps } from './temporaryChatPanelTypes'
@@ -326,13 +327,14 @@ export function TemporaryChatPanel({
   const conversationQueue = runtimePaneQueue(lifecycleStore, address, instanceId)
   const messageViewId = useId()
   const [chatSession] = useState(createTemporaryChatSession)
+  const storedDraft = useScopedDraft(projectChat.draftStore, `pane:${instanceId}`)
   const observation = chatSession.observe({
     instanceId,
     address,
     initialAddress,
     initialInput,
     draft,
-    storedInput: projectChat.inputByScope[`pane:${instanceId}`],
+    storedInput: storedDraft.revision ? storedDraft.value : undefined,
     writeDraft: projectChat.setInputForScope,
     draftRequest,
     onDraftRequestConsumed,

@@ -1,3 +1,4 @@
+import { createScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
@@ -546,9 +547,8 @@ function deferred<T>() {
 
 function createHomeDraft() {
   return {
-    inputByScope: {},
+    draftStore: createScopedDraftStore(),
     setInputForScope: vi.fn(),
-    getInputRevisionForScope: vi.fn(() => 0),
     personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
   }
 }

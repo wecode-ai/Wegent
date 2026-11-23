@@ -116,7 +116,7 @@ def main() -> None:
                                     released.wait(0.01)
 
                     threading.Thread(target=observe_database_wait, daemon=True).start()
-                emit("ready")
+                emit("ready", connectionId=db.thread_id())
                 if sys.stdin.read():
                     raise ValueError("The row lock accepts only stdin closure")
             finally:

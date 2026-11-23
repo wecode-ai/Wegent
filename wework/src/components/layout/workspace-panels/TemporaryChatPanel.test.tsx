@@ -1,3 +1,7 @@
+import {
+  createScopedDraftStore,
+  type ScopedDraftStore,
+} from '@/features/workbench/scopedDraftStore'
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -162,7 +166,7 @@ const mocks = vi.hoisted(() => ({
     chats: unknown[]
     totalTasks: number
   } | null,
-  inputByScope: {} as Record<string, string>,
+  draftStore: null as unknown as ScopedDraftStore,
   setInputForScope: vi.fn(),
 }))
 
@@ -496,7 +500,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => {
         runtimeWork: mocks.runtimeWork,
       },
       projectChat: {
-        inputByScope: mocks.inputByScope,
+        draftStore: mocks.draftStore,
         setInputForScope: mocks.setInputForScope,
         listLocalApps: mocks.mainListApps,
         trialPluginName: 'Main plugin',
@@ -1072,12 +1076,9 @@ describe('TemporaryChatPanel', () => {
     mocks.isBootstrapping = false
     mocks.globalModelReady = true
     mocks.runtimeWork = null
-    mocks.inputByScope = {}
+    mocks.draftStore = createScopedDraftStore()
     mocks.setInputForScope.mockReset()
-    mocks.setInputForScope.mockImplementation((scope: string, value: string) => {
-      if (value) mocks.inputByScope[scope] = value
-      else delete mocks.inputByScope[scope]
-    })
+    mocks.setInputForScope.mockImplementation(mocks.draftStore.write)
   })
 
   it('limits a historical pane to the proven native turn instead of showing the entire task', async () => {

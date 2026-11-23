@@ -354,7 +354,7 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
     currentRuntimeTask: paneContext.currentRuntimeTask,
     currentProject: paneContext.currentProject,
     paneModelChat: paneContext.paneModelChat,
-    paneInput: paneContext.paneInput,
+    getPaneInput: paneContext.getPaneInput,
     setPaneInput: paneContext.setPaneInput,
     newChatRuntime,
     localHarnessModelKeys,

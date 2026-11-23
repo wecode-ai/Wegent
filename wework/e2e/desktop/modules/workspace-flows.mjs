@@ -1355,6 +1355,10 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   )
   const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
   await control.command('waitFor', activeTaskConversationSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoView', activeTaskConversationSelector, { visible: true })
+  await control.command('waitFor', activeTaskConversationSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

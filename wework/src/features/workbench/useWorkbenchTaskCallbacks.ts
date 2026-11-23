@@ -198,7 +198,7 @@ export function useStartStandaloneChat({
 export function useStartNewProjectChat({
   state,
   attachmentSelection,
-  draftInputByScope,
+  draftStore,
   projectSelectionStartedRef,
   ownershipKey,
   dispatch,
@@ -206,7 +206,7 @@ export function useStartNewProjectChat({
 }: {
   state: WorkbenchState
   attachmentSelection: ReturnType<typeof useWorkbenchAttachments>
-  draftInputByScope: Record<string, string>
+  draftStore: import('./scopedDraftStore').ScopedDraftStore
   projectSelectionStartedRef: RefObject<boolean>
   ownershipKey: string
   dispatch: ActionDispatch<[action: WorkbenchAction]>
@@ -223,7 +223,7 @@ export function useStartNewProjectChat({
       })
       const blankAttachmentState = attachmentSelection.stateByScope[blankScopeKey]
       const hasPreservedBlankComposerState =
-        Boolean(draftInputByScope[blankScopeKey]) ||
+        Boolean(draftStore.read(blankScopeKey).value) ||
         Boolean(
           blankAttachmentState &&
           (blankAttachmentState.attachments.length > 0 ||
@@ -247,7 +247,7 @@ export function useStartNewProjectChat({
       state.standaloneChatKey,
       state.currentRuntimeTask,
       attachmentSelection.stateByScope,
-      draftInputByScope,
+      draftStore,
       projectSelectionStartedRef,
       ownershipKey,
       dispatch,

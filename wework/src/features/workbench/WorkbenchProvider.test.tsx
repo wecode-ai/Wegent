@@ -1,3 +1,4 @@
+import { useScopedDraft, type ScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 import { WorkbenchOwnerLeaseContext } from './workbenchContexts'
 import { WorkspaceTabSurface } from '@/AppWorkspaceRoutes'
 import { renderRuntimeTaskLifecycle } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.fixtures'
@@ -1253,9 +1254,18 @@ function RemoteRuntimeCacheProbe() {
   )
 }
 
+function ScopedDraftText({ store, scope }: { store: ScopedDraftStore; scope: string }) {
+  const draft = useScopedDraft(store, scope)
+  return draft.value
+}
+
 function PluginTrialInputProbe({ testId }: { testId: string }) {
   const { paneSession } = useWorkbenchProbeSession()
-  return <span data-testid={testId}>{paneSession.input}</span>
+  return (
+    <span data-testid={testId}>
+      {<ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />}
+    </span>
+  )
 }
 
 function ProjectSendProbe({
@@ -1306,7 +1316,9 @@ function ProjectSendProbe({
           'none'}
       </span>
       <span data-testid="standalone-chat-key">{workbench.state.standaloneChatKey}</span>
-      <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="composer-input">
+        {<ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />}
+      </span>
       <span data-testid="project-browser-annotation-command">
         {paneSession.browserAnnotationCommand
           ? `${paneSession.browserAnnotationCommand.sequence}:${paneSession.browserAnnotationCommand.reason}`
@@ -2452,7 +2464,14 @@ function RuntimeModelSelectionProbe() {
       <span data-testid="runtime-model-task">
         {workbench.state.currentRuntimeTask?.taskId ?? ''}
       </span>
-      <span data-testid="runtime-model-draft">{workbench.projectChat.input}</span>
+      <span data-testid="runtime-model-draft">
+        {
+          <ScopedDraftText
+            store={workbench.projectChat.draftStore}
+            scope={workbench.projectChat.scopeKey}
+          />
+        }
+      </span>
       <span data-testid="background-task-selected-model">
         {backgroundTaskModel.selectedModel?.name ?? ''}
       </span>
@@ -2547,7 +2566,9 @@ function FollowUpProbe() {
 
   return (
     <div>
-      <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="composer-input">
+        {<ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />}
+      </span>
       <span data-testid="pane-session-error">{paneSession.error ?? ''}</span>
       <span data-testid="queued-messages">
         {paneSession.queuedMessages
@@ -2976,7 +2997,14 @@ function StartSkillChatProbe() {
       </span>
       <span data-testid="skill-chat-key">{workbench.state.standaloneChatKey}</span>
       <span data-testid="skill-chat-start-result">{result}</span>
-      <span data-testid="skill-chat-input">{workbench.projectChat.input}</span>
+      <span data-testid="skill-chat-input">
+        {
+          <ScopedDraftText
+            store={workbench.projectChat.draftStore}
+            scope={workbench.projectChat.scopeKey}
+          />
+        }
+      </span>
       <button
         type="button"
         onClick={() =>
@@ -13927,6 +13955,35 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('follow-up-collaboration-mode')).toHaveTextContent('plan')
     )
     expect(screen.getByTestId('runtime-attachment-count')).toHaveTextContent('1')
+  })
+
+  test('publishes a composer draft without rerendering the workbench or pane', async () => {
+    const rendered = vi.fn()
+    function DraftIsolationProbe() {
+      const { paneSession } = useWorkbenchProbeSession()
+      rendered()
+      return (
+        <>
+          <button onClick={() => paneSession.setInput('Isolated draft')}>Publish draft</button>
+          <output data-testid="draft-isolation-current">
+            <ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />
+          </output>
+          <output data-testid="draft-isolation-other">
+            <ScopedDraftText store={paneSession.draftStore} scope="pane:other" />
+          </output>
+        </>
+      )
+    }
+
+    await act(async () => {
+      renderWorkbench(<DraftIsolationProbe />)
+    })
+    const publish = screen.getByRole('button', { name: 'Publish draft' })
+    rendered.mockClear()
+    act(() => publish.click())
+    expect(screen.getByTestId('draft-isolation-current')).toHaveTextContent('Isolated draft')
+    expect(screen.getByTestId('draft-isolation-other')).toBeEmptyDOMElement()
+    expect(rendered).not.toHaveBeenCalled()
   })
 
   test('keeps blank chat draft when clearing a project chat context', async () => {

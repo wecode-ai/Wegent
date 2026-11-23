@@ -16,11 +16,6 @@
   }
 }
 
-/* DSH paints text-field outlines too; pointer focus uses its dedicated token. */
-html[data-input-modality='pointer'] body :focus-visible {
-  --dsw-focus-ring-color: transparent;
-}
-
 .electron-titlebar-drag-region {
   -webkit-app-region: drag;
 }
