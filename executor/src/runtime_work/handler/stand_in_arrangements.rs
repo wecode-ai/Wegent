@@ -158,6 +158,9 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             match self.current_arrangement(&run) {
+                Ok(ref arrangement) if memory_review(arrangement) && run.trigger != "manual"
+                    && run.status == AutomationRunStatus::Pending
+                    && !self.memory_review_run_has_work(store, &run)? => {}
                 Ok(_) => facts.push(json!({"id":run.id,"userId":user,"roleId":binding.role_id,"automationId":run.automation_id,"automationVersion":binding.automation_version,"taskId":binding.task_id,"scheduledFor":run.scheduled_for})),
                 Err(error) => self.settle_arrangement(&run, AutomationRunStatus::NeedsAttention, None, Some(error.message))?,
             }
@@ -236,7 +239,7 @@ impl RuntimeWorkRpcHandler {
         Ok(automation)
     }
 
-    fn settle_arrangement(
+    pub(super) fn settle_arrangement(
         &self,
         run: &AutomationRun,
         status: AutomationRunStatus,
@@ -247,6 +250,14 @@ impl RuntimeWorkRpcHandler {
             .settle_coordinated_run(&run.id, status, task, error)
             .map_err(arrangement_error)?;
         self.emit_automation_runs_changed(&run.automation_id, &run.id);
+        if status == AutomationRunStatus::Succeeded
+            && self
+                .automation_store
+                .get(&run.automation_id)
+                .is_some_and(|entry| memory_review(&entry))
+        {
+            self.start_stand_in_ghost_evaluation(run);
+        }
         Ok(())
     }
 

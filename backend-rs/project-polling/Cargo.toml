@@ -1,0 +1,28 @@
+[package]
+name = "wegent-project-polling"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Project event polling and provider ingress normalization"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["process", "rt", "time"] }
+tracing = { workspace = true }
+url = { workspace = true }
+wegent-connector-apps = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-project-coordination = { workspace = true }
+wegent-storage = { workspace = true }
+yaml-rust2 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync"] }

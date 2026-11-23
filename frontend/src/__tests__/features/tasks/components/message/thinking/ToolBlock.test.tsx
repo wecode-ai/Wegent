@@ -13,6 +13,7 @@ jest.mock('@/hooks/useTranslation', () => ({
       ({
         'thinking.no_output': 'No output',
         'thinking.tools.load_skill': '加载技能',
+        'messages.status_cancelled': 'Cancelled',
       })[key] ?? key,
   }),
 }))
@@ -42,6 +43,32 @@ function createTool(input: string | Record<string, unknown>, toolName = 'Write')
 }
 
 describe('ToolBlock', () => {
+  it('stops waiting for pending tool output after the assistant is cancelled', () => {
+    const tool: ToolPair = { ...createTool({}), status: 'pending' }
+    const finished = { ...createTool({}), toolUseId: 'tool_done' }
+    const props = { tool, count: 2, mergedTools: [tool, finished], defaultExpanded: true }
+    const { rerender } = render(<ToolBlock {...props} taskStatus="RUNNING" />)
+    expect(screen.getByText('thinking.tool_executing')).toBeVisible()
+
+    rerender(<ToolBlock {...props} taskStatus="CANCELLED" />)
+    expect(screen.queryByText('thinking.tool_executing')).not.toBeInTheDocument()
+    expect(screen.getByText('Cancelled')).toBeVisible()
+    expect(screen.getByText('No output')).toBeVisible()
+  })
+
+  it('stops showing tool renderer activity while retaining its existing input', () => {
+    const tool: ToolPair = {
+      ...createTool({ file_path: 'report.txt', content: 'Draft content' }),
+      status: 'invoking',
+    }
+    const { rerender } = render(<ToolBlock tool={tool} defaultExpanded taskStatus="RUNNING" />)
+    expect(screen.getByText('thinking.tool_executing')).toBeVisible()
+
+    rerender(<ToolBlock tool={tool} defaultExpanded taskStatus="CANCELLED" />)
+    expect(screen.queryByText('thinking.tool_executing')).not.toBeInTheDocument()
+    expect(screen.getByText('Draft content')).toBeVisible()
+  })
+
   it('shows the full native written content on expansion', () => {
     const content = 'created line\n'.repeat(60) + 'last written line'
     render(<ToolBlock tool={createTool({ file_path: 'index.html', content })} defaultExpanded />)

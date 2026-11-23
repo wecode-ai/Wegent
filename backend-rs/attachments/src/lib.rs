@@ -19,7 +19,6 @@ use wegent_task_store::task_store::{self, TaskStore};
 #[cfg(test)]
 use wegent_backend_test_support as sql_test_support;
 
-pub mod attachment_block;
 mod attachments;
 pub mod attachments_task_all;
 mod internal_attachments_download;
@@ -40,8 +39,7 @@ pub use attachments::upload::{
     StoreObjectRequest, UploadBackendError,
 };
 pub use attachments::{
-    content_type, context_store, external_media, handler, minio_client, public_link, s3_signing,
-    storage, upload,
+    content_type, context_store, external_media, handler, minio_client, s3_signing, storage, upload,
 };
 
 /// Permission of an unlinked attachment that may belong to a knowledge document.

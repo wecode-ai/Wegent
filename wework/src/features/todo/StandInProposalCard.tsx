@@ -4,6 +4,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { dequal } from 'dequal'
+import { StandInGhostEvidence } from './StandInGhostEvidence'
 import { StandInProposalDiff } from './StandInProposalDiff'
 
 export function StandInProposalCard({
@@ -32,8 +33,12 @@ export function StandInProposalCard({
   const removed = current.roles.filter(
     role => !proposal.settings.roles.some(row => row.id === role.id)
   )
-  const stale = proposal.settings.version !== current.version
-  const title = t(`standIn.workspace.${result ? `proposal_${result}` : 'proposal_title'}`)
+  const stale =
+    proposal.settings.executionDeviceId === current.executionDeviceId &&
+    proposal.settings.version !== current.version
+  const title = t(
+    `standIn.workspace.${result ? `proposal_${result}` : proposal.training ? 'ghost_proposal_title' : 'proposal_title'}`
+  )
   return (
     <section
       aria-label={title}
@@ -46,40 +51,44 @@ export function StandInProposalCard({
         <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{proposal.summary}</p>
       </header>
       <div className="min-h-0 overflow-y-auto px-4" data-testid="stand-in-proposal-details">
-        <div className="divide-y divide-border">
-          {changed.map(role => {
-            const previous = current.roles.find(row => row.id === role.id)
-            return (
+        {proposal.training ? (
+          <StandInGhostEvidence training={proposal.training} resolved={!!result} />
+        ) : (
+          <div className="divide-y divide-border">
+            {changed.map(role => {
+              const previous = current.roles.find(row => row.id === role.id)
+              return (
+                <StandInProposalDiff
+                  key={role.id}
+                  name={t(
+                    previous
+                      ? 'standIn.workspace.update_role'
+                      : 'standIn.workspace.proposal_create_role',
+                    { name: role.name || t('standIn.personal.default_role') }
+                  )}
+                  identity={role}
+                  previous={previous}
+                  projects={projects}
+                />
+              )
+            })}
+            {removed.map(role => (
+              <p key={role.id} className="py-3 text-sm">
+                {t('standIn.workspace.remove_role', {
+                  name: role.name || t('standIn.personal.default_role'),
+                })}
+              </p>
+            ))}
+            {!dequal(current.primary, proposal.settings.primary) && proposal.settings.primary && (
               <StandInProposalDiff
-                key={role.id}
-                name={t(
-                  previous
-                    ? 'standIn.workspace.update_role'
-                    : 'standIn.workspace.proposal_create_role',
-                  { name: role.name || t('standIn.personal.default_role') }
-                )}
-                identity={role}
-                previous={previous}
+                name={t('standIn.workspace.update_primary')}
+                identity={proposal.settings.primary}
+                previous={current.primary}
                 projects={projects}
               />
-            )
-          })}
-          {removed.map(role => (
-            <p key={role.id} className="py-3 text-sm">
-              {t('standIn.workspace.remove_role', {
-                name: role.name || t('standIn.personal.default_role'),
-              })}
-            </p>
-          ))}
-          {!dequal(current.primary, proposal.settings.primary) && proposal.settings.primary && (
-            <StandInProposalDiff
-              name={t('standIn.workspace.update_primary')}
-              identity={proposal.settings.primary}
-              previous={current.primary}
-              projects={projects}
-            />
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
       {!result && (
         <footer className="shrink-0 border-t border-border bg-background px-4 py-3">

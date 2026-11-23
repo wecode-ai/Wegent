@@ -14,12 +14,10 @@
 //! streaming state up and publishes `TaskCompletedEvent`. [`completion`] owns
 //! that subsystem; the wrapped emitter's `chat:done` and `task:status` frames
 //! are emitted from here, in the source's order.
-pub(crate) mod block_frames;
-pub(crate) mod channel;
+pub(crate) use wegent_channel_streaming::channel;
 pub(crate) mod completion;
 mod device_dispatch;
 pub(crate) mod dingtalk_card;
-pub(crate) mod dingtalk_stream;
 pub(crate) mod emitter;
 pub(crate) use wegent_execution_events::event;
 pub(crate) use wegent_execution_events::parser;
@@ -29,8 +27,8 @@ pub(crate) use wegent_execution_runtime::session;
 pub(crate) use wegent_python_compat::py_json;
 mod socketio;
 pub(crate) use session::publish_terminal_callback;
+pub(crate) use socketio::ProcessLocalEmit;
 pub(crate) use socketio::publish_terminal_emit;
-pub(crate) mod status_frames;
 
 pub(crate) use socketio::{
     publish_chat_start, publish_emit_in_room, publish_emit_in_room_skipping, publish_task_created,
@@ -339,7 +337,7 @@ async fn deliver_terminal_callback(
             FastApiError::internal()
         })?;
     completion::acknowledge_delivery(
-        &ctx,
+        &ctx.storage(),
         event.task_id,
         event.subtask_id,
         completion::Delivery::Callback,
@@ -358,7 +356,7 @@ async fn deliver_terminal_callback(
     Ok(published)
 }
 
-async fn prepare_interactive_form_event(
+pub(crate) async fn prepare_interactive_form_event(
     registry: &crate::InteractiveFormRegistry,
     event: &mut event::ExecutionEvent,
 ) {

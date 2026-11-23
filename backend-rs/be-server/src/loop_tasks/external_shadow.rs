@@ -17,7 +17,7 @@ pub(super) async fn create(
     item_id: &str,
     user_id: i32,
 ) -> Result<(), FastApiError> {
-    let access = require_cloud_project_role(state, project_id, user_id).await?;
+    let access = require_cloud_project_role(&state.mysql, project_id, user_id).await?;
     let (issue, response) = visible_provider_issue(state, &access, item_id, user_id).await?;
     let description = issue.description(&access.project.task_provider());
     let item = response.into_loop_items();

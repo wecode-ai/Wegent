@@ -1,0 +1,361 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! `collect_completed_result` and its block-merge helpers
+//! (`app/services/chat/trigger/lifecycle.py`).
+use brz_mysql::{FromMysqlCol, Json, Mysql, MysqlResult, MysqlRow};
+use brz_redis::Redis;
+use serde_json::{Map, Value, json};
+
+use super::CompletionStore;
+use super::text_value::terminal_text_value;
+use wegent_execution_runtime::session;
+use wegent_task_store::task_store::subtask_column_index;
+
+mod knowledge_sources;
+
+use knowledge_sources::{KnowledgeSources, KnowledgeTool};
+
+const TERMINAL_CARD_STATUSES: [&str; 2] = ["populated", "error"];
+const NONTERMINAL_CARD_STATUSES: [&str; 2] = ["pending", "partial_ready"];
+
+/// Decode one column of the aliased `subtasks` projection positionally.
+fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, column: &str) -> MysqlResult<Option<T>> {
+    let index = subtask_column_index(column)
+        .ok_or_else(|| brz_mysql::MysqlError::ColumnNotFound(column.to_string()))?;
+    row.get_at::<Option<T>>(index)
+}
+
+/// Read the stored subtask result without loading its unrelated contexts.
+async fn existing_subtask_result<M: Mysql, R: Redis>(
+    ctx: &CompletionStore<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+) -> MysqlResult<Option<Value>> {
+    let (_, subtask_table) = super::resolve_tables(ctx.task_store, ctx.tables, task_id).await?;
+    let mysql = ctx
+        .mysql
+        .route(wegent_backend_persistence::task_routing::ByTaskId(
+            task_id as u64,
+        ));
+    let row: Option<MysqlRow> = mysql
+        .fetch_optional(
+            wegent_task_store::task_store_statements::subtask_by_id_statement(&subtask_table),
+            (subtask_id,),
+        )
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    if subtask_column::<i64>(&row, "task_id")? != Some(task_id) {
+        return Ok(None);
+    }
+    let result: Option<Value> = subtask_column::<Json<Value>>(&row, "result")?.map(|json| json.0);
+    Ok(result.filter(Value::is_object))
+}
+
+/// `_merge_blocks`: merge persisted and in-memory blocks preserving first-seen
+/// order, with the terminal-card guard.
+pub fn merge_blocks(existing_blocks: &Value, new_blocks: &Value) -> Vec<Value> {
+    let mut merged: Vec<Map<String, Value>> = Vec::new();
+    let mut indexes: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for candidate in [existing_blocks, new_blocks] {
+        let Value::Array(blocks) = candidate else {
+            continue;
+        };
+        for block in blocks {
+            let Value::Object(block) = block else {
+                continue;
+            };
+            let block_id = block
+                .get("id")
+                .map(|value| match value {
+                    Value::String(text) => text.clone(),
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_default();
+            if !block_id.is_empty()
+                && let Some(index) = indexes.get(&block_id).copied()
+            {
+                let existing = &merged[index];
+                let mut updated = existing.clone();
+                for (key, value) in block {
+                    if !value.is_null() {
+                        updated.insert(key.clone(), value.clone());
+                    }
+                }
+                if existing.get("type").and_then(Value::as_str) == Some("card")
+                    && existing
+                        .get("card_status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| TERMINAL_CARD_STATUSES.contains(&status))
+                    && block
+                        .get("card_status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| NONTERMINAL_CARD_STATUSES.contains(&status))
+                {
+                    for key in [
+                        "status",
+                        "card_status",
+                        "card_data",
+                        "card_preview_data",
+                        "card_error",
+                    ] {
+                        if let Some(value) = existing.get(key) {
+                            updated.insert(key.to_string(), value.clone());
+                        }
+                    }
+                }
+                merged[index] = updated;
+                continue;
+            }
+            if !block_id.is_empty() {
+                indexes.insert(block_id, merged.len());
+            }
+            merged.push(block.clone());
+        }
+    }
+    merged.into_iter().map(Value::Object).collect()
+}
+
+/// `_is_blank_text_value`.
+pub fn is_blank_text_value(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => true,
+        Some(Value::String(text)) => text.trim().is_empty(),
+        _ => false,
+    }
+}
+
+/// `_decode_tool_output_payloads`.
+fn decode_tool_output_payloads(tool_output: Option<&Value>) -> Vec<Map<String, Value>> {
+    let candidates: Vec<&Value> = match tool_output {
+        Some(Value::Array(items)) => items.iter().collect(),
+        Some(other) => vec![other],
+        None => vec![&Value::Null],
+    };
+    let mut payloads = Vec::new();
+    for candidate in candidates {
+        let mut value = candidate.clone();
+        if let Value::Object(map) = &value
+            && let Some(Value::String(text)) = map.get("text")
+        {
+            value = Value::String(text.clone());
+        }
+        if let Value::String(text) = &value {
+            match serde_json::from_str::<Value>(text) {
+                Ok(parsed) => value = parsed,
+                Err(_) => continue,
+            }
+        }
+        if let Value::Object(map) = value {
+            payloads.push(map);
+        }
+    }
+    payloads
+}
+
+/// Enrich the merged result from the same decoded tool payloads.
+fn enrich_tool_result(result: &mut Map<String, Value>, include_knowledge_sources: bool) {
+    let Some(Value::Array(blocks)) = result.get("blocks") else {
+        return;
+    };
+    let mut embedded = Vec::new();
+    let mut sources =
+        include_knowledge_sources.then(|| KnowledgeSources::from_existing(result.get("sources")));
+    for block in blocks {
+        let Value::Object(block) = block else {
+            continue;
+        };
+        if block.get("type").and_then(Value::as_str) != Some("tool") {
+            continue;
+        }
+        let knowledge_tool = sources
+            .as_ref()
+            .and_then(|_| KnowledgeTool::from_block(block));
+        for payload in decode_tool_output_payloads(block.get("tool_output")) {
+            if let (Some(sources), Some(tool)) = (&mut sources, knowledge_tool) {
+                sources.collect(tool, &payload);
+            }
+            if let Some(result_blocks @ Value::Array(_)) = payload
+                .get("result_data")
+                .and_then(|data| data.get("blocks"))
+            {
+                embedded = merge_blocks(&Value::Array(embedded), result_blocks);
+            }
+        }
+    }
+    if !embedded.is_empty() {
+        let merged = merge_blocks(
+            result.get("blocks").unwrap_or(&Value::Null),
+            &Value::Array(embedded),
+        );
+        result.insert("blocks".into(), Value::Array(merged));
+    }
+    if let Some(sources) = sources {
+        sources.append_to(result);
+    }
+}
+
+/// `collect_completed_result`: the terminal result payload for one subtask.
+pub async fn collect_completed_result<M: Mysql, R: Redis>(
+    ctx: &CompletionStore<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    status: &str,
+    result: Option<&Value>,
+    error_message: Option<&str>,
+    error_code: Option<&str>,
+) -> MysqlResult<Option<Value>> {
+    let normalized_status = status.to_uppercase();
+    let accumulated_content = session::get_accumulated_content(ctx.redis, subtask_id).await;
+    let existing_result = existing_subtask_result(ctx, task_id, subtask_id)
+        .await?
+        .unwrap_or_else(|| Value::Object(Map::new()));
+
+    let runtime_result = result.filter(|value| value.is_object());
+    let mut runtime = runtime_result
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut termination_reason = runtime
+        .get("termination_reason")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if termination_reason.is_none() {
+        termination_reason = existing_result
+            .get("termination_reason")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+    }
+    match &termination_reason {
+        Some(reason) => {
+            runtime.insert("termination_reason".into(), Value::String(reason.clone()));
+        }
+        None => {
+            runtime.shift_remove("termination_reason");
+        }
+    }
+
+    let session::LoadedBlocks {
+        blocks,
+        has_missing_text_content,
+    } = session::finalize_and_get_blocks(
+        ctx.redis,
+        subtask_id,
+        termination_reason.as_deref(),
+        Some(&normalized_status),
+    )
+    .await;
+
+    let has_payload = !runtime.is_empty()
+        || !existing_result.as_object().is_none_or(Map::is_empty)
+        || !accumulated_content.is_empty()
+        || !blocks.is_empty()
+        || normalized_status == "COMPLETED"
+        || normalized_status == "FAILED";
+    if !has_payload {
+        return Ok(None);
+    }
+
+    let mut final_result = runtime;
+    if let Value::Object(existing) = &existing_result {
+        for (key, value) in existing {
+            if key == "blocks" {
+                let merged =
+                    merge_blocks(value, final_result.get("blocks").unwrap_or(&Value::Null));
+                if !merged.is_empty() {
+                    final_result.insert("blocks".into(), Value::Array(merged));
+                }
+                continue;
+            }
+            let current = final_result.get(key);
+            if !final_result.contains_key(key)
+                || current.is_none_or(Value::is_null)
+                || (key == "blocks" && current.is_some_and(|value| !value.is_null()))
+            {
+                final_result.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    if !blocks.is_empty() {
+        let merged = merge_blocks(
+            final_result.get("blocks").unwrap_or(&Value::Null),
+            &Value::Array(blocks.into_iter().map(Value::Object).collect()),
+        );
+        if !merged.is_empty() {
+            final_result.insert("blocks".into(), Value::Array(merged));
+        }
+    }
+
+    enrich_tool_result(&mut final_result, normalized_status == "COMPLETED");
+
+    if is_blank_text_value(final_result.get("value"))
+        && (normalized_status == "COMPLETED" || !accumulated_content.trim().is_empty())
+    {
+        let text_value = terminal_text_value(
+            final_result.get("blocks"),
+            &accumulated_content,
+            has_missing_text_content,
+        );
+        final_result.insert("value".into(), Value::String(text_value));
+    }
+
+    if normalized_status == "FAILED" {
+        let code = error_code.or_else(|| final_result.get("error_type").and_then(Value::as_str));
+        let details = failure_details(
+            error_message.unwrap_or_default(),
+            code.unwrap_or("generic_error"),
+        );
+        final_result.extend(details);
+    }
+
+    Ok(Some(Value::Object(final_result)))
+}
+
+pub fn failure_details(message: &str, code: &str) -> Map<String, Value> {
+    let info = wegent_protocol::chat_errors::classify_chat_error(Some(code), Some(message));
+    let mut details = Map::from_iter([
+        ("error_type".into(), json!(code)),
+        (
+            "error_info".into(),
+            json!({
+                "code": info.code,
+                "category": info.category,
+                "retry_policy": info.retry_policy,
+                "stage": wegent_protocol::chat_errors::error_stage(info.code),
+            }),
+        ),
+    ]);
+    if let Some(status_code) = extract_http_status_code(message) {
+        details.insert("error_code".into(), json!(status_code));
+    }
+    details
+}
+
+/// `shared.utils.error_classifier.extract_http_status_code`: the first
+/// `4xx`/`5xx` status code carried by the message.
+fn extract_http_status_code(message: &str) -> Option<i64> {
+    let mut digits = String::new();
+    for ch in message.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            if digits.len() == 3 {
+                let code: i64 = digits.parse().ok()?;
+                if (400..600).contains(&code) {
+                    return Some(code);
+                }
+                digits.clear();
+            }
+        } else {
+            digits.clear();
+        }
+    }
+    None
+}

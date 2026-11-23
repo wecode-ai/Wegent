@@ -1,6 +1,7 @@
 import {
   scheduleDshRequest,
   executorRequestPriority,
+  dshRpcTimeoutMs,
   type DshRequestPriority,
 } from './backgroundRequests'
 import type { DeviceInfo } from '@/types/api'
@@ -95,6 +96,7 @@ async function readDshExecutorDescription(): Promise<DshExecutorDescription> {
     // Read live identity without serializing on Chromium HTTP cache entries.
     cache: 'no-store',
     headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(15_000),
   })
   const body = (await response.json()) as DshExecutorDescribeResponse | DshExecutorErrorBody
   if (!response.ok || !('executor' in body)) {
@@ -127,19 +129,23 @@ export function requestDshExecutor<T>(
   params: Record<string, unknown> = {},
   options: DshExecutorRequestOptions = {}
 ): Promise<T> {
+  const requestId = createRequestId('wework-local')
+  const command = method === 'device.execute_command' ? String(params.command_key ?? '') : undefined
   return scheduleDshRequest(
     options.priority ?? executorRequestPriority(method, params),
-    () => performDshExecutorRequest<T>(method, params, options),
-    isCancellableRuntimeRead(method) ? options.signal : undefined
+    () => performDshExecutorRequest<T>(requestId, method, params, options),
+    isCancellableRuntimeRead(method) ? options.signal : undefined,
+    undefined,
+    { requestId, method, ...(command ? { command } : {}) }
   )
 }
 
 async function performDshExecutorRequest<T>(
+  requestId: string,
   method: string,
   params: Record<string, unknown> = {},
   options: DshExecutorRequestOptions = {}
 ): Promise<T> {
-  const requestId = createRequestId('wework-local')
   const startedAt = Date.now()
   const diagnosticCount = modelDiagnosticCounts.get(method) ?? 0
   const diagnose =
@@ -149,7 +155,8 @@ async function performDshExecutorRequest<T>(
   if (diagnose) modelDiagnosticCounts.set(method, diagnosticCount + 1)
   const diagnosticStart = performance.now()
   const transportDiagnostic = (stage: string, details: Record<string, unknown> = {}) => {
-    console.warn(
+    const log = stage === 'dispatch' || stage === 'response_done' ? console.info : console.warn
+    log(
       '[Wework] Executor transport diagnostic ' +
         JSON.stringify({
           requestId,
@@ -172,6 +179,18 @@ async function performDshExecutorRequest<T>(
     method,
   })
   const requestBody = JSON.stringify({ id: requestId, method, params })
+  const bodyBytes = new TextEncoder().encode(requestBody).byteLength
+  const timeoutFailure = (phase: string) => {
+    transportDiagnostic('deadline_exceeded', { phase, bodyBytes })
+    return new DshExecutorTransportError(
+      'transport_timeout',
+      `Executor request ${method} timed out`
+    )
+  }
+  transportDiagnostic('dispatch', { bodyBytes })
+  const callerSignal = isCancellableRuntimeRead(method) ? options.signal : undefined
+  const deadline = AbortSignal.timeout(dshRpcTimeoutMs(method))
+  const signal = callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline
   let response: Response
   try {
     diagnostic('fetch_started')
@@ -188,10 +207,11 @@ async function performDshExecutorRequest<T>(
         'x-request-id': requestId,
       },
       body: requestBody,
-      ...(isCancellableRuntimeRead(method) && options.signal ? { signal: options.signal } : {}),
+      signal,
     })
   } catch (error) {
-    if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
+    if (callerSignal?.aborted) throw error
+    if (deadline.aborted) throw timeoutFailure('response_headers')
     diagnostic('fetch_failed')
     transportDiagnostic('fetch_failed', {
       errorType: error instanceof Error ? error.name : typeof error,
@@ -215,7 +235,8 @@ async function performDshExecutorRequest<T>(
   try {
     parsedBody = await response.json()
   } catch (error) {
-    if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
+    if (callerSignal?.aborted) throw error
+    if (deadline.aborted) throw timeoutFailure('response_body')
     diagnostic('body_parse_failed')
     transportDiagnostic('body_parse_failed', {
       status: response.status,
@@ -251,6 +272,7 @@ async function performDshExecutorRequest<T>(
     })
     throw error
   }
+  transportDiagnostic('response_done', { status: response.status })
   return body.result
 }
 

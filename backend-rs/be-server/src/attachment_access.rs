@@ -31,7 +31,10 @@ pub(crate) fn build_state(app: &Arc<AppState>) -> AttachmentState {
             redis: app.redis.clone(),
             resolvers: app.entity_resolvers.clone(),
         }),
-        share_access: Arc::new(ShareAccess(Arc::clone(app))),
+        share_access: Arc::new(ShareAccess {
+            mysql: app.mysql.clone(),
+            task_store: Arc::clone(&app.task_store),
+        }),
     }
 }
 
@@ -66,7 +69,10 @@ impl KnowledgeAttachmentAccess for KnowledgeAccess {
     }
 }
 
-struct ShareAccess(Arc<AppState>);
+struct ShareAccess {
+    mysql: brz_mysql::MysqlService,
+    task_store: Arc<dyn wegent_task_store::task_store::TaskStore>,
+}
 
 #[async_trait::async_trait]
 impl TaskAttachmentShareAccess for ShareAccess {
@@ -75,7 +81,7 @@ impl TaskAttachmentShareAccess for ShareAccess {
         token: &str,
         viewer_id: Option<i64>,
     ) -> Result<Option<ShareInfo>, FastApiError> {
-        let link = crate::share_access::find_task_share_link(&self.0, token)
+        let link = wegent_task_views::share_access::find_task_share_link(&self.mysql, token)
             .await
             .map_err(|error| {
                 tracing::error!(%error, "share-token link lookup failed");
@@ -87,8 +93,9 @@ impl TaskAttachmentShareAccess for ShareAccess {
         let Some(link) = link else {
             return Ok(None);
         };
-        crate::share_access::require_task_access(
-            &self.0,
+        wegent_task_views::share_access::require_task_access(
+            &self.mysql,
+            self.task_store.as_ref(),
             link.token_version,
             link.resource_id,
             viewer_id,

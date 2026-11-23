@@ -93,7 +93,7 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
         .await?
         .context("Issue unavailable")?;
     let agent = grants::agent(
-        app,
+        &app.mysql,
         &row.cloud_project_id,
         &row.agent_id,
         row.assigner_user_id,
@@ -155,7 +155,7 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
         plan.runtime_selection["resolved_environment_id"] = json!(source.environment_id);
         plan.owner = source.owner;
         plan.device_id.clone_from(&source.device);
-        plan.environment = profile::environment(app, source.owner, &source.device).await?;
+        plan.environment = profile::environment(&app.mysql, source.owner, &source.device).await?;
     } else if plan.device_id.is_empty()
         && !plan.runtime_selection["runner_routing"].is_object()
         && plan.environment != "wegent"
@@ -165,7 +165,7 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
             .filter(|device| !device.is_empty())
         {
             plan.device_id = device.to_owned();
-            plan.environment = profile::environment(app, plan.owner, device).await?;
+            plan.environment = profile::environment(&app.mysql, plan.owner, device).await?;
         } else if let Some(environment) = request["environment"].as_str() {
             plan.environment = environment.to_owned();
         }
@@ -207,7 +207,7 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
     if let Some(mut source) = continuation {
         runtime_device = Some(source.device.clone());
         if source.compile_member_profile {
-            source.request = profile::build(app, &issue, row.id, &plan).await?;
+            source.request = profile::build(&app.mysql, &issue, row.id, &plan).await?;
         }
         payload["runtime_request"] = continued_request(row.id, &source, &plan.context)?;
     } else if !plan.device_id.is_empty() {
@@ -216,7 +216,7 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
             if existing.is_object() && !existing.as_object().unwrap().is_empty() {
                 existing
             } else {
-                profile::build(app, &issue, row.id, &plan).await?
+                profile::build(&app.mysql, &issue, row.id, &plan).await?
             };
     }
     Ok(Some(Plan {

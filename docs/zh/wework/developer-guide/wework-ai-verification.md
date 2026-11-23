@@ -252,6 +252,6 @@ BOMBADIL_BIN=/absolute/path/bombadil pnpm --filter wework ai:verify bombadil --s
 
 每个规格使用独立的真实 Electron 与 Executor，自动获取临时 loopback 调试端口，拒绝已有 Executor Home 和多页面目标。执行前处理隔离实例的首次隐私弹窗，再建立规格前置条件。每个规格预算 1—600 秒；多个规格串行执行，结束或失败均清理实例。默认不执行模型请求或云端授权。
 
-结果保存在 wework/test-results/bombadil/<时间>/，包括 summary.json、日志和 Bombadil 原生轨迹。失败或清理失败返回非零；零操作不能通过。轨迹可能含界面截图和内容，只用于本地诊断，不提交仓库，也不上传包含 session.json、认证文件或整个 ai-verify 目录的产物。仅做定向、预算受控的 CI 接入；随机通过不替代确定性回归、权限验证或发布门禁。
+结果保存在 `wework/test-results/bombadil/<时间>/`，包括 summary.json、日志和 Bombadil 原生轨迹。失败或清理失败返回非零；零操作不能通过。轨迹可能含界面截图和内容，只用于本地诊断，不提交仓库，也不上传包含 session.json、认证文件或整个 ai-verify 目录的产物。仅做定向、预算受控的 CI 接入；随机通过不替代确定性回归、权限验证或发布门禁。
 
 GitHub Actions 的 Wework Bombadil exploration 工作流仅支持手动触发：选择 PR 分支，填写 base（默认 origin/main）和每个规格的秒数。普通 PR 不增加自动探索。工作流下载固定版本并校验 SHA-256，只把 summary.json 写入步骤摘要，不上传原始轨迹或认证目录。

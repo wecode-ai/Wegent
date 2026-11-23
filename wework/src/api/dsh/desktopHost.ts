@@ -1,4 +1,5 @@
-import { scheduleDshRequest, executorRequestPriority } from './backgroundRequests'
+import { dshRpcTimeoutMs, scheduleDshRequest, executorRequestPriority } from './backgroundRequests'
+import { createRequestId } from '@/lib/request-id'
 import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
 
 export interface DesktopHostErrorPayload {
@@ -48,6 +49,16 @@ const desktopHostEventHistory: DesktopHostEvent[] = []
 const MAX_DESKTOP_HOST_EVENT_HISTORY = 1024
 const DESKTOP_HOST_EVENT_CURSOR_KEY = 'wework.desktopHostEventCursor'
 const ATTACHMENT_REQUEST_TIMEOUT_MS = 15_000
+// Leave time for the Electron host's 15-minute preparation deadline to return an error.
+const HOST_PREPARATION_TIMEOUT_MS = 15 * 60_000 + 10_000
+const HOST_PREPARATION_CAPABILITIES = new Set([
+  'smartApps.start',
+  'smartApps.verify',
+  'runtime.installCoreDshPlugin',
+  'runtime.updateCoreDshPlugin',
+  'runtime.setCoreDshPluginEnabled',
+  'runtime.uninstallCoreDshPlugin',
+])
 let desktopHostEventAfter = loadDesktopHostEventCursor()
 let disconnectDesktopHostEvents: (() => void) | null = null
 
@@ -61,19 +72,28 @@ export function invokeDesktopHost<Result>(
   capability: string,
   params: Record<string, unknown> = {}
 ): Promise<Result> {
-  return scheduleDshRequest(
+  const requestId = createRequestId('wework-host')
+  const priority =
     capability === 'modelConfiguration.requestRuntime'
       ? executorRequestPriority(String(params.method), {})
       : BACKGROUND_HOST_CAPABILITIES.has(capability)
         ? 'background'
-        : 'foreground',
-    () => performDesktopHostRequest<Result>(capability, params)
+        : 'foreground'
+  return scheduleDshRequest(
+    priority,
+    () =>
+      performDesktopHostRequest<Result>(capability, params, requestId, priority === 'background'),
+    undefined,
+    undefined,
+    { requestId, method: capability }
   )
 }
 
 async function performDesktopHostRequest<Result>(
   capability: string,
-  params: Record<string, unknown> = {}
+  params: Record<string, unknown>,
+  requestId: string,
+  background: boolean
 ): Promise<Result> {
   const startedAt = performance.now()
   const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
@@ -89,19 +109,26 @@ async function performDesktopHostRequest<Result>(
     )
   }
   const pendingDiagnostic = e2e ? setTimeout(() => diagnostic('pending'), 1_000) : undefined
-  const attachmentRequest = capability.startsWith('attachment.')
-  const abortController = attachmentRequest ? new AbortController() : undefined
-  const requestTimeout = abortController
-    ? setTimeout(() => abortController.abort(), ATTACHMENT_REQUEST_TIMEOUT_MS)
-    : undefined
+  const timeoutMs = capability.startsWith('attachment.')
+    ? ATTACHMENT_REQUEST_TIMEOUT_MS
+    : capability === 'modelConfiguration.requestRuntime'
+      ? dshRpcTimeoutMs(String(params.method))
+      : HOST_PREPARATION_CAPABILITIES.has(capability)
+        ? HOST_PREPARATION_TIMEOUT_MS
+        : background
+          ? 30_000
+          : 125_000
+  const deadline = new AbortController()
+  const requestTimeout = setTimeout(() => deadline.abort(), timeoutMs)
+  const signal = deadline.signal
   try {
     let response: Response
     try {
       response = await fetch('/wework/electron-host/v1/invoke', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-request-id': requestId },
         body: JSON.stringify({ capability, params }),
-        ...(abortController ? { signal: abortController.signal } : {}),
+        signal,
       })
     } catch (error) {
       throw new DesktopHostTransportError(
@@ -148,9 +175,17 @@ async function performDesktopHostRequest<Result>(
           () => new DesktopHostTransportError('Electron host response was interrupted')
         )
       : result
+  } catch (error) {
+    if (signal.aborted) {
+      console.warn(
+        '[Wework] Executor transport diagnostic ' +
+          JSON.stringify({ requestId, method: capability, stage: 'deadline_exceeded', timeoutMs })
+      )
+    }
+    throw error
   } finally {
     if (pendingDiagnostic !== undefined) clearTimeout(pendingDiagnostic)
-    if (requestTimeout !== undefined) clearTimeout(requestTimeout)
+    clearTimeout(requestTimeout)
   }
 }
 

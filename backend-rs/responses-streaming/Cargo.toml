@@ -1,0 +1,35 @@
+[package]
+name = "wegent-responses-streaming"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Responses stream transports, lifecycle, and event projection"
+
+[features]
+test-support = []
+
+[dependencies]
+async-trait.workspace = true
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server.workspace = true
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+futures-util = { workspace = true, features = ["std"] }
+getrandom.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing.workspace = true
+wegent-backend-config.workspace = true
+wegent-execution-completion.workspace = true
+wegent-execution-emission.workspace = true
+wegent-execution-events.workspace = true
+wegent-execution-runtime.workspace = true
+wegent-http-compat.workspace = true
+wegent-protocol.workspace = true
+wegent-python-compat.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time", "test-util"] }

@@ -76,7 +76,7 @@ export function createBrowserNavigation(model: BrowserSessionModel) {
     model.options.onNativeLabelChange?.(nativeLabel)
     model.actions.reconcileDownloadSnapshot(nativeLabel)
   }
-  const updatePageUrl = (url: string | null): void => {
+  const updatePageUrl = (url: string | null, pageTitle?: string | null): void => {
     const pendingNavigationUrl = model.runtime.pendingNavigationUrl
     if (pendingNavigationUrl && url && url !== pendingNavigationUrl) return
     model.set('pageUrl', url)
@@ -85,7 +85,7 @@ export function createBrowserNavigation(model: BrowserSessionModel) {
       if (!model.runtime.addressEditing && document.activeElement !== model.dom.addressInput) {
         model.set('address', url)
       }
-      model.options.onTitleChange?.(getFallbackBrowserTitle(url))
+      model.options.onTitleChange?.(pageTitle || getFallbackBrowserTitle(url))
       model.options.onFaviconChange?.(getFallbackFaviconUrl(url))
       return
     }
@@ -119,11 +119,7 @@ export function createBrowserNavigation(model: BrowserSessionModel) {
       if (!pageState.isLoading && nextUrl && model.runtime.pendingNavigationUrl === nextUrl) {
         model.runtime.pendingNavigationUrl = null
       }
-      model.actions.updatePageUrl(nextUrl)
-      if (nextUrl) {
-        model.options.onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
-        model.options.onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
-      }
+      model.actions.updatePageUrl(nextUrl, pageState.title)
       return true
     } catch (error) {
       if (!model.observed || model.runtime.pageStateRequestGeneration !== requestGeneration) {
@@ -444,11 +440,8 @@ export function createBrowserNavigation(model: BrowserSessionModel) {
         if (!pageState.url) return
         model.runtime.nativeBrowserOpen = true
         model.set('currentUrl', pageState.url)
-        model.actions.updatePageUrl(pageState.url)
+        model.actions.updatePageUrl(pageState.url, pageState.title)
         model.runtime.pendingNavigationUrl = null
-        if (pageState.title) {
-          model.options.onTitleChange?.(pageState.title)
-        }
         model.actions.applyNativePageStatus(pageState)
         model.actions.schedulePostOpenBoundsSync(model.options.active)
       } catch {

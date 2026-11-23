@@ -97,7 +97,10 @@ import {
   readLocalExecutorLog,
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
-import { executeVerificationControlCommand } from './verification-control'
+import {
+  dispatchDesktopRuntimeControl,
+  executeVerificationControlCommand,
+} from './verification-control'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import {
@@ -2410,6 +2413,94 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return ''
     }
+    case 'runOversizedArchiveProbe': {
+      const { DshExecutorTransportError, requestDshExecutor } =
+        await import('@/api/dsh/executorTransport')
+      try {
+        await requestDshExecutor('runtime.tasks.archive', {
+          taskId: 'e2e-oversized-archive',
+          runtimeHandle: { messages: [{ content: 'x'.repeat(1024 * 1024) }] },
+          cleanupWorktree: true,
+        })
+      } catch (error) {
+        if (error instanceof DshExecutorTransportError) return error.code
+        throw error
+      }
+      throw new Error('DSH accepted the oversized archive probe')
+    }
+    case 'runDshHttpFailureProbe': {
+      const probe = command.value
+      const requestId = `e2e-http-${probe}`
+      const abort = new AbortController()
+      const options = {
+        headers: { 'x-request-id': requestId },
+        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15_000)]),
+      }
+      try {
+        const rpcPaths = {
+          electron: '/wework/electron-host/v1/invoke',
+          terminal: '/wework/terminal/v1/rpc',
+          plugins: '/wework/plugins/v1/rpc',
+        }
+        if (probe === 'electron' || probe === 'terminal' || probe === 'plugins') {
+          const maxBytes = (probe === 'electron' ? 64 : 1) * 1024 * 1024
+          const response = await fetch(rpcPaths[probe], {
+            ...options,
+            method: 'POST',
+            body: new Uint8Array(maxBytes + 1),
+          })
+          return JSON.stringify({
+            status: response.status,
+            connection: response.headers.get('connection'),
+            code: (await response.json()).error?.code,
+          })
+        }
+        if (probe === 'sse') {
+          const response = await fetch('/wework/executor/v1/events', options)
+          return JSON.stringify({
+            status: response.status,
+            contentType: response.headers.get('content-type'),
+            requestId: response.headers.get('x-request-id'),
+          })
+        }
+        if (probe === 'proxy-before') {
+          const response = await fetch('/wework/api/e2e-http-fault/before', options)
+          return JSON.stringify({
+            status: response.status,
+            connection: response.headers.get('connection'),
+            code: (await response.json()).code,
+          })
+        }
+        if (probe === 'proxy-body') {
+          const response = await fetch('/wework/api/e2e-http-fault/body', options)
+          const reader = response.body?.getReader()
+          if (!reader) throw new Error('The proxy did not return a readable response')
+          const decoder = new TextDecoder()
+          let first = ''
+          while (first.length < 'partial'.length) {
+            const chunk = await reader.read()
+            if (chunk.done) throw new Error('The upstream response ended before the fixture marker')
+            first += decoder.decode(chunk.value, { stream: true })
+          }
+          const release = await fetch('/wework/api/e2e-http-fault/release', options)
+          if (release.status !== 204) throw new Error('The upstream socket was not dropped')
+          let readError = ''
+          try {
+            while (!(await reader.read()).done) continue
+          } catch (error) {
+            readError = error instanceof Error ? error.name : String(error)
+          }
+          return JSON.stringify({
+            status: response.status,
+            first,
+            readError,
+          })
+        }
+        throw new Error('Unknown DSH HTTP failure probe')
+      } finally {
+        abort.abort()
+      }
+    }
     case 'waitForBackgroundRequestProbe':
       await Promise.all(backgroundRequestProbePending)
       return JSON.stringify(Object.fromEntries(backgroundRequestProbe))
@@ -4171,12 +4262,17 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
   }
 }
 
+function desktopControlPageState() {
+  return { visibility: document.visibilityState, hasFocus: document.hasFocus() }
+}
+
 async function postDesktopControlStarted(
   url: string,
   command: DesktopControlCommand,
   clientId: string
 ): Promise<void> {
   const startedAt = Date.now()
+  const startState = desktopControlPageState()
   let lastTick = startedAt
   let maxEventLoopLagMs = 0
   const probe = window.setInterval(() => {
@@ -4184,13 +4280,21 @@ async function postDesktopControlStarted(
     lastTick = Date.now()
   }, 100)
   let response: Response
+  let headersAt: number
+  let completedAt: number
+  let headersState: ReturnType<typeof desktopControlPageState>
+  let endState: ReturnType<typeof desktopControlPageState>
   try {
     response = await fetch(`${url}/started`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
       body: JSON.stringify({ id: command.id, clientId }),
     })
+    headersAt = Date.now()
+    headersState = desktopControlPageState()
     await response.arrayBuffer()
+    completedAt = Date.now()
+    endState = desktopControlPageState()
   } finally {
     window.clearInterval(probe)
     maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
@@ -4207,6 +4311,11 @@ async function postDesktopControlStarted(
         startedAt,
         elapsedMs: Date.now() - startedAt,
         maxEventLoopLagMs,
+        headersElapsedMs: headersAt - startedAt,
+        bodyElapsedMs: completedAt - headersAt,
+        startState,
+        headersState,
+        endState,
         serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
         visibility: document.visibilityState,
       },
@@ -4217,6 +4326,7 @@ async function postDesktopControlStarted(
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
+  let lastRuntimeCommandId: string | undefined
   const pollForCommand = () => {
     recordDesktopControlPhase('poll-started')
     return fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
@@ -4252,6 +4362,19 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       recordDesktopControlPhase('command-decoded', command)
       const diagnostic = { commandId: command.id, action: command.action, clientId }
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
+      if (command.action === 'fetchLocalRuntime') {
+        // Native owns admission and reporting, so Renderer scheduling cannot
+        // consume the Runtime action's budget or delay its completed result.
+        // The controller can return the queue head again before Native acknowledges it.
+        if (command.id !== lastRuntimeCommandId) {
+          lastRuntimeCommandId = command.id
+          void dispatchDesktopRuntimeControl(command, clientId).catch(error => {
+            console.error('[Wework] Desktop E2E Runtime request failed:', error)
+          })
+        }
+        commandRequest = pollForCommand()
+        continue
+      }
       await postDesktopControlStarted(url, command, clientId)
       recordDesktopControlPhase('start-acknowledged', command)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
@@ -4270,15 +4393,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           recordDesktopControlPhase('result-acknowledged', command)
         }
       )
-      if (command.action === 'fetchLocalRuntime') {
-        // Runtime RPCs may wait on each other; keep polling so the controller
-        // can issue the overlapping request while each result retains its ID.
-        void completion.catch(error => {
-          console.error('[Wework] Desktop E2E Runtime request failed:', error)
-        })
-        commandRequest = pollForCommand()
-        continue
-      }
       const result = await completion
       if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {

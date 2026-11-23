@@ -18,9 +18,9 @@
 
 use brz_redis::{SetExpiration, SetOptions};
 
-use crate::projects::PROJECT_COLUMNS;
 use crate::request_sql::{RequestSql, RouteKey};
 use crate::task_store::StatementArg;
+use wegent_backend_persistence::project_projection::PROJECT_COLUMNS;
 
 /// `TASK_SOURCE_GROUP_CACHE_TTL`.
 pub(crate) const CACHE_TTL_SECONDS: u64 = 3600;

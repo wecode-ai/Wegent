@@ -155,7 +155,8 @@ pub(super) async fn attachment_playback(
 
     // `context_service.build_attachment_url(attachment_id)` plus the
     // browser-native credential the download endpoint accepts.
-    let mut proxy_url = crate::attachment_block::build_attachment_download_url(attachment_id);
+    let mut proxy_url =
+        wegent_attachment_links::attachment_block::build_attachment_download_url(attachment_id);
     match share_token.filter(|token| !token.is_empty()) {
         Some(token) => {
             proxy_url.push_str("?share_token=");

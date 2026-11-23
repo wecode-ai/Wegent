@@ -212,7 +212,7 @@ where
 }
 
 /// Lowercase hex SHA-256 of `value`.
-fn hex_sha256(value: &[u8]) -> String {
+pub fn hex_sha256(value: &[u8]) -> String {
     let digest = Sha256::digest(value);
     let mut out = String::with_capacity(digest.len() * 2);
     for byte in digest {

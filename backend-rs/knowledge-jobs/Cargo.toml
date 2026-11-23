@@ -1,0 +1,39 @@
+[package]
+name = "wegent-knowledge-jobs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Knowledge document synchronization, indexing, summaries, and cleanup"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+brz-schedule.workspace = true
+chrono = { workspace = true, features = ["clock", "serde"] }
+htmd.workspace = true
+jsonwebtoken.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+url.workspace = true
+wegent-access.workspace = true
+wegent-attachments.workspace = true
+wegent-backend-config.workspace = true
+wegent-celery.workspace = true
+wegent-execution-preparation.workspace = true
+wegent-execution-runtime.workspace = true
+wegent-identity.workspace = true
+wegent-job-runtime.workspace = true
+wegent-knowledge.workspace = true
+wegent-mcp-providers.workspace = true
+wegent-network-policy.workspace = true
+
+[dev-dependencies]
+futures-util = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

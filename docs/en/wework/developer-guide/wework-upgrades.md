@@ -319,6 +319,8 @@ When upgrade tests quit an installed host, they first confirm command execution 
 
 When diagnostics need new packages, `build_only=true` produces immutable inputs for a subsequent non-publishing `verification_run_id` replay. This mode cannot publish, start the upgrade matrix, or generate compatibility evidence. Ordinary releases and default dry runs still require the complete upgrade gate.
 
+The upgrade test controller uses the frozen source package version and source commit to identify packages with the original control protocol. Those packages acknowledge the start of `fetchLocalRuntime` with the command and client IDs. Other packages must also echo the queued action and payload. The controller identifies the running package again when the client changes during upgrade or rollback.
+
 `Wework App` accepts `verification_writer_wait_seconds`, an integer from 0 to 600, to observe
 an independently owned native writer during stopped preparation. The default is 0 and adds no
 ordinary CI wait. Setting 65 adds one 65-second observation to `app-rollback` for each package

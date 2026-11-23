@@ -298,6 +298,7 @@ mod tests {
     }
 }
 
+pub mod content_type;
 pub mod fallback;
 
 /// The source's FastAPI `CORSMiddleware` returns before installing its

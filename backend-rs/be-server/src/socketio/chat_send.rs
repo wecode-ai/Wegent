@@ -624,6 +624,24 @@ const INTERACTIVE_FORM_TOOL_MARKER: &str = "interactive_form_question";
 /// The pending form `get_pending_interactive_form` finds, if any.
 pub(super) struct PendingInteractiveForm {
     tool_use_id: String,
+    expires_at_unix_ms: Option<i64>,
+}
+
+fn deferred_form_deadline(tool_output: Option<&Value>) -> Option<i64> {
+    let tool_output = tool_output?;
+    let decoded;
+    let output = if let Some(serialized) = tool_output.as_str() {
+        decoded = serde_json::from_str::<Value>(serialized).ok()?;
+        &decoded
+    } else {
+        tool_output
+    };
+    if output["__deferred_user_input__"].as_bool() != Some(true) {
+        return None;
+    }
+    output["expires_at_unix_ms"]
+        .as_i64()
+        .filter(|deadline| (1..=9_007_199_254_740_991).contains(deadline))
 }
 
 /// `_extract_interactive_form_from_result`'s `reversed(blocks)` scan.
@@ -657,7 +675,10 @@ pub(super) fn pending_form_in_result(result: &Value) -> Option<PendingInteractiv
             .and_then(Value::as_array)
             .is_some_and(|questions| !questions.is_empty())
         {
-            return Some(PendingInteractiveForm { tool_use_id });
+            return Some(PendingInteractiveForm {
+                tool_use_id,
+                expires_at_unix_ms: deferred_form_deadline(block.get("tool_output")),
+            });
         }
     }
     None
@@ -731,7 +752,12 @@ async fn validate_interactive_form_answer_on(
         }
     }
 
-    let Some(pending) = pending else {
+    // Evaluate the newest form only. Expiry does not reopen a superseded form.
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let Some(pending) = pending.filter(|form| {
+        form.expires_at_unix_ms
+            .is_none_or(|deadline| now_ms < deadline)
+    }) else {
         if answer.is_some_and(|answer| !answer.is_empty()) {
             return Ok(Err(error_ack_with_message(
                 "interactive_form_not_pending",
@@ -979,7 +1005,8 @@ pub async fn handle(
     } else {
         "web"
     };
-    let mut observation = crate::chat_metrics::RequestObservation::new(entrypoint);
+    let mut observation =
+        wegent_execution_completion::chat_metrics::RequestObservation::new(entrypoint);
     let mut payload = match ChatSendPayload::parse(&data) {
         Ok(payload) => payload,
         Err(error) => {
@@ -1018,9 +1045,14 @@ pub async fn handle(
             Ok(refs) => refs,
             Err(message) => return Ok(Reply::payload(error_ack(message))),
         };
+    let knowledge_acl = wegent_execution_knowledge::knowledge::AclContextSource::new(
+        &state.mysql,
+        &state.entity_resolvers,
+        state.redis.as_ref(),
+    );
     let knowledge_contexts =
-        match crate::responses::create::kb_context_creation::resolve_chat_contexts(
-            state,
+        match wegent_execution_knowledge::kb_context_creation::resolve_chat_contexts(
+            &knowledge_acl,
             user_id,
             payload.context_items(),
         )
@@ -1053,8 +1085,8 @@ pub async fn handle(
     let row_ts = row_timestamp(now);
     let crd_ts = crd_timestamp(now);
     let initial_knowledge_base_refs =
-        match crate::responses::create::kb_context_creation::build_initial_task_knowledge_base_refs(
-            state,
+        match wegent_execution_knowledge::kb_context_creation::build_initial_task_knowledge_base_refs(
+            &knowledge_acl,
             (user_id, session.user_name()),
             payload
                 .knowledge_base_id
@@ -1079,10 +1111,12 @@ pub async fn handle(
     // `prepare_execution_session` on one SQLAlchemy session, so every
     // statement below is a member of one transaction whose first statement is
     // the users-by-id read (qs148).
+    let setup_started = std::time::Instant::now();
     let outcome = transaction_outcome::run(
         &state.mysql,
         async |transaction| {
             let sql: &mut MysqlTransactionService = transaction;
+            tracing::debug!(user_id, elapsed_ms = setup_started.elapsed().as_millis(), stage = "transaction_started", "chat send setup progress");
             let mut payload = payload.clone();
             let mut scope = match resolve_scope_on(
                 &mut *sql,
@@ -1102,6 +1136,7 @@ pub async fn handle(
                     ))));
                 }
             };
+            tracing::debug!(user_id, elapsed_ms = setup_started.elapsed().as_millis(), stage = "scope_resolved", "chat send setup progress");
             let confirming_pipeline = payload.action.as_deref() == Some("pipeline:confirm");
             if confirming_pipeline {
                 let Some(task_id) = payload.task_id.filter(|_| scope.task_owner_user_id == user_id)
@@ -1280,6 +1315,7 @@ pub async fn handle(
                     ))));
                 }
             };
+            tracing::debug!(user_id, elapsed_ms = setup_started.elapsed().as_millis(), stage = "bots_resolved", "chat send setup progress");
             if bots.bot_ids.is_empty() {
                 return Ok(Completion::Rollback(Err(error_ack(
                     "No valid bots found in team",
@@ -1407,6 +1443,7 @@ pub async fn handle(
                     }
                 };
 
+            tracing::debug!(user_id, elapsed_ms = setup_started.elapsed().as_millis(), stage = "session_created", "chat send setup progress");
             let attachment_ids = payload
                 .attachment_ids
                 .as_ref()
@@ -1435,8 +1472,8 @@ pub async fn handle(
             }
 
             if !knowledge_contexts.is_empty() {
-                crate::responses::create::kb_context_creation::link_chat_contexts(
-                    &mut *sql, state.task_store.as_ref(), &mut setup,
+                setup.task_json = wegent_execution_knowledge::kb_context_creation::link_chat_contexts(
+                    &mut *sql, state.task_store.as_ref(), (setup.task_id, setup.user_subtask_id),
                     (user_id, session.user_name()), scope.task_owner_user_id, &row_ts,
                     &knowledge_contexts,
                 ).await.map_err(|error| {
@@ -1449,7 +1486,7 @@ pub async fn handle(
                 crate::responses::create::contexts::link_chat_external_refs(
                     &mut *sql,
                     state.task_store.as_ref(),
-                    &mut setup,
+                    (setup.task_id, setup.user_subtask_id, &mut setup.task_json),
                     user_id,
                     scope.task_owner_user_id,
                     &row_ts,
@@ -1791,12 +1828,13 @@ pub async fn handle(
             // `initialize_redis_chat_history`: a reused Task with history but an
             // empty cache rebuilds it before the turn is broadcast/triggered.
             if let Some(redis) = state.redis.as_ref()
-                && let Err(error) = crate::chat_history::initialize_from_subtasks(
-                    redis,
-                    turn.task_id,
-                    turn.existing_history.clone(),
-                )
-                .await
+                && let Err(error) =
+                    crate::background_jobs::subscription::history::initialize_from_subtasks(
+                        redis,
+                        turn.task_id,
+                        turn.existing_history.clone(),
+                    )
+                    .await
             {
                 tracing::warn!(%error, task_id = turn.task_id, "chat history init failed");
             }
@@ -2114,6 +2152,77 @@ mod tests {
                     queries[0],
                     crate::task_store_statements::subtasks_by_task_desc_statement("subtasks")
                 );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_expired_native_form_allows_a_new_message_and_rejects_a_late_answer() {
+        use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+
+        let answer = json!({"type": INTERACTIVE_FORM_TOOL_MARKER, "tool_use_id": "latest"});
+        for subscription in [false, true] {
+            for (deadline, expired) in [(1, true), (9_007_199_254_740_991_i64, false)] {
+                let fixture = MysqlRows::start(move |_| {
+                    let output = json!({
+                        "__deferred_user_input__": true,
+                        "expires_at_unix_ms": deadline
+                    });
+                    let blocks = json!([
+                        {
+                            "tool_name": INTERACTIVE_FORM_TOOL_MARKER,
+                            "tool_use_id": "older",
+                            "render_payload": {"type": INTERACTIVE_FORM_TOOL_MARKER, "questions": [{}]}
+                        },
+                        {
+                            "tool_name": INTERACTIVE_FORM_TOOL_MARKER,
+                            "tool_use_id": "latest",
+                            "render_payload": {"type": INTERACTIVE_FORM_TOOL_MARKER, "questions": [{}]},
+                            "tool_output": if subscription { json!(output.to_string()) } else { output },
+                        }
+                    ]);
+                    if subscription {
+                        return vec![
+                            ("id", SqlValue::I64(2)),
+                            ("message_id", SqlValue::I64(1)),
+                            ("blocks", SqlValue::Text(blocks.to_string())),
+                        ];
+                    }
+                    let column = |name| crate::task_store_statements::subtask_column_index(name).unwrap();
+                    let mut row = vec![("unused", SqlValue::Null); column("result") + 1];
+                    row[column("role")] = ("subtasks_role", SqlValue::Text("ASSISTANT".to_owned()));
+                    row[column("result")] = (
+                        "subtasks_result",
+                        SqlValue::Text(json!({"blocks": blocks}).to_string()),
+                    );
+                    row
+                })
+                .await;
+                let send = validate_interactive_form_answer_on(
+                    &mut &fixture.mysql,
+                    "subtasks",
+                    42,
+                    None,
+                    subscription,
+                )
+                .await
+                .unwrap();
+                let submit = validate_interactive_form_answer_on(
+                    &mut &fixture.mysql,
+                    "subtasks",
+                    42,
+                    answer.as_object(),
+                    subscription,
+                )
+                .await
+                .unwrap();
+                if expired {
+                    assert!(send.is_ok(), "{send:?}");
+                    assert_eq!(submit.unwrap_err()["error"], "interactive_form_not_pending");
+                } else {
+                    assert_eq!(send.unwrap_err()["error"], "pending_interactive_form");
+                    assert!(submit.is_ok(), "{submit:?}");
+                }
             }
         }
     }

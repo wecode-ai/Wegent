@@ -13,7 +13,7 @@ Rust Backend 在启动后台消费者和 HTTP 服务前准备数据库，仅支�
 
 空库按 `backend-rs/migrations/schema.json` 创建最新完整结构，成功后记录该结构对应的 head。已有数据库只执行尚未应用的迁移。数据库本身仍需提前创建，与 Python 的使用方式相同。
 
-迁移资产按 revision 放在 `backend-rs/migrations/revisions/`，通过 `src/migrations/assets.rs` 嵌入二进制。SQL 步骤可以声明表结构检查条件；需要查询、JSON 转换等操作的历史迁移由 Rust 模块实现。运行时不调用 Python 或 Alembic。
+迁移资产按 revision 放在 `backend-rs/migrations/revisions/`。独立的 `wegent-database-migrations` crate 通过 `backend-rs/migrations/src/assets.rs` 嵌入这些资产。SQL 步骤可以声明表结构检查条件；需要查询、JSON 转换等操作的历史迁移由 Rust 模块实现。运行时不调用 Python 或 Alembic。
 
 原始 Alembic 历史脚本及旧 Wiki SQL 集中保存在 `backend-rs/migrations/reference/`，用于 Python 独立运行和兼容性对照；Rust 不加载这些 Python 脚本。
 

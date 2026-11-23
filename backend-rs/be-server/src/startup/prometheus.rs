@@ -17,7 +17,8 @@ async fn metrics() -> Response {
 /// Creates a streaming response without consuming counters or buffering the body.
 pub fn response() -> Response {
     let robot = std::io::Cursor::new(crate::background_jobs::robot::prometheus().into_bytes());
-    let chat = std::io::Cursor::new(crate::chat_metrics::prometheus().into_bytes());
+    let chat =
+        std::io::Cursor::new(wegent_execution_completion::chat_metrics::prometheus().into_bytes());
     let body = ReaderStream::new(PrometheusReader::new().chain(robot).chain(chat));
     Response::stream(StatusCode::OK, ResponseStream::new(body)).content_type(CONTENT_TYPE)
 }

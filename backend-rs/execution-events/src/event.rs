@@ -197,3 +197,13 @@ impl ExecutionEvent {
         Value::Object(map)
     }
 }
+
+/// The status string a terminal event maps to.
+pub fn terminal_status(event_type: &str) -> Option<&'static str> {
+    match event_type {
+        "done" => Some("COMPLETED"),
+        "error" => Some("FAILED"),
+        "cancelled" => Some("CANCELLED"),
+        _ => None,
+    }
+}

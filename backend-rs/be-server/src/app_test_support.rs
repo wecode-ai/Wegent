@@ -56,9 +56,7 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
             crate::knowledge_download_policy::DefaultDocumentDownloadPolicy,
         ),
         task_store: Arc::new(crate::task_store::DefaultTaskStore::new(mysql.clone())),
-        workspace_repository: Arc::new(
-            crate::subscriptions_list::workspaces::BaseWorkspaceRepository,
-        ),
+        workspace_repository: Arc::new(crate::subscription_workspaces::BaseWorkspaceRepository),
         user_reader: Arc::new(crate::user_reader::PublicUserReader::new(mysql.clone())),
         jwt_secret_keys: vec![Arc::from(auth.jwt_key.as_str())],
         jwt_algorithm: auth.algorithm.clone(),
@@ -77,8 +75,8 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
         oidc_callback: Arc::new(crate::oidc_callback::DefaultOidcCallbackHandler),
         shutdown: Arc::new(crate::shutdown_state::ShutdownState::default()),
         attachment_http: wegent_storage::minio_client::build_client().unwrap(),
-        decision_http: crate::decisions::provider::build_client().unwrap(),
-        url_metadata_http: crate::url_metadata::build_client().unwrap(),
+        decision_http: wegent_model_decisions::build_client().unwrap(),
+        url_metadata_http: wegent_web_content::build_client().unwrap(),
         erp: Arc::new(crate::erp_provider::NoopErpProvider),
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
@@ -101,7 +99,7 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
             crate::git_repositories::GitRepositoriesService::new(None).unwrap(),
         ),
         token_issuer_extra_claims: Arc::new(crate::token_issuers::NoExtraClaims),
-        external_knowledge_auth: Arc::new(crate::mcp::knowledge_external::auth::PersonalApiKeyAuth),
+        external_knowledge_auth: Arc::new(crate::PersonalApiKeyAuth),
         responses_dispatch: Arc::new(crate::responses::dispatch::spawn()),
     })
 }

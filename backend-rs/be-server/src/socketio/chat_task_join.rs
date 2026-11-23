@@ -26,14 +26,14 @@ use crate::internal_callback::session as chat_streaming;
 use crate::request_sql::{RouteKey, fetch_optional_as};
 use crate::sql_support::StatementArg;
 use crate::state::AppState;
-use crate::task_detail_api::assembly::{
+use wegent_task_views::task_detail_api::assembly::{
     build_task_detail, extract_display_prompt, sanitize_client_payload,
 };
-use crate::task_detail_api::repository::{
+use wegent_task_views::task_detail_api::repository::{
     ContextRow, accessible_task_ids, get_task_owner_for_caller, is_approved_member,
     list_subtasks_by_task,
 };
-use crate::task_detail_api::views::{context_brief, conversation_task_id};
+use wegent_task_views::task_detail_api::views::{context_brief, conversation_task_id};
 
 use super::chat_session::ChatSession;
 use super::device_lifecycle::publish_room_event;
@@ -356,9 +356,15 @@ fn subtask_value_on_failure(result: Result<Value, String>, user_id: i64, task_id
 
 /// Full sync: `task_kinds_service.get_task_detail(...).get("subtasks")`.
 async fn full_sync_subtasks(state: &AppState, user_id: i64, task_id: i64) -> Result<Value, String> {
-    let outcome = build_task_detail(state, task_id, user_id, None, true)
-        .await
-        .map_err(|error| error.to_string())?;
+    let outcome = build_task_detail(
+        &crate::task_view_state::build(state),
+        task_id,
+        user_id,
+        None,
+        true,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     let body = serde_json::to_value(outcome.body).map_err(|error| error.to_string())?;
     Ok(body.get("subtasks").cloned().unwrap_or(Value::Null))
 }
@@ -375,10 +381,11 @@ async fn incremental_subtasks(
     // the caller as the owner filter; a missing row raises the source's
     // fork-history error, which `task:join` catches and acknowledges with
     // `subtasks: null`.
-    let owner_id = get_task_owner_for_caller(state, task_id, user_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| format!("Task {task_id} not found while resolving fork history"))?;
+    let owner_id =
+        get_task_owner_for_caller(&state.mysql, state.task_store.as_ref(), task_id, user_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("Task {task_id} not found while resolving fork history"))?;
     let listing = list_subtasks_by_task(&*state.task_store, task_id, owner_id, true)
         .await
         .map_err(|error| error.to_string())?;

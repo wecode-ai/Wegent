@@ -5,7 +5,6 @@ use crate::task_runtime::personal_stand_in::{
     source_collection_namespace, source_provider, stand_in_collection_connection,
     stand_in_identities,
 };
-use chrono::TimeZone;
 
 #[derive(Clone, Copy)]
 enum ConnectionSubscriber {
@@ -325,18 +324,21 @@ impl RuntimeWorkRpcHandler {
                 .map_err(settings_error)?;
             message_time(&message["at"])?;
             {
-                let eligible: Vec<Value> = roles
-                    .iter()
-                    .filter(|role| {
-                        stand_in_collection_connection(role, source).is_some_and(|connection| {
-                            connection["policy"]["automatic"] == true
-                                && source_accepts_message(connection, &message)
+                for role in roles {
+                    let Some(grant) =
+                        stand_in_collection_connection(role, source).filter(|grant| {
+                            grant["policy"]["automatic"] == true
+                                && source_accepts_message(grant, &message)
                         })
-                    })
-                    .map(|role| role["id"].clone())
-                    .collect();
-                for role in eligible {
-                    let event = json!({"kind":"connection","source":source,"message":message,"roleIds":[role],"roleScoped":true});
+                    else {
+                        continue;
+                    };
+                    let role = &role["id"];
+                    // A shared poll starts at the earliest activation. Dispatch and
+                    // later receipt matching use this recipient's concrete grant.
+                    let scoped = concrete_role_grant(grant, source);
+                    let event = json!({"kind":"connection","source":scoped,"message":message,"roleIds":[role],
+                        "roleScoped":true,"roleEnabledAfter":grant["enabledAfter"]});
                     let event_identity = LocalTaskStore::canonical_connection_event_identity(
                         &event,
                     )
@@ -395,12 +397,7 @@ impl RuntimeWorkRpcHandler {
         let target = self.connection_session_target(store, user, role, source, message)?;
         let connection = stand_in_collection_connection(role, source)
             .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
-        let mut connection = connection.clone();
-        if connection["scope"] == "all" {
-            connection.as_object_mut().unwrap().remove("scope");
-            connection["id"] = source["id"].clone();
-            connection["name"] = source["name"].clone();
-        }
+        let connection = concrete_role_grant(connection, source);
         if let Some(id) = &target {
             store
                 .ensure_coordinated_work(
@@ -417,6 +414,16 @@ impl RuntimeWorkRpcHandler {
             .map_err(settings_error)?;
         Ok(())
     }
+}
+
+fn concrete_role_grant(grant: &Value, source: &Value) -> Value {
+    let mut scoped = grant.clone();
+    if scoped["scope"] == "all" {
+        scoped.as_object_mut().unwrap().remove("scope");
+        scoped["id"] = source["id"].clone();
+        scoped["name"] = source["name"].clone();
+    }
+    scoped
 }
 
 fn collection_sources(
@@ -702,14 +709,9 @@ mod ordered_email_tests {
 }
 
 pub(super) fn message_time(value: &Value) -> Result<i64, AppIpcError> {
-    let text = value.as_str().unwrap_or_default();
-    if let Ok(time) = chrono::DateTime::parse_from_rfc3339(text) {
-        return Ok(time.timestamp_millis());
-    }
-    chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
-        .ok()
-        .and_then(|time| chrono::Local.from_local_datetime(&time).single())
-        .map(|time| time.timestamp_millis())
+    value
+        .as_str()
+        .and_then(wegent_local_task_store::store::connection_message_millis)
         .ok_or_else(|| {
             AppIpcError::new(
                 "connection_response_invalid",

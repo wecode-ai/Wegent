@@ -1,0 +1,21 @@
+[package]
+name = "wegent-attachment-content"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Attachment text extraction and model image preparation"
+
+[dependencies]
+base64.workspace = true
+chardetng.workspace = true
+chrono = { workspace = true, features = ["std"] }
+csv.workspace = true
+encoding_rs.workspace = true
+flate2 = { workspace = true, features = ["zlib"] }
+libz-sys.workspace = true
+regex.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
+turbojpeg = { workspace = true, features = ["cmake"] }
+wegent-backend-config.workspace = true
