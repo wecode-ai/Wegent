@@ -1,6 +1,7 @@
 import { Input } from '@ui-sdk/react/input'
 import { Button } from '@ui-sdk/react/button'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useRef, useState, type PointerEvent } from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import {
   Eraser,
   GripVertical,
@@ -54,7 +55,8 @@ export function useImagePreviewEditor(
   portalContainer: HTMLElement | null,
   imageSize: { width: number; height: number } | null,
   compact = false,
-  saveMarkup = false
+  saveMarkup = false,
+  initialComments: ImageComment[] = []
 ) {
   const { t } = useTranslation('common')
   const [mode, setMode] = useState<EditMode | null>(null)
@@ -63,7 +65,7 @@ export function useImagePreviewEditor(
     count: 0,
   })
   const [stroke, setStroke] = useState<ImageStroke | null>(null)
-  const activeEraseStroke = useRef<ImageStroke | null>(null)
+  const activeEraseGesture = useRef<{ pointerId: number; stroke: ImageStroke } | null>(null)
   const [brushWidth, setBrushWidth] = useState(4)
   const [instructions, setInstructions] = useState('')
   const [markupCommenting, setMarkupCommenting] = useState(false)
@@ -74,27 +76,32 @@ export function useImagePreviewEditor(
     setMarkupCommenting(false)
   })
   const strokes = history.strokes.slice(0, history.count)
-  const [comments, setComments] = useState<ImageComment[]>([])
+  const [comments, setComments] = useState<ImageComment[]>(initialComments)
   const sendCommentsButton = useRef<HTMLButtonElement>(null)
-  const focusSendAfterSave = useRef(false)
-  useLayoutEffect(() => {
-    if (!focusSendAfterSave.current) return
-    focusSendAfterSave.current = false
-    sendCommentsButton.current?.focus({ preventScroll: true })
-  }, [comments])
+  const [focusRequest, setFocusRequest] = useState(0)
+  useFocusRequest(sendCommentsButton, focusRequest, {
+    enabled: focusRequest > 0,
+    preventScroll: true,
+  })
   const [comment, setComment] = useState<ImageCommentDraft | null>(null)
-  const position = useRef<{ x: number; y: number; pointerX: number; pointerY: number } | null>(null)
+  const toolbarDrag = useRef<{
+    x: number
+    y: number
+    pointerX: number
+    pointerY: number
+    pointerId: number
+  } | null>(null)
   const controls = useRef<HTMLDivElement>(null)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
 
   function selectMode(next: EditMode | null) {
     setMode(next)
     setHistory({ strokes: [], count: 0 })
-    updateEraseStroke(null)
+    clearEraseGesture()
     setInstructions('')
     setMarkupCommenting(false)
     markup.reset()
-    setComments([])
+    setComments(initialComments)
     setComment(null)
   }
 
@@ -109,26 +116,45 @@ export function useImagePreviewEditor(
     submit(edit, () => selectMode(null))
   }
 
-  function updateEraseStroke(next: ImageStroke | null) {
-    activeEraseStroke.current = next
-    setStroke(next)
+  function clearEraseGesture() {
+    activeEraseGesture.current = null
+    setStroke(null)
+  }
+
+  function commitEraseGesture(
+    gesture: { pointerId: number; stroke: ImageStroke },
+    samples: ReturnType<typeof imagePointerSamples>
+  ) {
+    const stroke = samples.length
+      ? { ...gesture.stroke, points: [...gesture.stroke.points, ...samples] }
+      : gesture.stroke
+    setHistory(current => ({
+      strokes: [...current.strokes.slice(0, current.count), stroke],
+      count: current.count + 1,
+    }))
+    clearEraseGesture()
   }
 
   const canSendMarkup =
-    markup.marks.length > 0 || markup.pendingText || comments.length > 0 || comment?.text.trim()
+    markup.marks.length > 0 ||
+    markup.pendingText ||
+    comments.length > 0 ||
+    comment?.text.trim() ||
+    instructions.trim()
+
+  const currentComments = comment ? saveImageComment(comments, comment) : comments
 
   function submitMarkup() {
     const marks = markup.pendingText ? [...markup.marks, markup.pendingText] : markup.marks
-    const savedComments = comment ? saveImageComment(comments, comment) : comments
     if (!saveMarkup && marks.length === 0 && !instructions.trim()) {
-      onSubmit({ kind: 'comment', comments: savedComments })
+      onSubmit({ kind: 'comment', comments: currentComments })
       return
     }
     onSubmit({
       kind: 'markup',
       marks,
       instructions,
-      ...(savedComments.length ? { comments: savedComments } : {}),
+      ...(currentComments.length ? { comments: currentComments } : {}),
     })
   }
 
@@ -150,6 +176,12 @@ export function useImagePreviewEditor(
     })
   }
 
+  function finishToolbarDrag(event: PointerEvent<HTMLButtonElement>) {
+    const drag = toolbarDrag.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    toolbarDrag.current = null
+  }
+
   const commentSurface = (
     <ImageCommentSurface
       comments={comments}
@@ -157,7 +189,7 @@ export function useImagePreviewEditor(
       busy={busy}
       onDraft={setComment}
       onSave={explicit => {
-        focusSendAfterSave.current = explicit && mode === 'comment'
+        if (explicit && mode === 'comment') setFocusRequest(value => value + 1)
         commitComment()
       }}
       onDelete={index => {
@@ -182,44 +214,48 @@ export function useImagePreviewEditor(
         className="absolute inset-0 size-full touch-none cursor-crosshair"
         viewBox={`0 0 ${surfaceSize.width} ${surfaceSize.height}`}
         onPointerDown={event => {
-          if (busy || event.button !== 0) return
+          if (busy || event.button !== 0 || activeEraseGesture.current) return
           const point = imagePointerSamples(event).at(-1)
           if (!point) return
           event.currentTarget.setPointerCapture(event.pointerId)
           startImagePointerTrace(event, 'selection-eraser')
-          updateEraseStroke({ points: [point], width: brushWidth })
+          const gesture = {
+            pointerId: event.pointerId,
+            stroke: { points: [point], width: brushWidth },
+          }
+          activeEraseGesture.current = gesture
+          setStroke(gesture.stroke)
         }}
         onPointerMove={event => {
-          const current = activeEraseStroke.current
-          if (!current || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+          const gesture = activeEraseGesture.current
+          if (!gesture || gesture.pointerId !== event.pointerId) return
           const samples = imagePointerSamples(event)
-          if (samples.length)
-            updateEraseStroke({ ...current, points: [...current.points, ...samples] })
+          if (!samples.length) return
+          const next = {
+            ...gesture,
+            stroke: { ...gesture.stroke, points: [...gesture.stroke.points, ...samples] },
+          }
+          activeEraseGesture.current = next
+          setStroke(next.stroke)
         }}
         onPointerUp={event => {
-          const completed = activeEraseStroke.current
-          if (!completed || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+          const gesture = activeEraseGesture.current
+          if (!gesture || gesture.pointerId !== event.pointerId) return
           const samples = imagePointerSamples(event)
           finishImagePointerTrace(event)
-          setHistory(current => ({
-            strokes: [
-              ...current.strokes.slice(0, current.count),
-              {
-                ...completed,
-                points: [...completed.points, ...samples],
-              },
-            ],
-            count: current.count + 1,
-          }))
-          updateEraseStroke(null)
+          commitEraseGesture(gesture, samples)
         }}
         onPointerCancel={event => {
+          const gesture = activeEraseGesture.current
+          if (!gesture || gesture.pointerId !== event.pointerId) return
           finishImagePointerTrace(event)
-          updateEraseStroke(null)
+          clearEraseGesture()
         }}
         onLostPointerCapture={event => {
+          const gesture = activeEraseGesture.current
+          if (!gesture || gesture.pointerId !== event.pointerId) return
           finishImagePointerTrace(event)
-          updateEraseStroke(null)
+          commitEraseGesture(gesture, [])
         }}
       >
         {(stroke ? [...strokes, stroke] : strokes).map((line, index) => (
@@ -277,21 +313,26 @@ export function useImagePreviewEditor(
           aria-label={t('image_preview.move_toolbar')}
           data-testid="attachment-image-toolbar-handle"
           onPointerDown={event => {
-            if (event.button !== 0) return
-            position.current = { ...offset, pointerX: event.clientX, pointerY: event.clientY }
+            if (event.button !== 0 || toolbarDrag.current) return
+            toolbarDrag.current = {
+              ...offset,
+              pointerX: event.clientX,
+              pointerY: event.clientY,
+              pointerId: event.pointerId,
+            }
             event.currentTarget.setPointerCapture(event.pointerId)
           }}
           onPointerMove={event => {
-            const start = position.current
-            if (!start) return
+            const start = toolbarDrag.current
+            if (!start || start.pointerId !== event.pointerId) return
             moveToolbar(
               start.x + event.clientX - start.pointerX,
               start.y + event.clientY - start.pointerY
             )
           }}
-          onLostPointerCapture={() => {
-            position.current = null
-          }}
+          onPointerUp={finishToolbarDrag}
+          onPointerCancel={finishToolbarDrag}
+          onLostPointerCapture={finishToolbarDrag}
           onKeyDown={event => {
             const moves: Record<string, [number, number]> = {
               ArrowLeft: [-12, 0],
@@ -322,11 +363,14 @@ export function useImagePreviewEditor(
             </span>
             <Button
               type="button"
-              className={cn(actionClass, 'rounded-xl bg-blue-600 text-white hover:bg-blue-500')}
+              className={cn(
+                actionClass,
+                'rounded-xl bg-text-primary text-background hover:bg-text-primary/90'
+              )}
               data-testid="attachment-image-edit-send"
               ref={sendCommentsButton}
-              disabled={busy || !comments.length}
-              onClick={() => onSubmit({ kind: 'comment', comments })}
+              disabled={busy || !currentComments.length}
+              onClick={() => onSubmit({ kind: 'comment', comments: currentComments })}
             >
               {t('image_preview.send')}
             </Button>
@@ -420,7 +464,7 @@ export function useImagePreviewEditor(
                 actionClass,
                 mode === 'markup' &&
                   saveMarkup &&
-                  'rounded-xl bg-blue-600 text-white hover:bg-blue-500'
+                  'rounded-xl bg-text-primary text-background hover:bg-text-primary/90'
               )}
               data-testid={
                 mode === 'markup' && saveMarkup

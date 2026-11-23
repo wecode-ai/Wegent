@@ -72,6 +72,40 @@ export interface ComposerAttachmentsInitialState {
   files?: File[]
 }
 
+export function includeDraftAttachmentGroup({
+  submittedAttachments,
+  draftAttachments,
+  sourceAttachmentId,
+}: {
+  submittedAttachments: Attachment[]
+  draftAttachments: Attachment[]
+  sourceAttachmentId?: number
+}): Attachment[] {
+  if (sourceAttachmentId === undefined) return submittedAttachments
+  const source = draftAttachments.find(attachment => attachment.id === sourceAttachmentId)
+  if (!source?.ui_group_id) return submittedAttachments
+
+  const submittedIds = new Set(submittedAttachments.map(attachment => attachment.id))
+  const companions = draftAttachments.filter(
+    attachment =>
+      attachment.ui_group_id === source.ui_group_id &&
+      attachment.id !== source.id &&
+      !submittedIds.has(attachment.id)
+  )
+  return submittedAttachments
+    .map((attachment, index) =>
+      index === 0
+        ? {
+            ...attachment,
+            ui_group_id: source.ui_group_id,
+            ui_group_role: source.ui_group_role,
+            ui_kind: source.ui_kind,
+          }
+        : attachment
+    )
+    .concat(companions)
+}
+
 export function createComposerAttachmentsModel(
   options: ComposerAttachmentsOptions,
   initial?: ComposerAttachmentsInitialState
@@ -427,7 +461,7 @@ export function createComposerAttachmentsModel(
       ui_group_id: original.ui_group_id,
       ui_group_role: original.ui_group_role,
       ui_kind: original.ui_kind,
-      image_markup_comments: [...(original.image_markup_comments ?? []), ...comments],
+      image_markup_comments: comments,
     }
     updateScopeState(scopeKey, current => ({
       ...current,

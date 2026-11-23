@@ -32,10 +32,11 @@ const controlClass =
   'grid size-8 shrink-0 place-items-center rounded-md hover:bg-white/15 aria-pressed:bg-white/20 disabled:opacity-50'
 
 type Gesture =
-  | { kind: 'draw'; stroke: MarkupStroke }
-  | { kind: 'erase'; stroke: ImageStroke }
+  | { kind: 'draw'; pointerId: number; stroke: MarkupStroke }
+  | { kind: 'erase'; pointerId: number; stroke: ImageStroke }
   | {
       kind: 'move'
+      pointerId: number
       index: number
       start: ImagePoint
       current: ImagePoint
@@ -101,30 +102,41 @@ export function useMarkupEditor(
   }
 
   function pointerDown(event: PointerEvent<SVGSVGElement>) {
-    if (busy || event.button !== 0) return
+    if (busy || event.button !== 0 || activeGesture.current) return
     if (tool === 'pen') startImagePointerTrace(event, 'pen', width)
     const point = imagePointerSamples(event).at(-1)
-    if (!point) return
+    if (!point) {
+      finishImagePointerTrace(event)
+      return
+    }
     const hit = (event.target as Element)
       .closest('[data-mark-index]')
       ?.getAttribute('data-mark-index')
     const index = hit === null || hit === undefined ? -1 : Number(hit)
     const mark = marks[index]
     if (tool === 'text') {
+      commitPendingText()
       setTextDraft({ point, text: '' })
       return
     }
     if (tool === 'eraser') {
       const stroke = { points: [point], width: eraserWidth }
-      activeGesture.current = { kind: 'erase', stroke }
+      activeGesture.current = { kind: 'erase', pointerId: event.pointerId, stroke }
       setErasure(stroke)
     } else if (tool === 'select') {
       setSelected(mark ? index : null)
       if (!mark) return
-      activeGesture.current = { kind: 'move', index, start: point, current: point, mark }
+      activeGesture.current = {
+        kind: 'move',
+        pointerId: event.pointerId,
+        index,
+        start: point,
+        current: point,
+        mark,
+      }
     } else {
       const stroke = { points: [point], width, color, ...(tool === 'pen' ? {} : { shape: tool }) }
-      activeGesture.current = { kind: 'draw', stroke }
+      activeGesture.current = { kind: 'draw', pointerId: event.pointerId, stroke }
       setPreview(stroke)
     }
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -154,9 +166,10 @@ export function useMarkupEditor(
     setErasure(null)
   }
 
-  function extendErasure(stroke: ImageStroke, points: ImagePoint[]) {
+  function extendErasure(gesture: Extract<Gesture, { kind: 'erase' }>, points: ImagePoint[]) {
+    const stroke = gesture.stroke
     const next = { ...stroke, points: [...stroke.points, ...points] }
-    activeGesture.current = { kind: 'erase', stroke: next }
+    activeGesture.current = { ...gesture, stroke: next }
     return next
   }
 
@@ -165,7 +178,7 @@ export function useMarkupEditor(
     if (!gesture) return
     const point = points.at(-1)
     if (gesture.kind === 'erase') {
-      const stroke = point ? extendErasure(gesture.stroke, points) : gesture.stroke
+      const stroke = point ? extendErasure(gesture, points) : gesture.stroke
       const updated = eraseMarks(marks, stroke)
       if (updated.some((mark, index) => mark !== marks[index])) commit(updated)
       clearGesture()
@@ -188,7 +201,8 @@ export function useMarkupEditor(
   }
 
   function pointerUp(event: PointerEvent<SVGSVGElement>) {
-    if (!activeGesture.current) return
+    const gesture = activeGesture.current
+    if (!gesture || gesture.pointerId !== event.pointerId) return
     const samples = imagePointerSamples(event)
     finishImagePointerTrace(event)
     finishGesture(samples)
@@ -212,18 +226,22 @@ export function useMarkupEditor(
         onPointerDown={pointerDown}
         onPointerMove={event => {
           const gesture = activeGesture.current
-          if (!gesture) return
+          if (!gesture || gesture.pointerId !== event.pointerId) return
           const samples = imagePointerSamples(event)
           if (!samples.length) return
-          if (gesture.kind === 'erase') setErasure(extendErasure(gesture.stroke, samples))
+          if (gesture.kind === 'erase') setErasure(extendErasure(gesture, samples))
           else setPreview(updateGesture(samples))
         }}
         onPointerUp={pointerUp}
         onPointerCancel={event => {
+          const gesture = activeGesture.current
+          if (!gesture || gesture.pointerId !== event.pointerId) return
           finishImagePointerTrace(event)
           clearGesture()
         }}
         onLostPointerCapture={event => {
+          const gesture = activeGesture.current
+          if (!gesture || gesture.pointerId !== event.pointerId) return
           finishImagePointerTrace(event)
           finishGesture([])
         }}

@@ -1,4 +1,5 @@
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
+import { includeDraftAttachmentGroup } from '@wegent/collaboration/composer'
 
 import i18n from '@/i18n'
 
@@ -80,13 +81,18 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       setQueuedMessages,
     } = sessionOwner.commands
 
-    const { captureAttachments } = attachmentState
+    const { attachments: draftAttachments, captureAttachments, removeAttachment } = attachmentState
     const { getDraftEditVersion } = sessionOwner.commands
 
     const standalone = options.standaloneAttachments !== undefined
     const codeCommentContexts = standalone ? [] : draftCodeComments
     const resetAttachments = () => {
       if (!standalone) resetDraftAttachments()
+    }
+    const submittedAttachmentSourceId = standalone ? options.draftAttachmentSourceId : undefined
+    const cleanupSubmittedAttachmentSource = () => {
+      if (submittedAttachmentSourceId === undefined) return
+      void removeAttachment(submittedAttachmentSourceId).catch(() => {})
     }
     const restoreAttachments = (
       scope: string,
@@ -134,7 +140,13 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         replaceInputForScope(scopeKey, value)
       }
     }
-    const currentAttachments = options.standaloneAttachments ?? captureAttachments()
+    const currentAttachments = options.standaloneAttachments
+      ? includeDraftAttachmentGroup({
+          submittedAttachments: options.standaloneAttachments,
+          draftAttachments,
+          sourceAttachmentId: submittedAttachmentSourceId,
+        })
+      : captureAttachments()
     const hasCodeComments = codeCommentContexts.length > 0
     const paneIsBusy = readCurrentPaneBusy()
     debugComposerEvent('pane-send-called', {
@@ -214,6 +226,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           setGoalDraftActive(false)
           setQueuedMessages(messages => [...messages, baseMessage])
           await sendQueuedMessageAsGuidance(baseMessage, true)
+          cleanupSubmittedAttachmentSource()
           return true
         }
 
@@ -225,6 +238,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
           setGoalDraftActive(false)
           setQueuedMessages(messages => [...messages, queuedMessage])
+          cleanupSubmittedAttachmentSource()
           return true
         }
 
@@ -242,6 +256,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
           setGoalDraftActive(false)
           clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
+          cleanupSubmittedAttachmentSource()
         } else {
           restoreSubmittedInput(inputScopeKey, submittedInput)
           currentAttachments.forEach(attachment =>
@@ -310,6 +325,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         },
       })
       if (sent) {
+        cleanupSubmittedAttachmentSource()
         clearSubmittedInput()
         if (!isRuntimeTaskAddress(sent)) {
           appendLocalUserMessage(goalMessage.content, goalMessage.attachments, {
@@ -498,6 +514,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           setDraftMessages([])
         }
         clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
+        cleanupSubmittedAttachmentSource()
       } else {
         restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
         restoreAttachments(submissionScopeKey, currentAttachments)
@@ -535,11 +552,13 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
           restoreAttachments(inputScopeKey, currentAttachments)
         } else {
           clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
+          cleanupSubmittedAttachmentSource()
         }
         return sent
       }
       setQueuedMessages(messages => [...messages, queuedMessage])
       clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
+      cleanupSubmittedAttachmentSource()
       if (options.guideWhenBusy) {
         await sendQueuedMessageAsGuidance(queuedMessage, true)
       }
@@ -560,6 +579,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
     }
     if (result.accepted) {
       clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
+      cleanupSubmittedAttachmentSource()
     } else if (isRuntimeTaskBusyError(sendError)) {
       const lifecycleAfterSend = currentRuntimeTask
         ? lifecycleStore.getTask(currentRuntimeTask)
@@ -571,6 +591,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       }
       setQueuedMessages(messages => [...messages, queuedMessage])
       clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
+      cleanupSubmittedAttachmentSource()
     } else {
       restoreSubmittedInput(inputScopeKey, submittedInput)
       restoreAttachments(inputScopeKey, currentAttachments)

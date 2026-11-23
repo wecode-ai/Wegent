@@ -12,12 +12,96 @@ import {
   selectDesktopControlChoice,
 } from '@/e2e/desktop-control-select'
 import { DesktopImagePreview } from './DesktopImagePreview'
-import { ImageEditContext } from './ImageEditContext'
+import { ImageEditContext, type ImageEditActions } from './ImageEditContext'
 import { composeImageMarkupMessage } from './imageEdit'
 import { markupSurfaceSize, strokeGeometry } from './imageMarkup'
 import { useAttachmentImageServices } from '../useAttachmentImageServices'
+import { AttachmentPreviewContext } from '../AttachmentPreviewContext'
+import type { Attachment } from '@/types/api'
+import type { WorkspaceAttachmentPreviewSource } from '@/types/workspace-files'
 
 afterEach(() => vi.unstubAllGlobals())
+
+function imageAttachment(overrides: Partial<Attachment> = {}): Attachment {
+  return {
+    id: -1,
+    filename: 'image.png',
+    file_size: 1,
+    mime_type: 'image/png',
+    file_extension: '.png',
+    created_at: '',
+    status: 'ready',
+    ...overrides,
+  }
+}
+
+function preparePointerSurface(surface: HTMLElement) {
+  Object.defineProperties(surface, {
+    setPointerCapture: { value: vi.fn(), configurable: true },
+    hasPointerCapture: { value: () => true, configurable: true },
+  })
+  vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({
+    left: 0,
+    top: 0,
+    width: 100,
+    height: 100,
+    right: 100,
+    bottom: 100,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  })
+}
+
+function dispatchPointer(
+  surface: HTMLElement,
+  type: string,
+  pointerId: number,
+  clientX: number,
+  clientY: number
+) {
+  const event = new MouseEvent(type, { bubbles: true, button: 0, clientX, clientY })
+  Object.defineProperty(event, 'pointerId', { value: pointerId })
+  fireEvent(surface, event)
+}
+
+function renderImageEditor(
+  submit: ImageEditActions['submit'],
+  saveMarkup?: ImageEditActions['saveMarkup'],
+  {
+    attachment = imageAttachment(),
+    fromComposer = false,
+    onClose = vi.fn(),
+    openPanel,
+    loadFile: loadFileOverride,
+  }: {
+    attachment?: Attachment
+    fromComposer?: boolean
+    onClose?: () => void
+    openPanel?: (source: WorkspaceAttachmentPreviewSource) => void
+    loadFile?: () => Promise<File>
+  } = {}
+) {
+  const source = new File(['image'], attachment.filename, { type: attachment.mime_type })
+  const loadFile = loadFileOverride ?? (async () => source)
+  render(
+    <AttachmentPreviewContext.Provider value={openPanel ?? null}>
+      <ImageEditContext.Provider value={{ submit, saveMarkup }}>
+        <DesktopImagePreview
+          attachment={attachment}
+          fromComposer={fromComposer}
+          filename={source.name}
+          url="blob:test-preview"
+          loading={false}
+          loadFile={loadFile}
+          onClose={onClose}
+          onDownload={vi.fn()}
+          onError={vi.fn()}
+        />
+      </ImageEditContext.Provider>
+    </AttachmentPreviewContext.Provider>
+  )
+}
 
 test('uses the same isotropic coordinates for the preview and the exported pen outline', () => {
   expect(markupSurfaceSize({ width: 1200, height: 400 })).toEqual({
@@ -361,28 +445,15 @@ test('keeps the image and resize choices available after a failed edit', async (
   const loadFile = vi.fn().mockResolvedValue(source)
   const submit = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
   const close = vi.fn()
-  render(
-    <ImageEditContext.Provider value={{ submit }}>
-      <DesktopImagePreview
-        attachment={{
-          id: -1,
-          filename: source.name,
-          file_size: source.size,
-          mime_type: source.type,
-          file_extension: '.png',
-          created_at: '',
-          status: 'ready',
-        }}
-        filename={source.name}
-        url="blob:test-preview"
-        loading={false}
-        loadFile={loadFile}
-        onClose={close}
-        onDownload={vi.fn()}
-        onError={vi.fn()}
-      />
-    </ImageEditContext.Provider>
-  )
+  renderImageEditor(submit, undefined, {
+    attachment: imageAttachment({
+      filename: source.name,
+      file_size: source.size,
+      mime_type: source.type,
+    }),
+    onClose: close,
+    loadFile,
+  })
 
   fireEvent.click(screen.getByTestId('attachment-image-tool-resize'))
   const widescreen = screen.getByTestId('attachment-image-resize-16:9')
@@ -414,7 +485,21 @@ test('fits oversized images and uses native pixels for explicit zoom', async () 
           entries: Array<{ contentRect: { width: number; height: number } }>
         ) => void
       ) {}
-      observe() {
+      observe(element: Element) {
+        Object.defineProperty(element, 'getBoundingClientRect', {
+          configurable: true,
+          value: () => ({
+            left: 0,
+            top: 0,
+            right: 800,
+            bottom: 600,
+            width: 800,
+            height: 600,
+            x: 0,
+            y: 0,
+            toJSON: () => ({}),
+          }),
+        })
         this.callback([{ contentRect: { width: 800, height: 600 } }])
       }
       disconnect = vi.fn()
@@ -600,7 +685,10 @@ test('places an unnumbered draft, numbers saved comments and sends Codex-formatt
     fireEvent.click(screen.getByTestId('attachment-image-edit-send'))
     expect(submit).toHaveBeenCalledExactlyOnceWith(
       '图像 1：  \n1.（x：36.7%，y：50.4%）看看这个  \n2.（x：50%，y：50%）也看看这里',
-      { standaloneAttachments: [expect.objectContaining({ filename: 'image.png' })] }
+      {
+        draftAttachmentSourceId: -1,
+        standaloneAttachments: [expect.objectContaining({ filename: 'image.png' })],
+      }
     )
     expect(submitComposer).not.toHaveBeenCalled()
     await waitFor(() => expect(close).toHaveBeenCalledOnce())
@@ -614,31 +702,8 @@ test('places an unnumbered draft, numbers saved comments and sends Codex-formatt
 })
 
 test('retains fast brush samples and sends markup with image-relative comments', async () => {
-  const source = new File(['image'], 'image.png', { type: 'image/png' })
-  const attachment = {
-    id: -1,
-    filename: source.name,
-    file_size: source.size,
-    mime_type: source.type,
-    file_extension: '.png',
-    created_at: '',
-    status: 'ready' as const,
-  }
   const submit = vi.fn().mockResolvedValue(false)
-  render(
-    <ImageEditContext.Provider value={{ submit }}>
-      <DesktopImagePreview
-        attachment={attachment}
-        filename={source.name}
-        url="blob:test-preview"
-        loading={false}
-        loadFile={async () => source}
-        onClose={vi.fn()}
-        onDownload={vi.fn()}
-        onError={vi.fn()}
-      />
-    </ImageEditContext.Provider>
-  )
+  renderImageEditor(submit)
   fireEvent.click(screen.getByTestId('attachment-image-tool-markup'))
   const surface = screen.getByTestId('attachment-image-edit-surface')
   Object.defineProperties(surface, {
@@ -757,4 +822,191 @@ test('retains fast brush samples and sends markup with image-relative comments',
     ],
   })
   await screen.findByRole('alert')
+})
+
+test('keeps the first pointer as the owner of an active markup gesture', async () => {
+  const submit = vi.fn().mockResolvedValue(false)
+  renderImageEditor(submit)
+  fireEvent.click(screen.getByTestId('attachment-image-tool-markup'))
+  const surface = screen.getByTestId('attachment-image-edit-surface')
+  preparePointerSurface(surface)
+
+  dispatchPointer(surface, 'pointerdown', 1, 10, 10)
+  dispatchPointer(surface, 'pointerdown', 2, 90, 90)
+  dispatchPointer(surface, 'pointermove', 2, 80, 80)
+  dispatchPointer(surface, 'pointerup', 2, 80, 80)
+  dispatchPointer(surface, 'lostpointercapture', 2, 80, 80)
+  dispatchPointer(surface, 'pointermove', 1, 30, 30)
+  dispatchPointer(surface, 'pointerup', 1, 40, 40)
+
+  fireEvent.click(screen.getByTestId('attachment-image-edit-send'))
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce())
+  expect(submit.mock.calls[0]?.[1]).toEqual({
+    kind: 'markup',
+    instructions: '',
+    marks: [
+      {
+        points: [
+          { x: 10, y: 10 },
+          { x: 30, y: 30 },
+          { x: 40, y: 40 },
+        ],
+        width: 0.65,
+        color: '#ff3333',
+      },
+    ],
+  })
+})
+
+test('commits the owner selection-erase stroke when capture is lost and discards it on cancel', async () => {
+  const submit = vi.fn().mockResolvedValue(false)
+  renderImageEditor(submit)
+  fireEvent.click(screen.getByTestId('attachment-image-tool-erase'))
+  const surface = screen.getByTestId('attachment-image-edit-surface')
+  preparePointerSurface(surface)
+
+  dispatchPointer(surface, 'pointerdown', 1, 10, 10)
+  dispatchPointer(surface, 'pointermove', 1, 30, 30)
+  dispatchPointer(surface, 'lostpointercapture', 1, 30, 30)
+  expect(surface.querySelectorAll('path')).toHaveLength(1)
+
+  dispatchPointer(surface, 'pointerdown', 1, 50, 50)
+  dispatchPointer(surface, 'pointermove', 1, 60, 60)
+  expect(surface.querySelectorAll('path')).toHaveLength(2)
+  dispatchPointer(surface, 'pointercancel', 1, 60, 60)
+  expect(surface.querySelectorAll('path')).toHaveLength(1)
+
+  fireEvent.click(screen.getByTestId('attachment-image-edit-send'))
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce())
+  expect(submit.mock.calls[0]?.[1]).toEqual({
+    kind: 'erase',
+    strokes: [
+      {
+        points: [
+          { x: 10, y: 10 },
+          { x: 30, y: 30 },
+        ],
+        width: 4,
+      },
+    ],
+  })
+})
+
+test('commits a pending text mark before starting another text draft', async () => {
+  const submit = vi.fn().mockResolvedValue(false)
+  renderImageEditor(submit)
+  fireEvent.click(screen.getByTestId('attachment-image-tool-markup'))
+  fireEvent.click(screen.getByTestId('attachment-image-markup-text'))
+  const surface = screen.getByTestId('attachment-image-edit-surface')
+  preparePointerSurface(surface)
+
+  dispatchPointer(surface, 'pointerdown', 1, 20, 20)
+  fireEvent.change(screen.getByTestId('attachment-image-markup-text-input'), {
+    target: { value: 'First' },
+  })
+  dispatchPointer(surface, 'pointerdown', 1, 60, 60)
+  fireEvent.change(screen.getByTestId('attachment-image-markup-text-input'), {
+    target: { value: 'Second' },
+  })
+  fireEvent.click(screen.getByTestId('attachment-image-markup-save-text'))
+  fireEvent.click(screen.getByTestId('attachment-image-edit-send'))
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce())
+  expect(submit.mock.calls[0]?.[1]).toEqual({
+    kind: 'markup',
+    instructions: '',
+    marks: [
+      { point: { x: 20, y: 20 }, text: 'First', color: '#ff3333', size: 4 },
+      { point: { x: 60, y: 60 }, text: 'Second', color: '#ff3333', size: 4 },
+    ],
+  })
+})
+
+test('allows instructions-only markup to send from the button and Enter', async () => {
+  const submit = vi.fn().mockResolvedValue(false)
+  renderImageEditor(submit)
+  fireEvent.click(screen.getByTestId('attachment-image-tool-markup'))
+  const instructions = screen.getByTestId('attachment-image-markup-instructions')
+  fireEvent.change(instructions, { target: { value: '  Make it brighter  ' } })
+  expect(screen.getByTestId('attachment-image-edit-send')).toBeEnabled()
+
+  fireEvent.keyDown(instructions, { key: 'Enter' })
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce())
+  expect(submit.mock.calls[0]?.[1]).toEqual({
+    kind: 'markup',
+    instructions: '  Make it brighter  ',
+    marks: [],
+  })
+})
+
+test('renders existing pins and merges an unsaved comment draft when sending', async () => {
+  const submit = vi.fn().mockResolvedValue(true)
+  renderImageEditor(submit, undefined, {
+    attachment: imageAttachment({
+      image_markup_comments: [{ x: 10, y: 20, text: 'Existing pin' }],
+    }),
+  })
+  fireEvent.click(screen.getByTestId('attachment-image-tool-comment'))
+  expect(screen.getByTestId('attachment-image-comment-pin')).toHaveAttribute(
+    'title',
+    'Existing pin'
+  )
+  const surface = screen.getByTestId('attachment-image-edit-surface')
+  fireEvent.click(surface, { detail: 0 })
+  fireEvent.change(screen.getByTestId('attachment-image-comment-input'), {
+    target: { value: 'Unsaved pin' },
+  })
+  fireEvent.click(screen.getByTestId('attachment-image-edit-send'))
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce())
+  expect(submit.mock.calls[0]?.[1]).toEqual({
+    kind: 'comment',
+    comments: [
+      { x: 10, y: 20, text: 'Existing pin' },
+      { x: 50, y: 50, text: 'Unsaved pin' },
+    ],
+  })
+})
+
+test('saves initial and newly added comments exactly once with markup', async () => {
+  const initialComments = [{ x: 10, y: 20, text: 'Existing pin' }]
+  const saveMarkup = vi.fn().mockResolvedValue(null)
+  renderImageEditor(vi.fn(), saveMarkup, {
+    attachment: imageAttachment({ id: 42, image_markup_comments: initialComments }),
+    fromComposer: true,
+  })
+  fireEvent.click(screen.getByTestId('attachment-image-tool-markup'))
+  fireEvent.click(screen.getByTestId('attachment-image-markup-comment'))
+  fireEvent.click(screen.getByTestId('attachment-image-edit-surface'), { detail: 0 })
+  fireEvent.change(screen.getByTestId('attachment-image-comment-input'), {
+    target: { value: 'New pin' },
+  })
+  fireEvent.click(screen.getByTestId('attachment-image-markup-comment'))
+  fireEvent.click(screen.getByTestId('attachment-image-edit-save'))
+  await waitFor(() => expect(saveMarkup).toHaveBeenCalledOnce())
+  expect(saveMarkup.mock.calls[0]?.[2]).toMatchObject({
+    kind: 'markup',
+    comments: [
+      { x: 10, y: 20, text: 'Existing pin' },
+      { x: 50, y: 50, text: 'New pin' },
+    ],
+  })
+})
+
+test('cancels an active edit before closing or opening the side panel', () => {
+  const close = vi.fn()
+  const openPanel = vi.fn()
+  renderImageEditor(vi.fn().mockResolvedValue(true), undefined, { onClose: close, openPanel })
+  fireEvent.click(screen.getByTestId('attachment-image-tool-comment'))
+  expect(screen.getByTestId('attachment-image-open-in-panel')).toBeDisabled()
+  fireEvent.click(screen.getByTestId('attachment-image-open-in-panel'))
+  expect(openPanel).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByTestId('attachment-image-lightbox-close'))
+  expect(screen.queryByTestId('attachment-image-comment-count')).not.toBeInTheDocument()
+  expect(close).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByTestId('attachment-image-tool-comment'))
+  fireEvent.click(screen.getByTestId('attachment-image-viewport'))
+  expect(screen.queryByTestId('attachment-image-comment-count')).not.toBeInTheDocument()
+  expect(close).not.toHaveBeenCalled()
+
+  fireEvent.click(screen.getByTestId('attachment-image-lightbox-close'))
+  expect(close).toHaveBeenCalledOnce()
 })

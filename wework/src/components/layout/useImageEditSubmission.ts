@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import type { ImageEditActions } from '@/components/chat/image-preview/ImageEditContext'
 import {
   imageEditPrompt,
@@ -33,24 +33,21 @@ export function useImageEditSubmission({
   ) => Promise<Attachment | null>
   submit(
     text: string,
-    options: Pick<RuntimePaneSendOptions, 'standaloneAttachments'>
+    options: Pick<RuntimePaneSendOptions, 'standaloneAttachments' | 'draftAttachmentSourceId'>
   ): Promise<boolean>
 }) {
   const { t, i18n } = useTranslation('common')
   const locale = i18n.resolvedLanguage ?? i18n.language
-  const current = useRef<ImageEditActions | null>(null)
   const actions = useMemo<ImageEditActions | null>(() => {
     if (!enabled || !upload) return null
     return {
       scope,
-      current: () => current.current,
       saveMarkup:
         attachmentScope && replaceImageAttachment
           ? async (attachmentId, loadFile, edit, signal) => {
               const source = await loadFile()
               signal.throwIfAborted()
               const image = await renderImageEditSelection(source, edit)
-              if (current.current?.scope !== scope) return null
               const name = source.name.replace(/\.[^.]+$/, '') || 'image'
               const file = new File([image], `${name}.png`, { type: 'image/png' })
               const attachment = await replaceImageAttachment(
@@ -60,11 +57,12 @@ export function useImageEditSubmission({
                 edit.comments ?? [],
                 signal
               )
+              const comments = attachment?.image_markup_comments ?? edit.comments ?? []
               reportImageCommentStage('attachment_replaced', {
                 accepted: Boolean(attachment),
-                pinCount: attachment?.image_markup_comments?.length ?? 0,
+                pinCount: comments.length,
               })
-              return attachment && { attachmentId: attachment.id, file }
+              return attachment && { attachmentId: attachment.id, file, comments }
             }
           : undefined,
       async submit(source, edit) {
@@ -87,6 +85,9 @@ export function useImageEditSubmission({
         }
         const accepted = await submit(imageEditPrompt(edit, t, locale), {
           standaloneAttachments: attachments,
+          ...(edit.kind === 'comment' && source.draftAttachmentId !== undefined
+            ? { draftAttachmentSourceId: source.draftAttachmentId }
+            : {}),
         })
         if (!accepted) return false
         // Keep the admitted image available while a queued turn waits for transport.
@@ -117,11 +118,5 @@ export function useImageEditSubmission({
     t,
     locale,
   ])
-  useLayoutEffect(() => {
-    current.current = actions
-    return () => {
-      current.current = null
-    }
-  }, [actions])
   return actions
 }

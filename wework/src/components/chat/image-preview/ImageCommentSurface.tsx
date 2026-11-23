@@ -56,17 +56,26 @@ export function ImageCommentSurface({
         className={`absolute inset-0 size-full touch-none ${hover && !draft ? 'cursor-none' : 'cursor-crosshair'}`}
         disabled={busy}
         onPointerDown={event => {
+          if (start.current) return
           start.current =
             event.button === 0
               ? { x: event.clientX, y: event.clientY, pointerId: event.pointerId }
               : null
         }}
-        onPointerMove={event => setHover(pointAt(event))}
-        onPointerLeave={() => {
+        onPointerMove={event => {
+          const pointer = start.current
+          if (pointer && pointer.pointerId !== event.pointerId) return
+          setHover(pointAt(event))
+        }}
+        onPointerLeave={event => {
+          const pointer = start.current
+          if (pointer && pointer.pointerId !== event.pointerId) return
           start.current = null
           setHover(null)
         }}
-        onPointerCancel={() => {
+        onPointerCancel={event => {
+          const pointer = start.current
+          if (pointer && pointer.pointerId !== event.pointerId) return
           start.current = null
         }}
         onPointerUp={event => {
@@ -185,7 +194,7 @@ export function ImageCommentSurface({
               )}
               <Button
                 type="submit"
-                className="min-h-7 rounded-full bg-blue-600 px-2 text-sm text-white disabled:opacity-40"
+                className="min-h-7 rounded-full bg-text-primary px-2 text-sm text-background disabled:opacity-40"
                 data-testid="attachment-image-comment-save"
                 disabled={busy || !draft.text.trim()}
               >

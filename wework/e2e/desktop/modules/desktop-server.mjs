@@ -945,6 +945,7 @@ class DesktopE2EServer {
         'side_chat_image_preview_resize',
         'image_preview_comment',
         'image_preview_markup_save',
+        'image_preview_markup_instructions',
         'pasted_workspace_paths',
         'dropped_workspace_paths',
         'workspace_selection_streaming',
@@ -4470,7 +4471,8 @@ class DesktopE2EServer {
       this.scenario === 'image_preview_resize' ||
       this.scenario === 'side_chat_image_preview_resize' ||
       this.scenario === 'image_preview_comment' ||
-      this.scenario === 'image_preview_markup_save'
+      this.scenario === 'image_preview_markup_save' ||
+      this.scenario === 'image_preview_markup_instructions'
     ) {
       const turn = body.input?.findLast?.(item => item.role === 'user')
       const parts = turn?.content ?? []
@@ -4480,6 +4482,7 @@ class DesktopE2EServer {
         .join('\n')
       const isComment = this.scenario === 'image_preview_comment'
       const isSavedMarkup = this.scenario === 'image_preview_markup_save'
+      const isMarkupInstructions = this.scenario === 'image_preview_markup_instructions'
       if (isSavedMarkup) {
         assert.match(editText, /Preserve this unsent image-edit draft/)
         assert.match(editText, /[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Review the saved mark/)
@@ -4492,6 +4495,11 @@ class DesktopE2EServer {
         assert.match(
           editText,
           /1\.\s*[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Inspect this area/
+        )
+      } else if (isMarkupInstructions) {
+        assert.ok(
+          editText.trim(),
+          'The instructions-only markup request did not forward its instructions'
         )
       } else {
         assert.match(editText, /aspect ratio 16:9/)
@@ -4506,7 +4514,9 @@ class DesktopE2EServer {
             ? 'Saved markup received'
             : isComment
               ? 'Image comment received'
-              : 'Image resize received'
+              : isMarkupInstructions
+                ? 'Markup instructions received'
+                : 'Image resize received'
         ),
         responseCompleted(responseId),
       ])

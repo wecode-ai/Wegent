@@ -1,4 +1,5 @@
 import { type PluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
+import { includeDraftAttachmentGroup } from '@wegent/collaboration/composer'
 import type { runtimePaneQueue } from './runtimePaneQueues'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
@@ -95,7 +96,8 @@ interface TemporaryChatSendContext extends Pick<
 export async function sendTemporaryChatMessage(
   context: TemporaryChatSendContext,
   valueOverride?: string,
-  options: ChatSubmitOptions & Pick<RuntimePaneSendOptions, 'standaloneAttachments'> = {}
+  options: ChatSubmitOptions &
+    Pick<RuntimePaneSendOptions, 'standaloneAttachments' | 'draftAttachmentSourceId'> = {}
 ): Promise<boolean> {
   const {
     address,
@@ -170,7 +172,13 @@ export async function sendTemporaryChatMessage(
   if (!standalone && !transactionalDraft) setInput('')
   if (!standalone) setTrialGuide(null)
 
-  const currentAttachments = options.standaloneAttachments ?? captureAttachmentsForScope(instanceId)
+  const currentAttachments = options.standaloneAttachments
+    ? includeDraftAttachmentGroup({
+        submittedAttachments: options.standaloneAttachments,
+        draftAttachments: sideChatProjectChat.attachments,
+        sourceAttachmentId: options.draftAttachmentSourceId,
+      })
+    : captureAttachmentsForScope(instanceId)
   const { content: message, attachments: messageAttachments } = composeImageMarkupMessage(
     draftText,
     currentAttachments
@@ -369,7 +377,6 @@ export async function sendTemporaryChatMessage(
         )
       )
     }
-    if (sessionCommands.isCurrent()) resetAttachments()
     setSending(false)
     return true
   }
@@ -384,7 +391,6 @@ export async function sendTemporaryChatMessage(
     conversationQueue.enqueue(queuedMessage, {
       value: lifecycleBeforeSend,
     })
-    resetAttachments()
     if (options.guideWhenBusy) {
       setSending(false)
       return sendQueuedMessageAsGuidance(queuedMessage, true)

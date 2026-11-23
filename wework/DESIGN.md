@@ -761,8 +761,8 @@ The standalone comment mode and the comment tool in markup show an unnumbered
 pin until the user saves it. Sending includes a localized image heading with
 numbered image-relative coordinates in the user message. Comment-only
 submissions use the original image. After the conversation accepts the message
-and the image is available for dispatch, remove only the matching composer
-attachment from its draft.
+and the image is available for dispatch, remove only the admitted composer
+attachment group from its draft.
 Erase uploads the original and a black-and-white selection mask. Background
 removal and resizing send the image with the selected edit instruction.
 

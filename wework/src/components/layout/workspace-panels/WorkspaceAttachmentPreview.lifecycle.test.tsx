@@ -57,12 +57,12 @@ test('isolates a late attachment read from the new preview source', async () => 
 test('keeps image edits available in Files without trapping focus or reloading the source', async () => {
   const load = vi.fn(async () => new Blob(['image'], { type: 'image/png' }))
   const submit = vi.fn().mockResolvedValue(true)
-  const submitMain = vi.fn().mockResolvedValue(true)
+  const comments = [{ x: 50, y: 50, text: 'Keep with the draft' }]
   const saveMarkup = vi.fn().mockResolvedValue({
     attachmentId: -2,
     file: new File(['marked'], 'marked.png', { type: 'image/png' }),
+    comments,
   })
-  let acceptsEdits = true
   const revoke = vi.fn()
   vi.stubGlobal(
     'URL',
@@ -75,18 +75,18 @@ test('keeps image edits available in Files without trapping focus or reloading t
     ...source('image.png', load),
     image: {
       draftAttachmentId: -1,
-      getEditor: () => (acceptsEdits ? { submit, saveMarkup, scope: 'side-chat' } : null),
+      editorScope: 'side-chat',
     },
   }
   const panel = (scope: string) => (
-    <ImageEditContext.Provider value={{ submit: submitMain, scope }}>
+    <ImageEditContext.Provider value={{ submit, saveMarkup, scope }}>
       <button type="button" data-testid="composer-action">
         Composer
       </button>
       <WorkspaceAttachmentPreview source={attachment} />
     </ImageEditContext.Provider>
   )
-  const view = render(panel('original-task'))
+  const view = render(panel('side-chat'))
   try {
     const viewer = await screen.findByTestId('attachment-image-side-viewer')
     expect(viewer).not.toHaveAttribute('aria-modal')
@@ -96,7 +96,6 @@ test('keeps image edits available in Files without trapping focus or reloading t
       expect.objectContaining({ name: 'image.png', mimeType: 'image/png' }),
       { kind: 'background' }
     )
-    expect(submitMain).not.toHaveBeenCalled()
     await waitFor(() =>
       expect(screen.getByTestId('attachment-image-tool-background')).toBeEnabled()
     )
@@ -120,7 +119,12 @@ test('keeps image edits available in Files without trapping focus or reloading t
     )
     expect(submit).toHaveBeenCalledOnce()
     const savedViewer = screen.getByTestId('attachment-image-side-viewer')
-    acceptsEdits = false
+    fireEvent.click(screen.getByTestId('attachment-image-tool-comment'))
+    expect(screen.getByTestId('attachment-image-comment-pin')).toHaveAttribute(
+      'title',
+      'Keep with the draft'
+    )
+    fireEvent.click(screen.getByTestId('attachment-image-edit-cancel'))
     view.rerender(panel('other-task'))
     expect(screen.queryByTestId('attachment-image-tool-background')).not.toBeInTheDocument()
     expect(screen.getByTestId('attachment-image-side-viewer')).toBe(savedViewer)

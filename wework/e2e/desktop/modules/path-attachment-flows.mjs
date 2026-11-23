@@ -41,6 +41,33 @@ import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './wor
 const TERMINAL_DRAG_TEXT = 'WEWORK_TERMINAL_DRAG_E2E'
 const SELECTED_TEXT_FILE_NAME = 'selected-text-drag.ts'
 const SELECTED_TEXT_FILE_CONTENT = 'export const selectedTextDrag = true\n'
+const MARKUP_INSTRUCTIONS = 'Compare the highlighted regions before editing'
+const ORIGINAL_IMAGE_BYTES = Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
+const PNG_SIGNATURE_HEX = '89504e470d0a1a0a'
+const ORIGINAL_IMAGE_SIZE = {
+  width: ORIGINAL_IMAGE_BYTES.readUInt32BE(16),
+  height: ORIGINAL_IMAGE_BYTES.readUInt32BE(20),
+}
+
+function lastUserMessageParts(body) {
+  const turn = body.input?.findLast?.(item => item.role === 'user')
+  return Array.isArray(turn?.content) ? turn.content : []
+}
+
+function readSingleModelImage(body, label) {
+  const images = lastUserMessageParts(body).filter(part => part.type === 'input_image')
+  assert.equal(images.length, 1, `${label}: the model request must contain exactly one image`)
+  const prefix = 'data:image/png;base64,'
+  const dataUrl = images[0].image_url ?? ''
+  assert.ok(dataUrl.startsWith(prefix), `${label}: the image was not forwarded as PNG data`)
+  const bytes = Buffer.from(dataUrl.slice(prefix.length), 'base64')
+  assert.equal(
+    bytes.subarray(0, 8).toString('hex'),
+    PNG_SIGNATURE_HEX,
+    `${label}: the forwarded image is not a PNG`
+  )
+  return { bytes, width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+}
 
 async function waitForSystemDragPanelVisibility(control, expected, message) {
   const expectedValue = String(expected)
@@ -274,7 +301,14 @@ async function verifyImageEditSubmissions(control, composerSelector) {
   await control.command('click', thumbnail)
   await control.command('click', '[data-testid="attachment-image-tool-resize"]')
   await control.command('click', '[data-testid="attachment-image-resize-16:9"]')
-  await control.awaitScenarioRequestCount('image_preview_resize', 1)
+  const resizeRequest = await control.awaitScenarioRequestCount('image_preview_resize', 1)
+  assert.equal(
+    readSingleModelImage(resizeRequest.body, 'Image resize control').bytes.equals(
+      ORIGINAL_IMAGE_BYTES
+    ),
+    true,
+    'The image model request must forward the original attachment bytes unchanged'
+  )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: 'Image resize received',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -405,7 +439,18 @@ async function verifyComposerMarkupSave(control, composerSelector, draft) {
   await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.awaitScenarioRequestCount('image_preview_markup_save', 1)
+  const savedMarkupRequest = await control.awaitScenarioRequestCount('image_preview_markup_save', 1)
+  const savedMarkupImage = readSingleModelImage(savedMarkupRequest.body, 'Saved markup')
+  assert.equal(
+    savedMarkupImage.bytes.equals(ORIGINAL_IMAGE_BYTES),
+    false,
+    'Saving markup must replace the draft attachment with edited image bytes'
+  )
+  assert.deepEqual(
+    { width: savedMarkupImage.width, height: savedMarkupImage.height },
+    ORIGINAL_IMAGE_SIZE,
+    'Saving markup must preserve the draft attachment dimensions'
+  )
   await control.command('waitFor', userMessages, {
     text: 'Review the saved mark',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -414,6 +459,51 @@ async function verifyComposerMarkupSave(control, composerSelector, draft) {
     text: 'Saved markup received',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+}
+
+async function verifyMarkupInstructionsSubmission(control, sideChatSelector) {
+  const messageImage = `${sideChatSelector} [data-testid="message-image-preview-button"]`
+  const chatScroll = `${sideChatSelector} [data-testid="right-workspace-chat-scroll-area"]`
+  control.setScenario('image_preview_markup_instructions')
+  await control.command('scrollToRatioAsUser', chatScroll, { value: '0' })
+  await control.command('waitFor', messageImage, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', messageImage)
+  await control.command('click', '[data-testid="attachment-image-tool-markup"]')
+  await control.command('waitFor', '[data-testid="attachment-image-markup-instructions"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="attachment-image-markup-instructions"]', {
+    value: MARKUP_INSTRUCTIONS,
+  })
+  const request = control.awaitNextScenarioRequest('image_preview_markup_instructions')
+  await control.command('clickWhenEnabled', '[data-testid="attachment-image-edit-send"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const instructionsRequest = await request
+  await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
+    text: 'Markup instructions received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const modelText = lastUserMessageParts(instructionsRequest.body)
+    .filter(part => part.type === 'input_text')
+    .map(part => part.text)
+    .join('\n')
+  assert.equal(
+    modelText.trim(),
+    MARKUP_INSTRUCTIONS,
+    'The instructions-only markup did not forward its instructions'
+  )
+  const sentImage = readSingleModelImage(instructionsRequest.body, 'Instructions-only markup')
+  assert.deepEqual(
+    { width: sentImage.width, height: sentImage.height },
+    ORIGINAL_IMAGE_SIZE,
+    'Instructions-only markup must forward the original image dimensions'
+  )
 }
 
 async function verifySystemDragPanelLayout(control) {
@@ -1341,6 +1431,7 @@ async function verifySideChatAttachmentIsolation({
     'Restoring the split view did not restore the two independent composers'
   )
   await captureVerificationScreenshot(control, '07-side-chat-restored-two-composers.png')
+  await verifyMarkupInstructionsSubmission(control, sideChatSelector)
   const editRequest = control.awaitNextScenarioRequest('side_chat_image_preview_resize')
   control.setScenario('side_chat_image_preview_resize')
   await control.command(
@@ -1371,30 +1462,37 @@ async function verifySideChatAttachmentIsolation({
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const sideDraft = 'Keep this unsent side-chat draft'
+  await control.command('fill', sideComposerSelector, { value: sideDraft })
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    sideDraft,
+    'The side-chat draft was not in place before sending the image comment'
+  )
   await control.command('click', draftImage)
-  await control.command('click', '[data-testid="attachment-image-tool-markup"]')
-  await control.command('click', '[data-testid="attachment-image-markup-comment"]')
+  await control.command('click', '[data-testid="attachment-image-tool-comment"]')
   await control.command('click', '[data-testid="attachment-image-edit-surface"]')
   await control.command('fill', '[data-testid="attachment-image-comment-input"]', {
     value: 'Inspect this area',
   })
-  await control.command('click', '[data-testid="attachment-image-edit-save"]')
-  await control.command('waitFor', '[data-testid="attachment-image-lightbox"]', {
-    visible: false,
+  await control.command('click', '[data-testid="attachment-image-comment-save"]')
+  await control.command('waitFor', '[data-testid="attachment-image-comment-pin"]', {
+    text: '1',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  assert.equal(await control.command('getValue', sideComposerSelector), '')
   control.setScenario('image_preview_comment')
   const commentRequest = control.awaitNextScenarioRequest('image_preview_comment')
-  await control.command('clickWhenEnabled', sideSendButtonSelector, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await control.command('click', '[data-testid="attachment-image-edit-send"]')
   await commentRequest
   await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
     text: 'Image comment received',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    sideDraft,
+    'Sending an image comment must leave the unsent side-chat draft unchanged'
+  )
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
 
   const requests = control.scenarioRequests.get('side_chat_attachment') ?? []

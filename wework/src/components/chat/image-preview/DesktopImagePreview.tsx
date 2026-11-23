@@ -1,6 +1,7 @@
 import { Button } from '@ui-sdk/react/button'
-import { useContext, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useMemo, useRef, useState } from 'react'
 import { createPortal, flushSync } from 'react-dom'
+import { useDOMEvent, useElementGeometry } from '@wegent/collaboration/dom-events'
 import {
   ChevronDown,
   ChevronLeft,
@@ -27,7 +28,7 @@ import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { AttachmentPreviewContext } from '../AttachmentPreviewContext'
-import { ImageEditContext, type SavedImageMarkup, type ImageEditActions } from './ImageEditContext'
+import { ImageEditContext, type SavedImageMarkup } from './ImageEditContext'
 import { useImagePreviewEditor } from './ImagePreviewEditor'
 import type { ImageEdit } from './imageEdit'
 
@@ -36,7 +37,8 @@ const buttonClass =
   'flex min-h-9 shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 text-sm shadow-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 disabled:opacity-50 max-md:min-h-11'
 
 type DesktopImagePreviewProps = Omit<AttachmentImageLightboxProps<Attachment>, 'attachment'> & {
-  attachment: Pick<Attachment, 'mime_type'> & Partial<Pick<Attachment, 'id'>>
+  attachment: Pick<Attachment, 'mime_type'> &
+    Partial<Pick<Attachment, 'id' | 'image_markup_comments'>>
   loadFile(): Promise<File>
 }
 
@@ -47,7 +49,7 @@ export function DesktopImagePreview(
 }
 
 interface InlineImageEditorProps {
-  getEditor?: () => ImageEditActions | null
+  editorScope?: string
   onMarkupSaved?: (saved: SavedImageMarkup) => void
 }
 
@@ -59,7 +61,7 @@ export function InlineDesktopImagePreview(
 
 function ImagePreviewDialog({
   inline = false,
-  getEditor,
+  editorScope,
   onMarkupSaved,
   attachment,
   fromComposer,
@@ -81,13 +83,19 @@ function ImagePreviewDialog({
   const { t } = useTranslation('common')
   const openPanel = useContext(AttachmentPreviewContext)
   const submissionContext = useContext(ImageEditContext)
-  const resolveEditor = () => (inline ? (getEditor?.() ?? null) : submissionContext)
-  const editSubmission = resolveEditor()
+  const editSubmission =
+    !inline || (editorScope !== undefined && submissionContext?.scope === editorScope)
+      ? submissionContext
+      : null
   const composerAttachmentId = fromComposer ? attachment.id : undefined
   const [zoom, setZoom] = useState<number | null>(null)
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
-  const [fitZoom, setFitZoom] = useState(100)
   const viewport = useRef<HTMLDivElement>(null)
+  const [viewportElement, setViewportElement] = useState<HTMLDivElement | null>(null)
+  const setViewport = useCallback((element: HTMLDivElement | null) => {
+    viewport.current = element
+    setViewportElement(element)
+  }, [])
   const imageElement = useRef<HTMLImageElement>(null)
   const [menuContainer, setMenuContainer] = useState<HTMLDivElement | null>(null)
   const [openWith, setOpenWith] = useState(false)
@@ -95,31 +103,35 @@ function ImagePreviewDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const request = useRef<AbortController | null>(null)
-  useLayoutEffect(
-    () => () => {
-      request.current?.abort()
-      request.current = null
-    },
-    []
-  )
-
-  useLayoutEffect(() => {
+  const viewportGeometry = useElementGeometry([viewport], Boolean(imageSize))?.elements[0]
+  const viewportSize = useMemo(() => {
     const element = viewport.current
-    if (!element || !imageSize || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(([entry]) => {
-      if (!entry) return
-      const { width, height } = entry.contentRect
-      setFitZoom(Math.min(100, (100 * width) / imageSize.width, (100 * height) / imageSize.height))
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [imageSize])
+    if (!element || !viewportGeometry) return null
+    const style = getComputedStyle(element)
+    const padding = (name: 'paddingLeft' | 'paddingRight' | 'paddingTop' | 'paddingBottom') =>
+      Number.parseFloat(style[name]) || 0
+    return {
+      width: Math.max(0, viewportGeometry.width - padding('paddingLeft') - padding('paddingRight')),
+      height: Math.max(
+        0,
+        viewportGeometry.height - padding('paddingTop') - padding('paddingBottom')
+      ),
+    }
+  }, [viewportGeometry])
+  const fitZoom =
+    imageSize && viewportSize && viewportSize.width > 0 && viewportSize.height > 0
+      ? Math.min(
+          100,
+          (100 * viewportSize.width) / imageSize.width,
+          (100 * viewportSize.height) / imageSize.height
+        )
+      : 100
 
   const scale = (zoom ?? fitZoom) / 100
-  useLayoutEffect(() => {
-    const element = viewport.current
-    if (!element || !url || !imageSize) return
-    const onWheel = (event: WheelEvent) => {
+  useDOMEvent<WheelEvent>(
+    viewportElement,
+    'wheel',
+    event => {
       if (!event.ctrlKey) return
       event.preventDefault()
       event.stopPropagation()
@@ -138,15 +150,15 @@ function ImagePreviewDialog({
       const y = Math.min(1, Math.max(0, (event.clientY - before.top) / before.height))
       flushSync(() => setZoom(next))
       const after = image.getBoundingClientRect()
+      const element = viewport.current
+      if (!element) return
       element.scrollLeft += after.left + x * after.width - event.clientX
       element.scrollTop += after.top + y * after.height - event.clientY
-    }
-    element.addEventListener('wheel', onWheel, { passive: false })
-    return () => element.removeEventListener('wheel', onWheel)
-  }, [imageSize, scale, url])
+    },
+    { enabled: Boolean(url && imageSize && viewportElement), passive: false }
+  )
 
   async function runEdit(edit: ImageEdit, resetEditor: () => void) {
-    const editSubmission = resolveEditor()
     if (!editSubmission || request.current) return
     const submission = new AbortController()
     request.current = submission
@@ -189,8 +201,17 @@ function ImagePreviewDialog({
     inline ? null : menuContainer,
     imageSize,
     inline,
-    composerAttachmentId !== undefined
+    composerAttachmentId !== undefined,
+    attachment.image_markup_comments ?? []
   )
+  function requestClose() {
+    if (busy) return
+    if (editor.mode) {
+      editor.cancel()
+      return
+    }
+    onClose?.()
+  }
   function runAction(action: () => Promise<unknown>) {
     setError(null)
     void action().catch(() => setError(t('image_preview.action_failed')))
@@ -213,7 +234,7 @@ function ImagePreviewDialog({
       onKeyDown={event => {
         if (inline && event.key === 'Escape' && editor.mode && !busy) {
           event.stopPropagation()
-          editor.cancel()
+          requestClose()
           return
         }
         if (
@@ -232,10 +253,7 @@ function ImagePreviewDialog({
     <DialogSurface
       active={!inline}
       initialFocus='[data-testid="attachment-image-lightbox-close"]'
-      onClose={() => {
-        if (editor.mode && !busy) editor.cancel()
-        else onClose?.()
-      }}
+      onClose={requestClose}
       render={surface}
     >
       <header
@@ -341,8 +359,9 @@ function ImagePreviewDialog({
               className={buttonClass}
               data-testid="attachment-image-open-in-panel"
               aria-label={t('image_preview.open_panel')}
-              disabled={!url || busy}
+              disabled={!url || busy || Boolean(editor.mode)}
               onClick={() => {
+                if (editor.mode || busy) return
                 openPanel({
                   filename,
                   contentType: attachment.mime_type,
@@ -350,15 +369,11 @@ function ImagePreviewDialog({
                   image: {
                     localPath,
                     draftAttachmentId: composerAttachmentId,
-                    getEditor: () => {
-                      const current = editSubmission?.current
-                        ? editSubmission.current()
-                        : editSubmission
-                      return current?.scope === editSubmission?.scope ? current : null
-                    },
+                    editorScope: editSubmission?.scope,
+                    comments: attachment.image_markup_comments ?? [],
                   },
                 })
-                onClose?.()
+                requestClose()
               }}
             >
               <PanelRightOpen className="size-4" />
@@ -371,7 +386,7 @@ function ImagePreviewDialog({
               className={buttonClass}
               data-testid="attachment-image-lightbox-close"
               aria-label={t('image_preview.close')}
-              onClick={onClose}
+              onClick={requestClose}
             >
               <X className="size-4" />
             </Button>
@@ -379,10 +394,11 @@ function ImagePreviewDialog({
         </div>
       </header>
       <div
-        ref={viewport}
+        ref={setViewport}
+        data-testid="attachment-image-viewport"
         className={cn('flex min-h-0 flex-1 overflow-auto pb-10', inline ? 'px-2' : 'px-10')}
         onClick={event => {
-          if (!inline && event.target === event.currentTarget) onClose?.()
+          if (!inline && event.target === event.currentTarget) requestClose()
         }}
       >
         {url ? (

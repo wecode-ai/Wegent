@@ -16,7 +16,14 @@ const attachment: Attachment = {
 }
 
 test('replaces only the current draft image after a successful markup upload', async () => {
-  const original = { ...attachment, id: 41, mime_type: 'image/jpeg', filename: 'source.jpg' }
+  const existingComments = [{ x: 20, y: 30, text: 'Existing saved comment' }]
+  const original = {
+    ...attachment,
+    id: 41,
+    mime_type: 'image/jpeg',
+    filename: 'source.jpg',
+    image_markup_comments: existingComments,
+  }
   const edited = { ...attachment, id: 42, mime_type: 'image/png', filename: 'source.png' }
   const file = new File(['markup'], edited.filename, { type: edited.mime_type })
   const remove = vi.fn().mockResolvedValue(undefined)
@@ -35,7 +42,7 @@ test('replaces only the current draft image after a successful markup upload', a
     result.current.addExistingAttachmentForScope('other', edited)
   })
 
-  const comments = [{ x: 50, y: 50, text: 'Inspect this area' }]
+  const comments = [...existingComments, { x: 50, y: 50, text: 'Inspect this area' }]
   let saving!: Promise<Attachment | null>
   act(() => {
     saving = result.current.replaceImageAttachmentForScope(

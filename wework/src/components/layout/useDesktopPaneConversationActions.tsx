@@ -29,6 +29,7 @@ type PaneSubmitOptions = Pick<
   | 'modelSelection'
   | 'wegentTeamId'
   | 'standaloneAttachments'
+  | 'draftAttachmentSourceId'
 >
 interface Input {
   workbenchVisible: boolean

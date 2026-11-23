@@ -1,14 +1,14 @@
 import { createContext } from 'react'
-import type { ImageEdit } from './imageEdit'
+import type { ImageComment, ImageEdit } from './imageEdit'
 
 export interface SavedImageMarkup {
   attachmentId: number
   file: File
+  comments: ImageComment[]
 }
 
 export interface ImageEditActions {
   scope?: string
-  current?: () => ImageEditActions | null
   saveMarkup?(
     attachmentId: number,
     loadFile: () => Promise<File>,
