@@ -5,6 +5,12 @@
 import { autolinkUrls } from '@/lib/autolink-urls'
 
 describe('autolinkUrls', () => {
+  it('keeps closing bold markers outside bare links', () => {
+    const url = 'https://example.com/shared/task?token=demo_value_'
+
+    expect(autolinkUrls(`**${url}**`)).toBe(`**[${url}](${url})**`)
+  })
+
   it('stops bare links before adjacent CJK text and full-width parentheses', () => {
     expect(autolinkUrls('见 https://example.com/path（说明）')).toBe(
       '见 [https://example.com/path](https://example.com/path)（说明）'
