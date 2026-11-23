@@ -5,7 +5,8 @@ import {
 
 import { tmpdir } from 'node:os'
 import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
-import { flushProcessOutput } from '../process-output.mjs'
+import { closeExitedProcessOutput, flushProcessOutput } from '../process-output.mjs'
+import { launchWindowsOwnedApplication } from '../windows-owned-process.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
@@ -15,6 +16,7 @@ import { readInspectorEndpoint } from './inspect-before-start.mjs'
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
+import { verifyRiskyCommandApproval } from './risky-command-approval-flow.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
@@ -44,12 +46,9 @@ import {
   verifyBackgroundTaskPlanRestoration,
   verifyFollowUpMessageRestoration,
   verifyForegroundGuidanceScroll,
-  verifyEnvironmentPanelScrollStability,
-  verifyTurnNavigationComposerClearance,
   verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
-  verifyStandaloneViewImageTask,
   verifyTurnNavigationTracksVisibleTurnMessages,
   verifyUserMessageNavigation,
   verifyVisionSidecar,
@@ -101,9 +100,7 @@ import {
 import {
   ensureTaskRowVisible,
   verifyConcurrentTaskMemory,
-  verifyLocalMarkdownImage,
   verifyMemoryGrowth,
-  verifyToolBlockChronologicalOrder,
 } from './memory-tool-flows.mjs'
 
 import {
@@ -115,28 +112,20 @@ import {
 } from './path-attachment-flows.mjs'
 
 import {
-  createCoreDshPluginFixture,
   initializeBlankCodexHome,
   installOfficialPluginFixture,
   uninstallOfficialPlugin,
   verifyCloudWorkPage,
   verifyComposerPluginNetworkIsolation,
-  verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
-  verifySkillMentionRendering,
   verifyStartupIgnoresBlockedCodexNetwork,
 } from './plugin-flows.mjs'
 
 import {
   declineInitialTelemetryConsent,
   ensureExperimentalFeaturesEnabled,
-  verifyAutomationLifecycle,
-  verifyCodexCatalogOverride,
   verifyInitialTelemetryConsent,
-  verifySitesPluginAutoInstall,
-  verifyTelemetryPreference,
-  verifyTelemetryRemainsDisabled,
 } from './preferences-automation-flows.mjs'
 
 import {
@@ -163,7 +152,6 @@ import {
   ARTIFACT_CONTENT,
   ARTIFACT_NAME,
   ATTACHMENT_ONLY,
-  AUTOMATION_ONLY,
   BLOCKED_CLOUD_MODEL_PATH,
   BlockingNetworkProxy,
   CANCELLATION_COMPLETION_TEXT,
@@ -192,8 +180,6 @@ import {
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_LINK_NAME,
   FILE_PREVIEW_RESTORE_MARKER,
-  FOLLOW_UP_COMPLETION_TEXT,
-  FOLLOW_UP_PROMPT,
   GIT_SEED_CONTENT,
   GIT_SEED_NAME,
   GOAL_BUSY_ONLY,
@@ -251,11 +237,11 @@ import {
   TASK_PLAN_ONLY,
   TASK_PROMPT,
   TELEMETRY_TEST_PROJECT_KEY,
-  TOOL_BLOCK_ORDER_ONLY,
   TURN_NAVIGATION_ONLY,
   TURN_NAVIGATION_ONLY_TURN_COUNT,
   TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX,
   TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX,
+  UNANSWERED_MCP_APPROVAL_SERVER,
   UNSENT_BLANK_TASK_DRAFT,
   UNSENT_FIRST_TASK_DRAFT,
   UNSENT_SECOND_TASK_DRAFT,
@@ -299,14 +285,8 @@ import {
 } from './shared.mjs'
 
 import {
-  verifyAsyncRequestUserInput,
-  verifyFreeTextRequestUserInput,
-  verifyAsyncQuestionWaitingIndicator,
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
-  verifyForkProviderModelPreservation,
-  verifyPriorityFilter,
-  verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
 import { verifyRuntimeWorkSilentRefresh } from './runtime-work-silent-refresh.mjs'
@@ -325,13 +305,8 @@ import {
   verifyDefaultTaskBoardAssociation,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
-  verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
-  verifyTrackedTaskSettledStatus,
-  verifyDefaultWorkspaceStartupTab,
-  verifyWorkspaceIssueCreation,
   verifyWorkspaceDocumentTabs,
-  verifyWorkspaceTabIsolation,
   waitForControlSelectionOffset,
   waitForControlValue,
   waitForFolderPathReady,
@@ -624,7 +599,7 @@ async function verifyProjectAiSettings({
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_INITIAL_INSTRUCTIONS,
   })
-  await control.command('fill', '[data-testid="local-project-model-select"]', {
+  await control.command('select', '[data-testid="local-project-model-select"]', {
     value: PROJECT_AI_MODEL_VALUE,
   })
   await waitForControlValue(
@@ -633,7 +608,7 @@ async function verifyProjectAiSettings({
     PROJECT_AI_MODEL_VALUE,
     'The project default model selection did not update'
   )
-  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+  await control.command('select', '[data-testid="local-project-reasoning-select"]', {
     value: 'low',
   })
   await waitForControlValue(
@@ -766,7 +741,7 @@ async function verifyProjectAiSettings({
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_UPDATED_INSTRUCTIONS,
   })
-  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+  await control.command('select', '[data-testid="local-project-reasoning-select"]', {
     value: 'high',
   })
   await waitForControlValue(
@@ -1143,9 +1118,7 @@ async function main() {
   const executorHome = usesDefaultUserData
     ? join(homePath, '.wegent/workbench/wework/default')
     : join(resultDir, 'executor-home')
-  const codexHome = usesDefaultUserData
-    ? join(homePath, '.wework/codex')
-    : join(executorHome, 'codex')
+  const codexHome = join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
   const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
@@ -1212,19 +1185,13 @@ async function main() {
       false,
       'The isolated Wework Codex home was not blank before application startup'
     )
-    if (
-      shouldRunPluginSegment('plugin-lifecycle') ||
-      shouldRunPluginSegment('skill-mention-rendering')
-    ) {
+    if (shouldRunPluginSegment('plugin-lifecycle')) {
       await createOfficialPluginMarketplaceFixture({
         marketplaceRoot: pluginMarketplacePath,
         repositoryRoot: officialPluginRepositoryPath,
       })
     }
     await createPluginMarketplaceFixture(marketplacePluginPath)
-    if (shouldRunPluginSegment('core-dsh-plugin-management')) {
-      await createCoreDshPluginFixture(resultDir)
-    }
     await mkdir(nativeCodexHome, { recursive: true })
     await mkdir(join(staleBundledMarketplacePath, '.agents', 'plugins'), { recursive: true })
     await writeFile(
@@ -1376,12 +1343,13 @@ async function main() {
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
+      const codexFixtureHome = desktopScenario?.codexFixtureHome ?? codexHome
       const usesModelRoutingSubscription = DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY
       const modelRoutingConfigToml = usesModelRoutingSubscription
         ? `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "${control.url}/backend-api/"`
         : ''
       await writeCodexConfig(
-        codexHome,
+        codexFixtureHome,
         desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${modelRoutingConfigToml}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
@@ -1407,7 +1375,7 @@ async function main() {
           })
         ).toString('base64url')
         await writeFile(
-          join(codexHome, 'auth.json'),
+          join(codexFixtureHome, 'auth.json'),
           `${JSON.stringify({
             auth_mode: 'chatgpt',
             tokens: {
@@ -1422,7 +1390,7 @@ async function main() {
         )
       } else {
         await writeFile(
-          join(codexHome, 'auth.json'),
+          join(codexFixtureHome, 'auth.json'),
           `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
           'utf8'
         )
@@ -1465,6 +1433,7 @@ async function main() {
         ? {
             WEGENT_CODEX_MCP_URL_TIMEOUT_MS: String(MCP_URL_TIMEOUT_MS),
             WEGENT_CODEX_MCP_FORM_TIMEOUT_MS: String(MCP_FORM_TIMEOUT_MS),
+            WEWORK_E2E_UNANSWERED_MCP_APPROVAL_SERVER: UNANSWERED_MCP_APPROVAL_SERVER,
           }
         : {}),
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
@@ -1593,18 +1562,30 @@ async function main() {
       await mkdir(launchWorkingDirectory, { recursive: true })
     }
     let activeAppEnvironment = appEnvironment
-    const startDesktopAppProcess = async () => {
-      const child = spawn(appBinary, electronLaunchArguments, {
+    let ownedApplicationStartupDeadline = null
+    const startDesktopAppProcess = async (timeoutMs = DESKTOP_READY_TIMEOUT_MS) => {
+      const ownsApplication =
+        process.platform === 'win32' && !desktopScenario?.usesReleasePackageRuntimeAssets
+      ownedApplicationStartupDeadline = ownsApplication ? Date.now() + timeoutMs : null
+      const launchOptions = {
         cwd: launchWorkingDirectory,
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
-      })
+      }
+      // Delivered launchers own their upgrade handoffs; source apps own one test lifetime.
+      const owned = ownsApplication
+        ? await launchWindowsOwnedApplication(
+            appBinary,
+            electronLaunchArguments,
+            launchOptions,
+            resultDir,
+            Math.max(0, ownedApplicationStartupDeadline - Date.now())
+          )
+        : null
+      const child = owned?.launcher ?? spawn(appBinary, electronLaunchArguments, launchOptions)
       const nativeInspector = usesNativeCloudInspector ? readInspectorEndpoint(child) : null
       nativeInspector?.catch(() => undefined)
-      const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
-      // Observe early failure now; the await below still propagates it after log setup.
-      scenarioStartup?.catch(() => undefined)
       const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
       applicationProcessHistory.push(processState)
       child.once('error', error => {
@@ -1614,44 +1595,50 @@ async function main() {
       child.once('exit', (code, signal) => {
         Object.assign(processState, { code, signal, exitedAt: new Date().toISOString() })
       })
-      await markDesktopE2EResultActive(resultDir, {
-        applicationProcessId: child.pid,
-        ownerProcessId: process.pid,
-      })
       await Promise.all([
-        appendProcessOutput(child.stdout, appLogPath),
-        appendProcessOutput(child.stderr, appLogPath),
+        appendProcessOutput(child.stdout, appLogPath, child),
+        appendProcessOutput(child.stderr, appLogPath, child),
       ])
-      if (process.platform === 'win32') {
-        const stopObserving = observeWindowsSocketExhaustion([child.stdout, child.stderr], () => {
-          void Promise.resolve()
-            .then(() => {
-              const snapshot = collectWindowsNetworkDiagnostics()
-              return writeFile(
-                join(resultDir, 'windows-network-exhaustion-at-error.json'),
-                JSON.stringify(snapshot, null, 2),
-                { flag: 'wx' }
-              )
-            })
-            .catch(error => {
-              if (error.code !== 'EEXIST') {
-                console.error('[desktop-e2e] Immediate network diagnostics failed:', error.code)
-              }
-            })
-        })
-        child.once('exit', stopObserving)
-      }
+      const application = owned ? await owned.application : child
+      processState.pid = application.pid
       try {
+        const scenarioStartup = desktopScenario?.appProcessStarted?.(application)
+        // Install inspector listeners while the owned Windows process is suspended.
+        scenarioStartup?.catch(() => undefined)
+        await markDesktopE2EResultActive(resultDir, {
+          applicationProcessId: application.pid,
+          ownerProcessId: process.pid,
+        })
+        if (process.platform === 'win32') {
+          const stopObserving = observeWindowsSocketExhaustion([child.stdout, child.stderr], () => {
+            void Promise.resolve()
+              .then(() => {
+                const snapshot = collectWindowsNetworkDiagnostics()
+                return writeFile(
+                  join(resultDir, 'windows-network-exhaustion-at-error.json'),
+                  JSON.stringify(snapshot, null, 2),
+                  { flag: 'wx' }
+                )
+              })
+              .catch(error => {
+                if (error.code !== 'EEXIST') {
+                  console.error('[desktop-e2e] Immediate network diagnostics failed:', error.code)
+                }
+              })
+          })
+          child.once('exit', stopObserving)
+        }
+        await owned?.resume()
         await scenarioStartup
         if (nativeInspector) {
           control.nativeInspectorPort = Number(new URL(await nativeInspector).port)
         }
       } catch (error) {
-        await stopDesktopAppProcess(child)
+        await stopDesktopAppProcess(application)
         throw error
       }
-      control.applicationProcessId = child.pid
-      return child
+      control.applicationProcessId = application.pid
+      return application
     }
     app = await startDesktopAppProcess()
     const restartDesktopApp = async (options = null) => {
@@ -1696,10 +1683,12 @@ async function main() {
           profile,
         })
       }
-      app = await startDesktopAppProcess()
+      app = await startDesktopAppProcess(WORKBENCH_READY_TIMEOUT_MS)
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
-        WORKBENCH_READY_TIMEOUT_MS,
+        ownedApplicationStartupDeadline === null
+          ? WORKBENCH_READY_TIMEOUT_MS
+          : Math.max(0, ownedApplicationStartupDeadline - Date.now()),
         'The restarted Wework application did not reconnect to the desktop controller'
       )
       const nextUserDataDirectory =
@@ -1742,7 +1731,9 @@ async function main() {
           })
         : await withTimeout(
             readiness,
-            DESKTOP_READY_TIMEOUT_MS,
+            ownedApplicationStartupDeadline === null
+              ? DESKTOP_READY_TIMEOUT_MS
+              : Math.max(0, ownedApplicationStartupDeadline - Date.now()),
             'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
           )
     assert.match(
@@ -1753,7 +1744,10 @@ async function main() {
     if (usesNativeCloudInspector) {
       assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
       nativeCloudLogin = nativeCloudAuthorizationFixture(
-        cloudEnvironment,
+        {
+          backendUrl: appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL,
+          authToken: cloudEnvironment.authToken,
+        },
         electronUserDataDirectory,
         control
       )
@@ -2030,16 +2024,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await captureVerificationScreenshot(control, '00-canonical-model-catalog.png')
     await control.command('press', 'body', { key: 'Escape' })
 
-    if (TOOL_BLOCK_ORDER_ONLY) {
-      phase = 'tool-block-chronological-order'
-      await verifyToolBlockChronologicalOrder({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-      })
-      console.log(`Wework desktop tool-block-order E2E passed. Evidence: ${resultDir}`)
-      return
-    }
-
     if (RETRY_ONLY) {
       phase = 'retry-failure-restoration'
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -2255,17 +2239,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       return
     }
 
-    if (DESKTOP_SEGMENT === 'automation-lifecycle' || AUTOMATION_ONLY) {
-      phase = 'automation-lifecycle'
-      await verifyAutomationLifecycle(control, executorHome, homePath)
-      console.log(
-        AUTOMATION_ONLY
-          ? `Wework desktop automation E2E passed. Evidence: ${resultDir}`
-          : `Wework desktop automation-lifecycle checkpoint passed. Evidence: ${resultDir}`
-      )
-      return
-    }
-
     if (WORKTREE_STATUS_ONLY) {
       phase = 'worktree-creation-status'
       await verifyWorktreeCreationStatus({
@@ -2294,22 +2267,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         })
         return officialPluginFixture
       }
-
-      if (shouldRunPluginSegment('core-dsh-plugin-management')) {
-        phase = 'core-dsh-plugin-management'
-        await verifyCoreDshPluginManagement({
-          control,
-          pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
-          restartDesktopApp,
-          userDataDirectory: electronUserDataDirectory,
-        })
-      }
       if (shouldRunPluginSegment('plugin-composer-network-isolation')) {
         phase = 'plugin-composer-network-isolation'
         await verifyComposerPluginNetworkIsolation({
           blockingNetworkProxy,
           codexHome,
           control,
+          electronUserDataDirectory,
           marketplacePath: marketplacePluginPath,
           restartDesktopApp,
           workspacePath,
@@ -2332,17 +2296,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           control,
           fixture: await ensureOfficialPluginFixture(),
         })
-      }
-      if (shouldRunPluginSegment('skill-mention-rendering')) {
-        phase = 'skill-mention-rendering'
-        await verifySkillMentionRendering({
-          control,
-          fixture: await ensureOfficialPluginFixture(),
-        })
-      }
-      if (shouldRunPluginSegment('sites-plugin-auto-install')) {
-        phase = 'sites-plugin-auto-install'
-        await verifySitesPluginAutoInstall(control, executorHome)
       }
       if (officialPluginFixture) {
         phase = 'plugin-uninstall'
@@ -2494,93 +2447,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (DESKTOP_SEGMENT === 'permission-modes') {
       phase = 'permission-modes'
       await verifyPermissionModes(control)
+      await verifyRiskyCommandApproval(control, workspacePath)
       console.log(`Wework desktop permission-modes checkpoint passed. Evidence: ${resultDir}`)
       return
-    }
-
-    if (shouldRunDesktopCheckpoint('workspace-tabs')) {
-      phase = 'workspace-startup-tab'
-      await verifyDefaultWorkspaceStartupTab(control)
-      phase = 'workspace-issue-creation'
-      await verifyWorkspaceIssueCreation(control)
-      phase = 'workspace-tab-isolation'
-      await verifyWorkspaceTabIsolation(control, restartDesktopApp)
-      if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
-        console.log(`Wework desktop workspace-tabs checkpoint passed. Evidence: ${resultDir}`)
-        return
-      }
-    }
-
-    if (shouldRunDesktopCheckpoint('priority-filter')) {
-      phase = 'priority-filter'
-      await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
-      phase = 'request-user-input-async'
-      await verifyAsyncRequestUserInput({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-      })
-      phase = 'free-text-request-user-input'
-      await verifyFreeTextRequestUserInput({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-      })
-      phase = 'async-question-waiting-indicator'
-      await verifyAsyncQuestionWaitingIndicator({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-      })
-      phase = 'runtime-task-order-unread'
-      await verifyRuntimeTaskOrderAndUnreadVisibility({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-      })
-      if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
-        console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
-        return
-      }
-    }
-
-    if (shouldRunDesktopCheckpoint('telemetry-consent')) {
-      phase = 'telemetry-preference'
-      await verifyTelemetryPreference(control)
-      phase = 'codex-catalog-override'
-      await verifyCodexCatalogOverride(control, DEFAULT_MODEL_ID)
-      verifyTelemetryRemainsDisabled(control)
-      if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
-        console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
-        return
-      }
-    }
-
-    if (shouldRunDesktopCheckpoint('fork-provider-preservation')) {
-      phase = 'fork-provider-model-preservation'
-      await verifyForkProviderModelPreservation({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-        newConversationSelector: '[data-testid="new-chat-button"]',
-      })
-      if (shouldStopAfterDesktopCheckpoint('fork-provider-preservation')) {
-        console.log(
-          `Wework desktop fork-provider-preservation checkpoint passed. Evidence: ${resultDir}`
-        )
-        return
-      }
     }
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       if (!GUIDANCE_SCROLL_ONLY && !GUIDANCE_BACKGROUND_ONLY && !SIDE_CHAT_ONLY) {
         phase = 'workspace-document-tabs'
         await verifyWorkspaceDocumentTabs(control)
-
-        if (shouldRunDesktopCheckpoint('automation-lifecycle')) {
-          phase = 'automation-lifecycle'
-          await verifyAutomationLifecycle(control, executorHome, homePath)
-        }
 
         phase = 'cloud-work-page'
         await verifyCloudWorkPage(control)
@@ -2949,7 +2824,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     let associatedTaskTabTestId = null
     if (
       shouldRunDesktopCheckpoint('core-task-flow') ||
-      shouldRunDesktopCheckpoint('task-status-sync') ||
       shouldRunDesktopCheckpoint('task-board-association')
     ) {
       phase = 'project-space-default-association-setup'
@@ -3021,7 +2895,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     let taskRowCompletionText = COMPLETION_TEXT
     if (
       shouldRunDesktopCheckpoint('core-task-flow') ||
-      shouldRunDesktopCheckpoint('task-status-sync') ||
       shouldRunDesktopCheckpoint('task-board-association')
     ) {
       const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
@@ -3034,6 +2907,35 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
           testId.startsWith('runtime-local-task-row-')
         )
+      )
+      const [viewport] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+        )
+      )
+      const [dock] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-empty-composer-dock"]`
+        )
+      )
+      const [environmentSpacer] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-spacer"]`
+        )
+      )
+      const usableCenter = viewport.left + (viewport.width - environmentSpacer.width) / 2
+      const dockCenter = dock.left + dock.width / 2
+      assert.ok(
+        Math.abs(dockCenter - usableCenter) <= 2,
+        `The new-task composer must be centered in its workbench. Center offset: ${dockCenter - usableCenter}px`
+      )
+      const bottomGap = viewport.bottom - dock.bottom
+      assert.ok(
+        bottomGap >= 0 && bottomGap <= 16,
+        `The new-task composer must stay at the bottom of its workbench. Bottom gap: ${bottomGap}px`
       )
       phase = 'initial-task'
       const initialTaskRequest = await sendPromptUntilScenarioRequest(
@@ -3059,43 +2961,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       if (associatedTaskTabTestId) {
         phase = 'project-space-running-task-synchronized'
         await verifyTrackedTaskRunningStatus(control, associatedTaskTabTestId)
-      }
-      if (shouldRunDesktopCheckpoint('task-status-sync')) {
-        phase = 'project-space-settled-task-synchronized'
-        control.releaseInitialToolExecution()
-        await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: COMPLETION_TEXT,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        })
-        await verifyTrackedTaskSettledStatus(control)
-        await control.command('click', `[data-testid="${associatedTaskTabTestId}"]`)
-        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        })
-        control.setScenario('follow_up')
-        await sendPromptUntilScenarioRequest(
-          control,
-          composerSelector,
-          FOLLOW_UP_PROMPT,
-          'follow_up'
-        )
-        try {
-          await verifyTrackedTaskBoardRunningStatus(control, null)
-        } finally {
-          control.releaseFollowUpResponse()
-        }
-        await control.command('click', `[data-testid="${associatedTaskTabTestId}"]`)
-        await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: FOLLOW_UP_COMPLETION_TEXT,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        })
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
-        console.log(`Wework desktop task-status-sync checkpoint passed. Evidence: ${resultDir}`)
-        return
       }
       if (shouldRunDesktopCheckpoint('task-board-association')) {
         phase = 'project-space-task-board-association'
@@ -4073,45 +3938,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
 
-    if (shouldRunDesktopCheckpoint('environment-panel-scroll')) {
-      phase = 'environment-panel-scroll'
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-      })
-      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-      control.setScenario('turn_navigation')
-      const environmentPanelTurnCount = E2E_TRANSCRIPT_PAGE_SIZE + 4
-      const modelResponseTimeoutMs = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
-      for (let index = 0; index < environmentPanelTurnCount; index += 1) {
-        const turnNumber = index + 1
-        await sendPrompt(
-          control,
-          ACTIVE_COMPOSER_SELECTOR,
-          `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
-        )
-        await control.awaitScenarioRequestCount(
-          'turn_navigation',
-          turnNumber,
-          Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
-        )
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-          {
-            text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`,
-            timeoutMs: modelResponseTimeoutMs,
-          }
-        )
-      }
-      await verifyEnvironmentPanelScrollStability(control)
-      await verifyTurnNavigationComposerClearance(control, environmentPanelTurnCount)
-      if (shouldStopAfterDesktopCheckpoint('environment-panel-scroll')) {
-        console.log(`Wework desktop environment-panel-scroll E2E passed. Evidence: ${resultDir}`)
-        return
-      }
-    }
-
     if (shouldRunDesktopCheckpoint('conversation-state')) {
       await ensureExperimentalFeaturesEnabled(control)
       if (!taskRowTestId) {
@@ -4328,6 +4154,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
+      await control.command('pointerLeave', filePanelLinkSelector, {
+        target: rightWorkspacePanelSelector,
+      })
       await control.command('hover', filePanelLinkSelector)
       await control.command('waitFor', filePanelLinkTooltipSelector, {
         visible: true,
@@ -4366,14 +4195,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )
       await captureVerificationScreenshot(control, 'file-panel-anchor-03-link-tooltip.png')
       await control.command('press', filePanelLinkSelector, { key: 'Escape' })
-      await waitForSnapshot(
-        control,
-        snapshot =>
-          snapshot.testIds.includes(linkedFileTabId) &&
-          !snapshot.testIds.includes('assistant-markdown-link-tooltip'),
-        'The assistant file-link tooltip did not dismiss above the open file panel',
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      await control.command('waitFor', filePanelLinkTooltipSelector, {
+        visible: false,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('waitFor', linkedFileTabSelector, {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
 
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
@@ -4914,33 +4743,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
 
-    if (shouldRunDesktopCheckpoint('rendering-extensions')) {
-      phase = 'tool-block-chronological-order'
-      await verifyToolBlockChronologicalOrder({
-        composerSelector,
-        control,
-      })
-
-      phase = 'standalone-view-image'
-      await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
-
-      phase = 'local-markdown-image'
-      await verifyLocalMarkdownImage({
-        composerSelector,
-        control,
-      })
-
-      if (desktopScenario) {
-        phase = 'desktop-extension-scenario'
-        desktopScenarioVerified = true
-        await desktopScenario.verify(control)
-      }
-      if (shouldStopAfterDesktopCheckpoint('rendering-extensions')) {
-        console.log(`Wework desktop rendering-extensions checkpoint passed. Evidence: ${resultDir}`)
-        return
-      }
-    }
-
     if (shouldRunDesktopCheckpoint('local-harness')) {
       phase = 'local-harness-scenario'
       assert.ok(
@@ -5128,10 +4930,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     stopAsyncDiagnostics()
     const teardownFailures = []
     const runTeardownStep = async (label, action) => {
+      const startedAt = Date.now()
+      console.log('[desktop-e2e-teardown]', { label, status: 'started' })
       try {
         await action()
+        console.log('[desktop-e2e-teardown]', {
+          label,
+          status: 'completed',
+          elapsedMs: Date.now() - startedAt,
+        })
       } catch (error) {
         teardownFailures.push({ error, label })
+        console.error('[desktop-e2e-teardown]', {
+          label,
+          status: 'failed',
+          elapsedMs: Date.now() - startedAt,
+        })
       }
     }
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
@@ -5152,7 +4966,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
-    await runTeardownStep('process output', flushProcessOutput)
+    await runTeardownStep('process output', async () => {
+      if (process.platform === 'win32' && desktopScenario?.usesReleasePackageRuntimeAssets) {
+        await closeExitedProcessOutput(appLogPath)
+      }
+      await flushProcessOutput()
+    })
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,

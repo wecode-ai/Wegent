@@ -1,21 +1,23 @@
 import { Button } from '@/components/ui/button'
-import {
-  Bell,
-  ChevronDown,
-  Clock,
-  PauseCircle,
-  CircleAlert,
-  ClipboardList,
-  FileSearch,
-  Loader2,
-  Plus,
-  Search,
-} from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Automation } from '@/types/automation'
-import { formatScheduleSummary } from './formatScheduleSummary'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
+  Bell,
+  ChevronDown,
+  CircleAlert,
+  ClipboardList,
+  Clock,
+  FileSearch,
+  Loader2,
+  PauseCircle,
+  Plus,
+  Search,
+} from 'lucide-react'
 import type { AutomationDraft } from './automationDraft'
+import { formatScheduleSummary } from './formatScheduleSummary'
 export type StatusFilter = 'all' | 'active' | 'paused'
 
 export function AutomationListPane({
@@ -26,6 +28,7 @@ export function AutomationListPane({
   selectedAutomationId,
   locale,
   loading,
+  loadFailed = false,
   error,
   detailOpen,
   mobileDetailOpen,
@@ -45,6 +48,7 @@ export function AutomationListPane({
   locale: string
   loading: boolean
   error: string | null
+  loadFailed?: boolean
   detailOpen: boolean
   mobileDetailOpen: boolean
   onQueryChange: (query: string) => void
@@ -71,7 +75,8 @@ export function AutomationListPane({
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1">
             {(['all', 'active', 'paused'] as const).map(filter => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={filter}
                 type="button"
                 data-testid={`automation-filter-${filter}`}
@@ -89,7 +94,7 @@ export function AutomationListPane({
                   : filter === 'active'
                     ? t('todo.automation_filter_active', '已开启')
                     : t('todo.automation_filter_paused', '已暂停')}
-              </button>
+              </ControlButton>
             ))}
           </div>
           <Button
@@ -109,12 +114,13 @@ export function AutomationListPane({
         </div>
         <div className="relative mb-5 mt-5">
           <Search className="pointer-events-none absolute left-3 top-2 h-4 w-4 text-text-secondary" />
-          <input
+          <ControlInput
+            density="compact"
             data-testid="automation-search-input"
             value={query}
             onChange={event => onQueryChange(event.target.value)}
             placeholder={t('todo.automations_search', '搜索已安排任务')}
-            className="h-8 w-full rounded-full border border-border bg-background pl-9 pr-3 text-sm outline-none placeholder:text-text-tertiary focus:border-text-tertiary"
+            className="w-full pl-9 pr-3 placeholder:text-text-tertiary focus:border-text-tertiary"
           />
         </div>
         {error ? <AutomationError error={error} onClear={onClearError} /> : null}
@@ -134,7 +140,7 @@ export function AutomationListPane({
               />
             ))}
           </section>
-        ) : (
+        ) : !loadFailed ? (
           <p className="py-12 text-center text-sm text-text-secondary">
             {t(
               calendar
@@ -144,7 +150,7 @@ export function AutomationListPane({
                 : 'todo.automations_no_results'
             )}
           </p>
-        )}
+        ) : null}
         {onReviewTemplate ? (
           <Button
             variant="ghost"
@@ -222,7 +228,9 @@ export function AutomationEmptyState({
     )
   return (
     <div className="relative min-w-0 flex-1 overflow-y-auto">
-      <button
+      <ControlButton
+        variant="primary"
+        size="sm"
         type="button"
         data-testid="create-automation-button"
         onClick={() => onCreate()}
@@ -230,8 +238,8 @@ export function AutomationEmptyState({
       >
         {t('todo.automation_create', '创建')}
         <ChevronDown className="h-3.5 w-3.5" />
-      </button>
-      <div className="mx-auto w-full max-w-[660px] px-5 pb-16 pt-[61px] md:px-0">
+      </ControlButton>
+      <div className="mx-auto w-full max-w-[700px] px-5 pb-16 pt-[61px]">
         <header className="mb-[23px]">
           <h1 className="text-heading-lg font-normal tracking-[-0.02em]">
             {t('todo.automations_title', '已安排的任务')}
@@ -242,12 +250,12 @@ export function AutomationEmptyState({
         </header>
         <div className="relative mb-[26px]">
           <Search className="pointer-events-none absolute left-3 top-[7px] h-4 w-4 text-text-secondary" />
-          <input
+          <ControlInput
             data-testid="automation-search-input"
             value={query}
             onChange={event => onQueryChange(event.target.value)}
             placeholder={t('todo.automations_search', '搜索已安排任务')}
-            className="h-[30px] w-full rounded-full border border-border bg-background pl-9 pr-3 text-sm outline-none placeholder:text-text-tertiary focus:border-text-tertiary"
+            className="h-[30px] w-full pl-9 pr-3 placeholder:text-text-tertiary focus:border-text-tertiary"
           />
         </div>
         {error ? <AutomationError error={error} onClear={onClearError} /> : null}
@@ -265,7 +273,9 @@ export function AutomationEmptyState({
 
 function AutomationError({ error, onClear }: { error: string; onClear: () => void }) {
   return (
-    <button
+    <ControlButton
+      variant="destructive"
+      size="sm"
       type="button"
       data-testid="automation-error"
       onClick={onClear}
@@ -273,7 +283,7 @@ function AutomationError({ error, onClear }: { error: string; onClear: () => voi
     >
       <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
       <span className="min-w-0 flex-1">{error}</span>
-    </button>
+    </ControlButton>
   )
 }
 
@@ -334,7 +344,8 @@ function AutomationSuggestions({
         {suggestions.slice(compact ? 1 : 0).map((suggestion, index) => {
           const Icon = suggestion.icon
           return (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={suggestion.name}
               type="button"
               data-testid={`automation-suggestion-${compact ? index + 1 : index}`}
@@ -363,7 +374,7 @@ function AutomationSuggestions({
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100">
                 <Plus className="h-4 w-4" />
               </span>
-            </button>
+            </ControlButton>
           )
         })}
       </div>
@@ -385,7 +396,8 @@ function AutomationRow({
   const { t } = useTranslation('common')
   return (
     <article data-testid={`automation-row-${automation.id}`}>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`automation-open-${automation.id}`}
         onClick={onOpen}
@@ -424,7 +436,7 @@ function AutomationRow({
             </span>
           )}
         </span>
-      </button>
+      </ControlButton>
     </article>
   )
 }

@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type FormHTMLAttributes, type ReactNode } from 'react'
+import { useWindowEvent } from '../dom-events'
+import { useRef, useState, type FormHTMLAttributes, type ReactNode } from 'react'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import styles from './ProjectChatComposer.module.css'
 
 export const PROJECT_CHAT_EDITOR_CLASS = `min-h-12 w-full resize-none bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-secondary ${styles.input}`
 export const PROJECT_CHAT_TOOLBAR_CLASS = styles.toolbar
+export const PROJECT_CHAT_WORK_BAR_CLASS = '-mb-2 min-h-10 rounded-t-[20px] bg-muted/45 px-3 pb-2'
 export const PROJECT_CHAT_SCROLL_CONTAINER_CLASS = styles.inputViewport
 export const DOCUMENT_EDITOR_CLASS =
   'min-h-32 max-h-[60vh] w-full overflow-y-auto whitespace-pre-wrap bg-transparent py-2 text-chat text-text-primary [outline-style:none] placeholder:text-text-secondary'
@@ -34,14 +36,13 @@ export function ProjectChatComposerSurface({
 }) {
   const formRef = useRef<HTMLElement>(null)
   const [shortComposerExpanded, setShortComposerExpanded] = useState(false)
-  useEffect(() => {
-    if (!shortComposerExpanded) return
-    const outside = (event: MouseEvent) => {
+  useWindowEvent(
+    'click',
+    event => {
       if (!formRef.current?.contains(event.target as Node)) setShortComposerExpanded(false)
-    }
-    window.addEventListener('click', outside, true)
-    return () => window.removeEventListener('click', outside, true)
-  }, [shortComposerExpanded])
+    },
+    { enabled: shortComposerExpanded, capture: true }
+  )
   const surfaceClassName = cn(
     'relative z-10 flex w-full flex-col bg-background transition-colors',
     presentation === 'configuration'

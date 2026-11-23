@@ -181,6 +181,9 @@ pub(super) async fn prepare(
     let body =
         vision::replace_images_with_descriptions(vision_sidecar, conversation_id.as_deref(), &body)
             .await?;
+    // Fork cleanup needs the native item types before Responses normalization.
+    let (body, stripped_encrypted_content) =
+        prepare_fork_request(body, forked && upstream.api_format == "openai-responses")?;
     let (body, conversion, expanded_browser_tools) = prepare_request_with_history(
         &upstream.api_format,
         upstream.responses_tool_capabilities(),
@@ -190,7 +193,6 @@ pub(super) async fn prepare(
         history,
     )
     .await?;
-    let (body, stripped_encrypted_content) = prepare_fork_request(body, forked)?;
     Ok(PreparedRequest {
         body,
         conversion,

@@ -1,13 +1,14 @@
-import { ExternalLink, Loader2, MonitorCog } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
 import {
   getComputerUseStatus,
   openComputerUseScreenRecordingSettings,
   requestComputerUsePermissions,
   setComputerUseEnabled,
-  type ComputerUseStatus,
 } from '@/desktop/computerUse'
+import { useTranslation } from '@/hooks/useTranslation'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ExternalLink, Loader2, MonitorCog } from 'lucide-react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import {
   SettingsGroup,
   SettingsPage,
@@ -18,54 +19,39 @@ import {
 
 export function ComputerUseSettingsPage() {
   const { t } = useTranslation('common')
-  const [status, setStatus] = useState<ComputerUseStatus | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [resource] = useState(() =>
+    createAsyncResource('computer-use/status', getComputerUseStatus, {
+      refreshIntervalMs: 2_000,
+      refreshIntervalMode: 'after-settle',
+    })
+  )
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const status = snapshot.data
+  const loading = !snapshot.settled
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const pending = useRef(false)
+  const [failure, setFailure] = useState<'save' | 'permission' | null>(null)
+  const error = failure
+    ? t(`workbench.computer_use_${failure}_failed`)
+    : snapshot.status === 'error'
+      ? t('workbench.computer_use_load_failed')
+      : null
 
-  const refresh = useCallback(async () => {
-    try {
-      setStatus(await getComputerUseStatus())
-      setError(null)
-    } catch (loadError) {
-      console.error('[Wework] Failed to load computer use status:', loadError)
-      setError(t('workbench.computer_use_load_failed'))
-    } finally {
-      setLoading(false)
-    }
-  }, [t])
-
-  useEffect(() => {
-    const initial = window.setTimeout(() => void refresh(), 0)
-    const timer = window.setInterval(() => void refresh(), 2_000)
-    return () => {
-      window.clearTimeout(initial)
-      window.clearInterval(timer)
-    }
-  }, [refresh])
-
-  const setEnabled = async (enabled: boolean) => {
+  const mutate = async (action: { kind: 'save'; enabled: boolean } | { kind: 'permission' }) => {
+    if (pending.current) return
+    pending.current = true
     setSaving(true)
-    setError(null)
+    setFailure(null)
     try {
-      setStatus(await setComputerUseEnabled(enabled))
-    } catch (saveError) {
-      console.error('[Wework] Failed to update computer use:', saveError)
-      setError(t('workbench.computer_use_save_failed'))
+      const receipt = await (action.kind === 'save'
+        ? setComputerUseEnabled(action.enabled)
+        : requestComputerUsePermissions())
+      resource.update(() => receipt)
+    } catch (cause) {
+      console.error('[Wework] Failed to update computer use:', cause)
+      setFailure(action.kind)
     } finally {
-      setSaving(false)
-    }
-  }
-
-  const requestPermissions = async () => {
-    setSaving(true)
-    setError(null)
-    try {
-      setStatus(await requestComputerUsePermissions())
-    } catch (permissionError) {
-      console.error('[Wework] Failed to request computer use permissions:', permissionError)
-      setError(t('workbench.computer_use_permission_failed'))
-    } finally {
+      pending.current = false
       setSaving(false)
     }
   }
@@ -76,29 +62,32 @@ export function ComputerUseSettingsPage() {
         {t('workbench.computer_use_permission_granted')}
       </span>
     ) : (
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         type="button"
         data-testid={`computer-use-open-${kind}-settings-button`}
         disabled={saving || !status?.supported}
         onClick={() =>
           void (kind === 'screen-recording'
             ? openComputerUseScreenRecordingSettings()
-            : requestPermissions())
+            : mutate({ kind: 'permission' }))
         }
-        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-text-primary hover:bg-muted disabled:opacity-50"
       >
         <ExternalLink className="h-3.5 w-3.5" />
         {t('workbench.computer_use_open_system_settings')}
-      </button>
+      </ControlButton>
     )
 
   const stateLabel = loading
     ? t('common.loading', '加载中...')
-    : status?.running
-      ? t('workbench.computer_use_state_running')
-      : status?.enabled
-        ? t('workbench.computer_use_state_waiting_permissions')
-        : t('workbench.computer_use_state_off')
+    : !status
+      ? t('workbench.computer_use_load_failed')
+      : status?.running
+        ? t('workbench.computer_use_state_running')
+        : status?.enabled
+          ? t('workbench.computer_use_state_waiting_permissions')
+          : t('workbench.computer_use_state_off')
   const stateDescription =
     status?.enabled && !status?.running
       ? t('workbench.computer_use_permissions_hint')
@@ -136,11 +125,11 @@ export function ComputerUseSettingsPage() {
         <SettingsRow
           label={t('workbench.computer_use_enable')}
           description={
-            status?.supported
+            !status || status.supported
               ? t('workbench.computer_use_enable_description')
               : t('workbench.computer_use_macos_only')
           }
-          control={
+          children={
             loading || saving ? (
               <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
             ) : (
@@ -148,7 +137,7 @@ export function ComputerUseSettingsPage() {
                 data-testid="computer-use-enabled-toggle"
                 checked={status?.enabled ?? false}
                 disabled={!status?.supported}
-                onCheckedChange={enabled => void setEnabled(enabled)}
+                onCheckedChange={enabled => void mutate({ kind: 'save', enabled })}
                 aria-label={t('workbench.computer_use_enable')}
               />
             )
@@ -159,12 +148,12 @@ export function ComputerUseSettingsPage() {
             <SettingsRow
               label={t('workbench.computer_use_accessibility_permission')}
               description={t('workbench.computer_use_accessibility_permission_description')}
-              control={permissionControl(status.accessibilityPermissionGranted, 'accessibility')}
+              children={permissionControl(status.accessibilityPermissionGranted, 'accessibility')}
             />
             <SettingsRow
               label={t('workbench.computer_use_screen_recording_permission')}
               description={t('workbench.computer_use_screen_recording_permission_description')}
-              control={permissionControl(
+              children={permissionControl(
                 status.screenRecordingPermissionGranted,
                 'screen-recording'
               )}
@@ -174,7 +163,7 @@ export function ComputerUseSettingsPage() {
         <SettingsRow
           label={t('workbench.computer_use_approval')}
           description={t('workbench.computer_use_approval_description')}
-          control={
+          children={
             <span className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-text-secondary">
               {t('workbench.computer_use_approval_writes')}
             </span>

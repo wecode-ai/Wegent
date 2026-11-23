@@ -41,7 +41,9 @@
   line-height: 1.8;
 }
 
-[data-testid='collaboration-exp-app'] .experience-matter-background summary {
+[data-testid='collaboration-exp-app']
+  .experience-matter-background
+  [data-slot='collapsible-trigger'] {
   cursor: pointer;
 }
 
@@ -420,7 +422,9 @@
     padding-bottom: 24px;
   }
 
-  [data-testid='collaboration-exp-app'] .experience-matter-background summary,
+  [data-testid='collaboration-exp-app']
+    .experience-matter-background
+    [data-slot='collapsible-trigger'],
   [data-testid='collaboration-exp-app'] .experience-timeline-tools button,
   [data-testid='collaboration-exp-app'] .experience-timeline-attachments button,
   [data-testid='collaboration-exp-app'] .experience-timeline-execution-link,

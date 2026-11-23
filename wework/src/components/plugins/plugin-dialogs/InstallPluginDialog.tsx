@@ -1,5 +1,7 @@
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useRef } from 'react'
 import type { PluginDistribution } from '../pluginDistribution'
 import { PluginInstallWarning } from '../PluginInstallWarning'
 import { PluginSourceAvatar } from '../PluginSourceAvatar'
@@ -33,13 +35,7 @@ export function InstallPluginDialog({
 }: InstallPluginDialogProps) {
   const { t } = useTranslation('common')
   const unofficial = !plugin.isOfficial
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    onCancel,
-    true,
-    unofficial
-      ? '[data-testid="install-plugin-dialog-cancel"]'
-      : '[data-testid="install-plugin-dialog-confirm"]'
-  )
+  const dialogRef = useRef<HTMLElement>(null)
   const logo = plugin.logoUrl?.trim() || ''
   const useInitial = Boolean(plugin.useLogoInitial) || !logo
   const requiredConnectionNames = plugin.requiredConnectionNames ?? []
@@ -51,14 +47,22 @@ export function InstallPluginDialog({
       className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-6"
       onClick={onCancel}
     >
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="install-plugin-dialog-title"
-        data-testid="install-plugin-dialog"
-        className="plugin-dialog-surface w-full max-w-[480px] overflow-hidden"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        onClose={onCancel}
+        initialFocus={
+          unofficial
+            ? '[data-testid="install-plugin-dialog-cancel"]'
+            : '[data-testid="install-plugin-dialog-confirm"]'
+        }
+        render={
+          <section
+            ref={dialogRef}
+            aria-labelledby="install-plugin-dialog-title"
+            data-testid="install-plugin-dialog"
+            className="plugin-dialog-surface w-full max-w-[480px] overflow-hidden"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <div className="plugin-dialog-divider border-b px-6 py-5">
           <div className="flex items-center gap-3">
@@ -117,19 +121,19 @@ export function InstallPluginDialog({
           </ul>
         </div>
         <div className="plugin-dialog-divider flex justify-end gap-2 border-t px-6 py-4">
-          <button
+          <ControlButton
+            variant="ghost"
             type="button"
             data-testid="install-plugin-dialog-cancel"
-            className="h-9 rounded-lg px-4 text-sm font-medium text-text-secondary hover:bg-surface"
             onClick={onCancel}
           >
             {t('workbench.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
             type="button"
             data-testid="install-plugin-dialog-confirm"
             disabled={confirmDisabled}
-            className="flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={onConfirm}
           >
             {requiredConnectionNames.length > 0
@@ -140,9 +144,9 @@ export function InstallPluginDialog({
                   })
                 : t('workbench.plugins_install_and_connect', '安装并连接')
               : t('workbench.plugins_install_plugin', '安装插件')}
-          </button>
+          </ControlButton>
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

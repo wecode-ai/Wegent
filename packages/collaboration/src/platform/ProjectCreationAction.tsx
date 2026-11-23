@@ -1,5 +1,8 @@
-import { FolderOpen, FolderPlus, Plus, SquarePen } from 'lucide-react'
+import { ChevronDown, FolderOpen, FolderPlus, Plus, SquarePen } from 'lucide-react'
 import { ActionMenu } from '../controls/ActionMenu'
+import { Button as ControlButton } from '../markdown/Button'
+import { controlMenuTriggerDensity } from '../controls/recipes'
+import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 
 interface ProjectCreationActionLabels {
   addProject: string
@@ -61,30 +64,37 @@ export function ProjectCreationAction({
 
   if (items.length === 1) {
     return (
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
-        className={triggerClassName}
+        className={cn(triggerClassName, controlMenuTriggerDensity.default)}
         data-testid={testId}
         aria-label={messages.addProject}
         onClick={items[0].onSelect}
       >
         <Plus className="h-4 w-4" aria-hidden="true" />
         {messages.addProject}
-      </button>
+      </ControlButton>
     )
   }
 
   return (
     <ActionMenu
+      density="default"
       ariaLabel={messages.addProject}
-      icon={Plus}
       items={items}
       menuTestId={`${testId}-menu`}
       placement="bottom-end"
       showTriggerTooltip={false}
       testId={testId}
       triggerClassName={triggerClassName}
-      triggerLabel={messages.addProject}
+      triggerLabel={
+        <>
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          {messages.addProject}
+          <ChevronDown className="h-4 w-4" aria-hidden="true" />
+        </>
+      }
     />
   )
 }

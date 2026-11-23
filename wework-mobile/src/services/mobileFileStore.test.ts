@@ -237,7 +237,8 @@ describe('live workspace diffs', () => {
       'device-a',
       '/worktree',
       request.selection,
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      request.target.taskId
     )
     store.invalidate(request)
     expect(native.files.has(first.document.uri)).toBe(true)
@@ -531,7 +532,8 @@ describe('MobileFileStore', () => {
     expect(api.readWorkspaceTextFile).toHaveBeenCalledWith(
       'original-device',
       '/original/worktree/readme.md',
-      '/original/worktree'
+      '/original/worktree',
+      undefined
     )
     expect(api.downloadAttachment).not.toHaveBeenCalled()
     expect(native.constructedFiles).not.toContain('/different/device/file.md')

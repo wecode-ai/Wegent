@@ -33,6 +33,10 @@ def prepare_continuation(
             or original.loop_item_id != row.loop_item_id
         ):
             raise HTTPException(409, "The original session belongs to another Issue")
+        if original.execution_environment == "wegent":
+            # Rust's managed queue consumer validates and reuses the original Task.
+            # Leave its assignment pending instead of requiring a native device.
+            return None
         if not original.runtime_device_id and original.status in {
             "queued",
             "pending_approval",

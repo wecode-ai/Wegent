@@ -1,29 +1,26 @@
-import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
-import { ChevronDown, FileOutput, Folder, Loader2, X } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { ActionMenu, type ActionMenuItem, type MenuPosition } from '@/components/common/ActionMenu'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { ActionMenu, type ActionMenuItem, type MenuPosition } from '@/components/common/ActionMenu'
+import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { fileManagerRevealLabel } from '@/lib/file-manager'
-import {
-  isLocalTerminalAvailable,
-  listLocalWorkspaceOpeners,
-  openLocalFile,
-  revealLocalFile,
-  type LocalWorkspaceOpenerAvailability,
-} from '@/lib/local-terminal'
+import { isLocalTerminalAvailable, openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import {
   prioritizeWorkspaceOpener,
   type LocalWorkspaceOpenerId,
 } from '@/lib/local-workspace-openers'
+import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
 import {
   resolveWorkspaceOpener,
   setPreferredWorkspaceOpener,
   usePreferredWorkspaceOpener,
 } from '@/lib/workspace-opener-preferences'
-import { LocalWorkspaceOpenerIcon } from './LocalWorkspaceOpenerMenu'
 import type { WorkspaceFileApi, WorkspaceFileEntry, WorkspaceTarget } from '@/types/workspace-files'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown, FileOutput, Folder, Loader2, X } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { LocalWorkspaceOpenerIcon } from './LocalWorkspaceOpenerMenu'
 import { WorkspaceFileBreadcrumbs } from './WorkspaceFileBreadcrumbs'
 import { workspaceFilePreviewKind } from './workspaceFileTypes'
 
@@ -84,7 +81,8 @@ export function WorkspaceFileRootSelector({
       icon={Folder}
       placement="bottom-end"
       triggerLabel={<span className="min-w-0 truncate">{label(target)}</span>}
-      triggerClassName="flex h-[30px] max-w-52 items-center gap-1.5 rounded-lg border border-border px-2 text-sm text-text-primary hover:bg-muted"
+      density="dense"
+      triggerClassName="flex max-w-52 items-center gap-1.5 rounded-lg border border-border px-2 text-sm text-text-primary hover:bg-muted"
       items={unique.map(candidate => ({
         testId: `workspace-file-root-option-${candidate.path}`,
         label: <span title={candidate.path}>{label(candidate)}</span>,
@@ -107,49 +105,62 @@ export function WorkspaceFileToolbar({
   children,
 }: WorkspaceFileToolbarProps) {
   const { t } = useTranslation('common')
-  const [openers, setOpeners] = useState<LocalWorkspaceOpenerAvailability[] | null>(null)
   const preferred = usePreferredWorkspaceOpener(target.path)
-  const [hostedFileTarget, setHostedFileTarget] = useState<{
-    path: string
-    target: HostedFileTarget | null
-  } | null>(null)
   const [opening, setOpening] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
-  const [context, setContext] = useState<{
+  const [operationError, setActionError] = useState<string | null>(null)
+  const [dismissedReadFailure, setDismissedReadFailure] = useState<unknown>()
+  const local = target.workspaceSource !== 'remote' && isLocalTerminalAvailable()
+  const scope = useMemo(
+    () => ({ deviceId: target.deviceId, root: target.path, path, local }),
+    [target.deviceId, target.path, path, local]
+  )
+  const [contextState, setContext] = useState<{
+    scope: typeof scope
     isDirectory: boolean
     position: MenuPosition
     path: string
   } | null>(null)
+  const context = contextState?.scope === scope ? contextState : null
   const contextPath = context?.path ?? path
   const contextIsDirectory = context?.isDirectory ?? isDirectory
-  const local = target.workspaceSource !== 'remote' && isLocalTerminalAvailable()
+  const openerSnapshot = useLocalWorkspaceOpeners(local)
+  const openers =
+    openerSnapshot.status === 'error'
+      ? []
+      : (openerSnapshot.data?.filter(item => item.available && item.id !== 'file-manager') ?? null)
+  const hostedResource = useMemo(
+    () =>
+      createAsyncResource(
+        ['hosted-file', target.deviceId, target.path, contextPath].join(':'),
+        async () =>
+          normalizeHostedFileTarget(
+            await invokeDesktopHost<unknown>('workspace.fileGitHubUrl', { path: contextPath })
+          ),
+        { refreshOnSubscribe: true }
+      ),
+    [contextPath, target.deviceId, target.path]
+  )
+  const hostedSnapshot = useSyncExternalStore(
+    local && !contextIsDirectory ? hostedResource.subscribe : subscribeIdleResource,
+    hostedResource.getSnapshot,
+    hostedResource.getSnapshot
+  )
   const contextHostedFileTarget =
-    local && !contextIsDirectory && hostedFileTarget?.path === contextPath
-      ? hostedFileTarget.target
+    local && !contextIsDirectory && hostedSnapshot.status === 'ready'
+      ? (hostedSnapshot.data ?? null)
       : null
+  const readFailure = local
+    ? (openerSnapshot.failure ??
+      (context && !contextIsDirectory && hostedSnapshot.status === 'error'
+        ? hostedSnapshot
+        : undefined))
+    : undefined
+  const actionError =
+    operationError ??
+    (readFailure && readFailure !== dismissedReadFailure ? String(readFailure.error) : null)
   const normalizedPath = normalizeWorkspaceSeparators(path)
   const separator = normalizedPath.lastIndexOf('/')
   const name = normalizedPath.slice(separator + 1) || path
-
-  useEffect(() => {
-    let cancelled = false
-    if (local) {
-      void listLocalWorkspaceOpeners()
-        .then(items => {
-          if (!cancelled)
-            setOpeners(items.filter(item => item.available && item.id !== 'file-manager'))
-        })
-        .catch(error => {
-          if (!cancelled) {
-            setOpeners([])
-            setActionError(String(error))
-          }
-        })
-    }
-    return () => {
-      cancelled = true
-    }
-  }, [local])
 
   const selectedOpener = resolveWorkspaceOpener(
     (openers ?? []).map(item => item.id),
@@ -158,6 +169,7 @@ export function WorkspaceFileToolbar({
   const activeOpener = openers?.find(item => item.id === selectedOpener)
   const run = async (action: () => Promise<unknown>) => {
     setActionError(null)
+    setDismissedReadFailure(readFailure)
     try {
       await action()
     } catch (error) {
@@ -177,52 +189,12 @@ export function WorkspaceFileToolbar({
     })
     setOpening(false)
   }
-  const gitRequest = useRef<string | null>(null)
-  const fetchHostedFileTarget = useCallback(
-    async (filePath: string, { reportErrors = true }: { reportErrors?: boolean } = {}) => {
-      if (!local || isDirectory) {
-        return null
-      }
-      gitRequest.current = filePath
-      try {
-        const value = await invokeDesktopHost<unknown>('workspace.fileGitHubUrl', {
-          path: filePath,
-        })
-        const target = normalizeHostedFileTarget(value)
-        if (gitRequest.current === filePath) setHostedFileTarget({ path: filePath, target })
-        return target
-      } catch (error) {
-        if (gitRequest.current === filePath) {
-          setHostedFileTarget({ path: filePath, target: null })
-          if (reportErrors) setActionError(String(error))
-        }
-        return null
-      }
-    },
-    [isDirectory, local]
-  )
-
-  const openContextMenu = useCallback(
-    async (filePath: string, isDirectory: boolean, position: MenuPosition) => {
-      if (!isDirectory) await fetchHostedFileTarget(filePath)
-      setContext({ isDirectory, path: filePath, position })
-    },
-    [fetchHostedFileTarget]
-  )
-
-  useEffect(() => {
-    if (!local || isDirectory) return
-    gitRequest.current = path
-    void invokeDesktopHost<unknown>('workspace.fileGitHubUrl', { path })
-      .then(value => {
-        if (gitRequest.current === path) {
-          setHostedFileTarget({ path, target: normalizeHostedFileTarget(value) })
-        }
-      })
-      .catch(() => {
-        if (gitRequest.current === path) setHostedFileTarget({ path, target: null })
-      })
-  }, [isDirectory, local, path])
+  const openContextMenu = (filePath: string, directory: boolean, position: MenuPosition) => {
+    if (local && !directory && filePath === contextPath && hostedSnapshot.status !== 'loading') {
+      void hostedResource.reload()
+    }
+    setContext({ scope, isDirectory: directory, path: filePath, position })
+  }
 
   const applicationItems = (filePath: string): ActionMenuItem[] =>
     prioritizeWorkspaceOpener(openers ?? [], preferred).map(opener => ({
@@ -364,7 +336,8 @@ export function WorkspaceFileToolbar({
           {children}
           {local && (
             <div className="inline-flex h-[30px] items-center rounded-lg border border-border">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="workspace-file-open-file-button"
                 disabled={opening || openers === null}
@@ -379,7 +352,7 @@ export function WorkspaceFileToolbar({
                   <FileOutput className="h-4 w-4" />
                 )}
                 {t('workbench.workspace_file_open')}
-              </button>
+              </ControlButton>
               {!isDirectory && (
                 <ActionMenu
                   testId="workspace-file-open-file-picker-button"
@@ -387,7 +360,8 @@ export function WorkspaceFileToolbar({
                   ariaLabel={t('workbench.workspace_file_choose_opener')}
                   icon={ChevronDown}
                   placement="bottom-end"
-                  triggerClassName="flex h-7 w-7 items-center justify-center rounded-r-lg text-text-secondary hover:bg-muted"
+                  density="dense"
+                  triggerClassName="flex items-center justify-center rounded-r-lg text-text-secondary hover:bg-muted"
                   items={[
                     ...applicationItems(path),
                     { testId: 'workspace-file-opener-separator', label: '', separator: true },
@@ -423,15 +397,19 @@ export function WorkspaceFileToolbar({
           className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-sm text-destructive wework:text-red-600"
         >
           <span className="min-w-0 flex-1 break-words">{actionError}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="workspace-file-action-error-dismiss"
             aria-label={t('common.close')}
-            onClick={() => setActionError(null)}
+            onClick={() => {
+              setActionError(null)
+              setDismissedReadFailure(readFailure)
+            }}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-muted"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
       )}
     </>

@@ -272,8 +272,8 @@ describe("visible Issue read state", () => {
     return (
       <div
         ref={(element) => {
-          listRef.current = element;
           if (element) element.scrollTo = () => {};
+          return listRef(element);
         }}
         data-testid="list"
       >

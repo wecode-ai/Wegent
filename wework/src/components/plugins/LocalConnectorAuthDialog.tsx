@@ -1,11 +1,13 @@
-import { AlertCircle, ExternalLink, Loader2, QrCode, RefreshCw, X } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
 import type {
   LocalConnectorAuthResult,
   LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
 import { useLocalConnectorAuthSession } from '@/features/plugins/useLocalConnectorAuthSession'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, ExternalLink, Loader2, QrCode, RefreshCw, X } from 'lucide-react'
 
 interface LocalConnectorAuthDialogProps {
   open: boolean
@@ -54,11 +56,14 @@ export function LocalConnectorAuthDialog({
       className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-4"
       data-testid="local-connector-auth-dialog"
     >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="local-connector-auth-title"
-        className="plugin-dialog-surface w-full max-w-[480px] p-5"
+      <DialogSurface
+        onClose={cancel}
+        render={
+          <section
+            aria-labelledby="local-connector-auth-title"
+            className="plugin-dialog-surface w-full max-w-[480px] p-5"
+          />
+        }
       >
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -81,7 +86,8 @@ export function LocalConnectorAuthDialog({
                     ))}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface md:h-8 md:w-8"
             onClick={cancel}
@@ -89,7 +95,7 @@ export function LocalConnectorAuthDialog({
             data-testid="local-connector-auth-close"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         <div className="flex flex-col items-center gap-3 rounded-xl border bg-muted/30 p-4">
@@ -143,7 +149,8 @@ export function LocalConnectorAuthDialog({
         </div>
 
         <div className="mt-4 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className={cn(
               'inline-flex h-11 items-center gap-1 rounded-lg border px-3 text-sm md:h-9',
@@ -153,9 +160,11 @@ export function LocalConnectorAuthDialog({
             data-testid="local-connector-auth-cancel"
           >
             {t('common.cancel', '取消')}
-          </button>
+          </ControlButton>
           {canRetry ? (
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               className="inline-flex h-11 items-center gap-1 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 md:h-9"
               onClick={retry}
@@ -165,10 +174,10 @@ export function LocalConnectorAuthDialog({
               {usesBrowser
                 ? t('workbench.plugins_local_browser_retry', '重新授权')
                 : t('workbench.plugins_local_qr_refresh', '刷新二维码')}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

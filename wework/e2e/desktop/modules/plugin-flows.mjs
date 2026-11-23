@@ -1,4 +1,5 @@
 import { realpath } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { withNativePluginDecision } from './native-plugin-approval.mjs'
 
 import {
@@ -54,8 +55,6 @@ import {
   PLUGIN_DISPLAY_NAME,
   PLUGIN_MARKETPLACE_NAME,
   PLUGIN_NAME,
-  QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
-  QUALIFIED_SKILL_MENTION_PROMPT,
   STARTUP_NETWORK_PROBE_MARKETPLACE_NAME,
   STARTUP_NETWORK_PROBE_MARKETPLACE_URL,
   WORKBENCH_READY_TIMEOUT_MS,
@@ -136,149 +135,6 @@ async function createComposerNetworkIsolationPluginZip(root) {
       '---\nname: network-isolation\ndescription: Verify composer plugin network isolation.\n---\n',
   })
   return archivePath
-}
-
-async function createCoreDshPluginFixture(root) {
-  const pluginRoot = join(root, 'core-dsh-e2e-plugin')
-  await mkdir(pluginRoot, { recursive: true })
-  await writeFile(
-    join(pluginRoot, 'package.json'),
-    `${JSON.stringify(
-      {
-        name: 'dsh-core-e2e-plugin',
-        version: '1.0.0',
-        type: 'module',
-        main: 'index.js',
-        displayName: 'Wework E2E Plugin',
-        description: 'Wework plugin management fixture',
-        dsh: { bundle: { patch: './cordis.patch.yml' } },
-      },
-      null,
-      2
-    )}\n`
-  )
-  await writeFile(
-    join(pluginRoot, 'cordis.patch.yml'),
-    "- insert:\n    - id: core-dsh-e2e-plugin\n      name: 'dsh-core-e2e-plugin'\n"
-  )
-  await writeFile(
-    join(pluginRoot, 'index.js'),
-    "export const name = 'core-dsh-e2e-plugin'\nexport function apply() {}\n"
-  )
-  return pluginRoot
-}
-
-async function verifyCoreDshPluginManagement({
-  control,
-  pluginRoot,
-  restartDesktopApp,
-  userDataDirectory,
-}) {
-  const manifestPath = join(
-    userDataDirectory,
-    'dsh-core',
-    'profiles',
-    'wework-core',
-    'package.json'
-  )
-  const openManager = async () => {
-    await control.command('waitFor', '[data-testid="plugins-button"]', {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await control.command('click', '[data-testid="plugins-button"]')
-    await control.command('waitFor', '[data-testid="plugins-workspace"]', {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await control.command('click', '[data-testid="plugins-manage-button"]')
-    await control.command('waitFor', '[data-testid="plugin-management-page-content"]', {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await control.command(
-      'waitFor',
-      '[data-testid="plugin-management-installed-list"], [data-testid="plugin-management-empty-state"]',
-      { timeoutMs: 10_000 }
-    )
-    await control.command('click', '[data-testid="plugin-management-surface-core-dsh"]')
-    await control.command('waitFor', '[data-testid="core-dsh-plugin-management"]', {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-  }
-  const manifest = async () => JSON.parse(await readFile(manifestPath, 'utf8'))
-
-  await openManager()
-  await control.command('fill', '[data-testid="core-dsh-plugin-spec-input"]', {
-    value: pluginRoot,
-  })
-  await withNativePluginDecision(control, () =>
-    control.command('clickWhenEnabled', '[data-testid="core-dsh-plugin-install-button"]')
-  )
-  await control.command('waitFor', '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'] !== undefined, true)
-  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), true)
-
-  await control.command('click', '[data-testid="core-dsh-plugin-toggle-dsh-core-e2e-plugin"]')
-  await waitForSnapshot(
-    control,
-    snapshot => /Disabled|已停用/.test(snapshot.text),
-    'The Core DSH plugin did not finish disabling',
-    WORKBENCH_READY_TIMEOUT_MS,
-    '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]'
-  )
-  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
-
-  await restartDesktopApp()
-  await openManager()
-  await control.command('waitFor', '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await waitForSnapshot(
-    control,
-    snapshot => /Disabled|已停用/.test(snapshot.text),
-    'The disabled Core DSH plugin did not remain disabled after restart',
-    WORKBENCH_READY_TIMEOUT_MS,
-    '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]'
-  )
-  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
-  await control.command('click', '[data-testid="core-dsh-plugin-toggle-dsh-core-e2e-plugin"]')
-  await waitForSnapshot(
-    control,
-    snapshot => /Enabled|已启用/.test(snapshot.text),
-    'The Core DSH plugin did not finish enabling',
-    WORKBENCH_READY_TIMEOUT_MS,
-    '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]'
-  )
-  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), true)
-
-  await control.command('click', '[data-testid="core-dsh-plugin-uninstall-dsh-core-e2e-plugin"]')
-  await control.command('click', '[data-testid="core-dsh-plugin-uninstall-confirm"]')
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('core-dsh-plugin-row-dsh-core-e2e-plugin'),
-    'The uninstalled Core DSH plugin remained in the management list',
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-  assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'], undefined)
-  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
-
-  await restartDesktopApp()
-  await openManager()
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('core-dsh-plugin-row-dsh-core-e2e-plugin'),
-    'The uninstalled Core DSH plugin returned after restart',
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-  await control.command('navigate', 'body', { value: '/' })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('projects-empty-create-button') ||
-      snapshot.testIds.includes('runtime-project-sortable-list'),
-    'The workbench did not recover after the Core DSH plugin management flow',
-    WORKBENCH_READY_TIMEOUT_MS
-  )
 }
 
 async function verifyCloudWorkPage(control) {
@@ -420,13 +276,17 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   })
 }
 
+const catalogTestCodexUser = 'desktop-e2e-user'
+const catalogTestCodexWorkspace = 'desktop-e2e-account'
+
 function syntheticChatGptAuth() {
   const claims = Buffer.from(
     JSON.stringify({
       email: 'desktop-e2e@example.test',
       exp: Math.floor(Date.now() / 1000) + 3600,
       'https://api.openai.com/auth': {
-        chatgpt_account_id: 'desktop-e2e-account',
+        chatgpt_account_id: catalogTestCodexWorkspace,
+        chatgpt_user_id: catalogTestCodexUser,
         chatgpt_plan_type: 'pro',
       },
     })
@@ -434,13 +294,66 @@ function syntheticChatGptAuth() {
   return {
     auth_mode: 'chatgpt',
     tokens: {
-      account_id: 'desktop-e2e-account',
+      account_id: catalogTestCodexWorkspace,
       access_token: 'desktop-e2e-access-token',
       refresh_token: 'desktop-e2e-refresh-token',
       id_token: `header.${claims}.signature`,
     },
     last_refresh: new Date().toISOString(),
   }
+}
+
+const officialCatalogStorageKey = 'wework.plugins.openAiCatalog.v1'
+const cachedOfficialMarketplaceId = 'openai-curated-remote'
+const cachedOfficialPluginId = `cached-documents@${cachedOfficialMarketplaceId}`
+const cachedOfficialCard = `[data-testid="plugin-marketplace-row-${cachedOfficialPluginId}"]`
+
+function officialCatalogPath(userDataDirectory) {
+  return join(userDataDirectory, 'plugin-cache', 'openai-official-catalog.json')
+}
+
+async function seedOfficialCatalog({ accountScope, deviceId, userDataDirectory }) {
+  const authScope = createHash('sha256')
+    .update(JSON.stringify(['chatgpt', catalogTestCodexWorkspace, catalogTestCodexUser]))
+    .digest('hex')
+  const scope = createHash('sha256')
+    .update(JSON.stringify([deviceId, authScope, accountScope]))
+    .digest('hex')
+  const snapshot = {
+    version: 1,
+    scope,
+    fetchedAt: Date.now() - 31 * 60_000,
+    items: [
+      {
+        id: cachedOfficialPluginId,
+        name: 'cached-documents',
+        displayName: 'Cached Documents',
+        description: 'Official catalog restored after restart',
+        remotePluginId: '',
+        sourceType: 'marketplace',
+        sourceProvider: 'codex',
+        visibility: 'public',
+        featured: false,
+        ownerUserId: 0,
+        installed: false,
+        enabled: false,
+        manifest: { marketplaceId: cachedOfficialMarketplaceId },
+        components: {
+          skills: [],
+          commands: [],
+          apps: [],
+          agents: [],
+          mcps: [],
+          hooks: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+      },
+    ],
+  }
+  await mkdir(join(userDataDirectory, 'plugin-cache'), { recursive: true })
+  await writeFile(officialCatalogPath(userDataDirectory), `${JSON.stringify(snapshot)}\n`, 'utf8')
 }
 
 async function assertPrimaryComposerPlugin(control, pluginName) {
@@ -463,6 +376,7 @@ async function verifyComposerPluginNetworkIsolation({
   blockingNetworkProxy,
   codexHome,
   control,
+  electronUserDataDirectory,
   marketplacePath,
   restartDesktopApp,
   workspacePath,
@@ -497,23 +411,45 @@ async function verifyComposerPluginNetworkIsolation({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
-  blockingNetworkProxy.block()
-  await writeFile(
-    join(codexHome, 'auth.json'),
-    `${JSON.stringify(syntheticChatGptAuth(), null, 2)}\n`,
-    'utf8'
+  const { deviceId } = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  const cloudConnection = JSON.parse(
+    await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
   )
-  await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
-
+  assert.ok(deviceId && cloudConnection?.apiBaseUrl && cloudConnection?.user?.id != null)
+  const authJson = `${JSON.stringify(syntheticChatGptAuth(), null, 2)}\n`
+  let checkpointCompleted = false
   try {
+    blockingNetworkProxy.block()
+    await writeFile(join(codexHome, 'auth.json'), authJson, 'utf8')
+    await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
     // Restart to clear the renderer's in-memory plugin inventory. The installed
     // package remains in the isolated real Codex home, while every external
     // Codex request is held open by the proxy instead of returning an error.
-    await restartDesktopApp()
+    await restartDesktopApp(async () => {
+      await seedOfficialCatalog({
+        accountScope: JSON.stringify([cloudConnection.apiBaseUrl, cloudConnection.user.id]),
+        deviceId,
+        userDataDirectory: electronUserDataDirectory,
+      })
+      const refreshedAuth = syntheticChatGptAuth()
+      refreshedAuth.tokens.access_token = 'desktop-e2e-refreshed-access-token'
+      await writeFile(join(codexHome, 'auth.json'), JSON.stringify(refreshedAuth), 'utf8')
+    })
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    assert.equal(
+      await control.command('getLocalStorageItem', 'body', { value: officialCatalogStorageKey }),
+      '',
+      'The official catalog must stay outside Chromium localStorage after restart'
+    )
+    const sharedStorage = JSON.parse(
+      await readFile(join(electronUserDataDirectory, 'renderer-local-storage.json'), 'utf8')
+    )
+    assert.ok(!Object.hasOwn(sharedStorage.entries, officialCatalogStorageKey))
+    const catalogPath = officialCatalogPath(electronUserDataDirectory)
+    const savedCatalog = await readFile(catalogPath, 'utf8')
     const pluginName = 'composer-network-isolation-plugin'
     // Runtime-owned composer catalogs no longer initiate remote app/list reads.
     // Hold that real RPC explicitly before opening the local inventory.
@@ -558,7 +494,12 @@ async function verifyComposerPluginNetworkIsolation({
     await closeComposerPluginPicker(control)
     await control.command('click', '[data-testid="plugins-button"]')
     await control.command('waitFor', '[data-testid="plugins-workspace"]')
+    const catalogOpenedAt = performance.now()
     await control.command('click', '[data-testid="plugins-distribution-tab-official"]')
+    await control.command('waitFor', cachedOfficialCard)
+    console.log(
+      `[desktop-e2e-openai-catalog] cached card visible after ${Math.round(performance.now() - catalogOpenedAt)} ms`
+    )
     await control.command('waitFor', '[data-testid="plugins-openai-catalog-error"]', {
       // The remote request is deliberately held until its 30-second UI deadline.
       timeoutMs: PLUGIN_REMOTE_CATALOG_TIMEOUT_MS,
@@ -568,6 +509,7 @@ async function verifyComposerPluginNetworkIsolation({
       /timed out|超时/i,
       'Expected the held remote catalog to time out, not fail local protocol validation'
     )
+    await control.command('waitFor', cachedOfficialCard)
     await control.command('waitFor', '[data-testid="plugins-openai-catalog-retry"]:not(:disabled)')
     await control.command('click', '[data-testid="plugins-openai-catalog-retry"]')
     await control.command('waitFor', '[data-testid="plugins-refresh-button"]:disabled')
@@ -600,6 +542,7 @@ async function verifyComposerPluginNetworkIsolation({
     )
     assert.ok(catalogError.length < 500, 'Catalog error exposed a raw response body')
     assert.doesNotMatch(catalogError, /<html|<svg|<style/i)
+    assert.equal(await readFile(catalogPath, 'utf8'), savedCatalog)
     await assertPrimaryComposerPlugin(control, pluginName)
     await control.command('navigate', 'body', { value: '/' })
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
@@ -609,17 +552,34 @@ async function verifyComposerPluginNetworkIsolation({
       `[data-testid="composer-plugin-picker-item-plugin:${pluginName}"]`
     )
     await closeComposerPluginPicker(control)
+    checkpointCompleted = true
   } finally {
-    blockingNetworkProxy.release()
-    await control.command('setLocalProxyUrl', 'body', { value: '' })
-    await rm(join(codexHome, 'auth.json'), { force: true })
-    await control.command('deleteLocalPluginPackage', 'body', {
-      value: JSON.stringify({
-        pluginId: 'composer-network-isolation-plugin@wework-personal',
-        pluginName: 'composer-network-isolation-plugin',
-      }),
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
+    const cleanupErrors = []
+    for (const cleanup of [
+      () => blockingNetworkProxy.release(),
+      () => rm(join(codexHome, 'auth.json'), { force: true }),
+      () => rm(officialCatalogPath(electronUserDataDirectory), { force: true }),
+      () => control.command('setLocalProxyUrl', 'body', { value: '' }),
+      () =>
+        control.command('deleteLocalPluginPackage', 'body', {
+          value: JSON.stringify({
+            pluginId: 'composer-network-isolation-plugin@wework-personal',
+            pluginName: 'composer-network-isolation-plugin',
+          }),
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }),
+    ]) {
+      try {
+        await cleanup()
+      } catch (error) {
+        cleanupErrors.push(error)
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      const error = new AggregateError(cleanupErrors, 'Composer network isolation cleanup failed')
+      if (checkpointCompleted) throw error
+      console.error(error)
+    }
   }
 }
 
@@ -1705,116 +1665,6 @@ async function verifyCreatorAuthenticationToolkit(codexHome, workspacePath) {
   }
 }
 
-async function verifySkillMentionRendering({ control, fixture }) {
-  const officialPluginTaskId = await createOfficialPluginTask({
-    control,
-    installSelector: fixture.installSelector,
-    skillPath: fixture.skillPath,
-  })
-  const qualifiedSkillName = `${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`
-  const qualifiedSkillTestId = qualifiedSkillName.replace(/[^a-zA-Z0-9_-]/g, '-')
-  await control.command('click', '[data-testid="new-chat-button"]')
-  await waitForBlankConversation(control, ACTIVE_COMPOSER_SELECTOR)
-  control.setScenario('skill_mention_display')
-  for (const path of [
-    '~/.agents/skills/test-skill/SKILL.md',
-    'C:/Users/me/skills/instructions.md',
-    './skills/instructions.md',
-  ]) {
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
-      value: `[$test-skill](${path})`,
-    })
-    await control.command('waitFor', '[data-testid="local-skill-chip-test-skill"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
-      value: `[test-label](${path})`,
-    })
-    await control.command('waitFor', '[data-testid="composer-path-chip-test-label"]', {
-      text: 'test-label',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-  }
-  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
-    value: `[$${qualifiedSkillName}](${fixture.skillPath}) [test-label](${fixture.skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
-  })
-  await control.command('waitFor', `[data-testid="local-skill-chip-${qualifiedSkillTestId}"]`, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  const qualifiedSkillTaskSnapshot = await waitForWorkbenchDebugState(
-    control,
-    snapshot => Boolean(currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId),
-    'The qualified skill conversation did not expose its task ID'
-  )
-  const qualifiedSkillTaskId = currentRuntimeTaskFromDebugSnapshot(
-    qualifiedSkillTaskSnapshot
-  ).taskId
-  const officialPluginTaskRow = `[data-testid="runtime-local-task-row-${officialPluginTaskId}"]`
-  const qualifiedSkillTaskRow = `[data-testid="runtime-local-task-row-${qualifiedSkillTaskId}"]`
-  await control.command('waitFor', officialPluginTaskRow, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', qualifiedSkillTaskRow, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('clickWhenEnabled', officialPluginTaskRow, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await assertMentionRenderedAsToken(control, {
-    tokenSelector: '[data-testid="sent-plugin-token-OpenAI-Developers"]',
-    tokenText: OFFICIAL_PLUGIN_DISPLAY_NAME,
-    plainTextMention: `@${OFFICIAL_PLUGIN_NAME}`,
-    errorLabel: 'The reopened plugin reference degraded to its plain-text mention',
-  })
-  await control.command('clickWhenEnabled', qualifiedSkillTaskRow, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command(
-    'waitFor',
-    `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"][aria-disabled="false"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await assertMentionRenderedAsToken(control, {
-    tokenSelector: `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"]`,
-    plainTextMention: `$${qualifiedSkillName}`,
-    errorLabel: 'The reloaded qualified skill reference degraded to its plain-text mention',
-  })
-  await control.command(
-    'waitFor',
-    '[data-testid="message-user"] [data-testid="assistant-markdown-link"]',
-    {
-      text: 'test-label',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await control.command(
-    'waitFor',
-    '[data-testid="message-user"] [data-testid="assistant-markdown-link"] svg[data-testid="assistant-markdown-link-icon"]',
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await captureVerificationScreenshot(control, 'skill-mention-01-reloaded.png')
-}
-
 async function uninstallOfficialPlugin(control, fixture) {
   await control.command('click', '[data-testid="plugins-button"]')
   const pluginsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -1843,7 +1693,6 @@ async function uninstallOfficialPlugin(control, fixture) {
 }
 
 export {
-  createCoreDshPluginFixture,
   verifyCloudWorkPage,
   initializeBlankCodexHome,
   waitForBundledMarketplaceRegistration,
@@ -1858,7 +1707,5 @@ export {
   waitForMarketplaceInstallStateAfterUninstall,
   verifyMarketplacePluginLifecycle,
   verifyCreatorAuthenticationToolkit,
-  verifySkillMentionRendering,
   uninstallOfficialPlugin,
-  verifyCoreDshPluginManagement,
 }

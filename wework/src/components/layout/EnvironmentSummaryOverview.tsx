@@ -1,5 +1,3 @@
-import { Check, Cloud, Copy, FolderOpen, Laptop, Server } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
@@ -12,6 +10,10 @@ import {
 } from '@/lib/workbench-device'
 import type { DeviceInfo } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Cloud, Copy, FolderOpen, Laptop, Server } from 'lucide-react'
+import { useRef, useState } from 'react'
 
 const COPIED_PATH_DURATION_MS = 2000
 
@@ -36,8 +38,10 @@ export function EnvironmentSummaryOverview({
   info: EnvironmentInfo
 }) {
   const { t } = useTranslation('common')
-  const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null)
-  const copiedWorkspacePathTimeoutRef = useRef<number | null>(null)
+  const [copyReceipt, setCopyReceipt] = useState<{ path: string; deadline: number } | null>(null)
+  const copyExpired = useDeadlineExpired(copyReceipt?.deadline)
+  const copiedWorkspacePath = copyExpired ? null : copyReceipt?.path
+  const copyRequest = useRef(0)
   const executionDeviceId = info.executionDeviceId ?? info.deviceId
   const device = executionDeviceId ? findWorkbenchDevice(devices, executionDeviceId) : undefined
   const deviceName = device?.name?.trim() || ''
@@ -85,25 +89,11 @@ export function EnvironmentSummaryOverview({
           ? [info.workspacePath]
           : []
 
-  useEffect(
-    () => () => {
-      if (copiedWorkspacePathTimeoutRef.current !== null) {
-        window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
-      }
-    },
-    []
-  )
-
   async function handleCopyWorkspacePath(workspacePath: string) {
+    const request = ++copyRequest.current
     await copyTextToClipboard(workspacePath)
-    if (copiedWorkspacePathTimeoutRef.current !== null) {
-      window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
-    }
-    setCopiedWorkspacePath(workspacePath)
-    copiedWorkspacePathTimeoutRef.current = window.setTimeout(() => {
-      setCopiedWorkspacePath(current => (current === workspacePath ? null : current))
-      copiedWorkspacePathTimeoutRef.current = null
-    }, COPIED_PATH_DURATION_MS)
+    if (request !== copyRequest.current) return
+    setCopyReceipt(() => ({ path: workspacePath, deadline: Date.now() + COPIED_PATH_DURATION_MS }))
   }
 
   return (
@@ -124,7 +114,8 @@ export function EnvironmentSummaryOverview({
               data-testid={`environment-workspace-root-row-${index}`}
             >
               <FolderOpen className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={
                   index === 0
@@ -166,7 +157,7 @@ export function EnvironmentSummaryOverview({
                     {t('workbench.environment_copied')}
                   </span>
                 )}
-              </button>
+              </ControlButton>
             </div>
           )
         })}

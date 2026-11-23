@@ -1,7 +1,7 @@
 window.__ModuleLoader__.load({
   id: '@wegent/dsh-voice-input',
   factory: require => {
-    const { createElement: h, useEffect, useMemo, useRef, useState } = require('react')
+    const { createElement: h, useMemo, useRef, useSyncExternalStore } = require('react')
     const { Button, Modal } = require('@deepseek-ai/dsh-client-ui-primitives')
     const BUNDLE = '@deepseek-ai/dsh-experimental-voice-input-bundle'
     const OPEN_SETTINGS = 'wework:voice-input:settings'
@@ -86,6 +86,25 @@ window.__ModuleLoader__.load({
     }
 
     function setupComponent(ctx, OfficialPreparation, overlay) {
+      let open = false
+      const listeners = new Set()
+      const setOpen = next => {
+        if (open === next) return
+        open = next
+        listeners.forEach(listener => listener())
+      }
+      const show = () => setOpen(true)
+      const source = {
+        getSnapshot: () => open,
+        subscribe(listener) {
+          listeners.add(listener)
+          if (listeners.size === 1 && overlay) window.addEventListener(OPEN_SETTINGS, show)
+          return () => {
+            listeners.delete(listener)
+            if (!listeners.size && overlay) window.removeEventListener(OPEN_SETTINGS, show)
+          }
+        },
+      }
       return function VoiceSettings(props) {
         const title = ctx.wework.localization.translate(
           { en: 'Voice input', 'zh-CN': '语音输入' },
@@ -104,13 +123,7 @@ window.__ModuleLoader__.load({
               'FP32 · 完整精度版：保留 32 位浮点精度，下载和内存占用更大。如果 INT8 经常识别出错，可试用 FP32，用同一段录音对比效果。',
           },
         ].map(copy => ctx.wework.localization.translate(copy, copy.en))
-        const [open, setOpen] = useState(false)
-        useEffect(() => {
-          if (!overlay) return
-          const show = () => setOpen(true)
-          window.addEventListener(OPEN_SETTINGS, show)
-          return () => window.removeEventListener(OPEN_SETTINGS, show)
-        }, [])
+        const open = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
         const preparation = h(
           'div',
           {

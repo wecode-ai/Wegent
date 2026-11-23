@@ -39,6 +39,8 @@ Adding a project does not move its files. Removing a local project from Wework d
 
 ## Startup recovery
 
+If startup shows **Check Codex configuration**, choose **Retry** while a read is pending or after it fails. Repair the configuration or local runtime issue shown in the error, then retry to read its current status. Import and creation actions become available only after the status confirms initialization is needed. Once initialization succeeds, the workbench opens even if the prompt preference cannot be saved.
+
 Wework keeps an operable window available when release records, migrations, credentials, or local components fail. Unaffected workbench features remain available; an unavailable local service shows a notice with a retry action above the workbench content, without covering the composer. When settings or durable state cannot be read, the interface uses temporary state and refuses to overwrite the original file. Saving can resume after the file is repaired. When the Codex credential preference is unreadable, Wework neither imports nor deletes credentials automatically; repair settings and restart Wework to restore those capabilities.
 
 The workbench also remains available if its first state save fails. That state stays temporarily in memory and is not yet saved to disk. After the write failure is repaired, subsequent saves preserve the initial state.

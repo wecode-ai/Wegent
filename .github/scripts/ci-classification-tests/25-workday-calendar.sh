@@ -9,7 +9,7 @@ for workday_input in \
   assert_case "calendar-only changes validate both offline consumers: $workday_input" \
     "$workday_expected" "$workday_input"
   workday_desktop_expected="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" \
-    wework/e2e/desktop/catalog/workday-schedules.json)"
+    wework/e2e/desktop/catalog/project-automation.json)"
   assert_desktop_case "calendar data keeps existing personal/project native scenarios: $workday_input" \
     "$workday_desktop_expected" "$workday_input"
 done

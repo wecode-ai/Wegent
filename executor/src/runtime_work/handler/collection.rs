@@ -170,13 +170,7 @@ impl RuntimeWorkRpcHandler {
             apply_local_execution_state(&mut link, local_active, queue_position);
         }
         if let Some(path) = string_field(thread, "path") {
-            let mut runtime_handle = link
-                .runtime_handle
-                .as_object()
-                .cloned()
-                .unwrap_or_else(Map::new);
-            runtime_handle.insert("threadPath".to_owned(), Value::String(path));
-            link.runtime_handle = Value::Object(runtime_handle);
+            link.runtime_handle["threadPath"] = Value::String(path);
         }
         Some(link)
     }
@@ -315,8 +309,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
         goal_status: Option<String>,
+        goal: Option<&Value>,
     ) {
-        self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref());
+        self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref(), goal);
         self.with_goal_status_change(local_task_id, |_| {
             self.update_runtime_task_goal_status(local_task_id, goal_status, true, true);
         });

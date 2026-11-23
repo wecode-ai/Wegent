@@ -4,6 +4,7 @@ import { access, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { runChecked } from '../modules/shared.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   inCollaborationSidebar,
@@ -52,14 +53,20 @@ async function waitForTask(control, predicate, timeoutMs) {
 }
 
 async function configurePolicy(control, policy) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
   )
-  await control.command('waitFor', scoped(`[data-testid="${PREFIX}-preparation"]:not([open])`))
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${PREFIX}-preparation-toggle"][aria-expanded="false"]`)
+  )
   await control.command('click', scoped(`[data-testid="${PREFIX}-preparation-toggle"]`))
-  await control.command('waitFor', scoped(`[data-testid="${PREFIX}-preparation"][open]`))
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${PREFIX}-preparation-toggle"][aria-expanded="true"]`)
+  )
   await control.command('select', scoped(`[data-testid="${PREFIX}-workspace-policy"]`), {
     value: policy,
   })
@@ -75,7 +82,7 @@ async function configurePolicy(control, policy) {
 }
 
 async function createIssue(control, label) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: label })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
@@ -89,10 +96,7 @@ async function createIssue(control, label) {
 
 async function createTask(control, label, timeoutMs, executionMode = 'current_workspace') {
   await createIssue(control, label)
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="cloud-todo-create-task"]')
-  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-task"]'))
   await control.command('waitFor', COMPOSER)
   const projectButton = `${PANEL} [data-testid="project-work-button"]`
   if (!(await control.command('getText', projectButton)).includes('Worktree policy E2E')) {
@@ -129,7 +133,7 @@ async function createTask(control, label, timeoutMs, executionMode = 'current_wo
 }
 
 async function addAgent(control, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
 
   await control.command('click', scoped('[data-testid="collaboration-project-settings-agents"]'))
   await openProjectAgentCreator(control, scoped('[data-testid="project-agent-add"]'), timeoutMs)

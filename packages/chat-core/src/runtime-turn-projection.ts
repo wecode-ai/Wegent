@@ -104,6 +104,7 @@ function projectTurn(
       fileChanges: isLast ? turn.fileChanges : undefined,
       error: isLast ? turn.error : undefined,
       errorType: isLast ? turn.errorType : undefined,
+      errorInfo: isLast ? turn.errorInfo : undefined,
       stoppedNotice: isLast ? turn.stoppedNotice : undefined,
       contentTruncated: isLast ? turn.contentTruncated : undefined,
       streamingThinkingContent: isLast

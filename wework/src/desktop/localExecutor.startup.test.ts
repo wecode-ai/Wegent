@@ -189,7 +189,7 @@ describe('local Codex startup admission', () => {
   })
 
   test.each(['codex', 'claude_code'] as const)(
-    'the local service %s history entry configures the proxy before its runtime starts',
+    'the local service %s history entry configures the proxy without starting model execution',
     async runtime => {
       saveLocalProxyUrl('http://127.0.0.1:7890')
       const services = createLocalAppServices({ subscribe: () => () => undefined })
@@ -205,7 +205,6 @@ describe('local Codex startup admission', () => {
       ]
       expect(requestMock.mock.calls.filter(([method]) => startupMethods.includes(method))).toEqual([
         ['runtime.codex.runtime_config.update', { proxyUrl: 'http://127.0.0.1:7890' }],
-        ...(runtime === 'codex' ? [['runtime.codex.ensure_started']] : []),
         [
           'runtime.tasks.transcript',
           { deviceId: 'electron-device', taskId: 'task-1', runtime, transcriptProtocolVersion: 2 },

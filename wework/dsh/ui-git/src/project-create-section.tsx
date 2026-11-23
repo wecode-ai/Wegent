@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Cloud } from 'lucide-react'
 
 import { useTranslation } from '@/hooks/useTranslation'
@@ -18,7 +19,8 @@ export default function GitProjectCreateSection({
 
   return (
     <div>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="add-remote-project-option"
         onClick={() => {
@@ -29,7 +31,7 @@ export default function GitProjectCreateSection({
       >
         <Cloud className="h-4 w-4 shrink-0" />
         <span className="min-w-0 flex-1">{t('workbench.add_remote_project', '添加远程项目')}</span>
-      </button>
+      </ControlButton>
     </div>
   )
 }

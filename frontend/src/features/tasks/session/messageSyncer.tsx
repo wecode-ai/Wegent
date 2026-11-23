@@ -303,7 +303,7 @@ export function useMessageSyncer({
    */
   const handleChatError = useCallback(
     (data: ChatErrorPayload) => {
-      const { subtask_id, error, message_id, task_id: taskId, type: errorType } = data
+      const { subtask_id, error, message_id, task_id: taskId, type: errorType, error_info } = data
 
       if (!taskId) {
         console.warn('[messageSyncer] Received error without task_id:', subtask_id)
@@ -312,7 +312,7 @@ export function useMessageSyncer({
 
       const machine = getMachineForTask(taskId)
       if (machine) {
-        machine.handleChatError(subtask_id, error, message_id, errorType)
+        machine.handleChatError(subtask_id, error, message_id, errorType, error_info)
       }
 
       // Call error callback

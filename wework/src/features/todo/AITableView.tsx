@@ -1,3 +1,16 @@
+import { useDialogRequests } from '@/components/common/useDialogRequests'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -9,20 +22,21 @@
 // unknown types stay read-only and their raw payloads round-trip untouched.
 // Field management (add/rename/delete) requires a Developer-or-higher role.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import {
   AllCommunityModule,
-  ModuleRegistry,
   colorSchemeVariable,
+  ModuleRegistry,
   themeQuartz,
   type ColDef,
   type ICellRendererParams,
   type IHeaderParams,
 } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
-import { Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Loader2, Plus, RefreshCw } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 
-import type { AITableApi, AITableDescription, AITableField, AITableRecord } from '@/api/aitable'
+import type { AITableApi, AITableField, AITableRecord } from '@/api/aitable'
 import type { CloudProject } from '@/api/deliveries'
 import { track } from '@/telemetry/client'
 
@@ -204,12 +218,11 @@ function CellEditor({ field, record, onCommit }: CellEditorProps) {
 
   if (type === 'checkbox') {
     return (
-      <input
-        type="checkbox"
+      <Checkbox
         data-testid={`aitable-cell-checkbox-${record.id}-${field.id}`}
         checked={raw === true || raw === 'true'}
         disabled={saving}
-        onChange={event => void commit(event.target.checked)}
+        onCheckedChange={checked => void commit(checked === true)}
         className="h-4 w-4 accent-primary"
       />
     )
@@ -217,49 +230,61 @@ function CellEditor({ field, record, onCommit }: CellEditorProps) {
 
   if (type === 'singleSelect') {
     return (
-      <select
-        data-testid={`aitable-cell-select-${record.id}-${field.id}`}
-        value={cellText(raw)}
+      <SelectRoot
+        value={normalizeSelectValue(cellText(raw))}
         disabled={saving}
-        onChange={event => void commit(event.target.value)}
-        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-border keyboard:focus:border-primary focus:outline-none"
+        onValueChange={selectedValue => {
+          if (selectedValue !== null) return void commit(selectedValue)
+        }}
       >
-        <option value="">—</option>
-        {fieldOptions(field).map(option => (
-          <option key={option.name} value={option.name}>
-            {option.name}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger
+          aria-label={field.name}
+          data-testid={`aitable-cell-select-${record.id}-${field.id}`}
+          className="w-full border-transparent bg-transparent py-0.5 hover:border-border"
+        />
+        <SelectContent>
+          <SelectItem value="">—</SelectItem>
+          {fieldOptions(field).map(option => (
+            <SelectItem key={option.name} value={String(option.name)}>
+              {option.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </SelectRoot>
     )
   }
 
   if (type === 'multipleSelect') {
     const selected = selectValues(raw)
     return (
-      <select
+      <SelectRoot
         multiple
-        data-testid={`aitable-cell-multiselect-${record.id}-${field.id}`}
         value={selected}
         disabled={saving}
-        onChange={event =>
-          void commit(Array.from(event.target.selectedOptions, option => option.value))
-        }
-        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-border keyboard:focus:border-primary focus:outline-none"
+        onValueChange={next => void commit(next)}
       >
-        {fieldOptions(field).map(option => (
-          <option key={option.name} value={option.name}>
-            {option.name}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger
+          appearance="plain"
+          data-testid={`aitable-cell-multiselect-${record.id}-${field.id}`}
+          aria-label={field.name}
+          className="w-full border-transparent"
+        />
+        <SelectContent>
+          {fieldOptions(field).map(option => (
+            <SelectItem key={option.name} value={option.name}>
+              {option.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </SelectRoot>
     )
   }
 
   const inputType = type === 'number' ? 'number' : type === 'date' ? 'date' : 'text'
   if (!editing) {
     return (
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`aitable-cell-edit-${record.id}-${field.id}`}
         onClick={() => {
@@ -270,11 +295,11 @@ function CellEditor({ field, record, onCommit }: CellEditorProps) {
         title={displayText}
       >
         {displayText || <span className="text-text-muted">—</span>}
-      </button>
+      </ControlButton>
     )
   }
   return (
-    <input
+    <ControlInput
       autoFocus
       type={inputType}
       data-testid={`aitable-cell-input-${record.id}-${field.id}`}
@@ -286,7 +311,7 @@ function CellEditor({ field, record, onCommit }: CellEditorProps) {
         if (event.key === 'Enter') event.currentTarget.blur()
         if (event.key === 'Escape') setEditing(false)
       }}
-      className="w-full rounded border border-primary bg-background px-1 py-0.5 text-sm focus:outline-none"
+      className="w-full border-primary py-0.5"
     />
   )
 }
@@ -326,19 +351,16 @@ function FieldHeader({ displayName, column, context }: IHeaderParams<AITableReco
         {displayName}
       </span>
       {field && headerContext.canManageFields ? (
-        <button
+        <DeleteIconButton
           type="button"
           data-testid={`aitable-field-delete-${field.id}`}
           onClick={event => {
             event.stopPropagation()
             void headerContext.removeField(field)
           }}
-          className="shrink-0 text-text-muted hover:text-destructive"
           title="删除字段"
           aria-label="删除字段"
-        >
-          <Trash2 className="h-3 w-3" />
-        </button>
+        />
       ) : null}
     </span>
   )
@@ -355,92 +377,91 @@ function RecordActions({ data, context }: ICellRendererParams<AITableRecord>) {
   if (!record || !actionContext.canEditRecords) return null
 
   return (
-    <button
+    <DeleteIconButton
       type="button"
       data-testid={`aitable-record-delete-${record.id}`}
       onClick={() => void actionContext.removeRecord(record)}
-      className="text-text-muted hover:text-destructive"
       title="删除记录"
       aria-label="删除记录"
-    >
-      <Trash2 className="h-3.5 w-3.5" />
-    </button>
+    />
   )
 }
 
+function createAITableResource(api: AITableApi, project: CloudProject) {
+  let request: { keyword?: string; viewId?: string } = {}
+  const resource = createAsyncResource(project.id, async signal => {
+    await api.configureProject(project)
+    signal.throwIfAborted()
+    const schema = await api.describe(project.id)
+    signal.throwIfAborted()
+    const viewId =
+      request.viewId ??
+      (project.provider_config.view_id ||
+        (schema.views?.length ? viewValue(schema.views[0], ['viewId', 'view_id', 'id']) : ''))
+    const page = await api.listRecords(project.id, {
+      query: request.keyword,
+      limit: 100,
+      viewId: viewId || undefined,
+    })
+    signal.throwIfAborted()
+    return {
+      description: schema,
+      records: page.items,
+      cursor: page.cursor,
+      hasMore: page.has_more,
+      selectedViewId: viewId,
+    }
+  })
+  return {
+    ...resource,
+    load(keyword?: string, viewId?: string) {
+      request = { keyword, viewId }
+      return resource.reload()
+    },
+  }
+}
+
 export function AITableView({ api, project }: { api: AITableApi; project: CloudProject }) {
-  const [description, setDescription] = useState<AITableDescription | null>(null)
-  const [records, setRecords] = useState<AITableRecord[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { t } = useTranslation('common')
+  const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
+    (key, fallback) => t(key, fallback)
+  )
+  const resource = useMemo(() => createAITableResource(api, project), [api, project])
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const description = snapshot.data?.description ?? null
+  const records = snapshot.data?.records ?? []
+  const cursor = snapshot.data?.cursor ?? null
+  const hasMore = snapshot.data?.hasMore ?? false
+  const selectedViewId = snapshot.data?.selectedViewId ?? project.provider_config.view_id ?? ''
+  const loading = snapshot.status === 'idle' || snapshot.status === 'loading'
+  const [mutationError, setError] = useState<string | null>(null)
+  const error =
+    mutationError ??
+    (snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : '加载表格失败'
+      : null)
+  const setRecords = (change: (current: AITableRecord[]) => AITableRecord[]) =>
+    resource.update(data => data && { ...data, records: change(data.records) })
   const [query, setQuery] = useState('')
   const [newFieldName, setNewFieldName] = useState('')
   const [newFieldType, setNewFieldType] = useState('text')
   const [addingField, setAddingField] = useState(false)
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [mutationBusy, setMutationBusy] = useState(false)
-  const [selectedViewId, setSelectedViewId] = useState(project.provider_config.view_id ?? '')
   const canManageFields = ['Owner', 'Maintainer', 'Developer'].includes(
     project.access_role ?? 'Owner'
   )
   const canEditRecords = canManageFields
 
   const load = useCallback(
-    async (keyword?: string, viewId = selectedViewId) => {
-      setLoading(true)
+    (keyword?: string, viewId = selectedViewId) => {
       setError(null)
-      try {
-        await api.configureProject(project)
-        const [schema, page] = await Promise.all([
-          api.describe(project.id),
-          api.listRecords(project.id, { query: keyword, limit: 100, viewId: viewId || undefined }),
-        ])
-        setDescription(schema)
-        setRecords(page.items)
-        setCursor(page.cursor)
-        setHasMore(page.has_more)
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : '加载表格失败')
-      } finally {
-        setLoading(false)
-      }
+      return resource.load(keyword, viewId)
     },
-    [api, project, selectedViewId]
+    [resource, selectedViewId]
   )
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      setError(null)
-      try {
-        await api.configureProject(project)
-        const initialViewId = project.provider_config.view_id ?? ''
-        const schema = await api.describe(project.id)
-        const resolvedViewId =
-          initialViewId ||
-          (schema.views?.length ? viewValue(schema.views[0], ['viewId', 'view_id', 'id']) : '')
-        const page = await api.listRecords(project.id, {
-          limit: 100,
-          viewId: resolvedViewId || undefined,
-        })
-        if (cancelled) return
-        setDescription(schema)
-        setSelectedViewId(resolvedViewId)
-        setRecords(page.items)
-        setCursor(page.cursor)
-        setHasMore(page.has_more)
-      } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : '加载表格失败')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [api, project])
 
   const fields = useMemo(() => description?.fields ?? [], [description])
   const selectedView = useMemo(
@@ -495,7 +516,7 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
   }
 
   async function removeRecord(record: AITableRecord) {
-    if (!window.confirm('确定删除这条钉钉表格记录吗？此操作无法撤销。')) return
+    if (!(await requestConfirmation('确定删除这条钉钉表格记录吗？此操作无法撤销。'))) return
     setMutationBusy(true)
     setError(null)
     try {
@@ -521,9 +542,15 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
         cursor,
         viewId: selectedViewId || undefined,
       })
-      setRecords(current => [...current, ...page.items])
-      setCursor(page.cursor)
-      setHasMore(page.has_more)
+      resource.update(
+        data =>
+          data && {
+            ...data,
+            records: [...data.records, ...page.items],
+            cursor: page.cursor,
+            hasMore: page.has_more,
+          }
+      )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '加载更多记录失败')
     } finally {
@@ -550,7 +577,7 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
   }
 
   async function removeField(field: AITableField) {
-    if (!window.confirm(`确定删除字段“${field.name}”吗？此操作无法撤销。`)) return
+    if (!(await requestConfirmation(`确定删除字段“${field.name}”吗？此操作无法撤销。`))) return
     setError(null)
     try {
       await api.deleteField(project.id, field.id)
@@ -610,126 +637,146 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
   }
 
   return (
-    <div className="flex h-full flex-col" data-testid="aitable-view">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-        <input
-          type="search"
-          data-testid="aitable-search"
-          placeholder="搜索记录…"
-          value={query}
-          onChange={event => setQuery(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === 'Enter') void load(query || undefined)
-          }}
-          className="h-8 w-56 rounded-md border border-border bg-background px-2 text-sm keyboard:focus:border-primary focus:outline-none"
-        />
-        <button
-          type="button"
-          data-testid="aitable-refresh"
-          onClick={() => void load(query || undefined)}
-          className="flex h-8 items-center gap-1 rounded-md border border-border px-2 text-sm text-text-secondary hover:bg-muted"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          刷新
-        </button>
-        <span className="flex-1" />
-        {canEditRecords ? (
-          <button
-            type="button"
-            data-testid="aitable-add-record"
-            disabled={mutationBusy}
-            onClick={() => void addRecord()}
-            className="flex h-8 items-center gap-1 rounded-md bg-text-primary px-2.5 text-sm text-background hover:opacity-80 disabled:opacity-40"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            新增记录
-          </button>
-        ) : null}
-      </div>
-
-      {error ? (
-        <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
-
-      <div className="min-h-0 flex-1">
-        {loading ? (
-          <div className="flex h-32 items-center justify-center text-text-muted">
-            <Loader2 className="h-5 w-5 animate-spin" />
-          </div>
-        ) : (
-          <div className="h-full" data-testid="aitable-grid">
-            <AgGridReact<AITableRecord>
-              columnDefs={columnDefs}
-              context={gridContext}
-              defaultColDef={{
-                flex: 1,
-                resizable: true,
-                suppressMovable: false,
-              }}
-              getRowId={params => params.data.id}
-              headerHeight={40}
-              overlayNoRowsTemplate="暂无记录"
-              rowData={records}
-              rowHeight={40}
-              theme={aitableGridTheme}
-            />
-          </div>
-        )}
-      </div>
-
-      {hasMore ? (
-        <div className="flex justify-center border-t border-border px-4 py-2">
-          <button
-            type="button"
-            data-testid="aitable-load-more"
-            disabled={loadingMore}
-            onClick={() => void loadMore()}
-            className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted disabled:opacity-40"
-          >
-            {loadingMore ? '加载中…' : '加载更多'}
-          </button>
-        </div>
-      ) : null}
-
-      {canManageFields ? (
-        <div className="flex items-center gap-2 border-t border-border px-4 py-2">
-          <input
-            type="text"
-            data-testid="aitable-field-name"
-            placeholder="新字段名称"
-            value={newFieldName}
-            onChange={event => setNewFieldName(event.target.value)}
-            className="h-8 w-48 rounded-md border border-border bg-background px-2 text-sm keyboard:focus:border-primary focus:outline-none"
+    <>
+      {' '}
+      {requestDialogs}{' '}
+      <div className="flex h-full flex-col" data-testid="aitable-view">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+          <ControlInput
+            density="compact"
+            type="search"
+            data-testid="aitable-search"
+            placeholder="搜索记录…"
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') void load(query || undefined)
+            }}
+            className="w-56"
           />
-          <select
-            data-testid="aitable-field-type"
-            value={newFieldType}
-            onChange={event => setNewFieldType(event.target.value)}
-            className="h-8 rounded-md border border-border bg-background px-2 text-sm keyboard:focus:border-primary focus:outline-none"
-          >
-            <option value="text">文本</option>
-            <option value="number">数字</option>
-            <option value="singleSelect">单选</option>
-            <option value="multipleSelect">多选</option>
-            <option value="date">日期</option>
-            <option value="checkbox">勾选</option>
-            <option value="url">链接</option>
-            <option value="user">成员</option>
-          </select>
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
-            data-testid="aitable-add-field"
-            onClick={() => void addField()}
-            disabled={addingField || !newFieldName.trim()}
-            className="flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-sm text-text-secondary hover:bg-muted disabled:opacity-50"
+            data-testid="aitable-refresh"
+            onClick={() => void load(query || undefined)}
+            className="flex h-8 items-center gap-1 rounded-md border border-border px-2 text-sm text-text-secondary hover:bg-muted"
           >
-            <Plus className="h-3.5 w-3.5" />
-            新增字段
-          </button>
+            <RefreshCw className="h-3.5 w-3.5" />
+            刷新
+          </ControlButton>
+          <span className="flex-1" />
+          {canEditRecords ? (
+            <ControlButton
+              variant="primary"
+              size="sm"
+              type="button"
+              data-testid="aitable-add-record"
+              disabled={mutationBusy}
+              onClick={() => void addRecord()}
+              className="flex h-8 items-center gap-1 rounded-md bg-text-primary px-2.5 text-sm text-background hover:opacity-80 disabled:opacity-40"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              新增记录
+            </ControlButton>
+          ) : null}
         </div>
-      ) : null}
-    </div>
+
+        {error ? (
+          <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="min-h-0 flex-1">
+          {loading ? (
+            <div className="flex h-32 items-center justify-center text-text-muted">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : (
+            <div className="h-full" data-testid="aitable-grid">
+              <AgGridReact<AITableRecord>
+                columnDefs={columnDefs}
+                context={gridContext}
+                defaultColDef={{
+                  flex: 1,
+                  resizable: true,
+                  suppressMovable: false,
+                }}
+                getRowId={params => params.data.id}
+                headerHeight={40}
+                overlayNoRowsTemplate="暂无记录"
+                rowData={records}
+                rowHeight={40}
+                theme={aitableGridTheme}
+              />
+            </div>
+          )}
+        </div>
+
+        {hasMore ? (
+          <div className="flex justify-center border-t border-border px-4 py-2">
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="aitable-load-more"
+              disabled={loadingMore}
+              onClick={() => void loadMore()}
+              className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted disabled:opacity-40"
+            >
+              {loadingMore ? '加载中…' : '加载更多'}
+            </ControlButton>
+          </div>
+        ) : null}
+
+        {canManageFields ? (
+          <div className="flex items-center gap-2 border-t border-border px-4 py-2">
+            <ControlInput
+              density="compact"
+              type="text"
+              data-testid="aitable-field-name"
+              placeholder="新字段名称"
+              value={newFieldName}
+              onChange={event => setNewFieldName(event.target.value)}
+              className="w-48"
+            />
+            <SelectRoot
+              value={normalizeSelectValue(newFieldType)}
+              onValueChange={selectedValue => {
+                if (selectedValue !== null) return setNewFieldType(selectedValue)
+              }}
+            >
+              <SelectTrigger
+                density="compact"
+                aria-label={t('workbench.archived_filter_type_label')}
+                data-testid="aitable-field-type"
+              />
+              <SelectContent>
+                <SelectItem value="text">文本</SelectItem>
+                <SelectItem value="number">数字</SelectItem>
+                <SelectItem value="singleSelect">单选</SelectItem>
+                <SelectItem value="multipleSelect">多选</SelectItem>
+                <SelectItem value="date">日期</SelectItem>
+                <SelectItem value="checkbox">勾选</SelectItem>
+                <SelectItem value="url">链接</SelectItem>
+                <SelectItem value="user">成员</SelectItem>
+              </SelectContent>
+            </SelectRoot>
+            <ControlButton
+              variant="outline"
+              size="sm"
+              type="button"
+              data-testid="aitable-add-field"
+              onClick={() => void addField()}
+              disabled={addingField || !newFieldName.trim()}
+              className="flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-sm text-text-secondary hover:bg-muted disabled:opacity-50"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              新增字段
+            </ControlButton>
+          </div>
+        ) : null}
+      </div>{' '}
+    </>
   )
 }

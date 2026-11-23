@@ -1,13 +1,17 @@
-import { ProviderEditor } from './ProviderEditor'
-import { useEffect, useState, useSyncExternalStore } from 'react'
-import { ChevronDown, Plus } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Plus } from 'lucide-react'
+import { useState, useSyncExternalStore } from 'react'
+import { ProviderEditor } from './ProviderEditor'
 
-import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   getProviderConfigurationState,
-  initializeProviderModelConfiguration,
   reloadProviderConfiguration,
   saveProviderConfiguration,
   subscribeProviderConfiguration,
@@ -15,6 +19,7 @@ import {
   type ModelProvider,
   type PublicModelProvider,
 } from '@/features/model-settings/providerModelConfiguration'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 
 const BUTTON =
   'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
@@ -41,10 +46,6 @@ export function ProviderSettingsSection() {
     run: () => Promise<void>
   } | null>(null)
   const available = isElectronRuntime()
-
-  useEffect(() => {
-    if (available) void initializeProviderModelConfiguration()
-  }, [available])
 
   if (!available) return null
 
@@ -86,7 +87,8 @@ export function ProviderSettingsSection() {
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-text-primary">{t('title')}</h3>
         </div>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="provider-add"
           className={BUTTON}
@@ -95,12 +97,13 @@ export function ProviderSettingsSection() {
         >
           <Plus className="h-4 w-4" />
           {t('addProvider')}
-        </button>
+        </ControlButton>
       </div>
       {!snapshot && <p className="text-sm text-text-secondary">{t('loading')}</p>}
 
       {loadError && !editor && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className={BUTTON}
           data-testid="provider-retry"
@@ -108,7 +111,7 @@ export function ProviderSettingsSection() {
           onClick={() => void perform(reloadProviderConfiguration)}
         >
           {t('retry')}
-        </button>
+        </ControlButton>
       )}
       {(error || loadError) && (
         <p
@@ -130,14 +133,16 @@ export function ProviderSettingsSection() {
       )}
       <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-background">
         {snapshot?.providers.map(provider => (
-          <details
+          <CollapsibleRoot
             key={provider.id}
             data-testid={`provider-row-${provider.id}`}
             className="px-4 py-4"
           >
-            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <ChevronDown className="h-4 w-4 shrink-0" />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CollapsibleTrigger
+                className="min-w-0 flex-1"
+                data-testid="provider-settings-section-toggle"
+              >
                 <span className="truncate text-sm font-medium text-text-primary">
                   {provider.name}
                 </span>
@@ -147,9 +152,10 @@ export function ProviderSettingsSection() {
                 {provider.enabled === false && (
                   <span className="text-xs text-text-secondary">{t('disabled')}</span>
                 )}
-              </div>
+              </CollapsibleTrigger>
               <div className="flex gap-2">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className={BUTTON}
                   data-testid={`provider-edit-${provider.id}`}
@@ -160,8 +166,9 @@ export function ProviderSettingsSection() {
                   }}
                 >
                   {t('edit')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className={BUTTON}
                   data-testid={`provider-delete-${provider.id}`}
@@ -184,45 +191,50 @@ export function ProviderSettingsSection() {
                   }}
                 >
                   {t('delete')}
-                </button>
+                </ControlButton>
               </div>
-            </summary>
-            <div className="mt-2 space-y-1 pl-6">
-              <p className="break-all text-xs text-text-secondary">
-                {provider.base_url} · {provider.api_format} ·{' '}
-                {provider.api_key_configured
-                  ? t('keyConfigured')
-                  : provider.api_key_ref
-                    ? t('missingKey')
-                    : t('noKey')}
-              </p>
-              {provider.models.map(model => (
-                <div
-                  key={model.id}
-                  className="flex min-h-8 flex-wrap items-center justify-between gap-2 text-sm"
-                  data-testid={`provider-model-${model.id}`}
-                >
-                  <span className="text-text-primary">{model.display_name || model.model_id}</span>
-                  <span className="break-all font-mono text-xs text-text-secondary">
-                    {model.model_id}
-                    {model.enabled === false ? ` · ${t('disabled')}` : ''}
-                  </span>
-                  <button
-                    type="button"
-                    className={BUTTON}
-                    data-testid={`provider-model-edit-${model.id}`}
-                    disabled={pending || !!loadError}
-                    onClick={() => editProvider(provider, model.id)}
-                  >
-                    {t('editModel')}
-                  </button>
-                </div>
-              ))}
-              {provider.models.length === 0 && (
-                <p className="text-sm text-text-secondary">{t('emptyModels')}</p>
-              )}
             </div>
-          </details>
+            <CollapsiblePanel>
+              <div className="mt-2 space-y-1 pl-6">
+                <p className="break-all text-xs text-text-secondary">
+                  {provider.base_url} · {provider.api_format} ·{' '}
+                  {provider.api_key_configured
+                    ? t('keyConfigured')
+                    : provider.api_key_ref
+                      ? t('missingKey')
+                      : t('noKey')}
+                </p>
+                {provider.models.map(model => (
+                  <div
+                    key={model.id}
+                    className="flex min-h-8 flex-wrap items-center justify-between gap-2 text-sm"
+                    data-testid={`provider-model-${model.id}`}
+                  >
+                    <span className="text-text-primary">
+                      {model.display_name || model.model_id}
+                    </span>
+                    <span className="break-all font-mono text-xs text-text-secondary">
+                      {model.model_id}
+                      {model.enabled === false ? ` · ${t('disabled')}` : ''}
+                    </span>
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      className={BUTTON}
+                      data-testid={`provider-model-edit-${model.id}`}
+                      disabled={pending || !!loadError}
+                      onClick={() => editProvider(provider, model.id)}
+                    >
+                      {t('editModel')}
+                    </ControlButton>
+                  </div>
+                ))}
+                {provider.models.length === 0 && (
+                  <p className="text-sm text-text-secondary">{t('emptyModels')}</p>
+                )}
+              </div>
+            </CollapsiblePanel>
+          </CollapsibleRoot>
         ))}
         {snapshot?.providers.length === 0 && (
           <p className="px-4 py-4 text-xs text-text-secondary">{t('description')}</p>

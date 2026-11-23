@@ -1,5 +1,7 @@
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Search, X } from 'lucide-react'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react'
 
 const MARKETPLACE_SEARCH_DEBOUNCE_MS = 200
 
@@ -14,10 +16,22 @@ export const MarketplaceSearchInput = forwardRef<
     label: string
     placeholder: string
     clearLabel: string
+    inputTestId?: string
+    clearTestId?: string
+    debounceMs?: number
     onQueryChange: (query: string) => void
   }
 >(function MarketplaceSearchInput(
-  { initialValue, label, placeholder, clearLabel, onQueryChange },
+  {
+    initialValue,
+    label,
+    placeholder,
+    clearLabel,
+    inputTestId = 'plugins-search-input',
+    clearTestId = 'plugins-search-clear-button',
+    debounceMs = MARKETPLACE_SEARCH_DEBOUNCE_MS,
+    onQueryChange,
+  },
   forwardedRef
 ) {
   const [inputValue, setInputValue] = useState(initialValue)
@@ -31,23 +45,27 @@ export const MarketplaceSearchInput = forwardRef<
     debounceTimeoutRef.current = null
   }, [])
 
-  const scheduleQuery = useCallback(
-    (nextQuery: string) => {
-      cancelPendingQuery()
-      debounceTimeoutRef.current = window.setTimeout(() => {
-        debounceTimeoutRef.current = null
-        onQueryChange(nextQuery)
-      }, MARKETPLACE_SEARCH_DEBOUNCE_MS)
-    },
-    [cancelPendingQuery, onQueryChange]
-  )
-
   const commitQuery = useCallback(
     (nextQuery: string) => {
       cancelPendingQuery()
       onQueryChange(nextQuery)
     },
     [cancelPendingQuery, onQueryChange]
+  )
+
+  const scheduleQuery = useCallback(
+    (nextQuery: string) => {
+      if (debounceMs <= 0) {
+        commitQuery(nextQuery)
+        return
+      }
+      cancelPendingQuery()
+      debounceTimeoutRef.current = window.setTimeout(() => {
+        debounceTimeoutRef.current = null
+        onQueryChange(nextQuery)
+      }, debounceMs)
+    },
+    [cancelPendingQuery, commitQuery, debounceMs, onQueryChange]
   )
 
   const clearQuery = useCallback(
@@ -61,13 +79,23 @@ export const MarketplaceSearchInput = forwardRef<
 
   useImperativeHandle(forwardedRef, () => ({ clear: clearQuery }), [clearQuery])
 
-  useEffect(() => cancelPendingQuery, [cancelPendingQuery])
+  const attachInput = useCallback(
+    (node: HTMLInputElement | null) => {
+      inputRef.current = node
+      if (!node) return
+      return () => {
+        cancelPendingQuery()
+        inputRef.current = null
+      }
+    },
+    [cancelPendingQuery]
+  )
 
   return (
-    <label className="relative min-w-0 flex-1 md:w-[300px] md:flex-none">
+    <label className="relative min-w-0 flex-1">
       <span className="sr-only">{label}</span>
-      <input
-        ref={inputRef}
+      <ControlInput
+        ref={attachInput}
         value={inputValue}
         onChange={event => {
           const nextQuery = event.target.value
@@ -90,20 +118,21 @@ export const MarketplaceSearchInput = forwardRef<
           }
         }}
         placeholder={placeholder}
-        data-testid="plugins-search-input"
+        data-testid={inputTestId}
         className="plugin-market-search-input"
       />
       {inputValue ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
-          data-testid="plugins-search-clear-button"
+          data-testid={clearTestId}
           className="plugin-market-search-clear"
           aria-label={clearLabel}
           title={clearLabel}
           onClick={() => clearQuery({ focus: true })}
         >
           <X aria-hidden="true" />
-        </button>
+        </ControlButton>
       ) : (
         <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
       )}

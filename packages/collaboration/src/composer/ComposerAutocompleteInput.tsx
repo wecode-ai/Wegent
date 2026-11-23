@@ -2,13 +2,11 @@ import { insertComposerReference } from './insertComposerReference'
 import {
   useCallback,
   useContext,
-  useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useImperativeHandle,
-  startTransition,
+  useSyncExternalStore,
 } from 'react'
 import { ComposerPredictionStatus } from './ComposerPredictionStatus'
 import { ComposerPredictionContext } from './ComposerPredictionContext'
@@ -34,7 +32,7 @@ import { useComposerTransfers } from './useComposerTransfers'
 import { useComposerLinkEditing } from './useComposerLinkEditing'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
 import { useComposerInputEvents } from './useComposerInputEvents'
-import { useOutsideClick } from './useOutsideClick'
+import { ComposerAutocompletePopup } from './ComposerAutocompletePopup'
 import {
   ComposerProseMirrorEditor,
   type ComposerEditorHandle,
@@ -48,12 +46,7 @@ import {
   parseCloudProjectScopeQuery,
   type ComposerTextTrigger,
 } from './composerAutocomplete'
-import {
-  createComposerPathReference,
-  registerComposerMentionIcon,
-  replaceComposerMentionTrigger,
-  resolveComposerWorkspacePath,
-} from './composerMentions'
+import { registerComposerMentionIcon, replaceComposerMentionTrigger } from './composerMentions'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
 import { LinkEditPopover } from './LinkEditPopover'
@@ -64,6 +57,12 @@ import {
 import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
 import { useComposerMentionCandidates } from './useComposerMentionCandidates'
 import { ComposerPluginIcon } from './ComposerPluginIcon'
+import {
+  createComposerAutocompleteState,
+  createComposerEditorValuePort,
+} from './composerAutocompleteState'
+import { selectComposerMentionRow } from './selectComposerMentionRow'
+import { useScrollRequest } from '../dom-events'
 const EMPTY_EVENTS = {}
 const noAppLogo = () => ({ url: null, contrastPad: false, source: 'none' })
 const defaultAppIcon = (command: SlashCommand) => (
@@ -78,10 +77,6 @@ const defaultAppIcon = (command: SlashCommand) => (
     testId={`slash-command-icon-${command.testId}`}
   />
 )
-interface ActiveComposerMenu {
-  kind: ComposerTextTrigger['kind']
-  trigger: ComposerTextTrigger
-}
 export function ComposerAutocompleteInput<Project = unknown, Conversation = unknown>({
   value,
   onChange,
@@ -99,7 +94,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   className,
   scrollContainerClassName,
   nativeEmptyCaret = false,
-  skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
+  skillMenuClassName = 'w-[min(28rem,calc(100vw-2rem))]',
+  slashMenuClassName = skillMenuClassName,
   disableAutocomplete = false,
   onKeyDown,
   onPasteFiles,
@@ -146,7 +142,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   onPickWorkspacePaths,
   contributedMentionCandidates = [],
   contributedSlashCommands = [],
-  onMentionQueryChange,
+  autocompleteState: hostAutocompleteState,
   onExecuteCommand,
   Bindings,
   debug,
@@ -154,8 +150,30 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   transferServices,
 }: ComposerAutocompleteInputProps<Project, Conversation>) {
   const prediction = useContext(ComposerPredictionContext)
-  const [hasDraft, setHasDraft] = useState(Boolean(value.trim()))
-  useEffect(() => setHasDraft(Boolean(value.trim())), [value])
+  const [ownAutocompleteState] = useState(() => createComposerAutocompleteState(value))
+  const autocompleteState = hostAutocompleteState ?? ownAutocompleteState
+  const menuState = useSyncExternalStore(
+    autocompleteState.subscribe,
+    autocompleteState.getSnapshot,
+    autocompleteState.getSnapshot
+  )
+  const hasDraft = Boolean(menuState.editorValue.trim())
+  const {
+    activeMenu,
+    selectedIndex,
+    modelMenuOpen,
+    modelQuery,
+    modelSelectedIndex,
+    cloudProjectsOpen,
+  } = menuState
+  const {
+    setActiveMenu,
+    setSelectedIndex,
+    setModelMenuOpen,
+    setModelQuery,
+    setModelSelectedIndex,
+    setCloudProjectsOpen,
+  } = autocompleteState
   type ComposerMentionCandidate = Candidate<Project, Conversation>
   type MentionMenuRow = SharedMentionMenuRow<
     ComposerMentionCandidate,
@@ -174,26 +192,20 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     [compareApps]
   )
   const menuRef = useRef<HTMLDivElement>(null)
-  const modelMenuRef = useRef<HTMLDivElement>(null)
+  const [popupAnchor, setPopupAnchor] = useState<HTMLDivElement | null>(null)
   const editorRef = useRef<ComposerEditorHandle | null>(null)
-  const focusRequestExpiresAtRef = useRef(0)
-  const valueRef = useRef(value)
-  const restoredAutocompleteValueRef = useRef<string | null>(value)
-
-  const activeMenuRef = useRef<ActiveComposerMenu | null>(null)
-  const highlightedIndexRef = useRef(0)
-  const showSkillMenuRef = useRef(false)
-  const showSlashMenuRef = useRef(false)
-  const activeOptionCountRef = useRef(0)
-  const [activeMenu, setActiveMenu] = useState<ActiveComposerMenu | null>(null)
-  const [selectedIndex, setSelectedIndex] = useState(0)
-  const [modelMenuOpen, setModelMenuOpen] = useState(false)
-  const [modelQuery, setModelQuery] = useState('')
-  const [modelSelectedIndex, setModelSelectedIndex] = useState(0)
-  const isCatalogMenuOpen = useCallback(
-    () => showSkillMenuRef.current || showSlashMenuRef.current,
-    []
+  const valueRef = useMemo(
+    () => createComposerEditorValuePort(editorRef, autocompleteState),
+    [autocompleteState]
   )
+  const isCatalogMenuOpen = useCallback(() => {
+    const active = autocompleteState.getSnapshot().activeMenu
+    return (
+      active?.kind === 'slash' ||
+      active?.kind === 'mention' ||
+      (active?.kind === 'skill' && Boolean(onListLocalSkills || onListLocalApps))
+    )
+  }, [autocompleteState, onListLocalSkills, onListLocalApps])
   const { skills, apps, loading, loadError, appsLoading, appsLoadError, loadLocalMentions } =
     useComposerCatalog({
       onListLocalSkills,
@@ -202,12 +214,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       events: catalogEvents,
       isMenuOpen: isCatalogMenuOpen,
     })
-  const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false)
   const canPickNativeWorkspacePaths = Boolean(onPickWorkspacePaths && onPasteFiles)
-
-  useEffect(() => {
-    valueRef.current = value
-  }, [value])
 
   const { appCandidates, skillCandidates, mentionCandidates, filteredMentionCandidates } =
     useComposerMentionCandidates(
@@ -235,9 +242,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     const candidates =
       mentionScope === 'external'
         ? externalMentionCandidates.filter(candidate =>
-            (editorRef.current?.getSnapshot().value ?? value)[activeMenu.trigger.start] === '#'
-              ? candidate.type === 'issue'
-              : candidate.type !== 'issue'
+            activeMenu.symbol === '#' ? candidate.type === 'issue' : candidate.type !== 'issue'
           )
         : externalMentionCandidates
     if (!query) return candidates
@@ -246,11 +251,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         value.toLocaleLowerCase().includes(query)
       )
     )
-  }, [activeMenu, externalMentionCandidates, mentionScope, value])
-  const mentionQuery = activeMenu?.kind === 'mention' ? activeMenu.trigger.query : ''
-  useEffect(() => {
-    onMentionQueryChange?.(mentionQuery)
-  }, [mentionQuery, onMentionQueryChange])
+  }, [activeMenu, externalMentionCandidates, mentionScope])
 
   const workspaceSearch = useWorkspaceMentionSearch(
     activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
@@ -269,10 +270,6 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     ],
     [t]
   )
-  const cloudProjectScopeLabelsRef = useRef(cloudProjectScopeLabels)
-  useEffect(() => {
-    cloudProjectScopeLabelsRef.current = cloudProjectScopeLabels
-  }, [cloudProjectScopeLabels])
   const cloudProjectScopeKeyword =
     activeMenu?.kind === 'mention'
       ? parseCloudProjectScopeQuery(activeMenu.trigger.query, cloudProjectScopeLabels)
@@ -292,7 +289,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   // `cloud://projects` capability reference.
   const cloudSpaceDirectReference = `[$${t('workbench.mention_cloud_project_space', '项目空间')}](cloud://projects)`
 
-  const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onOpenModelSelector || (onSelectModel && models.length > 0))
+  const canOpenSlashModelMenu =
+    isModelSelectionReady && Boolean(onOpenModelSelector || (onSelectModel && models.length > 0))
   const openSlashModelMenu = useCallback(() => {
     if (onOpenModelSelector) {
       onOpenModelSelector()
@@ -301,7 +299,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     setModelQuery('')
     setModelSelectedIndex(0)
     setModelMenuOpen(true)
-  }, [onOpenModelSelector])
+  }, [onOpenModelSelector, setModelMenuOpen, setModelQuery, setModelSelectedIndex])
   const closeSlashModelMenu = useCallback(
     (focusTextarea = false) => {
       setModelMenuOpen(false)
@@ -313,7 +311,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         })
       }
     },
-    [textareaRef]
+    [textareaRef, setModelMenuOpen, setModelQuery, setModelSelectedIndex]
   )
 
   const actionSlashCommands = useMemo<SlashCommand[]>(
@@ -426,27 +424,13 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   const isSlashMentionLoading =
     !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loading) || appsLoading)
 
-  useLayoutEffect(() => {
-    activeMenuRef.current = activeMenu
-    highlightedIndexRef.current = highlightedIndex
-    showSkillMenuRef.current = showSkillMenu
-    showSlashMenuRef.current = showSlashMenu
-    activeOptionCountRef.current = activeOptionCount
-  }, [activeMenu, activeOptionCount, highlightedIndex, showSkillMenu, showSlashMenu])
-
-  useEffect(() => {
-    if (!showSkillMenu && !showSlashMenu) return
-    const selectedOption = menuRef.current?.querySelector<HTMLElement>(
-      '[role="option"][aria-selected="true"]'
-    )
-    selectedOption?.scrollIntoView?.({ block: 'nearest' })
-  }, [activeOptionCount, highlightedIndex, showSkillMenu, showSlashMenu])
-
-  const closeAutocompleteMenu = useCallback(() => {
-    setActiveMenu(null)
-    setSelectedIndex(0)
-    highlightedIndexRef.current = 0
-  }, [])
+  useScrollRequest(
+    menuRef,
+    '[role="option"][aria-selected="true"]',
+    `${activeOptionCount}:${highlightedIndex}:${showSkillMenu}:${showSlashMenu}`,
+    { enabled: showSkillMenu || showSlashMenu }
+  )
+  const closeAutocompleteMenu = autocompleteState.close
 
   useImperativeHandle(
     ref,
@@ -455,7 +439,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         return editorRef.current?.element ?? null
       },
       focus: () => {
-        focusRequestExpiresAtRef.current = Date.now() + 2_000
+        autocompleteState.requestFocus()
         editorRef.current?.focus()
       },
       getValue: () => editorRef.current?.getSnapshot().value ?? valueRef.current,
@@ -464,68 +448,72 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         const editor = editorRef.current
         if (!editor) return
         const next = insertComposerReference(editor.getSnapshot(), reference)
-        valueRef.current = next.value
         editor.setValue(next.value, next.cursor)
         closeAutocompleteMenu()
         if (mentionScope === 'external' && /(?:^|\s)[@#]$/.test(reference)) {
           const symbol = reference.endsWith('#') ? '#' : '@'
           const trigger = findStandaloneTrigger(next.value, next.cursor, symbol, 'mention')
-          if (trigger) setActiveMenu({ kind: 'mention', trigger })
+          if (trigger) setActiveMenu({ kind: 'mention', trigger, symbol })
         }
       },
       setValue: (nextValue, selectionOffset = nextValue.length) => {
-        restoredAutocompleteValueRef.current = nextValue
-        closeAutocompleteMenu()
-        valueRef.current = nextValue
+        autocompleteState.restoreValue(nextValue)
         editorRef.current?.setValue(nextValue, selectionOffset)
       },
     }),
-    [closeAutocompleteMenu, mentionScope]
+    [autocompleteState, closeAutocompleteMenu, mentionScope, setActiveMenu, valueRef]
   )
 
-  const moveHighlightedIndex = useCallback((delta: number) => {
-    const optionCount = activeOptionCountRef.current
-    if (optionCount <= 0) return false
-
-    setSelectedIndex(currentIndex => {
-      const current = Math.min(currentIndex, optionCount - 1)
-      const nextIndex = Math.max(0, Math.min(current + delta, optionCount - 1))
-      highlightedIndexRef.current = nextIndex
-      return nextIndex
-    })
-    return true
-  }, [])
+  const moveHighlightedIndex = useCallback(
+    (delta: number) => {
+      if (activeOptionCount <= 0) return false
+      setSelectedIndex(currentIndex =>
+        Math.max(
+          0,
+          Math.min(Math.min(currentIndex, activeOptionCount - 1) + delta, activeOptionCount - 1)
+        )
+      )
+      return true
+    },
+    [activeOptionCount, setSelectedIndex]
+  )
 
   const updateAutocompleteTrigger = useCallback(
     (snapshot?: ComposerEditorSnapshot) => {
-      if (disableAutocomplete) return
       const editor = editorRef.current
       const current = snapshot ?? editor?.getSnapshot()
       if (!current) return
-      if (restoredAutocompleteValueRef.current === current.value) return
-      restoredAutocompleteValueRef.current = null
+      autocompleteState.setEditorValue(editor?.element ? editor.getSnapshot().value : current.value)
+      if (disableAutocomplete) return
+      if (autocompleteState.isRestored(current.value)) return
+      autocompleteState.clearRestoredValue()
 
       const { nextTrigger: resolvedTrigger, triggerUnchanged } = resolveComposerAutocompleteTrigger(
         current,
-        activeMenuRef.current,
+        autocompleteState.getSnapshot().activeMenu,
         Boolean(onListLocalSkills),
-        cloudProjectScopeLabelsRef.current,
+        cloudProjectScopeLabels,
         mentionScope === 'external'
       )
       const nextTrigger =
         mentionScope === 'external' && resolvedTrigger?.kind !== 'mention' ? null : resolvedTrigger
 
-      startTransition(() => {
-        setActiveMenu(nextTrigger ? { kind: nextTrigger.kind, trigger: nextTrigger } : null)
-        if (nextTrigger) {
-          setModelMenuOpen(false)
-          if (!triggerUnchanged) {
-            setSelectedIndex(0)
-            highlightedIndexRef.current = 0
-            setCloudProjectsOpen(false)
-          }
+      setActiveMenu(
+        nextTrigger
+          ? {
+              kind: nextTrigger.kind,
+              trigger: nextTrigger,
+              symbol: current.value[nextTrigger.start],
+            }
+          : null
+      )
+      if (nextTrigger) {
+        setModelMenuOpen(false)
+        if (!triggerUnchanged) {
+          setSelectedIndex(0)
+          setCloudProjectsOpen(false)
         }
-      })
+      }
       if (
         mentionScope === 'all' &&
         nextTrigger &&
@@ -537,13 +525,24 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         loadLocalMentions()
       }
     },
-    [loadLocalMentions, onListLocalApps, onListLocalSkills, disableAutocomplete, mentionScope]
+    [
+      loadLocalMentions,
+      onListLocalApps,
+      onListLocalSkills,
+      disableAutocomplete,
+      mentionScope,
+      autocompleteState,
+      cloudProjectScopeLabels,
+      setActiveMenu,
+      setCloudProjectsOpen,
+      setModelMenuOpen,
+      setSelectedIndex,
+    ]
   )
 
   const commitEditorValue = useCallback(
     (nextValue: string, nextCursor: number) => {
       const editor = editorRef.current
-      valueRef.current = nextValue
       if (editor) {
         editor.setValue(nextValue, nextCursor)
       } else {
@@ -557,7 +556,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
 
   const selectMentionCandidate = useCallback(
     (candidate: ComposerMentionCandidate, explicitTrigger?: ComposerTextTrigger | null) => {
-      const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
+      const trigger = explicitTrigger ?? autocompleteState.getSnapshot().activeMenu?.trigger
       const editor = editorRef.current
       if (!trigger || !editor) return false
 
@@ -588,7 +587,14 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       editor.focus()
       return true
     },
-    [resolveAppLogo, onSelectApp, closeAutocompleteMenu, commitEditorValue, textareaRef]
+    [
+      resolveAppLogo,
+      onSelectApp,
+      closeAutocompleteMenu,
+      commitEditorValue,
+      textareaRef,
+      autocompleteState,
+    ]
   )
 
   const selectSkill = useCallback(
@@ -608,9 +614,9 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         return appCandidate ? selectMentionCandidate(appCandidate, explicitTrigger) : false
       }
 
+      const currentMenu = autocompleteState.getSnapshot().activeMenu
       const trigger =
-        explicitTrigger ??
-        (activeMenuRef.current?.kind === 'slash' ? activeMenuRef.current.trigger : null)
+        explicitTrigger ?? (currentMenu?.kind === 'slash' ? currentMenu.trigger : null)
       const editor = editorRef.current
       if (!trigger || !editor) return false
 
@@ -657,121 +663,30 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       selectSkill,
       onExecuteCommand,
       textareaRef,
+      autocompleteState,
     ]
   )
 
   const selectMentionMenuRow = useCallback(
-    (row: MentionMenuRow, explicitTrigger?: ComposerTextTrigger) => {
-      if (row.kind === 'files-action' && !canPickNativeWorkspacePaths) return false
-      const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
-      const editor = editorRef.current
-      if (!trigger || !editor) return false
-      if (row.kind === 'candidate') {
-        if (!row.candidate.enabled) return false
-        const selected = selectMentionCandidate(row.candidate, trigger)
-        if (selected && row.candidate.kind === 'cloud' && row.candidate.project) {
-          onSelectCloudProject?.(row.candidate.project)
-        }
-        return selected
-      }
-      if (row.kind === 'external') {
-        if (row.candidate.reference) {
-          const snapshot = editor.getSnapshot()
-          const replacement = replaceComposerMentionTrigger(
-            snapshot.value,
-            row.candidate.reference,
-            trigger.start,
-            Math.max(snapshot.selectionEnd, trigger.start + 1 + trigger.query.length)
-          )
-          commitEditorValue(replacement.value, replacement.cursor)
-        }
-        onSelectExternalMention?.(row.candidate)
-        closeAutocompleteMenu()
-        return true
-      }
-      if (row.kind === 'cloud-projects-action') {
-        setCloudProjectsOpen(true)
-        setSelectedIndex(0)
-        highlightedIndexRef.current = 0
-        return true
-      }
-      if (row.kind === 'cloud-back-action') {
-        setCloudProjectsOpen(false)
-        setSelectedIndex(0)
-        highlightedIndexRef.current = 0
-        return true
-      }
-
-      const snapshot = editor.getSnapshot()
-      if (row.kind === 'cloud-space-direct-action') {
-        const replacement = replaceComposerMentionTrigger(
-          snapshot.value,
-          cloudSpaceDirectReference,
-          trigger.start,
-          snapshot.selectionEnd
-        )
-        commitEditorValue(replacement.value, replacement.cursor)
-        closeAutocompleteMenu()
-        editor.focus()
-        return true
-      }
-      if (row.kind === 'path') {
-        const path = resolveComposerWorkspacePath(row.item.root, row.item.path)
-        const reference = createComposerPathReference(path, row.item.matchType === 'directory')
-        const replacement = replaceComposerMentionTrigger(
-          snapshot.value,
-          reference,
-          trigger.start,
-          snapshot.selectionEnd
-        )
-        commitEditorValue(replacement.value, replacement.cursor)
-        closeAutocompleteMenu()
-        editor.focus()
-        return true
-      }
-
-      const nextValue =
-        snapshot.value.slice(0, trigger.start) + snapshot.value.slice(snapshot.selectionEnd)
-      commitEditorValue(nextValue, trigger.start)
-      closeAutocompleteMenu()
-      if (row.kind === 'goal-action') onSetGoal?.()
-      if (row.kind === 'plan-action') onSetPlanMode?.()
-      if (row.kind === 'draw-action') onDraw?.()
-      if (row.kind === 'files-action' && onPickWorkspacePaths) {
-        setActionError(null)
-        void onPickWorkspacePaths(workspaceTarget?.path)
-          .then(async ({ attachmentFiles, referenceEntries }) => {
-            const currentEditor = editorRef.current
-            if (!currentEditor) return
-            if (attachmentFiles.length) await onPasteFiles?.(attachmentFiles)
-            if (!referenceEntries.length) {
-              currentEditor.focus()
-              return
-            }
-            const references = referenceEntries
-              .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
-              .join(' ')
-            const current = currentEditor.getSnapshot()
-            const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
-            const nextValue =
-              current.value.slice(0, current.selectionOffset) +
-              spacer +
-              references +
-              ' ' +
-              current.value.slice(current.selectionOffset)
-            commitEditorValue(
-              nextValue,
-              current.selectionOffset + spacer.length + references.length + 1
-            )
-            currentEditor.focus()
-          })
-          .catch(error => {
-            setActionError(error instanceof Error ? error.message : String(error))
-          })
-      }
-      editor.focus()
-      return true
-    },
+    (row: MentionMenuRow, explicitTrigger?: ComposerTextTrigger) =>
+      selectComposerMentionRow(row, explicitTrigger, {
+        editorRef,
+        autocompleteState,
+        canPickNativeWorkspacePaths,
+        closeAutocompleteMenu,
+        cloudSpaceDirectReference,
+        commitEditorValue,
+        onSelectCloudProject,
+        onSelectExternalMention,
+        onSetGoal,
+        onSetPlanMode,
+        onDraw,
+        selectMentionCandidate,
+        workspaceTarget,
+        onPickWorkspacePaths,
+        onPasteFiles,
+        setActionError,
+      }),
     [
       canPickNativeWorkspacePaths,
       closeAutocompleteMenu,
@@ -783,16 +698,20 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       onSetPlanMode,
       onDraw,
       selectMentionCandidate,
-      workspaceTarget?.path,
+      workspaceTarget,
       onPickWorkspacePaths,
       onPasteFiles,
+      autocompleteState,
     ]
   )
 
   const selectHighlightedMention = useCallback(() => {
-    const row = mentionMenuRows[highlightedIndexRef.current]
+    const row =
+      mentionMenuRows[
+        Math.min(autocompleteState.getSnapshot().selectedIndex, Math.max(activeOptionCount - 1, 0))
+      ]
     return row ? selectMentionMenuRow(row) : false
-  }, [mentionMenuRows, selectMentionMenuRow])
+  }, [mentionMenuRows, selectMentionMenuRow, activeOptionCount, autocompleteState])
 
   const handleMentionRowClick = useCallback(
     (index: number) => {
@@ -801,7 +720,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
       setSelectedIndex(index)
       selectMentionMenuRow(row, activeMenu?.trigger)
     },
-    [activeMenu?.trigger, mentionMenuRows, selectMentionMenuRow]
+    [activeMenu?.trigger, mentionMenuRows, selectMentionMenuRow, setSelectedIndex]
   )
 
   const selectHighlightedSlashCommand = useCallback(() => {
@@ -821,16 +740,26 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
           hasDraftTextForSlashCommands(snapshot.value)
         )
       : filteredSlashCommands
-    const command = commands[highlightedIndexRef.current] ?? commands[0]
+    const command =
+      commands[
+        Math.min(autocompleteState.getSnapshot().selectedIndex, Math.max(activeOptionCount - 1, 0))
+      ] ?? commands[0]
     if (!command || command.enabled === false) return false
     return selectSlashCommand(command, currentSlashTrigger)
-  }, [filteredSlashCommands, selectSlashCommand, slashCommands, filterSlashCommands])
+  }, [
+    filteredSlashCommands,
+    selectSlashCommand,
+    slashCommands,
+    filterSlashCommands,
+    activeOptionCount,
+    autocompleteState,
+  ])
 
   const confirmHighlightedMenuSelection = useCallback(() => {
-    if (showSkillMenuRef.current) return selectHighlightedMention()
-    if (showSlashMenuRef.current) return selectHighlightedSlashCommand()
+    if (showSkillMenu) return selectHighlightedMention()
+    if (showSlashMenu) return selectHighlightedSlashCommand()
     return false
-  }, [selectHighlightedMention, selectHighlightedSlashCommand])
+  }, [selectHighlightedMention, selectHighlightedSlashCommand, showSkillMenu, showSlashMenu])
 
   const getModelCompatibilityDisabledMessage = useCallback(
     (model: UnifiedModel) =>
@@ -849,15 +778,6 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     },
     [closeSlashModelMenu, onSelectModel]
   )
-
-  const outsideClickExceptions = useMemo(() => [textareaRef], [textareaRef])
-  useOutsideClick(
-    menuRef,
-    showSkillMenu || showSlashMenu,
-    closeAutocompleteMenu,
-    outsideClickExceptions
-  )
-  useOutsideClick(modelMenuRef, modelMenuOpen, closeSlashModelMenu, outsideClickExceptions)
 
   const {
     handleCompositionStart,
@@ -880,22 +800,25 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     onCompositionStart,
     onCompositionEnd,
     onKeyUp: () => {
-      restoredAutocompleteValueRef.current = null
+      autocompleteState.clearRestoredValue()
       updateAutocompleteTrigger()
     },
     onSnapshotChange: updateAutocompleteTrigger,
     debug,
     autocomplete: {
-      isOpen: () => showSkillMenuRef.current || showSlashMenuRef.current,
-      optionCount: () => activeOptionCountRef.current,
+      isOpen: () => showSkillMenu || showSlashMenu,
+      optionCount: () => activeOptionCount,
       move: moveHighlightedIndex,
       close: closeAutocompleteMenu,
       confirm: confirmHighlightedMenuSelection,
       debugDetails: () => ({
-        showSkillMenu: showSkillMenuRef.current,
-        showSlashMenu: showSlashMenuRef.current,
-        highlightedIndex: highlightedIndexRef.current,
-        activeOptionCount: activeOptionCountRef.current,
+        showSkillMenu: showSkillMenu,
+        showSlashMenu: showSlashMenu,
+        highlightedIndex: Math.min(
+          autocompleteState.getSnapshot().selectedIndex,
+          Math.max(activeOptionCount - 1, 0)
+        ),
+        activeOptionCount: activeOptionCount,
       }),
     },
   })
@@ -918,10 +841,16 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   })
 
   const predictionHidden =
-    hasDraft || disabled || isStreaming || showSkillMenu || showSlashMenu || modelMenuOpen || modelSelectorOpen
+    hasDraft ||
+    disabled ||
+    isStreaming ||
+    showSkillMenu ||
+    showSlashMenu ||
+    modelMenuOpen ||
+    modelSelectorOpen
 
   return (
-    <div className="relative min-w-0 flex-1 w-full">
+    <div ref={setPopupAnchor} className="relative min-w-0 flex-1 w-full">
       <ComposerErrorBanner error={transferError || actionError} />
       {Bindings && (
         <Bindings
@@ -938,8 +867,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         ref={editorRef}
         value={value}
         onChange={nextValue => {
-          valueRef.current = nextValue
-          setHasDraft(Boolean(nextValue.trim()))
+          autocompleteState.setEditorValue(nextValue)
           onChange(nextValue)
         }}
         onSnapshotChange={handleEditorSnapshot}
@@ -957,12 +885,12 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         onOpenMentionReference={onOpenMentionReference}
         onEditComposerLink={editComposerLink}
         onClick={() => {
-          restoredAutocompleteValueRef.current = null
+          autocompleteState.clearRestoredValue()
           updateAutocompleteTrigger()
         }}
         onFocus={() => updateAutocompleteTrigger()}
         onReady={() => {
-          if (focusRequestExpiresAtRef.current >= Date.now()) {
+          if (autocompleteState.shouldFocusWhenReady()) {
             editorRef.current?.focus()
           }
         }}
@@ -986,67 +914,82 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
           editorRef.current?.focus()
         }}
       />
-      {showSkillMenu && (
-        <ComposerMentionMenu
-          translate={t}
-          menuRef={menuRef}
-          rows={mentionMenuRows}
-          selectedIndex={highlightedIndex}
-          className={skillMenuClassName}
-          mentionMode={activeMenu?.kind === 'mention'}
-          projectSpaceScope={cloudProjectsOpen || cloudProjectScopeActive}
-          loading={isMentionLoading || workspaceSearch.loading}
-          error={hasMentionLoadError || workspaceSearch.error}
-          canBrowseFiles={canPickNativeWorkspacePaths}
-          onRetry={() => {
-            workspaceSearch.retry()
-            loadLocalMentions({ force: true })
+      {(showSkillMenu || showSlashMenu || modelMenuOpen) && (
+        <ComposerAutocompletePopup
+          anchor={popupAnchor}
+          editorRef={textareaRef}
+          label={
+            modelMenuOpen ? t('workbench.search_models') : t('workbench.slash_command_menu_title')
+          }
+          className={showSlashMenu && !modelMenuOpen ? slashMenuClassName : skillMenuClassName}
+          onClose={restoreEditor => {
+            if (modelMenuOpen) closeSlashModelMenu(restoreEditor)
+            else closeAutocompleteMenu()
           }}
-          onHighlight={setSelectedIndex}
-          onSelect={handleMentionRowClick}
-        />
-      )}
-      {showSlashMenu && (
-        <div ref={menuRef}>
-          <SlashCommandMenu
-            renderAppIcon={renderAppIcon}
-            commands={filteredSlashCommands}
-            selectedIndex={highlightedIndex}
-            className={skillMenuClassName}
-            title={t('workbench.slash_command_menu_title')}
-            noResultsLabel={t('workbench.no_slash_commands')}
-            loadingSkills={isSlashMentionLoading}
-            skillLoadError={hasSlashMentionLoadError}
-            skillGroupLabel={t('workbench.slash_command_group_skills')}
-            skillLoadingLabel={t('workbench.loading_slash_command_skills')}
-            skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
-            skillRetryLabel={t('workbench.retry_local_skills')}
-            onSelectCommand={command => selectSlashCommand(command, activeMenu?.trigger)}
-            onHighlightCommand={setSelectedIndex}
-            onRetrySkills={() => loadLocalMentions({ force: true })}
-          />
-        </div>
-      )}
-      {modelMenuOpen && (
-        <div ref={modelMenuRef}>
-          <SlashModelMenu
-            translate={t}
-            models={models}
-            selectedModel={selectedModel ?? null}
-            selectedModelOptions={selectedModelOptions}
-            query={modelQuery}
-            selectedIndex={modelSelectedIndex}
-            className={skillMenuClassName}
-            searchPlaceholder={t('workbench.search_models')}
-            noResultsLabel={t('workbench.no_models')}
-            onQueryChange={setModelQuery}
-            onSelectedIndexChange={setModelSelectedIndex}
-            onSelectModel={selectSlashModel}
-            onBlockedModelSelect={onBlockedModelSelect}
-            onClose={() => closeSlashModelMenu(true)}
-            getCompatibilityDisabledMessage={getModelCompatibilityDisabledMessage}
-          />
-        </div>
+        >
+          {showSkillMenu && (
+            <ComposerMentionMenu
+              translate={t}
+              menuRef={menuRef}
+              rows={mentionMenuRows}
+              selectedIndex={highlightedIndex}
+              className=""
+              mentionMode={activeMenu?.kind === 'mention'}
+              projectSpaceScope={cloudProjectsOpen || cloudProjectScopeActive}
+              loading={isMentionLoading || workspaceSearch.loading}
+              error={hasMentionLoadError || workspaceSearch.error}
+              canBrowseFiles={canPickNativeWorkspacePaths}
+              onRetry={() => {
+                workspaceSearch.retry()
+                loadLocalMentions({ force: true })
+              }}
+              onHighlight={setSelectedIndex}
+              onSelect={handleMentionRowClick}
+            />
+          )}
+          {showSlashMenu && (
+            <div ref={menuRef}>
+              <SlashCommandMenu
+                renderAppIcon={renderAppIcon}
+                commands={filteredSlashCommands}
+                selectedIndex={highlightedIndex}
+                className=""
+                title={t('workbench.slash_command_menu_title')}
+                noResultsLabel={t('workbench.no_slash_commands')}
+                loadingSkills={isSlashMentionLoading}
+                skillLoadError={hasSlashMentionLoadError}
+                skillGroupLabel={t('workbench.slash_command_group_skills')}
+                skillLoadingLabel={t('workbench.loading_slash_command_skills')}
+                skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
+                skillRetryLabel={t('workbench.retry_local_skills')}
+                onSelectCommand={command => selectSlashCommand(command, activeMenu?.trigger)}
+                onHighlightCommand={setSelectedIndex}
+                onRetrySkills={() => loadLocalMentions({ force: true })}
+              />
+            </div>
+          )}
+          {modelMenuOpen && (
+            <>
+              <SlashModelMenu
+                translate={t}
+                models={models}
+                selectedModel={selectedModel ?? null}
+                selectedModelOptions={selectedModelOptions}
+                query={modelQuery}
+                selectedIndex={modelSelectedIndex}
+                className=""
+                searchPlaceholder={t('workbench.search_models')}
+                noResultsLabel={t('workbench.no_models')}
+                onQueryChange={setModelQuery}
+                onSelectedIndexChange={setModelSelectedIndex}
+                onSelectModel={selectSlashModel}
+                onBlockedModelSelect={onBlockedModelSelect}
+                onClose={() => closeSlashModelMenu(true)}
+                getCompatibilityDisabledMessage={getModelCompatibilityDisabledMessage}
+              />
+            </>
+          )}
+        </ComposerAutocompletePopup>
       )}
       {editingLink && (
         <LinkEditPopover

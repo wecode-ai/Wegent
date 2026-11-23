@@ -1,5 +1,6 @@
-import { MessageCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { MessageCircle } from 'lucide-react'
 import type { ExperiencePrivateConversation } from '../model'
 
 export interface RecentDiscussionsProps {
@@ -16,7 +17,9 @@ export function RecentDiscussions({ conversations, onOpen }: RecentDiscussionsPr
       </h2>
       {conversations.length ? (
         conversations.slice(0, 8).map(conversation => (
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             key={conversation.key}
             type="button"
             data-testid={`collaboration-exp-recent-discussion-${encodeURIComponent(conversation.key)}`}
@@ -34,7 +37,7 @@ export function RecentDiscussions({ conversations, onOpen }: RecentDiscussionsPr
                 )}
               </time>
             )}
-          </button>
+          </ControlButton>
         ))
       ) : (
         <p className="px-4 py-3 text-sm text-text-muted">{t('assistant.noDiscussions')}</p>

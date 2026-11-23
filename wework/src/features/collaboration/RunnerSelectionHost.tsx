@@ -1,18 +1,13 @@
-import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { runnerSupportsModel, type RunnerSelection } from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
+import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
 import { useTranslation } from '@/hooks/useTranslation'
-import { registerRunnerSelectionHandler, type RunnerSelectionRequest } from '@/lib/runner-selection'
+import { runnerSupportsModel } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AgentEnvironmentFields, AgentModelFields } from './AgentRoutingFields'
+import type { PendingRunnerSelection as Pending } from './runnerSelectionSource'
+import { createRunnerSelectionSource } from './runnerSelectionSource'
 
-interface Pending {
-  id: number
-  request: RunnerSelectionRequest
-  resolve(selection: RunnerSelection): void
-  reject(error: Error): void
-}
 function SelectionDialog({ pending, close }: { pending: Pending; close(): void }) {
   const { t } = useTranslation('common')
   const api = useMemo(
@@ -35,19 +30,22 @@ function SelectionDialog({ pending, close }: { pending: Pending; close(): void }
       )
     : routing.modelAvailable
   const loadRouting = routing.load
-  useEffect(() => {
+  const [initialized, setInitialized] = useState<Pending | null>(null)
+  // Routing load only initializes React state owned by this dialog.
+  if (initialized !== pending) {
+    setInitialized(pending)
     loadRouting(
       pending.request.execution_policy.mode === 'user_select'
         ? undefined
         : pending.request.execution_policy,
       pending.request.model_policy.mode === 'fixed' ? pending.request.model_policy : undefined
     )
-  }, [pending, loadRouting])
+  }
   const cancel = () => {
     pending.reject(new Error(t('workbench.runner_selection_cancelled')))
     close()
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(cancel, true, 'select:not([disabled])')
+  const dialogRef = useRef<HTMLElement>(null)
   const confirm = () => {
     pending.resolve({
       ...(pending.request.execution_policy.mode === 'user_select'
@@ -67,13 +65,17 @@ function SelectionDialog({ pending, close }: { pending: Pending; close(): void }
     (pending.request.model_policy.mode === 'fixed' || routing.model !== null)
   return (
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="runner-selection-title"
-        className="w-full max-w-lg space-y-4 rounded-lg border border-border bg-popover p-5 shadow-lg"
-        data-testid="runner-selection-dialog"
+      <DialogSurface
+        onClose={cancel}
+        initialFocus={'select:not([disabled])'}
+        render={
+          <section
+            ref={dialogRef}
+            aria-labelledby="runner-selection-title"
+            className="w-full max-w-lg space-y-4 rounded-lg border border-border bg-popover p-5 shadow-lg"
+            data-testid="runner-selection-dialog"
+          />
+        }
       >
         <h2 id="runner-selection-title" className="text-sm font-semibold">
           {t('workbench.runner_selection_title')}
@@ -108,39 +110,15 @@ function SelectionDialog({ pending, close }: { pending: Pending; close(): void }
             {t('workbench.runner_selection_confirm')}
           </Button>
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }
 export function RunnerSelectionHost() {
-  const [queue, setQueue] = useState<Pending[]>([])
-  const pendingRef = useRef(new Set<Pending>())
-  const sequence = useRef(0)
-  useEffect(() => {
-    const unregister = registerRunnerSelectionHandler(
-      request =>
-        new Promise((resolve, reject) => {
-          const pending = { request, resolve, reject, id: ++sequence.current }
-          pendingRef.current.add(pending)
-          setQueue(current => [...current, pending])
-        })
-    )
-    const pending = pendingRef.current
-    return () => {
-      unregister()
-      for (const item of pending) item.reject(new Error('Runner selection dialog closed'))
-      pending.clear()
-    }
-  }, [])
+  const [source] = useState(createRunnerSelectionSource)
+  const queue = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
   const current = queue[0]
   return current ? (
-    <SelectionDialog
-      key={current.id}
-      pending={current}
-      close={() => {
-        pendingRef.current.delete(current)
-        setQueue(items => items.slice(1))
-      }}
-    />
+    <SelectionDialog key={current.id} pending={current} close={() => source.close(current)} />
   ) : null
 }

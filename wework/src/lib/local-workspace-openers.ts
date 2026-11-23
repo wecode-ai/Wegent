@@ -3,7 +3,7 @@ import type { DesktopPlatform } from './platform'
 export type OpenerCategory = 'general' | 'fileManager' | 'terminal' | 'macOnly' | 'winOnly'
 
 export interface LocalWorkspaceOpenerDef {
-  id: string
+  id: LocalWorkspaceOpenerId
   label: string
   category: OpenerCategory
 }

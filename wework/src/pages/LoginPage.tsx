@@ -1,127 +1,50 @@
-import { useEffect, useMemo, useState } from 'react'
 import {
   AdminPasswordSetupForm,
-  PasswordLoginForm,
   OUTLINED_LOGIN_BUTTON_CLASS,
+  PasswordLoginForm,
 } from '@/components/auth/LoginForms'
 import { getRuntimeConfig } from '@/config/runtime'
-import { isAdminPasswordSetupRequiredError } from '@/features/auth/adminPasswordSetup'
-import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/auth/redirect'
+import { createLoginPageSource, getLoginRedirectTarget } from '@/features/auth/loginPageSource'
 import { useAuth } from '@/features/auth/useAuth'
 import { useTranslation } from '@/hooks/useTranslation'
-import { navigateTo } from '@/lib/navigation'
-
-function getRedirectTarget(): string {
-  const search = new URLSearchParams(window.location.search)
-  const queryRedirect = sanitizeRedirectPath(search.get('redirect'), ['/login', '/login/oidc'])
-  const storedRedirect = sanitizeRedirectPath(sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY), [
-    '/login',
-    '/login/oidc',
-  ])
-  return queryRedirect || storedRedirect || '/'
-}
-
-function buildOidcLoginUrl(apiBaseUrl: string, redirect: string, appBasePath: string): string {
-  const params = new URLSearchParams()
-  params.set('redirect', redirect)
-  if (appBasePath) {
-    params.set('frontend_base_path', appBasePath)
-  }
-
-  return `${apiBaseUrl}/auth/oidc/login?${params.toString()}`
-}
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 
 export function LoginPage() {
   const { t } = useTranslation('common')
-  const {
-    login,
-    user,
-    isLoading: authLoading,
-    adminPasswordSetupRequired,
-    adminUsername,
-    setupAdminPassword,
-  } = useAuth()
+  const auth = useAuth()
+  const { user, isLoading: authLoading, adminPasswordSetupRequired, adminUsername } = auth
   const config = useMemo(() => getRuntimeConfig(), [])
-  const [formData, setFormData] = useState({
-    user_name: '',
-    password: '',
-  })
-  const [adminPasswordFormData, setAdminPasswordFormData] = useState({
-    password: '',
-    confirmPassword: '',
-  })
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isAdminPasswordSubmitting, setIsAdminPasswordSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [adminPasswordError, setAdminPasswordError] = useState<string | null>(null)
-  const redirectTarget = getRedirectTarget()
+  const [source] = useState(createLoginPageSource)
+  const redirectTarget = getLoginRedirectTarget()
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      source.subscribe(listener, {
+        auth,
+        config,
+        redirectTarget,
+        translate: key => t(key),
+      }),
+    [source, auth, config, redirectTarget, t]
+  )
+  const {
+    formData,
+    adminPasswordFormData,
+    isSubmitting,
+    isAdminPasswordSubmitting,
+    error,
+    adminPasswordError,
+  } = useSyncExternalStore(subscribe, source.getSnapshot)
+  const {
+    setFormData,
+    setAdminPasswordFormData,
+    handleSubmit,
+    handleAdminPasswordSubmit,
+    handleOidcLogin,
+  } = source
   const showPasswordLogin = config.loginMode === 'password' || config.loginMode === 'all'
   const showOidcLogin = config.loginMode === 'oidc' || config.loginMode === 'all'
   const isResolvingInitialUserState = authLoading && !user
-
-  useEffect(() => {
-    if (!authLoading && user) {
-      sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
-      navigateTo(redirectTarget)
-    }
-  }, [authLoading, redirectTarget, user])
-
-  useEffect(() => {
-    if (config.loginMode === 'oidc') {
-      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, redirectTarget)
-      window.location.href = buildOidcLoginUrl(
-        config.apiBaseUrl,
-        redirectTarget,
-        config.appBasePath
-      )
-    }
-  }, [config.apiBaseUrl, config.appBasePath, config.loginMode, redirectTarget])
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setError(null)
-    setIsSubmitting(true)
-    try {
-      await login(formData)
-      sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
-      navigateTo(redirectTarget)
-    } catch (err) {
-      if (isAdminPasswordSetupRequiredError(err)) {
-        return
-      }
-      setError(err instanceof Error ? err.message : t('workbench.login_failed'))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  async function handleAdminPasswordSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setAdminPasswordError(null)
-
-    if (adminPasswordFormData.password !== adminPasswordFormData.confirmPassword) {
-      setAdminPasswordError(t('workbench.admin_password_mismatch'))
-      return
-    }
-
-    setIsAdminPasswordSubmitting(true)
-    try {
-      await setupAdminPassword(adminPasswordFormData.password)
-      sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
-      navigateTo(redirectTarget)
-    } catch (err) {
-      setAdminPasswordError(
-        err instanceof Error ? err.message : t('workbench.admin_password_setup_failed')
-      )
-    } finally {
-      setIsAdminPasswordSubmitting(false)
-    }
-  }
-
-  function handleOidcLogin() {
-    const redirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY) || redirectTarget
-    window.location.href = buildOidcLoginUrl(config.apiBaseUrl, redirect, config.appBasePath)
-  }
 
   if (config.loginMode === 'oidc') {
     return null
@@ -172,14 +95,15 @@ export function LoginPage() {
           {showOidcLogin &&
             (!showPasswordLogin ||
               (!isResolvingInitialUserState && !adminPasswordSetupRequired)) && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="oidc-login-button"
                 className={OUTLINED_LOGIN_BUTTON_CLASS}
                 onClick={handleOidcLogin}
               >
                 {config.oidcLoginText || t('workbench.oidc_login')}
-              </button>
+              </ControlButton>
             )}
         </div>
       </div>

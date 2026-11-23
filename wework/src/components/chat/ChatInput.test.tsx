@@ -21,7 +21,7 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useComposerAttachments } from '@wegent/collaboration/composer'
-import { createRef, useEffect, useState } from 'react'
+import { createRef, useCallback, useImperativeHandle, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -514,11 +514,10 @@ describe('ChatInput', () => {
     expect(menuButton).not.toHaveAttribute('title')
     expect(menuButton.querySelector('.lucide-chevron-down')).toBeInTheDocument()
 
-    vi.useFakeTimers()
-    fireEvent.pointerEnter(menuButton.parentElement as HTMLElement)
-    act(() => vi.advanceTimersByTime(700))
-    expect(screen.getByTestId('send-mode-menu-button-tooltip')).toHaveTextContent('选择发送方式')
-    vi.useRealTimers()
+    await userEvent.hover(menuButton)
+    expect(await screen.findByTestId('send-mode-menu-button-tooltip')).toHaveTextContent(
+      '选择发送方式'
+    )
 
     await userEvent.click(menuButton)
     expect(
@@ -529,7 +528,10 @@ describe('ChatInput', () => {
     expect(
       screen.getByTestId('guide-current-turn-option').querySelector('.lucide-corner-down-left')
     ).not.toBeInTheDocument()
-    expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent('⇧')
+    expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent(/⇧|Shift/)
+    expect(
+      within(screen.getByTestId('interrupt-and-send-option')).getByLabelText('Enter')
+    ).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
 
     expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
@@ -1430,6 +1432,7 @@ describe('ChatInput', () => {
     // A selected text file stays a file even when its name resembles a pasted attachment.
     const file = new File(['test document'], 'clipboard-text-test.txt', { type: 'text/plain' })
     await userEvent.click(screen.getByTestId('add-context-button'))
+    await userEvent.click(screen.getByTestId('attach-files-button'))
     await userEvent.upload(screen.getByTestId('attachment-file-input'), file)
 
     const cards = () =>
@@ -2578,9 +2581,10 @@ describe('ChatInput', () => {
       let controls: ConversationModelControls | undefined
       function RecoveryComposer() {
         const model = useStandInConversationModel(services, profile)
-        useEffect(() => {
-          controls = model
-        }, [model])
+        const expose = useCallback((current: ConversationModelControls | null) => {
+          if (current) controls = current
+        }, [])
+        useImperativeHandle(expose, () => model, [model])
         const [value, setValue] = useState('Keep the cloud draft')
         return (
           <ChatInput
@@ -2747,6 +2751,8 @@ describe('ChatInput', () => {
       expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
       expect(screen.getByTestId('chat-message-input')).toHaveTextContent('Keep this draft')
       expect(screen.getByTestId('send-message-button')).toBeEnabled()
+      await userEvent.keyboard('{Escape}')
+      expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
       await userEvent.click(screen.getByTestId('send-message-button'))
       expect(onSubmit).toHaveBeenCalledWith(
         expect.objectContaining({

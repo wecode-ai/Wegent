@@ -133,11 +133,31 @@ async fn recovered_manager_publishes_its_issue_session_before_clearing_the_round
 
 #[tokio::test]
 async fn rejected_manager_publication_keeps_the_round_without_starting_a_hidden_run() {
+    use axum::{body::Body, response::IntoResponse};
+
     let root = tempfile::tempdir().unwrap();
-    let app = Router::new().route(
-        "/api/v1/cloud-projects/7/executions/assignment-status",
-        post(|| async { StatusCode::FORBIDDEN }),
-    );
+    let requests = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route(
+            "/api/v1/cloud-projects/7/executions/assignment-status",
+            post(
+                |State(requests): State<Arc<AtomicUsize>>, Json(payload): Json<Value>| async move {
+                    assert_eq!(payload["refresh_runtime_profiles"], true);
+                    if requests.fetch_add(1, Ordering::SeqCst) == 0 {
+                        let stream = futures_util::stream::iter([
+                            Ok(axum::body::Bytes::from_static(b"{")),
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::ConnectionReset,
+                                "interrupted response",
+                            )),
+                        ]);
+                        return (StatusCode::OK, Body::from_stream(stream)).into_response();
+                    }
+                    StatusCode::FORBIDDEN.into_response()
+                },
+            ),
+        )
+        .with_state(requests.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -152,6 +172,7 @@ async fn rejected_manager_publication_keeps_the_round_without_starting_a_hidden_
         .unwrap_err();
 
     assert!(error.contains("403"));
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
     assert!(handler
         .local_task_link(&fresh_cloud_manager_task_id(&command))
         .is_none());
@@ -488,26 +509,13 @@ fn native_default_manager_resumes_after_human_delivery_without_model_credentials
         .prepare_fresh_cloud_manager(&source, &command, &outcomes)
         .unwrap();
 
-    assert_eq!(payload["taskId"], fresh_cloud_manager_task_id(&command));
-    assert_eq!(payload["executionRequest"]["new_session"], true);
+    assert_eq!(payload["taskId"], command.manager_runtime_task_id);
+    assert_eq!(payload["executionRequest"]["new_session"], false);
     assert_eq!(payload["executionRequest"]["model_config"], json!({}));
     assert!(payload["message"]
         .as_str()
         .unwrap()
         .contains("CPU evidence delivered"));
-}
-
-#[test]
-fn configured_manager_requires_credentials_after_restart() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "unused-runner");
-    let mut source = source_link();
-    source.runtime_handle["executionRequest"]["model_config"] = json!({"model_id": "cloud-model"});
-    assert_eq!(
-        handler
-            .prepare_fresh_cloud_manager(&source, &command(), &[])
-            .unwrap_err(),
-        "Collaboration manager model configuration is unavailable"
-    );
 }
 
 #[tokio::test]
@@ -672,7 +680,7 @@ fn fresh_manager_preserves_direct_runtime_home_classification() {
 }
 
 #[test]
-fn fresh_cloud_manager_payload_starts_new_session() {
+fn cloud_manager_payload_reuses_the_existing_session_with_a_separate_turn() {
     let command = command();
     let mut source = source_link();
     source.runtime_handle["executionRequest"]["extra"]["origin"]["executionId"] = json!(91);
@@ -684,12 +692,10 @@ fn fresh_cloud_manager_payload_starts_new_session() {
 
     let (request, payload) = fresh_cloud_manager_payload(&source, &command, &outcomes).unwrap();
 
-    assert_eq!(request.task_id, "manager-task-1-manager-after-round-1");
-    assert_eq!(
-        request.subtask_id,
-        "manager-task-1-manager-after-round-1-initial"
-    );
-    assert!(request.new_session);
+    assert_eq!(request.task_id, command.manager_runtime_task_id);
+    assert_eq!(payload["clientUserMessageId"], request.subtask_id);
+    assert_eq!(payload["queueIfBusy"], true);
+    assert!(!request.new_session);
     assert!(request.history.is_empty());
     assert_eq!(request.message_id, None);
     assert!(request.extra["origin"].get("executionId").is_none());
@@ -720,10 +726,7 @@ fn fresh_cloud_manager_payload_starts_new_session() {
         payload["runtimeHandle"]["collaborationDispatchTaskId"],
         "dispatch-task-1"
     );
-    assert_eq!(
-        payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"],
-        source.runtime_handle["collaborationMemberRuntimeProfiles"]
-    );
+    assert!(payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"].is_null());
 }
 
 #[test]
@@ -789,13 +792,16 @@ fn executor_materializes_member_task_from_root_profile() {
         .expect("member system prompt");
     assert!(system_prompt.starts_with("member system instructions"));
     assert!(!system_prompt.contains("manager system instructions"));
-    assert!(system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
-    assert!(system_prompt.contains("不要调用 add_board_item_comment"));
-    assert!(system_prompt.contains("必须调用 upload_item_attachment"));
+    assert!(system_prompt.contains("The Executor records this run in the current Issue"));
+    assert!(system_prompt.contains("Do not call add_board_item_comment"));
+    assert!(system_prompt.contains("Use upload_item_attachment"));
+    assert!(system_prompt.contains("Use native subagents"));
+    assert!(system_prompt.contains("Delegate a single nontrivial task to one subagent"));
+    assert!(system_prompt.contains("finalize_delivery"));
 }
 
 #[test]
-fn fresh_cloud_manager_reuses_the_in_memory_runtime_model_config() {
+fn fresh_cloud_manager_replaces_expired_credentials_for_manager_and_members() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let source = source_link();
     let command = command();
@@ -804,13 +810,29 @@ fn fresh_cloud_manager_reuses_the_in_memory_runtime_model_config() {
         "base_url": "https://models.example.com/v1",
         "api_key": "runtime-secret",
     });
-    handler.retain_runtime_model_config(&source.local_task_id, &model_config);
+    handler.retain_runtime_model_config(&source.local_task_id, &json!({"api_key":"expired"}));
 
-    let payload = handler
+    let mut payload = handler
         .prepare_fresh_cloud_manager(&source, &command, &[])
         .unwrap();
+    let members = json!([{"memberIds":["agent-2"],"runtimePayload":{
+        "executionRequest":{"model_config":{"api_key":"fresh-member-secret"}}
+    }}]);
+    assert!(apply_fresh_cloud_manager_profiles(&mut payload, Value::Null).is_err());
+    apply_fresh_cloud_manager_profiles(
+        &mut payload,
+        json!({"manager_model_config":model_config,
+            "manager_model_selection":{"modelName":"cloud-model","modelType":"group"},
+            "member_runtime_profiles":members}),
+    )
+    .unwrap();
 
     assert_eq!(payload["executionRequest"]["model_config"], model_config);
+    assert_eq!(payload["modelSelection"]["modelName"], "cloud-model");
+    assert_eq!(
+        payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"],
+        members
+    );
     assert!(source.runtime_handle["executionRequest"]["model_config"].is_null());
 }
 
@@ -821,6 +843,7 @@ fn coordination_manager_round_retains_enabling_identity_instead_of_device_accoun
         backend_url: "https://backend.example.com".into(),
         socket_url: "wss://backend.example.com".into(),
         auth_token: "device-owner-session".into(),
+        authenticated_user_id: None,
         runtime_auth_token: "device-owner-runtime".into(),
     })));
     let handler =

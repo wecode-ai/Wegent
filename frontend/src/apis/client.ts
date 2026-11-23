@@ -125,7 +125,8 @@ class APIClient {
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
-    requestOptions: RequestOptions = {}
+    requestOptions: RequestOptions = {},
+    decode: (response: Response) => Promise<T> = response => response.json()
   ): Promise<T> {
     const url = `${this.getBaseURL()}${endpoint}`
     const token = getToken()
@@ -181,8 +182,7 @@ class APIClient {
         return null as T
       }
 
-      const result = await response.json()
-      return result
+      return await decode(response)
     } catch (error) {
       throw error
     }
@@ -190,6 +190,10 @@ class APIClient {
 
   async get<T>(endpoint: string, requestOptions?: RequestOptions): Promise<T> {
     return this.request<T>(endpoint, { method: 'GET' }, requestOptions)
+  }
+
+  getBlob(endpoint: string): Promise<Blob> {
+    return this.request(endpoint, { method: 'GET' }, {}, response => response.blob())
   }
 
   async post<T>(endpoint: string, data?: unknown, requestOptions?: RequestOptions): Promise<T> {

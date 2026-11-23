@@ -32,10 +32,10 @@ pub(super) fn register_context_with_lifetime(
         registered.context = context;
         registered.expires_at = now + CONTEXT_HANDLE_TTL;
         let handle = handle.clone();
-        contexts.retain(|_, registered| registered.expires_at > now);
+        contexts.retain(|_, registered| registered.is_live(now));
         return handle;
     }
-    contexts.retain(|_, registered| registered.expires_at > now);
+    contexts.retain(|_, registered| registered.is_live(now));
     let handle = Uuid::new_v4().to_string();
     contexts.insert(
         handle.clone(),
@@ -43,6 +43,7 @@ pub(super) fn register_context_with_lifetime(
             context,
             expires_at: now + CONTEXT_HANDLE_TTL,
             lifetime,
+            active_executions: 0,
         },
     );
     handle

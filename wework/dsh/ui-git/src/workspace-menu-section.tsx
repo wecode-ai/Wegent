@@ -1,9 +1,10 @@
-import { Check, ChevronDown, GitBranch, Search, Workflow } from 'lucide-react'
-import { useState } from 'react'
-
+import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { Button } from '@wegent/collaboration/markdown/Button'
+import { GitBranch, Workflow } from 'lucide-react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isGitWorkspaceProject } from '@/lib/projectClassification'
-import { cn } from '@/lib/utils'
 import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type { ProjectWithTasks } from '@/types/api'
 
@@ -24,8 +25,6 @@ interface GitWorkspaceMenuSectionProps {
   context: GitWorkspaceContext
 }
 
-type OpenSection = 'launch-mode' | 'branch' | null
-
 function unavailableMessageKey(reason: ProjectWorktreeAvailability['reason']): string | null {
   if (reason === 'available') return null
   return `workbench.worktree_unavailable_${reason}`
@@ -36,10 +35,18 @@ export default function GitWorkspaceMenuSection({
   context,
 }: GitWorkspaceMenuSectionProps) {
   const { t } = useTranslation('common')
-  const [openSection, setOpenSection] = useState<OpenSection>(null)
-  const [branchQuery, setBranchQuery] = useState('')
   const [branches, setBranches] = useState<string[]>([])
   const [branchesLoading, setBranchesLoading] = useState(false)
+  const [branchesError, setBranchesError] = useState<string | null>(null)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const [checkingOut, setCheckingOut] = useState(false)
+  const request = useRef(0)
+  const attachMenu = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return
+    return () => {
+      request.current += 1
+    }
+  }, [])
   const branchName = context.worktreeBranch ?? context.branchName ?? ''
   const projectSupportsWorktrees = Boolean(
     context.currentProject && isGitWorkspaceProject(context.currentProject)
@@ -61,160 +68,136 @@ export default function GitWorkspaceMenuSection({
         })
   const messageKey = unavailableMessageKey(availability.reason)
   const availableBranches = Array.from(new Set([branchName, ...branches].filter(Boolean)))
-  const filteredBranches = availableBranches.filter(branch =>
-    branch.toLocaleLowerCase().includes(branchQuery.trim().toLocaleLowerCase())
-  )
+  const modeOptions = [
+    {
+      value: 'current_workspace',
+      label: t('workbench.popout_workspace_menu_current_workspace'),
+      disabled: context.executionModeLocked,
+      testId: 'popout-workspace-launch-mode-current_workspace',
+    },
+    {
+      value: 'git_worktree',
+      label: t('workbench.popout_workspace_menu_worktree'),
+      disabled: context.executionModeLocked || !availability.available,
+      testId: 'popout-workspace-launch-mode-git_worktree',
+    },
+  ]
 
-  const toggleBranchSection = () => {
-    const opening = openSection !== 'branch'
-    setOpenSection(opening ? 'branch' : null)
-    setBranchQuery('')
-    if (!opening || !context.onListBranches) return
+  const loadBranches = async () => {
+    if (!context.onListBranches) return
+    const revision = ++request.current
     setBranchesLoading(true)
-    void context
-      .onListBranches()
-      .then(setBranches)
-      .catch(() => setBranches([]))
-      .finally(() => setBranchesLoading(false))
+    setBranchesError(null)
+    try {
+      const next = await context.onListBranches()
+      if (request.current === revision) setBranches(next)
+    } catch (cause) {
+      if (request.current === revision)
+        setBranchesError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (request.current === revision) setBranchesLoading(false)
+    }
+  }
+
+  const checkout = async (branch: string) => {
+    if (!context.onCheckoutBranch || checkingOut) return
+    setCheckingOut(true)
+    setCheckoutError(null)
+    try {
+      await context.onCheckoutBranch(branch)
+      closeMenu()
+    } catch (cause) {
+      setCheckoutError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setCheckingOut(false)
+    }
   }
 
   return (
-    <>
-      <button
-        type="button"
-        role="menuitem"
-        data-testid="popout-workspace-launch-mode-button"
-        className={cn(
-          'flex min-h-11 w-full items-center justify-between gap-4 rounded-lg px-3 text-sm font-normal hover:bg-muted',
-          openSection === 'launch-mode' && 'bg-muted'
-        )}
-        onClick={() =>
-          setOpenSection(current => (current === 'launch-mode' ? null : 'launch-mode'))
-        }
-      >
-        <span className="text-text-primary">
-          {t('workbench.popout_workspace_menu_launch_mode')}
-        </span>
-        <span className="flex min-w-0 items-center gap-2 text-text-primary">
-          <Workflow className="h-4 w-4 shrink-0" />
-          <span className="max-w-40 truncate">
-            {context.executionMode === 'git_worktree'
-              ? t('workbench.popout_workspace_menu_worktree')
-              : t('workbench.popout_workspace_menu_current_workspace')}
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
-        </span>
-      </button>
-      {openSection === 'launch-mode' ? (
-        <div
-          role="menu"
-          data-testid="popout-workspace-launch-mode-submenu"
-          className="mx-2 mb-1 rounded-xl border border-border/60 bg-background p-1"
-        >
-          {(
-            [
-              ['current_workspace', t('workbench.popout_workspace_menu_current_workspace')],
-              ['git_worktree', t('workbench.popout_workspace_menu_worktree')],
-            ] as const
-          ).map(([mode, label]) => {
-            const disabled =
-              context.executionModeLocked || (mode === 'git_worktree' && !availability.available)
-            return (
-              <button
-                key={mode}
-                type="button"
-                role="menuitemradio"
-                aria-checked={context.executionMode === mode}
-                disabled={disabled}
-                data-testid={`popout-workspace-launch-mode-${mode}`}
-                className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
-                onClick={() => {
-                  context.onExecutionModeChange(mode)
-                  closeMenu()
-                }}
-              >
-                <Workflow className="h-4 w-4 shrink-0 text-text-secondary" />
-                <span className="min-w-0 flex-1">{label}</span>
-                {context.executionMode === mode ? <Check className="h-4 w-4 shrink-0" /> : null}
-              </button>
-            )
-          })}
-          {messageKey ? (
+    <div ref={attachMenu} className="space-y-2 px-1">
+      <SelectField
+        accessibleLabel={t('workbench.popout_workspace_menu_launch_mode')}
+        testId="popout-workspace-launch-mode-button"
+        menuTestId="popout-workspace-launch-mode-submenu"
+        value={context.executionMode}
+        options={modeOptions.map(option => ({
+          ...option,
+          icon: <Workflow className="h-4 w-4 shrink-0" aria-hidden="true" />,
+        }))}
+        onChange={mode => {
+          if (!modeOptions.some(option => option.value === mode && !option.disabled)) return
+          context.onExecutionModeChange(mode)
+          closeMenu()
+        }}
+        className="w-full"
+        footer={
+          messageKey ? (
             <p
               data-testid="popout-workspace-worktree-unavailable-reason"
-              className="px-3 pt-1 text-xs leading-4 text-text-muted"
+              className="px-2 py-1 text-xs text-text-secondary"
               role="status"
             >
               {t(messageKey)}
             </p>
-          ) : null}
-        </div>
-      ) : null}
-      <button
-        type="button"
-        role="menuitem"
-        data-testid="popout-workspace-branch-button"
-        className={cn(
-          'flex min-h-11 w-full items-center justify-between gap-4 rounded-lg px-3 text-sm font-normal hover:bg-muted',
-          openSection === 'branch' && 'bg-muted'
-        )}
-        onClick={toggleBranchSection}
-      >
-        <span className="text-text-primary">{t('workbench.popout_workspace_menu_branch')}</span>
-        <span className="flex min-w-0 items-center gap-2 text-text-primary">
-          <GitBranch className="h-4 w-4 shrink-0" />
-          <span className="max-w-40 truncate">
-            {branchName || t('workbench.popout_workspace_menu_no_branch')}
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
-        </span>
-      </button>
-      {openSection === 'branch' ? (
-        <div
-          role="menu"
-          data-testid="popout-workspace-branch-submenu"
-          className="mx-2 mb-1 rounded-xl border border-border/60 bg-background p-1"
+          ) : undefined
+        }
+      />
+      <SearchableSelect
+        accessibleLabel={t('workbench.popout_workspace_menu_branch')}
+        testId="popout-workspace-branch-button"
+        menuTestId="popout-workspace-branch-submenu"
+        searchTestId="popout-workspace-branch-search"
+        value={branchName}
+        disabled={!context.onCheckoutBranch || checkingOut}
+        options={availableBranches.map(branch => ({
+          value: branch,
+          label: branch,
+          icon: <GitBranch className="h-4 w-4 shrink-0" aria-hidden="true" />,
+          testId: 'popout-workspace-branch-option-' + branch,
+        }))}
+        onChange={branch => {
+          void checkout(branch)
+        }}
+        onOpenChange={open => {
+          if (open) void loadBranches()
+        }}
+        searchPlaceholder={t('workbench.environment_branch_search', '搜索分支')}
+        emptyLabel={t('workbench.popout_workspace_menu_no_branch')}
+        searchStatus={
+          branchesLoading ? (
+            <p role="status" className="px-2 py-1 text-sm text-text-secondary">
+              {t('loading', '加载中…')}
+            </p>
+          ) : branchesError ? (
+            <p role="alert" className="px-2 py-1 text-sm text-destructive">
+              {branchesError}
+            </p>
+          ) : undefined
+        }
+        footer={
+          branchesError ? (
+            <Button
+              variant="ghost"
+              data-testid="popout-workspace-branch-retry"
+              onClick={() => {
+                void loadBranches()
+              }}
+            >
+              {t('retry', '重试')}
+            </Button>
+          ) : undefined
+        }
+        className="w-full"
+      />
+      {checkoutError && (
+        <p
+          role="alert"
+          data-testid="popout-workspace-branch-error"
+          className="px-2 text-sm text-destructive"
         >
-          <label className="mb-1 flex h-9 items-center gap-2 rounded-lg border border-border/70 px-2 text-text-secondary keyboard:focus-within:border-focus">
-            <Search className="h-4 w-4 shrink-0" />
-            <input
-              data-testid="popout-workspace-branch-search"
-              value={branchQuery}
-              onChange={event => setBranchQuery(event.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-sm font-normal text-text-primary outline-none placeholder:text-text-muted"
-              placeholder={t('workbench.environment_branch_search', '搜索分支')}
-            />
-          </label>
-          <div className="max-h-60 overflow-y-auto">
-            {branchesLoading ? (
-              <div className="px-3 py-2 text-sm font-normal text-text-secondary">
-                {t('loading', '加载中…')}
-              </div>
-            ) : (
-              filteredBranches.map(branch => (
-                <button
-                  key={branch}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={branchName === branch}
-                  data-testid={`popout-workspace-branch-option-${branch}`}
-                  className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal text-text-primary hover:bg-muted"
-                  onClick={() => {
-                    void context.onCheckoutBranch?.(branch).catch(error => {
-                      console.error('[Wework Git] Failed to checkout branch', error)
-                    })
-                    closeMenu()
-                  }}
-                >
-                  <GitBranch className="h-4 w-4 shrink-0 text-text-secondary" />
-                  <span className="min-w-0 flex-1 truncate">{branch}</span>
-                  {branchName === branch ? <Check className="h-4 w-4 shrink-0" /> : null}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      ) : null}
-    </>
+          {checkoutError}
+        </p>
+      )}
+    </div>
   )
 }

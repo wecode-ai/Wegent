@@ -1,47 +1,50 @@
-import { useState } from "react";
-import { AlertTriangle, ChevronDown } from "lucide-react";
-import type { WorkbenchMessage } from "@wegent/chat-core/runtime-conversation";
-import { parseChatError } from "@wegent/chat-core/chat-error";
-import { useConversationTranslation } from "./ConversationTranslation";
-import { GitAccountConfigurationButton } from "../controls/GitAccountConfiguration";
+import { parseChatError, type ChatErrorInfo } from '@wegent/chat-core/chat-error'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import { AlertTriangle, ChevronDown } from 'lucide-react'
+import { useState } from 'react'
+import { GitAccountConfigurationButton } from '../controls/GitAccountConfiguration'
+import { Button as ControlButton } from '../markdown/Button'
+import { useConversationTranslation } from './ConversationTranslation'
 
 export function AssistantErrorCard({
   error,
   errorType,
+  errorInfo,
   rawError,
   message,
   onRetry,
   onSwitchModel,
 }: {
-  error?: string;
-  errorType?: string;
-  rawError?: string;
-  message: WorkbenchMessage;
-  onRetry?: (message: WorkbenchMessage) => void;
-  onSwitchModel?: (message: WorkbenchMessage) => void;
+  error?: string
+  errorInfo?: ChatErrorInfo
+  errorType?: string
+  rawError?: string
+  message: WorkbenchMessage
+  onRetry?: (message: WorkbenchMessage) => void
+  onSwitchModel?: (message: WorkbenchMessage) => void
 }) {
-  const { t, translate } = useConversationTranslation();
-  const [isDetailExpanded, setIsDetailExpanded] = useState(false);
-  const parsedError = parseChatError(rawError || error || "", errorType);
+  const { t, translate } = useConversationTranslation()
+  const [isDetailExpanded, setIsDetailExpanded] = useState(false)
+  const parsedError = parseChatError(rawError || error || '', errorType, errorInfo)
   const displayError = parsedError.gitFailure
     ? `${parsedError.gitFailure.domain}: ${parsedError.gitFailure.message}`
-    : rawError || error;
-  const hasErrorDetails = Boolean(displayError);
+    : rawError || error
+  const hasErrorDetails = Boolean(displayError)
   const modelName =
     displayError?.match(/model_id:\s*([^"'}\s]+)/)?.[1] ??
-    displayError?.match(/model(?:\s+|_id["':\s]+)([a-z0-9._:-]+)/i)?.[1];
-  const title = t(parsedError.titleKey);
+    displayError?.match(/model(?:\s+|_id["':\s]+)([a-z0-9._:-]+)/i)?.[1]
+  const title = t(parsedError.titleKey)
   const description = parsedError.gitFailure
     ? t(parsedError.descriptionKey, { domain: parsedError.gitFailure.domain })
-    : parsedError.type === "model_protocol_error" && modelName
-      ? t("assistant_error.types.model_protocol_error.description_with_model", {
+    : parsedError.type === 'model_protocol_error' && modelName
+      ? t('assistant_error.types.model_protocol_error.description_with_model', {
           model: modelName,
         })
       : parsedError.timeoutSeconds
         ? t(parsedError.descriptionKey, { seconds: parsedError.timeoutSeconds })
-        : !hasErrorDetails && parsedError.type === "generic_error"
-          ? t("assistant_error.types.generic_error.description_without_details")
-          : t(parsedError.descriptionKey);
+        : !hasErrorDetails && parsedError.type === 'generic_error'
+          ? t('assistant_error.types.generic_error.description_without_details')
+          : t(parsedError.descriptionKey)
 
   return (
     <div
@@ -71,55 +74,65 @@ export function AssistantErrorCard({
             testId="assistant-error-configure-git"
           />
           {onSwitchModel && !parsedError.gitFailure ? (
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="assistant-error-switch-model-retry"
               onClick={() => onSwitchModel(message)}
               className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90"
             >
-              {t("assistant_error.actions.switch_model_retry")}
-            </button>
+              {t('assistant_error.actions.switch_model_retry')}
+            </ControlButton>
           ) : null}
           {onRetry ? (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="assistant-error-retry"
               onClick={() => onRetry(message)}
               className="h-8 min-h-11 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
             >
-              {t("assistant_error.actions.retry")}
-            </button>
+              {t(
+                parsedError.retryPolicy === 'after_change'
+                  ? 'assistant_error.actions.retry_after_change'
+                  : 'assistant_error.actions.retry'
+              )}
+            </ControlButton>
           ) : null}
           {hasErrorDetails && (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="assistant-error-details-toggle"
               aria-expanded={isDetailExpanded}
-              onClick={() => setIsDetailExpanded((value) => !value)}
+              onClick={() => setIsDetailExpanded(value => !value)}
               className="inline-flex h-8 min-h-11 items-center gap-1 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
             >
               <ChevronDown
                 className={[
-                  "h-3.5 w-3.5 transition-transform",
-                  isDetailExpanded ? "rotate-180" : "",
-                ].join(" ")}
+                  'h-3.5 w-3.5 transition-transform',
+                  isDetailExpanded ? 'rotate-180' : '',
+                ].join(' ')}
               />
-              {t("assistant_error.details")}
-            </button>
+              {t('assistant_error.details')}
+            </ControlButton>
           )}
         </div>
         {hasErrorDetails && isDetailExpanded && (
           <pre
             data-testid="assistant-error-details"
             className={[
-              "mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-xs leading-4 text-text-muted",
-              "max-h-32 overflow-auto whitespace-pre-wrap break-words",
-            ].join(" ")}
+              'mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-xs leading-4 text-text-muted',
+              'max-h-32 overflow-auto whitespace-pre-wrap break-words',
+            ].join(' ')}
           >
             {displayError}
           </pre>
         )}
       </div>
     </div>
-  );
+  )
 }

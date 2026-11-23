@@ -1,21 +1,21 @@
-import { ChevronDown, Globe, History, Loader2, MoreHorizontal, Search, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { useTranslation } from '@/hooks/useTranslation'
-import { clearEmbeddedBrowserData, requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
   embeddedBrowserHistoryEntryKey,
-  embeddedBrowserHistoryNextCursor,
-  removeEmbeddedBrowserHistoryEntries,
-  searchEmbeddedBrowserHistory,
-  type EmbeddedBrowserHistoryCursor,
   type EmbeddedBrowserHistoryEntry,
 } from '@/lib/embedded-browser-history'
 import { navigateTo } from '@/lib/navigation'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useIntersectionEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown, Globe, History, Loader2, MoreHorizontal, Search, Trash2 } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createBrowserHistoryResource } from './browserHistoryResource'
 import { ClearBrowserDataDialog } from './ClearBrowserDataDialog'
 
-const SEARCH_DEBOUNCE_MS = 200
 const OPEN_REQUEST_RETRY_DELAY_MS = 100
 const OPEN_REQUEST_RETRY_LIMIT = 50
 
@@ -129,13 +129,12 @@ function HistoryEntryRow({
       className="flex items-center gap-3 px-4 py-2 focus-within:bg-muted hover:bg-muted"
     >
       <label className="relative flex shrink-0 items-center" htmlFor={checkboxId}>
-        <input
+        <Checkbox
           id={checkboxId}
-          type="checkbox"
           data-testid={`browser-history-entry-select-${entry.id}`}
           checked={checked}
           disabled={disabled}
-          onChange={event => onSelect(event.target.checked)}
+          onCheckedChange={checked => onSelect(checked === true)}
           className="h-4 w-4 accent-primary disabled:opacity-50"
         />
         <span className="sr-only">{t('workbench.browser_history_select_entry', { title })}</span>
@@ -165,7 +164,8 @@ function HistoryEntryRow({
         placement="bottom-end"
         width={200}
         disabled={disabled}
-        triggerClassName="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-50"
+        density="dense"
+        triggerClassName="flex shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-50"
         items={[
           {
             label: t('workbench.browser_history_open_page'),
@@ -188,126 +188,49 @@ function HistoryEntryRow({
 export function BrowserHistoryPage() {
   const { t, i18n } = useTranslation('common')
   const locale = i18n.language
-  const [searchInput, setSearchInput] = useState('')
-  const [query, setQuery] = useState('')
-  const [entries, setEntries] = useState<EmbeddedBrowserHistoryEntry[]>([])
-  const [cursor, setCursor] = useState<EmbeddedBrowserHistoryCursor | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [loadError, setLoadError] = useState(false)
-  const [paginationError, setPaginationError] = useState(false)
+  const [resource] = useState(() => createBrowserHistoryResource())
+  const state = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const {
+    searchInput,
+    query,
+    entries,
+    cursor,
+    loading,
+    loadingMore,
+    loadError,
+    paginationError,
+    removing,
+    clearing,
+  } = state
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-  const [removing, setRemoving] = useState(false)
+  const [expandedPage, setExpandedPage] = useState(state.firstPageVersion)
+  if (expandedPage !== state.firstPageVersion) {
+    setExpandedPage(state.firstPageVersion)
+    const firstKey = groupHistoryEntries(entries)[0]?.key
+    setExpandedGroups(firstKey ? new Set([firstKey]) : new Set())
+  }
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
-  const [clearing, setClearing] = useState(false)
-  const [notice, setNotice] = useState<string | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
-  const generationRef = useRef(0)
-
-  useEffect(() => {
-    // Skip the initial mount (searchInput === query): re-scheduling a load for
-    // an unchanged query would flash the loading state over rendered entries.
-    if (searchInput === query) return
-    const timer = window.setTimeout(() => {
-      setQuery(searchInput)
-      setLoading(true)
-      setLoadError(false)
-      setPaginationError(false)
-    }, SEARCH_DEBOUNCE_MS)
-    return () => window.clearTimeout(timer)
-  }, [searchInput, query])
-
-  const loadFirstPage = useCallback(async (text: string) => {
-    const generation = ++generationRef.current
-    try {
-      const page = await searchEmbeddedBrowserHistory(text)
-      if (generation !== generationRef.current) return
-      setEntries(page)
-      setCursor(embeddedBrowserHistoryNextCursor(page, page.length))
-      // The newest day group starts expanded; every other group starts collapsed.
-      setExpandedGroups(() => {
-        const firstGroupKey = groupHistoryEntries(page)[0]?.key
-        return firstGroupKey ? new Set([firstGroupKey]) : new Set()
-      })
-    } catch (error) {
-      console.error('[Wework] Failed to load browsing history', error)
-      if (generation !== generationRef.current) return
-      setLoadError(true)
-    } finally {
-      if (generation === generationRef.current) setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    // Deferred so the data fetch behaves as an external-system sync, not a
-    // synchronous setState cascade inside the effect body.
-    const handle = window.setTimeout(() => void loadFirstPage(query), 0)
-    return () => window.clearTimeout(handle)
-  }, [query, loadFirstPage])
-
-  const reloadFirstPage = useCallback(() => {
-    setLoading(true)
-    setLoadError(false)
-    setPaginationError(false)
-    void loadFirstPage(query)
-  }, [loadFirstPage, query])
-
-  const loadNextPage = useCallback(async () => {
-    if (!cursor || loading || loadingMore) return
-    const generation = generationRef.current
-    setLoadingMore(true)
-    setPaginationError(false)
-    try {
-      const page = await searchEmbeddedBrowserHistory(query, cursor)
-      if (generation !== generationRef.current) return
-      setEntries(current => {
-        const next = [...current, ...page]
-        setCursor(embeddedBrowserHistoryNextCursor(next, page.length))
-        return next
-      })
-    } catch (error) {
-      console.error('[Wework] Failed to load more browsing history', error)
-      if (generation === generationRef.current) setPaginationError(true)
-    } finally {
-      if (generation === generationRef.current) setLoadingMore(false)
-    }
-  }, [cursor, loading, loadingMore, query])
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current
-    if (!sentinel || !cursor) return
-    const observer = new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting)) void loadNextPage()
-    })
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [cursor, loadNextPage])
-
+  const loadNextPage = resource.loadNextPage
+  const reloadFirstPage = resource.reload
+  const intersectHistory = useCallback<IntersectionObserverCallback>(
+    observed => {
+      if (cursor && observed.some(entry => entry.isIntersecting)) void resource.loadNextPage()
+    },
+    [resource, cursor]
+  )
+  useIntersectionEvent(sentinelRef, intersectHistory, {
+    enabled: !!cursor && !loading && !loadError && !paginationError,
+  })
   const groups = useMemo(() => groupHistoryEntries(entries), [entries])
 
-  const removeEntries = useCallback(
-    async (ids: string[]) => {
-      if (removing || ids.length === 0) return
-      setRemoving(true)
-      try {
-        await removeEmbeddedBrowserHistoryEntries(ids)
-        const removedKeys = new Set(ids)
-        setSelected(current => {
-          const next = new Set(current)
-          removedKeys.forEach(key => next.delete(key))
-          return next
-        })
-        await loadFirstPage(query)
-      } catch (error) {
-        console.error('[Wework] Failed to remove browsing history entries', error)
-        setNotice(t('workbench.browser_history_action_error'))
-      } finally {
-        setRemoving(false)
-      }
-    },
-    [removing, query, loadFirstPage, t]
-  )
+  const removeEntries = async (ids: string[]) => {
+    if (await resource.remove(ids)) {
+      const removed = new Set(ids)
+      setSelected(current => new Set([...current].filter(key => !removed.has(key))))
+    }
+  }
 
   const selectedIds = useMemo(
     () =>
@@ -317,20 +240,12 @@ export function BrowserHistoryPage() {
     [entries, selected]
   )
 
-  const clearBrowsingData = useCallback(async () => {
-    setClearing(true)
-    try {
-      await clearEmbeddedBrowserData()
+  const clearBrowsingData = async () => {
+    if (await resource.clear()) {
       setClearDialogOpen(false)
       setSelected(new Set())
-      await loadFirstPage(query)
-    } catch (error) {
-      console.error('[Wework] Failed to clear browsing data', error)
-      setNotice(t('workbench.browser_history_action_error'))
-    } finally {
-      setClearing(false)
     }
-  }, [loadFirstPage, query, t])
+  }
 
   const toggleGroup = (key: string) => {
     setExpandedGroups(current => {
@@ -344,8 +259,28 @@ export function BrowserHistoryPage() {
     })
   }
 
+  const loadFailure = (
+    <div
+      data-testid="browser-history-load-error"
+      className="flex items-center justify-between gap-4 px-4 py-3"
+    >
+      <span className="text-sm text-text-secondary">
+        {t('workbench.browser_history_load_error')}
+      </span>
+      <ControlButton
+        variant="unstyled"
+        type="button"
+        data-testid="browser-history-retry-button"
+        onClick={reloadFirstPage}
+        className="h-8 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover"
+      >
+        {t('workbench.browser_history_retry')}
+      </ControlButton>
+    </div>
+  )
+
   let content
-  if (loading) {
+  if (loading && entries.length === 0) {
     content = (
       <div
         data-testid="browser-history-loading"
@@ -355,25 +290,8 @@ export function BrowserHistoryPage() {
         {t('workbench.browser_history_loading')}
       </div>
     )
-  } else if (loadError) {
-    content = (
-      <div
-        data-testid="browser-history-load-error"
-        className="flex items-center justify-between gap-4 px-4 py-3"
-      >
-        <span className="text-sm text-text-secondary">
-          {t('workbench.browser_history_load_error')}
-        </span>
-        <button
-          type="button"
-          data-testid="browser-history-retry-button"
-          onClick={reloadFirstPage}
-          className="h-8 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover"
-        >
-          {t('workbench.browser_history_retry')}
-        </button>
-      </div>
-    )
+  } else if (loadError && entries.length === 0) {
+    content = loadFailure
   } else if (groups.length === 0) {
     const searching = query.trim().length > 0
     content = (
@@ -402,7 +320,8 @@ export function BrowserHistoryPage() {
           const contentId = `browser-history-group-content-${groupIndex}`
           return (
             <div key={group.key} data-testid={`browser-history-group-${group.key}`}>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 aria-expanded={expanded}
                 aria-controls={contentId}
@@ -415,7 +334,7 @@ export function BrowserHistoryPage() {
                   className={`h-3.5 w-3.5 text-text-secondary transition-transform ${expanded ? '' : '-rotate-90'}`}
                 />
                 {formatGroupDate(group.visitTimeMs, locale)}
-              </button>
+              </ControlButton>
               {expanded ? (
                 <div id={contentId}>
                   {group.entries.map(entry => (
@@ -453,7 +372,8 @@ export function BrowserHistoryPage() {
   return (
     <div data-testid="browser-history-page" className="flex h-full flex-col">
       <div className="mb-4 flex items-center gap-2">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="browser-history-back-button"
           aria-label={t('common.back', '返回')}
@@ -461,16 +381,17 @@ export function BrowserHistoryPage() {
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
         >
           <ChevronDown className="h-4 w-4 rotate-90" />
-        </button>
+        </ControlButton>
         <nav aria-label="breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="browser-history-breadcrumb-browser"
             onClick={() => navigateTo('/settings/browser')}
             className="shrink-0 text-text-secondary hover:text-text-primary hover:underline"
           >
             {t('workbench.settings_nav_browser', '浏览器')}
-          </button>
+          </ControlButton>
           <span className="text-text-muted">/</span>
           <span className="truncate font-medium text-text-primary">
             {t('workbench.browser_history_title')}
@@ -484,13 +405,13 @@ export function BrowserHistoryPage() {
             aria-hidden="true"
             className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
           />
-          <input
+          <ControlInput
             type="search"
             data-testid="browser-history-search"
             value={searchInput}
             aria-label={t('workbench.browser_history_search')}
             placeholder={t('workbench.browser_history_search')}
-            onChange={event => setSearchInput(event.target.value)}
+            onChange={event => resource.changeSearch(event.target.value)}
             className="h-9 w-full rounded-md border border-border bg-surface pl-9 pr-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-primary focus:bg-background"
           />
         </div>
@@ -502,7 +423,8 @@ export function BrowserHistoryPage() {
         </h2>
         <div className="flex items-center gap-2">
           {selectedIds.length > 0 ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="browser-history-remove-selected"
               disabled={removing}
@@ -511,22 +433,24 @@ export function BrowserHistoryPage() {
             >
               {removing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {t('workbench.browser_history_remove_selected')}
-            </button>
+            </ControlButton>
           ) : null}
-          <button
+          <ControlButton
             type="button"
             data-testid="browser-history-clear-data-button"
             disabled={removing || clearing}
             onClick={() => setClearDialogOpen(true)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover disabled:opacity-50"
+            variant="destructive-ghost"
+            size="sm"
           >
             <Trash2 className="h-4 w-4" />
             {t('workbench.browser_settings_clear_action')}
-          </button>
+          </ControlButton>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-surface/70">
+        {loadError && entries.length > 0 ? loadFailure : null}
         {content}
         {cursor && !loading && !loadError ? (
           <div
@@ -545,14 +469,15 @@ export function BrowserHistoryPage() {
             <span className="text-sm text-text-secondary">
               {t('workbench.browser_history_pagination_error')}
             </span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="browser-history-pagination-retry-button"
               onClick={() => void loadNextPage()}
               className="h-8 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover"
             >
               {t('workbench.browser_history_retry')}
-            </button>
+            </ControlButton>
           </div>
         ) : null}
       </div>
@@ -564,7 +489,11 @@ export function BrowserHistoryPage() {
           onConfirm={() => void clearBrowsingData()}
         />
       ) : null}
-      <TransientNotice message={notice} tone="error" onClear={() => setNotice(null)} />
+      <TransientNotice
+        message={state.actionFailed ? t('workbench.browser_history_action_error') : null}
+        tone="error"
+        onClear={resource.clearNotice}
+      />
     </div>
   )
 }

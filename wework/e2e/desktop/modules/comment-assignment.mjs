@@ -141,7 +141,7 @@ export async function verifyCommentAssignment(
   )
   await control.command(
     'waitFor',
-    `[data-testid="issue-comment-create-child-${original.id}"][data-state="closed"]`
+    `[data-testid="issue-comment-create-child-${original.id}"][aria-expanded="false"]`
   )
   const laterChildren = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
   const copied = laterChildren.items.find(

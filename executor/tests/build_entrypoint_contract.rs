@@ -224,11 +224,12 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     ));
 
     let github_pipeline = fs::read_to_string("../.github/workflows/publish-image.yml").unwrap();
+    // Two device images and one export-only connection runtime use this Dockerfile.
     assert_eq!(
         github_pipeline
             .matches("file: docker/device/Dockerfile")
             .count(),
-        2
+        3
     );
     assert!(!github_pipeline.contains("file: wecode/docker/device/Dockerfile"));
 

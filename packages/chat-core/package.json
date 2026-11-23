@@ -391,6 +391,10 @@
     "./workspace-branches": {
       "types": "./src/workspace-branches.ts",
       "import": "./src/workspace-branches.ts"
+    },
+    "./async-resource": {
+      "types": "./src/async-resource.ts",
+      "import": "./src/async-resource.ts"
     }
   },
   "scripts": {

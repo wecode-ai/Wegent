@@ -122,13 +122,21 @@ fn settle_pending_native_admission(link: &mut RuntimeTaskLink, outcome: &str) {
 }
 
 fn apply_local_task_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
+    apply_local_task_failure_at(link, error, now_ms());
+}
+
+fn apply_local_task_failure_at(
+    link: &mut RuntimeTaskLink,
+    error: &AppIpcError,
+    failed_at: i64,
+) -> i64 {
     settle_pending_native_admission(link, "failed");
     link.running = false;
     link.status = "failed".to_owned();
     link.thread_status = "failed".to_owned();
     link.turn_status = Some("failed".to_owned());
-    link.updated_at = now_ms();
-    link.completed_at = Some(link.updated_at);
+    link.updated_at = failed_at;
+    link.completed_at = Some(failed_at);
     normalize_settled_task_state(link);
     if !link.runtime_handle.is_object() {
         link.runtime_handle = json!({});
@@ -142,6 +150,7 @@ fn apply_local_task_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
         );
     }
     record_runtime_start_failure(link, error);
+    failed_at
 }
 
 fn record_runtime_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
@@ -534,6 +543,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "cloudProjectId"
                 | "cloud_project_id"
                 | "client_user_message_id"
+                | "issue_comment_trigger_id"
                 | "collaborationMode"
                 | "collaboration_mode"
                 | "collaboration_model"
@@ -546,6 +556,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "projectId"
                 | "project_plugin_ids"
                 | "projectPluginIds"
+                | "runtime_command_approval"
                 | "runtime_permission_profile"
                 | "runtimePermissionProfile"
                 | "runtime_command_id"
@@ -555,6 +566,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "standInDelegation"
                 | "standInOwnerRequest"
                 | "standInReportTo"
+                | "standInRoleResultRoot"
                 | "standInSchedule"
                 | "standInSourceBindings"
                 | "team_id"

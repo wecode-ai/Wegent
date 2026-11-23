@@ -1,10 +1,11 @@
+import { SearchableSelect } from '../controls/SearchableSelect'
+import { Tooltip } from '../controls/Tooltip'
+import { Button as ControlButton } from '../markdown/Button'
 import { Flag, ChevronDown } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
+import { getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import type { MilestonesApi } from './types'
 import { useMilestones } from './useMilestones'
-import { IssueDetailSearchableSelect } from '../issue-detail/IssueDetailControls'
-import { Tooltip } from '../issue-detail/Tooltip'
-import './milestones.css'
 
 export function MilestonePicker({
   api,
@@ -46,17 +47,19 @@ export function MilestonePicker({
   testId?: string
 }) {
   const ownedQuery = useMilestones(api, projectId, providedQuery === undefined)
-  const query = providedQuery ?? ownedQuery
-  useEffect(() => {
-    if (
-      !query.loading &&
-      !query.error &&
-      value &&
-      value !== 'all' &&
-      !query.items.some(item => item.id === value)
-    )
-      onMissingValue?.()
-  }, [onMissingValue, query.error, query.items, query.loading, value])
+  const source = providedQuery ?? ownedQuery
+  const { observeSelection } = source
+  const subscribe = useCallback(
+    (listener: () => void) => observeSelection(listener, value, onMissingValue),
+    [observeSelection, value, onMissingValue]
+  )
+  const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, getIdleResourceSnapshot)
+  const query = {
+    items: snapshot.data ?? [],
+    loading: source.enabled && (snapshot.status === 'idle' || snapshot.status === 'loading'),
+    error: snapshot.status === 'error',
+    reload: source.reload,
+  }
   const selectedTitle =
     query.items.find(item => item.id === value)?.title ??
     (value === 'all' ? allLabel : value === undefined ? placeholder : value ? label : noneLabel) ??
@@ -70,10 +73,12 @@ export function MilestonePicker({
         <span className="shrink-0 text-text-secondary">{label}</span>
       ) : null}
       <Tooltip label={selectedTitle} side="bottom" className="min-w-0 max-w-full shrink">
-        <IssueDetailSearchableSelect
+        <SearchableSelect
           testId={testId}
           accessibleLabel={label}
-          value={value ?? ''}
+          appearance={appearance === 'property' && compact ? 'property' : 'outline'}
+          density={compact ? 'dense' : 'default'}
+          value={value === undefined ? null : (value ?? '')}
           disabled={disabled || busy || query.loading || query.error}
           searchPlaceholder={searchLabel}
           emptyLabel={emptyLabel}
@@ -124,14 +129,15 @@ export function MilestonePicker({
         <span role="alert" className="text-destructive">
           {errorLabel}
           {query.error ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`${testId}-retry`}
               onClick={query.reload}
               className="ml-2 underline"
             >
               {retryLabel}
-            </button>
+            </ControlButton>
           ) : null}
         </span>
       ) : null}

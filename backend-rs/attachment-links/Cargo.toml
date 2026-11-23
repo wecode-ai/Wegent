@@ -1,0 +1,16 @@
+[package]
+name = "wegent-attachment-links"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Attachment links and context metadata"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+jsonwebtoken.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+wegent-backend-config.workspace = true

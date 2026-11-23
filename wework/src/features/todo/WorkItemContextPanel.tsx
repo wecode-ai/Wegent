@@ -1,12 +1,14 @@
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import { mergeIssueReadConfirmation } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowUpRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { projectStoreLocation, type ProjectSpaceApi } from './projectSpaceSelection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import { projectStoreLocation, type ProjectSpaceApi } from './projectSpaceSelection'
 import { TodoEditor } from './TodoEditor'
 
 interface WorkItemContextPanelProps {
@@ -28,6 +30,7 @@ interface WorkItemContextPanelProps {
   focusedCommentId?: string
   focusedCommentRequestKey?: string
   readFirst?: boolean
+  headerActions?: ReactNode
 }
 
 export function WorkItemContextPanel({
@@ -46,37 +49,27 @@ export function WorkItemContextPanel({
   focusedCommentId,
   focusedCommentRequestKey,
   readFirst,
+  headerActions,
 }: WorkItemContextPanelProps) {
   const { t } = useTranslation('common')
   const detailServices =
     services.projectSpaceDetailServices?.[projectStoreLocation(project.project_store)]
   const [currentItem, setCurrentItem] = useState(item)
-  const [allItems, setAllItems] = useState<CloudLoopItem[]>([item])
-  const [listError, setListError] = useState(false)
-  const [revision, setRevision] = useState(0)
-
-  useEffect(() => {
-    let current = true
-    void api
-      .listLoopItems(project.id)
-      .then(response => {
-        if (!current) return
-        setListError(false)
-        setAllItems(
-          response.items.some(candidate => candidate.id === currentItem.id)
-            ? response.items.map(candidate =>
-                candidate.id === currentItem.id ? currentItem : candidate
-              )
-            : [...response.items, currentItem]
-        )
-      })
-      .catch(() => {
-        if (current) setListError(true)
-      })
-    return () => {
-      current = false
-    }
-  }, [api, currentItem, project.id, revision])
+  const projectId = project.id
+  const resource = useMemo(
+    () => createAsyncResource(projectId, async () => (await api.listLoopItems(projectId)).items),
+    [api, projectId]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const listError = snapshot.status === 'error'
+  const items = snapshot.data ?? []
+  const allItems = items.some(candidate => candidate.id === currentItem.id)
+    ? items.map(candidate => (candidate.id === currentItem.id ? currentItem : candidate))
+    : [...items, currentItem]
 
   return (
     <section
@@ -89,14 +82,15 @@ export function WorkItemContextPanel({
           className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm text-error"
         >
           {t('personalHome.relatedFailed')}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="work-item-related-retry"
             className="min-h-11 underline md:min-h-8"
-            onClick={() => setRevision(value => value + 1)}
+            onClick={() => void resource.reload()}
           >
             {t('standIn.reload')}
-          </button>
+          </ControlButton>
         </div>
       )}
       <div className="min-h-0 flex-1">
@@ -112,8 +106,10 @@ export function WorkItemContextPanel({
           onOpenRuntimeTask={onOpenRuntimeTask}
           onOpenChildTask={onOpenChildTask}
           headerActions={
-            onOpenBoard && (
-              <button
+            headerActions ??
+            (onOpenBoard && (
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="work-item-open-board"
                 onClick={onOpenBoard}
@@ -121,8 +117,8 @@ export function WorkItemContextPanel({
               >
                 {t('workbench.open_workspace', '打开工作空间')}
                 <ArrowUpRight className="h-3.5 w-3.5" />
-              </button>
-            )
+              </ControlButton>
+            ))
           }
           selectedTaskId={currentTask?.taskId}
           deviceNamesById={deviceNamesById}
@@ -145,19 +141,21 @@ export function WorkItemContextPanel({
           onClose={() => undefined}
           onRead={updated => {
             setCurrentItem(current => mergeIssueReadConfirmation(current, updated))
-            setAllItems(items =>
-              items.map(candidate =>
+            resource.update(items =>
+              (items ?? []).map(candidate =>
                 candidate.id === updated.id
                   ? mergeIssueReadConfirmation(candidate, updated)
                   : candidate
               )
             )
+            void resource.reload()
           }}
           onUpdated={updated => {
             setCurrentItem(updated)
-            setAllItems(items =>
-              items.map(candidate => (candidate.id === updated.id ? updated : candidate))
+            resource.update(items =>
+              (items ?? []).map(candidate => (candidate.id === updated.id ? updated : candidate))
             )
+            void resource.reload()
           }}
           onOpenTaskConversation={task =>
             onOpenTask({ deviceId: task.device_id, taskId: task.task_id })

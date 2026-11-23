@@ -2,21 +2,37 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import client from '@/apis/client'
 import { retrieverApis, type UnifiedRetriever } from '@/apis/retrievers'
+import { useUser } from '@/features/common/UserContext'
+
+export type RetrieverCatalogCache = Map<string, UnifiedRetriever[]>
 
 export function useRetrievers(
   scope?: 'personal' | 'group' | 'organization' | 'all',
   groupName?: string,
-  publicOnly = false
+  publicOnly = false,
+  cache?: RetrieverCatalogCache
 ) {
-  const [retrievers, setRetrievers] = useState<UnifiedRetriever[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<Error | null>(null)
+  const { user } = useUser()
+  const key = JSON.stringify([client.getCacheScope(), user?.id, scope, groupName, publicOnly])
+  const requestId = useRef(0)
+  const [result, setResult] = useState<{
+    key: string
+    data?: UnifiedRetriever[]
+    error?: Error
+    loading: boolean
+  }>()
 
   const fetchRetrievers = useCallback(async () => {
+    const request = ++requestId.current
+    setResult(previous => ({
+      key,
+      data: previous?.key === key ? previous.data : undefined,
+      loading: true,
+    }))
     try {
-      setLoading(true)
       // For organization scope, use 'personal' to get user's retrievers + public retrievers
       // For group scope, pass 'group' directly to get group's retrievers + public retrievers
       const apiScope = scope === 'organization' ? 'personal' : scope || 'all'
@@ -38,17 +54,32 @@ export function useRetrievers(
         }
         return (a.name || '').localeCompare(b.name || '')
       })
-      setRetrievers(data)
+      if (request !== requestId.current) return
+      cache?.set(key, data)
+      setResult({ key, data, loading: false })
     } catch (err) {
-      setError(err as Error)
-    } finally {
-      setLoading(false)
+      if (request !== requestId.current) return
+      setResult(previous => ({
+        key,
+        data: previous?.key === key ? previous.data : undefined,
+        error: err as Error,
+        loading: false,
+      }))
     }
-  }, [scope, groupName, publicOnly])
+  }, [scope, groupName, publicOnly, key, cache])
 
   useEffect(() => {
-    fetchRetrievers()
+    void fetchRetrievers()
+    return () => {
+      requestId.current += 1
+    }
   }, [fetchRetrievers])
 
-  return { retrievers, loading, error, refetch: fetchRetrievers }
+  const current = result?.key === key ? result : undefined
+  return {
+    retrievers: current?.data ?? cache?.get(key) ?? [],
+    loading: current?.loading ?? true,
+    error: current?.error,
+    refetch: fetchRetrievers,
+  }
 }

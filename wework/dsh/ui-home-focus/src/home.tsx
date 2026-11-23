@@ -1,7 +1,8 @@
-import { Bot, FileText, ListChecks, PenLine, Search } from 'lucide-react'
-import type { ComponentType, ReactNode, SVGProps } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Bot, FileText, ListChecks, PenLine, Search } from 'lucide-react'
+import type { ComponentType, ReactNode, SVGProps } from 'react'
 
 interface HomeProps {
   heading: ReactNode
@@ -85,7 +86,8 @@ export default function FocusHome({
         {FOCUS_SUGGESTIONS.map(suggestion => {
           const Icon = suggestion.icon
           return (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={suggestion.id}
               type="button"
               data-testid={`focus-suggestion-${suggestion.id}`}
@@ -101,7 +103,7 @@ export default function FocusHome({
               <span className="text-sm font-medium leading-5 text-text-primary">
                 {t(suggestion.labelKey, suggestion.fallbackLabel)}
               </span>
-            </button>
+            </ControlButton>
           )
         })}
       </div>

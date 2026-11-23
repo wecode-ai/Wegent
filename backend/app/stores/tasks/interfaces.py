@@ -761,6 +761,7 @@ class SubtaskStore(Protocol):
         task_id: int,
         statuses: Sequence[SubtaskStatus],
         owner_user_id: Optional[int] = None,
+        for_update: bool = False,
     ) -> Optional[Subtask]: ...
 
     def get_latest_running_assistant_by_task(

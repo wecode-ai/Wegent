@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { resolveElectronBinary } from './electron-binary.mjs'
 import { fileURLToPath } from 'node:url'
 
 export function occupiedPublicationEntry(root, source, target) {
@@ -156,11 +156,11 @@ try {
 }
 `
   )
-  const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+  const electronBinary = resolveElectronBinary()
   const env = { ...environment }
   delete env.ELECTRON_RUN_AS_NODE
   const { stdout } = await promisify(execFile)(
-    require('electron'),
+    electronBinary,
     [
       script,
       JSON.stringify({

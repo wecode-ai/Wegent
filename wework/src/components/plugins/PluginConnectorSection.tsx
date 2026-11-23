@@ -1,8 +1,17 @@
-import { Link2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { InstalledPluginComponents } from '@/types/api'
 import { navigateTo } from '@/lib/navigation'
+import type { InstalledPluginComponents } from '@/types/api'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Link2 } from 'lucide-react'
+import { useRef, useState } from 'react'
 
 type Connector = NonNullable<InstalledPluginComponents['connectors']>[number]
 type Props = {
@@ -44,30 +53,27 @@ function ConnectorSourceDialog({
   onManage: (slug: string) => void
 }) {
   const { t } = useTranslation()
-  const dialog = useRef<HTMLDialogElement>(null)
-  const [slug, setSlug] = useState(
-    () =>
-      group.connectors.find(item => authBySlug?.[item.slug] === 'connected')?.slug ||
-      group.connectors[0].slug
-  )
-  const connector = group.connectors.find(item => item.slug === slug)!
+  const dialog = useRef<HTMLDivElement>(null)
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(null)
+  const connector =
+    group.connectors.find(item => item.slug === selectedSlug) ??
+    group.connectors.find(item => authBySlug?.[item.slug] === 'connected') ??
+    group.connectors[0]
+  const slug = connector.slug
   const connected = authBySlug?.[slug] === 'connected'
-  useEffect(() => {
-    const element = dialog.current!
-    const previous = document.activeElement as HTMLElement | null
-    element.showModal()
-    return () => {
-      element.close()
-      previous?.focus()
-    }
-  }, [])
+
   return (
-    <dialog
-      ref={dialog}
-      onCancel={onClose}
-      aria-labelledby="connector-source-title"
-      data-testid="plugin-connector-source-dialog"
-      className="plugin-dialog-surface fixed top-1/2 right-auto bottom-auto left-1/2 m-0 h-fit -translate-x-1/2 -translate-y-1/2 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[480px] overflow-y-auto p-5 text-text-primary backdrop:bg-black/35"
+    <DialogSurface
+      inline={false}
+      onClose={onClose}
+      render={
+        <div
+          ref={dialog}
+          aria-labelledby="connector-source-title"
+          data-testid="plugin-connector-source-dialog"
+          className="plugin-dialog-surface fixed top-1/2 right-auto bottom-auto left-1/2 m-0 h-fit -translate-x-1/2 -translate-y-1/2 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[480px] overflow-y-auto p-5 text-text-primary backdrop:bg-black/35"
+        />
+      }
     >
       <h2 id="connector-source-title" className="heading-subsection">
         {group.name}
@@ -75,35 +81,45 @@ function ConnectorSourceDialog({
       <label className="mt-4 block text-sm" htmlFor="connector-source-select">
         {t('workbench.plugin_connector_source')}
       </label>
-      <select
-        id="connector-source-select"
-        data-testid="plugin-connector-source-select"
-        value={slug}
-        onChange={event => setSlug(event.target.value)}
-        className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-9"
+      <SelectRoot
+        value={normalizeSelectValue(slug)}
+        onValueChange={selectedValue => {
+          if (selectedValue !== null) return setSelectedSlug(selectedValue)
+        }}
       >
-        {group.connectors.map(item => (
-          <option key={item.slug} value={item.slug} className="bg-background text-text-primary">
-            {item.displayName || item.slug}
-            {authBySlug?.[item.slug] === 'connected'
-              ? ` · ${t('workbench.plugin_connector_connected')}`
-              : ''}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger
+          id="connector-source-select"
+          data-testid="plugin-connector-source-select"
+          className="mt-2 h-11 w-full md:h-9"
+        />
+        <SelectContent>
+          {group.connectors.map(item => (
+            <SelectItem key={item.slug} value={String(item.slug)}>
+              {item.displayName || item.slug}
+              {authBySlug?.[item.slug] === 'connected'
+                ? ` · ${t('workbench.plugin_connector_connected')}`
+                : ''}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </SelectRoot>
       <p className="mt-3 text-sm text-text-secondary">
         {connector.description || t('workbench.plugin_connector_source_hint')}
       </p>
       <div className="mt-5 flex justify-end gap-2">
-        <button
+        <ControlButton
+          variant="outline"
+          size="sm"
           type="button"
           data-testid="plugin-connector-source-cancel"
           onClick={onClose}
           className="h-11 rounded-lg border border-border px-3 text-sm hover:bg-surface md:h-9"
         >
           {t('common.cancel', '取消')}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="primary"
+          size="sm"
           type="button"
           data-testid="plugin-connector-source-continue"
           onClick={() => {
@@ -115,9 +131,9 @@ function ConnectorSourceDialog({
           {connected
             ? t('workbench.plugin_disconnect_connection', '退出登录')
             : t('workbench.plugin_connect_login', '登录')}
-        </button>
+        </ControlButton>
       </div>
-    </dialog>
+    </DialogSurface>
   )
 }
 
@@ -129,8 +145,10 @@ export function PluginConnectorSection({
   onManage,
 }: Props) {
   const { t } = useTranslation()
-  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null)
   const groups = groupConnectors(connectors)
+  const selectedGroup = groups.find(group => group.key === selectedGroupKey)
+  if (selectedGroupKey && !selectedGroup) setSelectedGroupKey(null)
   const manage = (slug: string) => (onManage ? onManage(slug) : navigateTo('/settings/connections'))
   if (!groups.length) return null
   return (
@@ -170,13 +188,14 @@ export function PluginConnectorSection({
                         )}
                 </small>
               </span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 disabled={!installed || Boolean(busySlug)}
                 aria-busy={group.connectors.some(item => item.slug === busySlug)}
                 data-testid={`plugin-connection-manage-${group.key}`}
                 className="h-11 rounded-lg bg-surface px-3 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 md:h-8"
-                onClick={() => (grouped ? setSelectedGroup(group) : manage(connector.slug))}
+                onClick={() => (grouped ? setSelectedGroupKey(group.key) : manage(connector.slug))}
               >
                 {group.connectors.some(item => item.slug === busySlug)
                   ? t('common.loading', '加载中…')
@@ -189,7 +208,7 @@ export function PluginConnectorSection({
                         : state === 'disconnected'
                           ? t('workbench.plugin_connect_login', '登录')
                           : t('workbench.plugin_manage_connection', '管理连接')}
-              </button>
+              </ControlButton>
             </div>
           )
         })}
@@ -198,7 +217,7 @@ export function PluginConnectorSection({
         <ConnectorSourceDialog
           group={selectedGroup}
           authBySlug={authBySlug}
-          onClose={() => setSelectedGroup(null)}
+          onClose={() => setSelectedGroupKey(null)}
           onManage={manage}
         />
       )}

@@ -34,6 +34,27 @@ const OTHER_APP_ID = `issue-other-app-${process.pid}`
 const COMPLETION = 'ISSUE_APP_RECORD_COMPLETE'
 const scoped = selector => `${CONTENT} ${selector}`
 
+async function measureComposerProjectSelector(control, mode) {
+  const panel = scoped(`[role="tabpanel"][aria-labelledby$="-${mode}-tab"]:not([inert])`)
+  const projectId = 'collaboration-issue-project-trigger'
+  const editorId = 'project-chat-composer-content'
+  const selector = `${panel} :is([data-testid="${projectId}"], [data-testid="${editorId}"])`
+  const metrics = JSON.parse(
+    await control.command('getElementMetrics', selector, { value: 'includeText' })
+  )
+  const project = metrics.find(item => item.testId === projectId)
+  const content = metrics.find(item => item.testId === editorId)
+  assert.ok(
+    project?.height > 0 && content?.height > 0,
+    `${mode}: composer controls must be visible`
+  )
+  assert.ok(
+    project.bottom <= content.top + 1,
+    `${mode}: project selector must sit above the editor`
+  )
+  return project.height
+}
+
 export function createDesktopScenario({
   workbenchReadyTimeoutMs,
   modelResponseTimeoutMs,
@@ -250,7 +271,13 @@ export function createDesktopScenario({
     await openCollaborationIssueCreation(control, scoped)
     await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
     await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
+    const recordProjectHeight = await measureComposerProjectSelector(control, 'record')
     await control.command('click', scoped('[data-testid="personal-home-new-issue"]'))
+    assert.equal(
+      await measureComposerProjectSelector(control, 'task'),
+      recordProjectHeight,
+      'Record Issue and Create Task must use the same project selector height'
+    )
     const prompt = `Personal home start work recover ${Date.now()}`
     await control.command('fill', scoped('[data-testid="personal-home-task-content"]'), {
       value: prompt,

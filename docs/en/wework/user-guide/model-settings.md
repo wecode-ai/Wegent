@@ -41,7 +41,7 @@ and defaults follow the PC capability resolver without requiring the model list 
 
 Manage task models in **Settings → Models**.
 
-- **Codex subscription**: Enable the local subscription to use your local Codex account and models. Use “View models” to adjust model capabilities and “Manage account” to sign in or manage your account. Changing the subscription switch requires restarting the app.
+- **Codex subscription**: Enable the local subscription to use your local Codex account and models. Use “View models” to adjust model capabilities and “Manage account” to sign in or manage your account. Changing the subscription switch requires restarting the app. With the local subscription enabled, use “Connection transport” in the same section to choose HTTP (the default) or WebSocket for new conversations.
 - **Custom models**: Select “Add models”, choose a service such as DeepSeek, and enter a connection name and API key. Discover or manually add models in the same form, then save once to use them without switching steps. Connections may be saved without models and completed later. Different connection names support multiple accounts with the same service.
 - **Custom endpoint**: Choose the last option in the same provider dropdown. Enter a name, API protocol, Base URL, and any required API key, then fetch or manually add models.
 - **Cloud models**: Connect to the cloud to view models provided by the server.
@@ -59,6 +59,12 @@ When adding or editing models, expand a model and select “Test connection” t
 Canceling does not save changes; discarding unsaved changes requires confirmation. Deleting an endpoint also removes its models, while keeping existing conversations.
 
 This configuration UI improvement introduces no legacy migration, automatic regrouping or cleanup. Existing model IDs, conversation references and stored credentials are retained.
+
+## Confirming model catalog sync to a cloud device
+
+When selecting a local model that needs to be synced to a cloud device, review the device and model in the confirmation dialog, then sync or cancel. Multiple requests are confirmed individually in arrival order; confirming one does not approve later requests. While syncing, duplicate submission and cancellation are disabled. A failure remains visible so you can retry or cancel. Each subsequent request focuses Cancel; after the final response, focus returns to the original control.
+
+Closing the interface hosting the dialog cancels unconfirmed requests without syncing them. A sync you already confirmed continues to completion. When the confirmation interface is unavailable, the caller receives a cancellation result; you can select the model again after the interface is restored.
 
 ## Mobile standalone and provider configuration
 

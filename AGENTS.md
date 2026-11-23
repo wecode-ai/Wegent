@@ -95,6 +95,8 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 - Wework must remain openable when application-managed startup checks fail, including data corruption, missing credentials, and failed updates or migrations. Isolate the affected operation or capability; never use data or credential protection as a reason to prevent opening the entire application. Follow the [startup availability contract](wework/AGENTS.md#startup-availability-and-fault-isolation).
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
+- Avoid repeated JSON serialization and deserialization, especially in hot paths. Reuse parsed data and convert to or from JSON only where required.
+- Prefer algorithms with `O(log n)` or better time complexity per operation whenever feasible.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
 - Delete dead code. Do not add compatibility shims or fallback paths without agreement; correct the primary path.
 - Fix defects discovered while working when they are in scope or block correctness.
@@ -130,6 +132,8 @@ Reuse unified E2E suites, runners, services, and build artifacts. Do not introdu
 Any change expected to significantly increase CI runtime requires explicit human confirmation before implementation. Explain the cause and estimated runtime impact when requesting confirmation.
 Treat intermittent test failures as defects: investigate and fix them immediately before proceeding; never use reruns or retries to obtain a passing result or hide the underlying problem.
 Every E2E scenario must be invoked by GitHub CI. Focused local E2E commands may exist for debugging, but they must also be included by a CI-covered suite; do not add dead E2E coverage that CI never runs.
+Synchronize E2E steps on observable conditions or events, such as an element becoming actionable, an operation reaching the expected state, or a response arriving. Do not use fixed-duration sleeps to decide when to proceed. Register event listeners before triggering the action that emits the event.
+Set short, step-specific timeouts on critical E2E waits and assertions, sized for the expected operation. Timeout failures must identify the step and the condition or event it was waiting for so failures surface promptly without waiting for the overall test timeout.
 Long desktop E2E flows must expose registered checkpoints through the shared runner. A checkpoint must establish its own minimal prerequisites so both one-checkpoint and from-checkpoint runs are valid; do not depend on state created only by an earlier skipped checkpoint.
 DingTalk group chats and message delivery do not require real external E2E tests. Cover these behaviors with protocol-level integration tests and test doubles; do not require production or test-tenant group IDs, staff IDs, robot credentials, or real message delivery for this coverage.
 

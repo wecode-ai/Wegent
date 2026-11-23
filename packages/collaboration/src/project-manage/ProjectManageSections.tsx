@@ -1,8 +1,10 @@
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import { isImeComposingEvent } from '@wegent/chat-core/ime'
+import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import { isTagNameTooLong } from '../tagging'
 import type {
   ProjectManageExtensionContext,
@@ -54,7 +56,8 @@ export function ProjectTagsSection({
             {host.translate('todo.project_tags_description', '用于区分任务类型并筛选看板。')}
           </p>
         </div>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="cloud-project-tag-create-toggle"
           aria-expanded={tagComposerOpen}
@@ -62,13 +65,13 @@ export function ProjectTagsSection({
           className="h-8 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
         >
           ＋ {host.translate('todo.create_tag', '新建标签')}
-        </button>
+        </ControlButton>
       </div>
       {tagComposerOpen && (
         <div className="mt-3 flex gap-2">
           <label className="min-w-0 flex-1 space-y-1 text-sm text-text-secondary">
             <span>{host.translate('todo.tag_name', '标签名称')}</span>
-            <input
+            <ControlInput
               data-testid="cloud-project-tag-create-input"
               autoFocus
               value={newTag}
@@ -78,10 +81,12 @@ export function ProjectTagsSection({
                 if (event.key === 'Enter' && !isImeComposingEvent(event)) void createTag()
               }}
               placeholder={host.translate('todo.tag_name_placeholder', '输入标签名称')}
-              className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
+              className="h-9 w-full"
             />
           </label>
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="cloud-project-tag-create-confirm"
             disabled={!newTag.trim() || tooLong || tagBusy}
@@ -89,7 +94,7 @@ export function ProjectTagsSection({
             className="h-9 self-end rounded-lg bg-text-primary px-3.5 text-sm text-background outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:bg-text-primary disabled:text-background disabled:opacity-40"
           >
             {host.translate('todo.create_tag', '新建标签')}
-          </button>
+          </ControlButton>
         </div>
       )}
       {tagComposerOpen && tooLong && (
@@ -105,9 +110,14 @@ export function ProjectTagsSection({
       <div className="mt-4 flex flex-wrap gap-2">
         {allTags.map(tag =>
           renamingTag === tag ? (
-            <span key={tag} className="flex h-8 items-center gap-1 rounded-lg bg-muted px-1.5">
-              <input
+            <span
+              key={tag}
+              className="flex min-h-11 items-center gap-1 rounded-lg bg-muted px-1.5 md:min-h-8"
+            >
+              <ControlInput
                 data-testid={`cloud-project-tag-rename-input-${tag}`}
+                density="compact"
+                appearance="plain"
                 autoFocus
                 value={renameValue}
                 aria-label={host.translate('todo.tag_name', '标签名称')}
@@ -116,12 +126,13 @@ export function ProjectTagsSection({
                 onKeyDown={event => {
                   if (event.key === 'Enter' && !isImeComposingEvent(event)) void renameTag(tag)
                 }}
-                className="h-6 w-28 rounded bg-transparent px-1 text-sm outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
+                className="w-28"
               />
               {host.renderTooltip({
                 label: host.translate('todo.confirm_rename', '确认重命名'),
                 children: (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`cloud-project-tag-rename-confirm-${tag}`}
                     disabled={renameTooLong || !renameValue.trim() || tagBusy}
@@ -129,20 +140,21 @@ export function ProjectTagsSection({
                     aria-label={host.translate('todo.confirm_rename', '确认重命名')}
                   >
                     <Check className="h-3.5 w-3.5" />
-                  </button>
+                  </ControlButton>
                 ),
               })}
               {host.renderTooltip({
                 label: host.translate('todo.cancel_rename', '取消重命名'),
                 children: (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`cloud-project-tag-rename-cancel-${tag}`}
                     onClick={() => setRenamingTag(null)}
                     aria-label={host.translate('todo.cancel_rename', '取消重命名')}
                   >
                     <X className="h-3.5 w-3.5" />
-                  </button>
+                  </ControlButton>
                 ),
               })}
             </span>
@@ -159,7 +171,7 @@ export function ProjectTagsSection({
                   testId: `cloud-project-tag-menu-${tag}`,
                   placement: 'bottom-end',
                   triggerClassName:
-                    'flex h-8 w-full items-center justify-center rounded-lg text-text-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
+                    'flex w-full items-center justify-center rounded-lg text-text-muted hover:text-text-primary',
                   items: [
                     {
                       label: host.translate('todo.rename', '重命名'),

@@ -37,6 +37,30 @@ fn auth_failure() -> (&'static str, i32) {
 fn main() {
     let arguments: Vec<String> = env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    if let Some(root) = env::var_os("WEWORK_E2E_DINGTALK_TRAINING_HISTORY").map(PathBuf::from) {
+        match arguments.as_slice() {
+            ["chat", "message", "search-advanced", ..] => {
+                let group = arguments
+                    .windows(2)
+                    .find(|pair| pair[0] == "--conversation-ids")
+                    .unwrap()[1];
+                assert!(matches!(
+                    group,
+                    "training-alpha" | "training-beta" | "training-gamma"
+                ));
+                print!(
+                    "{}",
+                    fs::read_to_string(root.join(format!("{group}.json"))).unwrap()
+                );
+                return;
+            }
+            ["chat", "message", "reply" | "send" | "send-by-bot", ..] => {
+                fs::write(root.join("unexpected-send"), "send attempted").unwrap();
+                process::exit(2);
+            }
+            _ => {}
+        }
+    }
     let search = |success: &'static str| -> (&'static str, i32) {
         match auth_state().as_str() {
             EXPIRE_ON_SEARCH => {

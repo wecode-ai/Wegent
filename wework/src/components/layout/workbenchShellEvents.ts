@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import type { ProjectCreateMode } from '@/components/chat/ChatInput'
 import type { ProjectWithTasks } from '@/types/api'
 
@@ -44,43 +44,26 @@ export function useWorkbenchShellEventHandlers({
   onOpenCloudDeviceSettings: () => void
   onOpenTaskSearch: () => void
 }) {
-  useEffect(() => {
-    if (!enabled) return
-    const handleOpenProjectCreate = (event: Event) => {
+  useDOMEvent(
+    'window',
+    OPEN_PROJECT_CREATE_EVENT,
+    event => {
       const detail = (
-        event as CustomEvent<{
-          mode?: ProjectCreateMode
-          options?: ProjectCreateRequestOptions
-        }>
+        event as CustomEvent<{ mode?: ProjectCreateMode; options?: ProjectCreateRequestOptions }>
       ).detail
-      const mode = detail?.mode
-      if (mode) {
-        onCreateProjectMode(mode, detail.options)
-      }
-    }
-    const handleBindProjectWorkspace = (event: Event) => {
+      if (detail?.mode) onCreateProjectMode(detail.mode, detail.options)
+    },
+    { enabled }
+  )
+  useDOMEvent(
+    'window',
+    BIND_PROJECT_WORKSPACE_EVENT,
+    event => {
       const projectId = (event as CustomEvent<{ projectId?: number }>).detail?.projectId
-      if (typeof projectId === 'number') {
-        onBindProjectWorkspace(projectId)
-      }
-    }
-
-    window.addEventListener(OPEN_PROJECT_CREATE_EVENT, handleOpenProjectCreate)
-    window.addEventListener(BIND_PROJECT_WORKSPACE_EVENT, handleBindProjectWorkspace)
-    window.addEventListener(OPEN_CLOUD_DEVICE_SETTINGS_EVENT, onOpenCloudDeviceSettings)
-    window.addEventListener(OPEN_TASK_SEARCH_EVENT, onOpenTaskSearch)
-
-    return () => {
-      window.removeEventListener(OPEN_PROJECT_CREATE_EVENT, handleOpenProjectCreate)
-      window.removeEventListener(BIND_PROJECT_WORKSPACE_EVENT, handleBindProjectWorkspace)
-      window.removeEventListener(OPEN_CLOUD_DEVICE_SETTINGS_EVENT, onOpenCloudDeviceSettings)
-      window.removeEventListener(OPEN_TASK_SEARCH_EVENT, onOpenTaskSearch)
-    }
-  }, [
-    enabled,
-    onBindProjectWorkspace,
-    onCreateProjectMode,
-    onOpenCloudDeviceSettings,
-    onOpenTaskSearch,
-  ])
+      if (typeof projectId === 'number') onBindProjectWorkspace(projectId)
+    },
+    { enabled }
+  )
+  useDOMEvent('window', OPEN_CLOUD_DEVICE_SETTINGS_EVENT, onOpenCloudDeviceSettings, { enabled })
+  useDOMEvent('window', OPEN_TASK_SEARCH_EVENT, onOpenTaskSearch, { enabled })
 }

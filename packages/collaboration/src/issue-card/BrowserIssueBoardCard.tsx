@@ -1,21 +1,22 @@
-import { RuntimeDeviceAccessNotice } from '../conversation/RuntimeDeviceAccess'
-import { useRuntimeDeviceAccess } from '../conversation/useRuntimeDeviceAccess'
-import { useBoardRuntimeGoals } from './useBoardRuntimeGoals'
 import type { RuntimeGoal } from '@wegent/chat-core/runtime-stream-types'
-import { useMemo } from 'react'
-import { standInProcessingActor } from '../issueParticipation'
 import type { RuntimeWorkListResponse } from '@wegent/chat-core/runtime-task-api-types'
 import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
+import { useMemo } from 'react'
+import { RuntimeDeviceAccessNotice } from '../conversation/RuntimeDeviceAccess'
+import { useRuntimeConversationSession } from '../conversation/useRuntimeConversationSession'
+import { useRuntimeDeviceAccess } from '../conversation/useRuntimeDeviceAccess'
+import type { CollaborationTranslate } from '../i18n'
+import { BrowserTaskConversationContent } from '../issue-detail/BrowserTaskConversationContent'
+import { isExecutionActive } from '../issue-detail/executionStatus'
+import { standInProcessingActor } from '../issueParticipation'
+import { Button as ControlButton } from '../markdown/Button'
+import { isLoopItemExecutionActive } from '../my-work/model'
+import type { SharedWorkspaceRuntimeApi, WorkspaceTaskBinding } from '../ports/SharedWorkspaceApi'
+import type { CollaborationIssue } from '../types'
 import { IssueBoardCard, type IssueBoardCardProps } from './IssueBoardCard'
 import { IssueCardTaskSummary } from './IssueCardTaskSummary'
 import { runtimeTaskProgress, runtimeToolActivityText } from './runtimeTaskProgress'
-import type { SharedWorkspaceRuntimeApi, WorkspaceTaskBinding } from '../ports/SharedWorkspaceApi'
-import type { CollaborationIssue } from '../types'
-import { isLoopItemExecutionActive } from '../my-work/model'
-import { isExecutionActive } from '../issue-detail/executionStatus'
-import { useRuntimeConversationSession } from '../conversation/useRuntimeConversationSession'
-import { BrowserTaskConversationContent } from '../issue-detail/BrowserTaskConversationContent'
-import type { CollaborationTranslate } from '../i18n'
+import { useBoardRuntimeGoals } from './useBoardRuntimeGoals'
 
 interface BrowserBoardTask extends WorkspaceTaskBinding {
   task_id: string
@@ -188,14 +189,15 @@ function BrowserRuntimeTaskSummary({
       {goal?.error && (
         <div role="alert" className="px-4 py-2 text-xs text-error">
           {goal.error}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`cloud-todo-card-goal-retry-${item.id}`}
             className="ml-2 underline"
             onClick={onRetryGoal}
           >
             {translate('activity.retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
     </>
@@ -247,14 +249,15 @@ function BrowserCompactTaskSummary({
           data-testid={`cloud-todo-card-progress-error-${item.id}`}
         >
           {state.error}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`cloud-todo-card-progress-retry-${item.id}`}
             className="ml-2 underline"
             onClick={() => void session.reload()}
           >
             {translate('activity.retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
     </>

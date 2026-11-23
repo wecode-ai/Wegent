@@ -85,6 +85,7 @@ describe("shared Issue threads", () => {
             agentRole="manager"
             executionStatus={status}
             translate={translate}
+            onStopExecution={() => {}}
             onOpenAttachment={() => {}}
             onOpenUrl={() => {}}
           />,
@@ -93,6 +94,13 @@ describe("shared Issue threads", () => {
       expect(container.textContent).toContain(label);
       expect(container.textContent).not.toContain("正在规划任务");
       expect(container.querySelector(".animate-spin")).toBeNull();
+      expect(
+        Boolean(
+          container.querySelector(
+            '[data-testid="cloud-task-manager-cancel-root"]',
+          ),
+        ),
+      ).toBe(status !== "cancelled");
     },
   );
 
@@ -179,6 +187,45 @@ describe("shared Issue threads", () => {
         '[data-testid="collaboration-chat-message-execution"]',
       ),
     ).toHaveLength(1);
+  });
+
+  it("shows one public start comment with the recorded task link and threaded result", () => {
+    const runtimeAddress = { deviceId: "executor", taskId: "member-task" };
+    const execution: ProjectChatMessage = {
+      ...message,
+      runtimeAddress,
+      metadata: {
+        activity_type: "member_execution",
+        workflow_task_title: "Task",
+      },
+    };
+    const start: ProjectChatMessage = {
+      ...message,
+      messageId: "start",
+      sequenceNumber: 2,
+      content: "开始处理",
+      metadata: {
+        execution_dispatch: "comment_only",
+        collaboration_turn_start: true,
+        collaboration_execution_activity_id: execution.messageId,
+      },
+    };
+    const result: ProjectChatMessage = {
+      ...message,
+      messageId: "result",
+      sequenceNumber: 3,
+      rootMessageId: start.messageId,
+      replyToMessageId: start.messageId,
+    };
+    const threads = groupIssueTimelineThreads([result, start, execution]);
+
+    expect(threads).toHaveLength(1);
+    expect(threads[0].root).toMatchObject({
+      messageId: start.messageId,
+      runtimeAddress,
+      metadata: { workflow_task_title: "Task" },
+    });
+    expect(threads[0].replies).toEqual([result]);
   });
 
   it("renders Markdown, bot avatar, reply row and distinct execution event status", () => {
@@ -368,6 +415,39 @@ describe("shared Issue threads", () => {
     ).toHaveLength(1);
   });
 
+  it("renders completed manager output as an Issue comment", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              status: "completed",
+              content: "The manager reviewed the implementation.",
+              metadata: {
+                dispatch_role: "manager",
+                activity_type: "manager_execution",
+              },
+            },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+
+    const comment = container.querySelector(
+      '[data-testid="collaboration-chat-message-root"]',
+    );
+    expect(comment?.textContent).toContain(
+      "The manager reviewed the implementation.",
+    );
+    expect(comment?.textContent).not.toContain("已完成本轮评估");
+  });
+
   it("renders an optional manager status comment as comment content", () => {
     act(() =>
       root.render(
@@ -526,12 +606,15 @@ describe("shared Issue threads", () => {
     expect(badge.textContent).toContain("查看执行");
     act(() => badge.click());
     expect(open).toHaveBeenCalledOnce();
-    expect(container.querySelector("details")?.textContent).toContain(
-      "Run run-123",
-    );
-    expect(container.querySelector("details")?.textContent).toContain(
-      "test-model",
-    );
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      '[data-testid="task-activity-run-details-' + message.messageId + '"]',
+    )!;
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    act(() => disclosure.click());
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    const metadata = container.querySelector(".task-detail-thread-run-metadata");
+    expect(metadata?.textContent).toContain("Run run-123");
+    expect(metadata?.textContent).toContain("test-model");
   });
 
   it("preserves terminal message status and distinguishes backend Task IDs from execution IDs", () => {

@@ -1,5 +1,6 @@
 import { Check, Circle } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimePlanEventPayload, RuntimePlanStep } from '@/types/api'
 
@@ -16,14 +17,9 @@ export function TaskPlanProgress({ plan }: { plan?: RuntimePlanEventPayload | nu
 }
 
 function CompletedTaskPlanProgress({ plan }: { plan: RuntimePlanEventPayload }) {
-  const [visible, setVisible] = useState(true)
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setVisible(false), COMPLETED_PLAN_NOTICE_DURATION_MS)
-    return () => window.clearTimeout(timeout)
-  }, [])
-
-  return visible ? <TaskPlanProgressContent plan={plan} allCompleted /> : null
+  const [deadline] = useState(() => Date.now() + COMPLETED_PLAN_NOTICE_DURATION_MS)
+  const expired = useDeadlineExpired(deadline)
+  return expired ? null : <TaskPlanProgressContent plan={plan} allCompleted />
 }
 
 function TaskPlanProgressContent({

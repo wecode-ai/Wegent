@@ -11,8 +11,9 @@ function projectViewTabId(view) {
 }
 
 export function collaborationProjectViewSelector(contentSelector, view, selected = false) {
-  const option = `option[value=${JSON.stringify(view)}]${selected ? ':checked' : ''}`
-  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]:has(${option})`
+  const selection = selected ? `:has([data-value=${JSON.stringify(view)}])` : ''
+  const available = `[data-available-views~=${JSON.stringify(view)}]`
+  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]${available}${selection}`
   const tabId = projectViewTabId(view)
   const tab = `${contentSelector} [data-testid="${tabId}"]${selected ? '[aria-current="page"]' : ''}`
   return `${compact}, ${tab}`

@@ -35,7 +35,7 @@ export function setLocalExecutorCloudConnectionStatus(
   for (const listener of listeners) listener()
 }
 
-function subscribe(listener: () => void): () => void {
+export function subscribeLocalExecutorCloudConnectionStatus(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
@@ -46,7 +46,7 @@ export function getLocalExecutorCloudConnectionStatus(): LocalExecutorCloudConne
 
 export function useLocalExecutorCloudConnectionStatus(): LocalExecutorCloudConnectionStatus {
   return useSyncExternalStore(
-    subscribe,
+    subscribeLocalExecutorCloudConnectionStatus,
     getLocalExecutorCloudConnectionStatus,
     getLocalExecutorCloudConnectionStatus
   )

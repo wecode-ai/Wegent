@@ -61,6 +61,14 @@ maintenance warnings. Data migration failures, missing runtime files, and storag
 still need repair; clearing user data must not hide them. Animation, screenshot, and window geometry
 errors affect presentation and must not prevent a loaded main window from appearing.
 
+## The main window opens while the task list is still loading
+
+The task list can load while worktrees and queued tasks recover. Wework can show the first available
+local list and apply later results in the background. To diagnose a long wait, compare
+`main-window-show` and `renderer-startup-ready` with source `task-list` in `wework-main.log`.
+When `model-loading.log` contains `runtime.inventory.slow`, it reports the time spent reading the
+Executor identity, requesting the list, and verifying the identity again.
+
 ## Conversation export remains on packaging
 
 In the desktop log directory, inspect `dsh-core-runtime.log` for `[wework-conversation-export]` and the export task ID. Finalization logs report the start, completion, or failure of document sync, asset sync, packaging, and destination replacement, including stage duration and asset count. They omit file paths and contents. A stage with only a start event identifies the file operation to investigate; the packaging message alone does not establish that the export has failed.
@@ -116,6 +124,8 @@ Background terminals retain collected output after restoring a conversation. Use
 If MCP tools failed to start or their connection was interrupted, sending another message in the same conversation checks their actual connection status and attempts recovery while preserving the conversation and healthy tool connections. Restarting the app is unnecessary. Each new execution reconciles at most once, concurrent continuations share recovery, and an execution never loops on a persistent failure. A later continuation can still recover a service that becomes available afterward. Tools requiring login or renewed authorization still require that authorization. Connection recovery does not replay earlier tool operations.
 
 The `codex MCP startup status` log records the process generation, conversation, server, startup status, and redacted error. `codex MCP startup recovery` records the servers that triggered recovery. Preserve these records if the problem persists.
+
+MCP tool approvals have their own deadline. The tool execution timeout starts after approval, when the tool is called. At the approval deadline, the local executor sends a cancellation to Codex even if the current turn did not receive the request. Use the request and turn IDs in the `codex native MCP elicitation expired` log to identify the cancellation.
 
 ### Unable to connect to the model service
 

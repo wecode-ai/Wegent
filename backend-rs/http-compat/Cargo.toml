@@ -1,0 +1,17 @@
+[package]
+name = "wegent-http-compat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "FastAPI response compatibility for Wegent HTTP services"
+
+[dependencies]
+brz-http-server = { workspace = true }
+brz-json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[dev-dependencies]
+brz-http-server = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }

@@ -14,6 +14,7 @@ import type {
 import type { RuntimeTaskSummary } from '@/types/api'
 import type { Automation } from '@/types/automation'
 import { createRuntimeTaskCommandsApi, type RuntimeTaskCommandsApi } from './runtimeTaskCommands'
+import { LOCAL_USER } from './local/localSession'
 
 export interface StandInOnboardingResult {
   settings?: PersonalStandInSettings | null
@@ -31,6 +32,10 @@ export interface StandInInstanceBinding {
   version: number
   status: 'unbound' | 'active' | 'stopping' | 'stopped'
   target: StandInBindingTarget | null
+}
+
+export function isStandInBindingOwner(targetUserId: number, userId: number): boolean {
+  return targetUserId === LOCAL_USER.id || targetUserId === userId
 }
 
 export interface ConnectionProviderDescriptor {
@@ -107,15 +112,35 @@ export interface StandInProcessingStatus {
 import {
   publishPersonalStandIn,
   type PersonalStandInSettings,
+  type StandInDelegationRoute,
   type StandInSourceConnection,
 } from './personalStandIn'
 
 export interface StandInProposal {
   id: string
   summary: string
+  training?: {
+    before: string
+    after: string
+    cases: Array<{ id: string; scene: string; actual?: string; expected: string }>
+    evaluation: Array<{
+      caseId: string
+      baseline: string
+      candidate: string
+      reason: string
+      confirmationReason?: string
+    }>
+  }
   roleId?: string | null
   settings: PersonalStandInSettings
   status: 'pending' | 'accepted' | 'rejected'
+}
+
+export interface StandInGhostRevision {
+  id: string
+  before: string
+  after: string
+  version: number
 }
 
 export type StandInMemoryScope =
@@ -134,6 +159,7 @@ export interface StandInMemory {
   createdAt: string
   updatedAt: string
   sourceTaskId?: string | null
+  evidenceUnavailable?: boolean
   evidence?: {
     taskId?: string
     messageId?: string
@@ -141,12 +167,22 @@ export interface StandInMemory {
     excerpt?: string
     observedAt?: string | number | null
     readAt?: string
+    trainingCase?:
+      | { kind: 'observation'; roleId: string; source?: { id?: string; name?: string } }
+      | {
+          kind: 'demonstration' | 'correction' | 'positive'
+          roleId: string
+          scene: string
+          actual?: string
+          expected: string
+        }
   } | null
 }
 
 export type StandInMemoryRule =
   | (Pick<StandInMemory, 'id' | 'content' | 'scope' | 'version' | 'createdAt' | 'updatedAt'> & {
       kind: 'forgetting_rule'
+      evidenceUnavailable?: boolean
     })
   | {
       kind: 'legacy_fingerprint'
@@ -154,6 +190,36 @@ export type StandInMemoryRule =
       version: number
       updatedAt: string
     }
+
+export type StandInReworkComparison =
+  | { status: 'insufficient' }
+  | {
+      status: 'inconclusive' | 'lower' | 'higher'
+      dimension: 'ghost' | 'memory'
+      baselineVersion: string
+      currentVersion: string
+      baselineRequests: number
+      currentRequests: number
+      matchedSources: number
+      difference: number
+      lowerBound: number
+      upperBound: number
+    }
+
+export interface StandInReworkReport {
+  roleId: string
+  windowHours: number
+  lastBackgroundVerifiedAt?: string | null
+  completeRequests: number
+  ownerReworkRequests: number
+  confirmedReworkRequests?: number
+  outsideRateReworkRequests?: number
+  pendingRequests: number
+  incompleteRequests: number
+  unattributedRequests: number
+  comparison: StandInReworkComparison
+  memoryComparison?: StandInReworkComparison | null
+}
 
 type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
@@ -206,6 +272,37 @@ export type StandInTelemetryFact = {
     occurredAt: number
   }
 }[keyof StandInGeneratedEventMap]
+
+export interface RemoteStandInRoleBranch {
+  taskId: string
+  createdAt: string
+  root: string
+  title: string
+  roleName?: string
+  deviceId: string
+  parentTaskId: string
+  ancestors: string[]
+  prerequisiteTaskIds?: string[] | null
+  taskAddress?: { deviceId: string; taskId: string } | null
+  attempt: number
+  retryAllowed: boolean
+  status:
+    | 'waiting_for_device'
+    | 'waiting_for_dependencies'
+    | 'blocked_by_dependency'
+    | 'waiting_for_user'
+    | 'waiting_for_parent'
+    | 'dispatched'
+    | 'retrying'
+    | 'running'
+    | 'done'
+    | 'failed'
+    | 'cancelling'
+    | 'cancelling_waiting_for_device'
+    | 'cancelled'
+  errorCode?: string | null
+  cancelGroup?: boolean
+}
 
 export interface StandInExecutorApi {
   deviceIdentity(deviceId: string): Promise<{ deviceId: string; backendDeviceId: string }>
@@ -267,6 +364,7 @@ export interface StandInExecutorApi {
     telemetryAction?: 'split' | 'merge' | 'move' | 'undo'
   ): Promise<StandInInboxWork>
   memories(userId: number, deviceId: string): Promise<StandInMemory[]>
+  reworkReport(userId: number, deviceId: string, roleId: string): Promise<StandInReworkReport>
   memoryRules(userId: number, deviceId: string): Promise<StandInMemoryRule[]>
   deleteMemoryRule(
     userId: number,
@@ -285,6 +383,26 @@ export interface StandInExecutorApi {
     userId: number,
     deviceId: string
   ): Promise<{ items: StandInInboxWork[]; sourceErrors: StandInSourceError[] }>
+  remoteRoleBranches(
+    userId: number,
+    deviceId: string,
+    taskId: string
+  ): Promise<{ items: RemoteStandInRoleBranch[] }>
+  cancelRoleWork(
+    userId: number,
+    deviceId: string,
+    taskId: string,
+    root: string,
+    branchTaskId?: string
+  ): Promise<void>
+  retryRoleWork(
+    userId: number,
+    deviceId: string,
+    taskId: string,
+    root: string,
+    branchTaskId: string,
+    attempt: number
+  ): Promise<void>
   workMessages(
     userId: number,
     deviceId: string,
@@ -348,11 +466,17 @@ export interface StandInExecutorApi {
     options?: Record<string, unknown>
   ): Promise<{ taskId: string; address: WorkspaceRuntimeTaskAddress | null }>
   proposal(userId: number, deviceId: string, roleId?: string): Promise<StandInProposal | null>
+  latestAppliedGhost(
+    userId: number,
+    deviceId: string,
+    roleId?: string
+  ): Promise<StandInGhostRevision | null>
   resolveProposal(
     userId: number,
     deviceId: string,
     proposalId: string,
-    accept: boolean
+    accept: boolean,
+    undoVersion?: number
   ): Promise<PersonalStandInSettings>
   notifyAssignment(
     projectId: string,
@@ -366,6 +490,13 @@ export interface StandInExecutorApi {
     userId: number,
     settings: PersonalStandInSettings,
     deviceId: string
+  ): Promise<PersonalStandInSettings>
+  saveDelegationRoute(
+    userId: number,
+    deviceId: string,
+    version: number,
+    roleId: string,
+    route: StandInDelegationRoute | null
   ): Promise<PersonalStandInSettings>
   readTask(
     deviceId: string,
@@ -526,6 +657,8 @@ export function createStandInExecutorApi(
       ).items,
     saveMemory: (userId, deviceId, memory) =>
       request('runtime.stand_in.memory.save', { userId, memory }, deviceId),
+    reworkReport: (userId, deviceId, roleId) =>
+      request('runtime.stand_in.memory.rework_report', { userId, roleId }, deviceId),
     memoryRules: async (userId, deviceId) =>
       (
         await request<{ items: StandInMemoryRule[] }>(
@@ -545,6 +678,22 @@ export function createStandInExecutorApi(
       await request('runtime.stand_in.memory.delete', { userId, id, version }, deviceId)
     },
     inbox: (userId, deviceId) => request('runtime.stand_in.work.list', { userId }, deviceId),
+    remoteRoleBranches: (userId, deviceId, taskId) =>
+      request('runtime.stand_in.role_task.branches', { userId, taskId }, deviceId),
+    cancelRoleWork: async (userId, deviceId, taskId, root, branchTaskId) => {
+      await request(
+        'runtime.stand_in.role_task.cancel',
+        { userId, taskId, root, branchTaskId },
+        deviceId
+      )
+    },
+    retryRoleWork: async (userId, deviceId, taskId, root, branchTaskId, attempt) => {
+      await request(
+        'runtime.stand_in.role_task.retry',
+        { userId, taskId, root, branchTaskId, attempt },
+        deviceId
+      )
+    },
     workMessages: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
     runWork: (userId, deviceId, workId, options) =>
@@ -601,10 +750,21 @@ export function createStandInExecutorApi(
       ),
     proposal: (userId, deviceId, roleId) =>
       request('runtime.stand_in.proposal.get', { userId, roleId }, deviceId),
-    resolveProposal: async (userId, deviceId, proposalId, accept) => {
+    latestAppliedGhost: async (userId, deviceId, roleId) => {
+      const revision = await request<StandInGhostRevision | null>(
+        'runtime.stand_in.proposal.get',
+        { userId, roleId, latestAppliedGhost: true },
+        deviceId
+      )
+      if (revision && (!revision.id?.startsWith('ghost:') || !Number.isInteger(revision.version))) {
+        throw new Error(getStandInErrorMessage({ code: 'stand_in_unavailable' }))
+      }
+      return revision
+    },
+    resolveProposal: async (userId, deviceId, proposalId, accept, undoVersion) => {
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.proposal.resolve',
-        { userId, proposalId, accept },
+        { userId, proposalId, accept, ...(undoVersion !== undefined ? { undoVersion } : {}) },
         deviceId
       )
       publishPersonalStandIn(saved)
@@ -649,6 +809,15 @@ export function createStandInExecutorApi(
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
         { userId, settings },
+        deviceId
+      )
+      publishPersonalStandIn(saved)
+      return saved
+    },
+    saveDelegationRoute: async (userId, deviceId, version, roleId, route) => {
+      const saved = await request<PersonalStandInSettings>(
+        'runtime.stand_in.personal.save',
+        { userId, delegationRoute: { version, roleId, route } },
         deviceId
       )
       publishPersonalStandIn(saved)

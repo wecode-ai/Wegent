@@ -20,6 +20,12 @@ pnpm --filter wework e2e:desktop --segment idle-executor-requests
 
 检查点注册在现有 Core CI 分片，独立运行不依赖前序场景。本地 macOS arm64 验证含启动与清理耗时约 52 秒，共享构建另计。结果目录的 `idle-executor-requests.json` 只保存方法名、时间、状态和必要布尔标志，不保存请求参数、头或查询字符串；日志和截图不得提交。
 
+## 桌面 CPU 回归检查
+
+现有 Linux Core CI 对 `idle-executor-requests`、`streaming-conversation-switching` 和 `executor-stream-recovery` 记录 CPU。测量覆盖场景验证函数的完整运行区间，包含场景内的准备和重载。例如空闲场景的数值包含重载和后续验证，不能当成纯空闲 CPU 占用。CPU 时间以毫秒分别记录 Electron Renderer 进程和 Executor 主进程。Executor 子进程的 CPU 单独留待后续覆盖。采样窗口两端必须是同一批被测进程，采集失败或进程变化时，日志会标记样本不可用。
+
+[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) 维护每个检查点和 runner 平台的基线。现有 `main` 夜间任务或在 `main` 手动运行的 Wework E2E 更新基线，PR 和合并队列只读取基线。CI 在已有分片运行相应检查点时显示当前值、基线和比值。已有基线时，任一进程的 CPU 时间超过基线的 150%，或检查点未产出 CPU 样本，都会让 CI 失败。首次无基线时，CI 仍可通过并显示可用的样本。
+
 ## 插件周期恢复 E2E
 
 `plugin-periodic-reconcile` checkpoint 使用真实 Electron、Executor、Socket.IO、数据库和插件包存储，丢弃一次真实插件变更通知后，验证定时对账恢复状态、持久化 ACK、设备身份以及未受影响插件的内容。测试实例设置 `LOCAL_PLUGIN_RECONCILE_INTERVAL=90`、`LOCAL_PLUGIN_RECONCILE_JITTER=18`（单位为秒），并用已有的 `LOCAL_HEARTBEAT_INTERVAL=1` 保留至少 10 次心跳的活性断言。检查点根据真实对账 tick 对齐故障注入；准备流程跨过某个 tick 时等待当前定时器窗口，而不是因负载延长周期。
@@ -35,6 +41,8 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 ## 对话模型恢复诊断
 
 选择「完整任务数据」后，反馈包的 `context/task.json` 包含 `modelSelection`。快照包含模型名称、类型、资源归属和诊断指纹。快照不包含任意模型参数和认证配置。
+
+反馈框以打开时选定的任务为准。预览读取该任务的完整记录，避免窗格在重连时刷新记录或切换会话中断导出。
 
 - `configured`：传入模型选择器的配置。
 - `effective`：解析默认值后的配置。
@@ -157,6 +165,21 @@ Electron 不会为 WebContents 自动创建网页右键菜单。Wework 由 Elect
 
 AI 应先执行 `snapshot` 确认路由和可用的 `data-testid`，再进行最小必要操作，并以 `wait-for` 加 `snapshot` 或 `text` 验证结果。结束时必须执行 `stop`；若失败，保留该会话目录中的 `app.log` 以便诊断。
 
+## 录制验证视频
+
+需要留存操作证据时，先确认 PATH 中的 FFmpeg 支持 `libx264`。用 `start --record true` 启动会话，主窗口就绪后开始录像，并在返回会话路径前采集首帧。也可以对已启动的会话执行 `record-start`，用 `record-stop` 结束当前片段，并按需开启下一段。
+
+```bash
+pnpm --filter wework ai:verify start --record true
+pnpm --filter wework ai:verify record-stop --session SESSION
+pnpm --filter wework ai:verify record-start --session SESSION
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+`record-stop` 保存视频并输出路径。若录像仍在进行，`stop` 会先保存视频，再关闭会话，并输出视频路径。每段录像以独立的 MP4 文件保存在对应的 `wework/test-results/ai-verify/` 会话目录中。如果采集中断，录制器会尽量保存已采集画面，并在停止命令的错误信息中给出已保存的路径。
+
+录像以每秒 5 帧采集隔离 Electron 主窗口内容，覆盖页面重载，无需 macOS 屏幕录制权限。采集范围不包含操作系统弹窗、原生菜单、独立窗口或音频。请将录像与实际断言结果一起作为验收证据，分享前检查画面中的敏感信息。录像和会话文件请保留在 Git 之外。
+
 ## 通用 DevTools 与性能分析
 
 隔离验证实例通过主进程提供鉴权的 CDP 通道。它不经过渲染线程，因此在断点暂停时仍能读取事件并恢复执行。普通应用实例不注册此入口。先启动实例并枚举目标，将返回的 `id` 用作下面的 `ID`：
@@ -214,3 +237,21 @@ CPU 录制成功停止后，即使 trace 读取、解析或报告写入失败，
 工作台的记忆化回调分别定义在独立 Hook 的词法作用域中，不能重新合并进 Provider 的大型渲染作用域。否则依赖交替变化的回调会通过共享闭包串联保留历史任务、生命周期和工作列表快照。`workbenchCallbackLifetime.test.tsx` 使用 Inspector 触发真实 GC，并通过弱引用验证旧快照能够回收，同时约束 Provider 不再直接定义 `useCallback`。
 
 CPU Trace 的采样时间、HTML 解析时间与进程内存应分别解释。堆快照中的对象大小不等于活动监视器中的进程占用；单份堆快照能证明对象保留路径，不能独立证明内存增长速率。分析文件保持本地，不提交用户 Trace 或堆快照。
+
+## 按 PR 功能进行 Bombadil 探索
+
+使用固定版本 Bombadil 0.7.10（macOS ARM64 或 Linux），通过 BOMBADIL_BIN 指定可执行文件。先用 --plan true 检查选择结果，再显式运行；普通 ai:verify start 不开放调试端口。
+
+```bash
+pnpm --filter wework ai:verify bombadil --base origin/main --plan true
+BOMBADIL_BIN=/absolute/path/bombadil pnpm --filter wework ai:verify bombadil --base origin/main --seconds 30
+BOMBADIL_BIN=/absolute/path/bombadil pnpm --filter wework ai:verify bombadil --suite appearance --seconds 30
+```
+
+--base 使用 merge-base 到 HEAD 的已提交差异，包括删除和重命名涉及的路径；未提交改动不在差异计划内。需要本地未提交验证时显式选择 --suite。路径映射位于 scripts/ai-verify-bombadil.mjs：外观选择 appearance，工作台、聊天和标签页选择 workbench，共享 UI 和桌面宿主选择两者。未映射的 Wework/packages 改动会报告覆盖缺口并阻止将自动选择结果视为通过；新增功能应补充规格和映射。映射只表达候选覆盖，不能证明行为正确。
+
+每个规格使用独立的真实 Electron 与 Executor，自动获取临时 loopback 调试端口，拒绝已有 Executor Home 和多页面目标。执行前处理隔离实例的首次隐私弹窗，再建立规格前置条件。每个规格预算 1—600 秒；多个规格串行执行，结束或失败均清理实例。默认不执行模型请求或云端授权。
+
+结果保存在 `wework/test-results/bombadil/<时间>/`，包括 summary.json、日志和 Bombadil 原生轨迹。失败或清理失败返回非零；零操作不能通过。轨迹可能含界面截图和内容，只用于本地诊断，不提交仓库，也不上传包含 session.json、认证文件或整个 ai-verify 目录的产物。仅做定向、预算受控的 CI 接入；随机通过不替代确定性回归、权限验证或发布门禁。
+
+GitHub Actions 的 Wework Bombadil exploration 工作流仅支持手动触发：选择 PR 分支，填写 base（默认 origin/main）和每个规格的秒数。普通 PR 不增加自动探索。工作流下载固定版本并校验 SHA-256，只把 summary.json 写入步骤摘要，不上传原始轨迹或认证目录。

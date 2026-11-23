@@ -28,7 +28,11 @@ def stable_plugin(plugin: dict[str, Any]) -> dict[str, Any]:
 
 
 def current_legacy_plugin_ids(
-    db: Session, user_id: int, result: DeviceCapabilitySyncResult
+    db: Session,
+    user_id: int,
+    result: DeviceCapabilitySyncResult,
+    *,
+    installed_ids: list[int] | None = None,
 ) -> set[int]:
     """Fence legacy acknowledgements with the exact payload sent before the RPC."""
     from app.services.device.capability_sync_service import (
@@ -38,7 +42,10 @@ def current_legacy_plugin_ids(
     expected = {
         item["installed_plugin_id"]: stable_plugin(item)
         for item in (result.desired_plugin_snapshot or {}).get("plugins", [])
+        if installed_ids is None or item["installed_plugin_id"] in installed_ids
     }
+    if not expected:
+        return set()
     current = device_capability_sync_service._load_installed_plugins(
         db,
         user_id=user_id,
@@ -74,14 +81,15 @@ def record_versioned_result(
     removed_ids = {
         item["installed_plugin_id"] for item in payload.get("removed_plugins") or []
     }
-    rows = (
-        db.query(PluginDeviceInstallation)
-        .filter_by(
-            user_id=user_id,
-            device_id=result.device_id,
-        )
-        .all()
+    rows_query = db.query(PluginDeviceInstallation).filter_by(
+        user_id=user_id,
+        device_id=result.device_id,
     )
+    if installed_ids is not None:
+        rows_query = rows_query.filter(
+            PluginDeviceInstallation.installed_kind_id.in_(installed_ids)
+        )
+    rows = rows_query.all()
     if (payload.get("plugin_sync") or {}).get("complete"):
         removed_ids.update(
             row.installed_kind_id

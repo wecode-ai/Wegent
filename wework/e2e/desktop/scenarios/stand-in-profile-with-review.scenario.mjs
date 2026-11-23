@@ -268,7 +268,7 @@ export function createDesktopScenario(options) {
       })
       await control.command('click', '[data-testid="stand-in-onboarding-back"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
-      await control.command('waitFor', '[data-testid="stand-in-all-projects"]:checked')
+      await control.command('waitFor', '[data-testid="stand-in-all-projects"][aria-checked="true"]')
       await control.command('click', '[data-testid="stand-in-source-collaboration"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
       await control.command('waitFor', '[data-testid="stand-in-onboarding-summary"]', {

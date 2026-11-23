@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { resolveElectronBinary } from './electron-binary.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { verifyWindowsDesktopDataStartup } from './workbench-desktop-startup.mjs'
 import { verifyWindowsComponentPublication } from './workbench-component-publication.mjs'
@@ -32,7 +32,6 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   assert.equal(typeof input.incompatibleExecutor, 'string')
   const missingDesktopUserData = await verifyMissingDesktopUserData({
     resources: input.resources,
-    executor: input.executor,
     environment: appEnvironment,
     root: join(root, 'missing-desktop-user-data'),
   })
@@ -40,7 +39,6 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
     process.platform === 'darwin'
       ? await verifyMacosLogStartup({
           resources: input.resources,
-          executor: input.executor,
           environment: appEnvironment,
           root: join(root, 'macos-log-startup'),
         })
@@ -49,7 +47,6 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
     process.platform === 'win32'
       ? await verifyWindowsDesktopDataStartup({
           resources: input.resources,
-          executor: input.executor,
           environment: appEnvironment,
           root: join(root, 'windows-desktop-startup'),
         })
@@ -79,7 +76,6 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       const metadata = JSON.parse(await fs.readFile(path.join(appRoot, 'package.json'), 'utf8'));
       const runtimeRoot = path.join(appRoot, path.dirname(metadata.main), 'runtime');
       const load = name => import(pathToFileURL(path.join(runtimeRoot, name + '.js')).href);
-      const { migrateWorkbenchDesktopData, prepareDesktopDataSource } = await load('workbench-desktop-data');
       const { packagedUpdaterCache, restoreNativeUpdaterCache } = await load('../host/app-update-cache');
       const updaterCacheRecoveryStates = [];
       if (metadata.weworkProductName) app.setName(metadata.weworkProductName);
@@ -88,26 +84,21 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
         assert.equal(logs, path.join(input.root, 'Library', 'Logs', metadata.weworkProductName || app.getName()));
         const updaterCache = packagedUpdaterCache(input.root, input.resources, {}, 'darwin');
         assert.equal(path.dirname(updaterCache), path.join(input.root, 'Library', 'Caches'));
-        const migration = { source: path.join(input.root, 'legacy-user-data'), desktop: path.join(input.root, 'desktop'), logs };
         await fs.mkdir(updaterCache, { recursive: true });
         await fs.writeFile(path.join(updaterCache, 'marker'), 'before-upgrade');
-        prepareDesktopDataSource(migration.source, migration.desktop);
-        migrateWorkbenchDesktopData(migration);
-        const journal = path.join(migration.desktop, 'migrations', 'desktop-updater-cache-v1.json');
-        migrateWorkbenchDesktopData(migration);
-        await assert.rejects(fs.lstat(journal), { code: 'ENOENT' });
         assert.equal((await fs.lstat(updaterCache)).isDirectory(), true);
         assert.equal(await fs.readFile(path.join(updaterCache, 'marker'), 'utf8'), 'before-upgrade');
-        const { migrateWorkbenchDataEntry } = await load('workbench-data-migration');
         for (const state of ['recreated-source', 'replaced-target', 'dangling-bridge', 'invalid-journal']) {
           const fixtureRoot = path.join(input.root, 'updater-cache-recovery', state);
           const desktop = path.join(fixtureRoot, 'desktop');
           const cache = { source: path.join(fixtureRoot, 'system-cache'),
             target: path.join(desktop, 'updater-cache'),
             journal: path.join(desktop, 'migrations', 'desktop-updater-cache-v1.json') };
-          await fs.mkdir(cache.source, { recursive: true });
-          await fs.writeFile(path.join(cache.source, 'marker'), 'retained-update');
-          migrateWorkbenchDataEntry(cache);
+          await fs.mkdir(cache.target, { recursive: true });
+          await fs.mkdir(path.dirname(cache.journal), { recursive: true });
+          await fs.writeFile(cache.journal, '{}');
+          await fs.writeFile(path.join(cache.target, 'marker'), 'retained-update');
+          await fs.symlink(cache.target, cache.source, 'dir');
           if (state === 'recreated-source') {
             await fs.unlink(cache.source);
             await fs.mkdir(cache.source);
@@ -116,19 +107,12 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
             if (state === 'replaced-target') await fs.mkdir(cache.target);
           } else await fs.writeFile(cache.journal, 'invalid JSON');
           const oldJournal = await fs.readFile(cache.journal, 'utf8');
-          const persistent = { source: path.join(fixtureRoot, 'user-data'), desktop,
-            logs: path.join(fixtureRoot, 'user-data', 'logs') };
-          prepareDesktopDataSource(persistent.source, desktop);
-          await fs.writeFile(path.join(persistent.source, 'preferences.json'), 'original-preferences');
-          const migrated = migrateWorkbenchDesktopData(persistent);
           restoreNativeUpdaterCache(cache.source, desktop);
           await fs.mkdir(path.join(cache.source, 'pending'), { recursive: true });
           await fs.writeFile(path.join(cache.source, 'pending', 'update.zip'), 'new-update');
-          migrateWorkbenchDesktopData(persistent);
           assert.equal(restoreNativeUpdaterCache(cache.source, desktop), false);
           assert.equal((await fs.lstat(cache.source)).isDirectory(), true);
           assert.equal(await fs.readFile(path.join(cache.source, 'pending', 'update.zip'), 'utf8'), 'new-update');
-          assert.equal(await fs.readFile(path.join(migrated.userData, 'preferences.json'), 'utf8'), 'original-preferences');
           assert.equal(await fs.readFile(cache.journal, 'utf8'), oldJournal);
           const retainedCache = state === 'replaced-target' || state === 'dangling-bridge'
             ? cache.target + '.backup' : cache.target;
@@ -170,89 +154,20 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       assert.equal(devPrepared.WEGENT_CODEX_HOME, path.join(devHome, '.wegent', 'development', 'workbench', 'wework', 'default', 'codex'));
       assert.equal(await fs.readFile(nativeAuth, 'utf8'), 'synthetic-development-auth');
       await assert.rejects(fs.lstat(path.join(devHome, '.wegent', 'workbench')), { code: 'ENOENT' });
-      const freshHome = path.join(input.root, 'empty-codex-home');
-      const freshExecutorHome = metadata.weworkExecutorNamespace?.trim()
-        ? path.join(freshHome, '.wework', 'apps', metadata.weworkExecutorNamespace.trim())
-        : path.join(freshHome, '.wework');
-      await fs.mkdir(path.join(freshExecutorHome, 'codex'), { recursive: true });
-      const freshPrepared = await prepareWorkbenchEnvironment({
-        environment: { HOME: freshHome, USERPROFILE: freshHome, PATH: input.path,
-          SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
-          WEWORK_EXECUTOR_PATH: input.executor },
-        metadata, homeDirectory: freshHome,
+      const legacyHome = path.join(input.root, 'legacy-home');
+      const legacyExecutor = metadata.weworkExecutorNamespace?.trim()
+        ? path.join(legacyHome, '.wework', 'apps', metadata.weworkExecutorNamespace.trim())
+        : path.join(legacyHome, '.wework');
+      const legacyCodex = path.join(legacyExecutor, 'codex');
+      await fs.mkdir(legacyCodex, { recursive: true });
+      await fs.writeFile(path.join(legacyCodex, 'auth.json'), 'synthetic-legacy-auth');
+      const prepared = prepareWorkbenchEnvironment({
+        environment: { HOME: legacyHome, USERPROFILE: legacyHome },
+        metadata, homeDirectory: legacyHome,
       });
-      assert.notEqual(freshPrepared.WEGENT_CODEX_HOME, path.join(freshExecutorHome, 'codex'));
-      assert.equal(await fs.realpath(path.join(freshExecutorHome, 'codex')), await fs.realpath(freshPrepared.WEGENT_CODEX_HOME));
-      assert.deepEqual(await fs.readdir(freshPrepared.WEGENT_CODEX_HOME), []);
-      const upgradeHome = path.join(input.root, 'populated-legacy-codex-home');
-      const upgradeExecutorHome = metadata.weworkExecutorNamespace?.trim()
-        ? path.join(upgradeHome, '.wework', 'apps', metadata.weworkExecutorNamespace.trim())
-        : path.join(upgradeHome, '.wework');
-      const legacyCodexHome = path.join(upgradeExecutorHome, 'codex');
-      const config = "cli_auth_credentials_store = 'file'\\n";
-      await fs.mkdir(path.join(legacyCodexHome, 'sessions'), { recursive: true });
-      await fs.writeFile(path.join(legacyCodexHome, 'config.toml'), config);
-      await fs.writeFile(path.join(legacyCodexHome, 'auth.json'), 'synthetic-upgrade-auth');
-      await fs.writeFile(path.join(legacyCodexHome, 'sessions', 'marker'), 'legacy-session');
-      await fs.writeFile(path.join(upgradeExecutorHome, 'device-config.json'), '{"marker":"legacy-device"}');
-      await fs.writeFile(path.join(upgradeExecutorHome, 'device-config.json.lock'), '');
-      const { DatabaseSync } = require('node:sqlite');
-      const seedPath = path.join(upgradeHome, 'seed.sqlite');
-      const seed = new DatabaseSync(seedPath);
-      seed.exec("PRAGMA journal_mode=WAL; CREATE TABLE tasks(id TEXT); INSERT INTO tasks VALUES ('legacy-task')");
-      await fs.mkdir(path.join(upgradeExecutorHome, 'data'), { recursive: true });
-      for (const suffix of ['', '-wal', '-shm'])
-        await fs.copyFile(seedPath + suffix, path.join(upgradeExecutorHome, 'data', 'tasks.sqlite') + suffix);
-      seed.close();
-      const upgradeOptions = {
-        environment: { HOME: upgradeHome, USERPROFILE: upgradeHome, PATH: input.path,
-          SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
-          WEWORK_EXECUTOR_PATH: input.executor },
-        metadata, homeDirectory: upgradeHome,
-      };
-      const upgraded = await prepareWorkbenchEnvironment(upgradeOptions);
-      assert.notEqual(upgraded.WEGENT_CODEX_HOME, legacyCodexHome);
-      assert.equal(await fs.realpath(legacyCodexHome), await fs.realpath(upgraded.WEGENT_CODEX_HOME));
-      assert.equal(await fs.readFile(path.join(upgraded.WEGENT_CODEX_HOME, 'config.toml'), 'utf8'), config);
-      assert.equal(await fs.readFile(path.join(upgraded.WEGENT_CODEX_HOME, 'auth.json'), 'utf8'), 'synthetic-upgrade-auth');
-      assert.equal(await fs.readFile(path.join(upgraded.WEGENT_CODEX_HOME, 'sessions', 'marker'), 'utf8'), 'legacy-session');
-      const upgradedDatabase = new DatabaseSync(path.join(upgraded.WEGENT_EXECUTOR_HOME, 'data', 'tasks.sqlite'));
-      assert.equal(upgradedDatabase.prepare('SELECT id FROM tasks').get().id, 'legacy-task');
-      upgradedDatabase.exec("INSERT INTO tasks VALUES ('new-task')");
-      upgradedDatabase.close();
-      const legacyDatabase = new DatabaseSync(path.join(upgradeExecutorHome, 'data', 'tasks.sqlite'));
-      assert.equal(legacyDatabase.prepare('SELECT count(*) AS total FROM tasks').get().total, 2);
-      legacyDatabase.close();
-      const replacementConfig = path.join(upgradeHome, 'replacement-device-config.json');
-      await fs.writeFile(replacementConfig, '{"marker":"updated-device"}');
-      await fs.rename(replacementConfig, path.join(upgraded.WEGENT_EXECUTOR_HOME, 'device-config.json'));
-      await prepareWorkbenchEnvironment(upgradeOptions);
-      assert.equal(await fs.readFile(path.join(upgradeExecutorHome, 'device-config.json'), 'utf8'), '{"marker":"updated-device"}');
-      if (process.platform === 'win32') {
-        // Reproduce an installation that already completed migration with a file hard link.
-        const source = path.join(freshExecutorHome, 'app-ipc.addr');
-        const target = path.join(freshPrepared.WEGENT_EXECUTOR_HOME, 'app-ipc.addr');
-        const state = path.join(freshPrepared.WEGENT_EXECUTOR_HOME, 'migrations', 'executor-data-v1');
-        const journal = path.join(state, Buffer.from('app-ipc.addr').toString('hex') + '.json');
-        await fs.writeFile(target, 'synthetic-ipc-address');
-        await fs.link(target, source);
-        const identity = await fs.stat(target, { bigint: true });
-        const record = JSON.stringify({ source, target, journal, version: 1, directory: false,
-          completed: true, device: identity.dev.toString(), inode: identity.ino.toString() });
-        await fs.writeFile(journal, record);
-        await fs.writeFile(path.join(state, 'entries.json'), JSON.stringify(['app-ipc.addr']));
-        for (let restart = 0; restart < 2; restart++) {
-          await prepareWorkbenchEnvironment({
-            environment: { HOME: freshHome, USERPROFILE: freshHome, PATH: input.path,
-              SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
-              WEWORK_EXECUTOR_PATH: input.executor },
-            metadata, homeDirectory: freshHome,
-          });
-          assert.equal(await fs.readFile(journal, 'utf8'), record);
-          assert.equal(await fs.readFile(source, 'utf8'), 'synthetic-ipc-address');
-          assert.equal((await fs.stat(source, { bigint: true })).ino, identity.ino);
-        }
-      }
+      assert.notEqual(prepared.WEGENT_CODEX_HOME, legacyCodex);
+      await assert.rejects(fs.lstat(prepared.WEGENT_CODEX_HOME), { code: 'ENOENT' });
+      assert.equal(await fs.readFile(path.join(legacyCodex, 'auth.json'), 'utf8'), 'synthetic-legacy-auth');
       const home = path.join(input.root, 'must-remain-absent');
       const environment = { PATH: input.path, HOME: home, WEWORK_EXECUTOR_PATH: input.executor };
       await assertExecutorWorkbenchCompatibility(environment);
@@ -267,9 +182,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       await reacquired.release();
       await assert.rejects(fs.lstat(home), { code: 'ENOENT' });
       const incompatible = { ...environment, WEWORK_EXECUTOR_PATH: input.incompatibleExecutor };
-      await assert.rejects(prepareWorkbenchEnvironment({
-        environment: incompatible, metadata, homeDirectory: home,
-      }), /schema/);
+      await assert.rejects(assertExecutorWorkbenchCompatibility(incompatible), /schema/);
       await assert.rejects(fs.lstat(home), { code: 'ENOENT' });
 
       const packaged = JSON.parse(await fs.readFile(path.join(input.resources, 'components.json'), 'utf8'));
@@ -326,8 +239,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
         selectedComponentStateUnchanged: true,
         packagedFallbackPreservesSharedComponentIndex: true,
         developmentHomeIsolatedWithNativeAuthLink: true,
-        emptyCodexHomeMigratedWithoutCredentials: true,
-        completedFileHardlinksPreserved: process.platform === 'win32' ? true : undefined,
+        legacyHomeUntouched: true,
         updaterCacheRecoveryStates,
       }));
       app.exit(0);
@@ -339,9 +251,9 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   delete environment.ELECTRON_RUN_AS_NODE
   // Packaged executables always launch their own app; use the matching Electron toolchain
   // to import the packaged modules with real Electron APIs available.
-  const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+  const electronBinary = resolveElectronBinary()
   const { stdout } = await promisify(execFile)(
-    require('electron'),
+    electronBinary,
     [scriptPath, JSON.stringify(input), ...resolveElectronLaunchArguments()],
     {
       env: environment,

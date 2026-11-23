@@ -96,6 +96,11 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.memory.list" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "list") })
             }
+            "runtime.stand_in.memory.rework_report" => boxed_rpc(move || async move {
+                let user = super::runtime_owner::runtime_user(&payload)?;
+                let role = super::stand_in_tasks::required(&payload, "roleId")?;
+                self.role_rework_report(user, role, None).await
+            }),
             "runtime.stand_in.memory.save" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "save") })
             }
@@ -215,6 +220,15 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.work.list" => {
                 boxed_rpc(move || async move { self.list_connection_stand_in_work(payload) })
             }
+            "runtime.stand_in.role_task.branches" => {
+                boxed_rpc(move || async move { self.stand_in_role_branches(&payload) })
+            }
+            "runtime.stand_in.role_task.cancel" => {
+                boxed_rpc(move || async move { self.request_role_cancellation(payload).await })
+            }
+            "runtime.stand_in.role_task.retry" => {
+                boxed_rpc(move || async move { self.request_role_retry(payload).await })
+            }
             "runtime.stand_in.work.messages" => {
                 boxed_rpc(move || async move { self.connection_stand_in_messages(payload) })
             }
@@ -307,7 +321,7 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.resolve_command_owner(payload).await })
             }
             "runtime.tasks.send" => {
-                boxed_rpc(move || async move { self.send_message(payload).await })
+                boxed_rpc(move || async move { self.send_message_from_owner(payload, true).await })
             }
             "runtime.tasks.interrupt_and_send" => {
                 boxed_rpc(move || async move { self.interrupt_and_send(payload).await })
@@ -315,9 +329,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.rollback" => {
                 boxed_rpc(move || async move { self.rollback_task(payload).await })
             }
-            "runtime.tasks.guidance" => {
-                boxed_rpc(move || async move { self.send_guidance(payload).await })
-            }
+            "runtime.tasks.guidance" => boxed_rpc(move || async move {
+                self.send_guidance_with_context(payload, None, true).await
+            }),
             "runtime.tasks.compact" => {
                 boxed_rpc(move || async move { self.compact_task(payload).await })
             }
@@ -678,6 +692,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.workspace.search" => {
                 boxed_rpc(move || async move { self.search_workspace(payload).await })
+            }
+            "runtime.workspace.read" => {
+                boxed_rpc(move || async move { self.read_workspace(payload).await })
             }
             "runtime.sidebar.projects.reorder" => {
                 boxed_rpc(move || async move { self.reorder_sidebar_projects(payload).await })

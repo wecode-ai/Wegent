@@ -49,6 +49,7 @@ from ..llm_logging import log_llm_request_event as _log_llm_request_event
 from ..llm_logging import log_llm_response_event as _log_llm_response_event
 from ..tools.argument_stream import ToolCallStreamTracker
 from ..tools.base import ToolRegistry
+from ..tools.builtin.load_skill import LazySkillProviderTool
 from ..tools.builtin.silent_exit import SilentExitException
 from ..tools.deferred_input import DeferredUserInputExit
 from .turn_context import TurnExecutionContext
@@ -132,22 +133,16 @@ def _log_tool_error_event(tool_name: str, run_id: str, event_data: Any) -> None:
 
     LangGraph reports tool failures (e.g. argument ``ValidationError``) via an
     ``on_tool_error`` event and then converts them into an error ``ToolMessage``
-    that is only visible to the model. Without this, chat_shell logs stay silent
-    on tool failures, making them hard to diagnose. The ``input`` is included
-    because mismatches between it and the error (e.g. a "Field required" error
-    with an empty input) are the fastest way to spot argument-routing bugs.
+    that is only visible to the model. Log names and exception types for
+    diagnosis; arguments and exception text can contain private credentials.
     """
     data = event_data if isinstance(event_data, dict) else {}
     error = data.get("error")
-    tool_input = data.get("input")
-    # Truncate both fields: tool args can be large (e.g. file contents) or carry
-    # sensitive values, so we cap the logged length to avoid log bloat / leakage.
-    logger.error(
-        "[stream_tokens] Tool '%s' failed (run_id=%s): input=%s error=%s",
+    logger.warning(
+        "[stream_tokens] Tool unavailable: tool=%s run_id=%s error_type=%s",
         tool_name,
         run_id,
-        repr(tool_input)[:1000],
-        str(error)[:1000],
+        type(error).__name__,
     )
 
 
@@ -1261,34 +1256,40 @@ class LangGraphAgentBuilder:
         load_skill_tool: Any | None,
     ) -> list[BaseTool] | Any:
         """Create a ToolNode that can execute tools registered after graph build."""
-        if not load_skill_tool:
-            return all_tools
-
         from langgraph.prebuilt.tool_node import ToolCallRequest, ToolNode
 
         async def awrap_tool_call(tool_request: Any, execute: Callable) -> Any:
             """Resolve a dynamically registered skill tool before execution."""
-            if tool_request.tool is not None:
-                return await execute(tool_request)
-
             finder = getattr(load_skill_tool, "find_registered_tool", None)
-            if not finder:
-                return await execute(tool_request)
-
-            tool_name = tool_request.tool_call["name"]
-            dynamic_tool = finder(tool_name)
-            if dynamic_tool is None:
-                return await execute(tool_request)
-
-            logger.info("[dynamic_tool_node] Resolved dynamic tool '%s'", tool_name)
-            return await execute(
-                ToolCallRequest(
-                    tool_call=tool_request.tool_call,
-                    tool=dynamic_tool,
-                    state=tool_request.state,
-                    runtime=tool_request.runtime,
-                )
-            )
+            if tool_request.tool is None and finder:
+                tool_name = tool_request.tool_call["name"]
+                dynamic_tool = finder(tool_name)
+                if dynamic_tool is not None:
+                    logger.info(
+                        "[dynamic_tool_node] Resolved dynamic tool '%s'", tool_name
+                    )
+                    tool_request = ToolCallRequest(
+                        tool_call=tool_request.tool_call,
+                        tool=dynamic_tool,
+                        state=tool_request.state,
+                        runtime=tool_request.runtime,
+                    )
+            result = await execute(tool_request)
+            active_tool = tool_request.tool
+            if isinstance(active_tool, LazySkillProviderTool) and finder:
+                active_tool = finder(tool_request.tool_call["name"])
+            unavailable = getattr(active_tool, "_wegent_mcp_unavailable", None)
+            if isinstance(result, ToolMessage) and unavailable is not None:
+                if result.status == "error" or unavailable.is_set():
+                    unavailable.set()
+                    return result.model_copy(
+                        update={
+                            "content": "This connector is temporarily unavailable. Its MCP capabilities have been skipped; continue with available tools and briefly explain affected work to the user.",
+                            "status": "error",
+                            "artifact": None,
+                        }
+                    )
+            return result
 
         return ToolNode(all_tools, awrap_tool_call=awrap_tool_call)
 
@@ -1387,6 +1388,16 @@ class LangGraphAgentBuilder:
                 prompt=prompt_modifier,
                 pre_model_hook=effective_pre_model_hook,
             )
+        from ..tools.mcp.routing import configure_mcp_result_routing
+
+        tool_resolver = (
+            load_skill_tool.find_registered_tool
+            if load_skill_tool and load_skill_tool.has_deferred_tool_loaders()
+            else None
+        )
+        self._agent = configure_mcp_result_routing(
+            self._agent, all_tools, tool_resolver=tool_resolver
+        )
         add_span_event("react_agent_created")
 
         return self._agent

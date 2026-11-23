@@ -1,27 +1,33 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, ChevronRight, Lock, X } from 'lucide-react'
+import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
+import { useTranslation } from '@/hooks/useTranslation'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import type {
+  CollaborationIssue,
+  CollaborationProject,
+  IssueParticipationViewer,
+  SharedWorkspaceApi,
+} from '@wegent/collaboration'
 import {
   canStartWorkOnCollaborationIssue,
   createAssistantConversation,
   createAssistantInteraction,
   createRuntimeAssistantTransport,
-  type CollaborationIssue,
-  type CollaborationProject,
-  type IssueParticipationViewer,
-  type SharedWorkspaceApi,
 } from '@wegent/collaboration'
-import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
-import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { useTranslation } from '@/hooks/useTranslation'
-import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, ChevronRight, Lock, X } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ExperiencePrivateConversation } from '../model'
-import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
-import { useConclusionPublication } from './useConclusionPublication'
-import { useExperienceDraftInput } from '../useExperienceDraftInput'
 import { experienceAssistantEndpoint } from '../model/assistantEndpoint'
+import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
+import { useExperienceDraftInput } from '../useExperienceDraftInput'
+import { createPrivateDiscussionView } from './privateDiscussionView'
 import './PrivateExperience.css'
+import { useConclusionPublication } from './useConclusionPublication'
 
 export interface PrivateDiscussionPaneProps {
   api: SharedWorkspaceApi
@@ -107,37 +113,19 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   const [history, setHistory] = useState<{ identity: string; available: boolean } | null>(null)
   const historyAvailable =
     sourceScope === 'task' || (history?.identity === identity && history.available)
-  const [preview, setPreview] = useState<{ identity: string; key: string | null }>({
-    identity,
-    key: null,
-  })
-  if (preview.identity !== identity) setPreview({ identity, key: null })
-  const showConclusion =
-    sourceScope === 'task' && preview.identity === identity && preview.key === conclusionKey
+  const view = useMemo(() => createPrivateDiscussionView(identity), [identity])
+  const subscribeView = useCallback(
+    (notify: () => void) => view.subscribe(notify, props.onConclusionViewChange),
+    [view, props.onConclusionViewChange]
+  )
+  const preview = useSyncExternalStore(subscribeView, view.getSnapshot, view.getSnapshot)
+  const showConclusion = sourceScope === 'task' && preview.identity === identity && preview.open
   const reviewButton = useRef<HTMLButtonElement>(null)
   const conclusionInput = useRef<HTMLTextAreaElement>(null)
-  const wasPreview = useRef(false)
-  const mounted = useRef(true)
-  const previewGeneration = useRef(0)
-  const [publishedPreview, setPublishedPreview] = useState<number | null>(null)
-  const { onConclusionViewChange } = props
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-  useEffect(() => {
-    logRuntimeTaskCreateStage('collaboration-exp-preview-commit', { showConclusion }, 'debug')
-    onConclusionViewChange?.(showConclusion)
-    return () => onConclusionViewChange?.(false)
-  }, [onConclusionViewChange, showConclusion])
-  useLayoutEffect(() => {
-    previewGeneration.current += 1
-    if (showConclusion) conclusionInput.current?.focus()
-    else if (wasPreview.current) reviewButton.current?.focus()
-    wasPreview.current = showConclusion
-  }, [showConclusion])
+  useFocusRequest(conclusionInput, preview.generation, { enabled: showConclusion })
+  useFocusRequest(reviewButton, preview.generation, {
+    enabled: !showConclusion && preview.generation > 0,
+  })
   const address = useMemo(() => ({ ...conversation.address }), [conversation.address])
   const assistantInteraction = useMemo(() => {
     const runtime = services.runtimeWorkApi
@@ -202,15 +190,6 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
       showConclusion,
     draft,
   })
-  useEffect(() => {
-    if (
-      publishedPreview === previewGeneration.current &&
-      showConclusion &&
-      !publication.publishing &&
-      !publication.error
-    )
-      setPreview({ identity, key: null })
-  }, [identity, publishedPreview, showConclusion, publication.publishing, publication.error])
   const title = t(
     sourceScope === 'source'
       ? 'private.sourceTitle'
@@ -228,14 +207,15 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
         <header className="experience-private-standalone-heading">
           <h2>{title}</h2>
           {onClose && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="collaboration-exp-private-close"
               aria-label={t('private.close')}
               onClick={onClose}
             >
               <X size={16} aria-hidden="true" />
-            </button>
+            </ControlButton>
           )}
         </header>
       )}
@@ -243,14 +223,15 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
         <span title={issue.title}>{issue.title}</span>
         <small>
           {props.embedded && onClose ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="experience-private-context-back"
               data-testid="collaboration-exp-private-close"
               onClick={onClose}
             >
               {t('private.taskProgress')}
-            </button>
+            </ControlButton>
           ) : (
             <span>{t('private.taskProgress')}</span>
           )}
@@ -274,13 +255,14 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
               <Lock size={13} aria-hidden="true" />
               <span>{t('private.sourceScope')}</span>
               {props.onContinue && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="collaboration-exp-private-continue"
                   onClick={props.onContinue}
                 >
                   {t('private.continueCurrent')} <ArrowRight size={13} aria-hidden="true" />
-                </button>
+                </ControlButton>
               )}
             </div>
           )}
@@ -357,7 +339,8 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                     data-testid="collaboration-exp-private-ready"
                   >
                     <span>{t('private.reviewHint')}</span>
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       ref={reviewButton}
                       type="button"
                       data-testid="collaboration-exp-conclusion-open"
@@ -375,12 +358,12 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                           },
                           'debug'
                         )
-                        setPreview({ identity, key: conclusionKey })
+                        view.setOpen(true)
                       }}
                     >
                       {t('private.reviewConclusion')}
                       <ArrowRight size={15} aria-hidden="true" />
-                    </button>
+                    </ControlButton>
                   </div>
                 )
               }
@@ -392,11 +375,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
               data-testid="collaboration-exp-conclusion-form"
               onSubmit={event => {
                 event.preventDefault()
-                const generation = previewGeneration.current
-                void publication.publish().then(published => {
-                  if (published && mounted.current && previewGeneration.current === generation)
-                    setPublishedPreview(generation)
-                })
+                void view.publishConclusion(publication.publish, publication.getOperation)
               }}
             >
               <p className="experience-private-conclusion-eyebrow">{t('private.finalCheck')}</p>
@@ -404,7 +383,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
               <label htmlFor={`conclusion-${encodeURIComponent(conclusionKey)}`}>
                 {t('private.conclusion')}
               </label>
-              <textarea
+              <ControlTextarea
                 ref={conclusionInput}
                 id={`conclusion-${encodeURIComponent(conclusionKey)}`}
                 data-testid="collaboration-exp-conclusion-text"
@@ -420,7 +399,8 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
               ) : null}
               {publication.error && <p role="alert">{t(`private.errors.${publication.error}`)}</p>}
               <div className="experience-private-conclusion-actions">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="collaboration-exp-conclusion-back"
                   onClick={event => {
@@ -437,12 +417,13 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                       },
                       'debug'
                     )
-                    setPreview({ identity, key: null })
+                    view.setOpen(false)
                   }}
                 >
                   {t('private.continueDiscussion')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="submit"
                   data-testid="collaboration-exp-conclusion-publish"
                   disabled={
@@ -450,7 +431,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                   }
                 >
                   {t(publication.publishing ? 'private.publishing' : 'private.publish')}
-                </button>
+                </ControlButton>
               </div>
             </form>
           )}

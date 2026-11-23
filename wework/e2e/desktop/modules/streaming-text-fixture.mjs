@@ -17,45 +17,6 @@ import assert from 'node:assert/strict'
 export const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 export const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
-export const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
-export const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
-export const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
-export const TOOL_DETAIL_PERSISTENCE_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_DETAIL_PERSISTS'
-export const TOOL_DETAIL_PERSISTENCE_CALL_ID = 'wework-tool-detail-persistence'
-export const TOOL_DETAIL_PERSISTENCE_OUTPUT = 'WEWORK_DESKTOP_E2E_TOOL_DETAIL_OUTPUT'
-export const TOOL_DETAIL_PERSISTENCE_COMPLETION =
-  'WEWORK_DESKTOP_E2E_TOOL_DETAIL_PERSISTS_FINAL_ANSWER'
-export const LEGACY_CONVERSATION_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_INITIAL'
-export const LEGACY_CONVERSATION_COMPLETION = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_COMPLETE'
-export const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
-export const LONG_CODE_PROMPT = 'WEWORK_DESKTOP_E2E_LONG_CODE_TERMINAL_BURST'
-export const LONG_CODE_STREAM_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_055'
-export const LONG_CODE_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_110'
-export const LONG_CODE_COMPLETION = [
-  'The completed response contains one long SQL block and a windowed Markdown tail.',
-  '',
-  '```sql',
-  ...Array.from({ length: 110 }, (_, index) => {
-    const line = index + 1
-    return `SELECT ${line} AS value_${line}, 'customer_${String(line).padStart(
-      3,
-      '0'
-    )}' AS customer_name, JSON_OBJECT('id', ${line}, 'status', 'active', 'description', 'streaming long code row ${line}') AS payload${
-      index === 54 ? `, '${LONG_CODE_STREAM_MARKER}' AS stream_marker` : ''
-    }${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''} FROM generated_records WHERE record_id = ${line};`
-  }),
-  '```',
-  '',
-  ...Array.from(
-    { length: 24 },
-    (_, index) =>
-      `### Rapid scroll section ${index + 1}\n\n${`Visible fallback content ${index + 1} keeps the conversation painted during rapid scrolling. `.repeat(18)}`
-  ),
-].join('\n')
-export const LONG_CODE_REASONING = Array.from(
-  { length: 180 },
-  (_, index) => `Completed reasoning line ${index + 1} for the terminal rendering burst.`
-).join('\n')
 export const VISUALIZATION_PROMPT = 'WEWORK_DESKTOP_E2E_ABSOLUTE_VISUALIZATION'
 export const VISUALIZATION_TITLE = 'Absolute visualization E2E'
 export const VISUALIZATION_MARKER = 'WEWORK_DESKTOP_E2E_VISUALIZATION_VISIBLE'
@@ -64,11 +25,6 @@ export const GENERATED_IMAGE_COMPLETION = 'WEWORK_DESKTOP_E2E_GENERATED_IMAGE_CO
 export const GENERATED_IMAGE_CALL_ID = 'wework-generated-image'
 export const GENERATED_IMAGE_REVISED_PROMPT =
   'A small generated image used by the desktop regression test'
-export const WINDOWS_LINK_PROMPT = 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK'
-export const WINDOWS_LINK_LABEL = 'wegent'
-export const WINDOWS_LINK_COMPLETION = '[wegent](C:/projects/example-app/wegent)'
-export const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_PROCESS_TO_FALLBACK_FINAL'
-export const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 export const RECLASSIFIED_COMMENTARY_PROMPT = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_COMMENTARY'
 export const RECLASSIFIED_COMMENTARY_TEXT = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_PROCESS_TEXT'
 export const RECLASSIFIED_COMMENTARY_FINAL = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_REAL_FINAL'
@@ -89,11 +45,6 @@ export const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
 export const SUBAGENT_CHILD_FINAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE'
 export const SUBAGENT_CHILD_COMPLETION = `${SUBAGENT_CHILD_PARTIAL}\n\n${SUBAGENT_CHILD_FINAL}`
 export const SUBAGENT_PARENT_COMPLETION = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARENT_COMPLETE'
-export const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
-export const ORDER_STOP_PARTIAL = 'WEWORK_DESKTOP_E2E_ORDER_STOP_PARTIAL'
-export const ORDER_FOLLOW_UP_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_FOLLOW_UP'
-export const ORDER_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION'
-export const ORDER_FOLLOW_UP_COUNT = 26
 export const HIDDEN_REASONING = 'WEWORK_DESKTOP_E2E_HIDDEN_REASONING_CONTENT'
 export const REASONING_SUMMARY = 'WEWORK_DESKTOP_E2E_REASONING_SUMMARY'
 export const REASONING_PREVIEW = REASONING_SUMMARY.replaceAll('_', ' ')
@@ -125,9 +76,6 @@ export const USER_MESSAGE_E2E_ID = 'streaming-text-latest-user-message'
 export const USER_MESSAGE_SELECTOR_MARKED = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${USER_MESSAGE_E2E_ID}"]`
 export const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 export const PROCESS_TEXT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
-export const LONG_CODE_SCROLL_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="markdown-code-scroll-container"]`
-export const LONG_CODE_E2E_ID = 'streaming-text-long-code'
-export const LONG_CODE_MARKED_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${LONG_CODE_E2E_ID}"]`
 export const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 export const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 export const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${PROCESS_TEXT_SELECTOR} [data-scroll-anchor]`
@@ -347,64 +295,6 @@ export function streamingEvents(
   }
 }
 
-export function longCodeStreamingEvents(id) {
-  const reasoning = reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING, 4)
-  const stream = streamingEvents(id, LONG_CODE_COMPLETION, 'final_answer', 1)
-  const output = [reasoning.at(-1).item, stream.finish.at(-2).item]
-  return {
-    ...stream,
-    start: [...stream.start.slice(0, 1), ...reasoning, ...stream.start.slice(1)],
-    finish: [...stream.finish.slice(0, -1), responseCompleted(id, output)],
-  }
-}
-
-export function phaseFlipEvents(id) {
-  const itemId = `${id}-phase-flip-message`
-  return [
-    responseCreated(id),
-    {
-      type: 'response.output_item.added',
-      output_index: 0,
-      item: {
-        id: itemId,
-        type: 'message',
-        status: 'in_progress',
-        role: 'assistant',
-        content: [],
-        phase: 'final_answer',
-      },
-    },
-    {
-      type: 'response.content_part.added',
-      item_id: itemId,
-      output_index: 0,
-      content_index: 0,
-      part: { type: 'output_text', text: '', annotations: [] },
-    },
-    ...textDeltaEvents(itemId, PHASE_FLIP_TEXT),
-    {
-      type: 'response.output_text.done',
-      item_id: itemId,
-      output_index: 0,
-      content_index: 0,
-      text: PHASE_FLIP_TEXT,
-    },
-    {
-      type: 'response.output_item.done',
-      output_index: 0,
-      item: {
-        id: itemId,
-        type: 'message',
-        status: 'completed',
-        role: 'assistant',
-        content: [{ type: 'output_text', text: PHASE_FLIP_TEXT, annotations: [] }],
-        phase: 'commentary',
-      },
-    },
-    responseCompleted(id),
-  ]
-}
-
 export function reclassifiedCommentaryToolEvents(id, tool) {
   const itemId = `${id}-reclassified-commentary`
   return [
@@ -493,24 +383,8 @@ export function findHistoryTurn(body) {
   return HISTORY_TURNS.findLast(turn => input.includes(turn.prompt))
 }
 
-export function requestContainsToolRegressionPrompt(body) {
-  return JSON.stringify(body.input ?? []).includes(TOOL_REGRESSION_PROMPT)
-}
-
-export function requestContainsToolDetailPersistencePrompt(body) {
-  return JSON.stringify(body.input ?? []).includes(TOOL_DETAIL_PERSISTENCE_PROMPT)
-}
-
-export function requestContainsPhaseFlipPrompt(body) {
-  return JSON.stringify(body.input ?? []).includes(PHASE_FLIP_PROMPT)
-}
-
 export function requestContainsReclassifiedCommentaryPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(RECLASSIFIED_COMMENTARY_PROMPT)
-}
-
-export function requestContainsLegacyConversationPrompt(body) {
-  return JSON.stringify(body.input ?? []).includes(LEGACY_CONVERSATION_PROMPT)
 }
 
 export function requestContainsVisualizationPrompt(body) {
@@ -521,10 +395,6 @@ export function requestContainsGeneratedImagePrompt(body) {
   return JSON.stringify(body.input ?? []).includes(GENERATED_IMAGE_PROMPT)
 }
 
-export function requestContainsWindowsLinkPrompt(body) {
-  return JSON.stringify(body.input ?? []).includes(WINDOWS_LINK_PROMPT)
-}
-
 export function requestContainsSubagentPrompt(body) {
   return latestModelInputText(body).includes(SUBAGENT_PROMPT)
 }
@@ -533,11 +403,6 @@ export function latestModelInputText(body) {
   const input = Array.isArray(body.input) ? body.input.at(-1) : body.input
   const message = Array.isArray(body.messages) ? body.messages.at(-1) : null
   return JSON.stringify(input ?? message ?? '')
-}
-
-export function orderFollowUpNumber(body) {
-  const match = latestModelInputText(body).match(new RegExp(`${ORDER_FOLLOW_UP_PREFIX}_(\\d+)`))
-  return match ? Number(match[1]) : null
 }
 
 export function requestContainsToolOutput(body) {
@@ -694,12 +559,6 @@ export async function assertComposerDocked(control, scrollerMetrics, description
     bottomGap >= 0 && bottomGap <= 32,
     `${description} drifted ${bottomGap}px above the conversation viewport bottom`
   )
-}
-
-export function processingDurationSeconds(text) {
-  const minutes = Number(text.match(/(\d+)\s*分钟/)?.[1] ?? 0)
-  const seconds = Number(text.match(/(\d+)\s*秒/)?.[1] ?? 0)
-  return minutes * 60 + seconds
 }
 
 export async function expandCompletedProcessing(control, timeoutMs) {
@@ -918,30 +777,6 @@ export async function retainSecondTaskWorkspace(control, timeoutMs) {
     ) >= 2,
     'The inactive task workspace provider was not retained for the streaming regression'
   )
-}
-
-export async function sendOrderFollowUp(control, index, uiTimeoutMs, modelResponseTimeoutMs) {
-  const prompt = `${ORDER_FOLLOW_UP_PREFIX}_${index}`
-  assert.equal(
-    await control.command('fill', COMPOSER_SELECTOR, { value: prompt }),
-    prompt,
-    `Follow-up ${index} was not filled into the active composer`
-  )
-  await control.command(
-    'clickWhenEnabled',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
-    { timeoutMs: uiTimeoutMs, visible: true }
-  )
-  const response = await control.awaitScenarioRequestCount(
-    'message_order_follow_up',
-    index,
-    modelResponseTimeoutMs
-  )
-  assert.equal(response.followUpNumber, index, 'The model answered a different follow-up turn')
-  await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-    text: `${ORDER_COMPLETION_PREFIX}_${index}`,
-    timeoutMs: uiTimeoutMs,
-  })
 }
 
 export { readJson }

@@ -16,6 +16,7 @@ import zhHooks from './locales/zh-CN/hooks.json'
 import enCollaborationExp from './locales/en/collaborationExp.json'
 import zhCollaborationExp from './locales/zh-CN/collaborationExp.json'
 import { extensionI18nResources } from '@extensions/i18n'
+import { personalIssueMessages } from '@wegent/collaboration/platform'
 
 const extensionNamespaces = Array.from(
   new Set(Object.values(extensionI18nResources).flatMap(resources => Object.keys(resources ?? {})))
@@ -28,7 +29,11 @@ i18n
     resources: {
       en: {
         chat: enChat,
-        common: enCommon,
+        common: {
+          ...enCommon,
+          ...personalIssueMessages.en,
+          todo: { ...enCommon.todo, ...personalIssueMessages.en.todo },
+        },
         localRuntime: enLocalRuntime,
         sites: enSites,
         hooks: enHooks,
@@ -38,7 +43,11 @@ i18n
       },
       'zh-CN': {
         chat: zhChat,
-        common: zhCommon,
+        common: {
+          ...zhCommon,
+          ...personalIssueMessages['zh-CN'],
+          todo: { ...zhCommon.todo, ...personalIssueMessages['zh-CN'].todo },
+        },
         localRuntime: zhLocalRuntime,
         sites: zhSites,
         hooks: zhHooks,

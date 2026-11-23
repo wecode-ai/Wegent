@@ -1,7 +1,7 @@
-import { act, renderHook } from '@testing-library/react'
+import { act } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo } from '@/types/api'
-import { useWorkbenchDeviceReconnect } from './useWorkbenchDeviceReconnect'
+import { createWorkbenchDeviceReconnect } from './workbenchDeviceReconnect'
 
 const device = (id: string, status: DeviceInfo['status']): DeviceInfo => ({
   id: 1,
@@ -13,13 +13,18 @@ const device = (id: string, status: DeviceInfo['status']): DeviceInfo => ({
   bind_shell: 'claudecode',
 })
 
+function fixture(
+  input: Parameters<ReturnType<typeof createWorkbenchDeviceReconnect>['update']>[0]
+) {
+  const owner = createWorkbenchDeviceReconnect()
+  owner.update(input)
+  return { rerender: (next: Partial<typeof input>) => owner.update({ ...input, ...next }) }
+}
+
 describe('device-owned read recovery', () => {
   test('refreshes once when the same owner returns, including an initially unknown device', () => {
     const onReconnect = vi.fn()
-    const { rerender } = renderHook(
-      ({ devices }) => useWorkbenchDeviceReconnect({ deviceId: 'owner', devices, onReconnect }),
-      { initialProps: { devices: [] as DeviceInfo[] } }
-    )
+    const { rerender } = fixture({ deviceId: 'owner', devices: [] as DeviceInfo[], onReconnect })
     act(() => rerender({ devices: [device('owner', 'online')] }))
     expect(onReconnect).toHaveBeenCalledTimes(1)
     act(() => rerender({ devices: [device('owner', 'busy')] }))
@@ -32,10 +37,11 @@ describe('device-owned read recovery', () => {
 
   test('does not refresh for unrelated devices or an owner change', () => {
     const onReconnect = vi.fn()
-    const { rerender } = renderHook(
-      ({ deviceId, devices }) => useWorkbenchDeviceReconnect({ deviceId, devices, onReconnect }),
-      { initialProps: { deviceId: 'owner', devices: [device('owner', 'offline')] } }
-    )
+    const { rerender } = fixture({
+      deviceId: 'owner',
+      devices: [device('owner', 'offline')],
+      onReconnect,
+    })
     act(() =>
       rerender({
         deviceId: 'owner',

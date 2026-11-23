@@ -1,14 +1,20 @@
-import { useContext, useEffect, useMemo, useState } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import { MarkdownLinkScope } from './markdownLinkScope'
 import { useMarkdownServices } from './MarkdownServices'
 import {
+  classifyMarkdownLink,
   getAuthenticatedAttachmentId,
   getMarkdownAttachmentId,
-  classifyMarkdownLink,
   isAuthenticatedAttachmentImageSrc,
   localMarkdownImagePath,
   resolveDirectMarkdownImageSrc,
 } from './assistantMarkdownLinks'
+import { Button as ControlButton } from './Button'
 export function AssistantMarkdownImage({
   src,
   alt,
@@ -68,21 +74,7 @@ export function AssistantMarkdownImage({
       attempt,
     ]
   )
-  const [loadedPreview, setLoadedPreview] = useState<{
-    request: typeof request
-    url: string
-  } | null>(null)
-  const [failedRequest, setFailedRequest] = useState<typeof request | null>(null)
-  const resolvedSrc = requiresBlobPreview
-    ? loadedPreview?.request === request
-      ? loadedPreview.url
-      : null
-    : rawSrc
-      ? resolveDirectMarkdownImageSrc(rawSrc)
-      : null
-  const hasError = !rawSrc || failedRequest === request
-
-  useEffect(() => {
+  const resource = useMemo(() => {
     const {
       rawSrc,
       alt,
@@ -94,37 +86,23 @@ export function AssistantMarkdownImage({
       localPath,
       requiresBlobPreview,
     } = request
-    let objectUrl: string | null = null
-    let isMounted = true
-
-    if (!rawSrc || !requiresBlobPreview) {
-      return () => {
-        isMounted = false
-      }
-    }
-
-    async function loadImage() {
-      try {
+    if (!rawSrc || !requiresBlobPreview) return null
+    return createAsyncResource(
+      rawSrc,
+      async signal => {
         if (!readOwnedImage && resolveImageUrl) {
-          const url = await resolveImageUrl(rawSrc)
-          if (isMounted) {
-            setLoadedPreview({ request, url })
-          }
-          return
+          return { url: await resolveImageUrl(rawSrc), release: null }
         }
         let blob: Blob
         if (readOwnedImage) {
           blob = await readOwnedImage(rawSrc, alt)
         } else if (isAuthenticatedSrc) {
           const attachmentId = getAuthenticatedAttachmentId(rawSrc)
-          if (attachmentId === null) {
-            throw new Error('Failed to resolve markdown attachment')
-          }
+          if (attachmentId === null) throw new Error('Failed to resolve markdown attachment')
           if (!fetchAttachmentBlob) throw new Error('Attachment download is unavailable')
           blob = await fetchAttachmentBlob(attachmentId)
-          if (!blob.type.startsWith('image/')) {
+          if (!blob.type.startsWith('image/'))
             throw new Error(`Markdown image response is not an image: ${blob.type || 'unknown'}`)
-          }
         } else if (getMarkdownAttachmentId(rawSrc) !== null) {
           throw new Error('An Issue image reader is required for this resource')
         } else if (localPath && readLocalFile) {
@@ -132,29 +110,25 @@ export function AssistantMarkdownImage({
         } else {
           throw new Error('Failed to resolve local markdown image')
         }
-
-        objectUrl = URL.createObjectURL(blob)
-        if (isMounted) {
-          setLoadedPreview({ request, url: objectUrl })
-        } else {
-          URL.revokeObjectURL(objectUrl)
-        }
-      } catch {
-        if (isMounted) {
-          setFailedRequest(request)
-        }
-      }
-    }
-
-    void loadImage()
-
-    return () => {
-      isMounted = false
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl)
-      }
-    }
+        signal.throwIfAborted()
+        const url = URL.createObjectURL(blob)
+        return { url, release: () => URL.revokeObjectURL(url) }
+      },
+      { release: image => image.release?.() }
+    )
   }, [request])
+  const snapshot = useSyncExternalStore(
+    resource?.subscribe ?? subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const [failedRequest, setFailedRequest] = useState<typeof request | null>(null)
+  const resolvedSrc = requiresBlobPreview
+    ? (snapshot.data?.url ?? null)
+    : rawSrc
+      ? resolveDirectMarkdownImageSrc(rawSrc)
+      : null
+  const hasError = !rawSrc || failedRequest === request || snapshot.status === 'error'
 
   if (hasError) {
     return (
@@ -165,7 +139,8 @@ export function AssistantMarkdownImage({
       >
         {translate('image.failed')}: {alt || rawSrc}
         {rawSrc && !insideLink ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="assistant-markdown-image-retry"
             className="ml-2 min-h-11 min-w-11 underline md:min-h-0 md:min-w-0"
@@ -176,7 +151,7 @@ export function AssistantMarkdownImage({
             }}
           >
             {translate('image.retry')}
-          </button>
+          </ControlButton>
         ) : null}
       </span>
     )
@@ -206,7 +181,8 @@ export function AssistantMarkdownImage({
     />
   )
   return openMarkdownImage && readOwnedImage && !insideLink ? (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="assistant-markdown-image-open"
       aria-label={translate('image.open')}
@@ -220,7 +196,7 @@ export function AssistantMarkdownImage({
       }}
     >
       {image}
-    </button>
+    </ControlButton>
   ) : (
     image
   )

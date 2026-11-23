@@ -1,49 +1,35 @@
-import {
-  Check,
-  ChevronDown,
-  ChevronUp,
-  FileDiff,
-  Undo2,
-  X,
-} from "lucide-react";
-import { useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import type { TurnFileChangesSummary } from "@wegent/chat-core/runtime";
-import { useConversationTranslation } from "./ConversationTranslation";
-import { useCollaborationPortalTheme } from "../theme/CollaborationTheme";
-import { Button } from "../markdown/Button";
-import { useEscapeKey } from "../markdown/useEscapeKey";
-import {
-  FileChangeRow,
-  FileChangeSummaryTrigger,
-  FileChangesStats,
-} from "./FileChangesPreview";
-const DEFAULT_VISIBLE_FILE_COUNT = 3;
+import type { TurnFileChangesSummary } from '@wegent/chat-core/runtime'
+import { Check, ChevronDown, ChevronUp, FileDiff, Undo2, X } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button, Button as ControlButton } from '../markdown/Button'
+import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
+import { useConversationTranslation } from './ConversationTranslation'
+import { FileChangeRow, FileChangeSummaryTrigger, FileChangesStats } from './FileChangesPreview'
+const DEFAULT_VISIBLE_FILE_COUNT = 3
 interface FileChangesCardProps {
-  subtaskId: string;
-  summary: TurnFileChangesSummary;
-  deviceOnline: boolean;
-  diffPreviewDisabled?: boolean;
-  onLoadDiff: (
-    subtaskId: string,
-    fileChanges: TurnFileChangesSummary,
-  ) => Promise<string>;
+  subtaskId: string
+  summary: TurnFileChangesSummary
+  deviceOnline: boolean
+  diffPreviewDisabled?: boolean
+  onLoadDiff: (subtaskId: string, fileChanges: TurnFileChangesSummary) => Promise<string>
   onRevert: (
     subtaskId: string,
-    fileChanges: TurnFileChangesSummary,
-  ) => Promise<TurnFileChangesSummary>;
+    fileChanges: TurnFileChangesSummary
+  ) => Promise<TurnFileChangesSummary>
   onOpenReview?: (request: {
-    subtaskId: string;
-    loadDiff: () => Promise<string>;
-    reviewTitle?: string;
-    defaultFileTreeVisible?: boolean;
-    focusFilePath?: string;
-  }) => void;
+    subtaskId: string
+    loadDiff: () => Promise<string>
+    reviewTitle?: string
+    defaultFileTreeVisible?: boolean
+    focusFilePath?: string
+  }) => void
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error) return error.message;
-  return fallback;
+  if (error instanceof Error) return error.message
+  return fallback
 }
 
 export function FileChangesCard({
@@ -55,49 +41,43 @@ export function FileChangesCard({
   onRevert,
   onOpenReview,
 }: FileChangesCardProps) {
-  const { t } = useConversationTranslation();
-  const [expanded, setExpanded] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [reverting, setReverting] = useState(false);
-  const [actionError, setActionError] = useState<string>();
-  const hiddenCount = Math.max(
-    0,
-    summary.files.length - DEFAULT_VISIBLE_FILE_COUNT,
-  );
-  const visibleFiles = expanded
-    ? summary.files
-    : summary.files.slice(0, DEFAULT_VISIBLE_FILE_COUNT);
-  const singleFile = summary.files.length === 1 ? summary.files[0] : undefined;
-  const shownFileCount = summary.file_count || summary.files.length;
-  const actionsDisabled =
-    !deviceOnline || summary.status === "artifact_missing";
-  const reviewDisabled = actionsDisabled || !onOpenReview;
-  const showRevert = summary.status === "active";
-  const revertDisabled = actionsDisabled || summary.revertible === false;
+  const { t } = useConversationTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [reverting, setReverting] = useState(false)
+  const [actionError, setActionError] = useState<string>()
+  const hiddenCount = Math.max(0, summary.files.length - DEFAULT_VISIBLE_FILE_COUNT)
+  const visibleFiles = expanded ? summary.files : summary.files.slice(0, DEFAULT_VISIBLE_FILE_COUNT)
+  const singleFile = summary.files.length === 1 ? summary.files[0] : undefined
+  const shownFileCount = summary.file_count || summary.files.length
+  const actionsDisabled = !deviceOnline || summary.status === 'artifact_missing'
+  const reviewDisabled = actionsDisabled || !onOpenReview
+  const showRevert = summary.status === 'active'
+  const revertDisabled = actionsDisabled || summary.revertible === false
 
   const openReview = (focusFilePath?: string) => {
     onOpenReview?.({
       subtaskId,
       loadDiff: () => onLoadDiff(subtaskId, summary),
-      reviewTitle: t("file_changes.previous_turn_label"),
+      reviewTitle: t('file_changes.previous_turn_label'),
       defaultFileTreeVisible: false,
       focusFilePath,
-    });
-  };
+    })
+  }
 
   const revert = async () => {
-    setReverting(true);
-    setActionError(undefined);
+    setReverting(true)
+    setActionError(undefined)
     try {
-      await onRevert(subtaskId, summary);
-      setConfirmOpen(false);
+      await onRevert(subtaskId, summary)
+      setConfirmOpen(false)
     } catch (error) {
-      setActionError(getErrorMessage(error, t("file_changes.revert_failed")));
-      setConfirmOpen(false);
+      setActionError(getErrorMessage(error, t('file_changes.revert_failed')))
+      setConfirmOpen(false)
     } finally {
-      setReverting(false);
+      setReverting(false)
     }
-  };
+  }
 
   return (
     <>
@@ -105,19 +85,19 @@ export function FileChangesCard({
         data-testid="file-changes-card"
         className="mt-3 overflow-visible rounded-xl border border-border bg-surface"
       >
-        {summary.status === "conflicted" ? (
+        {summary.status === 'conflicted' ? (
           <p className="border-b border-border bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
-            {t("file_changes.conflicted")}
+            {t('file_changes.conflicted')}
           </p>
         ) : null}
-        {summary.status === "artifact_missing" ? (
+        {summary.status === 'artifact_missing' ? (
           <p className="border-b border-border bg-surface px-3 py-1.5 text-xs text-text-muted">
-            {t("file_changes.artifact_missing")}
+            {t('file_changes.artifact_missing')}
           </p>
         ) : null}
         {!deviceOnline ? (
           <p className="border-b border-border bg-surface px-3 py-1.5 text-xs text-text-muted">
-            {t("file_changes.device_offline")}
+            {t('file_changes.device_offline')}
           </p>
         ) : null}
         {actionError ? (
@@ -127,9 +107,9 @@ export function FileChangesCard({
         ) : null}
         <div
           className={[
-            "flex min-h-[4.5rem] items-center gap-3 px-4 py-3",
-            singleFile ? "" : "border-b border-border/70",
-          ].join(" ")}
+            'flex min-h-[4.5rem] items-center gap-3 px-4 py-3',
+            singleFile ? '' : 'border-b border-border/70',
+          ].join(' ')}
         >
           {singleFile ? (
             <FileChangeSummaryTrigger
@@ -149,50 +129,50 @@ export function FileChangesCard({
                   data-testid="file-changes-summary-title"
                   className="block truncate text-sm font-semibold leading-5 text-text-primary"
                 >
-                  {t("file_changes.edited_files", { count: shownFileCount })}
+                  {t('file_changes.edited_files', { count: shownFileCount })}
                 </span>
-                <FileChangesStats
-                  additions={summary.additions}
-                  deletions={summary.deletions}
-                />
+                <FileChangesStats additions={summary.additions} deletions={summary.deletions} />
               </span>
             </div>
           )}
           <div className="flex shrink-0 items-center gap-2">
-            {summary.status === "reverted" ? (
+            {summary.status === 'reverted' ? (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-text-secondary">
                 <Check className="h-3.5 w-3.5" />
-                {t("file_changes.reverted")}
+                {t('file_changes.reverted')}
               </span>
             ) : null}
             {showRevert ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="revert-file-changes-button"
                 disabled={revertDisabled}
                 onClick={() => setConfirmOpen(true)}
                 className="flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-medium text-text-primary hover:bg-base disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-50"
               >
-                {t("file_changes.revert")}
+                {t('file_changes.revert')}
                 <Undo2 className="h-3.5 w-3.5" />
-              </button>
+              </ControlButton>
             ) : null}
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="review-file-changes-button"
               disabled={reviewDisabled}
               onClick={() => void openReview()}
               className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {t("file_changes.review")}
-            </button>
+              {t('file_changes.review')}
+            </ControlButton>
           </div>
         </div>
         {singleFile ? null : (
           <div className="divide-y divide-border/70">
-            {visibleFiles.map((file) => (
+            {visibleFiles.map(file => (
               <FileChangeRow
-                key={`${file.old_path ?? ""}:${file.path}`}
+                key={`${file.old_path ?? ''}:${file.path}`}
                 file={file}
                 summary={summary}
                 disabled={reviewDisabled}
@@ -203,24 +183,25 @@ export function FileChangesCard({
           </div>
         )}
         {!singleFile && hiddenCount > 0 ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="toggle-file-changes-button"
             aria-expanded={expanded}
-            onClick={() => setExpanded((value) => !value)}
+            onClick={() => setExpanded(value => !value)}
             className="flex h-8 w-full items-center gap-1 px-4 text-xs font-medium text-text-secondary hover:bg-muted"
           >
             <span>
               {expanded
-                ? t("file_changes.show_less")
-                : t("file_changes.show_more", { count: hiddenCount })}
+                ? t('file_changes.show_less')
+                : t('file_changes.show_more', { count: hiddenCount })}
             </span>
             {expanded ? (
               <ChevronUp className="h-3.5 w-3.5" />
             ) : (
               <ChevronDown className="h-3.5 w-3.5" />
             )}
-          </button>
+          </ControlButton>
         ) : null}
       </section>
       <ConfirmRevertDialog
@@ -230,7 +211,7 @@ export function FileChangesCard({
         onConfirm={() => void revert()}
       />
     </>
-  );
+  )
 }
 
 function ConfirmRevertDialog({
@@ -239,35 +220,36 @@ function ConfirmRevertDialog({
   onClose,
   onConfirm,
 }: {
-  open: boolean;
-  submitting: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
+  open: boolean
+  submitting: boolean
+  onClose: () => void
+  onConfirm: () => void
 }) {
-  const { t } = useConversationTranslation();
-  const portalTheme = useCollaborationPortalTheme();
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useEscapeKey(
-    () => {
-      if (!submitting) onClose();
-    },
-    open,
-    dialogRef,
-  );
+  const { t } = useConversationTranslation()
+  const portalTheme = useCollaborationPortalTheme()
+  const dialogRef = useRef<HTMLDivElement>(null)
 
-  if (!open) return null;
+  if (!open) return null
 
   return createPortal(
     <div
       {...portalTheme}
       className={`fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4 ${portalTheme.className}`}
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-revert-file-changes-title"
-        className="w-full max-w-md rounded-xl border border-border bg-background p-5 shadow-2xl"
+      <DialogSurface
+        onClose={() => {
+          if (open)
+            (() => {
+              if (!submitting) onClose()
+            })()
+        }}
+        render={
+          <div
+            ref={dialogRef}
+            aria-labelledby="confirm-revert-file-changes-title"
+            className="w-full max-w-md rounded-xl border border-border bg-background p-5 shadow-2xl"
+          />
+        }
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -275,22 +257,23 @@ function ConfirmRevertDialog({
               id="confirm-revert-file-changes-title"
               className="text-base font-semibold text-text-primary"
             >
-              {t("file_changes.confirm_revert_title")}
+              {t('file_changes.confirm_revert_title')}
             </h2>
             <p className="mt-2 text-sm leading-6 text-text-secondary">
-              {t("file_changes.confirm_revert_description")}
+              {t('file_changes.confirm_revert_description')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={onClose}
             disabled={submitting}
             className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-text-muted hover:bg-muted"
             data-testid="close-revert-file-changes-button"
-            aria-label={t("file_changes.close")}
+            aria-label={t('file_changes.close')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
         <div className="mt-6 flex justify-end gap-2">
           <Button
@@ -300,7 +283,7 @@ function ConfirmRevertDialog({
             onClick={onClose}
             disabled={submitting}
           >
-            {t("file_changes.cancel")}
+            {t('file_changes.cancel')}
           </Button>
           <Button
             type="button"
@@ -309,13 +292,11 @@ function ConfirmRevertDialog({
             onClick={onConfirm}
             disabled={submitting}
           >
-            {submitting
-              ? t("file_changes.reverting")
-              : t("file_changes.confirm_revert")}
+            {submitting ? t('file_changes.reverting') : t('file_changes.confirm_revert')}
           </Button>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
-    document.body,
-  );
+    document.body
+  )
 }

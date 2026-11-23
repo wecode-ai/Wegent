@@ -227,7 +227,7 @@ describe('FilePreviewProvider', () => {
       entries: [{ path: '/repo/docs', isDirectory: true }],
     })
     await act(() => actions.openLink('docs'))
-    expect(api.listWorkspaceDirectory).toHaveBeenCalledWith('device-a', '/repo')
+    expect(api.listWorkspaceDirectory).toHaveBeenCalledWith('device-a', '/repo', '/repo', 'task-a')
     expect(modal().props.location).toEqual({
       kind: 'directory',
       target: { ...target, path: '/repo/docs' },

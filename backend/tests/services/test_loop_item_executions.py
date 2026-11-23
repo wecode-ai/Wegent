@@ -4772,6 +4772,43 @@ def test_claimed_lease_expiry_requeues_run(test_db: Session, test_user: User) ->
     assert claimed.status == "queued"
 
 
+def test_expired_dispatched_execution_is_marked_stale_once(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None and claimed.id == execution.id
+    accepted = loop_item_execution_service.confirm_runtime_accepted(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+    assert accepted is not None
+    expired_at = accepted.lease_expires_at + timedelta(seconds=120)
+
+    assert loop_item_execution_service.recovery_scan(test_db, now=expired_at) == (0, 1)
+    test_db.refresh(accepted)
+    assert accepted.sync_state == "stale"
+    version = accepted.version
+    assert loop_item_execution_service.recovery_scan(test_db, now=expired_at) == (0, 0)
+    test_db.refresh(accepted)
+    assert accepted.version == version
+    assert accepted.id in {
+        row.id for row in loop_item_execution_service.stale_for_reconciliation(test_db)
+    }
+
+
 def test_claim_materializes_current_model_config_without_persisting_credentials(
     test_db: Session, test_user: User
 ) -> None:

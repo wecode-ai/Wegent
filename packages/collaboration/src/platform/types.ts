@@ -105,6 +105,14 @@ export interface CollaborationPlatformHostAdapter {
     onClose(): void;
   }): ReactNode;
   renderProjectSidebarBadge?(project: CollaborationProject): ReactNode;
+  projectPins?: {
+    keys: readonly string[];
+    setPinned(key: string, pinned: boolean): Promise<void>;
+    heading: string;
+    pinLabel: string;
+    unpinLabel: string;
+    saveError: string;
+  };
   convertLocalProjectToCloud?(project: CollaborationProject): void;
   openProjectConversation?(project: CollaborationProject): void;
   currentUser?: {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
   const summary = scope('[data-testid="cloud-todo-state-summary"]')
   await control.command('waitFor', summary, { visible: true, timeoutMs })
-  const summaryText = await control.command('getText', summary)
+  const { text: summaryText } = JSON.parse(await control.command('snapshot', summary))
   const propertyLabels = `${summary} [data-testid="issue-property-grid"] dt`
   assert.equal(
     Number(await control.command('getElementCount', propertyLabels)),

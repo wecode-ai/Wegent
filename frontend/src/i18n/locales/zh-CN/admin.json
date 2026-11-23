@@ -505,6 +505,31 @@
       "cannot_demote_self": "当只有一个管理员时，不能降级自己的角色"
     }
   },
+  "model_group_icons": {
+    "title": "一级分组图标",
+    "description": "同名一级分组共用一个图标。选择“自动生成”可恢复默认图标。",
+    "group": "一级分组",
+    "icon": "图标",
+    "automatic": "自动生成",
+    "save": "保存",
+    "saved": "分组图标已保存",
+    "save_failed": "保存分组图标失败",
+    "load_failed": "加载分组图标失败",
+    "loading": "正在加载分组图标…",
+    "retry": "重试",
+    "choices": {
+      "globe": "地球",
+      "map-pin": "地图标记",
+      "zap": "闪电",
+      "brain": "大脑",
+      "code": "代码",
+      "cpu": "芯片",
+      "layers": "图层",
+      "sparkles": "星光",
+      "shield": "盾牌",
+      "flask-conical": "烧瓶"
+    }
+  },
   "public_models": {
     "title": "公共模型管理",
     "description": "管理所有用户可用的公共 AI 模型",

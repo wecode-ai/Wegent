@@ -4,7 +4,6 @@
 
 """Resolve an owned logical device identity to its current Runtime socket."""
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -18,6 +17,7 @@ from app.services.device.identity import (
     record_route_id,
     resolve_owned_device_alias,
 )
+from app.services.device.plugin_sync_io import run_plugin_sync_db
 from app.services.device_service import device_service
 from shared.telemetry.decorators import trace_async
 
@@ -187,7 +187,7 @@ class RuntimeRouteResolver:
     ) -> RuntimeRoute:
         """Resolve and validate one owned, online Runtime route."""
 
-        identity = await asyncio.to_thread(
+        identity = await run_plugin_sync_db(
             self._resolve_identity,
             user_id,
             submitted_device_id,

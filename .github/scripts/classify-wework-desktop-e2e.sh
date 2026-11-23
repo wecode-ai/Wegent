@@ -139,13 +139,11 @@ select_plugin_sync_checkpoints() {
 }
 
 select_rendering_checkpoints() {
-  select_target "core:rendering-extensions"
-  select_target "core:streaming-content"
-  select_target "core:streaming-tools"
-  select_target "core:streaming-scroll"
-  select_target "core:streaming-message-order"
   select_target "core:streaming-conversation-switching"
-  select_target "core:streaming-subagents"
+  select_target "core:core-task-flow"
+  select_target "core:streaming-content"
+  select_target "core:transcript-sync"
+  select_target "core:streaming-subagent-guidance"
 }
 
 select_cloud_worktree_checkpoints() {
@@ -175,7 +173,6 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in-telemetry"
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
-  select_target "core:stand-in-project-enable"
   select_target "core:stand-in-cloud"
   select_target "core:stand-in-assignment-notifications"
   select_target "core:stand-in-personal-task"
@@ -183,7 +180,6 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
   select_target "core:collaboration-remote-group-coordinate"
-  select_target "core:collaboration-remote-group-planning-details"
   select_target "core:collaboration-human-round-resume"
   select_target "core:collaboration-local-group-cancellation"
 }

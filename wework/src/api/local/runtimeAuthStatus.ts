@@ -7,6 +7,7 @@ export interface LocalRuntimeAuthStatus {
   exists: boolean
   updatedAt: string | null
   sha256: string | null
+  catalogScope: string | null
   sizeBytes: number | null
   error: string | null
 }
@@ -25,13 +26,16 @@ function normalizeStatus(value: unknown): LocalRuntimeAuthStatus {
     exists: record.exists === true,
     updatedAt: typeof record.updated_at === 'string' ? record.updated_at : null,
     sha256: typeof record.sha256 === 'string' ? record.sha256 : null,
+    catalogScope: typeof record.catalog_scope === 'string' ? record.catalog_scope : null,
     sizeBytes: typeof record.size_bytes === 'number' ? record.size_bytes : null,
     error: typeof record.error === 'string' ? record.error : null,
   }
 }
 
-export async function getLocalCodexAuthStatus(): Promise<LocalRuntimeAuthStatus> {
-  await ensureLocalExecutorStarted()
+export async function getLocalCodexAuthStatus(
+  options: { startCodex?: boolean } = {}
+): Promise<LocalRuntimeAuthStatus> {
+  if (options.startCodex !== false) await ensureLocalExecutorStarted()
   const response = await requestLocalExecutor<DeviceCommandResponse>('device.execute_command', {
     command_key: 'runtime_auth_status',
     timeout_seconds: 10,

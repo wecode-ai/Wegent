@@ -226,8 +226,8 @@ export async function startHistoricalPluginExecutor({
   })
   cloud.generatedRemoteExecutors.push(child)
   await Promise.all([
-    appendProcessOutput(child.stdout, logPath),
-    appendProcessOutput(child.stderr, logPath),
+    appendProcessOutput(child.stdout, logPath, child),
+    appendProcessOutput(child.stderr, logPath, child),
   ])
   try {
     await cloud.waitForDevice(deviceId, logPath)

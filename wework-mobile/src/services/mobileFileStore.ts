@@ -316,12 +316,13 @@ export class MobileFileStore {
     if (request.kind === 'diff' || request.kind === 'git-diff') {
       const patch =
         request.kind === 'diff'
-          ? await this.api.readFileChangesDiff(request.summary)
+          ? await this.api.readFileChangesDiff(request.summary, request.taskId)
           : await this.api.getWorkspaceGitDiff(
               request.target.deviceId,
               request.target.path,
               request.selection,
-              options.signal
+              options.signal,
+              request.target.taskId
             )
       throwIfAborted(options.signal)
       const text = selectFileDiff(patch, request)
@@ -394,10 +395,10 @@ export class MobileFileStore {
     file: import('expo-file-system').File,
     options: FileLoadOptions
   ): Promise<FileReadResult> {
-    const { deviceId, path: root } = request.target
+    const { deviceId, path: root, taskId } = request.target
     const kind = workspaceFilePreviewKind(request.path)
     if (kind === 'text' && !options.complete) {
-      const result = await this.api.readWorkspaceTextFile(deviceId, request.path, root)
+      const result = await this.api.readWorkspaceTextFile(deviceId, request.path, root, taskId)
       throwIfAborted(options.signal)
       file.write(result.content)
       return {
@@ -420,7 +421,7 @@ export class MobileFileStore {
     const handle = file.open()
     try {
       await copyWorkspaceFileChunks(
-        offset => this.api.readWorkspaceFileChunk(deviceId, request.path, offset, root),
+        offset => this.api.readWorkspaceFileChunk(deviceId, request.path, offset, root, taskId),
         bytes => handle.writeBytes(bytes),
         options
       )

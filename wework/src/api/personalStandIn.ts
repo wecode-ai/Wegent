@@ -45,6 +45,7 @@ export interface StandInIdentity extends Partial<
   Pick<WorkspaceStandInSettings, 'model' | 'modelOptions' | 'workspace'>
 > {
   enabled: boolean
+  selfLearningEnabled?: boolean
   prompt: string
   preferences: string
   calendar?: { policy: StandInHandlingPolicy }
@@ -54,6 +55,7 @@ export interface StandInIdentity extends Partial<
 
 export interface StandInRole extends WorkspaceStandInSettings {
   id: string
+  selfLearningEnabled?: boolean
   name: string
   migrationSource?: string
   previousExecutionDevices?: string[]
@@ -62,6 +64,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
   collaboration: {
     enabled: boolean
     allProjects: boolean
+    includeIndependentIssues?: boolean
     projects: StandInProjectRef[]
     excludedProjects: StandInProjectRef[]
     tags: string[]
@@ -70,12 +73,18 @@ export interface StandInRole extends WorkspaceStandInSettings {
   }
 }
 
+export type StandInDelegationRoute = Pick<
+  StandInRole,
+  'id' | 'name' | 'prompt' | 'enabled' | 'executionDeviceId'
+>
+
 export interface PersonalStandInSettings {
   userId: number
   executionDeviceId: string
   version: number
   primary?: StandInIdentity
   roles: StandInRole[]
+  delegationRoutes?: StandInDelegationRoute[]
   lifecycle?: { status: 'stopping' | 'stopped' }
 }
 

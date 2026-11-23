@@ -41,6 +41,7 @@ import {
   AdminPublicModelUpdate,
 } from '@/apis/admin'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import { ModelPrimaryGroupIconSettings } from './ModelPrimaryGroupIconSettings'
 
 const isJsonObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -645,7 +646,12 @@ const PublicModelList: React.FC = () => {
         {/* Add Button */}
         {!loading && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
-            <div className="flex justify-center">
+            <div className="flex flex-wrap justify-center gap-2">
+              <ModelPrimaryGroupIconSettings
+                groups={models
+                  .map(model => getSpecValue(model.json, 'modelGroup').trim())
+                  .filter(Boolean)}
+              />
               <UnifiedAddButton onClick={() => setIsCreateDialogOpen(true)}>
                 {t('admin:public_models.create_model')}
               </UnifiedAddButton>

@@ -11,6 +11,7 @@ export const inject = ['webServer', 'weworkRequestSecurity']
 export const APP_BASE_PATH = '/wework/app'
 const API_PROXY_PATH = '/wework/api'
 const SOCKET_PROXY_PATH = '/wework/socket.io'
+const PROXY_IDLE_TIMEOUT_MS = 60_000
 const DEEP_LINK_PARAMETER = '__wework_route'
 const HOT_RELOAD_BUILD_ID_FILE = '.wework-build-id'
 const configuredWebRoot = process.env.WEWORK_APP_WEB_ROOT?.trim()
@@ -260,6 +261,10 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       'WEWORK_E2E_SEED_LOCAL_MODELS',
       'VITE_WEWORK_E2E_SEED_LOCAL_MODELS'
     ),
+    conversationCacheIdleTtlMs: environmentPositiveInteger(
+      environment,
+      'WEWORK_E2E_CONVERSATION_CACHE_IDLE_TTL_MS'
+    ),
     transcriptPageSize: environmentPositiveInteger(
       environment,
       'WEWORK_E2E_TRANSCRIPT_PAGE_SIZE',
@@ -368,41 +373,97 @@ export function resolveSocketUrl(environment) {
   return url.toString().replace(/\/+$/, '')
 }
 
-async function proxyHttpRequest(req, res, backendUrl, sourcePath, targetPath) {
-  const source = new URL(req.url ?? sourcePath, 'http://localhost')
-  const target = new URL(backendUrl)
-  target.pathname = `${target.pathname.replace(/\/+$/, '')}${source.pathname.replace(
-    sourcePath,
-    targetPath
-  )}`
-  target.search = source.search
-  const upstreamRequest = requestFor(target)({
-    protocol: target.protocol,
-    hostname: target.hostname,
-    port: target.port || undefined,
-    method: req.method,
-    path: `${target.pathname}${target.search}`,
-    headers: proxyHeaders(req.headers, target.host),
-  })
-  upstreamRequest.on('response', upstream => {
-    res.writeHead(upstream.statusCode ?? 502, upstream.headers)
-    upstream.pipe(res)
-  })
-  upstreamRequest.on('error', error => {
-    if (res.headersSent) {
-      res.destroy(error)
-      return
-    }
-    res.writeHead(502, {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store',
-    })
-    res.end(
-      JSON.stringify({
-        detail: 'Wegent backend is unavailable',
-        error: error.message,
-      })
+function proxyHttpRequest(req, res, backendUrl, sourcePath, targetPath) {
+  const reportFailure = (code, status = 502) => {
+    const header = req.headers['x-request-id']
+    const requestId =
+      typeof header === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(header) ? header : undefined
+    console.warn(
+      '[wework-app] Backend proxy interrupted ' +
+        JSON.stringify({ requestId, code, status, headersSent: res.headersSent })
     )
+    if (res.destroyed || res.writableEnded) return
+    if (res.headersSent) return res.destroy()
+    try {
+      res.writeHead(status, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        connection: 'close',
+      })
+      res.end(JSON.stringify({ detail: 'Wegent backend is unavailable', code }))
+    } catch {
+      res.destroy()
+    }
+  }
+  let upstreamRequest
+  try {
+    const source = new URL(req.url ?? sourcePath, 'http://localhost')
+    const target = new URL(backendUrl)
+    target.pathname = `${target.pathname.replace(/\/+$/, '')}${source.pathname.replace(
+      sourcePath,
+      targetPath
+    )}`
+    target.search = source.search
+    upstreamRequest = requestFor(target)({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || undefined,
+      method: req.method,
+      path: `${target.pathname}${target.search}`,
+      headers: proxyHeaders(req.headers, target.host),
+    })
+  } catch {
+    reportFailure('proxy_request_failed')
+    return
+  }
+  let upstreamResponse
+  let settled = false
+  const stop = () => {
+    if (settled) return false
+    settled = true
+    clearTimeout(headersDeadline)
+    req.unpipe(upstreamRequest)
+    return true
+  }
+  const fail = (code, status = 502) => {
+    if (!stop()) return
+    upstreamResponse?.destroy()
+    upstreamRequest.destroy()
+    reportFailure(code, status)
+  }
+  const headersDeadline = setTimeout(
+    () => fail('upstream_headers_timeout', 504),
+    PROXY_IDLE_TIMEOUT_MS
+  )
+  headersDeadline.unref()
+  upstreamRequest.once('response', upstream => {
+    if (settled) return upstream.destroy()
+    clearTimeout(headersDeadline)
+    upstreamResponse = upstream
+    upstream.once('aborted', () => fail('upstream_response_aborted'))
+    upstream.once('error', () => fail('upstream_response_failed'))
+    upstream.once('close', () => {
+      if (!upstream.complete) fail('upstream_response_incomplete')
+    })
+    upstream.setTimeout(PROXY_IDLE_TIMEOUT_MS, () => fail('upstream_body_timeout', 504))
+    try {
+      res.writeHead(upstream.statusCode ?? 502, upstream.headers)
+      upstream.pipe(res)
+    } catch {
+      fail('proxy_response_failed')
+    }
+  })
+  upstreamRequest.once('error', () => fail('upstream_request_failed'))
+  req.once('aborted', () => fail('downstream_request_aborted'))
+  req.once('error', () => fail('downstream_request_failed'))
+  res.once('error', () => fail('downstream_response_failed'))
+  res.once('finish', () => {
+    if (stop() && !upstreamRequest.writableFinished) upstreamRequest.destroy()
+  })
+  res.once('close', () => {
+    if (!stop()) return
+    upstreamResponse?.destroy()
+    upstreamRequest.destroy()
   })
   req.pipe(upstreamRequest)
 }

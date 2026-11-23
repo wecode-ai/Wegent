@@ -1,68 +1,49 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react'
+import { useCallback, useMemo, useSyncExternalStore, type SetStateAction } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { CollaborationTranslate } from '../i18n'
 
 // Each mounted panel owns its requests; the settings shell never awaits them.
 export function usePanelData<T>(load: (() => Promise<T>) | undefined, enabled = true) {
-  const [snapshot, setSnapshot] = useState<{
-    load: typeof load
-    data?: T
-    loading: boolean
-    error?: unknown
-  }>({ load, loading: true })
-  const revision = useRef(0)
-  const currentLoad = useRef(load)
+  const resource = useMemo(
+    () =>
+      createAsyncResource<T>('panel', () => load!(), {
+        refreshOnSubscribe: true,
+      }),
+    [load]
+  )
+  const snapshot = useSyncExternalStore(
+    enabled && load ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
   const setData = useCallback(
     (update: SetStateAction<T | undefined>) => {
-      if (!load || !enabled || currentLoad.current !== load) return
-      revision.current++
-      setSnapshot(current =>
-        current.load !== load
-          ? current
-          : {
-              ...current,
-              loading: false,
-              error: undefined,
-              data:
-                typeof update === 'function'
-                  ? (update as (data?: T) => T | undefined)(current.data)
-                  : update,
-            }
+      if (!load || !enabled) return
+      resource.update(data =>
+        typeof update === 'function' ? (update as (data?: T) => T | undefined)(data) : update
       )
     },
-    [load, enabled]
+    [load, enabled, resource]
   )
   const refresh = useCallback(async () => {
-    if (!load || !enabled || currentLoad.current !== load) return
-    const request = ++revision.current
-    setSnapshot(current => ({
-      load,
-      data: current.load === load ? current.data : undefined,
-      loading: true,
-    }))
-    try {
-      const next = await load()
-      if (request === revision.current && currentLoad.current === load)
-        setSnapshot({ load, data: next, loading: false })
-    } catch (cause) {
-      if (request === revision.current && currentLoad.current === load)
-        setSnapshot(current => ({ ...current, error: cause, loading: false }))
-    }
-  }, [load, enabled])
-  const invalidate = useCallback(() => {
-    revision.current++
-    currentLoad.current = undefined
-  }, [])
-  useEffect(() => {
-    currentLoad.current = load
-    if (enabled) void refresh()
-    return invalidate
-  }, [refresh, enabled, load, invalidate])
-  const current =
-    snapshot.load === load ? snapshot : { data: undefined, loading: enabled, error: undefined }
-  return { data: current.data, loading: current.loading, error: current.error, setData, refresh }
+    if (load && enabled) await resource.reload()
+  }, [load, enabled, resource])
+  return {
+    data: snapshot.data,
+    loading:
+      enabled && Boolean(load) && (snapshot.status === 'idle' || snapshot.status === 'loading'),
+    error: snapshot.status === 'loading' ? undefined : snapshot.error,
+    setData,
+    refresh,
+  }
 }
 
 export function PanelFeedback({
@@ -70,7 +51,12 @@ export function PanelFeedback({
   translate,
   testId,
 }: {
-  state: { data?: unknown; loading: boolean; error: unknown; refresh(): Promise<void> }
+  state: {
+    data?: unknown
+    loading: boolean
+    error: unknown
+    refresh(): Promise<void>
+  }
   translate: CollaborationTranslate
   testId: string
 }) {
@@ -82,14 +68,15 @@ export function PanelFeedback({
         data-testid={`${testId}-error`}
       >
         <span>{translate('todo.load_collaboration_data_failed', '加载协作数据失败')}</span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="min-h-11 rounded-md px-3 text-text-primary hover:bg-muted md:min-h-8"
           data-testid={`${testId}-retry`}
           onClick={() => void state.refresh()}
         >
           {translate('common.retry', '重试')}
-        </button>
+        </ControlButton>
       </div>
     )
   return state.loading && state.data === undefined ? (

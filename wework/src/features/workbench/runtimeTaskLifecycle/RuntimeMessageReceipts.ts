@@ -94,7 +94,7 @@ export class RuntimeMessageReceipts {
           ? live || (previouslyUnread && message.id === newest.id)
           : message.createdAt > Math.max(record.readAt, record.baselineAt))
       record.messages[message.id] = { at: message.createdAt, unread }
-      if (unread && (!initial || live)) incoming.push(message)
+      if (unread && live) incoming.push(message)
       changed = true
     }
     if (this.viewed.has(key)) record.readAt = Math.max(record.readAt, Date.now(), newest.createdAt)

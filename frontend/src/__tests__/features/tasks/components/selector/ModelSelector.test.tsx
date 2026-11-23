@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import React from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { getModelPrimaryGroupIcons } from '@/apis/model-primary-group-icons'
 import ModelSelector from '@/features/tasks/components/selector/ModelSelector'
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 
@@ -60,6 +61,10 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/hooks/useMediaQuery', () => ({
   useMediaQuery: () => mockIsMobile,
+}))
+
+jest.mock('@/apis/model-primary-group-icons', () => ({
+  getModelPrimaryGroupIcons: jest.fn().mockResolvedValue({}),
 }))
 
 jest.mock('@/features/tasks/hooks/useModelSelection', () => {
@@ -147,8 +152,45 @@ const mockDefaultModel: Model = {
 describe('ModelSelector', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    jest.mocked(getModelPrimaryGroupIcons).mockResolvedValue({})
     mockModelSelectionOverrides = {}
     mockIsMobile = false
+  })
+
+  it('retries group icons without closing the picker and shows only the icon beside the model', async () => {
+    const selectedModel = { ...mockModel, modelGroup: 'Domestic' }
+    jest
+      .mocked(getModelPrimaryGroupIcons)
+      .mockRejectedValueOnce(new Error('Icons temporarily unavailable'))
+      .mockResolvedValue({ Domestic: 'globe' })
+    mockModelSelectionOverrides = {
+      displayModelGroup: selectedModel.modelGroup,
+      filteredModels: [selectedModel, { ...mockAdvancedModel, modelGroup: 'Overseas' }],
+    }
+    render(
+      <ModelSelector
+        selectedModel={selectedModel}
+        setSelectedModel={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    const trigger = screen.getByTestId('model-selector')
+    expect(trigger).toHaveTextContent(selectedModel.displayName!)
+    expect(trigger).not.toHaveTextContent('Domestic')
+
+    await userEvent.click(trigger)
+    await userEvent.click(await screen.findByTestId('model-group-icons-retry'))
+    const groupMark = screen.getByRole('img', { name: 'Domestic' })
+    await waitFor(() => expect(groupMark.querySelector('svg')).toHaveClass('lucide-globe'))
+    const triggerIcon = groupMark.querySelector('svg')
+    const domestic = screen.getByTestId('model-primary-group-Domestic')
+    const overseasIcon = screen.getByTestId('model-primary-group-Overseas').querySelector('svg')
+    await waitFor(() => expect(domestic.querySelector('svg')).toHaveClass('lucide-globe'))
+    expect(overseasIcon).toBeInTheDocument()
+    expect(triggerIcon?.innerHTML).toBe(domestic.querySelector('svg')?.innerHTML)
+    expect(triggerIcon?.innerHTML).not.toBe(overseasIcon?.innerHTML)
   })
 
   it('syncs an externally selected model into the selector display', async () => {

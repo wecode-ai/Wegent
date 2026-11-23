@@ -51,6 +51,8 @@ Open **browser toolbar … → History**, or **Settings → Integrations → Bro
 | Remove multiple records | Select record checkboxes and remove the selection; does not clear webpage cookies or conversation history          |
 | More records            | Continue loading history. Retry an initial failure on the page, or a pagination failure at its pagination controls |
 
+Late search or pagination responses do not replace current results. Failed refreshes retain displayed records; retry a failed page from its pagination controls. Successful removal or browser-data clearing refreshes the current search.
+
 ## Browser controls
 
 ### Toolbar and More menu

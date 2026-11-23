@@ -22,6 +22,7 @@ export function createDesktopScenario({ workspacePath }) {
       if (holdQuota && Date.now() >= resetAt * 1000) {
         resetAt = Math.floor(Date.now() / 1000) + 5
       }
+      console.info('[desktop-e2e] quota usage snapshot', { at: Date.now(), resetAt, holdQuota })
       return {
         plan_type: 'enterprise',
         rate_limit: {
@@ -52,6 +53,15 @@ export function createDesktopScenario({ workspacePath }) {
       const rpc = (method, params) =>
         requestExecutor(control, method, params, DEFAULT_STEP_TIMEOUT_MS)
       const task = async taskId => (await rpc('runtime.tasks.get', { taskId })).task
+      // Startup can recheck an expired wait before returning the task to the queue.
+      const waitForRestoredQuota = taskId =>
+        waitForValue(
+          () => task(taskId),
+          value =>
+            value?.runtimeHandle?.quotaWait && value.status === 'queued' && value.running === false,
+          `The durable quota wait for ${taskId} was not restored after desktop restart`,
+          RECOVERY_TIMEOUT_MS
+        )
       const create = async (
         taskId,
         delaySeconds,
@@ -59,11 +69,18 @@ export function createDesktopScenario({ workspacePath }) {
         { goal = false, responses } = {}
       ) => {
         const marker = `WEWORK_QUOTA_${taskId}`
+        let expectedResetAt = 0
         const plan = model.plan(marker, [
           {
             usageLimit: () => {
               holdQuota = holdUntilRestored
               resetAt = Math.floor(Date.now() / 1000) + delaySeconds
+              expectedResetAt = resetAt
+              console.info('[desktop-e2e] initial quota limit', {
+                taskId,
+                at: Date.now(),
+                expectedResetAt,
+              })
               return resetAt
             },
           },
@@ -102,11 +119,16 @@ export function createDesktopScenario({ workspacePath }) {
         assert.equal(created.accepted, true)
         const waiting = await waitForValue(
           () => task(taskId),
-          value => value?.runtimeHandle?.quotaWait,
+          value =>
+            value?.status === 'queued' && value.running === false && value.runtimeHandle?.quotaWait,
           'The subscription error did not enter durable quota waiting',
           RECOVERY_TIMEOUT_MS
         )
-        assert.equal(waiting.resumeAt, resetAt * 1000)
+        assert.equal(
+          waiting.resumeAt,
+          expectedResetAt * 1000,
+          `The first queued quota deadline for ${taskId} differs from its initial limit response`
+        )
         assert.equal(plan.count, 1, 'The limited request was retried before reset')
         return {
           created,
@@ -211,24 +233,11 @@ export function createDesktopScenario({ workspacePath }) {
       await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
       await control.command('waitFor', '[data-testid="runtime-quota-wait-status"]')
       await restartDesktopApp()
-      const restored = await waitForValue(
-        () => task(taskId),
-        value => value?.runtimeHandle?.quotaWait && value,
-        'The durable quota wait was not restored after desktop restart',
-        RECOVERY_TIMEOUT_MS
-      )
-      assert.equal(restored.status, 'queued')
-      assert.equal(restored.running, false)
+      const restored = await waitForRestoredQuota(taskId)
       assert.equal(restored.threadId, beforeRestart.threadId)
       assert.equal(plan.count, 1, 'Recovery ran before the restored wait was observed')
-      const restoredGoal = await waitForValue(
-        () => task(continuingGoal.taskId),
-        value => value?.runtimeHandle?.quotaWait && value,
-        'The ongoing Goal quota wait was not restored after desktop restart',
-        RECOVERY_TIMEOUT_MS
-      )
+      const restoredGoal = await waitForRestoredQuota(continuingGoal.taskId)
       assert.equal(restoredGoal.threadId, goalThreadId)
-      assert.equal(restoredGoal.running, false)
       assert.equal(continuingGoal.plan.count, 1)
       const stoppedAfterRestart = await task(stoppedPreparation.taskId)
       assert.equal(stoppedAfterRestart.status, 'cancelled')

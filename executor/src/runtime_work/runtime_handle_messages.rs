@@ -26,18 +26,19 @@ pub(crate) fn completed_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value
 }
 
 pub(crate) fn transcript_snapshot_messages(link: &RuntimeTaskLink) -> Vec<Value> {
-    let Some(thread_id) = link.thread_id.as_deref() else {
-        return Vec::new();
-    };
-    if link
-        .runtime_handle
-        .get("transcriptSnapshotThreadId")
-        .and_then(Value::as_str)
-        != Some(thread_id)
-    {
-        return Vec::new();
-    }
-    runtime_handle_messages(&link.runtime_handle, "transcriptSnapshotMessages")
+    transcript_snapshot_message_refs(link).cloned().collect()
+}
+
+pub(crate) fn transcript_snapshot_message_refs(
+    link: &RuntimeTaskLink,
+) -> impl Iterator<Item = &Value> {
+    link.thread_id
+        .as_deref()
+        .filter(|thread_id| link.runtime_handle["transcriptSnapshotThreadId"] == *thread_id)
+        .and_then(|_| link.runtime_handle["transcriptSnapshotMessages"].as_array())
+        .into_iter()
+        .flatten()
+        .filter(|message| message.is_object())
 }
 
 pub(crate) fn transcript_snapshot_pagination(

@@ -1,71 +1,74 @@
-import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Loader2 } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
+import { testProviderConnection } from '@/features/model-settings/providerConnectionTest'
 import type {
   ModelProvider,
   PublicModelProvider,
 } from '@/features/model-settings/providerModelConfiguration'
-import { testProviderConnection } from '@/features/model-settings/providerConnectionTest'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Loader2 } from 'lucide-react'
+import { useRef, useState } from 'react'
 
-/** Test the current editor draft without persisting it. */
-export function ProviderConnectionTestButton({
-  provider,
-  disabled = false,
-  testId,
-}: {
+interface ProviderConnectionTestButtonProps {
   provider: ModelProvider | PublicModelProvider
   disabled?: boolean
   testId: string
-}) {
+}
+
+/** Test the current editor draft without persisting it. */
+export function ProviderConnectionTestButton(props: ProviderConnectionTestButtonProps) {
+  return <ScopedProviderConnectionTestButton key={JSON.stringify(props.provider)} {...props} />
+}
+
+function ScopedProviderConnectionTestButton({
+  provider,
+  disabled = false,
+  testId,
+}: ProviderConnectionTestButtonProps) {
   const { t } = useTranslation('modelConnections')
-  const key = JSON.stringify(provider)
-  const sequence = useRef(0)
-  const [status, setStatus] = useState<{
-    key: string
+  const pending = useRef(false)
+  const [current, setStatus] = useState<{
     pending: boolean
     message?: string
     failed?: boolean
   } | null>(null)
-  useEffect(
-    () => () => {
-      sequence.current += 1
-    },
-    [key]
-  )
-  const current = status?.key === key ? status : null
   async function test() {
-    const request = ++sequence.current
-    setStatus({ key, pending: true })
+    if (pending.current) return
+    pending.current = true
+    setStatus({ pending: true })
     try {
       const results = await testProviderConnection(provider)
       const failures = results.filter(result => result.error)
-      if (request === sequence.current)
-        setStatus({
-          key,
-          pending: false,
-          failed: failures.length > 0,
-          message: failures.length
-            ? failures
-                .map(
-                  result =>
-                    `${result.model}: ${result.error === 'connection_test_failed' ? t('testFailed') : result.error}`
-                )
-                .join('\n')
-            : t('testSuccess'),
-        })
+      setStatus({
+        pending: false,
+        failed: failures.length > 0,
+        message: failures.length
+          ? failures
+              .map(
+                result =>
+                  `${result.model}: ${result.error === 'connection_test_failed' ? t('testFailed') : result.error}`
+              )
+              .join('\n')
+          : t('testSuccess'),
+      })
     } catch (error) {
-      if (request === sequence.current)
-        setStatus({
-          key,
-          pending: false,
-          failed: true,
-          message: error instanceof Error ? error.message : t('failed'),
-        })
+      setStatus({
+        pending: false,
+        failed: true,
+        message: error instanceof Error ? error.message : t('failed'),
+      })
+    } finally {
+      pending.current = false
     }
   }
   return (
     <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={testId}
         disabled={
@@ -83,27 +86,25 @@ export function ProviderConnectionTestButton({
       >
         {current?.pending && <Loader2 className="h-4 w-4 animate-spin" />}
         {current?.pending ? t('testing') : t('testConnection')}
-      </button>
+      </ControlButton>
       {current?.message && current.failed && (
-        <details
+        <CollapsibleRoot
           role="alert"
           data-testid={`${testId}-result`}
           className="group min-w-0 text-xs text-destructive wework:text-red-500"
         >
-          <summary
+          <CollapsibleTrigger
             data-testid={`${testId}-error-details`}
             className="flex min-h-11 cursor-pointer items-center gap-1 md:min-h-8"
           >
             {t('testFailed')}
-            <ChevronDown
-              aria-hidden="true"
-              className="h-3.5 w-3.5 shrink-0 group-open:rotate-180"
-            />
-          </summary>
-          <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words py-2">
-            {current.message}
-          </p>
-        </details>
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words py-2">
+              {current.message}
+            </p>
+          </CollapsiblePanel>
+        </CollapsibleRoot>
       )}
       {current?.message && !current.failed && (
         <p

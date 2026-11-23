@@ -450,13 +450,13 @@ async function openSmartAppsTab(control, uiTimeoutMs) {
 async function selectHarnessAppModel(control, installationId, label, uiTimeoutMs) {
   const selector = `[data-testid="harness-app-model-${installationId}"]`
   await control.command('waitFor', selector, {
-    text: label,
     enabled: true,
     stableMs: 300,
     timeoutMs: uiTimeoutMs,
   })
   await control.command('select', selector, { by: 'label', value: label })
   await control.command('waitFor', selector, {
+    text: label,
     enabled: true,
     stableMs: 300,
     timeoutMs: uiTimeoutMs,
@@ -605,10 +605,16 @@ async function injectInvalidLegacyModelForRejectionTest(
   control,
   displayName = UNAVAILABLE_MODEL_LABEL
 ) {
+  const existing = JSON.parse(
+    (await control.command('getLocalStorageItem', 'body', {
+      value: LOCAL_MODEL_SETTINGS_STORAGE_KEY,
+    })) || '[]'
+  )
   await control.command('setLocalStorageItem', 'body', {
     value: JSON.stringify({
       key: LOCAL_MODEL_SETTINGS_STORAGE_KEY,
       value: JSON.stringify([
+        ...existing.filter(model => model.id !== UNAVAILABLE_MODEL_ID),
         {
           id: UNAVAILABLE_MODEL_ID,
           displayName,

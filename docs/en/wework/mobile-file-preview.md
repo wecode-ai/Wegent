@@ -65,7 +65,11 @@ the original cause; source remains available for supported files.
 Regular text-file previews display at most the first 256 KiB and show a truncation notice. Sharing obtains
 the complete file; the truncated preview must not be mistaken for the full contents. Existing device
 authorization governs reads, including permitted absolute paths outside the current project.
-Permission to access a computer's tasks remotely does not automatically grant access to its file API.
+For a desktop App device with remote task access enabled, the phone can read only the current
+task's actual workspace (including a managed worktree) or a local project workspace and their
+descendants. Directory, preview, search, Git comparison and historical change reads use a
+scoped Runtime operation. Absolute paths outside those roots, generic device commands, file
+writes and terminal access remain denied. Turning off remote task access rejects subsequent reads.
 
 Sharing from an individual diff exports only that file's `.diff` patch. A change preview without a
 selected file exports the full patch.
@@ -90,10 +94,14 @@ must not expose their source directory as the final workspace.
 flowchart TD
   E[Files / message links / attachments / changes] --> T[Shared file source and path resolution]
   T --> W[Cloud directory / text / chunk commands]
+  T --> X[APP scoped read only Runtime RPC]
   T --> A[Authenticated attachment download]
   T --> D[Turn diff]
   T --> G[The same Runtime channel as PC]
-  G --> GD[Existing device.execute_command Git commands]
+  G --> GD[Existing cloud Git commands]
+  G --> X
+  X --> VLD[Executor validates task worktree or local project root]
+  VLD --> C
   GD --> C
   W --> C[Phone cache for the authenticated session]
   A --> C

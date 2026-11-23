@@ -1,7 +1,0 @@
-{
-  "order": 48100,
-  "scenario": "./scenarios/stand-in-startup-recovery.scenario.mjs",
-  "scenarioOnly": true,
-  "ciHost": "stand-in-assignment-notifications",
-  "paths": ["wework/e2e/desktop/modules/stand-in-startup-recovery.mjs"]
-}

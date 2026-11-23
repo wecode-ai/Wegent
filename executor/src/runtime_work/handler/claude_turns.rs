@@ -277,6 +277,10 @@ impl RuntimeWorkRpcHandler {
         mut request: ExecutionRequest,
         restore_startup: Option<Arc<RestoreStartupGate>>,
     ) {
+        // Claude does not deliver Codex additionalContext fragments as turn input.
+        if let Some(snapshot) = request.extra.get_mut("standInDeliveryContext") {
+            snapshot["ghostVersion"] = Value::Null;
+        }
         request.agent_home_runtime_task_id = Some(local_task_id.clone());
         let backend_connection = match self.backend_connection_snapshot() {
             Ok(connection) => connection,
@@ -425,6 +429,11 @@ impl RuntimeWorkRpcHandler {
                 hooks.started(&local_task_id, &request.subtask_id);
             }
             let outcome = match authorization {
+                Err(message) if message == CODEX_APP_SERVER_TURN_CANCELLED => {
+                    ExecutionOutcome::Cancelled {
+                        message: "cancelled".to_owned(),
+                    }
+                }
                 Err(message) => ExecutionOutcome::Failed { message },
                 Ok(()) => tokio::select! {
                 _ = cancel_rx => ExecutionOutcome::Cancelled {

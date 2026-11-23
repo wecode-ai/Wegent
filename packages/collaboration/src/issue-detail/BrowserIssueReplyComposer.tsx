@@ -1,9 +1,10 @@
-import type { CollaborationTranslate } from '../i18n'
-import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
-import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
-import { useBrowserTaskDraft } from './browserTaskDraftContext'
-import { useBrowserIssueReplies } from './browserIssueRepliesContext'
 import type { ComposerExternalMentionCandidate } from '../composer/composerAutocompleteInputTypes'
+import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
+import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
+import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
+import { useBrowserIssueReplies } from './browserIssueRepliesContext'
+import { useBrowserTaskDraft } from './browserTaskDraftContext'
 
 export function BrowserIssueReplyComposer({
   rootId,
@@ -34,14 +35,15 @@ export function BrowserIssueReplyComposer({
       {reply.error && (
         <div role="alert" className="task-detail-comment-inline-error">
           {reply.error}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="ml-2 underline"
             data-testid={`collaboration-chat-retry-${rootId}`}
             onClick={reply.retry}
           >
             {t('activity.retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
       <IssueThreadReplyComposer

@@ -165,6 +165,8 @@ export function emitResponseApiEvent(
   }
 
   if (eventName === "response.guidance.applied") {
+    const source = recordField(data, "source");
+    const sourceKind = source && stringField(source, "source");
     handlers.onGuidanceApplied?.({
       ...base,
       guidanceId:
@@ -175,6 +177,7 @@ export function emitResponseApiEvent(
         stringField(data, "clientGuidanceId") ??
         stringField(data, "client_guidance_id"),
       message: stringField(data, "message") ?? "",
+      ...(sourceKind && { source: { ...source, source: sourceKind } }),
       appliedAtMs:
         optionalNumberField(data, "appliedAtMs") ??
         optionalNumberField(data, "applied_at_ms") ??
@@ -394,7 +397,15 @@ export function emitResponseApiEvent(
       task: data.task as RuntimeTurnUpdatedPayload["task"],
       error: errorMessage(payload, data),
       type:
-        stringField(data, "type") ?? stringField(payload, "type") ?? eventName,
+        stringField(asRecord(data.error), "code") ??
+        stringField(asRecord(payload.error), "code") ??
+        stringField(data, "code") ??
+        stringField(data, "type") ??
+        stringField(payload, "type") ??
+        eventName,
+      errorInfo: (data.error_info ?? payload.error_info) as
+        | import("./api-types").ChatErrorInfo
+        | undefined,
       shellType:
         stringField(payload, "runtime") ?? stringField(data, "runtime"),
       startedAt:

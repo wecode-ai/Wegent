@@ -76,9 +76,9 @@
 .collaboration-exp-app .experience-task-view-menu {
   z-index: 40;
   display: grid;
-  width: var(--radix-popover-trigger-width);
+  width: var(--anchor-width);
   min-width: 140px;
-  max-height: var(--radix-popover-content-available-height);
+  max-height: var(--available-height);
   gap: 2px;
   overflow: auto;
   overscroll-behavior: contain;

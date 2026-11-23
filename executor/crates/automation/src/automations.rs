@@ -530,17 +530,34 @@ impl AutomationStore {
     }
 
     pub fn list_runs(&self, automation_id: Option<&str>) -> Vec<AutomationRun> {
+        self.list_matching_runs(|run| automation_id.map_or(true, |id| run.automation_id == id))
+    }
+
+    pub fn list_matching_runs(
+        &self,
+        matches_run: impl Fn(&AutomationRun) -> bool,
+    ) -> Vec<AutomationRun> {
         let Ok(state) = self.state.lock() else {
             return Vec::new();
         };
         let mut runs = state
             .runs
             .iter()
-            .filter(|run| automation_id.map_or(true, |id| run.automation_id == id))
+            .filter(|run| matches_run(run))
             .cloned()
             .collect::<Vec<_>>();
         runs.sort_by_key(|run| std::cmp::Reverse(run.created_at));
         runs
+    }
+
+    pub fn get_run(&self, id: &str) -> Option<AutomationRun> {
+        self.state
+            .lock()
+            .ok()?
+            .runs
+            .iter()
+            .find(|run| run.id == id)
+            .cloned()
     }
 
     pub fn settle_coordinated_run(

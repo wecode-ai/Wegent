@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { LoaderCircle } from 'lucide-react'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { StandInNotification, StandInNotificationState } from './standInNotifications'
@@ -30,7 +35,7 @@ export function StandInNotificationProcessing({
   const interactions = useRuntimeInteractions()
   const [busy, setBusy] = useState(false)
   const submitting = useRef(false)
-  const [error, setError] = useState<string | null>(null)
+  const [operationError, setError] = useState<string | null>(null)
   const [started, setStarted] = useState<{
     state: StandInNotificationState
     notificationVersion: string | null
@@ -39,7 +44,6 @@ export function StandInNotificationProcessing({
   const notificationVersion = notifiedState ? standInVersion(notifiedState) : null
   if (started && notifiedState && notificationVersion !== started.notificationVersion)
     setStarted(null)
-  const [summary, setSummary] = useState<{ version: string; text: string } | null>(null)
   const state =
     started && (!notifiedState || started.notificationVersion === notificationVersion)
       ? started.state
@@ -63,44 +67,52 @@ export function StandInNotificationProcessing({
   const completedTaskId = state?.taskId
   const completedStatus = state?.status
   const completedArchived = notification.runtimeItem?.task.status === 'archived'
-  useEffect(() => {
+  const runtimeApi = services?.runtimeWorkApi
+  const summaryResource = useMemo(() => {
     if (
-      completedArchived ||
       !completedDeviceId ||
       !completedTaskId ||
       !completedStatus ||
       !['completed', 'failed', 'cancelled'].includes(completedStatus) ||
-      !services?.runtimeWorkApi
+      !runtimeApi
     )
-      return
-    let active = true
-    void services.runtimeWorkApi
-      .getRuntimeTranscript({ deviceId: completedDeviceId, taskId: completedTaskId, limit: 20 })
-      .then(response => {
-        if (!active) return
-        const transcript = projectRuntimePaneTranscript(response)
-        const error = completedStatus === 'failed' ? transcript.turns.at(-1)?.error : undefined
-        setSummary({
-          version: completionVersion,
-          text: error
-            ? getStandInErrorMessage(error)
-            : notificationTextFromMessages(response.messages)?.body || '',
+      return null
+    return createAsyncResource(
+      JSON.stringify([userId, notification.id, completionVersion]),
+      async () => {
+        const response = await runtimeApi.getRuntimeTranscript({
+          deviceId: completedDeviceId,
+          taskId: completedTaskId,
+          limit: 20,
         })
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
+        const transcript = projectRuntimePaneTranscript(response)
+        const failure = completedStatus === 'failed' ? transcript.turns.at(-1)?.error : undefined
+        return {
+          version: completionVersion,
+          text: failure
+            ? getStandInErrorMessage(failure)
+            : notificationTextFromMessages(response.messages)?.body || '',
+        }
+      }
+    )
   }, [
-    completionVersion,
     completedDeviceId,
     completedTaskId,
     completedStatus,
-    completedArchived,
-    services?.runtimeWorkApi,
+    runtimeApi,
+    userId,
+    notification.id,
+    completionVersion,
   ])
+  const summarySnapshot = useSyncExternalStore(
+    !completedArchived && summaryResource ? summaryResource.subscribe : subscribeIdleResource,
+    summaryResource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const summary = summarySnapshot.data
+  const error =
+    operationError ??
+    (summarySnapshot.status === 'error' ? getStandInErrorMessage(summarySnapshot.error) : null)
 
   const start = async () => {
     if (submitting.current) return
