@@ -9,6 +9,8 @@ import {
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { installedItem, item } from '@/features/plugins/pluginMarketplaceCache.test-fixtures'
+import { mergeMarketplaceCatalog } from '../marketplaceCatalogMerge'
+import { mergeInstalledPlugins } from '../installedPluginMerge'
 import {
   cancelPersonalPluginCloudInstall,
   capturePersonalPluginCloudInstall,
@@ -83,6 +85,104 @@ function fixture() {
   })!
   return { local, schedule, onInstalled }
 }
+
+test.each([
+  {
+    visibility: 'personal',
+    role: 'owner',
+    sourceVersion: '1.1.0',
+    localUpdateAvailable: false,
+    updateAvailable: false,
+  },
+  {
+    visibility: 'personal',
+    role: 'owner',
+    sourceVersion: '1.1.0',
+    localUpdateAvailable: true,
+    updateAvailable: true,
+  },
+  {
+    visibility: 'personal',
+    role: 'owner',
+    sourceVersion: '1.2.0',
+    localUpdateAvailable: false,
+    updateAvailable: true,
+  },
+  {
+    visibility: 'personal',
+    role: 'recipient',
+    sourceVersion: '1.1.0',
+    localUpdateAvailable: false,
+    updateAvailable: true,
+  },
+  {
+    visibility: 'workspace',
+    role: 'owner',
+    sourceVersion: '1.1.0',
+    localUpdateAvailable: false,
+    updateAvailable: true,
+  },
+] as const)(
+  'projects $visibility $role source $sourceVersion with local update=$localUpdateAvailable',
+  ({ visibility, role, sourceVersion, localUpdateAvailable, updateAvailable }) => {
+    const installed = {
+      ...first,
+      spec: {
+        ...first.spec,
+        origin: 'created' as const,
+        version: '1.1.0',
+        sourcePayload: { cloudPluginId: 17, marketplacePath: '/personal' },
+      },
+    }
+    const account = {
+      ...first,
+      metadata: { ...first.metadata, namespace: 'default', labels: { id: '80' } },
+      spec: {
+        ...first.spec,
+        pluginId: 17,
+        releaseId: 117,
+        version: '1.0.0',
+      },
+    }
+    const [merged] = mergeMarketplaceCatalog(
+      [
+        {
+          ...cloudRelease('first', 17),
+          visibility,
+          sourceProvider: 'user',
+          accessRole: role,
+          version: '1.0.0',
+        },
+      ],
+      [
+        item({
+          id: 'first@wework-personal',
+          name: 'first',
+          version: sourceVersion,
+          manifest: { marketplaceId: 'wework-personal', marketplacePath: '/personal' },
+          installed: true,
+          installedVersion: '1.1.0',
+          updateAvailable: localUpdateAvailable,
+        }),
+      ],
+      mergeInstalledPlugins([account], [installed], 'personal-sync-test', true)
+    )
+
+    expect(merged).toMatchObject({
+      installed: true,
+      installedVersion: '1.1.0',
+      version: role === 'owner' ? sourceVersion : '1.0.0',
+      updateAvailable,
+    })
+    if (role === 'owner') {
+      expect(merged.sharedVersion).toBe('1.0.0')
+      expect(merged.localPersonalSource).toEqual({
+        pluginName: 'first',
+        marketplacePath: '/personal',
+      })
+    } else expect(merged.localPersonalSource).toBeUndefined()
+  }
+)
 
 test.each([false, true])(
   'reinstall restores the retained private release (linked: %s)',
