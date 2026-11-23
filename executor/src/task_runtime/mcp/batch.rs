@@ -159,11 +159,19 @@ async fn cloud(
     let (Some(url), Some(token)) = (&context.backend_url, &context.auth_token) else {
         return Err("Backend connection is unavailable".into());
     };
-    let response = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(std::time::Duration::from_secs(45)).build().map_err(|error|error.to_string())?
-        .post(format!("{}/mcp/wework-space/sse",url.trim_end_matches('/').trim_end_matches("/api/v1")))
-        .bearer_auth(token).header("Accept","application/json, text/event-stream")
+    let endpoint = crate::agents::runtime_capabilities::api_url(url, "/api/mcp/wework-space/sse")?;
+    let response = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(45))
+        .build()
+        .map_err(|error| error.to_string())?
+        .post(endpoint)
+        .bearer_auth(token)
+        .header("Accept", "application/json, text/event-stream")
         .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":arguments}}))
-        .send().await.map_err(|_|"source_unavailable: backend operation response was not received".to_owned())?;
+        .send()
+        .await
+        .map_err(|_| "source_unavailable: backend operation response was not received".to_owned())?;
     let status = response.status();
     let body = response
         .text()
