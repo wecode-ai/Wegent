@@ -596,9 +596,9 @@ mod tests {
             ]
         })
         .await;
-        let state = crate::app_test_support::app(fixture.mysql.clone());
+        let state = crate::test_support::state(fixture.mysql.clone());
         let outcome = overwrite_attachment_internal(
-            &state,
+            state.upload_services(),
             Some(7),
             42,
             "notes.doc",
