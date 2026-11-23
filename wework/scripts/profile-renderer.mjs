@@ -249,14 +249,12 @@ export function createDesktopScenario({ uiTimeoutMs, resultDir }) {
             )
             const snapshot = await waitForWorkbenchDebugState(
               control,
-              snapshot => {
-                const id = snapshot.pane?.currentRuntimeTask?.taskId
-                return id && !taskIds.has(id) && snapshot.pane?.status?.isBusy === false
-              },
+              ({ taskId, isBusy }) => taskId && !taskIds.has(taskId) && isBusy === false,
               `Historical task ${historyIndex} did not settle`,
-              textTimeoutMs
+              textTimeoutMs,
+              'pane-activity'
             )
-            taskIds.add(snapshot.pane.currentRuntimeTask.taskId)
+            taskIds.add(snapshot.taskId)
             await sampleHeap('history')
             await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]', {
               visible: true,

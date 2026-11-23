@@ -537,24 +537,40 @@ export function useWorkbenchPaneEnvironment({
     return applySharedChangeRequestSnapshot(environmentInfo, sharedChangeRequestSnapshot)
   }, [environmentInfo, sharedChangeRequestSnapshot])
 
-  return {
-    workspaceProject,
-    workspaceTarget: activeWorkspaceTarget,
-    workspaceTargetError,
-    environmentInfo: sharedEnvironmentInfo,
-    conversationSummaryIsGitRepository,
-    projectWork: {
+  const branchLoading = environmentInfo.branchLoading ?? environmentInfo.loading
+  const paneProjectWork = useMemo<ProjectWorkControls>(
+    () => ({
       ...projectWork,
       worktreeAvailability,
       branchName: environmentInfo.branchName,
-      branchLoading: environmentInfo.branchLoading ?? environmentInfo.loading,
+      branchLoading,
       onListBranches:
         activeWorkspaceTarget && contributionActionsAvailable
           ? listPaneEnvironmentBranches
           : undefined,
       onCheckoutBranch: contributionActionsAvailable ? checkoutPaneEnvironmentBranch : undefined,
       onCreateBranch: contributionActionsAvailable ? createPaneEnvironmentBranch : undefined,
-    },
+    }),
+    [
+      projectWork,
+      worktreeAvailability,
+      environmentInfo.branchName,
+      branchLoading,
+      activeWorkspaceTarget,
+      contributionActionsAvailable,
+      listPaneEnvironmentBranches,
+      checkoutPaneEnvironmentBranch,
+      createPaneEnvironmentBranch,
+    ]
+  )
+
+  return {
+    workspaceProject,
+    workspaceTarget: activeWorkspaceTarget,
+    workspaceTargetError,
+    environmentInfo: sharedEnvironmentInfo,
+    conversationSummaryIsGitRepository,
+    projectWork: paneProjectWork,
     refreshEnvironmentInfo,
     commitEnvironmentChanges: commitPaneEnvironmentChanges,
     commitAndPushEnvironmentChanges: commitAndPushPaneEnvironmentChanges,

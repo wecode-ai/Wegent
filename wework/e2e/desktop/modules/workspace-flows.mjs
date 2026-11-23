@@ -719,13 +719,14 @@ async function waitForWorkbenchDebugState(
   control,
   predicate,
   message,
-  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
+  snapshotType = 'state-only'
 ) {
   const startedAt = Date.now()
   let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(
-      await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+      await control.command('getWorkbenchDebugSnapshot', 'body', { value: snapshotType })
     )
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot

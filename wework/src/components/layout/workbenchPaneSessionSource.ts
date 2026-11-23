@@ -235,6 +235,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   }
 
   const commands: PaneCommands = {
+    getInput: () => external.workbench.projectChat.draftStore.read(currentInputScope()).value,
     setQueuedMessages: (...args: Parameters<PaneCommands['setQueuedMessages']>) => {
       return bind().commands.setQueuedMessages(...args)
     },
@@ -568,7 +569,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       }
       reconcileGoal(current)
       const nextReadScope = [current.runtimeTaskLoadTarget?.key, state.transcriptReloadVersion]
-      if (differs(readScope, nextReadScope)) {
+      const readScopeChanged = differs(readScope, nextReadScope)
+      if (readScopeChanged) {
         const previousTarget = readScope?.[0]
         readScope = nextReadScope
         readerController.abort()
@@ -576,8 +578,10 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
         queryRevision++
         if (previousTarget !== current.runtimeTaskLoadTarget?.key)
           state = { ...state, answeredRequestUserInputIds: new Set() }
-        unsubscribeSearch?.()
-        unsubscribeSearch = search.subscribe(searchOptions(), publish)
+      }
+      unsubscribeSearch ??= search.subscribe(publish)
+      search.updateOptions(searchOptions())
+      if (readScopeChanged) {
         const targetContext = bind()
         if (targetContext.frame.runtimeTaskLoadTarget) {
           hydrateRuntimePaneTranscript(targetContext, readerController.signal)
@@ -590,9 +594,6 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
             transcriptLoadingMoreBeforeKey: null,
           }
         }
-      } else {
-        unsubscribeSearch?.()
-        unsubscribeSearch = search.subscribe(searchOptions(), publish)
       }
     } finally {
       reconciling = false

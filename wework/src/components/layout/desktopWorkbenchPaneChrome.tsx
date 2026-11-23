@@ -20,7 +20,11 @@ import { DesktopWindowControls } from './DesktopWindowControls'
 import { MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS } from './desktopWorkbenchMainHelpers'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import type { useDesktopWorkbenchPaneModel } from './useDesktopWorkbenchPaneModel'
-import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import { EnvironmentInfoPopover } from './EnvironmentInfoPopover'
+import {
+  WorkspacePanelToggles,
+  WorkspaceTargetActions,
+} from './workspace-panels/WorkspacePanelActions'
 import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
 export function createDesktopWorkbenchPaneChrome(
   model: ReturnType<typeof useDesktopWorkbenchPaneModel>
@@ -94,62 +98,44 @@ export function createDesktopWorkbenchPaneChrome(
     toggleRightPanelExpanded,
     toggleBottomPanel,
   } = model
-  const environmentTranscriptProps = {
-    conversationMessages: paneMessages,
-    onOpenConversationWorkspaceFile: openWorkspaceFileFromMessage,
-    environmentInfoFooter:
-      subagentConversations.length > 0 || runningBackgroundTerminals.length > 0 ? (
-        <div className="flex flex-col gap-3">
-          <SubagentEnvironmentSummary
-            blocks={subagentConversations}
-            onOpen={openSubagentOverview}
-          />
-          <BackgroundTerminalsSummary
-            terminals={runningBackgroundTerminals}
-            onOpen={openBackgroundTerminal}
-            onStop={stopBackgroundTerminals}
-          />
-        </div>
-      ) : undefined,
-  }
-  const renderWorkspacePanelActions = (
-    mode:
-      | 'all'
-      | 'environment'
-      | 'primary-target'
-      | 'panel-toggles'
-      | 'bottom-panel-toggle'
-      | 'right-panel-toggle',
-    environmentInfoPopoverContainer: HTMLElement | null = environmentInfoPanelElement,
-    forceEnvironmentInfoDocked?: boolean
-  ) => (
-    <WorkspacePanelActions
-      mode={mode}
-      currentProject={currentProject}
-      devices={devices}
-      workspaceTarget={workspaceTarget}
-      workspaceSessionApi={workspaceSessionApi}
-      environmentInfo={environmentInfo}
-      conversationSummaryIsGitRepository={conversationSummaryIsGitRepository}
-      {...(mode === 'all' || mode === 'environment' ? environmentTranscriptProps : undefined)}
-      environmentInfoPopoverContainer={environmentInfoPopoverContainer}
-      environmentInfoVisible={Boolean(currentRuntimeTask)}
-      environmentInfoDocked={forceEnvironmentInfoDocked ?? environmentInfoDocked}
-      environmentInfoOpen={environmentInfoOpen}
-      onEnvironmentInfoOpenChange={setEnvironmentInfoOpen}
-      onRefreshEnvironmentInfo={refreshEnvironmentInfo}
-      onCommitEnvironmentChanges={commitEnvironmentChanges}
-      onCommitAndPushEnvironmentChanges={commitAndPushEnvironmentChanges}
-      onPushEnvironmentChanges={pushEnvironmentChanges}
-      onListEnvironmentBranches={listEnvironmentBranches}
-      onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
-      onCreateEnvironmentBranch={createEnvironmentBranch}
-      onGenerateEnvironmentBranch={branchNameApi ? generateBranchName : undefined}
-      environmentBranchNameSource={workbenchTitle ?? undefined}
-      onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
-      onDeliver={
-        currentRuntimeTask && boundProjectSpaceApi && activeDeliveryItem ? openDelivery : undefined
+  const mainHeaderEnvironmentAction = currentRuntimeTask ? (
+    <EnvironmentInfoPopover
+      key={environmentInfoDocked ? 'docked' : 'floating'}
+      info={environmentInfo}
+      isGitRepository={conversationSummaryIsGitRepository}
+      messages={paneMessages}
+      popoverContainer={environmentInfoPanelElement}
+      docked={environmentInfoDocked}
+      open={environmentInfoOpen}
+      onOpenChange={setEnvironmentInfoOpen}
+      footer={
+        subagentConversations.length > 0 || runningBackgroundTerminals.length > 0 ? (
+          <div className="flex flex-col gap-3">
+            <SubagentEnvironmentSummary
+              blocks={subagentConversations}
+              onOpen={openSubagentOverview}
+            />
+            <BackgroundTerminalsSummary
+              terminals={runningBackgroundTerminals}
+              onOpen={openBackgroundTerminal}
+              onStop={stopBackgroundTerminals}
+            />
+          </div>
+        ) : undefined
       }
+      devices={devices}
+      onRefresh={refreshEnvironmentInfo}
+      onCommitChanges={commitEnvironmentChanges}
+      onCommitAndPushChanges={commitAndPushEnvironmentChanges}
+      onPushChanges={pushEnvironmentChanges}
+      onListBranches={listEnvironmentBranches}
+      onCheckoutBranch={checkoutEnvironmentBranch}
+      onCreateBranch={createEnvironmentBranch}
+      onGenerateBranchName={branchNameApi ? generateBranchName : undefined}
+      branchNameSource={workbenchTitle ?? undefined}
+      onOpenChangesReview={openDefaultEnvironmentChangesReview}
+      onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+      onDeliver={boundProjectSpaceApi && activeDeliveryItem ? openDelivery : undefined}
       todoLabel={
         boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name
       }
@@ -164,6 +150,18 @@ export function createDesktopWorkbenchPaneChrome(
           ? runTaskSupervisorNow
           : undefined
       }
+    />
+  ) : null
+  const mainHeaderProjectAction = (
+    <WorkspaceTargetActions
+      currentProject={currentProject}
+      devices={devices}
+      workspaceTarget={workspaceTarget}
+      workspaceSessionApi={workspaceSessionApi}
+    />
+  )
+  const panelChromeActions = (
+    <WorkspacePanelToggles
       rightPanelOpen={rightPanelOpen}
       rightPanelExpanded={rightPanelExpanded}
       bottomPanelOpen={bottomPanelOpen}
@@ -172,7 +170,18 @@ export function createDesktopWorkbenchPaneChrome(
       onToggleBottomPanel={toggleBottomPanel}
     />
   )
-  const workspacePanelActions = renderWorkspacePanelActions('all')
+  const workspacePanelActions = !isDesktop ? (
+    <>
+      <WorkspaceToolbarExtensions
+        currentProject={currentProject}
+        environmentInfo={environmentInfo}
+        workspaceTarget={workspaceTarget}
+      />
+      {mainHeaderEnvironmentAction}
+      {mainHeaderProjectAction}
+      {panelChromeActions}
+    </>
+  ) : null
   const conversationToolbarExtensions = currentRuntimeTask ? (
     <DshMenuActions
       args={{
@@ -194,9 +203,6 @@ export function createDesktopWorkbenchPaneChrome(
       />
     </>
   )
-  const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
-  const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
-  const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
   const conversationHeaderTitle =
     currentRuntimeConversationSource && runtimeTaskSummary && !activeLocalHarnessSession ? (
       <ConversationHeaderTitle

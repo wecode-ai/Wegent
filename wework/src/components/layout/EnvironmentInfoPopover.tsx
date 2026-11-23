@@ -20,11 +20,14 @@ import { controlPopup } from '@wegent/collaboration/controls/recipes'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import { GitBranch, Info, Link2 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { memo, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 import { EnvironmentSummaryOverview } from './EnvironmentSummaryOverview'
 import { TaskSupervisorStatusButton } from './TaskSupervisorControl'
+
+const EMPTY_MESSAGES: readonly WorkbenchMessage[] = []
+const EnvironmentContribution = memo(DshContributionSlotSurface)
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
@@ -80,7 +83,7 @@ function gitRepositoryContextValue(
 export function EnvironmentInfoPopover({
   info,
   isGitRepository,
-  messages = [],
+  messages = EMPTY_MESSAGES,
   popoverContainer,
   docked = true,
   open,
@@ -112,61 +115,85 @@ export function EnvironmentInfoPopover({
     onOpenChange(next)
     if (next) void onRefresh?.()
   }
-  const environmentService: EnvironmentHostService = {
-    read: () => ({ devices, info }),
-  }
-  const outputsService: ConversationOutputsHostService = {
-    read: () => buildConversationOutputs(messages),
-  }
-  const commandHandlers: Record<string, ((args?: unknown) => unknown) | undefined> = {
-    'git.commit': args => onCommitChanges?.(commandStringArgument(args, 'message')),
-    'git.commit-and-push': args => onCommitAndPushChanges?.(commandStringArgument(args, 'message')),
-    'git.push': onPushChanges,
-    'git.list-branches': () => onListBranches?.() ?? [],
-    'git.checkout-branch': args => onCheckoutBranch?.(commandStringArgument(args, 'branchName')),
-    'git.create-branch': args => onCreateBranch?.(commandStringArgument(args, 'branchName')),
-    'git.generate-branch-name': args =>
-      onGenerateBranchName?.(commandStringArgument(args, 'sourceText')) ?? '',
-    'git.open-changes-review': onOpenChangesReview,
-  }
-  const services: ConversationSummarySurfaceServices = {
-    canExecuteCommand(id) {
-      return commandHandlers[id] !== undefined
-    },
-    getService<T>(id: string): T | undefined {
-      if (id === WEWORK_HOST_SERVICES.environment) return environmentService as T
-      if (id === WEWORK_HOST_SERVICES.conversationOutputs) return outputsService as T
-      return undefined
-    },
-    async openResource(resource: ConversationSummaryResource) {
-      if (resource.kind === 'url') {
-        await openExternalUrl(resource.url, { target: 'system' })
-        return
-      }
-      onOpenWorkspaceFile?.(resource.path)
-    },
-    async executeCommand(id, args) {
-      const handler = commandHandlers[id]
-      if (!handler) throw new Error(`Unavailable conversation summary command: ${id}`)
-      return handler(args)
-    },
-  }
+  const visibleMessages = open ? messages : EMPTY_MESSAGES
+  const outputs = useMemo(() => buildConversationOutputs(visibleMessages), [visibleMessages])
+  const workspaceIsGitRepository = gitRepositoryContextValue(info, isGitRepository)
+  const contribution = useMemo(() => {
+    const environmentService: EnvironmentHostService = {
+      read: () => ({ devices, info }),
+    }
+    const outputsService: ConversationOutputsHostService = {
+      read: () => outputs,
+    }
+    const commandHandlers: Record<string, ((args?: unknown) => unknown) | undefined> = {
+      'git.commit': args => onCommitChanges?.(commandStringArgument(args, 'message')),
+      'git.commit-and-push': args =>
+        onCommitAndPushChanges?.(commandStringArgument(args, 'message')),
+      'git.push': onPushChanges,
+      'git.list-branches': () => onListBranches?.() ?? [],
+      'git.checkout-branch': args => onCheckoutBranch?.(commandStringArgument(args, 'branchName')),
+      'git.create-branch': args => onCreateBranch?.(commandStringArgument(args, 'branchName')),
+      'git.generate-branch-name': args =>
+        onGenerateBranchName?.(commandStringArgument(args, 'sourceText')) ?? '',
+      'git.open-changes-review': onOpenChangesReview,
+    }
+    const services: ConversationSummarySurfaceServices = {
+      canExecuteCommand(id) {
+        return commandHandlers[id] !== undefined
+      },
+      getService<T>(id: string): T | undefined {
+        if (id === WEWORK_HOST_SERVICES.environment) return environmentService as T
+        if (id === WEWORK_HOST_SERVICES.conversationOutputs) return outputsService as T
+        return undefined
+      },
+      async openResource(resource: ConversationSummaryResource) {
+        if (resource.kind === 'url') {
+          await openExternalUrl(resource.url, { target: 'system' })
+          return
+        }
+        onOpenWorkspaceFile?.(resource.path)
+      },
+      async executeCommand(id, args) {
+        const handler = commandHandlers[id]
+        if (!handler) throw new Error(`Unavailable conversation summary command: ${id}`)
+        return handler(args)
+      },
+    }
+    return {
+      context: {
+        'conversation.available': true,
+        'conversation.title': branchNameSource,
+        'workspace.isGitRepository': workspaceIsGitRepository,
+      },
+      docked,
+      onClose: () => onOpenChange(false),
+      services,
+    }
+  }, [
+    branchNameSource,
+    devices,
+    docked,
+    info,
+    onCheckoutBranch,
+    onCommitAndPushChanges,
+    onCommitChanges,
+    onCreateBranch,
+    onGenerateBranchName,
+    onListBranches,
+    onOpenChange,
+    onOpenChangesReview,
+    onOpenWorkspaceFile,
+    onPushChanges,
+    outputs,
+    workspaceIsGitRepository,
+  ])
 
   const content = (
     <>
       <EnvironmentSummaryOverview devices={devices} info={info} />
-      <DshContributionSlotSurface
+      <EnvironmentContribution
         attachedClassName="contents"
-        props={{
-          context: {
-            'conversation.available': true,
-            'conversation.title': branchNameSource,
-            'workspace.isGitRepository': gitRepositoryContextValue(info, isGitRepository),
-          },
-          docked,
-          onClose: () => onOpenChange(false),
-          services,
-        }}
+        props={contribution}
         slot={WEWORK_DSH_SLOTS.conversationSummary}
       />
 

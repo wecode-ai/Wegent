@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
@@ -153,7 +153,7 @@ export function DesktopWorkbenchConversationView({
     composerDisabled,
     inlineComposerDisabledReason,
     projectChatWithModelSelectorSignal,
-    branchNameProjectWork,
+    projectWork,
     emptyProjectWork,
     popoutComposerPlaceholder,
     selectTaskSuggestion,
@@ -175,8 +175,26 @@ export function DesktopWorkbenchConversationView({
     clearCurrentGoal,
     showPageTopBar,
   } = model
+  const hasTask = currentRuntimeTask !== null
+  const transcriptLoading = paneSession.transcriptLoading
+  const selectionSharingMounted = hasTask && paneVisible && workbenchVisible
+  const composerContextHeader = useMemo(
+    () =>
+      (projectSpaceContext || hasTask) && (
+        <div
+          className={cn(
+            'flex min-w-0 items-center justify-between gap-1 [container-type:inline-size]',
+            transcriptLoading && 'invisible'
+          )}
+          inert={transcriptLoading}
+        >
+          {projectSpaceContext}
+          {selectionSharingMounted && <div ref={setIssueShareToolbarHost} className="contents" />}
+        </div>
+      ),
+    [projectSpaceContext, hasTask, transcriptLoading, selectionSharingMounted]
+  )
   const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
-  const selectionSharingMounted = Boolean(currentRuntimeTask && paneVisible && workbenchVisible)
   return (
     <TaskDetailScrollArea
       viewportRef={workbenchScrollRef}
@@ -527,7 +545,7 @@ export function DesktopWorkbenchConversationView({
                                     )}
                                     variant="desktop"
                                     projectChat={projectChatWithModelSelectorSignal}
-                                    projectWork={branchNameProjectWork}
+                                    projectWork={projectWork}
                                     showProjectWorkBar={false}
                                     queuedMessages={paneQueuedMessages}
                                     guidanceMessages={paneGuidanceMessages}
@@ -538,27 +556,7 @@ export function DesktopWorkbenchConversationView({
                                       experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
-                                    contextHeader={
-                                      (projectSpaceContext || currentRuntimeTask) && (
-                                        <div
-                                          className={cn(
-                                            'flex min-w-0 items-center justify-between gap-1 [container-type:inline-size]',
-                                            paneSession.transcriptLoading && 'invisible'
-                                          )}
-                                          inert={paneSession.transcriptLoading}
-                                        >
-                                          {projectSpaceContext}
-                                          {currentRuntimeTask &&
-                                            paneVisible &&
-                                            workbenchVisible && (
-                                              <div
-                                                ref={setIssueShareToolbarHost}
-                                                className="contents"
-                                              />
-                                            )}
-                                        </div>
-                                      )
-                                    }
+                                    contextHeader={composerContextHeader}
                                     isStreaming={paneIsBusy}
                                     showPauseButton={showPauseButton}
                                     onPause={pauseCurrentResponse}

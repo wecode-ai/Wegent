@@ -296,7 +296,6 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
   const paneLayout = useDesktopPaneLayout({
     workbenchVisible: props.workbenchVisible,
     sidebarResizing: props.sidebarResizing ?? false,
-    sharedWorkbenchContentWidth: props.sharedWorkbenchContentWidth,
     onEnvironmentInfoVisibilityChange: props.onEnvironmentInfoVisibilityChange,
     activeLocalHarnessSession: props.activeLocalHarnessSession,
     paneActive: paneContext.paneActive,
@@ -596,25 +595,29 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
   )
   const branchNameApi = paneContext.services?.branchNameApi
   const composerWorkspaceDeviceId = workspaceTargets.composerWorkspaceTarget?.deviceId
+  const { paneModelChat, t: translate } = paneContext
+  const attachmentScope = paneContext.paneSession.scopeKey
+  const { getAttachmentForScope } = paneContext.projectChat
+  const getDraftAttachment = useCallback(
+    (id: number) => getAttachmentForScope(attachmentScope, id),
+    [attachmentScope, getAttachmentForScope]
+  )
+  const preferences = paneContext.appPreferences?.preferences
+  const branchDeviceId = paneContext.currentRuntimeTask?.deviceId ?? composerWorkspaceDeviceId
   const generateBranchName = useCallback(
     async (sourceText: string) => {
       if (!branchNameApi) {
-        throw new Error(paneContext.t('workbench.environment_branch_generate_failed'))
+        throw new Error(translate('workbench.environment_branch_generate_failed'))
       }
       const selectedModel =
-        paneContext.paneModelChat.getSelectedModel?.() ??
-        paneContext.paneModelChat.selectedModel ??
-        resolveAutomaticModel(paneContext.paneModelChat.models)
+        paneModelChat.getSelectedModel?.() ??
+        paneModelChat.selectedModel ??
+        resolveAutomaticModel(paneModelChat.models)
       const selectedOptions =
-        paneContext.paneModelChat.getSelectedModelOptions?.() ??
-        paneContext.paneModelChat.selectedModelOptions
+        paneModelChat.getSelectedModelOptions?.() ?? paneModelChat.selectedModelOptions
       const executionModel = selectedModelExecutionFields(selectedModel, selectedOptions)
       const generationModel =
-        titleModelForGeneration(
-          paneContext.appPreferences?.preferences,
-          paneContext.paneModelChat.models,
-          executionModel
-        ) ??
+        titleModelForGeneration(preferences, paneModelChat.models, executionModel) ??
         (executionModel.modelId
           ? {
               modelId: executionModel.modelId,
@@ -624,29 +627,23 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
           : null)
       console.info('[Wework] Branch name generation model resolved', {
         selectedModel: selectedModel?.name ?? null,
-        configuredTitleModel:
-          paneContext.appPreferences?.preferences.friendlyTaskTitleModel?.modelName ?? null,
+        configuredTitleModel: preferences?.friendlyTaskTitleModel?.modelName ?? null,
         generationModel: generationModel?.modelId ?? null,
-        availableModelCount: paneContext.paneModelChat.models.length,
+        availableModelCount: paneModelChat.models.length,
       })
       if (!generationModel) {
-        throw new Error(paneContext.t('workbench.environment_branch_generate_model_unavailable'))
+        throw new Error(translate('workbench.environment_branch_generate_model_unavailable'))
       }
       return branchNameApi.generateBranchName({
         sourceText,
-        deviceId: paneContext.currentRuntimeTask?.deviceId ?? composerWorkspaceDeviceId,
+        deviceId: branchDeviceId,
         ...generationModel,
       })
     },
-    [branchNameApi, paneContext, composerWorkspaceDeviceId]
+    [branchNameApi, branchDeviceId, paneModelChat, preferences, translate]
   )
-  const branchNameProjectWork = {
-    ...paneContext.paneProjectWork,
-    onGenerateBranchName: branchNameApi ? generateBranchName : undefined,
-    branchNameSource: paneContext.workbenchTitle ?? undefined,
-  }
   const emptyProjectWork = {
-    ...branchNameProjectWork,
+    ...paneContext.paneProjectWork,
     projectMenuOpenSignal,
     projectMenuAnchorElement,
   }
@@ -778,7 +775,10 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
 
   const workspaceLaunchDeviceId = workspaceTargets.composerWorkspaceTarget?.deviceId
   const workspaceLaunchPath = workspaceTargets.composerWorkspaceTarget?.path
-  const projectGuide = useDesktopPaneProjectGuide(paneContext, panelActions)
+  const projectSpaceContext = useDesktopPaneProjectGuide(
+    paneContext,
+    panelActions.openRightPanelTab
+  )
   const fileActions = useDesktopPaneFileActions({
     captureScope: panelSession.captureScope,
     loadTurnFileChangesDiff: paneContext.loadTurnFileChangesDiff,
@@ -955,7 +955,7 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
     conversationSelectionInsertion,
     bottomPanelOpenByKey,
     openFileRequest,
-    setOpenFileRequest,
+    getDraftAttachment,
     forkDialogOpen,
     setForkDialogOpen,
     setHasPreviousTurnReview,
@@ -980,11 +980,10 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
     composerDisabled,
     inlineComposerDisabledReason,
     projectChatWithModelSelectorSignal,
-    branchNameProjectWork,
     emptyProjectWork,
     popoutComposerPlaceholder,
     selectTaskSuggestion,
-    ...projectGuide,
+    projectSpaceContext,
     pauseCurrentResponse,
     compactCurrentContext,
     setCurrentGoal,

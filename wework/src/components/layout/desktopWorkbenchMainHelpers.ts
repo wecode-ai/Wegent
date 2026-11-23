@@ -371,7 +371,6 @@ export interface DesktopWorkbenchPaneProps {
   presentation: 'workbench' | 'popout'
   workspaceSessionApi?: WorkspaceSessionApi
   environmentInfoVisibilityByPane: Record<string, EnvironmentInfoVisibilityState>
-  sharedWorkbenchContentWidth: number
   onSidebarCollapsedChange: (collapsed: boolean) => void
   onEnvironmentInfoVisibilityChange: (
     paneId: string,

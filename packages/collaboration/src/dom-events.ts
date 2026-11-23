@@ -562,6 +562,24 @@ function sameGeometry(first: GeometrySnapshot | null, second: GeometrySnapshot |
   )
 }
 
+/** Width-only consumers have no dependency on scrolling or subtree layout. */
+export function useElementWidth<T extends HTMLElement>(enabled = true) {
+  const [width, setWidth] = useState(0)
+  const attach = useCallback(
+    (element: T | null) => {
+      if (!enabled || !element) return
+      setWidth(element.getBoundingClientRect().width)
+      const observer = new ResizeObserver(([entry]) => {
+        setWidth(entry.borderBoxSize[0]?.inlineSize ?? entry.contentRect.width)
+      })
+      observer.observe(element, { box: 'border-box' })
+      return () => observer.disconnect()
+    },
+    [enabled]
+  )
+  return [enabled ? width : 0, attach] as const
+}
+
 function observeElementGeometry(
   nodes: readonly (HTMLElement | null)[],
   publish: (value: GeometrySnapshot) => void
@@ -590,8 +608,17 @@ function observeElementGeometry(
   }
   const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
   for (const node of new Set(nodes)) if (node) observer?.observe(node)
+  const onScroll = (event: Event) => {
+    const target = event.target
+    if (
+      target === window ||
+      (target instanceof Node && nodes.some(node => node !== null && target.contains(node)))
+    ) {
+      update()
+    }
+  }
   window.addEventListener('resize', update)
-  window.addEventListener('scroll', update, true)
+  window.addEventListener('scroll', onScroll, true)
   return {
     nodes,
     update,
@@ -607,7 +634,7 @@ function observeElementGeometry(
       if (frame !== null) window.cancelAnimationFrame(frame)
       observer?.disconnect()
       window.removeEventListener('resize', update)
-      window.removeEventListener('scroll', update, true)
+      window.removeEventListener('scroll', onScroll, true)
     },
   }
 }

@@ -91,7 +91,7 @@ Async question model fixtures must also respect user-message boundaries: reuse t
 
 Streaming text and scroll following each have exactly one scheduler. Component animation, direct scrolling, and delayed scroll timers must not compete:
 
-- `useBufferedStreamingText` only coalesces text updates received within one frame into the next animation frame. It must not maintain a typewriter queue that trails the authoritative message content; the next frame must commit the latest complete prefix, with a short timeout fallback when frames are unavailable.
+- The desktop conversation cache coalesces high-frequency text deltas. Markdown passes each published prefix directly to Streamdown. Terminal and interactive updates publish immediately.
 - `Streamdown` remains in `streaming` mode for incremental Markdown parsing. Existing windowing and freezing continue to own non-tail Markdown blocks; animation must not rebuild the whole message tree.
 - Streaming auto-follow in `ScrollableMessageArea` is owned by one damped spring. ResizeObserver callbacks, message appends, and runtime-state changes may only ask that spring to keep tracking the latest bottom; they must not also perform streaming jumps or schedule stabilization timers.
 - While the spring owns following, disable TanStack append follow and end-resize compensation while retaining virtual row geometry. In reading mode, TanStack compensates row changes before the viewport; the text anchor corrects residual within-row reflow.

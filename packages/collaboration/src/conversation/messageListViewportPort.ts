@@ -84,7 +84,6 @@ export function createMessageListViewportPort() {
     const row = chunk.closest<HTMLElement>('[data-message-row][data-index]')
     if (!row || !element.contains(row)) return
     input.measureRow(row)
-    capture()
     if (!input.ready || !input.onLayoutChange) return
     const scrollHeight = input.scrollElementRef?.current?.scrollHeight
     if (scrollHeight === undefined || scrollHeight === previousScrollHeight) return

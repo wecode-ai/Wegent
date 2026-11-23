@@ -13,6 +13,7 @@ import {
   type GitPatchAction,
 } from '@/api/environment'
 import type {
+  WorkspaceAttachmentPreviewSource,
   WorkspaceFileOpenOptions,
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
@@ -279,6 +280,19 @@ export function useDesktopPaneFileActions({
     },
     [fileWorkspaceTarget, setSelectedWorkspaceFile]
   )
+  const openAttachment = useCallback(
+    (attachment: WorkspaceAttachmentPreviewSource) => {
+      setOpenFileRequest(current => ({
+        id: (current?.id ?? 0) + 1,
+        path: attachment.filename,
+        target: current?.target,
+        attachment,
+      }))
+      openRightPanelTab('files')
+    },
+    [openRightPanelTab, setOpenFileRequest]
+  )
+
   const openWorkspaceFileFromMessage = useCallback(
     async (path: string, options?: WorkspaceFileOpenOptions) => {
       const scope = captureScope()
@@ -594,6 +608,7 @@ export function useDesktopPaneFileActions({
     selectFileWorkspaceTarget,
     openFileTab,
     handleFileWorkspaceSelectionChange,
+    openAttachment,
     openWorkspaceFileFromMessage,
     openLocalSkillFile,
     applyReviewPatch,

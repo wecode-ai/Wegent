@@ -62,7 +62,7 @@ interface ScrollPorts {
 type ViewportMode = 'follow' | 'read' | 'navigate' | 'drag'
 interface ScrollSnapshot {
   mode: ViewportMode
-  motionActive: boolean
+  virtualAnchorToEnd: boolean
   showScrollButton: boolean
   turnNavigationLoading: boolean
   turnNavigationTargetMessageId: string | null
@@ -104,7 +104,9 @@ export function createConversationScrollState(
       : listeners.size > 0)
   let state: ScrollSnapshot = {
     mode: 'follow',
-    motionActive: false,
+    virtualAnchorToEnd:
+      !initialInput.autoScrollSuspended &&
+      !initialInput.messages.some(message => message.status === 'streaming'),
     showScrollButton: false,
     turnNavigationLoading: false,
     turnNavigationTargetMessageId: null,
@@ -112,8 +114,12 @@ export function createConversationScrollState(
     viewport: null,
     interaction: null,
   }
-  function publish(change: Partial<ScrollSnapshot>) {
+  function publish(change: Partial<ScrollSnapshot> = {}) {
     const next = { ...state, ...change }
+    // A streaming viewport already disables TanStack follow. Starting and
+    // stopping spring frames inside that period does not change React's policy.
+    next.virtualAnchorToEnd =
+      next.mode === 'follow' && !streaming && !autoScrollSuspended && motion.position === null
     if (
       Object.keys(next).every(
         key => next[key as keyof ScrollSnapshot] === state[key as keyof ScrollSnapshot]
@@ -198,7 +204,7 @@ export function createConversationScrollState(
     motion.position = null
     motion.velocity = 0
     motion.at = null
-    publish({ motionActive: false })
+    publish()
     readVirtualizer()?.cancelScroll()
   }
   const changeMode = (next: ViewportMode) => {
@@ -297,6 +303,7 @@ export function createConversationScrollState(
       return
     const viewport = scrollRef.current
     if (!viewport) return
+    if (motion.frame !== null) return
     const end = followEnd(viewport)
     const distanceFromBottom =
       motion.position === null ? Math.max(0, end - viewport.scrollTop) : null
@@ -305,14 +312,14 @@ export function createConversationScrollState(
       save(distanceFromBottom)
       return
     }
-    const animate = smooth || followBehavior === 'smooth' || motion.frame !== null
-    if (!animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    const animate = smooth || followBehavior === 'smooth'
+    const reducedMotion = animate ? window.matchMedia?.('(prefers-reduced-motion: reduce)') : null
+    if (!animate || reducedMotion?.matches) {
       cancelMotion()
       writeOffset(end)
       save(Math.max(0, end - (readerState.lastScrollPosition ?? viewport.scrollTop)))
       return
     }
-    if (motion.frame !== null) return
     motion.position ??= viewport.scrollTop
     const engine = readVirtualizer()
     if (engine) {
@@ -323,7 +330,7 @@ export function createConversationScrollState(
         scrollEndThreshold: -1,
       })
     }
-    publish({ motionActive: true })
+    publish()
     const advance = (now: number) => {
       motion.frame = null
       if (
@@ -340,7 +347,7 @@ export function createConversationScrollState(
       // Keep subpixel progress even when the browser quantizes scrollTop writes.
       const position = Math.min(end, motion.position ?? viewport.scrollTop)
       const lag = Math.max(0, end - position)
-      if (lag <= STREAM_FOLLOW_SETTLE_PX) {
+      if (lag <= STREAM_FOLLOW_SETTLE_PX || reducedMotion?.matches) {
         writeOffset(end)
         cancelMotion()
         save(Math.max(0, end - (readerState.lastScrollPosition ?? viewport.scrollTop)))
@@ -355,7 +362,7 @@ export function createConversationScrollState(
       motion.velocity = step.velocityPxPerSecond
       motion.position = Math.min(end, position + step.advancePx)
       writeOffset(motion.position)
-      publish({ showScrollButton: false })
+      if (state.showScrollButton) publish({ showScrollButton: false })
       motion.frame = requestSafeAnimationFrame(advance)
     }
     motion.frame = requestSafeAnimationFrame(advance)
@@ -384,7 +391,7 @@ export function createConversationScrollState(
       handleContentLayoutChange()
       return
     }
-    if (layoutFrame) return
+    if (motion.frame || layoutFrame) return
     layoutFrame = requestSafeAnimationFrame(() => {
       layoutFrame = null
       handleContentLayoutChange()

@@ -452,6 +452,7 @@ export function useDesktopPaneContext({
     environmentInfo,
     conversationSummaryIsGitRepository,
     paneProjectWork,
+    projectWork,
     refreshEnvironmentInfo,
     commitEnvironmentChanges,
     commitAndPushEnvironmentChanges,

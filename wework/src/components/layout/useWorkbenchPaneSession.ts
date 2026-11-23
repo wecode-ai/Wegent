@@ -4,7 +4,7 @@ import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { WorkbenchOwnerLeaseContext } from '@/features/workbench/workbenchContexts'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useContext, useId, useState, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useId, useMemo, useState, useSyncExternalStore } from 'react'
 import { createWorkbenchPaneSessionSource } from './workbenchPaneSessionSource'
 import type { WorkbenchPaneSessionOptions } from './workbenchPaneSessionTypes'
 
@@ -31,24 +31,36 @@ export function useWorkbenchPaneSession({
     ? getRuntimeTaskChatScopeKey(currentRuntimeTask)
     : workbench.projectChat.scopeKey
   const attachmentState = useScopedComposerAttachments(workbench.projectChat, inputScopeKey)
-  const external = {
-    t,
-    draftEditVersions,
-    currentRuntimeTask,
-    debugSnapshotEnabled,
-    queueDiagnosticSessionId,
-    workbench,
-    lifecycleStore,
-    attachmentState,
-  }
+  const external = useMemo(
+    () => ({
+      t,
+      draftEditVersions,
+      currentRuntimeTask,
+      debugSnapshotEnabled,
+      queueDiagnosticSessionId,
+      workbench,
+      lifecycleStore,
+      attachmentState,
+    }),
+    [
+      t,
+      draftEditVersions,
+      currentRuntimeTask,
+      debugSnapshotEnabled,
+      queueDiagnosticSessionId,
+      workbench,
+      lifecycleStore,
+      attachmentState,
+    ]
+  )
   const [owner, setOwner] = useState(() => createWorkbenchPaneSessionSource(external))
   let source = owner
   if (!source.matches(external)) {
     source = createWorkbenchPaneSessionSource(external)
     setOwner(source)
   }
-  return useSyncExternalStore(
-    listener => {
+  const subscribe = useCallback(
+    (listener: () => void) => {
       const releaseOwner = retainOwner?.()
       const unsubscribe = source.subscribe(external, listener)
       return () => {
@@ -56,8 +68,8 @@ export function useWorkbenchPaneSession({
         releaseOwner?.()
       }
     },
-    source.getSnapshot,
-    source.getSnapshot
+    [external, retainOwner, source]
   )
+  return useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
 }
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>

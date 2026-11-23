@@ -245,7 +245,7 @@ pnpm --filter wework profile:renderer --processes
 ```
 
 - `--check` 在空闲 CPU ≥ 10%、单任务 CPU ≥ 15% 或采样 JS 堆峰值 ≥ 200 MB（200,000,000 字节）时退出失败。省略参数仅输出测量结果。CPU 按隔离窗口 Renderer PID 的累计 CPU 时间除以墙钟时间计算，100% 代表占用一个逻辑核心。空闲窗口约 7 秒，单任务窗口从模型开始响应到末段可见。V8 堆使用量每秒采样，不强制 GC。
-- `--capture` 复用上面的性能录制，额外生成 `renderer-performance.json` 和原始证据。录制本身会增加开销，阈值验收用 `--check` 单独复测。三种模式的测量报告都保存在控制台列出的测试目录下，文件名为 `renderer-threshold-measurements.json`。
+- `--capture` 复用上面的性能录制，额外生成 `renderer-performance.json` 和原始证据。原生调用的 `caller` 字段可以定位到触发布局等操作的 JavaScript 代码。录制本身会增加开销，阈值验收用 `--check` 单独复测。测量报告统一保存在控制台列出的测试目录下，文件名为 `renderer-threshold-measurements.json`。
 - `--history` 在测量前依次完成 16 个真实持久化会话，逐个记录堆使用量，然后在同一 Renderer 启动基准任务。它使用可复现的测试模型结果，报告中的 `historicalTasks` 标明会话数量。
 - `--processes` 记录空闲、流式中段和任务完成后的进程树快照。用 `processSamples` 分别检查主进程、Renderer、GPU、执行器及其子进程。进程快照 CPU 为操作系统或 Electron 的采样值，阈值验收使用单独运行的 `--check`。共享内存页可能出现在多个进程的统计中，进程内存应逐项阅读。
 - 排查长期内存增长时，在同一隔离实例中用相同历史数据反复切换任务后记录 JS 堆，再用 Chromium Memory 面板采集两份堆快照。先比较对象数量和 retained size，再检查 `Retainers` 中仍可达的引用路径，尤其是 detached DOM、回调闭包和缓存。使用 Memory 面板之前先断开同一目标上的 CDP 录制。报告和快照仅保存在本地。

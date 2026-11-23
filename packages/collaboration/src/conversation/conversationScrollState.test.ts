@@ -76,10 +76,8 @@ it('follows the measured transcript end without scrolling into temporary Markdow
 })
 
 it('keeps the scroll button hidden during controller-owned follow steps', () => {
-  vi.stubGlobal(
-    'requestAnimationFrame',
-    vi.fn(() => 1)
-  )
+  const requestFrame = vi.fn(() => 1)
+  vi.stubGlobal('requestAnimationFrame', requestFrame)
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
   const viewport = document.createElement('div')
   let scrollHeight = 640
@@ -112,7 +110,8 @@ it('keeps the scroll button hidden during controller-owned follow steps', () => 
     ports
   )
   state.handleContentLayoutChange()
-  expect(state.getSnapshot().motionActive).toBe(true)
+  expect(requestFrame).toHaveBeenCalled()
+  expect(state.getSnapshot().virtualAnchorToEnd).toBe(false)
   state.endInput()
   expect(state.getSnapshot().showScrollButton).toBe(false)
   releaseStream()

@@ -43,7 +43,6 @@ import { getRecognizedLink } from './link-preview'
 import { createTableMarkdownRehypePlugins } from './markdownTableSource'
 import { preprocessCjkEmphasis } from './preprocessCjkEmphasis'
 import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelimiters'
-import { useBufferedStreamingText } from './useBufferedStreamingText'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -141,7 +140,6 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 }: AssistantMarkdownProps) {
   const services = useMarkdownServices()
   const renderVisualization = renderVisualizationOverride ?? services.renderVisualization
-  const bufferedContent = useBufferedStreamingText(content, isStreaming)
   const streamdownMode =
     variant === 'default' || variant === 'process' || isStreaming
       ? ('streaming' as const)
@@ -154,12 +152,12 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         normalizeMathDelimiters(
           protectComposerReferenceLinks(
             variant === 'user'
-              ? bufferedContent
-              : stripUnsupportedContentReferenceCitations(bufferedContent)
+              ? content
+              : stripUnsupportedContentReferenceCitations(content)
           )
         )
       ),
-    [bufferedContent, variant]
+    [content, variant]
   )
   // Only unfinished annotation syntax depends on the stream lifecycle. Plain text keeps
   // the same plugin identities so completed blocks retain their parsed trees.

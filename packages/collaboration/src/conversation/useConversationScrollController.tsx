@@ -179,9 +179,8 @@ export function useConversationScrollController(options: Options) {
     onVirtualScrollAdjustment: resource.onVirtualScrollAdjustment,
     captureNativeScrollRange: resource.captureNativeScrollRange,
     virtualAnchorToEnd:
-      snapshot.mode === 'follow' &&
+      snapshot.virtualAnchorToEnd &&
       !messages.some(message => message.status === 'streaming') &&
-      !snapshot.motionActive &&
       !autoScrollSuspended,
     virtualAnchor:
       snapshot.mode === 'navigate' || snapshot.mode === 'drag'
