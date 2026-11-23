@@ -1,3 +1,7 @@
+import { Input } from '@ui-sdk/react/input'
+import { Button } from '@ui-sdk/react/button'
+import { SelectTrigger } from '@ui-sdk/react/select'
+import { SelectContent, SelectItem, SelectRoot } from '@wegent/collaboration/controls/SelectParts'
 import { useId, useRef, useState, type PointerEvent } from 'react'
 import { Eraser, MousePointer2, PenLine, Shapes, Type } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -36,6 +40,7 @@ export function useMarkupEditor(
   busy: boolean,
   surfaceSize: { width: number; height: number },
   commenting: boolean,
+  portalContainer: HTMLElement | null,
   onChooseTool: () => void
 ) {
   const { t } = useTranslation('common')
@@ -290,7 +295,7 @@ export function useMarkupEditor(
             commitPendingText()
           }}
         >
-          <input
+          <Input
             autoFocus
             className="w-36 bg-transparent px-1 text-sm"
             data-testid="attachment-image-markup-text-input"
@@ -298,14 +303,14 @@ export function useMarkupEditor(
             value={textDraft.text}
             onChange={event => setTextDraft({ ...textDraft, text: event.target.value })}
           />
-          <button
+          <Button
             type="submit"
             className="rounded-md bg-blue-600 px-1.5 text-white"
             data-testid="attachment-image-markup-save-text"
             disabled={!textDraft.text.trim() || busy}
           >
             {t('image_preview.save')}
-          </button>
+          </Button>
         </form>
       )}
     </>
@@ -314,7 +319,7 @@ export function useMarkupEditor(
   const palette = (
     <>
       {tools.map(({ id, icon: Icon }) => (
-        <button
+        <Button
           key={id}
           type="button"
           className={controlClass}
@@ -326,32 +331,38 @@ export function useMarkupEditor(
           onClick={() => chooseTool(id)}
         >
           <Icon className="size-4" />
-        </button>
+        </Button>
       ))}
-      <label className="flex items-center gap-1">
-        <Shapes className="size-4" />
-        <select
-          className="rounded bg-neutral-800 text-sm"
+      <SelectRoot
+        disabled={busy}
+        value={markupShapes.find(shape => shape === tool) ?? null}
+        onValueChange={value => {
+          if (value) chooseTool(value)
+        }}
+      >
+        <SelectTrigger
+          className="flex min-h-8 shrink-0 items-center gap-1 rounded bg-neutral-800 text-sm focus-visible:outline focus-visible:outline-2 max-md:min-h-11"
           aria-label={t('image_preview.markup_shapes')}
           data-testid="attachment-image-markup-shapes"
-          disabled={busy}
-          value={markupShapes.find(shape => shape === tool) ?? ''}
-          onChange={event => {
-            const shape = markupShapes.find(item => item === event.target.value)
-            if (shape) chooseTool(shape)
-          }}
         >
-          <option value="" disabled>
-            {t('image_preview.markup_shapes')}
-          </option>
+          <Shapes className="size-4" />
+          {markupShapes.some(shape => shape === tool)
+            ? t(`image_preview.markup_${tool}`)
+            : t('image_preview.markup_shapes')}
+        </SelectTrigger>
+        <SelectContent container={portalContainer}>
           {markupShapes.map(shape => (
-            <option key={shape} value={shape}>
+            <SelectItem
+              key={shape}
+              value={shape}
+              data-testid={`attachment-image-markup-shape-${shape}`}
+            >
               {t(`image_preview.markup_${shape}`)}
-            </option>
+            </SelectItem>
           ))}
-        </select>
-      </label>
-      <input
+        </SelectContent>
+      </SelectRoot>
+      <Input
         type="color"
         className="size-7 shrink-0"
         aria-label={t('image_preview.markup_color')}
@@ -360,14 +371,14 @@ export function useMarkupEditor(
         disabled={busy}
         onChange={event => setColor(event.target.value)}
       />
-      <input
+      <Input
         type="range"
         className="w-16 shrink-0 accent-white"
         aria-label={t(
           tool === 'eraser' ? 'image_preview.brush_size' : 'image_preview.markup_width'
         )}
         data-testid="attachment-image-markup-width"
-        value={tool === 'eraser' ? eraserWidth : width}
+        value={String(tool === 'eraser' ? eraserWidth : width)}
         disabled={busy}
         min={0.2}
         max={tool === 'eraser' ? 12 : 4}

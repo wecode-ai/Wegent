@@ -1343,7 +1343,17 @@ async function verifySideChatAttachmentIsolation({
   await captureVerificationScreenshot(control, '07-side-chat-restored-two-composers.png')
   const editRequest = control.awaitNextScenarioRequest('side_chat_image_preview_resize')
   control.setScenario('side_chat_image_preview_resize')
-  await control.command('click', `${sideChatSelector} [data-testid="message-image-preview-button"]`)
+  await control.command(
+    'scrollToRatioAsUser',
+    `${sideChatSelector} [data-testid="right-workspace-chat-scroll-area"]`,
+    { value: '0' }
+  )
+  const sideChatImage = `${sideChatSelector} [data-testid="message-image-preview-button"]`
+  await control.command('waitFor', sideChatImage, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', sideChatImage)
   await control.command('click', '[data-testid="attachment-image-tool-resize"]')
   await control.command('click', '[data-testid="attachment-image-resize-16:9"]')
   await editRequest

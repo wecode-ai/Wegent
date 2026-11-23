@@ -1,3 +1,5 @@
+import { Input } from '@ui-sdk/react/input'
+import { Button } from '@ui-sdk/react/button'
 import { useLayoutEffect, useRef, useState } from 'react'
 import {
   Eraser,
@@ -66,7 +68,7 @@ export function useImagePreviewEditor(
   const [instructions, setInstructions] = useState('')
   const [markupCommenting, setMarkupCommenting] = useState(false)
   const surfaceSize = markupSurfaceSize(imageSize ?? { width: 100, height: 100 })
-  const markup = useMarkupEditor(busy, surfaceSize, markupCommenting, () => {
+  const markup = useMarkupEditor(busy, surfaceSize, markupCommenting, portalContainer, () => {
     if (!markupCommenting) return
     commitComment()
     setMarkupCommenting(false)
@@ -241,7 +243,7 @@ export function useImagePreviewEditor(
       style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
     >
       {mode === 'markup' && !saveMarkup && (
-        <input
+        <Input
           data-testid="attachment-image-markup-instructions"
           aria-label={t('image_preview.markup_instructions')}
           placeholder={t('image_preview.markup_instructions')}
@@ -269,7 +271,7 @@ export function useImagePreviewEditor(
         className="flex max-w-full items-center gap-1 overflow-x-auto rounded-xl bg-neutral-800 p-1 text-sm text-neutral-100 shadow-lg"
         data-testid="attachment-image-edit-tools"
       >
-        <button
+        <Button
           type="button"
           className={cn(actionClass, 'cursor-grab touch-none px-1')}
           aria-label={t('image_preview.move_toolbar')}
@@ -306,7 +308,7 @@ export function useImagePreviewEditor(
           }}
         >
           <GripVertical className="size-4" />
-        </button>
+        </Button>
         {mode === 'comment' ? (
           <>
             <span
@@ -318,7 +320,7 @@ export function useImagePreviewEditor(
                 ? t('image_preview.comment_count', { count: comments.length })
                 : t('image_preview.comment_hint')}
             </span>
-            <button
+            <Button
               type="button"
               className={cn(actionClass, 'rounded-xl bg-blue-600 text-white hover:bg-blue-500')}
               data-testid="attachment-image-edit-send"
@@ -327,8 +329,8 @@ export function useImagePreviewEditor(
               onClick={() => onSubmit({ kind: 'comment', comments })}
             >
               {t('image_preview.send')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               className={actionClass}
               data-testid="attachment-image-edit-cancel"
@@ -337,11 +339,11 @@ export function useImagePreviewEditor(
               onClick={() => selectMode(null)}
             >
               <X className="size-4" />
-            </button>
+            </Button>
           </>
         ) : mode ? (
           <>
-            <button
+            <Button
               type="button"
               className={actionClass}
               data-testid="attachment-image-edit-cancel"
@@ -349,11 +351,11 @@ export function useImagePreviewEditor(
               onClick={() => selectMode(null)}
             >
               {t('image_preview.cancel')}
-            </button>
+            </Button>
             {mode === 'markup' ? (
               <>
                 {markup.palette}
-                <button
+                <Button
                   type="button"
                   data-testid="attachment-image-markup-comment"
                   aria-label={t('image_preview.comment')}
@@ -367,15 +369,15 @@ export function useImagePreviewEditor(
                   }}
                 >
                   <MessageSquareDashed className="size-4" />
-                </button>
+                </Button>
               </>
             ) : (
-              <input
+              <Input
                 type="range"
                 min={1}
                 max={12}
                 step={0.5}
-                value={brushWidth}
+                value={String(brushWidth)}
                 className="w-20 accent-white"
                 aria-label={t('image_preview.brush_size')}
                 data-testid="attachment-image-erase-brush-size"
@@ -383,7 +385,7 @@ export function useImagePreviewEditor(
                 onChange={event => setBrushWidth(event.target.valueAsNumber)}
               />
             )}
-            <button
+            <Button
               type="button"
               className={actionClass}
               data-testid="attachment-image-edit-undo"
@@ -395,8 +397,8 @@ export function useImagePreviewEditor(
               }
             >
               {t('image_preview.undo')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               className={actionClass}
               data-testid="attachment-image-edit-redo"
@@ -411,8 +413,8 @@ export function useImagePreviewEditor(
               }
             >
               {t('image_preview.redo')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               className={cn(
                 actionClass,
@@ -431,12 +433,12 @@ export function useImagePreviewEditor(
               }
             >
               {t(mode === 'markup' && saveMarkup ? 'image_preview.save' : 'image_preview.send')}
-            </button>
+            </Button>
           </>
         ) : (
           <>
             {tools.map(({ id, icon: Icon }) => (
-              <button
+              <Button
                 key={id}
                 type="button"
                 data-testid={`attachment-image-tool-${id}`}
@@ -448,7 +450,7 @@ export function useImagePreviewEditor(
               >
                 <Icon className="size-4" />
                 {!compact && t(`image_preview.${id}`)}
-              </button>
+              </Button>
             ))}
             <ActionMenu
               testId="attachment-image-tool-resize"

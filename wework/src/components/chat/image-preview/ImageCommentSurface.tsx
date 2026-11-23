@@ -1,3 +1,6 @@
+import { Textarea } from '@ui-sdk/react/textarea'
+import { Input } from '@ui-sdk/react/input'
+import { Button } from '@ui-sdk/react/button'
 import { useRef, useState, type PointerEvent } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -46,7 +49,7 @@ export function ImageCommentSurface({
 
   return (
     <>
-      <button
+      <Button
         type="button"
         aria-label={t('image_preview.comment_surface')}
         data-testid="attachment-image-edit-surface"
@@ -91,7 +94,7 @@ export function ImageCommentSurface({
       {comments.map(
         (comment, index) =>
           draft?.index !== index && (
-            <button
+            <Button
               key={index}
               type="button"
               data-testid="attachment-image-comment-pin"
@@ -103,13 +106,14 @@ export function ImageCommentSurface({
               onClick={() => switchDraft({ ...comment, index })}
             >
               {index + 1}
-            </button>
+            </Button>
           )
       )}
       {draft && (
         <>
           <span
-            aria-hidden="true"
+            role="img"
+            aria-label={t('image_preview.comment')}
             data-testid="attachment-image-comment-draft-pin"
             className={`${pinClass} pointer-events-none`}
             style={pointStyle(draft)}
@@ -127,7 +131,7 @@ export function ImageCommentSurface({
             }}
           >
             {editingIndex === undefined ? (
-              <input
+              <Input
                 autoFocus
                 data-testid="attachment-image-comment-input"
                 className="min-w-0 flex-1 bg-transparent px-2 text-sm outline-none"
@@ -138,7 +142,7 @@ export function ImageCommentSurface({
                 onChange={event => onDraft({ ...draft, text: event.target.value })}
               />
             ) : (
-              <textarea
+              <Textarea
                 autoFocus
                 rows={3}
                 data-testid="attachment-image-comment-input"
@@ -158,7 +162,7 @@ export function ImageCommentSurface({
             <div className="flex shrink-0 items-center gap-1">
               {editingIndex !== undefined && (
                 <>
-                  <button
+                  <Button
                     type="button"
                     data-testid="attachment-image-comment-delete"
                     className="grid size-7 place-items-center rounded-full text-muted-foreground hover:bg-muted"
@@ -167,8 +171,8 @@ export function ImageCommentSurface({
                     onClick={() => onDelete(editingIndex)}
                   >
                     <Trash2 className="size-4" />
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
                     data-testid="attachment-image-comment-cancel"
                     className="ml-auto rounded-full px-2 py-1 text-sm hover:bg-muted"
@@ -176,17 +180,17 @@ export function ImageCommentSurface({
                     onClick={() => onDraft(null)}
                   >
                     {t('image_preview.cancel')}
-                  </button>
+                  </Button>
                 </>
               )}
-              <button
+              <Button
                 type="submit"
                 className="min-h-7 rounded-full bg-blue-600 px-2 text-sm text-white disabled:opacity-40"
                 data-testid="attachment-image-comment-save"
                 disabled={busy || !draft.text.trim()}
               >
                 {t('image_preview.save_comment')}
-              </button>
+              </Button>
             </div>
           </form>
         </>

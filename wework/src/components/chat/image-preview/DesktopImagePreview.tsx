@@ -1,3 +1,4 @@
+import { Button } from '@ui-sdk/react/button'
 import { useContext, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import {
@@ -14,6 +15,8 @@ import {
 } from 'lucide-react'
 import type { AttachmentImageLightboxProps } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { SelectContent, SelectItem, SelectRoot } from '@wegent/collaboration/controls/SelectParts'
+import { SelectTrigger } from '@ui-sdk/react/select'
 import type { Attachment } from '@/types/api'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { ActionMenu } from '@/components/common/ActionMenu'
@@ -213,7 +216,12 @@ function ImagePreviewDialog({
           editor.cancel()
           return
         }
-        if ((event.target as HTMLElement).closest('select, textarea') || editor.mode || busy) return
+        if (
+          (event.target as HTMLElement).closest('[role="combobox"], [role="listbox"], textarea') ||
+          editor.mode ||
+          busy
+        )
+          return
         if (event.key === 'ArrowLeft') onPrevious?.()
         if (event.key === 'ArrowRight') onNext?.()
       }}
@@ -244,29 +252,35 @@ function ImagePreviewDialog({
           <span className="truncate">{inline ? filename : t('image_preview.image')}</span>
         </span>
         <div className="flex shrink-0 items-center gap-1.5 [-webkit-app-region:no-drag]">
-          <label className={buttonClass}>
-            <select
+          <SelectRoot
+            value={zoom === null ? 'fit' : String(zoom)}
+            onValueChange={value => setZoom(value && value !== 'fit' ? Number(value) : null)}
+          >
+            <SelectTrigger
               data-testid="attachment-image-zoom-value"
               aria-label={t('image_preview.zoom')}
-              className="appearance-none bg-transparent outline-none"
-              value={zoom ?? ''}
-              onChange={event => setZoom(event.target.value ? Number(event.target.value) : null)}
+              className={buttonClass}
             >
-              <option value="">
+              {zoom === null ? `${Math.round(fitZoom)}% · ${t('image_preview.fit')}` : `${zoom}%`}
+              <ChevronDown className="size-3.5" />
+            </SelectTrigger>
+            <SelectContent container={inline ? undefined : menuContainer}>
+              <SelectItem value="fit">
                 {Math.round(fitZoom)}% · {t('image_preview.fit')}
-              </option>
-              {zoomLevels.map(level => (
-                <option key={level} value={level}>
+              </SelectItem>
+              {(zoom === null || zoomLevels.includes(zoom)
+                ? zoomLevels
+                : [...zoomLevels, zoom].sort((a, b) => a - b)
+              ).map(level => (
+                <SelectItem key={level} value={String(level)}>
                   {level}%
-                </option>
+                </SelectItem>
               ))}
-              {zoom !== null && !zoomLevels.includes(zoom) && <option value={zoom}>{zoom}%</option>}
-            </select>
-            <ChevronDown className="size-3.5 pointer-events-none" />
-          </label>
+            </SelectContent>
+          </SelectRoot>
           {localPath && (
             <div className="flex items-center rounded-full border border-border bg-background shadow-sm">
-              <button
+              <Button
                 type="button"
                 className="flex min-h-9 items-center gap-1.5 rounded-s-full px-3 text-sm hover:bg-muted max-md:min-h-11"
                 data-testid="attachment-image-open"
@@ -274,7 +288,7 @@ function ImagePreviewDialog({
               >
                 <ExternalLink className="size-4" />
                 {t('image_preview.open')}
-              </button>
+              </Button>
               <ActionMenu
                 ariaLabel={t('image_preview.open_with')}
                 testId="attachment-image-open-with"
@@ -309,7 +323,7 @@ function ImagePreviewDialog({
               />
             </div>
           )}
-          <button
+          <Button
             type="button"
             className={buttonClass}
             data-testid={
@@ -320,9 +334,9 @@ function ImagePreviewDialog({
             onClick={() => runAction(onDownload)}
           >
             <Download className="size-4" />
-          </button>
+          </Button>
           {!inline && openPanel && (
-            <button
+            <Button
               type="button"
               className={buttonClass}
               data-testid="attachment-image-open-in-panel"
@@ -349,10 +363,10 @@ function ImagePreviewDialog({
             >
               <PanelRightOpen className="size-4" />
               <span className="max-md:hidden">{t('image_preview.open_panel')}</span>
-            </button>
+            </Button>
           )}
           {!inline && (
-            <button
+            <Button
               type="button"
               className={buttonClass}
               data-testid="attachment-image-lightbox-close"
@@ -360,7 +374,7 @@ function ImagePreviewDialog({
               onClick={onClose}
             >
               <X className="size-4" />
-            </button>
+            </Button>
           )}
         </div>
       </header>
@@ -413,7 +427,7 @@ function ImagePreviewDialog({
       </div>
       {onPrevious && onNext && !editor.mode && !busy && (
         <>
-          <button
+          <Button
             type="button"
             className={`${buttonClass} absolute left-2 top-1/2`}
             data-testid="attachment-image-previous"
@@ -421,8 +435,8 @@ function ImagePreviewDialog({
             onClick={onPrevious}
           >
             <ChevronLeft className="size-4" />
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             className={`${buttonClass} absolute right-2 top-1/2`}
             data-testid="attachment-image-next"
@@ -430,7 +444,7 @@ function ImagePreviewDialog({
             onClick={onNext}
           >
             <ChevronRight className="size-4" />
-          </button>
+          </Button>
         </>
       )}
       <div ref={setMenuContainer} />

@@ -7,6 +7,10 @@ import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import * as electronFiles from '@/lib/electron-local-file'
 import * as runtimeEnvironment from '@/lib/runtime-environment'
 import { afterEach, expect, test, vi } from 'vitest'
+import {
+  desktopControlSelectionValue,
+  selectDesktopControlChoice,
+} from '@/e2e/desktop-control-select'
 import { DesktopImagePreview } from './DesktopImagePreview'
 import { ImageEditContext } from './ImageEditContext'
 import { composeImageMarkupMessage } from './imageEdit'
@@ -401,7 +405,7 @@ test('keeps the image and resize choices available after a failed edit', async (
   expect(loadFile).not.toHaveBeenCalled()
 })
 
-test('fits oversized images and uses native pixels for explicit zoom', () => {
+test('fits oversized images and uses native pixels for explicit zoom', async () => {
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -445,9 +449,9 @@ test('fits oversized images and uses native pixels for explicit zoom', () => {
   expect(image).toHaveStyle({ width: '800px', height: '400px' })
 
   const zoom = screen.getByTestId('attachment-image-zoom-value')
-  fireEvent.change(zoom, { target: { value: '100' } })
+  await selectDesktopControlChoice(zoom, '100')
   expect(image).toHaveStyle({ width: '1600px', height: '800px' })
-  fireEvent.change(zoom, { target: { value: '' } })
+  await selectDesktopControlChoice(zoom, 'fit')
   expect(image).toHaveStyle({ width: '800px', height: '400px' })
 
   vi.spyOn(image, 'getBoundingClientRect').mockReturnValue({
@@ -471,7 +475,7 @@ test('fits oversized images and uses native pixels for explicit zoom', () => {
       clientY: 200,
     })
   ).toBe(false)
-  expect(zoom).toHaveValue('82')
+  await expect(desktopControlSelectionValue(zoom)).resolves.toBe('82')
   expect(image).toHaveStyle({ width: '1312px', height: '656px' })
 })
 
@@ -683,9 +687,10 @@ test('retains fast brush samples and sends markup with image-relative comments',
     ],
   })
   await screen.findByRole('alert')
-  fireEvent.change(screen.getByTestId('attachment-image-markup-shapes'), {
-    target: { value: 'rectangle' },
-  })
+  await selectDesktopControlChoice(
+    screen.getByTestId('attachment-image-markup-shapes'),
+    'rectangle'
+  )
   fireEvent(surface, new MouseEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 35 }))
   fireEvent(surface, new MouseEvent('pointerup', { bubbles: true, clientX: 50, clientY: 60 }))
   expect(surface.querySelector('[data-mark-index="1"] path')).toHaveAttribute(
