@@ -104,6 +104,7 @@ class RecordingDingTalkServer:
         *,
         after: int,
         item_key: str,
+        kind_label: str | None = None,
     ) -> dict[str, Any]:
         """Wait for the background delivery to emit one specific card."""
 
@@ -112,12 +113,14 @@ class RecordingDingTalkServer:
         while loop.time() < deadline:
             for request in self.cards()[after:]:
                 params = request["cardData"]["cardParamMap"]
-                if params.get("itemKey") == item_key:
+                if params.get("itemKey") == item_key and (
+                    kind_label is None or params.get("kindLabel") == kind_label
+                ):
                     return request
             await asyncio.sleep(0.05)
         raise AssertionError(
             "DingTalk card was not delivered for "
-            f"item_key={item_key}; requests={self.requests[-8:]}"
+            f"item_key={item_key}, kind_label={kind_label}; requests={self.requests[-8:]}"
         )
 
     def _record(self, path: str, body: dict[str, Any]) -> None:
