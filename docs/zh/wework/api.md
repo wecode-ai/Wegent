@@ -65,6 +65,8 @@ PC、手机版和 API 启动的 Codex 会话，每轮都会通过 `additionalCon
 
 `kind: application` 表示应用上下文，`kind: untrusted` 表示外部来源内容；传递时保留原有类型，不把外部内容提升为应用指令。项目详情仍由模型调用授权工具读取。上下文字段不授予权限。仓库锁定的 Codex 0.171.0 会把 `application` 渲染为 developer 消息，把 `untrusted` 渲染为 `namespace: agent` 的独立 `function_call_output`；二者都不拼入用户正文。
 
+通过 Responses 模型代理转发时，无调用 ID 的工具输出会转换成带有 `[tool_result without a matching tool_call]` 来源标记的独立用户角色消息，仍与用户正文分开。
+
 ```mermaid
 sequenceDiagram
     participant C as 桌面或移动端
