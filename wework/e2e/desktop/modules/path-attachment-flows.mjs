@@ -382,9 +382,7 @@ async function verifyImageEditSubmissions(control, composerSelector) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('dragBy', `${panel} button[data-testid="attachment-image-edit-surface"]`, {
-    value: JSON.stringify({ x: 0, y: 0 }),
-  })
+  await control.command('click', `${panel} button[data-testid="attachment-image-edit-surface"]`)
   await control.command('waitFor', `${panel} [data-testid="attachment-image-comment-draft-pin"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -482,9 +480,7 @@ async function verifyComposerMarkupSave(control, composerSelector, draft) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('dragBy', 'button[data-testid="attachment-image-edit-surface"]', {
-    value: JSON.stringify({ x: 0, y: 0 }),
-  })
+  await control.command('click', 'button[data-testid="attachment-image-edit-surface"]')
   await control.command('fill', '[data-testid="attachment-image-comment-input"]', {
     value: 'Review the saved mark',
   })
@@ -512,9 +508,7 @@ async function verifyComposerMarkupSave(control, composerSelector, draft) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('dragBy', `${panel} button[data-testid="attachment-image-edit-surface"]`, {
-    value: JSON.stringify({ x: 0, y: 0 }),
-  })
+  await control.command('click', `${panel} button[data-testid="attachment-image-edit-surface"]`)
   await control.command('fill', `${panel} [data-testid="attachment-image-comment-input"]`, {
     value: 'Review the mark saved in Files',
   })
@@ -1577,9 +1571,7 @@ async function verifySideChatAttachmentIsolation({
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('dragBy', 'button[data-testid="attachment-image-edit-surface"]', {
-    value: JSON.stringify({ x: 0, y: 0 }),
-  })
+  await control.command('click', 'button[data-testid="attachment-image-edit-surface"]')
   await control.command('fill', '[data-testid="attachment-image-comment-input"]', {
     value: 'Inspect this area',
   })
