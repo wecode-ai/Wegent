@@ -638,18 +638,68 @@ fn request_adapters_discard_nameless_function_calls_and_their_rejections() {
         output(&normalized_empty_id, "unsupported call: "),
         output(&normalized_empty_id, "unsupported call: "),
         output("", "unsupported call: "),
-        detached_context.clone(),
+        detached_context,
     ]);
-    let expected = request(vec![valid_call, valid_output, detached_context]);
+    let expected = vec![
+        valid_call,
+        valid_output,
+        json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "external context"}]
+        }),
+    ];
     for api_format in [
         "openai-responses",
         "openai-chat-completions",
         "anthropic-messages",
     ] {
         let (actual, _, _) = prepare_request(api_format, false, None, &actual).unwrap();
-        let (expected, _, _) = prepare_request(api_format, false, None, &expected).unwrap();
+        let mut expected = expected.clone();
+        if api_format == "openai-responses" {
+            expected[2]["content"].as_array_mut().unwrap().insert(
+                0,
+                json!({"type":"input_text","text":"[tool_result without a matching tool_call]"}),
+            );
+        }
+        let (expected, _, _) =
+            prepare_request(api_format, false, None, &request(expected)).unwrap();
+        let actual: Value = serde_json::from_slice(&actual).unwrap();
+        let expected: Value = serde_json::from_slice(&expected).unwrap();
         assert_eq!(actual, expected, "{api_format}");
     }
+}
+
+#[test]
+fn responses_preserves_native_parts_and_incremental_tool_results() {
+    let file = json!({"type":"input_file","file_id":"file_1"});
+    let image = json!({"type":"input_image","image_url":"https://example.test/image.png"});
+    let text = json!({"type":"input_text","text":"external context"});
+    let result = json!({"type":"function_call_output","call_id":"call_previous","output":"done"});
+    let body = json!({
+        "model": "test-model",
+        "previous_response_id": "resp_previous",
+        "input": [
+            result,
+            {"type":"function_call_output","output":[text, file, image]}
+        ]
+    });
+    let body = serde_json::to_vec(&body).unwrap();
+    let (prepared, _, _) = prepare_request("openai-responses", false, None, &body).unwrap();
+    let prepared: Value = serde_json::from_slice(&prepared).unwrap();
+    assert_eq!(prepared["previous_response_id"], "resp_previous");
+    assert_eq!(prepared["input"][0], result);
+    assert_eq!(
+        prepared["input"][1],
+        json!({
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type":"input_text","text":"[tool_result without a matching tool_call]"},
+                text, file, image
+            ]
+        })
+    );
 }
 
 #[test]

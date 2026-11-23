@@ -183,7 +183,9 @@ automatic continuation, no duplicate user messages, and cancellation.
 
 ### Codex external context conversion
 
-When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. For Chat Completions and Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID keep their association with the original call through `tool_call_id` or `tool_use_id`, respectively.
+When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. When adapting requests for Responses, Chat Completions, or Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID stay linked to the original call through the destination protocol's call ID.
+
+The Responses adapter adds the `[tool_result without a matching tool_call]` marker and preserves native `input_image` and `input_file` content parts.
 
 ### Codex subagent message conversion
 
