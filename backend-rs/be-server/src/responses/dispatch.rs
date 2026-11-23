@@ -222,6 +222,7 @@ impl<M: Mysql, R: Redis> DispatchJob<M, R> {
 
 pub struct ResponsesDispatch<M: Mysql = MysqlService, R: Redis = RedisService> {
     queue: DispatchQueue<DispatchJob<M, R>>,
+    cleanup_queue: DispatchQueue<DispatchJob<M, R>>,
 }
 
 impl<M: Mysql, R: Redis> ResponsesDispatch<M, R> {
@@ -230,7 +231,15 @@ impl<M: Mysql, R: Redis> ResponsesDispatch<M, R> {
     }
 
     pub(crate) fn submit(&self, job: DispatchJob<M, R>) -> bool {
-        self.queue.submit(job)
+        let mut inner = &job;
+        while let DispatchJob::Pipeline(job, _) = inner {
+            inner = job;
+        }
+        if matches!(inner, DispatchJob::SubscriptionCleanup(_)) {
+            self.cleanup_queue.submit(job)
+        } else {
+            self.queue.submit(job)
+        }
     }
 }
 
@@ -241,6 +250,14 @@ where
 {
     ResponsesDispatch {
         queue: DispatchQueue::spawn(
+            executor_dispatch_http_client,
+            DispatchJob::context,
+            |http, job| Box::pin(run(http, job)),
+        ),
+        // Separate bounded supervisors keep cleanup's permit wait and FIFO
+        // backlog from blocking launches. Both retain the same task ownership,
+        // rejection logging and drain-on-shutdown behavior.
+        cleanup_queue: DispatchQueue::spawn(
             executor_dispatch_http_client,
             DispatchJob::context,
             |http, job| Box::pin(run(http, job)),

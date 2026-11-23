@@ -53,6 +53,7 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
         .mysql
         .route(crate::task_routing::ByTaskId(event.task_id as u64));
     let mut reached_status_write = false;
+    let mut selected_execution_id = None;
     let mut auto_delete = None;
     let outcome = mysql
         .with_transaction(async |transaction| {
@@ -60,6 +61,7 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
                 auto_delete = cleanup::prepare_auto_delete(transaction, ctx.tables, event).await?;
                 return Ok(None);
             };
+            selected_execution_id = Some(execution.id);
             let result = completion::terminal_result(event);
             reached_status_write = true;
             let applied = completion::apply_status(transaction, event, &execution, &result).await?;
@@ -86,7 +88,9 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
             // so the failure notifications still go out.
             tracing::error!(%error, task_id=event.task_id, "could not save the run result");
             failure_message = unsaved_result_message(&error);
-            let Some(execution) = fail_unsaved_result(ctx, &mysql, event, &failure_message).await
+            let Some(execution) =
+                fail_unsaved_result(ctx, &mysql, event, selected_execution_id, &failure_message)
+                    .await
             else {
                 return;
             };
@@ -139,11 +143,18 @@ async fn fail_unsaved_result<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     mysql: &M,
     event: &TaskCompletedEvent<'_>,
+    execution_id: Option<i64>,
     message: &str,
 ) -> Option<Execution> {
+    let id = execution_id?;
     let outcome = mysql
         .with_transaction(async |transaction| {
-            let Some(execution) = find_execution_by_task_id(transaction, event).await? else {
+            // Preserved-history subscriptions can bind a newer run to this task
+            // while the failed write rolls back. Keep the original run identity.
+            let execution: Option<Execution> = transaction
+                .fetch_optional(model::execution_by_id(), (id,))
+                .await?;
+            let Some(execution) = execution else {
                 return Ok(None);
             };
             let applied =
@@ -457,6 +468,8 @@ mod tests {
                 statements: std::sync::Arc::clone(&self.statements),
                 attempts: std::sync::Arc::clone(&self.attempts),
                 fail_at: self.fail_at,
+                reader: None,
+                fail_runtime_page: false,
             }
         }
 
@@ -477,10 +490,12 @@ mod tests {
         statements: std::sync::Arc<std::sync::Mutex<Vec<crate::sql_test_support::Query>>>,
         attempts: std::sync::Arc<std::sync::Mutex<usize>>,
         fail_at: Option<usize>,
+        reader: Option<brz_mysql::MysqlService>,
+        fail_runtime_page: bool,
     }
 
     impl CapturedTransaction {
-        fn record<S: AsRef<str>, A: brz_mysql::MysqlArgs>(&self, sql: S, arguments: A) {
+        fn record<S: AsRef<str>, A: brz_mysql::MysqlArgs>(&self, sql: S, arguments: &A) {
             self.statements
                 .lock()
                 .unwrap()
@@ -510,7 +525,7 @@ mod tests {
                 return Err(brz_mysql::MysqlError::RowNotFound);
             }
             drop(attempts);
-            self.record(sql, arguments);
+            self.record(sql, &arguments);
             Ok(brz_mysql::MysqlExecution {
                 rows_affected: 1,
                 last_insert_id: 0,
@@ -527,7 +542,10 @@ mod tests {
             A: brz_mysql::MysqlArgs + Send,
             T: brz_mysql::FromMysqlRow + Send,
         {
-            self.record(sql, arguments);
+            self.record(sql.as_ref(), &arguments);
+            if let Some(reader) = &self.reader {
+                return reader.fetch_optional(sql, arguments).await;
+            }
             Ok(None)
         }
 
@@ -563,7 +581,10 @@ mod tests {
             A: brz_mysql::MysqlArgs + Send,
             T: brz_mysql::FromMysqlRow + Send,
         {
-            self.record(sql, arguments);
+            self.record(sql, &arguments);
+            if self.fail_runtime_page {
+                return Err(brz_mysql::MysqlError::RowNotFound);
+            }
             Ok(Vec::new())
         }
     }
@@ -722,5 +743,61 @@ mod tests {
         assert!(outcome.is_err(), "{outcome:?}");
         assert_eq!(capture.update_attempts(), 2);
         assert_eq!(capture.statements().len(), 1);
+
+        // The first runtime-page failure must abort preparation too, rather
+        // than pretending the eligible runtime list is successfully empty.
+        let rows = crate::sql_test_support::mysql_rows::MysqlRows::start(|_| {
+            use crate::sql_test_support::mysql_rows::Value;
+            vec![
+                ("id", Value::I64(42)),
+                ("user_id", Value::I64(7)),
+                ("kind", Value::Text("Task".into())),
+                ("name", Value::Text("fixture-task".into())),
+                ("namespace", Value::Text("default".into())),
+                (
+                    "json",
+                    Value::Bytes(
+                        br#"{"metadata":{"labels":{"autoDeleteExecutor":"true"}}}"#.to_vec(),
+                    ),
+                ),
+                ("is_active", Value::I8(1)),
+                ("created_at", Value::DateTime),
+                ("updated_at", Value::DateTime),
+                ("project_id", Value::Null),
+                ("client_origin", Value::Null),
+                ("is_group_chat", Value::I8(0)),
+            ]
+        })
+        .await;
+        let capture = TransactionCapture::default();
+        let mut transaction = capture.transaction();
+        transaction.reader = Some(rows.mysql.clone());
+        transaction.fail_runtime_page = true;
+        let event = TaskCompletedEvent {
+            task_id: 42,
+            user_id: 7,
+            subtask_id: 0,
+            status: "COMPLETED",
+            result: None,
+            error: None,
+        };
+        assert!(matches!(
+            cleanup::prepare_auto_delete(&mut transaction, tables(), &event).await,
+            Err(brz_mysql::MysqlError::RowNotFound)
+        ));
+        assert!(
+            capture
+                .statements()
+                .last()
+                .is_some_and(|query| query.sql.contains("executor_deleted_at = false"))
+        );
+        assert_eq!(capture.update_attempts(), 0);
+        transaction.fail_runtime_page = false;
+        assert!(
+            cleanup::prepare_auto_delete(&mut transaction, tables(), &event)
+                .await
+                .expect("a successful empty page remains a no-op")
+                .is_none()
+        );
     }
 }

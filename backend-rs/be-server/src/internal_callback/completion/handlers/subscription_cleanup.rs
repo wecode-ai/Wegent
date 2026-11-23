@@ -128,7 +128,7 @@ async fn prepare_task<T: MysqlTransaction>(
     let Some(owner_user_id) = task_column::<i64>(&task, "user_id") else {
         return Ok(None);
     };
-    let mut page = list_not_executor_deleted_by_task(tx, tables, task_id, owner_user_id).await;
+    let mut page = list_not_executor_deleted_by_task(tx, tables, task_id, owner_user_id).await?;
     let mut subtasks = Vec::new();
     while !page.is_empty() {
         let after_id = page
@@ -154,6 +154,31 @@ async fn prepare_task<T: MysqlTransaction>(
 }
 
 impl CleanupJob {
+    #[cfg(test)]
+    pub(crate) fn test_job(
+        mysql: MysqlService,
+        tables: Tables,
+        executor_manager: ExecutorManager,
+        task_id: i64,
+    ) -> Self {
+        Self {
+            task_id,
+            subtask_id: 42,
+            mysql,
+            tables,
+            executor_manager,
+            plan: CleanupPlan {
+                task_id,
+                source: "subscription completion",
+                subtasks: vec![RuntimeReference {
+                    id: 42,
+                    name: Some("fixture-runtime".into()),
+                    namespace: Some("default".into()),
+                }],
+            },
+        }
+    }
+
     pub(crate) async fn run(self) {
         // No connection is acquired until all HTTP deletion attempts finish.
         let (sandbox_deleted, successful_keys) = self.delete_runtimes().await;
@@ -271,7 +296,7 @@ async fn list_not_executor_deleted_by_task<T: MysqlTransaction>(
     tables: Tables,
     task_id: i64,
     owner_user_id: i64,
-) -> Vec<MysqlRow> {
+) -> MysqlResult<Vec<MysqlRow>> {
     let owner: Option<MysqlRow> = tx
         .fetch_optional(
             crate::task_store_statements::owner_matches_task_id_statement(tables.tasks),
@@ -290,12 +315,10 @@ async fn list_not_executor_deleted_by_task<T: MysqlTransaction>(
             .unwrap_or_default();
         if owners.len() != 1 || owners[0].get_required::<i64>("user_id").ok() != Some(owner_user_id)
         {
-            return Vec::new();
+            return Ok(Vec::new());
         }
     }
-    executor_cleanup_page(tx, tables, task_id, 0)
-        .await
-        .unwrap_or_default()
+    executor_cleanup_page(tx, tables, task_id, 0).await
 }
 
 async fn executor_cleanup_page<T: MysqlTransaction>(

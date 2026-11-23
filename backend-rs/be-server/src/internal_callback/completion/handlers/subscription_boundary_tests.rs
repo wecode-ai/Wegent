@@ -38,6 +38,7 @@ use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
 #[derive(Default)]
 pub(crate) struct NoRedis {
     pub(crate) fail_publication: bool,
+    pub(crate) failed_publications: AtomicUsize,
 }
 
 impl Redis for NoRedis {
@@ -47,6 +48,7 @@ impl Redis for NoRedis {
         M: EncodeRedisArg + Send,
     {
         if self.fail_publication {
+            self.failed_publications.fetch_add(1, Ordering::SeqCst);
             return Err(std::io::Error::other("fixture Redis publication failed").into());
         }
         Ok(0)
@@ -758,12 +760,23 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
         status: "COMPLETED",
         ..completed_event(&execution)
     };
-    let server_cancel = MysqlRows::start_results(|sql| {
+    let removed = Arc::new(AtomicBool::new(false));
+    let row_removed = Arc::clone(&removed);
+    let server_cancel = MysqlRows::start_results(move |sql| {
         if sql.contains("FROM background_executions") {
-            let row = execution_row("CANCELLED");
+            // A newer active run now owns the reused task. Only the originally
+            // selected execution has already been cancelled.
+            let mut row = execution_row(if sql.contains("ORDER BY") {
+                "RUNNING"
+            } else {
+                "CANCELLED"
+            });
+            if sql.contains("ORDER BY") {
+                row[0].1 = SqlValue::I64(2_539_502);
+            }
             return (
                 row.clone(),
-                if sql.contains("status IN") {
+                if row_removed.load(Ordering::SeqCst) {
                     Vec::new()
                 } else {
                     vec![row]
@@ -789,12 +802,69 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
         &ctx_cancel,
         &server_cancel.mysql,
         &event,
+        Some(execution.id),
         "The run finished but its result could not be saved: Data too long",
     )
     .await;
     assert!(fallback.is_none());
     let queries = server_cancel.queries();
-    assert_latest_before_cleanup(&queries);
+    let selected = server_cancel.requests();
+    let resolved = selected
+        .iter()
+        .position(|request| normalize(&request.sql) == normalize(&model::execution_by_id()))
+        .expect("fallback reloads the originally selected execution");
+    let cleanup = selected
+        .iter()
+        .position(|request| request.sql.contains("FROM `tasks_0030`"))
+        .expect("cancelled run still prepares cleanup");
+    assert!(resolved < cleanup, "{selected:?}");
+    assert_eq!(selected[resolved].first_integer, Some(execution.id));
+    assert!(
+        !queries.iter().any(|query| query.contains("ORDER BY")
+            || query.starts_with("UPDATE background_executions")
+            || query.starts_with("UPDATE kinds")),
+        "the fallback must not select or fail the newer run: {queries:?}"
+    );
+    let before_missing_id = server_cancel.requests().len();
+    assert!(
+        super::fail_unsaved_result(
+            &ctx_cancel,
+            &server_cancel.mysql,
+            &event,
+            None,
+            "save failed"
+        )
+        .await
+        .is_none()
+    );
+    assert_eq!(server_cancel.requests().len(), before_missing_id);
+    removed.store(true, Ordering::SeqCst);
+    assert!(
+        super::fail_unsaved_result(
+            &ctx_cancel,
+            &server_cancel.mysql,
+            &event,
+            Some(execution.id),
+            "save failed"
+        )
+        .await
+        .is_none()
+    );
+    let after_removed = server_cancel.requests();
+    let reads: Vec<_> = after_removed[before_missing_id..]
+        .iter()
+        .filter(|request| request.args != 0)
+        .collect();
+    assert_eq!(
+        reads.len(),
+        1,
+        "a missing original run cannot select another: {reads:?}"
+    );
+    assert_eq!(
+        normalize(&reads[0].sql),
+        normalize(&model::execution_by_id())
+    );
+    assert_eq!(reads[0].first_integer, Some(execution.id));
     assert!(
         queries
             .iter()
@@ -871,6 +941,7 @@ async fn terminal_completion_refreshes_a_lost_transition_before_cleanup() {
                     &ctx,
                     &mysql,
                     &event,
+                    Some(execution.id),
                     "The run finished but its result could not be saved: Data too long",
                 )
                 .await

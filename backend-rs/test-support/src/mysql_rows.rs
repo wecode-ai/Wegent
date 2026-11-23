@@ -173,6 +173,11 @@ async fn connection(
             0x19 => {}
             0x03 => {
                 let sql = String::from_utf8_lossy(&request[1..]);
+                requests.lock().unwrap().push(super::Query {
+                    sql: sql.to_string(),
+                    args: 0,
+                    first_integer: None,
+                });
                 if is_text_read(&sql) {
                     queries.lock().unwrap().push(sql.to_string());
                     let (columns, results) = rows(&sql);
@@ -187,11 +192,6 @@ async fn connection(
                     status = 2;
                 }
                 packet(&mut stream, 1, &[0, 0, 0, status, 0, 0, 0]).await;
-                requests.lock().unwrap().push(super::Query {
-                    sql: sql.to_string(),
-                    args: 0,
-                    first_integer: None,
-                });
             }
             0x0e => packet(&mut stream, 1, &[0, 0, 0, status, 0, 0, 0]).await,
             command => panic!("unexpected MySQL fixture command: {command}"),
@@ -274,18 +274,40 @@ fn first_bound_integer(request: &[u8], parameters: usize, types: &mut Vec<u8>) -
     if request.get(10)? & 1 != 0 {
         return None;
     }
+    let unsigned = types.get(1)? & 0x80 != 0;
     match types.first()? {
         8 => {
             let bytes = request.get(value..value + 8)?.try_into().ok()?;
-            if types.get(1)? & 0x80 != 0 {
+            if unsigned {
                 u64::from_le_bytes(bytes).try_into().ok()
             } else {
                 Some(i64::from_le_bytes(bytes))
             }
         }
-        3 => Some(i32::from_le_bytes(request.get(value..value + 4)?.try_into().ok()?).into()),
-        2 => Some(i16::from_le_bytes(request.get(value..value + 2)?.try_into().ok()?).into()),
-        1 => Some(i64::from(*request.get(value)?)),
+        3 => {
+            let bytes = request.get(value..value + 4)?.try_into().ok()?;
+            Some(if unsigned {
+                u32::from_le_bytes(bytes).into()
+            } else {
+                i32::from_le_bytes(bytes).into()
+            })
+        }
+        2 => {
+            let bytes = request.get(value..value + 2)?.try_into().ok()?;
+            Some(if unsigned {
+                u16::from_le_bytes(bytes).into()
+            } else {
+                i16::from_le_bytes(bytes).into()
+            })
+        }
+        1 => {
+            let byte = *request.get(value)?;
+            Some(if unsigned {
+                byte.into()
+            } else {
+                i8::from_le_bytes([byte]).into()
+            })
+        }
         _ => None,
     }
 }

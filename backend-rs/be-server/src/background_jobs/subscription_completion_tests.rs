@@ -264,6 +264,7 @@ async fn redis_failure_does_not_drop_inbox_or_follower_delivery() {
     let app = crate::app_test_support::app(server.mysql.clone());
     let redis = NoRedis {
         fail_publication: true,
+        ..Default::default()
     };
     let execution = execution();
     let event = TaskCompletedEvent {
@@ -300,6 +301,7 @@ async fn redis_failure_does_not_drop_inbox_or_follower_delivery() {
         .await
         .expect("follower delivery still runs")
         .unwrap();
+    assert_eq!(redis.failed_publications.load(Ordering::SeqCst), 1);
     assert!(
         server
             .queries()
@@ -403,6 +405,7 @@ async fn held_delete_releases_the_only_connection_for_delivery_and_later_handler
             (row.clone(), vec![row])
         })
         .await;
+        let server = Arc::new(server);
         let mysql = MysqlService::connect_lazy_with_options(
             &server.url,
             MysqlServiceOptions::default().with_max_connections(1),
@@ -424,13 +427,14 @@ async fn held_delete_releases_the_only_connection_for_delivery_and_later_handler
         );
         let (delete_started, held) = tokio::sync::oneshot::channel();
         let (release, wait_release) = tokio::sync::oneshot::channel();
+        let sql_at_delete = Arc::clone(&server);
         let http = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             assert!(http_request(&mut stream).await.starts_with("GET "));
             http_reply(&mut stream, "{}").await;
             let (mut stream, _) = listener.accept().await.unwrap();
             assert!(http_request(&mut stream).await.starts_with("DELETE "));
-            delete_started.send(()).unwrap();
+            delete_started.send(sql_at_delete.requests()).unwrap();
             let _ = wait_release.await;
             http_reply(&mut stream, r#"{"success":true}"#).await;
         });
@@ -463,19 +467,18 @@ async fn held_delete_releases_the_only_connection_for_delivery_and_later_handler
                 finished.send(()).unwrap();
             },
             async {
-                tokio::time::timeout(Duration::from_secs(5), held)
+                let requests_at_delete = tokio::time::timeout(Duration::from_secs(5), held)
                     .await
                     .expect("cleanup reaches the real DELETE")
                     .unwrap();
                 let progress = tokio::time::timeout(Duration::from_secs(2), delivered).await;
                 let queries = server.queries();
-                let requests = server.requests();
                 release.send(()).unwrap();
                 assert!(
                     matches!(progress, Ok(Ok(()))),
                     "held DELETE must not occupy the only DB connection or delay later handlers: {queries:?}"
                 );
-                let prepared = requests
+                let prepared = requests_at_delete
                     .iter()
                     .rposition(|request| {
                         request.sql.contains("FROM subtasks_0030")
@@ -483,10 +486,10 @@ async fn held_delete_releases_the_only_connection_for_delivery_and_later_handler
                     })
                     .expect("cleanup prepared runtime references");
                 assert!(
-                    requests[prepared + 1..]
+                    requests_at_delete[prepared + 1..]
                         .iter()
                         .any(|request| { request.sql.eq_ignore_ascii_case("COMMIT") }),
-                    "preparation must commit before the held DELETE: {requests:?}"
+                    "preparation must commit before DELETE arrives: {requests_at_delete:?}"
                 );
                 if subscription_execution {
                     assert!(
