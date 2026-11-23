@@ -3,9 +3,10 @@ import test from 'node:test'
 import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
 import {
   createDesktopScenario,
-  openNotificationInboxAfterReload,
+  prepareNotificationHitTesting,
 } from '../e2e/desktop/scenarios/stand-in-notifications.scenario.mjs'
 import { verifyNarrowImMenu } from '../e2e/desktop/modules/stand-in-im-menu-layout.mjs'
+import { openCollaborationNotifications } from '../e2e/desktop/modules/stand-in-flows.mjs'
 
 test('stand-in IM native keyboard runs in the foreground without competing for native focus', () => {
   const scenario = createDesktopScenario({})
@@ -92,11 +93,27 @@ for (const [description, options, error] of [
 const content = '[data-workspace-tab-content][aria-hidden="false"]'
 const issue = `${content} [data-testid="cloud-todo-detail"]`
 const popover = '[data-testid="wework-notifications-popover"]'
+const notificationRow = '[data-testid="wework-notification-stand-in:original-task"]'
 
-function restoredIssueControl({ exit = Promise.resolve(), closeError } = {}) {
-  let issueMounted = true
-  let issueVisible = true
-  let inboxOpen = false
+async function openPreparedInbox(control) {
+  await prepareNotificationHitTesting(control, content, 'PRJ261E6109-1', notificationRow)
+  await openCollaborationNotifications(control)
+}
+
+function restoredIssueControl({
+  issuePresent = true,
+  navigation = Promise.resolve(),
+  exit = Promise.resolve(),
+  closeError,
+} = {}) {
+  let issueMounted = issuePresent
+  let issueVisible = issuePresent
+  let inboxOpen = true
+  let openingIssue
+  let navigationObserved
+  const navigating = new Promise(resolve => {
+    navigationObserved = resolve
+  })
   let removalStarted
   const removing = new Promise(resolve => {
     removalStarted = resolve
@@ -106,19 +123,35 @@ function restoredIssueControl({ exit = Promise.resolve(), closeError } = {}) {
     inboxOpened = resolve
   })
   return {
+    navigating,
     removing,
     opened,
     get inboxOpen() {
       return inboxOpen
     },
     async command(action, selector, options) {
-      if (action === 'waitFor' && selector === issue) {
+      if (action === 'clickWhenEnabled' && selector === notificationRow) {
+        assert.equal(inboxOpen, true)
+        openingIssue = navigation.then(() => {
+          issueMounted = true
+          issueVisible = true
+          inboxOpen = false
+        })
+      } else if (action === 'waitFor' && selector === issue) {
         if (options.visible === false) assert.equal(issueVisible, false)
-        else assert.equal(options.text, 'PRJ261E6109-1')
+        else {
+          assert.equal(options.text, 'PRJ261E6109-1')
+          if (!issueMounted)
+            throw new Error(
+              `Timed out waiting for selector "${issue}" containing "${options.text}"; matches=[]`
+            )
+        }
       } else if (
         action === 'clickWhenEnabled' &&
         selector.endsWith('[data-testid="cloud-todo-detail-close"]')
       ) {
+        if (inboxOpen)
+          throw new Error('The previous Issue closed before notification navigation completed')
         if (closeError) throw closeError
         issueVisible = false
       } else if (
@@ -148,18 +181,47 @@ function restoredIssueControl({ exit = Promise.resolve(), closeError } = {}) {
         return '在通知内继续处理助理任务'
       } else if (action === 'waitFor' && selector === popover) {
         assert.equal(options.visible, false)
+        navigationObserved()
+        await openingIssue
         if (inboxOpen) throw new Error(`Timed out waiting for selector "${popover}"; visible=true`)
       } else throw new Error(`Unexpected ${action} for ${selector}`)
     },
   }
 }
 
-test('reload recovery makes the notification icon hit dismiss the inbox instead of hitting the restored Issue', async () => {
-  const control = restoredIssueControl()
-  await openNotificationInboxAfterReload(control, content, 'PRJ261E6109-1')
-  await control.command('clickAt', 'body', { value: JSON.stringify({ x: 927, y: 128 }) })
-  await control.command('waitFor', popover, { visible: false })
-})
+for (const issuePresent of [false, true])
+  test(`notification icon dismisses the inbox when reload leaves the Issue ${issuePresent ? 'restored' : 'absent'}`, async () => {
+    const control = restoredIssueControl({ issuePresent })
+    await openPreparedInbox(control)
+    await control.command('clickAt', 'body', { value: JSON.stringify({ x: 927, y: 128 }) })
+    await control.command('waitFor', popover, { visible: false })
+  })
+
+test(
+  'an existing Issue cannot satisfy readiness before the selected notification dismisses its inbox',
+  { timeout: 1000 },
+  async () => {
+    let finishNavigation
+    const navigation = new Promise(resolve => {
+      finishNavigation = resolve
+    })
+    const control = restoredIssueControl({ navigation })
+    const reopening = openPreparedInbox(control)
+    try {
+      await Promise.race([control.navigating, reopening])
+      assert.equal(
+        control.inboxOpen,
+        true,
+        'The current row action must complete before Issue closing'
+      )
+    } finally {
+      finishNavigation()
+    }
+    await reopening
+    await control.command('clickAt', 'body', { value: JSON.stringify({ x: 927, y: 128 }) })
+    await control.command('waitFor', popover, { visible: false })
+  }
+)
 
 test(
   'reload recovery waits for full Issue removal after its exit frame becomes invisible',
@@ -170,7 +232,7 @@ test(
       finishExit = resolve
     })
     const control = restoredIssueControl({ exit })
-    const reopening = openNotificationInboxAfterReload(control, content, 'PRJ261E6109-1')
+    const reopening = openPreparedInbox(control)
     try {
       await Promise.race([control.removing, reopening])
       await Promise.race([
@@ -194,9 +256,6 @@ test(
 
 test('reload recovery propagates failed Issue closing without opening an obscured inbox', async () => {
   const control = restoredIssueControl({ closeError: new Error('Issue close failed') })
-  await assert.rejects(
-    openNotificationInboxAfterReload(control, content, 'PRJ261E6109-1'),
-    /Issue close failed/
-  )
+  await assert.rejects(openPreparedInbox(control), /Issue close failed/)
   assert.equal(control.inboxOpen, false)
 })
