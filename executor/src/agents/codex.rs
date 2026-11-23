@@ -104,8 +104,9 @@ Sub-agents are off-limits in this side conversation. Do not interact with any ex
 
 Do not modify files, source, git state, permissions, configuration, or workspace state unless the user explicitly asks for that mutation after this boundary. Do not request escalated permissions or broader sandbox access unless the user explicitly asks for a mutation that requires it. If the user explicitly requests a mutation, keep it minimal, local to the request, and avoid disrupting the main thread."#;
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
+- Continue ordinary follow-ups using the conversation. Consult project-space data only when the user explicitly asks to look up or act on a project or Issue, or when the current request requires information from that project or Issue that is missing from the conversation. A project or Issue reference alone does not trigger a lookup.
 - Use `wework_space` MCP tools for Wework project spaces and Issues; discover deferred tools before reporting them unavailable.
-- For the current Issue, start with `get_current_context`; without a binding, use `list_spaces` and explicit target IDs. Follow the discovered tool instructions.
+- When a lookup is needed for the current Issue, start with `get_current_context`. Without a binding, use any supplied target IDs; use `list_spaces` when the target project needs to be discovered. Follow the discovered tool instructions.
 - Never use MCP resources, browser, Shell, `curl`, local storage or provider APIs to bypass these tools or their access errors.
 "#;
 
