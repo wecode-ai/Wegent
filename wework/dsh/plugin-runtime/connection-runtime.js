@@ -76,6 +76,20 @@ export function createConnectionRuntime({ dependencies, request, satisfies, befo
       registry.dispose()
     },
     registration: () => ({
+      observationOnlyProviders: [...registry.entries.values()]
+        .map(entry => ({
+          providerId: entry.id,
+          resourceKinds: entry.provider.resourceKinds.filter(
+            kind => !entry.provider.reviewHistory?.resourceKinds.includes(kind)
+          ),
+        }))
+        .filter(entry => entry.resourceKinds.length),
+      reviewHistoryProviders: [...registry.entries.values()]
+        .filter(entry => entry.provider.reviewHistory)
+        .map(entry => ({
+          providerId: entry.id,
+          resourceKinds: entry.provider.reviewHistory.resourceKinds,
+        })),
       providerGuidance: [...registry.entries.values()]
         .filter(entry => entry.provider.assistance)
         .map(entry => ({ providerId: entry.id, assistance: entry.provider.assistance })),

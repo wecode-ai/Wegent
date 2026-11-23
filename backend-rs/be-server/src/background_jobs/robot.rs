@@ -10,8 +10,7 @@ pub(crate) mod authority;
 pub(crate) mod managed;
 #[path = "robot_managed_jobs.rs"]
 pub(crate) mod managed_jobs;
-#[path = "robot_model.rs"]
-pub(crate) mod model;
+pub(crate) use wegent_project_coordination::project_execution as model;
 #[path = "robot_projection.rs"]
 mod projection;
 #[path = "robot_state.rs"]

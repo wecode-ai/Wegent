@@ -27,12 +27,11 @@ fn the_download_handler_is_registered_with_the_application() {
     // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
     const GET: u16 = 1 << 1;
     assert!(
-        brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>()
-            .flat_map(|entry| (entry.0.routes)())
-            .any(
-                |route| route.path == "/api/plugins/installed/:installed_id/download"
-                    && route.methods & GET != 0
-            ),
+        wegent_plugin_runtime::registered_routes()
+            .into_iter()
+            .any(|(path, methods)| {
+                path == "/api/plugins/installed/:installed_id/download" && methods & GET != 0
+            }),
         "the download route must have exactly one registered Rust handler"
     );
 }

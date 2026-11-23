@@ -18,7 +18,6 @@ export function BranchPicker({
   triggerTestId,
   accessibleLabel,
   onListBranches,
-  onRefresh,
   onChoose,
   onOpenChange,
   footer,
@@ -35,7 +34,6 @@ export function BranchPicker({
   triggerTestId: string
   accessibleLabel: string
   onListBranches(): Promise<string[]>
-  onRefresh?(): Promise<void>
   onChoose(branch: string): Promise<void> | void
   onOpenChange?(open: boolean): void
   footer?: ReactNode
@@ -53,17 +51,8 @@ export function BranchPicker({
   const setOpen = (next: boolean) => setOpenRevision(next ? closeSignal : null)
   const [query, setQuery] = useState('')
   const branchResource = useMemo(
-    () =>
-      createAsyncResource(
-        prefix,
-        async signal => {
-          if (onRefresh) await onRefresh()
-          signal.throwIfAborted()
-          return onListBranches()
-        },
-        { refreshOnSubscribe: true }
-      ),
-    [prefix, onListBranches, onRefresh]
+    () => createAsyncResource(prefix, onListBranches, { refreshOnSubscribe: true }),
+    [prefix, onListBranches]
   )
   const snapshot = useSyncExternalStore(
     open ? branchResource.subscribe : subscribeIdleResource,

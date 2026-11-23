@@ -54,10 +54,10 @@ const manifest = () => ({
   name: '@independent/metrics',
   wework: { connections: { apiVersion: 1, dependencies: {}, providers: [descriptor()] } },
 })
-async function fixture(t) {
+async function fixture(t, declaration = manifest()) {
   const root = await mkdtemp(join(tmpdir(), 'connection-schema-'))
   const path = join(root, 'package.json')
-  await writeFile(path, JSON.stringify(manifest()))
+  await writeFile(path, JSON.stringify(declaration))
   const source = {
     providerId: '@independent/metrics/metrics',
     id: 'one',
@@ -106,6 +106,41 @@ async function fixture(t) {
   })
   return { registry, source, state }
 }
+
+test('a third-party history reader can supply partial evidence without changing ordinary source reads', async t => {
+  const declaration = manifest()
+  declaration.wework.connections.providers[0].reviewHistory = { resourceKinds: ['dashboard'] }
+  const { registry, source, state } = await fixture(t, declaration)
+  const query = { since: '2026-11-20T00:00:00Z', trainingUntil: '2026-11-21T00:00:00Z', limit: 20 }
+  const read = () => registry.call(source.providerId, 'readSource', { source, query })
+  const item = {
+    id: 'native-1',
+    conversationId: 'one',
+    at: query.since,
+    text: 'Scheduled job completed',
+    author: 'unknown',
+  }
+  state.result = { items: [item], hasMore: false, reviewCoverage: 'partial' }
+  assert.deepEqual(await read(), state.result)
+  assert.equal(state.validations, 1)
+  state.result.reviewUseCollectedEvents = true
+  await assert.rejects(read(), /empty terminal partial/)
+  state.result.items = []
+  assert.deepEqual(await read(), state.result)
+  delete state.result.reviewUseCollectedEvents
+  state.result.items = Array(21).fill(item)
+  await assert.rejects(read(), /requested limit/)
+  state.result.items = [item]
+  delete state.result.reviewCoverage
+  await assert.rejects(read(), /coverage/)
+  state.result.reviewCoverage = 'complete'
+  item.author = 'assistant'
+  await assert.rejects(read(), /Invalid source read item/)
+  await assert.rejects(
+    registry.call(source.providerId, 'readSource', { source, query: { revision: 'release' } }),
+    /Invalid source read item/
+  )
+})
 
 test('third-party non-message reads use declared query and items without changing core', async t => {
   const { registry, source, state } = await fixture(t)
@@ -205,6 +240,9 @@ test('invalid JSON Schemas and the removed parallel readPagination declaration a
     },
     p => {
       p.read.pagination = 'offset'
+    },
+    p => {
+      p.reviewHistory = { resourceKinds: ['undeclared'] }
     },
   ]) {
     const value = manifest()

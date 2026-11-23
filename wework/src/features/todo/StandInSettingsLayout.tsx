@@ -1,7 +1,8 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { ArrowLeft, ChevronRight, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, X } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { useId, useState } from 'react'
 
 export function StandInSettingsError({
   error,
@@ -179,12 +180,14 @@ export function StandInSettingsEntry({
   onClick,
   label,
   description,
+  disclosure,
 }: {
   testId: string
   disabled: boolean
   onClick(): void
   label: string
   description?: string
+  disclosure?: { expanded: boolean; controls: string }
 }) {
   const { t } = useTranslation('common')
   return (
@@ -195,18 +198,63 @@ export function StandInSettingsEntry({
       data-testid={testId}
       disabled={disabled}
       onClick={onClick}
+      aria-expanded={disclosure?.expanded}
+      aria-controls={disclosure?.controls}
       className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:opacity-40"
     >
-      <span className="flex-1">
+      <span className="min-w-0 flex-1 whitespace-normal break-words">
         <span className="block font-medium">{label}</span>
         {description && (
           <span className="mt-1 block text-sm text-text-secondary">{description}</span>
         )}
       </span>
       <span className="shrink-0 rounded-md border border-border bg-background px-2 py-1 text-sm">
-        {t('standIn.personal.manage')}
+        {t(
+          disclosure
+            ? disclosure.expanded
+              ? 'standIn.workspace.settings_collapse'
+              : 'standIn.workspace.settings_expand'
+            : 'standIn.personal.manage'
+        )}
       </span>
-      <ChevronRight className="h-4 w-4" />
+      {disclosure ? (
+        <ChevronDown
+          aria-hidden="true"
+          className={`h-4 w-4 shrink-0 ${disclosure.expanded ? 'rotate-180' : ''}`}
+        />
+      ) : (
+        <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0" />
+      )}
     </ControlButton>
+  )
+}
+
+export function StandInSettingsDisclosure({
+  testId,
+  label,
+  description,
+  children,
+}: {
+  testId: string
+  label: string
+  description: string
+  children: ReactNode
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const contentId = useId()
+  return (
+    <section data-testid={testId} aria-label={label}>
+      <StandInSettingsEntry
+        testId={`${testId}-toggle`}
+        label={label}
+        description={description}
+        disabled={false}
+        disclosure={{ expanded, controls: contentId }}
+        onClick={() => setExpanded(value => !value)}
+      />
+      <div id={contentId} hidden={!expanded} className="space-y-3 px-3 pt-3">
+        {expanded && children}
+      </div>
+    </section>
   )
 }

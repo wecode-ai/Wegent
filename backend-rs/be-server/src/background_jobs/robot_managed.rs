@@ -107,9 +107,13 @@ async fn reconcile(app: &AppState, execution_id: i64) -> Result<()> {
 
 async fn cancel_task(app: &AppState, row: &Execution, task_id: i64, status: &str) -> Result<()> {
     if status != "PENDING" {
-        crate::task_mutation_api::cancel_task(app, row.executor_owner_user_id, task_id)
-            .await
-            .map_err(|error| anyhow::anyhow!("Managed cancellation failed: {error:?}"))?;
+        wegent_task_mutations::cancel_task(
+            &crate::task_view_state::mutations(app),
+            row.executor_owner_user_id,
+            task_id,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("Managed cancellation failed: {error:?}"))?;
         return Ok(());
     }
     let redis = app

@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react'
 import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
@@ -14,7 +15,7 @@ import { localHarnessLabel } from '@/lib/local-harness'
 import { cn } from '@/lib/utils'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ChevronRight, Loader2, MessageCircle } from 'lucide-react'
-import { BufferedChatInput } from './BufferedChatInput'
+import { ScopedDraftChatInput } from './BufferedChatInput'
 import { CentralHarnessTerminal } from './CentralHarnessTerminal'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DESKTOP_MESSAGE_LIST_CLASS, DESKTOP_MESSAGE_LIST_WIDTH_CLASS } from './desktopChatLayout'
@@ -34,7 +35,7 @@ import {
 } from './requestUserInputOverlay'
 import { TaskDetailScrollArea } from './TaskDetailScrollArea'
 import { SupervisorSuggestionCards } from './TaskSupervisorControl'
-import { TaskIssueShare } from '@/features/todo/TaskIssueShare'
+import { TaskIssueShare, type TaskIssueShareHandle } from '@/features/todo/TaskIssueShare'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
@@ -45,6 +46,8 @@ export function DesktopWorkbenchConversationView({
 }: {
   model: DesktopWorkbenchPaneRenderModel
 }) {
+  const issueShareRef = useRef<TaskIssueShareHandle>(null)
+  const [issueShareToolbarHost, setIssueShareToolbarHost] = useState<HTMLDivElement | null>(null)
   const {
     workbenchVisible,
     presentation,
@@ -172,6 +175,8 @@ export function DesktopWorkbenchConversationView({
     clearCurrentGoal,
     showPageTopBar,
   } = model
+  const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
+  const selectionSharingMounted = Boolean(currentRuntimeTask && paneVisible && workbenchVisible)
   return (
     <TaskDetailScrollArea
       viewportRef={workbenchScrollRef}
@@ -197,6 +202,33 @@ export function DesktopWorkbenchConversationView({
       }
     >
       <>
+        {selectionSharingMounted && currentRuntimeTask && (
+          <TaskIssueShare
+            toolbarContainer={issueShareToolbarHost}
+            shareRef={issueShareRef}
+            key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
+            title={workbenchTitle ?? ''}
+            messages={paneMessages}
+            turns={paneSession.turns}
+            address={{
+              ...currentRuntimeTask,
+              workspacePath: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath,
+            }}
+            readWorkspaceFileChunk={workspaceFileApi.readWorkspaceFileChunk}
+            readHistoryPage={
+              paneSession.transcriptHasMoreBefore && services?.runtimeWorkApi
+                ? (request, signal) =>
+                    services.runtimeWorkApi!.getRuntimeTranscript(
+                      {
+                        ...currentRuntimeTask,
+                        ...request,
+                      },
+                      { signal }
+                    )
+                : undefined
+            }
+          />
+        )}
         <div className="grid w-full flex-1 grid-cols-[minmax(0,1fr)_auto]">
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
@@ -474,13 +506,13 @@ export function DesktopWorkbenchConversationView({
                                       }
                                     />
                                   )}
-                                  <BufferedChatInput
+                                  <ScopedDraftChatInput
                                     alwaysShowComposerToolbar={alwaysShowComposerToolbar}
                                     autoFocus
                                     insertion={conversationSelectionInsertion}
-                                    value={paneSession.input}
-                                    replaceDraftKey={paneSession.replaceDraftKey}
-                                    onChange={paneSession.setInput}
+                                    draftStore={paneSession.draftStore}
+                                    draftScope={paneSession.scopeKey}
+                                    writeDraft={paneSession.setInputForScope}
                                     onDraftEdit={paneSession.onDraftEdit}
                                     onSubmit={submitPaneInput}
                                     disabled={composerDisabled || !paneVisible || !workbenchVisible}
@@ -518,38 +550,16 @@ export function DesktopWorkbenchConversationView({
                                           {currentRuntimeTask &&
                                             paneVisible &&
                                             workbenchVisible && (
-                                              <TaskIssueShare
-                                                key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
-                                                title={workbenchTitle ?? ''}
-                                                messages={paneMessages}
-                                                address={{
-                                                  ...currentRuntimeTask,
-                                                  workspacePath:
-                                                    currentRuntimeTask.workspacePath ||
-                                                    runtimeTaskWorkspacePath,
-                                                }}
-                                                readWorkspaceFileChunk={
-                                                  workspaceFileApi.readWorkspaceFileChunk
-                                                }
-                                                readHistoryPage={
-                                                  paneSession.transcriptHasMoreBefore &&
-                                                  services?.runtimeWorkApi
-                                                    ? (request, signal) =>
-                                                        services.runtimeWorkApi!.getRuntimeTranscript(
-                                                          {
-                                                            ...currentRuntimeTask,
-                                                            ...request,
-                                                          },
-                                                          { signal }
-                                                        )
-                                                    : undefined
-                                                }
+                                              <div
+                                                ref={setIssueShareToolbarHost}
+                                                className="contents"
                                               />
                                             )}
                                         </div>
                                       )
                                     }
                                     isStreaming={paneIsBusy}
+                                    showPauseButton={showPauseButton}
                                     onPause={pauseCurrentResponse}
                                     onCompactContext={
                                       currentRuntimeUsesCodex ||
@@ -716,6 +726,11 @@ export function DesktopWorkbenchConversationView({
                 }
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+                onShareSelectionAsIssue={
+                  selectionSharingMounted
+                    ? (text, context) => issueShareRef.current?.openSelection(text, context)
+                    : undefined
+                }
                 onAddSelectionToConversation={addSelectionToConversation}
                 onAskSelectionInSidebar={askSelectionInSidebar}
                 onOpenSubagent={openSubagentConversation}
@@ -746,13 +761,13 @@ export function DesktopWorkbenchConversationView({
                       hideAvailableUpdates
                       className="mb-3"
                     />
-                    <BufferedChatInput
+                    <ScopedDraftChatInput
                       alwaysShowComposerToolbar={alwaysShowComposerToolbar}
                       showProjectWorkBar={presentation !== 'popout'}
                       autoFocus
-                      value={paneSession.input}
-                      replaceDraftKey={paneSession.replaceDraftKey}
-                      onChange={paneSession.setInput}
+                      draftStore={paneSession.draftStore}
+                      draftScope={paneSession.scopeKey}
+                      writeDraft={paneSession.setInputForScope}
                       onDraftEdit={() => {
                         paneSession.onDraftEdit()
                         setCentralHarnessError(null)
@@ -846,6 +861,7 @@ export function DesktopWorkbenchConversationView({
                       }
                       onSelectCloudProject={handleSelectCloudProject}
                       isStreaming={paneIsBusy}
+                      showPauseButton={showPauseButton}
                       onPause={pauseCurrentResponse}
                       onCompactContext={
                         activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'

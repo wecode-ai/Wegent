@@ -1,6 +1,14 @@
 //! Real MySQL migration checks use a newly created schema, never a developer DB.
 
 use super::*;
+use anyhow::{Result, ensure};
+use brz_mysql::{FromMysqlRow, MysqlService, MysqlTransaction};
+use wegent_database_migrations::test_support::{VERSION_TABLE, migrate};
+
+#[derive(FromMysqlRow)]
+struct Name {
+    name: String,
+}
 
 #[path = "historical_tests.rs"]
 mod historical;
@@ -21,7 +29,10 @@ pub(crate) async fn isolated(test: impl AsyncFnOnce(&MysqlService) -> Result<()>
         "test fixture must use loopback"
     );
     let admin = super::connect(&format!("mysql://root@{address}/mysql?ssl-mode=disabled")).unwrap();
-    let schema = format!("migration_test_{}", super::rows::uuid().replace('-', ""));
+    let schema = format!(
+        "migration_test_{}",
+        wegent_database_migrations::test_support::uuid().replace('-', "")
+    );
     admin
         .with_transaction(async |tx| {
             tx.execute(
@@ -225,7 +236,9 @@ async fn verify_permission_data(mysql: &MysqlService) -> Result<()> {
     }
     mysql.execute("INSERT INTO resource_members (resource_type,resource_id,entity_type,entity_id,role,status,user_id,requested_at,created_at,updated_at) VALUES ('CloudProject',101,'user','7','Reporter','pending',7,NOW(),NOW(),NOW())",()).await?;
     mysql
-        .with_transaction(async |tx| super::data_changes::project_permissions(tx, false).await)
+        .with_transaction(async |tx| {
+            wegent_database_migrations::test_support::project_permissions(tx, false).await
+        })
         .await?;
     #[derive(FromMysqlRow)]
     struct Item {
@@ -260,7 +273,9 @@ async fn verify_permission_data(mysql: &MysqlService) -> Result<()> {
         ("Viewer", "approved")
     );
     mysql
-        .with_transaction(async |tx| super::data_changes::project_permissions(tx, true).await)
+        .with_transaction(async |tx| {
+            wegent_database_migrations::test_support::project_permissions(tx, true).await
+        })
         .await?;
     let nodes:Vec<Item>=mysql.fetch_all("SELECT id,metadata AS payload FROM loop_items WHERE id IN ('101','102','103') ORDER BY id",()).await?;
     assert_eq!(

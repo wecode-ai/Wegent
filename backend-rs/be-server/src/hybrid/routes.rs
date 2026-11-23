@@ -87,6 +87,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn deferred_smart_app_marketplace_keeps_its_rust_handler() {
+        const PATH: &str = "/api/smart-apps/marketplace";
+        const GET: u16 = 1 << 1;
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/routes.toml");
+        let table = load(&path).expect("routes compile");
+        assert!(!table.matches(&Method::GET, PATH));
+        assert!(!table.matches(&Method::POST, PATH));
+        assert!(
+            wegent_smart_apps::registered_routes()
+                .into_iter()
+                .any(|(path, methods)| path == PATH && methods & GET != 0),
+            "GET {PATH} must be registered by the router",
+        );
+    }
+
+    #[test]
+    fn deferred_resource_binding_routes_keep_python_ownership() {
+        const GET: u16 = 1 << 1;
+        const PUT: u16 = 1 << 6;
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/routes.toml");
+        let config = load_routes_config(&path).expect("the route file loads");
+        let skill_binding = "/api/v1/kinds/skills/bindings/me";
+        assert!(!config.routes.iter().any(|rule| {
+            rule.path == skill_binding && rule.methods.iter().any(|method| method == "GET")
+        }));
+        let table = RouteTable::compile(config).expect("the route table compiles");
+        let registered = wegent_resource_library::registered_routes();
+        let agent_binding = "/api/resource-library/agents/:agent_id/bindings";
+        let agent_request = "/api/resource-library/agents/195057/bindings";
+        for (path, request, method, mask) in [
+            (skill_binding, skill_binding, Method::GET, GET),
+            (agent_binding, agent_request, Method::GET, GET),
+            (agent_binding, agent_request, Method::PUT, PUT),
+        ] {
+            assert!(
+                registered
+                    .iter()
+                    .any(|(route, methods)| { *route == path && methods & mask != 0 }),
+                "{method} {path} must be registered"
+            );
+            assert!(!table.matches(&method, request));
+        }
+    }
+
     struct Fixture(PathBuf);
 
     impl Fixture {
@@ -250,15 +295,32 @@ mod tests {
             };
         }
         collect!(__http_registry_http_apis);
+        let connector_routes = wegent_connector_apps::registered_routes();
+        let connector_tools = "/api/connector-runtime/tools";
+        assert!(table.matches(&Method::GET, connector_tools));
+        assert_eq!(
+            connector_routes
+                .iter()
+                .filter(|(path, _)| *path == connector_tools)
+                .count(),
+            1,
+        );
+        assert!(!registered.contains(&("GET".to_owned(), connector_tools.to_owned())));
+        let connector_sse = "/api/mcp/connectors/sse";
+        assert!(table.matches(&Method::GET, connector_sse));
+        assert!(table.matches(&Method::POST, connector_sse));
         for (path, methods) in wegent_runtime_check::registered_routes()
             .into_iter()
             .chain(wegent_models::registered_routes())
             .chain(wegent_capabilities::registered_routes())
+            .chain(wegent_resource_library::registered_routes())
+            .chain(wegent_resource_readiness::registered_routes())
             .chain(wegent_backend_users::registered_routes())
             .chain(wegent_authentication::registered_routes())
             .chain(wegent_oidc::registered_routes())
             .chain(wegent_remote_workspace::registered_routes())
             .chain(wegent_sites::registered_routes())
+            .chain(wegent_smart_apps::registered_routes())
             .chain(wegent_git_repositories::registered_routes())
             .chain(wegent_tasks::registered_routes())
             .chain(wegent_task_export_docx::registered_routes())
@@ -266,13 +328,32 @@ mod tests {
             .chain(wegent_workspaces::registered_routes())
             .chain(wegent_mcp_providers::registered_routes())
             .chain(wegent_teams::registered_routes())
+            .chain(wegent_task_views::registered_routes())
+            .chain(wegent_task_mutations::registered_routes())
+            .chain(wegent_subscriptions::registered_routes())
+            .chain(wegent_legacy_projects::registered_routes())
+            .chain(wegent_runtime_work::registered_routes())
             .chain(wegent_devices::registered_routes())
+            .chain(wegent_device_artifacts::registered_routes())
             .chain(wegent_workspace_archive::registered_routes())
             .chain(wegent_attachments::registered_routes())
+            .chain(wegent_chat_history::registered_routes())
             .chain(wegent_responses_api::registered_routes())
             .chain(wegent_project_coordination::registered_routes())
+            .chain(wegent_project_participation::registered_routes())
+            .chain(wegent_project_scheduler::registered_routes())
             .chain(wegent_knowledge::registered_routes())
+            .chain(wegent_admin_api::registered_routes())
+            .chain(wegent_skill_market::registered_routes())
+            .chain(wegent_notification_inbox::registered_routes())
+            .chain(wegent_knowledge_mcp::registered_routes())
+            .chain(wegent_model_decisions::registered_routes())
+            .chain(wegent_git_inbox::registered_routes())
+            .chain(wegent_web_content::registered_routes())
+            .chain(connector_routes)
             .chain(wegent_plugin_catalog::registered_routes())
+            .chain(wegent_plugin_runtime::registered_routes())
+            .chain(wegent_runtime_observations::registered_routes())
         {
             for (bit, method) in METHODS.into_iter().enumerate() {
                 if methods & (1 << bit) != 0 {
@@ -306,6 +387,9 @@ mod tests {
             "selected routes without a registered handler: {:?}",
             selected.difference(&registered).collect::<Vec<_>>()
         );
+        // Registrations also serve deployments with their own route table.
+        assert!(registered.contains(&("GET".to_owned(), "/api/admin/connector-apps".to_owned())));
+        assert!(!table.matches(&Method::GET, "/api/admin/connector-apps"));
         let custom = Method::from_bytes(b"CUSTOM").unwrap();
         for (method, path) in &selected {
             let concrete = path
@@ -387,11 +471,9 @@ mod tests {
 
         // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
         const GET: u16 = 1 << 1;
-        let registered =
-            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
-                .into_iter()
-                .flat_map(|entry| (entry.0.routes)())
-                .any(|route| route.path == PATH && route.methods & GET != 0);
+        let registered = wegent_resource_library::registered_routes()
+            .into_iter()
+            .any(|(path, methods)| path == PATH && methods & GET != 0);
         assert!(registered, "GET {PATH} must be registered by the router");
     }
 
@@ -614,6 +696,8 @@ mod tests {
                 .flat_map(|entry| (entry.0.routes)())
                 .map(|route| (route.path, route.methods))
                 .chain(wegent_knowledge::registered_routes())
+                .chain(wegent_knowledge_mcp::registered_routes())
+                .chain(wegent_resource_library::registered_routes())
                 .chain(wegent_plugin_catalog::registered_routes())
                 .filter(|(path, methods)| in_scope(path) && methods & (1 << 1) != 0)
                 .map(|(path, _)| path.to_owned())

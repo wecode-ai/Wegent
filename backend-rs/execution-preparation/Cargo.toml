@@ -29,7 +29,6 @@ wegent-http-compat = { workspace = true }
 wegent-identity = { workspace = true }
 wegent-python-compat = { workspace = true }
 wegent-resource-store = { workspace = true }
-wegent-task-store = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

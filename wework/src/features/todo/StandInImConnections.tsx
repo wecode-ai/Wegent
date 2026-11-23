@@ -1,4 +1,4 @@
-import { Check, MessageSquare } from 'lucide-react'
+import { Check, ChevronDown, MessageSquare } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { createStandInImConnectionSource } from './standInImConnectionSource'
@@ -12,7 +12,6 @@ import { StandInImConnectionDialog } from './StandInImConnectionDialog'
 
 const CHANNELS = ['dingtalk', 'telegram', 'discord', 'weibo'] as const
 
-/** Channel entry points live in the identity popover, outside profile forms. */
 export function StandInImConnections({
   services,
   deviceId,
@@ -47,7 +46,7 @@ export function StandInImConnections({
     source.getSnapshot
   )
   const trigger = useRef<HTMLButtonElement | null>(null)
-  const section = useRef<HTMLElement | null>(null)
+  const content = useRef<HTMLDivElement | null>(null)
   const focusTarget = useRef<HTMLElement | null>(null)
   const [focusRequest, setFocusRequest] = useState<object>()
   useFocusRequest(focusTarget, focusRequest, {
@@ -72,8 +71,38 @@ export function StandInImConnections({
       : (sessions.find(row => row.channel_type === type)?.channel_label ?? type)
   const device = devices.find(row => sameDevice(row.device_id))
   return (
-    <section ref={section} aria-label={t('standIn.im.title')} data-testid="stand-in-im-channels">
-      <h3 className="mb-2 text-sm font-medium text-text-secondary">{t('standIn.im.title')}</h3>
+    <div ref={content} className="space-y-2">
+      <div className="flex justify-end empty:hidden">
+        {!loading && error !== 'load' && (availableToAdd.length > 0 || menuOpen) && (
+          <ActionMenu
+            ariaLabel={t('standIn.im.add_channels')}
+            testId="stand-in-im-add-channels"
+            placement="bottom-end"
+            itemClassName="max-md:min-h-11"
+            density="default"
+            triggerLabel={
+              <>
+                {t('standIn.im.add_channels_action')}
+                <ChevronDown aria-hidden="true" className="h-4 w-4" />
+              </>
+            }
+            triggerClassName="shrink-0 gap-2 px-0 text-sm"
+            onOpenChange={setMenuOpen}
+            items={availableToAdd.map(type => ({
+              label: t('standIn.im.add_channel', { channel: label(type) }),
+              icon: MessageSquare,
+              testId: `stand-in-im-channel-${type}`,
+              onSelect: () => {
+                trigger.current =
+                  content.current?.querySelector<HTMLButtonElement>(
+                    '[data-testid="stand-in-im-add-channels"]'
+                  ) ?? null
+                setChannel(type)
+              },
+            }))}
+          />
+        )}
+      </div>
       {loading && (
         <p
           role="status"
@@ -101,7 +130,7 @@ export function StandInImConnections({
           </Button>
         </div>
       )}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 empty:hidden">
         {channels.map(type => {
           const isConnected = sessions.some(row => row.channel_type === type && connected(row))
           return (
@@ -124,29 +153,6 @@ export function StandInImConnections({
             </Button>
           )
         })}
-        {!loading && error !== 'load' && (availableToAdd.length > 0 || menuOpen) && (
-          <ActionMenu
-            ariaLabel={t('standIn.im.add_channels')}
-            testId="stand-in-im-add-channels"
-            placement="bottom-end"
-            itemClassName="max-md:min-h-11"
-            density="default"
-            triggerClassName="flex items-center justify-center rounded-md text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onOpenChange={setMenuOpen}
-            items={availableToAdd.map(type => ({
-              label: t('standIn.im.add_channel', { channel: label(type) }),
-              icon: MessageSquare,
-              testId: `stand-in-im-channel-${type}`,
-              onSelect: () => {
-                trigger.current =
-                  section.current?.querySelector<HTMLButtonElement>(
-                    '[data-testid="stand-in-im-add-channels"]'
-                  ) ?? null
-                setChannel(type)
-              },
-            }))}
-          />
-        )}
       </div>
       {channel !== null && (
         <StandInImConnectionDialog
@@ -166,14 +172,14 @@ export function StandInImConnections({
           onClose={() => {
             // Release the popover's inert state before restoring its trigger focus.
             const availableTrigger = Array.from(
-              section.current?.querySelectorAll('button') ?? []
+              content.current?.querySelectorAll('button') ?? []
             ).find(button => button.dataset.testid === `stand-in-im-channel-${channel}`)
             focusTarget.current =
               availableTrigger ??
-              section.current?.querySelector<HTMLButtonElement>(
+              content.current?.querySelector<HTMLButtonElement>(
                 '[data-testid="stand-in-im-add-channels"]'
               ) ??
-              section.current?.querySelector<HTMLButtonElement>(
+              content.current?.querySelector<HTMLButtonElement>(
                 '[data-testid="stand-in-im-discovery-retry"]'
               ) ??
               (trigger.current?.isConnected ? trigger.current : null)
@@ -182,6 +188,6 @@ export function StandInImConnections({
           }}
         />
       )}
-    </section>
+    </div>
   )
 }

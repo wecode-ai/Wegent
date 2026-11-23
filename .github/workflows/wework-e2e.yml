@@ -839,7 +839,7 @@ jobs:
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Prepare DingTalk protocol fixture for the standard account
-        if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli')
+        if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli') || contains(matrix.segments, 'stand-in-self-learning')
         shell: pwsh
         env:
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}

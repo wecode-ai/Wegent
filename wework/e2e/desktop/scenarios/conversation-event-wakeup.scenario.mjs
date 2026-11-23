@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cp, readFile, writeFile } from 'node:fs/promises'
+import { cp, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createDesktopScenario as createBridgeScenario } from './stand-in-plugin-bridge.scenario.mjs'
@@ -42,12 +42,13 @@ const CONTROL_MCP_IDLE_TTL_MS = 1000
 function latestWaitingSubscriptions(body) {
   const snapshot = body.input.findLast(
     item =>
-      item.type === 'function_call_output' &&
-      item.namespace === 'agent' &&
-      item.name === 'weworkconnectioneventswaiting'
+      item.type === 'message' &&
+      item.role === 'user' &&
+      item.content?.[0]?.text === '[tool_result without a matching tool_call]'
   )
   assert.ok(snapshot, 'The model must receive a waiting subscription snapshot')
-  return JSON.parse(snapshot.output)
+  assert.equal(snapshot.content[1]?.type, 'input_text', 'The snapshot must be model-visible text')
+  return JSON.parse(snapshot.content[1].text)
 }
 
 export function createDesktopScenario(options, { controlContextOnly = false } = {}) {
@@ -114,9 +115,11 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
       },
     },
   }
-  const saveEvents = () =>
-    writeFile(
-      recordsPath,
+  const saveEvents = async () => {
+    // Background MCP readers must see a complete snapshot during event publication.
+    const pendingPath = `${recordsPath}.pending`
+    await writeFile(
+      pendingPath,
       JSON.stringify([
         ...['archive-record', 'long-archive-record'].map(id => ({
           id,
@@ -125,6 +128,8 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
         { id: 'preexisting-checks-record', value: JSON.stringify([failedChecks]) },
       ])
     )
+    await rename(pendingPath, recordsPath)
+  }
   const event = (
     id,
     text,

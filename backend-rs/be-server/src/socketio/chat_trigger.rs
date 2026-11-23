@@ -29,7 +29,7 @@ use crate::responses::create::team_member_context;
 use crate::responses::create::{resolution, seam, subtask_bot};
 use crate::sql_support::StatementArg;
 use crate::state::AppState;
-use crate::task_detail_api::views::context_brief_fields;
+use wegent_task_views::task_detail_api::views::context_brief_fields;
 
 /// `CLIENT_ORIGIN_FRONTEND`.
 const CLIENT_ORIGIN_FRONTEND: &str = "frontend";
@@ -50,6 +50,9 @@ pub(crate) struct ChatTurn {
     pub team_id: i64,
     pub bot_ids: Vec<i64>,
     pub new_session: bool,
+    /// Continuations may start a fresh native session when no authenticated
+    /// prior session evidence exists.
+    pub allow_new_session_fallback: bool,
     pub message: String,
     pub interactive_form_answer: Option<Value>,
     pub additional_skills: Vec<Value>,
@@ -132,7 +135,7 @@ pub(crate) async fn after_commit(
             );
             // A concurrent cancellation can make the subtask undispatchable.
             // Preserve that terminal state instead of marking the turn failed.
-            if !seam::is_subtask_not_dispatchable(&error) {
+            if !wegent_responses_streaming::streaming_bridge::is_subtask_not_dispatchable(&error) {
                 finalize_trigger_failure(&state, &turn, user_id, &error).await;
             }
         }
@@ -280,16 +283,18 @@ async fn broadcast_user_message(
     let context_rows = rows
         .into_iter()
         .filter(|row| row.context_type != CONVERSATION_CONTEXT)
-        .map(|row| crate::task_detail_api::repository::ContextRow {
-            subtask_contexts_id: row.id,
-            subtask_contexts_subtask_id: row.subtask_id,
-            subtask_contexts_context_type: row.context_type,
-            subtask_contexts_name: Some(row.name),
-            subtask_contexts_status: Some(row.status),
-            subtask_contexts_type_data: Some(brz_mysql::Json(
-                brz_json::OpaqueJson::from_serializable(&row.type_data.0),
-            )),
-        })
+        .map(
+            |row| wegent_task_views::task_detail_api::repository::ContextRow {
+                subtask_contexts_id: row.id,
+                subtask_contexts_subtask_id: row.subtask_id,
+                subtask_contexts_context_type: row.context_type,
+                subtask_contexts_name: Some(row.name),
+                subtask_contexts_status: Some(row.status),
+                subtask_contexts_type_data: Some(brz_mysql::Json(
+                    brz_json::OpaqueJson::from_serializable(&row.type_data.0),
+                )),
+            },
+        )
         .collect::<Vec<_>>();
     let contexts_list = context_rows
         .iter()
@@ -360,7 +365,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
     // `db.refresh(team)` reads the row once (`make_transient` afterwards only
     // detaches it), so the flat projection's row is decoded and reused instead
     // of re-selecting the same Team.
-    let team: Option<crate::responses::create::kind_reload::KindEntityRow> = fetch_optional_as(
+    let team: Option<wegent_execution_preparation::kind_reload::KindEntityRow> = fetch_optional_as(
         &mut handle,
         RouteKey::None,
         &crate::task_store_statements::kind_by_id_flat_statement(),
@@ -445,6 +450,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
             executor_namespace: &turn.executor_namespace,
             executor_deleted: false,
             new_session: turn.new_session,
+            allow_new_session_fallback: turn.allow_new_session_fallback,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
             // `request_preparation.py:751-755`: the frontend client origin
@@ -665,6 +671,7 @@ mod tests {
             team_id: 6,
             bot_ids: vec![7],
             new_session: false,
+            allow_new_session_fallback: false,
             message: "hi".into(),
             interactive_form_answer: None,
             additional_skills: Vec::new(),

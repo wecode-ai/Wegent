@@ -144,7 +144,7 @@ async fn upsert_project_assistant_roster(
         && let Some(agent_id) = wegent_agent_id(&input.endpoint_ref)
     {
         crate::background_jobs::project::authority::agent(
-            state,
+            &state.mysql,
             &caller.project.id,
             agent_id,
             input.user_id,
@@ -284,7 +284,7 @@ pub(super) async fn roster_entries(
         if entry.enabled && entry.endpoint_kind == "wegent_agent" {
             let authorized = match wegent_agent_id(&entry.endpoint_ref) {
                 Some(agent_id) => crate::background_jobs::project::authority::agent(
-                    state,
+                    &state.mysql,
                     project_id,
                     agent_id,
                     i64::from(user_id),

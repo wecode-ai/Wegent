@@ -20,6 +20,7 @@ import { verifyRiskyCommandApproval } from './risky-command-approval-flow.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
+import { verifyProjectMenuPointerInput } from './sidebar-hover.mjs'
 import { prepareStandInOnboardingFixture } from './stand-in-onboarding-fixture.mjs'
 
 import {
@@ -2426,11 +2427,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           testId.startsWith('project-menu-') && !projectMenusBeforeProjectAiSettings.has(testId)
       )
       assert.ok(projectMenuTestId, 'The project AI settings fixture identity was not found')
+      const projectId = projectMenuTestId.slice('project-menu-'.length)
+      phase = 'project-menu-pointer-input'
+      await verifyProjectMenuPointerInput(control, projectId, DEFAULT_STEP_TIMEOUT_MS)
       await verifyProjectAiSettings({
         codexHome,
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
-        projectId: projectMenuTestId.slice('project-menu-'.length),
+        projectId,
         setPhase: value => {
           phase = value
         },

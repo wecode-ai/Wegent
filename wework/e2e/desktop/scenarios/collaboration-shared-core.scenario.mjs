@@ -2,6 +2,8 @@ import { showAllCollaborationIssues } from '../modules/collaboration-board-flows
 import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   handlePersonalHomeModel,
   openCollaborationIssueCreation,
@@ -41,7 +43,12 @@ import {
 } from '../modules/issue-activity-timeline.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { verifyMultiTagBoardDrag } from '../modules/collaboration-board-tag-drag.mjs'
-import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
+import {
+  ACTIVE_COMPOSER_SELECTOR,
+  DEFAULT_STEP_TIMEOUT_MS,
+  REMOTE_DOCKER_DEVICE_ID,
+  selectE2EModel,
+} from '../modules/shared.mjs'
 import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
@@ -197,11 +204,48 @@ async function verifyTaskTabLoadedCollaborationTask(control, taskId, taskTabIdsB
   })
 }
 
+async function verifyTaskTabRetention(control, resultDir) {
+  const composer = `${FIXED_TASK_TAB_CONTENT} ${ACTIVE_COMPOSER_SELECTOR}`
+  const board = '[data-testid="workspace-tab-select-fixed-board"]'
+  const draft = 'Keep this unsent draft when switching tabs'
+  const taskListReads = async () =>
+    (await readFile(join(resultDir, 'electron-user-data', 'logs', 'runtime-launch.log'), 'utf8'))
+      .split('\n')
+      .filter(line => line.includes('"stage":"local-work-snapshot-received"')).length
+  await control.command('waitFor', composer, { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('fill', composer, { value: draft })
+  try {
+    await control.command('click', board)
+    await control.command('waitFor', `${board}[aria-selected="true"]`, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', composer, {
+      visible: false,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const before = await taskListReads()
+    assert.ok(before > 0, 'The task list diagnostics did not record initial reads')
+    await control.command('click', FIXED_TASK_TAB_SELECT)
+    await control.command('waitFor', composer, {
+      visible: true,
+      text: draft,
+      stableMs: 1000,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    assert.equal(await control.command('getValue', composer), draft, 'Task draft was lost')
+    assert.equal(await taskListReads(), before, 'Returning to Tasks loaded the task list again')
+  } finally {
+    await control.command('click', FIXED_TASK_TAB_SELECT)
+    await control.command('fill', composer, { value: '' })
+  }
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   executorHome,
+  resultDir,
 }) {
   const boardReplyModel = createBoardReplyModelRegression({
     executorHome,
@@ -1043,6 +1087,7 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
         await capture(control, 'collaboration-shared-core-09-task-tab-refreshed.png')
+        await verifyTaskTabRetention(control, resultDir)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await control.command('waitFor', scoped('[data-testid="wework-collaboration-platform"]'), {
           timeoutMs: uiTimeoutMs,

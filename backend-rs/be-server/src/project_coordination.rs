@@ -197,7 +197,7 @@ async fn set_project_coordinator_binding(
             .ok_or_else(|| {
                 FastApiError::detail(StatusCode::BAD_REQUEST, "A running device is required")
             })?;
-        let group = groups::authorize(state, project_id, group_id, i64::from(actor.0.id))
+        let group = groups::authorize(&state.mysql, project_id, group_id, i64::from(actor.0.id))
             .await
             .map_err(group_error)?;
         if group["leader"]["kind"] != "agent" {

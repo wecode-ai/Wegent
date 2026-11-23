@@ -16,8 +16,10 @@ import { StandInComposer } from './StandInComposer'
 import type { StandInConnectionNavigationHandle } from './StandInConnectionSettings'
 import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
+import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import {
   StandInSettingsActions,
+  StandInSettingsDisclosure,
   StandInSettingsEntry,
   StandInSettingsError,
   StandInSettingsHeader,
@@ -76,14 +78,17 @@ export function StandInPrimaryProfile({
     ...defaultRole.collaboration,
     policy: { automatic: true, askBeforeAct: true, immediate: false },
   }
-  // Consolidate the old two-field profile without dropping either saved value.
+  // Legacy profiles retain their single editor. Learning-enabled profiles keep sources and private preferences separate.
+  const separatePrompt = saved.selfLearningEnabled !== undefined
   const original = {
     ...saved,
     collaboration: saved.collaboration ?? defaultCollaboration,
     calendar: saved.calendar,
     connections: saved.connections ?? [],
-    prompt: '',
-    preferences: [saved.prompt, saved.preferences].filter(Boolean).join('\n\n'),
+    prompt: separatePrompt ? saved.prompt : '',
+    preferences: separatePrompt
+      ? saved.preferences
+      : [saved.prompt, saved.preferences].filter(Boolean).join('\n\n'),
   }
   const [draft, setDraft] = useState(original)
   const [baseline, setBaseline] = useState(original)
@@ -136,6 +141,10 @@ export function StandInPrimaryProfile({
     tagDraft.getDirtySnapshot
   )
   const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
+  const preserveLegacyInstructions =
+    !separatePrompt &&
+    draft.selfLearningEnabled === true &&
+    draft.preferences === original.preferences
 
   const role = {
     ...defaultRole,
@@ -221,8 +230,26 @@ export function StandInPrimaryProfile({
       />
       {!connections && (
         <>
+          {separatePrompt && (
+            <label className="mb-4 grid gap-2">
+              <span>{t('standIn.workspace.ghost_prompt')}</span>
+              <ControlTextarea
+                data-testid="stand-in-primary-ghost-prompt"
+                value={draft.prompt}
+                disabled={blocked}
+                onChange={event => setDraft({ ...draft, prompt: event.target.value })}
+                rows={4}
+              />
+            </label>
+          )}
           <label className="grid gap-2">
-            <span>{t('standIn.workspace.profile_instructions')}</span>
+            <span>
+              {t(
+                separatePrompt
+                  ? 'standIn.workspace.ghost_private_preferences'
+                  : 'standIn.workspace.profile_instructions'
+              )}
+            </span>
             <div className="rounded-lg border border-solid border-border bg-background focus-within:border-text-tertiary focus-within:ring-1 focus-within:ring-focus/20">
               <ControlTextarea
                 data-testid="stand-in-preferences"
@@ -235,9 +262,21 @@ export function StandInPrimaryProfile({
               />
             </div>
             <span className="text-xs text-text-secondary">
-              {t('standIn.workspace.profile_instructions_help')}
+              {t(
+                separatePrompt
+                  ? 'standIn.workspace.ghost_private_preferences_help'
+                  : 'standIn.workspace.profile_instructions_help'
+              )}
             </span>
           </label>
+          <StandInSelfLearningSetting
+            enabled={draft.selfLearningEnabled}
+            savedEnabled={saved.selfLearningEnabled}
+            disabled={blocked}
+            onChange={selfLearningEnabled =>
+              setDraft(current => ({ ...current, selfLearningEnabled }))
+            }
+          />
           <div className="mt-6">
             <StandInSettingsEntry
               label={t('standIn.workspace.connections')}
@@ -289,55 +328,53 @@ export function StandInPrimaryProfile({
         </div>
       )}
       {!connections && (
-        <section
-          className="mt-6 space-y-3 border-t border-border pt-5"
-          data-testid="stand-in-primary-execution"
-        >
-          <div>
-            <h3 className="font-medium">{t('standIn.workspace.execution_settings')}</h3>
-            <p className="mt-1 text-xs text-text-secondary">
-              {t('standIn.workspace.execution_settings_help')}
+        <div className="mt-4">
+          <StandInSettingsDisclosure
+            testId="stand-in-primary-execution"
+            label={t('standIn.workspace.execution_settings')}
+            description={t('standIn.workspace.execution_settings_help')}
+          >
+            <StandInComposer
+              draft={role}
+              showPrompt={false}
+              onChange={update => {
+                setDraft(current => {
+                  const next =
+                    typeof update === 'function' ? update({ ...role, ...current }) : update
+                  return {
+                    ...current,
+                    model: next.model,
+                    modelOptions: next.modelOptions,
+                    workspace: next.workspace,
+                  }
+                })
+              }}
+              onSave={async () => {}}
+              disabled={blocked}
+              submitDisabled={blocked}
+              services={services}
+              devices={devices}
+              runtimeWork={runtimeWork}
+              deviceControl={
+                <StandInDeviceSelect
+                  readOnly={deviceReadOnly}
+                  value={settings.executionDeviceId}
+                  currentDeviceId={localDeviceId}
+                  devices={devices}
+                  disabled={blocked || dirty}
+                  onChange={onSelectDevice}
+                />
+              }
+            />
+            <p className="text-xs text-text-secondary">
+              {t('standIn.workspace.execution_device_help')}
             </p>
-          </div>
-          <StandInComposer
-            draft={role}
-            showPrompt={false}
-            onChange={update => {
-              setDraft(current => {
-                const next = typeof update === 'function' ? update({ ...role, ...current }) : update
-                return {
-                  ...current,
-                  model: next.model,
-                  modelOptions: next.modelOptions,
-                  workspace: next.workspace,
-                }
-              })
-            }}
-            onSave={async () => {}}
-            disabled={blocked}
-            submitDisabled={blocked}
-            services={services}
-            devices={devices}
-            runtimeWork={runtimeWork}
-            deviceControl={
-              <StandInDeviceSelect
-                readOnly={deviceReadOnly}
-                value={settings.executionDeviceId}
-                currentDeviceId={localDeviceId}
-                devices={devices}
-                disabled={blocked || dirty}
-                onChange={onSelectDevice}
-              />
-            }
-          />
-          <p className="text-xs text-text-secondary">
-            {t('standIn.workspace.execution_device_help')}
-          </p>
-          <StandInSettingsError
-            error={runtimeError}
-            retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
-          />
-        </section>
+            <StandInSettingsError
+              error={runtimeError}
+              retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
+            />
+          </StandInSettingsDisclosure>
+        </div>
       )}
       <ConfirmDialog
         open={discard}
@@ -372,6 +409,9 @@ export function StandInPrimaryProfile({
               ...settings,
               primary: {
                 ...draft,
+                ...(preserveLegacyInstructions
+                  ? { prompt: saved.prompt, preferences: saved.preferences }
+                  : {}),
                 collaboration:
                   saved.collaboration || !dequal(draft.collaboration, original.collaboration)
                     ? draft.collaboration

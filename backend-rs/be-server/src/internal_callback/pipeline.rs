@@ -80,7 +80,7 @@ pub(super) async fn dispatch_next(
             executor_manager: &state.executor_manager,
         };
         let persisted = super::completion::persist_completed_result(
-            &ctx,
+            &ctx.storage(),
             task_id,
             subtask_id,
             "FAILED",
@@ -164,6 +164,7 @@ async fn prepare_dispatch(
             executor_namespace: &advance.pair.executor.namespace,
             executor_deleted: advance.pair.executor.deleted_at != 0,
             new_session: false,
+            allow_new_session_fallback: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
             web_runtime_guidance: false,

@@ -18,7 +18,6 @@ use crate::state::AppState;
 use crate::task_creation::{TaskCrdInput, WorkspaceRepository};
 use crate::transaction_outcome::Completion;
 
-use super::kind_reload::reload_team;
 use super::memory_context;
 use super::model::parse_model_string;
 use super::model_selection;
@@ -27,6 +26,7 @@ use super::schema::{ResponseCreateInput, extract_input_text, parse_wegent_tools}
 use super::seam::{self, DispatchInput};
 use super::session::{ChatSessionSetup, SetupChatSessionInput, setup_chat_session};
 use crate::task_skills::kinds::KindCacheStore;
+use wegent_execution_preparation::kind_reload::reload_team;
 use wegent_responses_api::CreateResponse;
 
 pub(crate) async fn create_response(
@@ -46,7 +46,7 @@ pub(crate) async fn create_response(
     if super::wework::is_wework_request(&body) {
         return super::wework::create_response(state, principal, body, limit, &limit_key).await;
     }
-    let mut observation = crate::chat_metrics::RequestObservation::new("api");
+    let mut observation = wegent_execution_completion::chat_metrics::RequestObservation::new("api");
     let input: ResponseCreateInput = serde_json::from_value(body).map_err(invalid_body)?;
     create_response_flow(
         state,
@@ -420,7 +420,7 @@ async fn create_response_flow(
     // The raw `auto_delete_executor` / `auto-delete-executor` header; the
     // endpoint body normalizes it after the rate-limit check.
     raw_auto_delete_executor: Option<&str>,
-    observation: &mut crate::chat_metrics::RequestObservation,
+    observation: &mut wegent_execution_completion::chat_metrics::RequestObservation,
 ) -> Result<CreateResponse, FastApiError> {
     // `setup_chat_session`: task + workspace + paired subtasks.
     let input_text = extract_input_text(&input.input);
@@ -601,7 +601,7 @@ async fn create_response_flow(
     // The same expiry covers the Team Kind: `build_execution_request` receives
     // the expired instance (`openapi_responses.py:795-799`) and its first
     // `team.` access reloads the row by primary key.
-    let team = reload_team(state, &team).await?;
+    let team = reload_team(&state.mysql, &team).await?;
     let user_id = i64::from(user.id);
 
     // `setup.task` is the Task CRD this request built or reused: a resumed

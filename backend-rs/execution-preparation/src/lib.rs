@@ -18,10 +18,10 @@ use wegent_http_compat::FastApiError;
 use wegent_identity::user_reader;
 use wegent_mcp_providers::{mcp_provider_registry, mcp_user_service, user_mcp_oauth};
 use wegent_python_compat::json_compat;
-use wegent_task_store::task_store_statements;
 
 pub mod bot_config;
 pub mod ghost;
+pub mod kind_reload;
 pub mod mcp_servers;
 pub mod model;
 pub mod model_config;

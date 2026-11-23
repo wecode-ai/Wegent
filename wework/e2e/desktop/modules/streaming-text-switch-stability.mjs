@@ -25,7 +25,9 @@ export async function verifyConversationSwitchPosition(
     value: JSON.stringify({
       anchorText,
       scrollerSelector: SCROLLER_SELECTOR,
-      durationMs: uiTimeoutMs,
+      // Keep sampling across the separate waits for the away composer, task row,
+      // restored transcript, and final observation. Each wait retains its own timeout.
+      durationMs: 4 * uiTimeoutMs,
     }),
   })
   let sample

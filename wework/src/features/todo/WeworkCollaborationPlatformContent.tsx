@@ -1,3 +1,4 @@
+import { useScopedDraft } from '@/features/workbench/scopedDraftStore'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useWindowEvent } from '@wegent/collaboration/dom-events'
@@ -148,6 +149,23 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
     if (props.focusedPersonalIssueId)
       setIndependentSelection({ scope: templateScope, selection: props.focusedPersonalIssueId })
   }
+  const { draftStore, setInputForScope } = props.homeDraft
+  const issueDraftScope = `collaboration-home:${templateScope}`
+  const issueProjectScope = `collaboration-home-project:${templateScope}`
+  const issueProject = useScopedDraft(draftStore, issueProjectScope)
+  const issueHomeDraft = useMemo(
+    () => ({
+      get value() {
+        return draftStore.read(issueDraftScope).value
+      },
+      subscribe: (listener: () => void) => draftStore.subscribe(issueDraftScope, listener),
+      getRevision: () => draftStore.read(issueDraftScope).revision,
+      projectId: issueProject.value || null,
+      onSelectProject: (projectId: string) => setInputForScope(issueProjectScope, projectId),
+      onChange: (value: string) => setInputForScope(issueDraftScope, value),
+    }),
+    [draftStore, issueDraftScope, issueProjectScope, issueProject.value, setInputForScope]
+  )
   const projectPins = useCollaborationProjectPins(templateScope)
   const independentIssueSelection =
     independentSelection.scope === templateScope ? independentSelection.selection : undefined
@@ -552,20 +570,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
               if (!cloudConnection.isConnected) setCloudLoginIntent('general')
             },
             accountScope: templateScope,
-            issueHomeDraft: {
-              getRevision: () =>
-                props.homeDraft.getInputRevisionForScope(`collaboration-home:${templateScope}`),
-              projectId:
-                props.homeDraft.inputByScope[`collaboration-home-project:${templateScope}`] ?? null,
-              onSelectProject: projectId =>
-                props.homeDraft.setInputForScope(
-                  `collaboration-home-project:${templateScope}`,
-                  projectId
-                ),
-              value: props.homeDraft.inputByScope[`collaboration-home:${templateScope}`] ?? '',
-              onChange: value =>
-                props.homeDraft.setInputForScope(`collaboration-home:${templateScope}`, value),
-            },
+            issueHomeDraft,
             templateStore,
             templateNavigation: true,
             createIndependentIssue: () =>

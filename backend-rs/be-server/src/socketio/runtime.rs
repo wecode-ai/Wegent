@@ -27,12 +27,7 @@ use crate::state::AppState;
 
 use super::session::{ConnectionRateLimiter, RegistrationDebounce, RegistrationFingerprint};
 
-/// Namespace that receives chat-room device broadcasts.
-pub const CHAT_NAMESPACE: &str = "/chat";
-/// Namespace that owns device sessions and the capability sync call.
-pub const EXECUTOR_NAMESPACE: &str = "/local-executor";
-/// Namespace that relays browser terminal traffic.
-pub const TERMINAL_NAMESPACE: &str = "/terminal";
+pub use wegent_socket_adapter::{CHAT_NAMESPACE, EXECUTOR_NAMESPACE, TERMINAL_NAMESPACE};
 
 /// Bound on follow-up work waiting for the worker; the source creates an
 /// unbounded asyncio task per registration.
@@ -51,51 +46,17 @@ const EMIT_QUEUE_CAPACITY: usize = 2048;
 /// inbound event independently, so one slow ACK must not block the others.
 pub(crate) const RPC_WORKER_COUNT: usize = 4;
 
-/// Deliver one event to every selected recipient, even after a peer fails.
-///
-/// The source's `_handle_emit` emits to each participant of the room; a closed
-/// or saturated recipient must not stop the remaining peers. `deliver` returns
-/// `None` for an excluded recipient and `Some(ok)` for an attempted delivery;
-/// the returned `(sent, failed)` counts attempted deliveries.
-fn fanout<T>(recipients: &[T], mut deliver: impl FnMut(&T) -> Option<bool>) -> (usize, usize) {
-    let (mut sent, mut failed) = (0, 0);
-    for recipient in recipients {
-        match deliver(recipient) {
-            Some(true) => sent += 1,
-            Some(false) => failed += 1,
-            None => {}
-        }
-    }
-    (sent, failed)
-}
-
-#[cfg(test)]
-mod fanout_tests {
-    use super::fanout;
-
-    /// A failed or excluded recipient never stops the remaining peers.
-    #[test]
-    fn a_failed_peer_does_not_stop_the_remaining_recipients() {
-        let recipients = ["healthy-a", "failed", "excluded", "healthy-b"];
-        let mut delivered = Vec::new();
-        let (sent, failed) = fanout(&recipients, |peer| match *peer {
-            "excluded" => None,
-            "failed" => Some(false),
-            peer => {
-                delivered.push(peer);
-                Some(true)
-            }
-        });
-        assert_eq!((sent, failed), (2, 1));
-        assert_eq!(delivered, vec!["healthy-a", "healthy-b"]);
-    }
-}
-
-#[path = "runtime_emitters.rs"]
-mod emitters;
-pub use emitters::SocketEmitters;
-pub(super) use emitters::TerminalRoomBinding;
+pub use wegent_socket_adapter::SocketEmitters;
+pub(super) use wegent_socket_adapter::TerminalRoomBinding;
+use wegent_socket_adapter::redis_adapter::{self, DeviceCommandAckLimits};
+pub use wegent_socket_adapter::redis_adapter::{RuntimeCallEvent, RuntimeRpcCall};
 pub use wegent_terminal::TerminalRelay;
+
+pub(crate) const DEVICE_COMMAND_ACK_LIMITS: DeviceCommandAckLimits = DeviceCommandAckLimits {
+    default_seconds: crate::device_commands::DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    max_seconds: crate::device_commands::MAX_COMMAND_TIMEOUT_SECONDS,
+    grace_seconds: crate::device_commands::SOCKET_ACK_GRACE_SECONDS,
+};
 
 /// The process's emitter handles for `AsyncPubSubManager._handle_emit`'s local
 /// half. Production installs them once during service construction; tests may
@@ -129,59 +90,9 @@ pub(crate) async fn deliver_local_emit(
             event,
             room,
             skip_sid,
-            &super::device_sync::ArgsTuple(&args),
+            &redis_adapter::ArgsTuple(&args),
         )
         .await;
-}
-
-/// The `/local-executor` event one inbound adapter call delivers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RuntimeCallEvent {
-    /// `runtime:rpc`: the executor's downlink call.
-    RuntimeRpc,
-    /// `device:sync_capabilities`: the capability-sync `sio.call`.
-    SyncCapabilities,
-    /// `device:execute_command`: the remote device command round trip.
-    ExecuteCommand,
-    StartTerminalSession,
-    StartCodeServerSession,
-    Terminal(TerminalRelay),
-}
-
-/// One inbound adapter `/local-executor` call waiting for the real client ACK.
-pub struct RuntimeRpcCall {
-    pub event: RuntimeCallEvent,
-    pub room: String,
-    pub namespace: String,
-    pub host_id: String,
-    pub id: u64,
-    pub arg: Value,
-}
-
-impl RuntimeRpcCall {
-    pub(crate) fn ack_timeout(&self) -> std::time::Duration {
-        use crate::device_commands::{
-            DEFAULT_COMMAND_TIMEOUT_SECONDS, MAX_COMMAND_TIMEOUT_SECONDS, SOCKET_ACK_GRACE_SECONDS,
-        };
-        if matches!(self.event, RuntimeCallEvent::Terminal(_)) {
-            return wegent_terminal::TERMINAL_ATTACH_TIMEOUT;
-        }
-        if matches!(
-            self.event,
-            RuntimeCallEvent::StartTerminalSession | RuntimeCallEvent::StartCodeServerSession
-        ) {
-            return std::time::Duration::from_secs(15);
-        }
-        if self.event != RuntimeCallEvent::ExecuteCommand {
-            return super::device_sync::RUNTIME_RPC_TIMEOUT;
-        }
-        let seconds = self.arg["timeout_seconds"]
-            .as_i64()
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_COMMAND_TIMEOUT_SECONDS)
-            .min(MAX_COMMAND_TIMEOUT_SECONDS);
-        std::time::Duration::from_secs((seconds + SOCKET_ACK_GRACE_SECONDS) as u64)
-    }
 }
 
 /// One deferred follow-up job for the device engine.
@@ -217,7 +128,7 @@ fn callback_sequencer_sink(
                     return;
                 };
                 use brz_redis::Redis as _;
-                let message = super::device_sync::callback_message(
+                let message = redis_adapter::callback_message(
                     &callback.host_id,
                     &callback.room,
                     &callback.namespace,
@@ -261,7 +172,7 @@ pub struct SocketRuntime {
     reconcile_jobs: mpsc::Sender<super::device_reconcile::ReconcileJob>,
     rpc_jobs: mpsc::Sender<RuntimeRpcCall>,
     /// Ordinary inbound adapter broadcasts, delivered locally to their room.
-    emit_jobs: mpsc::Sender<super::device_sync::AdapterEmit>,
+    emit_jobs: mpsc::Sender<redis_adapter::AdapterEmit>,
     /// `_sync_runtime_auth_for_heartbeat_device`: its own bounded queue so the
     /// read never queues behind the registration capability sync, exactly like
     /// the source's independent event-loop task.
@@ -328,7 +239,7 @@ pub(crate) struct SocketRuntimeWorkers {
     pub plugin_removal_jobs: mpsc::Receiver<DeviceJob>,
     pub rpc_jobs: mpsc::Receiver<RuntimeRpcCall>,
     pub reconcile_jobs: mpsc::Receiver<super::device_reconcile::ReconcileJob>,
-    pub emit_jobs: mpsc::Receiver<super::device_sync::AdapterEmit>,
+    pub emit_jobs: mpsc::Receiver<redis_adapter::AdapterEmit>,
     pub auth_sync_jobs: mpsc::Receiver<super::device_auth_sync::RuntimeAuthSyncJob>,
 }
 
@@ -408,8 +319,13 @@ impl SocketRuntime {
         // `EventEmitter::new` requires the namespace to be registered, so this
         // runs after `handlers!` has exported every namespace.
         let emitters = Arc::new(
-            SocketEmitters::new(server, Arc::downgrade(&state))
-                .map_err(|error| -> BoxError { format!("Socket.IO emitters: {error}").into() })?,
+            SocketEmitters::new(
+                server,
+                Some(Arc::new(super::issue_room_access::ProjectIssueRoomAccess(
+                    Arc::downgrade(&state),
+                ))),
+            )
+            .map_err(|error| -> BoxError { format!("Socket.IO emitters: {error}").into() })?,
         );
         if self.emitters.set(Arc::clone(&emitters)).is_err() {
             return Err("Socket.IO emitters installed twice".into());
@@ -435,7 +351,7 @@ impl SocketRuntime {
             rpc.set_emit_sink(self.adapter_emit_sink(Arc::clone(&emitters)));
         }
         let emit_receiver = Arc::new(tokio::sync::Mutex::new(emit_receiver));
-        tokio::spawn(super::device_sync::run_adapter_emit_worker(
+        tokio::spawn(redis_adapter::run_adapter_emit_worker(
             emit_receiver,
             Arc::clone(&emitters),
         ));
@@ -494,8 +410,11 @@ impl SocketRuntime {
             let receiver = Arc::clone(&rpc_receiver);
             let emitters = Arc::clone(&emitters);
             let sequencer = Arc::clone(&callback_sequencer);
-            tokio::spawn(super::device_sync::run_rpc_worker(
-                receiver, emitters, sequencer,
+            tokio::spawn(redis_adapter::run_rpc_worker(
+                receiver,
+                emitters,
+                sequencer,
+                DEVICE_COMMAND_ACK_LIMITS,
             ));
         }
         Ok(())
@@ -511,7 +430,7 @@ impl SocketRuntime {
         let emit_jobs = self.emit_jobs.clone();
         let in_flight = self.in_flight.get().cloned();
         Arc::new(move |message: Value| {
-            if let Some(call) = super::device_sync::inbound_rpc_job(message.clone()) {
+            if let Some(call) = redis_adapter::inbound_rpc_job(message.clone()) {
                 if !emitters.has_local_runtime_recipient(&call.room) {
                     return;
                 }
@@ -537,7 +456,7 @@ impl SocketRuntime {
                         &identity.1,
                         &identity.2,
                         identity.3,
-                        tokio::time::Instant::now() + call.ack_timeout(),
+                        tokio::time::Instant::now() + call.ack_timeout(DEVICE_COMMAND_ACK_LIMITS),
                     );
                 }
                 if rpc_jobs.try_send(call).is_err() {
@@ -550,7 +469,7 @@ impl SocketRuntime {
                 }
                 return;
             }
-            if let Some(emit) = super::device_sync::adapter_emit_job(message)
+            if let Some(emit) = redis_adapter::adapter_emit_job(message)
                 && emit_jobs.try_send(emit).is_err()
             {
                 tracing::warn!("inbound adapter broadcast queue is full; the frame is dropped");

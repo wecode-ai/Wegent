@@ -1,0 +1,30 @@
+[package]
+name = "wegent-task-mutations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Task and subtask mutation routes and committed lifecycle effects"
+
+[dependencies]
+anyhow.workspace = true
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing.workspace = true
+wegent-access.workspace = true
+wegent-capabilities.workspace = true
+wegent-chat-history.workspace = true
+wegent-execution-runtime.workspace = true
+wegent-executor-manager.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-python-compat.workspace = true
+wegent-resource-store.workspace = true
+wegent-socket-events.workspace = true
+wegent-task-store.workspace = true
+wegent-task-views.workspace = true

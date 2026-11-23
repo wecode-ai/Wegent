@@ -5,6 +5,7 @@
 
 import hashlib
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -570,6 +571,7 @@ class ProjectChatService:
         project_id: str,
         request: ProjectChatAgentCreate,
     ) -> ProjectChatAgentView:
+        started = time.perf_counter()
         project = self._require_scope(
             db,
             user_id=user_id,
@@ -579,6 +581,10 @@ class ProjectChatService:
         )
         from app.services.runner_routing import validate_agent_policies
 
+        logger.info(
+            "Project Agent creation stage=scope elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
         validate_agent_policies(
             db,
             user_id=user_id,
@@ -588,6 +594,10 @@ class ProjectChatService:
             runtime=request.runtime,
         )
         if request.runtime == "wegent":
+            logger.info(
+                "Project Agent creation stage=policies elapsed_ms=%.1f",
+                (time.perf_counter() - started) * 1000,
+            )
             self._authorize_team_binding(
                 db,
                 project,
@@ -597,6 +607,10 @@ class ProjectChatService:
             )
             from app.services.project_automation_domain import runnable_wegent_team
 
+            logger.info(
+                "Project Agent creation stage=authorization elapsed_ms=%.1f",
+                (time.perf_counter() - started) * 1000,
+            )
             runnable_wegent_team(
                 db,
                 user_id,
@@ -610,6 +624,10 @@ class ProjectChatService:
             runtime_profile_service.require_owned(
                 db, request.default_runtime_profile_id, user_id
             )
+        logger.info(
+            "Project Agent creation stage=dependencies elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
         workspace_binding = ProjectChatWorkspaceBindingView(
             type="standalone",
             status="ready",
@@ -697,6 +715,10 @@ class ProjectChatService:
         }
         db.add(row)
         db.flush()
+        logger.info(
+            "Project Agent creation stage=flushed elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
         if request.runtime != "wegent":
             from app.services.collaboration_permissions import (
                 collaboration_permission_service,
@@ -707,7 +729,16 @@ class ProjectChatService:
             )
         self._commit(db)
         db.refresh(row)
-        return self.agent_to_view(row, db=db, viewer_user_id=user_id)
+        logger.info(
+            "Project Agent creation stage=persisted elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
+        result = self.agent_to_view(row, db=db, viewer_user_id=user_id)
+        logger.info(
+            "Project Agent creation stage=view elapsed_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
+        return result
 
     def update_agent(
         self,

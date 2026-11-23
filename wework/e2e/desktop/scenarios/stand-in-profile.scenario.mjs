@@ -156,6 +156,7 @@ export function createDesktopScenario({
       await openConnectionTypePicker(control)
       await control.command('waitFor', '[data-testid="stand-in-time-connections"]')
       await control.command('click', '[data-testid="stand-in-primary-back-to-settings"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
       await control.command('click', `${PANEL} [data-testid="project-work-button"]`)
       const option = await waitForTestIdByText(control, 'body', 'project-option-', NAME)
       await control.command('click', selector(option))
@@ -182,6 +183,7 @@ export function createDesktopScenario({
       assert.equal(saved.primary.model.model_id, model.model_id)
       await openStandInSettings(control)
       await control.command('waitFor', PANEL)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
       await control.command('waitFor', `${PANEL} [data-testid="project-work-button"]`, {
         text: NAME,
       })

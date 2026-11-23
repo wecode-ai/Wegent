@@ -20,7 +20,7 @@ const independent = new Set([
 const expectedCounts: Record<string, number> = {
   'global-setup.ts': 1,
   'global-teardown.ts': 1,
-  'tasks/agent-conversation-regression.spec.ts': 23,
+  'tasks/agent-conversation-regression.spec.ts': 26,
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/device-ide.spec.ts': 1,
   'tasks/claudecode-compaction.spec.ts': 4,
@@ -125,6 +125,16 @@ describe('Executor scheduling boundaries', () => {
     expect(
       identities.has(
         'tasks/agent-conversation-regression.spec.ts:device ClaudeCode preserves streamed text order after completion and reload'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/agent-conversation-regression.spec.ts:device Codex preserves the native question across a reload and accepts an answer'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/agent-conversation-regression.spec.ts:device Codex expires an unanswered native question and releases its Home'
       )
     ).toBe(true)
     expect(

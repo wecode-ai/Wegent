@@ -91,8 +91,8 @@ impl TerminalTransport for SocketTerminalTransport<'_> {
                 .await
                 .map_err(|error| error.to_string());
         }
-        crate::runtime_work::call_socketio_event(
-            self.app,
+        wegent_runtime_work::call_socketio_event(
+            crate::runtime_work::transport(self.app),
             user_id,
             socket_id,
             EXECUTOR_NAMESPACE,

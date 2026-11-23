@@ -10,6 +10,7 @@ use brz_redis::{
     RedisValues,
 };
 use futures_util::FutureExt;
+use serde_json::json;
 use std::sync::{
     Mutex,
     atomic::{AtomicBool, Ordering},
@@ -381,7 +382,7 @@ async fn content_recovers_missing_metadata_without_a_start_event() {
     with_fixture(async |fixture| {
         let mut emitter =
             StatusUpdatingEmitter::new(fixture.redis.clone(), fixture.task_id, fixture.subtask_id);
-        let observed_start = emitter.observed_started_at.clone();
+        let observed_start = emitter.observed_started_at_for_test().clone();
         let mut chunk = ExecutionEvent::new(EventType::Chunk, fixture.task_id, fixture.subtask_id);
         chunk.content = "real streamed content".into();
         emitter.emit_persist_only(&mut chunk).await.expect("chunk");
@@ -421,11 +422,11 @@ async fn content_recovers_metadata_after_a_failed_start_write() {
         let redis = InterleavedRedis::new(fixture);
         redis.fail_start.store(true, Ordering::SeqCst);
         let mut emitter = StatusUpdatingEmitter::new(redis, fixture.task_id, fixture.subtask_id);
-        emitter.observed_started_at = "2000-01-01T00:00:00.000000+00:00".into();
+        *emitter.observed_started_at_for_test() = "2000-01-01T00:00:00.000000+00:00".into();
         let mut start = ExecutionEvent::new(EventType::Start, fixture.task_id, fixture.subtask_id);
         assert!(emitter.emit_persist_only(&mut start).await.is_err());
         assert!(fixture.raw().await.is_none());
-        let observed_start = emitter.observed_started_at.clone();
+        let observed_start = emitter.observed_started_at_for_test().clone();
         assert_ne!(observed_start, "2000-01-01T00:00:00.000000+00:00");
 
         let mut chunk = ExecutionEvent::new(EventType::Chunk, fixture.task_id, fixture.subtask_id);

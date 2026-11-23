@@ -31,24 +31,15 @@
 pub mod backend;
 #[cfg(test)]
 mod consistency_tests;
-mod csv;
-pub(crate) mod document;
 mod external_storage;
-mod jpeg_metadata;
-pub(crate) mod model_image;
-mod model_jpeg;
-pub(crate) mod office;
 mod open;
 mod overwrite;
-pub(crate) mod pdf;
-mod resample;
 mod response;
 mod s3;
 pub use s3::S3StorageBackend;
 mod store;
 #[cfg(test)]
 mod tests;
-pub(crate) mod truncation;
 mod video_metadata;
 
 pub use backend::{
@@ -56,7 +47,6 @@ pub use backend::{
     ExternalAttachmentUploadRequest, ImagePid, ImageUploadRequest, MySqlStorageBackend,
     StoreObjectRequest, UploadBackendError,
 };
-pub use document::max_file_size;
 pub use overwrite::{OverwriteError, Param, Preflush, overwrite_attachment_internal};
 pub(crate) use response::AttachmentResponse;
 pub use store::refresh_context;
@@ -65,6 +55,8 @@ use store::{
     UPDATE_READY_QUERY, UPDATE_READY_WITH_IMAGE_QUERY, UPDATE_TYPE_DATA_QUERY, build_type_data,
     merge_extra_type_data, type_data_json,
 };
+use wegent_attachment_content::document;
+pub use wegent_attachment_content::document::max_file_size;
 
 use std::sync::Arc;
 

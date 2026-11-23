@@ -15,5 +15,6 @@ pub mod public_models;
 pub mod group_membership;
 pub mod group_queries;
 
+pub mod entity_resources;
 pub mod task_membership;
 pub mod team_access_policy;

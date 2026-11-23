@@ -9,11 +9,11 @@ use sha2::{Digest, Sha256};
 
 use super::NotificationPlan;
 use crate::background_jobs::project::notifications::send_text;
-use crate::runtime_work_im_notification_sessions::{
-    runtime_notification_sessions, runtime_task_notification_key,
-};
-use crate::runtime_work_im_notifications::PrivateSession;
 use crate::state::AppState;
+use wegent_runtime_work::{
+    PrivateSession, optional_model_selection, runtime_notification_sessions,
+    runtime_task_notification_key,
+};
 
 pub(super) async fn deliver(
     state: &AppState,
@@ -27,11 +27,10 @@ pub(super) async fn deliver(
         .get("modelSelection")
         .filter(|value| !value.is_null())
         .or_else(|| payload.get("model_selection"));
-    if let Ok(Some(selection)) = crate::runtime_work_projection::optional_model_selection(selection)
-    {
+    if let Ok(Some(selection)) = optional_model_selection(selection) {
         address["modelSelection"] = serde_json::to_value(selection)?;
     }
-    let sessions = runtime_notification_sessions(state, user_id, &address).await?;
+    let sessions = runtime_notification_sessions(state.redis.as_ref(), user_id, &address).await?;
     if sessions.is_empty() {
         return Ok(());
     }
@@ -152,7 +151,7 @@ async fn send_and_save_reply(
     } else {
         message.to_owned()
     };
-    let sent = send_text(state, &serde_json::to_value(session)?, &message).await?;
+    let sent = send_text(&state.mysql, &serde_json::to_value(session)?, &message).await?;
     if let Some(receipt) = receipt {
         redis.set(receipt, "sent").await?;
     }
@@ -194,7 +193,7 @@ pub(super) fn reply_reference(result: &Value) -> Option<String> {
 
 fn receipt_key(user_id: i64, task_key: &str, session_key: &str, notification: &str) -> String {
     let value = json!([user_id, task_key, session_key, notification]);
-    let canonical = crate::subscriptions_item::python_json_dumps(&value);
+    let canonical = wegent_python_compat::py_json::python_dumps_with_serde_numbers(&value);
     format!(
         "channel:runtime_notification_receipt:{:x}",
         Sha256::digest(canonical)

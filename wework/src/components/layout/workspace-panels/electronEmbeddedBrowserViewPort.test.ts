@@ -34,6 +34,8 @@ test('retains native ownership while coalescing metadata binds and cancels relea
   left = 80
   for (let index = 0; index < 3; index += 1) {
     release()
+    // Cursor refs can bind between metadata ref cleanup and its same-commit replacement.
+    expect(port.getOwnership()).toBe(ownership)
     release = port.bind(placeholder, { ...metadata, interactionBlocked: index === 2 })
   }
   await Promise.resolve()

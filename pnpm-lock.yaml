@@ -10,10 +10,11 @@ overrides:
 packageExtensionsChecksum: sha256-3GPW0RD2OEoa+ghjgZDxiKOdOuYbfpGKnEfG8cSqwz0=
 
 patchedDependencies:
-  '@file-viewer/renderer-drawing@2.1.26': 96f8d20757dde512edb9d888a64aee9a18ab063435284f5e2cba69ef422f1e0c
+  '@file-viewer/renderer-drawing@2.1.26': 269abd13fc9825762095194fdc00cad885f9df61a3a54f7d1a266df1fcd82501
+  '@file-viewer/renderer-text@2.1.26': 07f0ee55b85ffe85a3d499bcc28faf7ce0f10ce66bff3db190de6980f45726a5
   '@ui-sdk/core@0.1.0-beta.10': 094ff83e027272062f9ab53ba87a26cb18a96a9eb1e5dee80861f6576d1bf8e7
   '@xterm/xterm@6.0.0': b38db80fd1709677fc969ffc8691a371d0fa4131a20c4a6f46968c2279918cdb
-  mermaid@11.15.0: 2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3
+  mermaid@11.15.0: 4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e
 
 importers:
 
@@ -309,7 +310,7 @@ importers:
         version: 2.0.0
       mermaid:
         specifier: ^11.4.0
-        version: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+        version: 11.15.0(patch_hash=4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e)
       micromark-extension-gfm-footnote:
         specifier: 2.1.0
         version: 2.1.0
@@ -548,7 +549,7 @@ importers:
         version: 1.17.0(react@19.2.7)
       mermaid:
         specifier: 11.15.0
-        version: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+        version: 11.15.0(patch_hash=4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e)
       plantuml-encoder:
         specifier: 1.4.0
         version: 1.4.0
@@ -799,7 +800,7 @@ importers:
         version: 1.5.0
       mermaid:
         specifier: 11.15.0
-        version: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+        version: 11.15.0(patch_hash=4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e)
       plantuml-encoder:
         specifier: 1.4.0
         version: 1.4.0
@@ -11174,7 +11175,7 @@ snapshots:
     dependencies:
       '@excalidraw/markdown-to-text': 0.1.2
       '@mermaid-js/parser': 0.6.3
-      mermaid: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+      mermaid: 11.15.0(patch_hash=4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e)
       nanoid: 4.0.2
 
   '@excalidraw/random-username@1.1.0': {}
@@ -11229,7 +11230,7 @@ snapshots:
       '@file-viewer/renderer-archive': 2.1.26
       '@file-viewer/renderer-cad': 2.1.26(three@0.184.0)
       '@file-viewer/renderer-data': 2.1.26
-      '@file-viewer/renderer-drawing': 2.1.26(patch_hash=96f8d20757dde512edb9d888a64aee9a18ab063435284f5e2cba69ef422f1e0c)
+      '@file-viewer/renderer-drawing': 2.1.26(patch_hash=269abd13fc9825762095194fdc00cad885f9df61a3a54f7d1a266df1fcd82501)
       '@file-viewer/renderer-eda': 2.1.26
       '@file-viewer/renderer-geo': 2.1.26
       '@file-viewer/renderer-mindmap': 2.1.26
@@ -11243,7 +11244,7 @@ snapshots:
       '@file-viewer/core': 2.1.26
       '@file-viewer/renderer-image': 2.1.26
       '@file-viewer/renderer-media': 2.1.26
-      '@file-viewer/renderer-text': 2.1.26
+      '@file-viewer/renderer-text': 2.1.26(patch_hash=07f0ee55b85ffe85a3d499bcc28faf7ce0f10ce66bff3db190de6980f45726a5)
 
   '@file-viewer/preset-office@2.1.26':
     dependencies:
@@ -11300,11 +11301,11 @@ snapshots:
       hyparquet: 1.26.2
       sql.js: 1.14.1
 
-  '@file-viewer/renderer-drawing@2.1.26(patch_hash=96f8d20757dde512edb9d888a64aee9a18ab063435284f5e2cba69ef422f1e0c)':
+  '@file-viewer/renderer-drawing@2.1.26(patch_hash=269abd13fc9825762095194fdc00cad885f9df61a3a54f7d1a266df1fcd82501)':
     dependencies:
       '@file-viewer/core': 2.1.26
       '@panzoom/panzoom': 4.6.2
-      mermaid: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+      mermaid: 11.15.0(patch_hash=4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e)
       plantuml-encoder: 1.4.0
       roughjs: 4.6.6
 
@@ -11395,13 +11396,13 @@ snapshots:
       styled-exceljs: 0.21.1
       tinycolor2: 1.6.0
 
-  '@file-viewer/renderer-text@2.1.26':
+  '@file-viewer/renderer-text@2.1.26(patch_hash=07f0ee55b85ffe85a3d499bcc28faf7ce0f10ce66bff3db190de6980f45726a5)':
     dependencies:
       '@file-viewer/core': 2.1.26
       diff2html: 3.4.56
       highlight.js: 11.11.1
       marked: 18.0.6
-      mermaid: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+      mermaid: 11.15.0(patch_hash=4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e)
       pako: 2.1.0
 
   '@file-viewer/renderer-typst@2.1.26':
@@ -18195,7 +18196,7 @@ snapshots:
 
   merge2@1.4.1: {}
 
-  mermaid@11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3):
+  mermaid@11.15.0(patch_hash=4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e):
     dependencies:
       '@braintree/sanitize-url': 7.1.2
       '@iconify/utils': 3.1.3
@@ -20075,7 +20076,7 @@ snapshots:
       hast-util-to-jsx-runtime: 2.3.6
       html-url-attributes: 3.0.1
       marked: 17.0.6
-      mermaid: 11.15.0(patch_hash=2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3)
+      mermaid: 11.15.0(patch_hash=4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
       rehype-harden: 1.1.8

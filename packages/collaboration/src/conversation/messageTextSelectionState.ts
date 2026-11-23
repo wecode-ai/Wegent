@@ -1,4 +1,21 @@
-interface MessageTextSelection {
+import type {
+  WorkbenchMessage,
+  RuntimeConversationTurn,
+} from '@wegent/chat-core/runtime-conversation'
+import { readConversationSearchContent } from './conversationSearchHighlightBinding'
+
+export interface MessageSelectionContext {
+  messageId: string
+  content: string
+  start: number
+}
+
+export interface ConversationShareSelectionContext extends MessageSelectionContext {
+  messages: WorkbenchMessage[]
+  turns: RuntimeConversationTurn[]
+}
+
+interface MessageTextSelection extends MessageSelectionContext {
   text: string
   left: number
   top: number
@@ -35,6 +52,9 @@ export function createMessageTextSelectionState(
         (previousText &&
           nextText &&
           previousText.text === nextText.text &&
+          previousText.messageId === nextText.messageId &&
+          previousText.content === nextText.content &&
+          previousText.start === nextText.start &&
           previousText.left === nextText.left &&
           previousText.top === nextText.top &&
           previousText.conversationKey === nextText.conversationKey))
@@ -76,12 +96,41 @@ export function createMessageTextSelectionState(
 
     const range = selection.getRangeAt(0)
     const selectedMessageBodies = selectableMessageBodiesForRange(root, range)
-    if (selectedMessageBodies.length !== 1) {
+    const owner = selectedMessageBodies[0]?.closest<HTMLElement>('[data-message-id]')
+    if (!owner || selectedMessageBodies.some(body => body.closest('[data-message-id]') !== owner)) {
       publish({ textSelection: null })
       return
     }
 
-    const text = selection.toString().trim()
+    const projection: ReturnType<typeof readConversationSearchContent> = { text: '', nodes: [] }
+    // MessageList owns one article; its prose segments appear in transcript order.
+    for (const body of owner.querySelectorAll<HTMLElement>('[data-message-selectable-text]')) {
+      if (body.closest('[data-message-id]') !== owner) continue
+      const part = readConversationSearchContent(body)
+      if (!part.text) continue
+      if (projection.text) projection.text += '\n\n'
+      const offset = projection.text.length
+      projection.nodes.push(
+        ...part.nodes.map(entry => ({
+          ...entry,
+          start: entry.start + offset,
+          end: entry.end + offset,
+        }))
+      )
+      projection.text += part.text
+    }
+    let selectionStart: number | undefined
+    let selectionEnd = 0
+    for (const entry of projection.nodes) {
+      const selected = selectedTextWithinElement(range, entry.node)
+      if (!selected) continue
+      const offset = range.startContainer === entry.node ? range.startOffset : 0
+      selectionStart ??= entry.start + offset
+      selectionEnd = entry.start + offset + selected.length
+    }
+    const selectedText = projection.text.slice(selectionStart ?? 0, selectionEnd)
+    const text = selectedText.trim()
+    const start = (selectionStart ?? 0) + selectedText.length - selectedText.trimStart().length
     if (!text) {
       publish({ textSelection: null })
       return
@@ -89,6 +138,9 @@ export function createMessageTextSelectionState(
     const rect = range.getBoundingClientRect()
     const nextSelection: MessageTextSelection = {
       text,
+      messageId: owner.dataset.messageId ?? '',
+      content: projection.text,
+      start,
       left: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 120),
       top: Math.max(rect.top - SELECTION_ACTION_GAP, 44),
       conversationKey,
@@ -146,7 +198,7 @@ function selectableMessageBodiesForRange(root: HTMLElement, range: Range): HTMLE
   )
 }
 
-function selectedTextWithinElement(range: Range, element: HTMLElement): string {
+function selectedTextWithinElement(range: Range, element: Node): string {
   if (!range.intersectsNode(element)) return ''
 
   const intersection = document.createRange()

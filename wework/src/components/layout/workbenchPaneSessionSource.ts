@@ -9,7 +9,9 @@ import type { RuntimeTranscriptLoader } from '@/types/workbench'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   getRuntimeConversationMessages,
+  getRuntimeConversationSnapshot,
   isRuntimeConversationArchived,
+  runtimeConversationKey,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
@@ -21,8 +23,13 @@ import {
   type PaneSessionState,
   type PaneSessionStateActions,
 } from './workbenchPaneSessionState'
-import { createPaneSessionFrame, type PaneSessionExternal } from './workbenchPaneSessionFrame'
+import {
+  createPaneSessionFrame,
+  type PaneSessionExternal,
+  type PaneSessionFrame,
+} from './workbenchPaneSessionFrame'
 import { createPaneSessionView } from './workbenchPaneSessionView'
+import { deferHiddenConversationText } from './workbenchPaneConversationPresentation'
 import type {
   PaneCommandContext,
   PaneCommands,
@@ -67,6 +74,22 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   let unsubscribeSearch: (() => void) | undefined
   let stopWindowActivity: (() => void) | undefined
   let windowActivity: WorkbenchWindowActivity = 'foreground'
+  type Conversation = ReturnType<typeof getRuntimeConversationSnapshot>
+  let presentedConversation:
+    | { key: string; current: Conversation; visible: Conversation }
+    | undefined
+  const readPresentedConversation: typeof getRuntimeConversationSnapshot = address => {
+    const key = runtimeConversationKey(address)
+    const current = getRuntimeConversationSnapshot(address)
+    const previous = presentedConversation?.key === key ? presentedConversation : undefined
+    let visible = current
+    if (windowActivity === 'hidden' && previous) {
+      if (previous.current === current) return previous.visible
+      visible = deferHiddenConversationText(current, previous.visible)
+    }
+    presentedConversation = { key, current, visible }
+    return visible
+  }
   let pendingStreamPresentation = false
   let conversationFrame: number | undefined
   let conversationTimer: ReturnType<typeof setTimeout> | undefined
@@ -125,7 +148,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     }
     return { read: readTranscript, isCurrent }
   }
-  const frame = () => createPaneSessionFrame(external, state, readPort())
+  const frame = (readConversation = getRuntimeConversationSnapshot) =>
+    createPaneSessionFrame(external, state, readPort(), readConversation)
   const diagnostics = createPaneSessionDiagnostics({ readFrame: frame, isActive })
   const live: PaneTransactionState = {
     browserAnnotationCommandSequence: 0,
@@ -141,9 +165,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     get mounted() {
       return isActive()
     },
-    get inputRevision() {
-      return state.inputRevision
-    },
+    inputRevision: 0,
     get activeInputScope() {
       return currentInputScope()
     },
@@ -434,7 +456,12 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       return bind().commands.setInput(...args)
     },
   }
-  let snapshot = createPaneSessionView(frame(), commands, search, attachmentCommands)
+  let snapshot = createPaneSessionView(
+    frame(readPresentedConversation),
+    commands,
+    search,
+    attachmentCommands
+  )
   const differs = (previous: readonly unknown[] | undefined, next: readonly unknown[]) =>
     !previous || next.some((value, index) => !Object.is(value, previous[index]))
   function publish() {
@@ -446,7 +473,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     try {
       do {
         publishAgain = false
-        const current = frame()
+        const current = frame(readPresentedConversation)
         if (
           current.runtimeTaskLoadTarget &&
           current.threadGoal &&
@@ -472,6 +499,19 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     } finally {
       publishing = false
     }
+  }
+  function reconcileGoal(current: PaneSessionFrame) {
+    if (!isActive()) return
+    const nextScope = [
+      current.runtimeTaskLoadTarget?.key,
+      current.getRuntimeGoal,
+      current.paneStatus.isCreatingTask,
+    ]
+    if (!differs(goalReadScope, nextScope)) return
+    goalReadScope = nextScope
+    goalReaderController.abort()
+    goalReaderController = new AbortController()
+    if (current.runtimeTaskLoadTarget) hydrateRuntimePaneGoal(bind(), goalReaderController.signal)
   }
   function reconcile() {
     if (!isActive() || reconciling) return
@@ -526,14 +566,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
             )
           : undefined
       }
-      const nextGoalReadScope = [current.runtimeTaskLoadTarget?.key, current.getRuntimeGoal]
-      if (differs(goalReadScope, nextGoalReadScope)) {
-        goalReadScope = nextGoalReadScope
-        goalReaderController.abort()
-        goalReaderController = new AbortController()
-        if (current.runtimeTaskLoadTarget)
-          hydrateRuntimePaneGoal(bind(), goalReaderController.signal)
-      }
+      reconcileGoal(current)
       const nextReadScope = [current.runtimeTaskLoadTarget?.key, state.transcriptReloadVersion]
       if (differs(readScope, nextReadScope)) {
         const previousTarget = readScope?.[0]
@@ -580,8 +613,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       external = next
       accountId ??= next.workbench.state.user?.id
       listeners.add(listener)
-      if (previousInputScope !== currentInputScope())
-        state = { ...state, inputRevision: state.inputRevision + 1 }
+      if (previousInputScope !== currentInputScope()) live.inputRevision += 1
       const chat = next.workbench.projectChat
       const inputScope = currentInputScope()
       const signature = [
@@ -591,8 +623,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
         next.currentRuntimeTask?.workspacePath,
         next.workbench.state.runtimeWork,
         inputScope,
-        chat.inputByScope[inputScope],
-        chat.getInputRevisionForScope(inputScope),
+        chat.draftStore,
+        chat.setInputForScope,
         chat.composerErrorByScope?.[inputScope],
         chat.composerError,
         chat.goalDraftActiveByScope?.[inputScope],
@@ -607,7 +639,9 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       if (!started) {
         started = true
         stopWindowActivity = subscribeWorkbenchWindowActivity(activity => {
-          const resumed = activity === 'foreground' && windowActivity !== 'foreground'
+          const resumed =
+            (windowActivity === 'hidden' && activity !== 'hidden') ||
+            (activity === 'foreground' && windowActivity !== 'foreground')
           windowActivity = activity
           if (resumed) flushConversation()
           else if (pendingStreamPresentation) {
@@ -617,9 +651,11 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
         })
         let revision = lifecycleStore.getTaskRevision(frame().lifecycleAddress)
         unsubscribeLifecycle = lifecycleStore.subscribe(() => {
-          const nextRevision = lifecycleStore.getTaskRevision(frame().lifecycleAddress)
+          const current = frame()
+          const nextRevision = lifecycleStore.getTaskRevision(current.lifecycleAddress)
           if (revision === nextRevision) return
           revision = nextRevision
+          reconcileGoal(current)
           publish()
         })
       }
@@ -638,6 +674,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
           stopWindowActivity?.()
           stopWindowActivity = undefined
           windowActivity = 'foreground'
+          presentedConversation = undefined
           readScope = undefined
           releaseQueue?.()
           releaseQueue = undefined

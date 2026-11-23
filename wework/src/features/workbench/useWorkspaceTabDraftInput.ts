@@ -4,11 +4,10 @@ import {
   publishWorkspaceTabTransferState,
   WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
-import { useScopedDraftInput } from './useScopedDraftInput'
+import { createScopedDraftStore } from './scopedDraftStore'
 
 export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
-  const draft = useScopedDraftInput(() => ({}))
-  const { inputs, replaceInputs } = draft
+  const [draftStore] = useState(createScopedDraftStore)
   const [goalDraftActiveByScope, setGoalDraftActiveByScope] = useState<Record<string, boolean>>({})
   const setGoalDraftActiveForScope = useCallback((scopeKey: string, active: boolean) => {
     setGoalDraftActiveByScope(current => {
@@ -24,7 +23,7 @@ export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
     const restore = () => {
       const transfer = consumeWorkspaceTabTransfer(workspaceTabId)
       if (transfer) {
-        replaceInputs(transfer.draftInputByScope)
+        draftStore.restore(transfer.draftInputByScope)
         setGoalDraftActiveByScope(transfer.goalDraftActiveByScope ?? {})
       }
     }
@@ -34,13 +33,16 @@ export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
     restore()
     window.addEventListener(WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT, accept)
     return () => window.removeEventListener(WORKSPACE_TAB_TRANSFER_ACCEPTED_EVENT, accept)
-  }, [replaceInputs, workspaceTabId])
+  }, [draftStore, workspaceTabId])
   useLayoutEffect(() => {
     if (!workspaceTabId) return
+    // A hidden tab can still be popped out from the tab strip.
     publishWorkspaceTabTransferState(workspaceTabId, {
-      draftInputByScope: inputs,
+      get draftInputByScope() {
+        return draftStore.exportInputs()
+      },
       goalDraftActiveByScope,
     })
-  }, [goalDraftActiveByScope, inputs, workspaceTabId])
-  return { ...draft, goalDraftActiveByScope, setGoalDraftActiveForScope }
+  }, [draftStore, goalDraftActiveByScope, workspaceTabId])
+  return { draftStore, goalDraftActiveByScope, setGoalDraftActiveForScope }
 }

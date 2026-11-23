@@ -65,7 +65,6 @@ export interface WorkbenchSessionInput extends WorkbenchStreamInput {
   composerAppsSourceActive: boolean
   marketplaceCacheKey: string
   listLocalApps: ReturnType<typeof useListLocalApps>
-  workspaceTabRevealRevision: number
   onStartupReadyChange?: (ready: boolean) => void
 }
 interface TabAccountOwner {
@@ -107,7 +106,6 @@ export function createWorkbenchSession(
   let previousTrials = false
   let previousReady: boolean | undefined
   let previousReadyCallback: WorkbenchSessionInput['onStartupReadyChange']
-  let revealRevision: number | undefined
   let scheduled = false
   const inputs = () => {
     if (!input) throw new Error('Workbench capabilities are not committed')
@@ -237,7 +235,7 @@ export function createWorkbenchSession(
     if (!running) {
       running = true
       state.activate()
-      streams = createWorkbenchSessionStreams(owner)
+      streams = createWorkbenchSessionStreams(owner, tabId)
       stopState = state.subscribe(schedule)
       stopInventory = subscribePluginMarketplaceCache(snapshot => {
         if (snapshot && snapshot.cacheKey !== inputs().marketplaceCacheKey) return
@@ -295,13 +293,6 @@ export function createWorkbenchSession(
       previousReadyCallback = input.onStartupReadyChange
       input.onStartupReadyChange?.(ready)
     }
-    if (revealRevision !== undefined && revealRevision !== input.workspaceTabRevealRevision)
-      void operations
-        .stableRefreshWorkLists()
-        .catch(error =>
-          console.warn('[Wework] Failed to refresh runtime work after tab reveal', error)
-        )
-    revealRevision = input.workspaceTabRevealRevision
     routeNavigation.update(
       observers > 0 && active && input.taskRouteActive === true,
       input.notificationTaskReminders

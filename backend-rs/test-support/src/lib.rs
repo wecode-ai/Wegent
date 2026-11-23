@@ -10,6 +10,8 @@ pub mod mysql_rows;
 
 pub use database_name::unique_database_name;
 
+pub const LOOP_ITEMS_NULLABLE_SQL: &str = include_str!("../fixtures/loop_items_nullable.sql");
+
 use brz_mysql::{
     FromMysqlRow, Mysql, MysqlArgs, MysqlExecution, MysqlResult, MysqlRouteKey, MysqlRouting,
     MysqlService, MysqlTransactionService,

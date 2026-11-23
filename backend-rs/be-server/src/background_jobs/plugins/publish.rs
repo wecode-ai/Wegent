@@ -3,11 +3,7 @@
 
 //! Publication preserves review policy, immutable versions and administrator copy.
 
-use super::{
-    Upstream,
-    package::{self, Package},
-    storage::Storage,
-};
+use super::{Upstream, storage::Storage};
 use crate::AppState;
 use anyhow::{Result, bail};
 use brz_mysql::{FromMysqlRow, Json, MysqlError, MysqlResult, MysqlTransaction};
@@ -15,6 +11,7 @@ use brz_redis::Redis;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, sync::Arc};
+use wegent_plugin_package::{self as package, Package};
 
 #[derive(FromMysqlRow)]
 struct Plugin {

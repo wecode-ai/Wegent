@@ -19,7 +19,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 sha2 = { workspace = true }
 tracing = { workspace = true }
-wegent-attachments = { workspace = true }
+wegent-attachment-links = { workspace = true }
 wegent-backend-config = { workspace = true }
 wegent-backend-persistence = { workspace = true }
 wegent-execution-runtime = { workspace = true }
@@ -33,6 +33,6 @@ wegent-task-store = { workspace = true }
 [dev-dependencies]
 async-trait = { workspace = true }
 jsonwebtoken = { workspace = true }
-tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 wegent-backend-test-support = { workspace = true }
 wegent-identity = { workspace = true, features = ["test-support"] }

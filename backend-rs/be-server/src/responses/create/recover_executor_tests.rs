@@ -13,12 +13,12 @@ use super::{
     probes_executor_binding, read_subtask_with_contexts, recover_executor_if_needed,
     requires_claude_session, shell_supports_recovery,
 };
-use crate::chat_repository::contexts_by_subtask_ids_statement;
 use crate::responses::create::dispatch::ExecutionRequest;
 use crate::sql_test_support::mysql_pool_server;
 use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
 use crate::task_store::TableTemplates;
 use crate::task_store_statements::{subtask_by_id_statement, subtask_column_index};
+use wegent_chat_history::chat_repository::contexts_by_subtask_ids_statement;
 
 /// Deployment shard policy for the test: the recorded `{{subtasks}}` template
 /// renders the physical table the recording shows.

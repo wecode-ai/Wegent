@@ -72,7 +72,9 @@ export function apply(ctx) {
     const unregister = ctx.webServer.register({
       kind: 'exact',
       path: BASE_PATH,
-      handler: ctx.weworkRequestSecurity.wrap((req, res) => handleRpc(req, res, request)),
+      handler: ctx.weworkRequestSecurity.wrap((req, res) => handleRpc(req, res, request), {
+        rpc: true,
+      }),
     })
     return () => {
       active = false
@@ -91,12 +93,15 @@ export async function handleRpc(req, res, request) {
   }
   try {
     const body = await readJsonBody(req)
+    if (res.writableEnded || res.destroyed) return
     if (!isRecord(body)) {
       throw new PluginRuntimeError('invalid_request', 'Request body must be an object', 400)
     }
     const result = await request(body.plugin, body.method, body.params ?? {})
     sendJson(res, 200, { ok: true, result: result ?? null })
   } catch (error) {
+    if (res.writableEnded || res.destroyed) return
+    if (res.headersSent) return res.destroy()
     sendError(res, error)
   }
 }
@@ -113,7 +118,7 @@ export class PluginRuntimeError extends Error {
 async function readJsonBody(req) {
   let bytes = 0
   const chunks = []
-  for await (const chunk of req) {
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     bytes += buffer.byteLength
     if (bytes > MAX_REQUEST_BODY_BYTES) {
@@ -152,6 +157,7 @@ function sendJson(res, status, value) {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'content-length': Buffer.byteLength(body),
+    ...(status >= 400 ? { connection: 'close' } : {}),
   })
   res.end(body)
 }

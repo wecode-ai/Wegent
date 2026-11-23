@@ -11,11 +11,11 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::background_jobs::project::notifications::send_text;
-use crate::runtime_work_im_notification_sessions::runtime_question_sessions;
-use crate::runtime_work_im_notifications::{
-    PrivateSession, decode_json, parse_private_session, private_session_key, unix_seconds,
-};
 use crate::state::AppState;
+use wegent_runtime_work::{
+    PrivateSession, decode_json, parse_private_session, private_session_key,
+    runtime_question_sessions, unix_seconds,
+};
 
 const RETENTION_SECONDS: u64 = 7 * 24 * 60 * 60;
 const STATE_COMMIT: &str = "if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end \
@@ -181,7 +181,7 @@ async fn recipients(
     source: Option<&Value>,
 ) -> Result<Vec<PrivateSession>> {
     let Some(source) = source.filter(|source| source["source"] == "im") else {
-        return Ok(runtime_question_sessions(state, user_id, address).await?);
+        return Ok(runtime_question_sessions(state.redis.as_ref(), user_id, address).await?);
     };
     let key = source["external_id"]
         .as_str()
@@ -190,7 +190,7 @@ async fn recipients(
     // Group-channel tasks have no private-session address. Owner questions use
     // the configured personal recipient rather than exposing them to the group.
     if key.is_empty() {
-        return Ok(runtime_question_sessions(state, user_id, address).await?);
+        return Ok(runtime_question_sessions(state.redis.as_ref(), user_id, address).await?);
     }
     let redis = state.redis.as_ref().context("Redis is unavailable")?;
     let cached: Option<String> = redis.get(private_session_key(key)).await?;
@@ -327,7 +327,7 @@ async fn deliver_locked(
         {
             continue;
         }
-        match send_text(state, &serde_json::to_value(session)?, &text).await {
+        match send_text(&state.mysql, &serde_json::to_value(session)?, &text).await {
             Ok(sent) => {
                 let entry = document.get_mut(&id).expect("Question entry was inserted");
                 if !entry["deliveries"][&session.session_key].is_object() {

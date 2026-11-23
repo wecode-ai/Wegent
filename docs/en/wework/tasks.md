@@ -52,6 +52,12 @@ During the initial task load, the desktop sidebar shows **Loading tasks…** bel
 
 ### Share a conversation as an issue
 
+Select text in a task conversation and choose **Share with others** in the selection popover to open the same flow with that text already selected. Confirm participants, assignee and content, then save. Sign in if prompted.
+
+The full source message is shown with the selection highlighted. Only highlighted text is shared by default. Select the expand icon at the top right of the message (**Share whole message**) to include its full content. Select the shrink icon (**Share selected text only**) to switch back. You can also select other messages and load earlier history.
+
+Messages retain transcript order. An empty checkbox means excluded, a minus means only the selected fragment, and a check means the whole message. Clicking a partial message selects the whole message; click again to exclude it, then again to restore the fragment.
+
 In a desktop task, select **Share as issue** above the composer. It opens the same creation view as the collaboration sidebar. Edit the title at the top. On the left, choose participants, assign the issue and optionally link a project. You are the default assignee. On the right, choose what to share and add a to-do. Sign in to your team's Wework service if prompted.
 
 - Leave participants and the project blank and select **Create Issue** to keep the issue private. Select colleagues and choose **Create and share** to notify them.
@@ -257,6 +263,8 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 | Interrupt and send      | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
+
+While a subagent is running, the composer keeps the Send button visible. Enter a draft to send a follow-up message.
 
 ### Answer AI questions
 
