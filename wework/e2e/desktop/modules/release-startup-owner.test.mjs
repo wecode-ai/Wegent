@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
+import { createRequire, stripTypeScriptTypes } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -30,10 +30,14 @@ test(
     const electron = require('electron')
     await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
     await writeFile(
+      join(root, 'release-startup-owner.mjs'),
+      stripTypeScriptTypes(await readFile(source, 'utf8'))
+    )
+    await writeFile(
       entry,
       `
     const {app} = require('electron')
-    const {appendFileSync,existsSync,readFileSync,mkdirSync} = require('node:fs')
+    const {appendFileSync,existsSync,mkdirSync} = require('node:fs')
     const trace = phase => {
       const event = JSON.stringify({phase,pid:process.pid})
       appendFileSync(require('node:path').join(${JSON.stringify(root)}, 'trace-' + process.pid + '.jsonl'), event + '\\n')
@@ -43,9 +47,8 @@ test(
     const profile = require('node:path').join(${JSON.stringify(root)}, 'profile-' + process.pid)
     mkdirSync(profile, {recursive:true,mode:0o700})
     app.setPath('userData', profile)
-    const {stripTypeScriptTypes} = require('node:module')
-    const code = stripTypeScriptTypes(readFileSync(${JSON.stringify(source)}, 'utf8'))
-    import('data:text/javascript;base64,' + Buffer.from(code).toString('base64')).then(async ({acquireReleaseStartup}) => {
+    const {acquireReleaseStartup} = require('./release-startup-owner.mjs')
+    void (async () => {
       trace('acquiring')
       const release = await acquireReleaseStartup(process.argv.at(-1), ${JSON.stringify(launcher)}, error => {
         console.error(error.message)
@@ -67,7 +70,7 @@ test(
           app.exit(0)
         })().catch(error => {console.error(error);app.exit(1)})
       }, 25)
-    }).catch(error => {console.error(error);app.exit(1)})
+    })().catch(error => {console.error(error);app.exit(1)})
   `
     )
     function launch(identity) {

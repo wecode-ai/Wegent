@@ -8,6 +8,8 @@ sidebar_position: 4
 
 ## Individual composer controls
 
+When a red error notice appears above the task composer, select **Dismiss notice** on its right. Dismissing it leaves the draft and task run in place. If a plugin login check fails, the notice identifies the plugin to check.
+
 | Feature                          | UI steps                                                                         | Conditions and result                                                                                                      |
 | -------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | Photos and files                 | Composer + → add photos/files → choose → review attachments                      | Removing an attachment does not delete its source file                                                                     |
@@ -156,6 +158,8 @@ Click the PR/MR status beside a task and choose **Continue fixing with AI** when
 <a id="task-board-association"></a>
 
 ## Add a conversation to a project-space board
+
+When an Issue is linked, the AI uses the conversation for ordinary follow-ups such as confirming a requirement or adding a constraint. It accesses the project space when you explicitly ask it to look up or act on the Issue, or when the current request requires Issue information missing from the conversation.
 
 Runtime task and private conversation titles are independent of the bound Issue title. Runs started from tasks, Issue details, or Collaboration never overwrite an existing Issue title when the conversation title changes. Edit the title in Issue details to rename the Issue.
 
