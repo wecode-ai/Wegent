@@ -2,6 +2,7 @@ import { roleSelectsProject, standInRoleName } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkspaceNavigationDetail } from '@/lib/navigation'
@@ -27,7 +28,7 @@ import {
 import { createPortal } from 'react-dom'
 import { StandInConversation } from './StandInConversation'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
-import { StandInGhostRevisionEntry } from './StandInGhostRevisionEntry'
+import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInOnboarding } from './StandInOnboarding'
@@ -37,7 +38,7 @@ import { standInProcessingFailure } from './standInProcessingFailure'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
-import { StandInSettingsDisclosure, StandInSettingsEntry } from './StandInSettingsLayout'
+import type { StandInSettingsShortcut } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
@@ -239,6 +240,7 @@ export function StandInOverviewPage({
     if (panelRef.current) panelRef.current.requestLeave(action)
     else action()
   }
+  const openMemory = useStableEvent(() => leavePanel(() => openProfile('memory')))
   const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
   const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
   const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
@@ -331,46 +333,52 @@ export function StandInOverviewPage({
     processingFailure.summary ??
     processingFailure.message ??
     (processing.status?.awaitingUser ? t('standIn.processing.needs_input') : null)
-  const management = (
-    <section data-testid="stand-in-settings-tools" className="mt-4 space-y-4">
-      {active && deviceId && (profile === 'primary' || profile === 'role') && (
-        <StandInSettingsDisclosure
-          testId="stand-in-im-channels"
-          label={t('standIn.im.title')}
-          description={t('standIn.im.settings_help')}
-        >
-          <StandInImConnections
-            services={props.services}
-            devices={props.devices}
-            deviceId={deviceId}
-            roleId={profile === 'role' ? roleId : undefined}
-            name={
-              profile === 'role' && role
-                ? standInRoleName(
-                    role,
-                    Math.max(0, roles.indexOf(role)),
-                    t('standIn.personal.default_role')
-                  )
-                : t('standIn.title')
-            }
-            onOpenChange={setImDialogOpen}
-          />
-        </StandInSettingsDisclosure>
-      )}
-      {api && saved && (
-        <StandInSettingsEntry
-          testId="stand-in-memory-open"
-          label={t('standIn.memory.title')}
-          description={t('standIn.memory.settings_help')}
-          disabled={false}
-          onClick={() => leavePanel(() => openProfile('memory'))}
+  const shortcuts: StandInSettingsShortcut[] = []
+  if (active && deviceId && (profile === 'primary' || profile === 'role')) {
+    shortcuts.push({
+      id: 'im',
+      testId: 'stand-in-im-channels-toggle',
+      containerTestId: 'stand-in-im-channels',
+      label: t('standIn.im.title'),
+      description: t('standIn.im.settings_help'),
+      content: (
+        <StandInImConnections
+          services={props.services}
+          devices={props.devices}
+          deviceId={deviceId}
+          roleId={profile === 'role' ? roleId : undefined}
+          name={
+            profile === 'role' && role
+              ? standInRoleName(
+                  role,
+                  Math.max(0, roles.indexOf(role)),
+                  t('standIn.personal.default_role')
+                )
+              : t('standIn.title')
+          }
+          onOpenChange={setImDialogOpen}
         />
-      )}
-      {api &&
-        saved &&
-        (roleId ? saved.roles.find(role => role.id === roleId) : saved.primary)
-          ?.selfLearningEnabled !== undefined && (
-          <StandInGhostRevisionEntry
+      ),
+    })
+  }
+  if (api && saved) {
+    shortcuts.push({
+      id: 'memory',
+      testId: 'stand-in-memory-open',
+      label: t('standIn.memory.title'),
+      description: t('standIn.memory.settings_help'),
+      onClick: openMemory,
+    })
+    if (
+      (roleId ? saved.roles.find(item => item.id === roleId) : saved.primary)
+        ?.selfLearningEnabled !== undefined
+    ) {
+      shortcuts.push({
+        id: 'revision',
+        testId: 'stand-in-ghost-revision-open',
+        label: t('standIn.workspace.ghost_revision'),
+        content: (
+          <StandInGhostRevisionPanel
             key={JSON.stringify([saved.userId, saved.executionDeviceId, saved.version, roleId])}
             api={api}
             userId={saved.userId}
@@ -378,9 +386,10 @@ export function StandInOverviewPage({
             roleId={roleId}
             requestLeave={leavePanel}
           />
-        )}
-    </section>
-  )
+        ),
+      })
+    }
+  }
   const content = (
     <section
       className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
@@ -797,7 +806,7 @@ export function StandInOverviewPage({
                 ) : profile === 'primary' && state.draft ? (
                   <StandInPrimaryProfile
                     ref={panelRef}
-                    management={management}
+                    shortcuts={shortcuts}
                     footerLeading={
                       !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
                     }
@@ -834,7 +843,7 @@ export function StandInOverviewPage({
                     key={`${profile === 'create' ? '@create' : (roleId ?? '@default')}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
                     {...props}
-                    management={management}
+                    shortcuts={shortcuts}
                     footerLeading={
                       !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
                     }

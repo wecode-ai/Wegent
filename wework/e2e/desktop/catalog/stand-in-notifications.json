@@ -4,7 +4,7 @@
   "scenarioOnly": true,
   "paths": [
     "wework/e2e/desktop/modules/stand-in-im-connections.mjs",
-    "wework/e2e/desktop/modules/stand-in-im-menu-layout.mjs"
+    "wework/e2e/desktop/modules/stand-in-im-channel-layout.mjs"
   ],
   "resources": ["macos-inspector-foreground"],
   "ci": {
