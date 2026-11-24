@@ -364,8 +364,8 @@ function ChatAreaContent({
   const searchParams = useSearchParams()
   const searchParamsString = stringifySearchParams(searchParams)
   const taskIdFromUrl = getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
-  const teamIdFromUrl =
-    getSearchParam(searchParams, 'teamId') ?? quickLaunchIntent?.teamId.toString() ?? null
+  const explicitTeamId = getSearchParam(searchParams, 'teamId')
+  const teamIdFromUrl = explicitTeamId ?? quickLaunchIntent?.teamId.toString() ?? null
   const { recentTeamIds, isLoading: isRecentTeamsLoading } = useRecentTaskTeams(
     taskType,
     !effectiveTaskId && !taskIdFromUrl && !teamIdFromUrl && !selectedTeamForNewTask
@@ -378,7 +378,10 @@ function ChatAreaContent({
       !teamIdFromUrl &&
       !selectedTeamForNewTask
   )
-  const urlTeam = useUrlTeam(teamIdFromUrl, !effectiveTaskId && !taskIdFromUrl)
+  const isNewChat = !effectiveTaskId && !taskIdFromUrl
+  const { team: urlTeam, failed: urlTeamFailed } = useUrlTeam(teamIdFromUrl, isNewChat)
+  const recommendedTeam =
+    explicitTeamId && getSearchParam(searchParams, 'recommend') === '1' ? urlTeam : null
   // Explicit navigation is resolved by ID; offset pages can omit existing agents.
   const resolvedTeam = urlTeam ?? earlyDefaultTeam
   const teams = useMemo(
@@ -1198,10 +1201,12 @@ function ChatAreaContent({
 
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
+  const isUrlTeamRequired =
+    isNewChat && teamIdFromUrl !== null && ignoredTeamIdParamRef.current !== teamIdFromUrl
+  const linkedAgentError =
+    isUrlTeamRequired && urlTeamFailed ? t('input.linked_agent_unavailable') : null
   const isTeamSelectionReady =
-    (!teamIdFromUrl ||
-      ignoredTeamIdParamRef.current === teamIdFromUrl ||
-      selectedTeam?.id === Number(teamIdFromUrl)) &&
+    (!isUrlTeamRequired || (urlTeam !== null && selectedTeam?.id === urlTeam.id)) &&
     initializedTeamSelection?.scope === teamSelectionScope &&
     initializedTeamSelection.teamId != null &&
     initializedTeamSelection.teamId === selectedTeam?.id
@@ -1651,6 +1656,9 @@ function ChatAreaContent({
 
   const submitBlockedReason = useMemo(() => {
     if (disabledReason) return disabledReason
+    if (isUrlTeamRequired && !isTeamSelectionReady) {
+      return linkedAgentError ?? t('input.loading_teams_placeholder')
+    }
     if (isModelSelectionRequired) {
       return t('generate.material_errors.model_required')
     }
@@ -1690,6 +1698,9 @@ function ChatAreaContent({
     generationAttachmentCounts.material,
     isModeSpecVideo,
     isModelSelectionRequired,
+    isTeamSelectionReady,
+    isUrlTeamRequired,
+    linkedAgentError,
     t,
     videoCapabilities?.image_input_required,
     videoCapabilities?.reference_material_required,
@@ -2808,6 +2819,11 @@ function ChatAreaContent({
                 autoFocus={!hasMessages}
                 inputControlsRef={inputControlsRef}
               />
+              {linkedAgentError && (
+                <p role="status" className="mt-2 text-sm text-text-secondary">
+                  {linkedAgentError}
+                </p>
+              )}
               {taskType !== 'knowledge' && !hideSelectors && !activeProject && (
                 <QuickAccessCards
                   teams={teams}
@@ -2823,6 +2839,7 @@ function ChatAreaContent({
                   onRefreshTeams={onRefreshTeams}
                   showWizardButton={effectiveTaskType === 'chat'}
                   defaultTeam={chatState.defaultTeam}
+                  recommendedTeam={recommendedTeam}
                   launchIntent={quickLaunchIntent}
                   onLaunchIntentConsumed={() => setQuickLaunchIntent(null)}
                 />
