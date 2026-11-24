@@ -1,6 +1,7 @@
 import type {
   BrowserDownloadChange,
   BrowserDownloadEvent,
+  BrowserDownloadList,
   BrowserDownloadRecord,
 } from '../../electron/src/shared/browser-download'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
@@ -220,11 +221,7 @@ export function listenEmbeddedBrowserAnnotationState(
 }
 
 export function listEmbeddedBrowserDownloads() {
-  return invokeDesktopHost<{
-    downloads: BrowserDownloadRecord[]
-    revision: number
-    historyUnavailable: boolean
-  }>('browser.listDownloads')
+  return invokeDesktopHost<BrowserDownloadList>('browser.listDownloads')
 }
 
 export function removeEmbeddedBrowserDownloadRecord(id: string): Promise<void> {

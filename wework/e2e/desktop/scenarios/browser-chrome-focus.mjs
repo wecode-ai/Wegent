@@ -2,8 +2,14 @@ import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { colorChannels, focusLayers, readFocusPaint } from '../modules/focus-paint.mjs'
+import {
+  colorChannels,
+  focusLayers,
+  outlineContrast,
+  readFocusPaint,
+} from '../modules/focus-paint.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const dialog = '[data-testid="runtime-task-close-confirm-overlay"] [role="dialog"]'
@@ -172,6 +178,16 @@ async function verifySearchOverlay(
     'The guest page must be visible again after closing search',
     5000
   )
+  const readGuestClicks = async () => {
+    const result = await bridgeCall({
+      action: 'evaluate',
+      expression: 'Number(document.querySelector("#page").dataset.clicks)',
+    })
+    assert.equal(result.ok, true, 'The guest click counter must be readable')
+    return result.value
+  }
+  const closedClicks = await readGuestClicks()
+  assert.equal(closedClicks, 0, 'The dialog dismissal must stay out of the guest page')
   await clickPoint(command, overlap.close)
   const pageClicked = await bridgeCall({
     action: 'waitFor',
@@ -185,6 +201,8 @@ async function verifySearchOverlay(
     true,
     'The restored guest page must receive exactly one native click'
   )
+  const restoredClicks = await readGuestClicks()
+  assert.equal(restoredClicks, 1)
   await writeFile(
     join(resultDir, 'search-overlay-paint.json'),
     JSON.stringify(
@@ -194,7 +212,8 @@ async function verifySearchOverlay(
         pagePixel,
         dialogPixel,
         restoredPixel,
-        restoredClicks: 1,
+        closedClicks,
+        restoredClicks,
       },
       null,
       2
@@ -293,17 +312,23 @@ export async function verifyBrowserChromeFocus({
     }
     const defaultOption = '[data-testid="workspace-browser-address-submit"][data-highlighted]'
     const option = `[data-testid="workspace-browser-address-history-option"][data-url="${historyUrl}"]`
-    await control.command('waitFor', option, { visible: true, timeoutMs: 5_000 })
-    await control.command('waitFor', defaultOption, { visible: true, timeoutMs: 5_000 })
+    await control.command('waitFor', option, { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+    await control.command('waitFor', defaultOption, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     const typed = await sampleAddress()
     await control.command('nativePress', address, { key: 'ArrowDown' })
     await control.command('waitFor', option + '[data-highlighted]', {
       visible: true,
-      timeoutMs: 5_000,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     const selected = await sampleAddress()
     await control.command('nativePress', address, { key: 'ArrowUp' })
-    await control.command('waitFor', defaultOption, { visible: true, timeoutMs: 5_000 })
+    await control.command('waitFor', defaultOption, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     const returned = await sampleAddress()
     await control.command('nativePress', address, { key: 'Escape' })
     await control.command('nativePress', address, { key: 'Tab' })
@@ -314,11 +339,17 @@ export async function verifyBrowserChromeFocus({
     await control.command('nativePress', downloads, { key: 'Shift+Tab' })
     const keyboard = await sampleAddress()
     let highContrast
+    let highContrastBaseline
     try {
       await command('Emulation.setEmulatedMedia', {
         features: [{ name: 'forced-colors', value: 'active' }],
       })
       assert.ok(await read("matchMedia('(forced-colors: active)').matches"))
+      await control.command('nativePress', address, { key: 'Tab' })
+      await waitForFocus(downloads)
+      highContrastBaseline = await sampleAddress()
+      await control.command('nativePress', downloads, { key: 'Shift+Tab' })
+      await waitForFocus(address)
       highContrast = await sampleAddress()
     } finally {
       await command('Emulation.setEmulatedMedia', { features: [] })
@@ -351,6 +382,8 @@ export async function verifyBrowserChromeFocus({
 
     await control.command('requestMainWindowClose', 'body')
     await control.command('waitFor', dialog, { visible: true, timeoutMs: 5_000 })
+    let focusError
+    let focusEvidence
     try {
       await waitForFocus(dialog)
       const opened = await sample(dialog)
@@ -358,13 +391,14 @@ export async function verifyBrowserChromeFocus({
       await control.command('nativePress', dialog, { key: 'Tab' })
       const tabbed = await sample(quitButton)
       const dialogBaseline = await sample(dialog)
-      return {
+      focusEvidence = {
         borderSample,
         pointer,
         typed,
         selected,
         returned,
         highContrast,
+        highContrastBaseline,
         keyboard,
         search,
         searchClose,
@@ -382,10 +416,26 @@ export async function verifyBrowserChromeFocus({
           quit: quitBaseline,
         },
       }
-    } finally {
-      await control.command('nativePress', quitButton, { key: 'Escape' })
-      await control.command('waitFor', dialog, { visible: false, timeoutMs: 5_000 })
+    } catch (error) {
+      focusError = error
     }
+    try {
+      await control.command('nativePress', dialog, { key: 'Escape' })
+      await control.command('waitFor', dialog, { visible: false, timeoutMs: 5_000 })
+    } catch (cleanupError) {
+      if (focusError) {
+        throw new AggregateError(
+          [focusError, cleanupError],
+          'Quit dialog focus and dismissal checks failed',
+          {
+            cause: focusError,
+          }
+        )
+      }
+      throw cleanupError
+    }
+    if (focusError) throw focusError
+    return focusEvidence
   })
   await writeFile(join(resultDir, 'browser-chrome-focus.json'), JSON.stringify(evidence, null, 2))
   const baseline = evidence.baselines
@@ -421,6 +471,11 @@ export async function verifyBrowserChromeFocus({
   assert.ok(!['none', 'hidden'].includes(evidence.highContrast.paint.outlineStyle))
   assert.ok(parseFloat(evidence.highContrast.paint.outlineWidth) > 0)
   assert.ok(colorChannels(evidence.highContrast.paint.outlineColor)[3] > 0)
+  assert.ok(!evidence.highContrastBaseline.focused)
+  assert.ok(
+    outlineContrast(evidence.highContrast.paint, evidence.highContrastBaseline.paint) >= 3,
+    'The forced-colors focus outline must contrast with the adjacent surface by at least 3:1'
+  )
   assertIndicator(evidence.search, baseline.search, 1, 'Tab must show one task search indicator')
   assertIndicator(
     evidence.searchClose,

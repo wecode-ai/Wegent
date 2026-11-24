@@ -38,7 +38,12 @@ test.each(['a closed panel', 'an inactive tab'])(
       downloads.clearDownloadHistory(2)
       expect(state.downloadsLoading).toBe(false)
     } finally {
-      reply.resolve({ revision: 1, downloads: [], historyUnavailable: true })
+      reply.resolve({
+        revision: 1,
+        downloads: [],
+        historyUnavailable: true,
+        historyReadFailed: true,
+      })
       await refresh
     }
     expect(state.downloadsLoading).toBe(false)

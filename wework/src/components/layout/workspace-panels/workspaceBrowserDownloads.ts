@@ -35,6 +35,11 @@ export function createBrowserDownloads(model: BrowserSessionModel) {
       if (!model.observed || pendingEvents !== pending || !model.state.downloadsOpen) return
       snapshotRevision = snapshot.revision
       const records = new Map(snapshot.downloads.map(record => [record.id, record]))
+      if (snapshot.historyReadFailed) {
+        for (const record of model.state.downloads) {
+          if (!isLiveDownload(record) && !records.has(record.id)) records.set(record.id, record)
+        }
+      }
       for (const event of pending.values()) {
         if (event.revision <= snapshotRevision) continue
         if (event.status === 'deleted') records.delete(event.id)
@@ -61,9 +66,14 @@ export function createBrowserDownloads(model: BrowserSessionModel) {
       model.state.downloadsOpen &&
       model.options.active &&
       model.state.downloads.length >= BROWSER_DOWNLOAD_SNAPSHOT_SIZE
-    if (model.state.downloadsOpen || owned) {
+    if (model.state.downloadsOpen || owned || download.historyRemoval) {
       pendingEvents?.set(download.id, download)
       model.set('downloads', current => {
+        const index = current.findIndex(record => record.id === download.id)
+        // Live updates keep the same start time, ordering and snapshot capacity.
+        if (index >= 0 && isLiveDownload(current[index]) && isLiveDownload(download)) {
+          return current.with(index, download)
+        }
         const remaining = current.filter(item => item.id !== download.id)
         if (download.status === 'deleted') return remaining
         return browserDownloadSnapshot([...remaining, download])
@@ -100,7 +110,17 @@ export function createBrowserDownloads(model: BrowserSessionModel) {
   }
   const reconcileDownloadSnapshot = (nativeLabel: string): void => {
     const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel)
-    if (!model.state.downloadsOpen) model.set('downloads', snapshot)
+    if (!model.state.downloadsOpen) {
+      model.set('downloads', current => {
+        const records = new Map<string, (typeof current)[number]>(
+          snapshot.map(record => [record.id, record])
+        )
+        for (const record of current) {
+          if (!isLiveDownload(record)) records.set(record.id, record)
+        }
+        return browserDownloadSnapshot(records.values())
+      })
+    }
     model.runtime.activeDownloadIds = new Set(
       snapshot
         .filter(download => download.status === 'started' || download.status === 'progress')

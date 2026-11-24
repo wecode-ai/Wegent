@@ -45,6 +45,14 @@ describe('BrowserHistoryStore', () => {
       ],
     },
     {
+      kind: 'password reset credentials',
+      ordinary: ['https://app.test/help?reset_password=enabled'],
+      sensitive: [
+        'https://app.test/reset?reset_password_token=synthetic-secret',
+        'https://app.test/reset#RESET_PASSWORD_TOKEN=synthetic-secret',
+      ],
+    },
+    {
       kind: 'Azure SAS',
       sensitive: [
         sas,
@@ -173,6 +181,24 @@ describe('BrowserHistoryStore', () => {
     expect(await readFile(path, 'utf8')).not.toContain('synthetic-secret')
   })
 
+  test.each(['[', '{"visits":[]}'])(
+    'only replaces malformed history on explicit clear: %s',
+    async raw => {
+      const { path, store } = await createStore()
+      await writeFile(path, raw)
+      const query = { text: '', endTimeMs: null, offset: 0, maxResults: 10 }
+      await expect(store.search(query)).rejects.toBeInstanceOf(SyntaxError)
+      expect(await readFile(path, 'utf8')).toBe(raw)
+      await mkdir(path + '.tmp')
+      await expect(store.clear()).rejects.toMatchObject({ path: path + '.tmp' })
+      expect(await readFile(path, 'utf8')).toBe(raw)
+      await rmdir(path + '.tmp')
+      await store.clear()
+      expect(await readFile(path, 'utf8')).toBe('[]')
+      await expect(store.search(query)).resolves.toEqual([])
+    }
+  )
+
   test('drops credential-bearing visits and cleans older records before searching or paginating', async () => {
     const { path, store } = await createStore()
     const callback = 'https://app.test/login/oidc?access_token=history-test-secret'
@@ -261,6 +287,9 @@ describe('BrowserHistoryStore', () => {
       { url: 'https://docs.test', title: 'Latest title' },
       { url: 'https://other.test' },
     ])
+    await expect(
+      store.search({ ...query, distinctUrls: true, offset: 1, maxResults: 1 })
+    ).resolves.toMatchObject([{ url: 'https://other.test' }])
     await expect(store.search(query)).resolves.toMatchObject([
       { title: 'Latest title' },
       { title: 'First title' },

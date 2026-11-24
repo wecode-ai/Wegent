@@ -51,6 +51,30 @@ function over(foreground, opaqueBackground) {
   )
 }
 
+function compositeBackground(colors) {
+  return colors
+    .map(colorChannels)
+    .toReversed()
+    .reduce((bg, color) => over(color, bg), [255, 255, 255])
+}
+
+function luminance(channels) {
+  const [red, green, blue] = channels.map(channel => {
+    const value = channel / 255
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+}
+
+export function outlineContrast(focused, unfocused) {
+  const background = compositeBackground(
+    parseFloat(focused.outlineOffset) < 0 ? unfocused.backgrounds : unfocused.backgrounds.slice(1)
+  )
+  const outline = luminance(over(colorChannels(focused.outlineColor), background))
+  const adjacent = luminance(background)
+  return (Math.max(outline, adjacent) + 0.05) / (Math.min(outline, adjacent) + 0.05)
+}
+
 function shadowBand(shadow) {
   const tokens = shadow.match(/[a-z-]+\([^()]*\)|[^\s]+/gi) ?? []
   const lengths = tokens.filter(token => /^-?(?:[\d.]+px|0)$/.test(token)).map(parseFloat)
@@ -135,9 +159,9 @@ export function focusLayers(focused, unfocused) {
   if (!focused.visible) return 0
   if (!unfocused?.visible)
     throw new Error('A visible unfocused baseline from the same control is required')
-  const [surface, ...ancestors] = focused.backgrounds.map(colorChannels)
-  const outside = ancestors.toReversed().reduce((bg, color) => over(color, bg), [255, 255, 255])
-  const inside = over(surface, outside)
+  const [surface, ...ancestors] = focused.backgrounds
+  const outside = compositeBackground(ancestors)
+  const inside = over(colorChannels(surface), outside)
   // A complete border is one band. A single highlighted edge can still expose a second band.
   return Math.max(
     ...focused.borders.map((border, side) =>

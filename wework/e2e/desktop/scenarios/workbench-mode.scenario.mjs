@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { createWorkbenchHomeScenario } from '../modules/workbench-home.mjs'
 import { verifyCustomModelOutputBudget } from '../modules/custom-model-output-budget.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 120_000
@@ -67,12 +68,12 @@ export async function verifyGeneralSettingsDialogFocus(control) {
       () => control.command('getActiveElementTestId', 'body'),
       id => id === safeButton,
       `Opening ${trigger} should focus ${safeButton}`,
-      5_000
+      DEFAULT_STEP_TIMEOUT_MS
     )
     await control.command('nativePress', `[data-testid="${safeButton}"]`, { key: 'Enter' })
     await control.command('waitFor', `[data-testid="${dialog}"]`, {
       visible: false,
-      timeoutMs: 5_000,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
   await assertMode(control, 'developer')

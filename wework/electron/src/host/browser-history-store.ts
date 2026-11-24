@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 const MAX_HISTORY_ENTRIES = 5_000
 const HISTORY_PROTOCOLS = ['http:', 'https:', 'file:']
 const CREDENTIAL_NAME =
-  /(?:(?:(?:access|refresh|id|auth|oauth|session)[_-]?)?token|api[_-]?key|client[_-]?(?:secret|assertion)|password|passwd|code[_-]?verifier|samlresponse|signature|x-amz-(?:signature|security-token)|x-goog-signature)/
+  /(?:(?:(?:access|refresh|id|auth|oauth|session|reset[_-]?password)[_-]?)?token|api[_-]?key|client[_-]?(?:secret|assertion)|password|passwd|code[_-]?verifier|samlresponse|signature|x-amz-(?:signature|security-token)|x-goog-signature)/
 const CREDENTIAL_PARAM = new RegExp(`^${CREDENTIAL_NAME.source}$`, 'i')
 const CREDENTIAL_IN_TITLE = new RegExp(`(?:^|[?&#;\\s])${CREDENTIAL_NAME.source}=`, 'i')
 const CAS_TICKET_VALUE = /(?:ST|PT|PGT|PGTIOU|TGT)-[^?#&;\s]+/
@@ -136,23 +136,29 @@ export class BrowserHistoryStore {
     return this.run(async () => {
       await this.load()
       const needle = input.text.trim().toLocaleLowerCase()
-      const seen = new Set<string>()
-      return this.entries
-        .toReversed()
-        .filter(entry => input.endTimeMs == null || entry.visitTimeMs < input.endTimeMs)
-        .filter(
-          entry =>
-            !needle ||
-            entry.url.toLocaleLowerCase().includes(needle) ||
-            entry.title?.toLocaleLowerCase().includes(needle)
+      const seen = input.distinctUrls ? new Set<string>() : undefined
+      const results: BrowserHistoryEntry[] = []
+      let offset = input.offset
+
+      for (
+        let index = this.entries.length - 1;
+        index >= 0 && results.length < input.maxResults;
+        index--
+      ) {
+        const entry = this.entries[index]
+        if (input.endTimeMs != null && entry.visitTimeMs >= input.endTimeMs) continue
+        if (
+          needle &&
+          !entry.url.toLocaleLowerCase().includes(needle) &&
+          !entry.title?.toLocaleLowerCase().includes(needle)
         )
-        .filter(entry => {
-          if (!input.distinctUrls) return true
-          if (seen.has(entry.url)) return false
-          seen.add(entry.url)
-          return true
-        })
-        .slice(input.offset, input.offset + input.maxResults)
+          continue
+        if (seen?.has(entry.url)) continue
+        seen?.add(entry.url)
+        if (offset > 0) offset--
+        else results.push(entry)
+      }
+      return results
     })
   }
 
@@ -206,15 +212,10 @@ export class BrowserHistoryStore {
 
   clear(): Promise<void> {
     return this.run(async () => {
-      await this.load()
-      const previous = this.entries
+      // Explicit clearing can replace a corrupt file without parsing its contents.
+      await this.persist([])
       this.entries = []
-      try {
-        await this.persist()
-      } catch (error) {
-        this.entries = previous
-        throw error
-      }
+      this.loaded = true
     })
   }
 
@@ -239,7 +240,8 @@ export class BrowserHistoryStore {
       }
       throw error
     }
-    const parsed = JSON.parse(raw) as BrowserHistoryEntry[]
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) throw new SyntaxError('Invalid browser history file')
     const safe: BrowserHistoryEntry[] = []
     let scrubbed = false
     for (const entry of parsed) {
@@ -267,10 +269,10 @@ export class BrowserHistoryStore {
     }
   }
 
-  private async persist(): Promise<void> {
+  private async persist(entries = this.entries): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true })
     const temporaryPath = `${this.path}.tmp`
-    await writeFile(temporaryPath, JSON.stringify(this.entries), 'utf8')
+    await writeFile(temporaryPath, JSON.stringify(entries), 'utf8')
     await rename(temporaryPath, this.path)
   }
 }

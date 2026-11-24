@@ -2,6 +2,7 @@ const URL_SCHEME = /^[a-z][a-z\d+.-]*:/i
 const EXPLICIT_AUTHORITY = /^[a-z][a-z\d+.-]*\s*:\s*[/\\]\s*[/\\]/i
 const KNOWN_URI_SCHEME =
   /^(?:https?|file|asset|ftp|wss?|about|blob|data|javascript|mailto|tel|sms|wework):/i
+const WEB_SEARCH_OPERATOR = /^(?:site|filetype|intitle|inurl|before|after):(?!\/\/)/i
 
 function isLocalAssetUrl(url: URL): boolean {
   return url.protocol === 'asset:' && url.hostname === 'localhost'
@@ -52,8 +53,12 @@ export function browserDiagnosticOrigin(value: string): string | null {
   }
 }
 
+function addressAuthority(value: string): string {
+  return value.split(/[/?#\\]/, 1)[0]
+}
+
 function addressHostPort(value: string): string {
-  const authority = value.split(/[/?#\\]/, 1)[0]
+  const authority = addressAuthority(value)
   return authority.slice(authority.lastIndexOf('@') + 1)
 }
 
@@ -65,9 +70,14 @@ export function normalizeBrowserUrl(value: string): string | null {
   const scheme = trimmed.match(URL_SCHEME)?.[0]
   const afterScheme = scheme ? trimmed.slice(scheme.length) : ''
   const hasAuthority = afterScheme.startsWith('//')
-  // A bare host:port is HTTP. An opaque URI such as mailto:user@host must not become HTTP.
+  // A bare authority can include a port or user info. Known opaque schemes remain unsupported.
   if (!localFile && scheme && !hasAuthority) {
-    if (KNOWN_URI_SCHEME.test(scheme) || !/^\d+(?:[/?#\\]|$)/.test(afterScheme)) return null
+    const bareAuthority = addressAuthority(trimmed)
+    if (
+      KNOWN_URI_SCHEME.test(scheme) ||
+      (!bareAuthority.includes('@') && !/^\d+(?:[/?#\\]|$)/.test(afterScheme))
+    )
+      return null
   }
   const withProtocol = localFile ?? (hasAuthority ? trimmed : `http://${trimmed}`)
 
@@ -110,11 +120,12 @@ function networkEndpoint(text: string): { port?: string } | undefined {
   if (!parts) return undefined
   const [, rawHost, port] = parts
   const host = rawHost.trimEnd()
-  if (
-    explicitHttp ||
-    looksLikeNetworkHost(host) ||
-    (host && !/\s/.test(host) && /^\d+$/.test(port))
-  ) {
+  const hasAddressSuffix = text.length > addressAuthority(text).length
+  const bareHostWithPort =
+    /^[\p{L}\p{N}_-]+$/u.test(host) &&
+    (/^\d+$/.test(port) ||
+      (hasAddressSuffix && !WEB_SEARCH_OPERATOR.test(text) && /^\S+$/.test(port)))
+  if (explicitHttp || looksLikeNetworkHost(host) || bareHostWithPort) {
     return { port }
   }
   return undefined
@@ -152,7 +163,7 @@ export function browserAddressAction(value: string) {
   const networkAddress = hasNetworkAddressIntent(text)
   const colonQuery =
     !networkAddress &&
-    (/^(?:site|filetype|intitle|inurl|before|after):(?!\/\/)/i.test(text) ||
+    (WEB_SEARCH_OPERATOR.test(text) ||
       (/^[a-z][a-z\d+.-]*:\s/i.test(text) && !KNOWN_URI_SCHEME.test(text)))
   const directUrl = colonQuery ? null : normalizeBrowserUrl(text)
   const explicitAddress =

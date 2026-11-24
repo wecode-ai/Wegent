@@ -17,6 +17,13 @@ export interface BrowserDownloadEvent extends BrowserDownloadRecord {
   historyRemoval?: true
 }
 
+export interface BrowserDownloadList {
+  downloads: BrowserDownloadRecord[]
+  revision: number
+  historyUnavailable: boolean
+  historyReadFailed: boolean
+}
+
 export type BrowserDownloadChange =
   | BrowserDownloadEvent
   | { cleared: true; revision: number }

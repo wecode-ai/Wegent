@@ -114,10 +114,10 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('clickWhenEnabled', refresh)
       await control.command('waitFor', `${panel} ${first}`)
       await waitForPrimaryConnections(1)
+      assert.equal(await control.command('getAttribute', first, { value: 'aria-pressed' }), 'true')
       await verifyProjectFieldFocus(control, `stand-in-im-connect-${keys[0]}`, {
         nextButtonPattern: /^stand-in-im-submit$/,
       })
-      assert.equal(await control.command('getAttribute', first, { value: 'aria-pressed' }), 'true')
       await captureScreenshot(control, 'im-stand-in-00-single-conversation.png')
       await control.command('nativePress', '[data-testid="stand-in-im-mode-help"]', { key: 'Tab' })
       await control.command('waitFor', '[data-testid="stand-in-im-dialog-close"]:focus')

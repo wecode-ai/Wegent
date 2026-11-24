@@ -59,6 +59,30 @@ test('discards an older history response and navigates once to the keyboard-sele
   expect(navigate).toHaveBeenCalledExactlyOnceWith('https://docs.test/latest')
 })
 
+test.each(['pointer', 'keyboard'])('retries an unavailable history lookup by %s', async method => {
+  const history = vi.mocked(searchEmbeddedBrowserHistory)
+  history.mockClear()
+  history
+    .mockRejectedValueOnce(new Error('History is unavailable'))
+    .mockResolvedValueOnce([
+      { id: 'previous', url: 'https://docs.test/guide', title: 'Guide', visitTimeMs: 1 },
+    ])
+  const { navigate, input } = renderAddress(true)
+  await userEvent.click(input)
+  fireEvent.input(input, { target: { value: 'docs.test' } })
+  const retry = await screen.findByTestId('workspace-browser-address-history-retry')
+  if (method === 'pointer') await userEvent.click(retry)
+  else await userEvent.keyboard('{ArrowDown}{Enter}')
+  expect(navigate).not.toHaveBeenCalled()
+  expect(input).toHaveValue('docs.test')
+  expect(await screen.findByTestId('workspace-browser-address-history-option')).toHaveTextContent(
+    'Guide'
+  )
+  expect(history.mock.calls.map(([text]) => text)).toEqual(['docs.test', 'docs.test'])
+  await userEvent.click(screen.getByTestId('workspace-browser-address-submit'))
+  expect(navigate).toHaveBeenCalledExactlyOnceWith('http://docs.test/')
+})
+
 test('keeps a single-label host reachable and submits search text only after confirmation', async () => {
   const { navigate, input } = renderAddress(false)
   await userEvent.click(input)
@@ -106,9 +130,11 @@ test.each([
   ['https://example.test/a b', 'https://example.test/a%20b'],
   ['localhost:8080/path', 'http://localhost:8080/path'],
   ['site:8080/guide', 'http://site:8080/guide'],
+  ['3d:8080/report', 'http://3d:8080/report'],
   ['intranet/reports', 'http://intranet/reports'],
   ['intranet?token=sample', 'http://intranet/?token=sample'],
   ['reader@10.0.0.5', 'http://reader@10.0.0.5/'],
+  ['reader:sample@intranet.test/report', 'http://reader:sample@intranet.test/report'],
   ['http://2026', 'http://0.0.7.234/'],
   ['2001:db8::1/path', null],
   ['/tmp/video settings', 'file:///tmp/video%20settings'],
@@ -139,6 +165,7 @@ test.each([
   ['[fd00::1]:65536/reports', true],
   ['10.0.0.5:oops/reports', true],
   ['3d.intra.test:bad/reports?token=sample', true],
+  ['3d:bad/report?token=sample', true],
   ['3d.intra.test /reports?token=sample', false],
   ['reader@10.0.0.5:84443/report', true],
 ] as const)(

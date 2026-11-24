@@ -233,6 +233,10 @@ async function verifyAddressHistory(control, bridgeCall, fixtureUrl) {
     '10.0.0.5 :84443/reports?token=sample',
     '端口'
   )
+  const invalidSingleLabelPortMessage = await verifyInvalidAddress(
+    '3d:bad/report?token=sample',
+    '端口'
+  )
   const invalidSchemeMessage = await verifyInvalidAddress(
     'https ://intranet.test/reports?token=sample',
     '请输入有效的'
@@ -248,6 +252,7 @@ async function verifyAddressHistory(control, bridgeCall, fixtureUrl) {
   }
   for (const query of [
     '?access_token=synthetic-history-fixture',
+    '?reset_password_token=synthetic-history-fixture',
     '?sv=2024-11-04&sp=r&se=2030-01-01&sig=synthetic-history-fixture',
     `${DOWNLOAD_OAUTH_CALLBACK_PATH}?code=synthetic-history-fixture&state=opaque`,
     '#https://synthetic:synthetic-history-fixture@inner.test/login',
@@ -335,6 +340,7 @@ async function verifyAddressHistory(control, bridgeCall, fixtureUrl) {
     url: fixtureUrl,
     title: DOWNLOAD_FIXTURE_TITLE,
     invalidPortMessage,
+    invalidSingleLabelPortMessage,
     invalidAddressMessage,
     invalidSchemeMessage,
     spacedHostMessage,
@@ -382,6 +388,20 @@ async function verifyRetryWithConcurrentDownload(control, db, fileName, releaseD
     // Retry is disabled while the response is held. Its enabled state proves the stale reply was applied.
     const retried = await control.command('waitFor', DOWNLOAD_RETRY, { ...visible, enabled: true })
     await control.command('waitFor', status, { ...visible, text: '已下载' })
+
+    await control.command('click', DOWNLOAD_BUTTON)
+    await control.command('waitFor', DOWNLOAD_PANEL, { ...visible, visible: false })
+    await control.command('click', DOWNLOAD_BUTTON)
+    await control.command('waitFor', DOWNLOAD_RETRY, { ...visible, enabled: true })
+    const cached = `${DOWNLOAD_PANEL} [data-testid="workspace-browser-download-item"][data-file-name="${fileName}"]`
+    await control.command(
+      'waitFor',
+      `${cached} [data-testid="workspace-browser-download-status"]`,
+      {
+        ...visible,
+        text: '已下载',
+      }
+    )
 
     db.exec('ROLLBACK')
     await control.command('click', DOWNLOAD_RETRY)
@@ -616,6 +636,7 @@ export async function verifyBrowserDownloadHistory({
     uiTimeoutMs,
     'direct embedded-browser download clip.mp4'
   )
+  await assertNoNativeSaveDialog(control.applicationProcessId)
   const download = await verifyDownloadList(control, downloadsPath, 'clip.mp4', 'SINGLE_CLIP_BYTES')
 
   const db = new DatabaseSync(join(electronUserDataDirectory, 'browser-download-history.sqlite'))

@@ -8,6 +8,7 @@ import {
   BROWSER_DOWNLOAD_SNAPSHOT_SIZE,
   browserDownloadSnapshot,
   type BrowserDownloadChange,
+  type BrowserDownloadList,
   type BrowserDownloadRecord,
 } from '../shared/browser-download.js'
 
@@ -232,7 +233,7 @@ export class BrowserDownloads {
     this.publish({ cleared: true, revision: ++this.revision })
   }
 
-  async list() {
+  async list(): Promise<BrowserDownloadList> {
     const records = [
       ...Array.from(this.active.values(), ({ record }) => ({ ...record })),
       ...Array.from(this.unsaved.values(), record => ({ ...record })),
@@ -254,7 +255,7 @@ export class BrowserDownloads {
       this.publishHistoryStatus()
     }
     // Newer events can arrive while the filesystem checks this snapshot.
-    const { revision, historyUnavailable } = this
+    const { revision, historyUnavailable, historyReadFailed } = this
     const downloads = browserDownloadSnapshot(records)
     for (let offset = 0; offset < downloads.length; offset += FILE_CHECK_BATCH_SIZE) {
       const batch = downloads.slice(offset, offset + FILE_CHECK_BATCH_SIZE)
@@ -264,7 +265,7 @@ export class BrowserDownloads {
         })
       )
     }
-    return { revision, downloads, historyUnavailable }
+    return { revision, downloads, historyUnavailable, historyReadFailed }
   }
 
   async openFile(id: string, reveal: boolean): Promise<void> {

@@ -21,6 +21,8 @@ import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import { ArrowUpRight, Globe, Search } from 'lucide-react'
 import { useRef, useState, type Ref } from 'react'
 
+const retryHistoryValue = '__retry_browser_history__'
+
 interface BrowserAddressBarProps {
   active: boolean
   address: string
@@ -52,15 +54,22 @@ export function BrowserAddressBar({
   )
   const query = address.trim()
   const action = browserAddressAction(query)
+  const historyFailed = historyAvailable && history.query === query && history.status === 'error'
+  const historyRetryLabel = t('workbench.browser_history_retry')
+  const historyErrorLabel = t('workbench.browser_history_load_error')
   const entries =
     historyAvailable && history.query === query && history.status === 'idle' ? history.items : []
   const ActionIcon = action.kind === 'search' ? Search : ArrowUpRight
 
   function submit(text: string) {
-    const url = selectedUrl.current ?? browserAddressAction(text).url
+    const selected = selectedUrl.current
     selectedUrl.current = null
+    if (selected === retryHistoryValue) {
+      history.reload()
+      return
+    }
     setOpen(false)
-    onNavigate(url)
+    onNavigate(selected ?? browserAddressAction(text).url)
   }
 
   return (
@@ -79,12 +88,22 @@ export function BrowserAddressBar({
         filter={false}
         autoHighlight
         submitOnSelect
-        onValueChange={(text, { reason, item }) => {
+        onValueChange={(text, details) => {
+          const { reason, item } = details
           selectedUrl.current = item?.value ?? null
+          if (selectedUrl.current === retryHistoryValue) {
+            details.cancel()
+            return
+          }
           onChange(text)
           if (historyAvailable && reason === 'input-change') history.setQuery(text.trim())
         }}
-        onOpenChange={(next, { reason }) => {
+        onOpenChange={(next, details) => {
+          const { reason } = details
+          if (!next && reason === 'item-press' && selectedUrl.current === retryHistoryValue) {
+            details.cancel()
+            return
+          }
           setOpen(next)
           if (!next) history.setQuery('')
           else if (historyAvailable && reason !== 'input-change') history.setQuery(query)
@@ -174,6 +193,17 @@ export function BrowserAddressBar({
                   <span className="truncate">{action.alternateHostUrl}</span>
                 </AutocompleteItem>
               )}
+            {historyFailed && (
+              <AutocompleteItem
+                data-testid="workspace-browser-address-history-retry"
+                value={retryHistoryValue}
+                label={address === historyRetryLabel ? historyErrorLabel : historyRetryLabel}
+                className={controlOption}
+              >
+                <span className="min-w-0 flex-1">{historyErrorLabel}</span>
+                <span className="shrink-0 text-xs text-text-secondary">{historyRetryLabel}</span>
+              </AutocompleteItem>
+            )}
           </AutocompleteList>
         </AutocompleteContent>
       </Autocomplete>

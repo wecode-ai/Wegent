@@ -14,7 +14,7 @@ Background page-state synchronization does not overwrite the address while you a
 
 <a id="browser-address-suggestions"></a>
 
-Type part of a page title or URL in the address bar to find a previous visit. Use the arrow keys to select a suggestion and press Enter to open it. Choosing **Search the web** sends your input to Google.
+Type part of a page title or URL in the address bar to find a previous visit. Use the arrow keys to select a suggestion and press Enter to open it. If history fails to load, retry from the suggestions. Choosing **Search the web** sends your input to Google.
 
 If a Wework dialog, menu, or overlay intersects the right browser area, the browser temporarily hides so the native page cannot cover the main interface. It returns automatically when the overlay closes or moves away.
 
