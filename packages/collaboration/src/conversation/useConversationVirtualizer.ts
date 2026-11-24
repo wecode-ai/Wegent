@@ -82,6 +82,7 @@ export function useConversationVirtualizer({
     },
     observeElementOffset: (instance, callback) => {
       let acknowledgedOffset: number | undefined
+      let pendingOffset: number | undefined
       const acknowledge = (offset: number) => {
         if (acknowledgedOffset === offset) return
         acknowledgedOffset = offset
@@ -96,15 +97,30 @@ export function useConversationVirtualizer({
       })
       const element = instance.scrollElement
       const updateDragOffset = () => {
+        pendingOffset = undefined
         acknowledgedOffset = undefined
         if (element) callback(element.scrollTop, true)
       }
       element?.addEventListener(SCROLLBAR_DRAG_POSITION_EVENT, updateDragOffset)
       const stopObservingWrites = element
-        ? observeConversationScrollWrites(element, acknowledge)
+        ? observeConversationScrollWrites(element, offset => {
+            // A single layout commit can restore a distance and then correct
+            // to an anchor. Publish only the settled position after the commit.
+            const scheduled = pendingOffset !== undefined
+            pendingOffset = offset
+            if (scheduled) return
+            queueMicrotask(() => {
+              const settledOffset = pendingOffset
+              pendingOffset = undefined
+              if (settledOffset !== undefined && settledOffset === element.scrollTop) {
+                acknowledge(settledOffset)
+              }
+            })
+          })
         : undefined
       return () => {
         readOffsetRef.current = null
+        pendingOffset = undefined
         element?.removeEventListener(SCROLLBAR_DRAG_POSITION_EVENT, updateDragOffset)
         stopObservingWrites?.()
         dispose?.()
