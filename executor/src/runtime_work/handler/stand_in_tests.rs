@@ -1033,7 +1033,10 @@ async fn enabled_settings_save_offline_without_agent_model_or_workspace_preparat
     assert_eq!(saved["enabled"], true);
     assert_eq!(saved["version"], 1);
     assert_eq!(saved["prompt"], prompt);
-    assert_eq!(saved["workspace"], settings["workspace"]);
+    assert_eq!(
+        saved["workspace"],
+        json!({"projectKey":"not-indexed","executionMode":"git_worktree"})
+    );
 }
 
 #[tokio::test]

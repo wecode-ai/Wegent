@@ -46,6 +46,7 @@ export interface AutomationRun {
   scheduledFor: string
   trigger: 'scheduled' | 'manual' | string
   status: AutomationRunStatus
+  conversationMode?: AutomationConversationMode
   taskId?: string | null
   deviceId?: string | null
   workspacePath?: string | null

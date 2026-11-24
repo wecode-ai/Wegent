@@ -2,10 +2,100 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    project_role, role_project_matches, stand_in_identities,
+    project_role, role_project_matches, role_receives_participating_issues, stand_in_identities,
 };
 
+pub(super) fn issue_role_config(
+    role: &Value,
+    user: i64,
+    project: &str,
+    kind: &str,
+    participant: bool,
+) -> Option<Value> {
+    let project_matches = role_project_matches(role, project, kind);
+    let participation = participant
+        && role_receives_participating_issues(role)
+        && role["participatingIssuesEnabledAfter"].is_string();
+    if !project_matches && !participation {
+        return None;
+    }
+    let mut config = project_role(role, user, project, kind);
+    if participation
+        && (!project_matches
+            || config["enabledAfter"].as_str().is_none()
+            || role["participatingIssuesEnabledAfter"].as_str() < config["enabledAfter"].as_str())
+    {
+        config["enabledAfter"] = role["participatingIssuesEnabledAfter"].clone();
+    }
+    Some(config)
+}
+
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn issue_intake_roles(
+        &self,
+        roles: &[Value],
+        user: i64,
+        project: &str,
+        kind: &str,
+        issue_id: &str,
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let participant = if roles.iter().any(role_receives_participating_issues) {
+            if kind == "local" {
+                let store =
+                    LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+                store
+                    .participating_issue_ids(project, &[0, user])
+                    .map_err(settings_error)?
+                    .contains(issue_id)
+            } else {
+                self.verify_runtime_user(&json!({"userId":user})).await?;
+                let members = self
+                    .runtime_http(
+                        reqwest::Method::GET,
+                        &format!("/v1/loop-items/{issue_id}/collaborators"),
+                        None,
+                    )
+                    .await?;
+                members
+                    .as_array()
+                    .ok_or_else(|| {
+                        AppIpcError::new(
+                            "cloud_response_invalid",
+                            "Issue participants are not a list",
+                        )
+                    })?
+                    .iter()
+                    .any(|row| row["user_id"] == user)
+            }
+        } else {
+            false
+        };
+        Ok(roles
+            .iter()
+            .filter_map(|role| issue_role_config(role, user, project, kind, participant))
+            .collect())
+    }
+
+    pub(super) async fn cloud_issue_intake_configs(
+        &self,
+        settings: &[Value],
+        user: i64,
+        project: &str,
+        issue_id: &str,
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let roles = settings
+            .iter()
+            .filter(|settings| {
+                settings["userId"] == user
+                    && settings["executionDeviceId"] == self.device_id
+                    && settings["lifecycle"]["status"].is_null()
+            })
+            .flat_map(stand_in_identities)
+            .collect::<Vec<_>>();
+        self.issue_intake_roles(&roles, user, project, "cloud", issue_id)
+            .await
+    }
+
     pub(super) async fn personal_stand_in_projects(&self) -> Result<Vec<Value>, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let personal = store
@@ -81,7 +171,25 @@ impl RuntimeWorkRpcHandler {
             .list_projects()
             .map_err(settings_error)?
             .into_iter()
-            .flat_map(|project| self.stand_in_project_configs(&personal, &project.id, "local"))
+            .flat_map(|project| {
+                personal
+                    .iter()
+                    .filter(|settings| settings["executionDeviceId"] == self.device_id)
+                    .flat_map(stand_in_identities)
+                    .filter(|role| {
+                        role_project_matches(role, &project.id, "local")
+                            || role_receives_participating_issues(role)
+                    })
+                    .map(|role| {
+                        project_role(
+                            &role,
+                            role["userId"].as_i64().unwrap_or_default(),
+                            &project.id,
+                            "local",
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
             .collect())
     }
 

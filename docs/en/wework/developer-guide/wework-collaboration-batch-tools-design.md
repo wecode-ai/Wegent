@@ -117,6 +117,7 @@ Values within one field use OR; different fields use AND. Tag filters explicitly
 | `query`                                | Issue ID, title, description, and tags; no implicit comment-history full-text scan    |
 | `assignees`                            | People, robots, groups, and existing team identities, matched by ID                   |
 | `unassigned`                           | No assignee; mutually exclusive with `assignees`                                      |
+| `participation: "mine"`                 | Issues that list the authenticated user as a participant |
 | `creator_user_ids`                     | Authorship independent of assignment                                                  |
 | `statuses` / `exclude_statuses`        | Dynamic status IDs; mutually exclusive                                                |
 | `priorities` / `tags`                  | Priority and tags                                                                     |

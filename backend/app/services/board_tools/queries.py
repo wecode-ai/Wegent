@@ -307,10 +307,18 @@ def _scan(db: Session, token: MCPAuthInfo, state: dict[str, Any]) -> None:
                     "unsupported_filter", "Archived Issue selection is not supported"
                 )
             parent = state["filters"].get("parent")
-            items = single._list_items(db, row, token.user_id)
-            visible = {str(item["id"]): item.get("permissions") for item in items}
+            participating = state["filters"].get("participation") == "mine"
+            items = single._list_items(
+                db, row, token.user_id, participating=participating
+            )
+            board = (
+                single._list_items(db, row, token.user_id)
+                if participating and "has_children" in state["filters"]
+                else items
+            )
+            visible = {str(item["id"]): item.get("permissions") for item in board}
             parents = {
-                str(item["parent_id"]) for item in items if item.get("parent_id")
+                str(item["parent_id"]) for item in board if item.get("parent_id")
             }
             selected = []
             for item in items:

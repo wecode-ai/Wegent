@@ -117,6 +117,8 @@ In the **Codex conversation composer**, describe an operation such as “Create 
 5. The workday filter defaults to off, preserving existing Monday–Friday schedules. It works on local and cloud devices without changing execution location. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
 6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
 
+Reopen the details to see the saved project. After an Executor restart, a run that cannot resume is marked **Needs attention** and the schedule can continue at its next due time.
+
 Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
 
 ## Write a useful request
@@ -316,6 +318,8 @@ A plan generated in Plan mode remains part of the visible response instead of be
 ## Manage conversations
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+You can click Archive on several tasks in succession. After each task's undo window closes, its request joins the same queue as batch archives. Tasks leave the list once they are successfully archived.
 
 Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
 

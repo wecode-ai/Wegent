@@ -366,9 +366,9 @@ export function StandInOverviewPage({
               ? standInRoleName(
                   role,
                   Math.max(0, roles.indexOf(role)),
-                  t('standIn.personal.default_role')
+                  t('standIn.personal.unnamed_assistant')
                 )
-              : t('standIn.title')
+              : t('standIn.personal.default_role')
           }
           onOpenChange={setImDialogOpen}
         />
@@ -415,9 +415,9 @@ export function StandInOverviewPage({
                 ? standInRoleName(
                     role,
                     Math.max(0, roles.indexOf(role)),
-                    t('standIn.personal.default_role')
+                    t('standIn.personal.unnamed_assistant')
                   )
-                : t('standIn.title')
+                : t('standIn.personal.default_role')
             }
             enabled={role ? role.enabled : saved?.primary?.enabled !== false}
             device={device}
@@ -503,7 +503,7 @@ export function StandInOverviewPage({
                 className={roleTabClass(!roleId)}
               >
                 <UserRound aria-hidden="true" className="h-4 w-4" />
-                {t('standIn.title')}
+                {t('standIn.personal.default_role')}
                 {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
               </ControlButton>
               {roles.map((value, index) => {
@@ -538,7 +538,7 @@ export function StandInOverviewPage({
                       className={`h-4 w-4 ${selected ? '[&_g]:text-background' : ''}`}
                     />
                     <span className="max-w-40 truncate">
-                      {standInRoleName(value, index, t('standIn.personal.default_role'))}
+                      {standInRoleName(value, index, t('standIn.personal.unnamed_assistant'))}
                     </span>
                     {selected && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
                     <span className="sr-only">{scope}</span>
@@ -549,24 +549,22 @@ export function StandInOverviewPage({
                   </ControlButton>
                 )
               })}
-              <Tooltip label={t('standIn.workspace.create_role')} side="bottom">
-                <ControlButton
-                  variant="unstyled"
-                  type="button"
-                  data-testid="stand-in-create-role"
-                  aria-label={t('standIn.workspace.create_role')}
-                  onClick={event => {
-                    const trigger = event.currentTarget
-                    leavePanel(() => {
-                      setCalendarRequest(0)
-                      openProfile('create', trigger)
-                    })
-                  }}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted md:h-8 md:w-8"
-                >
-                  <Plus aria-hidden="true" className="h-4 w-4" />
-                </ControlButton>
-              </Tooltip>
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="stand-in-create-role"
+                onClick={event => {
+                  const trigger = event.currentTarget
+                  leavePanel(() => {
+                    setCalendarRequest(0)
+                    openProfile('create', trigger)
+                  })
+                }}
+                className="flex h-11 shrink-0 items-center gap-1 rounded-md px-2 text-text-secondary hover:bg-muted md:h-8"
+              >
+                <Plus aria-hidden="true" className="h-4 w-4" />
+                {t('standIn.personal.create_title')}
+              </ControlButton>
             </div>
           </nav>
           {api && deviceId && saved && (

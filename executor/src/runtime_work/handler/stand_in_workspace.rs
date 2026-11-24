@@ -1,34 +1,28 @@
 use super::*;
 use crate::runtime_work::codex_global_state::CodexGlobalProjectIndex;
 
-pub(super) fn validate_stand_in_workspace(config: &Value) -> Result<(), AppIpcError> {
-    let Some(workspace) = config.get("workspace").filter(|value| !value.is_null()) else {
-        return Ok(());
-    };
+pub(super) fn apply_stand_in_workspace(
+    payload: &mut Value,
+    config: &Value,
+) -> Result<(), AppIpcError> {
+    let workspace = &config["workspace"];
     let index = CodexGlobalProjectIndex::load();
     let key = workspace["projectKey"].as_str().unwrap_or_default();
-    let path = workspace["workspacePath"].as_str().unwrap_or_default();
     let project = index.project_for_key(key).ok_or_else(|| {
         AppIpcError::new(
             "workspace_unavailable",
             "The selected local project is unavailable on this Executor",
         )
     })?;
-    if project.remote_host_id.is_some()
-        || !project
-            .roots
-            .iter()
-            .chain(std::iter::once(&project.workspace_path))
-            .any(|root| normalize_workspace_path(root) == normalize_workspace_path(path))
-        || !Path::new(path).is_dir()
-    {
+    let path = &project.workspace_path;
+    if project.remote_host_id.is_some() || !Path::new(path).is_dir() {
         return Err(AppIpcError::new(
             "workspace_unavailable",
             "Choose an available directory in the selected local project",
         ));
     }
-    match workspace["executionMode"].as_str() {
-        Some("current_workspace") => Ok(()),
+    let source = match workspace["executionMode"].as_str() {
+        Some("current_workspace") => "local_path",
         Some("git_worktree") => {
             let output = std::process::Command::new("git")
                 .args(["-C", path, "rev-parse", "--show-toplevel"])
@@ -39,32 +33,20 @@ pub(super) fn validate_stand_in_workspace(config: &Value) -> Result<(), AppIpcEr
                     "Worktrees require a Git repository",
                 ));
             }
-            Ok(())
+            "git_worktree"
         }
-        _ => Err(AppIpcError::new(
-            "bad_request",
-            "Invalid Stand-in execution mode",
-        )),
-    }
-}
-
-pub(super) fn apply_stand_in_workspace(
-    payload: &mut Value,
-    config: &Value,
-) -> Result<(), AppIpcError> {
-    validate_stand_in_workspace(config)?;
-    let workspace = &config["workspace"];
-    payload["workspacePath"] = workspace["workspacePath"].clone();
-    payload["runtimeProjectKey"] = workspace["projectKey"].clone();
-    payload["runtimeWorkspaceRoots"] = json!([workspace["workspacePath"]]);
-    let isolated = workspace["executionMode"] == "git_worktree";
-    let source = if isolated {
-        "git_worktree"
-    } else {
-        "local_path"
+        _ => {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "Invalid Stand-in execution mode",
+            ));
+        }
     };
+    payload["workspacePath"] = json!(path);
+    payload["runtimeProjectKey"] = json!(project.key);
+    payload["runtimeWorkspaceRoots"] = json!([path]);
     let mut target = json!({"source":source});
-    if isolated {
+    if source == "git_worktree" {
         if let Some(branch) = workspace["branch"]
             .as_str()
             .map(str::trim)

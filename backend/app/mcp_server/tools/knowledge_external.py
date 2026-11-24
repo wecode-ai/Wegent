@@ -8,8 +8,10 @@ import json
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Optional
+from typing import Annotated, Any, Literal, Optional
 
+from mcp.types import CallToolResult, TextContent
+from pydantic import StrictBool, TypeAdapter
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
@@ -37,10 +39,9 @@ from app.schemas.knowledge_external import (
     ExternalSearchContentResponse,
 )
 from app.services.knowledge.document_download_policy import is_original_download_allowed
-from app.services.knowledge.document_read_service import (
-    DOCUMENT_READ_ERROR_ACCESS_DENIED,
-    DOCUMENT_READ_ERROR_NOT_FOUND,
-    document_read_service,
+from app.services.knowledge.document_text_sources import (
+    DocumentTextSources,
+    load_document_text_sources,
 )
 from app.services.knowledge.external_creator import resolve_external_knowledge_creators
 from app.services.knowledge.external_document_access import (
@@ -91,6 +92,8 @@ IGNORED_KNOWLEDGE_BASES_WARNING = (
 )
 DOCUMENT_CONTENT_FORMAT = "text"
 DOCUMENT_CONTENT_SOURCE = "parsed_attachment"
+ExternalToolResult = Annotated[CallToolResult, dict[str, Any]]
+_JSON_OBJECT_ADAPTER = TypeAdapter(dict[str, Any])
 
 
 @dataclass(frozen=True)
@@ -132,8 +135,26 @@ def _get_external_user():
     return _external_knowledge_request_user.get()
 
 
-def _json_error(message: str, code: str = "bad_request") -> str:
-    return json.dumps({"error": message, "code": code}, ensure_ascii=False)
+def _json_error(message: str, code: str = "bad_request") -> dict[str, Any]:
+    return {"error": message, "code": code}
+
+
+def _format_tool_response(
+    payload: dict[str, Any], response_format: Literal["legacy", "structured"]
+) -> CallToolResult:
+    """Keep legacy JSON text while allowing clients to opt into business objects."""
+    # Business errors used json.dumps; successful models used model_dump_json.
+    text = (
+        json.dumps(payload, ensure_ascii=False)
+        if "error" in payload
+        else _JSON_OBJECT_ADAPTER.dump_json(payload).decode("utf-8")
+    )
+    return CallToolResult(
+        content=[TextContent(type="text", text=text)],
+        structuredContent=(
+            payload if response_format == "structured" else {"result": text}
+        ),
+    )
 
 
 def _is_int(value) -> bool:
@@ -274,7 +295,7 @@ def _list_knowledge_bases_sync(
     *,
     user_id: int,
     filters: ExternalKnowledgeBaseListFilters,
-) -> str:
+) -> dict[str, Any]:
     db = SessionLocal()
     try:
         page_kbs, total = KnowledgeService.list_external_knowledge_bases(
@@ -323,7 +344,7 @@ def _list_knowledge_bases_sync(
             limit=filters.limit,
             offset=filters.offset,
             items=items,
-        ).model_dump_json()
+        ).model_dump(mode="json")
     except Exception as exc:
         logger.exception("wegent_kb_list_knowledge_bases failed: %s", exc)
         return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
@@ -341,7 +362,7 @@ def _list_nodes_sync(
     limit: int,
     offset: int,
     document_download_exempt: bool = False,
-) -> str:
+) -> dict[str, Any]:
     db = SessionLocal()
     try:
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -406,7 +427,7 @@ def _list_nodes_sync(
             has_more=has_more,
             items=items,
             warnings=warnings,
-        ).model_dump_json()
+        ).model_dump(mode="json")
     except ExternalKnowledgeInputError as exc:
         return _json_error(str(exc), exc.code)
     except Exception as exc:
@@ -422,7 +443,7 @@ def _get_document_content_sync(
     document_id: int,
     offset: int,
     limit: int,
-) -> str:
+) -> dict[str, Any]:
     from app.services.knowledge.read_reporting import (
         report_read,
         suppressed_read_events,
@@ -437,41 +458,35 @@ def _get_document_content_sync(
             user_id=user_id,
             document_id=document_id,
         )
-        results = document_read_service.read_documents(
-            db=db,
-            document_ids=[document_id],
-            offset=offset,
-            limit=limit,
-            knowledge_base_ids=[access.knowledge_base_id],
-            user_id=user_id,
-            actor_user_id=user_id,
-            entrypoint="mcp",
-            searchable_only=False,
+        sources = load_document_text_sources(db, [access.document]).get(
+            document_id, DocumentTextSources()
         )
-        result = results[0] if results else None
-        if result is None or result.get("error_code") == DOCUMENT_READ_ERROR_NOT_FOUND:
-            return _json_error("Document not found", "not_found")
-        if result.get("error_code") == DOCUMENT_READ_ERROR_ACCESS_DENIED:
-            return _json_error(result["error"], "forbidden")
-        if result.get("error"):
-            return _json_error(result["error"], "forbidden")
+        full_content = sources.select_text() or ""
+        total_length = len(full_content)
+        actual_offset = min(offset, total_length)
+        content = full_content[actual_offset : actual_offset + limit]
+        returned_length = len(content)
 
         response = ExternalDocumentContentResponse(
             document_id=document_id,
             node_id=f"document:{document_id}",
             knowledge_base_id=access.knowledge_base_id,
-            name=result["name"],
-            content=result["content"],
+            name=access.document.name,
+            content=content,
             content_format=DOCUMENT_CONTENT_FORMAT,
             content_source=DOCUMENT_CONTENT_SOURCE,
-            content_available=result["total_length"] > 0,
-            offset=result["offset"],
-            returned_length=result["returned_length"],
-            total_length=result["total_length"],
-            has_more=result["has_more"],
+            content_available=total_length > 0,
+            offset=actual_offset,
+            returned_length=returned_length,
+            total_length=total_length,
+            has_more=actual_offset + returned_length < total_length,
             index_status=_document_index_status(access.document),
-        ).model_dump_json()
-        event_result = result
+        ).model_dump(mode="json")
+        event_result = {
+            **response,
+            "id": document_id,
+            "kb_id": access.knowledge_base_id,
+        }
         return response
     except ExternalDocumentAccessError as exc:
         return _json_error(str(exc), exc.code)
@@ -500,7 +515,7 @@ def _get_document_download_sync(
     disposition: str,
     resource_url: str,
     document_download_exempt: bool = False,
-) -> str:
+) -> dict[str, Any]:
     db = SessionLocal()
     try:
         access = get_document_file_or_raise(
@@ -531,7 +546,7 @@ def _get_document_download_sync(
             file_size=access.file_size,
             downloadable=access.downloadable,
             previewable=access.previewable,
-        ).model_dump_json()
+        ).model_dump(mode="json")
     except ExternalDocumentAccessError as exc:
         return _json_error(str(exc), exc.code)
     except Exception as exc:
@@ -554,6 +569,7 @@ def _prepare_search_content_sync(
     query: str,
     requested_ids: list[int],
     max_results: int,
+    deduplicate_by_document: bool = False,
 ) -> SearchPreparation:
     search_rate_limit_status = _search_rate_limit_status(user_id)
     if search_rate_limit_status == ExternalMcpRateLimitStatus.LIMITED:
@@ -599,6 +615,7 @@ def _prepare_search_content_sync(
             knowledge_base_ids=target_ids,
             query=query,
             max_results=max_results,
+            deduplicate_by_document=deduplicate_by_document,
             route_mode="rag_retrieval",
             user_id=user_id,
             user_name=user_name,
@@ -627,11 +644,13 @@ async def wegent_kb_list_knowledge_bases(
     owner_user_ids: Optional[list[int]] = None,
     limit: int = DEFAULT_KNOWLEDGE_BASE_LIST_LIMIT,
     offset: int = 0,
-) -> str:
+    response_format: Literal["legacy", "structured"] = "legacy",
+) -> ExternalToolResult:
     """List knowledge bases visible to the authenticated external user."""
+    format_response = partial(_format_tool_response, response_format=response_format)
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return format_response(_json_error("Authentication required", "unauthorized"))
 
     params, error = validate_knowledge_base_list_params(
         scope=scope,
@@ -642,14 +661,16 @@ async def wegent_kb_list_knowledge_bases(
         offset=offset,
     )
     if error:
-        return _json_error(error)
+        return format_response(_json_error(error))
     assert params is not None
 
-    return await run_in_threadpool(
-        partial(
-            _list_knowledge_bases_sync,
-            user_id=user.id,
-            filters=params.filters,
+    return format_response(
+        await run_in_threadpool(
+            partial(
+                _list_knowledge_bases_sync,
+                user_id=user.id,
+                filters=params.filters,
+            )
         )
     )
 
@@ -662,43 +683,53 @@ async def wegent_kb_list_nodes(
     include_inactive: bool = True,
     limit: int = DEFAULT_DIRECT_NODE_LIMIT,
     offset: int = 0,
-) -> str:
-    """List folder and document nodes in a knowledge base."""
+    response_format: Literal["legacy", "structured"] = "legacy",
+) -> ExternalToolResult:
+    """List folders and documents with their stored short summaries."""
+    format_response = partial(_format_tool_response, response_format=response_format)
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return format_response(_json_error("Authentication required", "unauthorized"))
     if not _is_int(knowledge_base_id):
-        return _json_error("knowledge_base_id must be an integer")
+        return format_response(_json_error("knowledge_base_id must be an integer"))
     if not _is_int(folder_id):
-        return _json_error("folder_id must be an integer")
+        return format_response(_json_error("folder_id must be an integer"))
     if not _is_bool(recursive):
-        return _json_error("recursive must be a boolean")
+        return format_response(_json_error("recursive must be a boolean"))
     if not _is_bool(include_inactive):
-        return _json_error("include_inactive must be a boolean")
+        return format_response(_json_error("include_inactive must be a boolean"))
     if not _is_int(limit):
-        return _json_error("limit must be an integer")
+        return format_response(_json_error("limit must be an integer"))
     if not _is_int(offset):
-        return _json_error("offset must be an integer")
+        return format_response(_json_error("offset must be an integer"))
     if knowledge_base_id <= 0:
-        return _json_error("knowledge_base_id is required")
+        return format_response(_json_error("knowledge_base_id is required"))
     if folder_id < 0:
-        return _json_error("folder_id must be greater than or equal to 0")
+        return format_response(
+            _json_error("folder_id must be greater than or equal to 0")
+        )
     if limit < 1 or limit > MAX_DIRECT_NODE_LIMIT:
-        return _json_error(f"limit must be between 1 and {MAX_DIRECT_NODE_LIMIT}")
+        return format_response(
+            _json_error(f"limit must be between 1 and {MAX_DIRECT_NODE_LIMIT}")
+        )
     if offset < 0:
-        return _json_error("offset must be greater than or equal to 0")
+        return format_response(_json_error("offset must be greater than or equal to 0"))
 
-    return await run_in_threadpool(
-        partial(
-            _list_nodes_sync,
-            user_id=user.id,
-            knowledge_base_id=knowledge_base_id,
-            folder_id=folder_id,
-            recursive=recursive,
-            include_inactive=include_inactive,
-            limit=limit,
-            offset=offset,
-            document_download_exempt=getattr(user, "document_download_exempt", False),
+    return format_response(
+        await run_in_threadpool(
+            partial(
+                _list_nodes_sync,
+                user_id=user.id,
+                knowledge_base_id=knowledge_base_id,
+                folder_id=folder_id,
+                recursive=recursive,
+                include_inactive=include_inactive,
+                limit=limit,
+                offset=offset,
+                document_download_exempt=getattr(
+                    user, "document_download_exempt", False
+                ),
+            )
         )
     )
 
@@ -708,26 +739,30 @@ async def wegent_kb_get_document_content(
     document_id: int,
     offset: int = 0,
     limit: int = MAX_DOCUMENT_READ_LIMIT,
-) -> str:
+    response_format: Literal["legacy", "structured"] = "legacy",
+) -> ExternalToolResult:
     """Read parsed text content for an accessible knowledge document."""
+    format_response = partial(_format_tool_response, response_format=response_format)
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return format_response(_json_error("Authentication required", "unauthorized"))
 
     validation_error = _validate_document_id(document_id)
     if validation_error:
-        return _json_error(validation_error)
+        return format_response(_json_error(validation_error))
     validation_error = _validate_document_read_paging(offset, limit)
     if validation_error:
-        return _json_error(validation_error)
+        return format_response(_json_error(validation_error))
 
-    return await run_in_threadpool(
-        partial(
-            _get_document_content_sync,
-            user_id=user.id,
-            document_id=document_id,
-            offset=offset,
-            limit=limit,
+    return format_response(
+        await run_in_threadpool(
+            partial(
+                _get_document_content_sync,
+                user_id=user.id,
+                document_id=document_id,
+                offset=offset,
+                limit=limit,
+            )
         )
     )
 
@@ -736,30 +771,36 @@ async def wegent_kb_get_document_content(
 async def wegent_kb_get_document_download(
     document_id: int,
     disposition: str = "inline",
-) -> str:
+    response_format: Literal["legacy", "structured"] = "legacy",
+) -> ExternalToolResult:
     """Get a short-lived original file download credential for a document."""
+    format_response = partial(_format_tool_response, response_format=response_format)
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return format_response(_json_error("Authentication required", "unauthorized"))
 
     validation_error = _validate_document_id(document_id)
     if validation_error:
-        return _json_error(validation_error)
+        return format_response(_json_error(validation_error))
 
     try:
         normalized_disposition = normalize_disposition(disposition)
     except ExternalDocumentAccessError as exc:
-        return _json_error(str(exc), exc.code)
+        return format_response(_json_error(str(exc), exc.code))
 
     resource_url = _external_knowledge_document_file_url(document_id)
-    return await run_in_threadpool(
-        partial(
-            _get_document_download_sync,
-            user_id=user.id,
-            document_id=document_id,
-            disposition=normalized_disposition,
-            resource_url=resource_url,
-            document_download_exempt=getattr(user, "document_download_exempt", False),
+    return format_response(
+        await run_in_threadpool(
+            partial(
+                _get_document_download_sync,
+                user_id=user.id,
+                document_id=document_id,
+                disposition=normalized_disposition,
+                resource_url=resource_url,
+                document_download_exempt=getattr(
+                    user, "document_download_exempt", False
+                ),
+            )
         )
     )
 
@@ -769,44 +810,57 @@ async def wegent_kb_search_content(
     query: str,
     knowledge_base_ids: Optional[list[int]] = None,
     max_results: int = 10,
-) -> str:
-    """Search document content in accessible knowledge bases."""
+    deduplicate_by_document: StrictBool = False,
+    response_format: Literal["legacy", "structured"] = "legacy",
+) -> ExternalToolResult:
+    """Search content, optionally returning one top-ranked hit per document."""
+    format_response = partial(_format_tool_response, response_format=response_format)
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return format_response(_json_error("Authentication required", "unauthorized"))
 
     if not isinstance(query, str):
-        return _json_error("query must be a string")
+        return format_response(_json_error("query must be a string"))
     normalized_query = query.strip()
     if not normalized_query:
-        return _json_error("query must not be empty")
+        return format_response(_json_error("query must not be empty"))
     if len(normalized_query) > MAX_SEARCH_QUERY_LENGTH:
-        return _json_error(
-            f"query must be at most {MAX_SEARCH_QUERY_LENGTH} characters"
+        return format_response(
+            _json_error(f"query must be at most {MAX_SEARCH_QUERY_LENGTH} characters")
         )
     if not _is_int(max_results):
-        return _json_error("max_results must be an integer")
+        return format_response(_json_error("max_results must be an integer"))
     if max_results < 1 or max_results > MAX_SEARCH_RESULTS:
-        return _json_error(f"max_results must be between 1 and {MAX_SEARCH_RESULTS}")
+        return format_response(
+            _json_error(f"max_results must be between 1 and {MAX_SEARCH_RESULTS}")
+        )
+    if not _is_bool(deduplicate_by_document):
+        return format_response(_json_error("deduplicate_by_document must be a boolean"))
     if knowledge_base_ids is None:
-        return _json_error("knowledge_base_ids is required")
+        return format_response(_json_error("knowledge_base_ids is required"))
     if not isinstance(knowledge_base_ids, list):
-        return _json_error("knowledge_base_ids must be a list of integers")
+        return format_response(
+            _json_error("knowledge_base_ids must be a list of integers")
+        )
     if any(not _is_int(knowledge_base_id) for knowledge_base_id in knowledge_base_ids):
-        return _json_error("knowledge_base_ids must contain only integers")
+        return format_response(
+            _json_error("knowledge_base_ids must contain only integers")
+        )
     requested_ids = list(dict.fromkeys(knowledge_base_ids))
     if not requested_ids:
-        return _json_error("knowledge_base_ids must not be empty")
+        return format_response(_json_error("knowledge_base_ids must not be empty"))
     if len(requested_ids) > MAX_SEARCH_KNOWLEDGE_BASE_IDS:
-        return _json_error(
-            f"knowledge_base_ids must contain at most {MAX_SEARCH_KNOWLEDGE_BASE_IDS} items"
+        return format_response(
+            _json_error(
+                f"knowledge_base_ids must contain at most {MAX_SEARCH_KNOWLEDGE_BASE_IDS} items"
+            )
         )
 
     effective_ids: list[int] = []
-    response_json: str
+    response_payload: dict[str, Any]
 
     async def execute_search() -> dict:
-        nonlocal response_json
+        nonlocal response_payload
         preparation = await run_in_threadpool(
             partial(
                 _prepare_search_content_sync,
@@ -815,6 +869,7 @@ async def wegent_kb_search_content(
                 query=normalized_query,
                 requested_ids=requested_ids,
                 max_results=max_results,
+                deduplicate_by_document=deduplicate_by_document,
             )
         )
         effective_ids.extend(preparation.target_ids)
@@ -838,15 +893,24 @@ async def wegent_kb_search_content(
                 )
             )
 
-        response_json = ExternalSearchContentResponse(
+        response_payload = ExternalSearchContentResponse(
             query=normalized_query,
             total=result.get("total", len(records)),
+            total_returned=len(records),
+            returned_document_count=len(
+                {
+                    (record.knowledge_base_id, record.document_id)
+                    for record in records
+                    if record.document_id is not None
+                }
+            ),
+            deduplicate_by_document=deduplicate_by_document,
             total_estimated_tokens=result.get("total_estimated_tokens", 0),
             searched_knowledge_base_ids=preparation.target_ids,
             ignored_knowledge_base_ids=preparation.ignored_knowledge_base_ids,
             warnings=preparation.warnings,
             records=records,
-        ).model_dump_json()
+        ).model_dump(mode="json")
         return result
 
     try:
@@ -859,9 +923,9 @@ async def wegent_kb_search_content(
             actor_user_id=user.id,
             execute=execute_search,
         )
-        return response_json
+        return format_response(response_payload)
     except SearchPreparationError as exc:
-        return _json_error(str(exc), exc.code)
+        return format_response(_json_error(str(exc), exc.code))
     except Exception as exc:
         logger.exception("wegent_kb_search_content failed: %s", exc)
-        return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
+        return format_response(_json_error(INTERNAL_ERROR_MESSAGE, "internal_error"))
