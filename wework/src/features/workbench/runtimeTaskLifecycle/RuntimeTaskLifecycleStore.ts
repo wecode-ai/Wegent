@@ -870,8 +870,9 @@ export class RuntimeTaskLifecycleStore {
     const keys = new Set(
       [...this.unreadStateByTask].filter(([, state]) => state.unread).map(([key]) => key)
     )
-    for (const [key, machine] of this.machines) {
-      if (!machine.getSnapshot().derived.shouldShowUnread) keys.delete(key)
+    for (const key of keys) {
+      const machine = this.machines.get(key)
+      if (machine && !machine.getSnapshot().derived.shouldShowUnread) keys.delete(key)
     }
     const serialized = serializeTaskKeys(keys)
     if (serialized === this.persistedUnreadSerialized) return

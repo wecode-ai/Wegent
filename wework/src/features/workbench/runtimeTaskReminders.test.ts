@@ -7,6 +7,7 @@ import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
+import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
 import { createNotificationCenterSummary } from '@/features/notifications/notificationCenterSummary'
 import { readCachedRemoteRuntimeWork, writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import { serializeTaskKeys } from './runtimeTaskLifecycle/taskKeyStorage'
@@ -44,7 +45,20 @@ function reminderItem(key: string): RuntimeTaskReminderItem {
   }
 }
 
-describe('getVisibleRuntimeTaskUnreadKeys', () => {
+describe('runtime task reminders', () => {
+  test('preserves listed reminder rows when only an unlisted task changes', () => {
+    const listed = reminderItem('listed')
+    const unlisted = new RuntimeTaskMachine(reminderItem('unlisted').address).getSnapshot()
+    const items = [listed]
+    const initial = new RuntimeTaskLifecycleStore('reminder-row-identity-test').getSnapshot()
+    const { result, rerender } = renderHook(snapshot => useUnlistedStandInTasks(items, snapshot), {
+      initialProps: initial,
+    })
+    const rows = result.current
+    rerender({ ...initial, version: 1, tasks: new Map([[unlisted.key, unlisted]]) })
+    expect(result.current).toBe(rows)
+  })
+
   test('discovers hidden pending work without adding it to visible unread badges', () => {
     const item = reminderItem('hidden-pending')
     const machine = new RuntimeTaskMachine(item.address)

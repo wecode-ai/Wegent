@@ -1,5 +1,4 @@
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
-export { getVisibleRuntimeTaskUnreadKeys } from './runtimeTaskReminderSource'
 import { createAppPreferencesStore } from '@/features/app-preferences/appPreferencesStore'
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { defaultAppPreferences, type AppPreferences } from '@/desktop/appPreferences'
@@ -152,7 +151,7 @@ export function useRuntimeTaskReminders({
         },
       ]
     })
-    return [...listedItems, ...unlisted]
+    return unlisted.length ? [...listedItems, ...unlisted] : listedItems
   }, [listedItems, lifecycleSnapshot.tasks])
   const unreadMessageCounts = useStandInMessageReminders(
     items,
