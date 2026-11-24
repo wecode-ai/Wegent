@@ -292,7 +292,7 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Verify desktop E2E runner helpers
-        run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs wework/e2e/desktop/desktop-cpu-benchmark.test.mjs
+        run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs wework/e2e/desktop/desktop-cpu-benchmark.test.mjs .github/scripts/wework-cpu-hardware-key.test.mjs
 
       - name: Set up ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
