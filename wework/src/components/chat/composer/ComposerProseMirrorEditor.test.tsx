@@ -49,7 +49,7 @@ function renderEditor(
   const textareaRef = createRef<HTMLElement>()
   const onChange = vi.fn()
 
-  render(
+  const { unmount } = render(
     <ComposerProseMirrorEditor
       ref={editorRef}
       value={value}
@@ -75,10 +75,21 @@ function renderEditor(
     />
   )
 
-  return { editorRef, onChange }
+  return { editorRef, onChange, unmount }
 }
 
 describe('ComposerProseMirrorEditor', () => {
+  test('releases the editor value accessor when a retained DOM node is unmounted', async () => {
+    const { unmount } = renderEditor('draft')
+    const editor = screen.getByRole('textbox')
+    expect(Object.getOwnPropertyDescriptor(editor, 'value')?.get?.()).toBe('draft')
+
+    unmount()
+
+    await waitFor(() => expect(Object.hasOwn(editor, 'value')).toBe(false))
+    expect(editor.isConnected).toBe(false)
+  })
+
   test('keeps an explicit accessible name distinct from its localized input prompt', () => {
     renderEditor('', undefined, undefined, undefined, '项目说明')
     expect(screen.getByRole('textbox', { name: '项目说明' })).toHaveAttribute(

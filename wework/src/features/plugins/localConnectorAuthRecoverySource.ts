@@ -49,9 +49,11 @@ export function createLocalConnectorAuthRecoverySource() {
   }
   const clearPending = () => invalidate(true)
 
-  function reconcile(next: ConnectorAuthRecoveryInput) {
+  function reconcile(
+    next: ConnectorAuthRecoveryInput,
+    candidate: ReturnType<typeof latestConnectorAuthMessage>
+  ) {
     input = next
-    const candidate = latestConnectorAuthMessage(next.messages)
     const messageId = candidate?.message.id
     const status = candidate?.message.status
     const hint = candidate?.hint
@@ -176,13 +178,13 @@ export function createLocalConnectorAuthRecoverySource() {
         await current.onResumeSend(current.t('workbench.plugins_local_auth_resume_prompt'))
     },
     observe(next: ConnectorAuthRecoveryInput) {
-      const messageId = latestConnectorAuthMessage(next.messages)?.message.id
+      const candidate = latestConnectorAuthMessage(next.messages)
       return {
         getSnapshot: () =>
-          next.active !== false && pendingMessageId === messageId ? pending : null,
+          next.active !== false && pendingMessageId === candidate?.message.id ? pending : null,
         subscribe(listener: () => void) {
           listeners.add(listener)
-          reconcile(next)
+          reconcile(next, candidate)
           return () => {
             listeners.delete(listener)
             queueMicrotask(() => {

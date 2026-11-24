@@ -1,7 +1,6 @@
+import { DSH_BACKGROUND_CONCURRENCY } from '@/api/dsh/backgroundRequests'
 import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
 import type { RuntimeTaskAddress, RuntimeTaskArchiveResponse } from '@/types/api'
-
-export const BULK_RUNTIME_TASK_CONCURRENCY = 8
 
 export type RuntimeTaskArchiveAttempt =
   | {
@@ -21,7 +20,7 @@ export async function archiveRuntimeTaskAddresses(
 ): Promise<RuntimeTaskArchiveAttempt[]> {
   const results = await allSettledWithConcurrency(
     addresses,
-    BULK_RUNTIME_TASK_CONCURRENCY,
+    DSH_BACKGROUND_CONCURRENCY,
     async address => ({
       address,
       response: await archiveConversation(address),

@@ -56,7 +56,7 @@ export interface NormalizedRuntimeMessage {
   errorInfo?: import('./api-types').ChatErrorInfo | null;
   error_info?: import('./api-types').ChatErrorInfo | null;
   error_type?: string | null;
-  createdAt?: string | null;
+  createdAt?: string | number | null;
   completedAt?: string | number | null;
   completed_at?: string | number | null;
   stoppedNotice?: boolean | null;

@@ -334,14 +334,13 @@ export async function sendTemporaryChatMessage(
   )
   const turnIdsBeforeSend = getRuntimeConversationTurnIds(targetAddress)
   if (!deferLocalMessage) {
-    setMessages(
-      applyRuntimeConversationAction(targetAddress, {
-        type: 'user_added',
-        message: createRuntimeUserMessage(message, messageAttachments, {
-          id: queuedMessage.id,
-        }),
-      })
-    )
+    applyRuntimeConversationAction(targetAddress, {
+      type: 'user_added',
+      message: createRuntimeUserMessage(message, messageAttachments, {
+        id: queuedMessage.id,
+      }),
+    })
+    setMessages(getRuntimeConversationMessages(targetAddress))
   }
   let sendError: string | null = null
   let queued = false

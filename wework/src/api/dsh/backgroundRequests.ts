@@ -1,6 +1,7 @@
 export type DshRequestPriority = 'foreground' | 'background'
 
 const BACKGROUND_SLOTS = ['wework.dsh.background.0', 'wework.dsh.background.1'] as const
+export const DSH_BACKGROUND_CONCURRENCY = BACKGROUND_SLOTS.length
 const BACKGROUND_QUEUE_TIMEOUT_MS = 30_000
 
 // Allow the DSH-to-executor deadline to report its error before closing HTTP.

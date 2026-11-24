@@ -510,6 +510,8 @@ Claude Code, Agno, and Codex task shells receive a task identity environment set
 
 When project mode calls Claude or Codex model APIs, the executor adds a `wecode-project: <project_id>` request header in the directly launched runtime context and fills source identity headers: `wecode-action: wegent`, `wecode-source: wegent-local`, and `wecode-executor: <runtime>`, where Claude Code uses `claudecode` and Codex uses `codex`. Claude Code local mode first merges existing `ANTHROPIC_CUSTOM_HEADERS` from the executor startup process environment and the runtime environment, then appends the project identity and writes the resulting header set to both `ANTHROPIC_CUSTOM_HEADERS` and `DEFAULT_HEADERS`/`default_headers`. This keeps the Claude Code child process and downstream model gateways on the same header set. Codex writes the header into provider `http_headers` for Wegent-managed provider configs, and also injects it for personal Codex config runs when the execution model explicitly names the provider.
 
+The Wework desktop app passes its Electron-reported application version when it starts the local executor. Model requests carry `x-wework-version`, `x-wework-platform`, and `x-wework-arch` for the application version, operating system, and executor architecture. When a request uses the Wegent model gateway, the gateway forwards the same header names to the model service.
+
 ### Chat Task Device Resolution And Claude Code Launch Context
 
 When a regular chat Task runs through the local executor, Backend resolves the actual dispatch device before creating or continuing the task. Resolution order is:

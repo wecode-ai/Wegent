@@ -8,14 +8,13 @@ use tracing::Instrument;
 // Every acquisition must have room for cleanup before it sends anything to Redis.
 static PENDING_ADMISSION_CLEANUPS: Semaphore = Semaphore::const_new(64);
 const PENDING_SET_BUDGET: Duration = Duration::from_secs(5);
-const PROVISIONAL_LEASE_MS: u64 = 1_000;
-const PROMOTABLE_AGE_MS: u64 = 200;
+// Expiration itself bounds promotion age, including commands executed after timeout.
+const PROVISIONAL_LEASE_MS: u64 = 200;
 pub const NATIVE_LEASE_PROMOTION_SCRIPT: &str = r"
-if redis.call('GET', KEYS[1]) ~= ARGV[1]
-    or redis.call('PTTL', KEYS[1]) < tonumber(ARGV[2]) then
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
     return 0
 end
-return redis.call('PEXPIRE', KEYS[1], ARGV[3])
+return redis.call('PEXPIRE', KEYS[1], ARGV[2])
 ";
 
 pub(crate) async fn complete_native_write<T, F>(
@@ -40,7 +39,7 @@ pub(crate) enum NativeAdmissionError {
     RedisReplyUnknown,
     RedisReplyLate,
     RedisPromotionNotConfirmed,
-    RedisPromotionUnavailable,
+    RedisPromotionUnavailable(brz_redis::RedisError),
     CleanupCapacityExhausted,
     Mysql(MysqlError),
     LegacyAcquire(MysqlError),
@@ -328,20 +327,16 @@ impl<'a, R: Redis + Clone + 'static> PluginWriteLease<'a, R> {
         let failure = if Instant::now() >= deadline {
             NativeAdmissionError::RedisReplyLate
         } else {
-            // Redis can execute an abandoned command later. A stale provisional key
-            // must never gain the transaction TTL, even if its token still matches.
+            // A late command cannot recreate an expired provisional key or extend
+            // a new owner's lease. Keep the comparison and expiration atomic.
             let promotion = self.redis.eval::<_, _, _, i64>(
                 NATIVE_LEASE_PROMOTION_SCRIPT,
                 [self.key.as_str()],
-                (
-                    self.token.as_str(),
-                    PROVISIONAL_LEASE_MS - PROMOTABLE_AGE_MS,
-                    LEASE_SECONDS * 1_000,
-                ),
+                (self.token.as_str(), LEASE_SECONDS * 1_000),
             );
             match tokio::time::timeout_at(deadline, promotion).await {
                 Ok(Ok(1)) if Instant::now() < deadline => return Ok(self),
-                Ok(Err(_)) => NativeAdmissionError::RedisPromotionUnavailable,
+                Ok(Err(error)) => NativeAdmissionError::RedisPromotionUnavailable(error),
                 Ok(Ok(_)) | Err(_) => NativeAdmissionError::RedisPromotionNotConfirmed,
             }
         };

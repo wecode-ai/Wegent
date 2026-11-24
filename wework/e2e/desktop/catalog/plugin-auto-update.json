@@ -7,5 +7,9 @@
       "shard": 3,
       "position": 1000
     }
-  }
+  },
+  "paths": [
+    "wework/e2e/desktop/modules/plugin-upgrade-flow.mjs",
+    "wework/src/components/plugins/pluginManagementSource.ts"
+  ]
 }

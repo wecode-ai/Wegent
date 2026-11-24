@@ -266,16 +266,15 @@ component data directory. The development data directory therefore owns its
 release state. A development `release-bootstrap` path error must not be repaired
 by creating production release directories or removing startup validation.
 
-The Wework macOS development scripts share Cargo targets by component across Git worktrees, so switching worktrees can reuse already compiled dependencies instead of compiling them from scratch. Cargo coordinates concurrent access to a target directory and rebuilds artifacts when their fingerprints change. On the first `pnpm --dir wework run dev:mac`, the script installs `sccache` with Homebrew when it is missing to reuse compiler outputs as well.
+The Wework macOS development scripts isolate Cargo targets by component and worktree so each checkout starts with its own build state. When `sccache` is installed, worktrees can reuse compiler outputs with matching cache keys. Development builds pass the output directory through Cargo's `--target-dir` so different values of the `CARGO_TARGET_DIR` environment variable do not change the Rust cache key.
 
-- `pnpm --dir wework run dev:mac`, `pnpm --dir wework run build:mac`, the development executor sidecar, and `executor/local.sh build` use `$XDG_CACHE_HOME/wegent/cargo-target/<component>`, or `~/.cache/wegent/cargo-target/...` when `XDG_CACHE_HOME` is not set.
-- When `sccache` is available, the scripts set `RUSTC_WRAPPER` and `SCCACHE_BASEDIRS` automatically, normalize source and target paths across worktrees, and disable Cargo incremental compilation, which is incompatible with shared compiler caching.
+- `pnpm --dir wework run dev:mac` defaults to `$XDG_CACHE_HOME/wegent/cargo-target/executor-dev/worktrees/<path-hash>`. When `XDG_CACHE_HOME` is unset, the cache root is `~/.cache/wegent/cargo-target`.
+- When `sccache` is available, the scripts set `RUSTC_WRAPPER` and disable Cargo incremental compilation.
 - Set `WEGENT_CARGO_TARGET_ROOT=/path/to/cache` to choose another target cache root.
-- Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use Cargo's repository-local default `target/`.
-- Set `WEGENT_DISABLE_SCCACHE=1` to skip automatic installation and disable `sccache`.
-- Explicit `CARGO_TARGET_DIR` and `RUSTC_WRAPPER` values are always preserved.
+- Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to put artifacts under `target/executor-dev` in the current worktree.
+- Set `WEGENT_DISABLE_SCCACHE=1` to disable automatic `sccache` configuration.
+- An explicit `CARGO_TARGET_DIR` supplies the cache root. The scripts preserve an explicitly configured `RUSTC_WRAPPER`.
 - Codex and Claude Code sessions started by Wework derive a stable repository cache key from Git's common directory and set `CARGO_TARGET_DIR` to `$WEGENT_CARGO_TARGET_ROOT/repositories/<repository-key>`. Direct agent commands such as `cargo test` and `cargo build` therefore reuse one Cargo target across every worktree of the same repository while keeping unrelated repositories isolated. Electron builds use `wework/electron/release/` instead.
-- Existing per-worktree `executor/target` directories are not deleted automatically. After confirming that no Cargo build is running, remove those old caches manually; subsequent Executor builds use the shared directory above.
 
 ---
 

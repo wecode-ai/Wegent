@@ -68,6 +68,7 @@ export function useLocalConnectorAuthSession({
   const cancel = transport?.cancel ?? localConnectorAuthCancel
   const pluginKey = target.pluginKey
   const connectorSlug = target.connectorSlug
+  const marketplaceId = target.marketplaceId
   const pluginRoot = target.pluginRoot ?? null
   const instance = target.instance ?? undefined
   const intervalMs = pollIntervalMs(target.localAuth)
@@ -79,6 +80,7 @@ export function useLocalConnectorAuthSession({
           instance,
           pluginKey,
           connectorSlug,
+          marketplaceId,
           ...(pluginRoot ? { pluginRoot } : {}),
         },
         { start, poll, cancel },
@@ -89,6 +91,7 @@ export function useLocalConnectorAuthSession({
       instance,
       pluginKey,
       connectorSlug,
+      marketplaceId,
       pluginRoot,
       start,
       poll,

@@ -1,3 +1,4 @@
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import type { RemoteStandInRoleBranch } from '@/api/standIn'
 import { standInState } from '@/features/notifications/standInNotifications'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
@@ -57,6 +58,28 @@ export const actionableStatuses: Status[] = [
 ]
 export const cancellingStatuses: Status[] = ['cancelling', 'cancellingWaitingForDevice']
 export const activeStatuses: Status[] = [...actionableStatuses, ...cancellingStatuses]
+
+export function activeStandInAncestors(branches: Branch[]): ReadonlySet<string> {
+  return new Set(
+    branches.flatMap(branch => (activeStatuses.includes(branch.status) ? branch.ancestors : []))
+  )
+}
+
+export function standInBranchStatus(branch: Branch, activeAncestors: ReadonlySet<string>) {
+  return branch.status === 'completed' && activeAncestors.has(branch.taskId)
+    ? 'waitingChildren'
+    : branch.status
+}
+
+export function activeStandInBranchRows(branches: Branch[]) {
+  const activeAncestors = activeStandInAncestors(branches)
+  return branches.flatMap(branch => {
+    const status = standInBranchStatus(branch, activeAncestors)
+    return status === 'waitingChildren' || activeStatuses.includes(status)
+      ? [{ taskId: branch.taskId, title: branch.title, address: branch.address, status }]
+      : []
+  })
+}
 
 export function selectStandInDelegatedWork(
   items: RuntimeTaskReminderItem[],
@@ -135,4 +158,46 @@ export function selectStandInDelegatedWork(
     })
   }
   return [...branches.values()]
+}
+
+type DelegationGroup = { root: string; createdAt: number; branches: Branch[] }
+
+export function groupStandInDelegations(branches: Branch[]) {
+  const groups = new Map<string, DelegationGroup>()
+  const orderedBranches = branches.toSorted((left, right) => left.createdAt - right.createdAt)
+  for (const branch of orderedBranches) {
+    const group = groups.get(branch.root)
+    if (group) group.branches.push(branch)
+    else {
+      groups.set(branch.root, {
+        root: branch.root,
+        createdAt: branch.createdAt,
+        branches: [branch],
+      })
+    }
+  }
+  return [...groups.values()]
+}
+
+/** Delegations are dated by the dispatcher. Keep them next to the preceding visible request. */
+export function standInDelegationsByMessage(
+  messages: Pick<WorkbenchMessage, 'id' | 'role' | 'source' | 'createdAt'>[],
+  groups: DelegationGroup[]
+) {
+  const requests = messages
+    .filter(message => message.role === 'user' && message.source?.source !== 'stand_in_activity')
+    .map(message => ({ id: message.id, createdAt: Date.parse(message.createdAt) }))
+    .filter(message => Number.isFinite(message.createdAt))
+    .sort((left, right) => left.createdAt - right.createdAt)
+  const byMessage = new Map<string, DelegationGroup[]>()
+  let index = -1
+  for (const group of groups) {
+    while (requests[index + 1]?.createdAt <= group.createdAt) index++
+    const request = requests[index]
+    if (!request) continue
+    const existing = byMessage.get(request.id)
+    if (existing) existing.push(group)
+    else byMessage.set(request.id, [group])
+  }
+  return byMessage
 }

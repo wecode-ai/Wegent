@@ -28,7 +28,8 @@ it('restores the bottom as soon as Markdown restores the native range', () => {
     port.chunkLayout(scope, element)
   )
   const virtualizer = { options: { enabled: true } } as ConversationVirtualizer
-  port.bind(list, {
+  port.attach(list)
+  port.update({
     scope,
     virtual: true,
     ready: true,

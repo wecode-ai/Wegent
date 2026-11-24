@@ -690,8 +690,6 @@ export function createDesktopScenario({
   return {
     appEnvironment: {
       WEWORK_E2E_DOWNLOADS_DIR: downloadsPath,
-      WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
-      WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS: '5000',
     },
     setExecutorBinary(path) {
       desktopScenarioExecutorBinary = path

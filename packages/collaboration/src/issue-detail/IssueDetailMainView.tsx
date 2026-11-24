@@ -1,4 +1,5 @@
 import { Button as ControlButton } from '../markdown/Button'
+import { createBodyFlagRef } from '../dom-events'
 import { IssueHeaderContext } from './IssueHeaderContext'
 import { PopoverClose } from '../controls/Popover'
 import { Copy, Folder, Maximize2, Minimize2, X } from 'lucide-react'
@@ -9,6 +10,9 @@ import type { IssueDetailModel } from './useSharedIssueDetailModel'
 import { createIssueDetailProperties } from './issueDetailProperties'
 import { IssueDetailExecutionRail } from './IssueDetailExecutionRail'
 import { IssueDetailDocumentView } from './IssueDetailDocumentView'
+
+const markIssueCreateOpen = createBodyFlagRef('data-collaboration-issue-create-open')
+
 export type IssueDetailViewModel = IssueDetailModel & ReturnType<typeof createIssueDetailProperties>
 export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
   const viewModel = { ...model, ...createIssueDetailProperties(model) }
@@ -83,6 +87,7 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
       }}
     >
       <section
+        ref={isCreate ? markIssueCreateOpen : undefined}
         data-testid={isCreate ? 'cloud-todo-create-panel' : 'cloud-todo-detail'}
         data-field-save-state={fieldSaves.pending ? 'pending' : 'idle'}
         aria-busy={fieldSaves.pending || undefined}

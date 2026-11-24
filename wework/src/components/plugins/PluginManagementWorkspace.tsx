@@ -2,6 +2,7 @@ import { getToken } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { getRuntimeConfig } from '@/config/runtime'
 import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
@@ -11,6 +12,7 @@ import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
+import { createLocalFirstPluginApi } from '@/features/plugins/pluginLocalSync'
 import { pluginMarketplaceCacheKey } from '@/features/plugins/pluginMarketplaceCache'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { queuePluginTrial } from '@/features/plugins/pluginTrial'
@@ -21,7 +23,7 @@ import type { InstalledPlugin } from '@/types/api'
 import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { ReactNode } from 'react'
-import { useMemo, useSyncExternalStore } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import {
@@ -35,7 +37,13 @@ import { PluginDetailView } from './PluginDetailView'
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { InstalledPluginRow } from './PluginManagementRows'
-import { createPluginManagementSource } from './pluginManagementSource'
+import {
+  createPluginManagementSource,
+  findGitMarketplaceVersionHint,
+  resolvePublishedPluginUpdate,
+  type PluginManagementTab,
+} from './pluginManagementSource'
+import { PluginMarketplaceManagement } from './PluginMarketplaceManagement'
 import { PluginOperationNotice } from './PluginOperationNotice'
 import { resolvePluginOwnerActions } from './pluginOwnerActions'
 import {
@@ -83,6 +91,7 @@ function PluginManagementWorkspaceContent({
     [cloudToken, resolvedCloudApiBaseUrl]
   )
   const knownDeviceId = isDesktopRuntime() ? getKnownLocalExecutorDeviceId() || '' : ''
+  const cloudAvailable = Boolean(cloudToken === undefined ? getToken() : cloudToken)
 
   const showCoreDshTab = isElectronRuntime()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
@@ -91,17 +100,22 @@ function PluginManagementWorkspaceContent({
       apiBaseUrl: resolvedCloudApiBaseUrl,
       token: cloudToken === undefined ? getToken() : cloudToken,
     }
-    return createLocalDevicePluginApi(
-      createPluginApi(
-        createHttpClient({
-          baseUrl: profile.apiBaseUrl,
-          getToken: () => profile.token,
-          ...(cloudToken === undefined ? {} : { redirectOnUnauthorized: false }),
-        }),
-        resolvedCloudApiBaseUrl
-      ),
-      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile)
+    const api = createPluginApi(
+      createHttpClient({
+        baseUrl: profile.apiBaseUrl,
+        getToken: () => profile.token,
+        ...(cloudToken === undefined ? {} : { redirectOnUnauthorized: false }),
+      }),
+      resolvedCloudApiBaseUrl
     )
+    const deviceApi = createLocalDevicePluginApi(api, deviceId =>
+      resolveLocalPluginDeviceRouteId(deviceId, profile)
+    )
+    return {
+      ...deviceApi,
+      updatePublishedRelease: createLocalFirstPluginApi(api, deviceApi, profile)
+        .updateInstalledPlugin,
+    }
   }, [cloudToken, resolvedCloudApiBaseUrl])
 
   const workspaceSource = useMemo(
@@ -111,19 +125,25 @@ function PluginManagementWorkspaceContent({
         knownDeviceId,
         localPluginApi,
         cloudPluginApi,
+        cloudAvailable,
       }),
-    [marketplaceCacheKeyValue, knownDeviceId, localPluginApi, cloudPluginApi]
+    [marketplaceCacheKeyValue, knownDeviceId, localPluginApi, cloudPluginApi, cloudAvailable]
   )
   const observation = useMemo(() => workspaceSource.observe(t), [workspaceSource, t])
   const {
     installedPlugins,
     marketplaceItems,
+    publishedMarketplaceItems,
     isLoadingPlugins,
     selectedPluginId,
     pendingUninstall,
     uninstallingPluginIds,
     pluginOperationNotice,
     activeTab,
+    updatingPluginId,
+    currentDeviceId,
+    checkingMarketplaces,
+    gitMarketplaceVersions,
   } = useSyncExternalStore(
     observation.subscribe,
     workspaceSource.getSnapshot,
@@ -139,7 +159,37 @@ function PluginManagementWorkspaceContent({
     requestUninstallPlugin,
     confirmUninstallPlugin,
     copyMarketplacePlugin,
+    preparePublishedPluginUpdate,
+    updatePublishedPlugin,
+    checkGitMarketplace,
+    reconcileGitMarketplaceSources,
+    removeConfiguredMarketplaceFromInventory,
+    refresh,
   } = workspaceSource
+  const [pendingUpdate, setPendingUpdate] = useState<{
+    id: string | number
+    name: string
+    releaseId: number
+    expectedCurrentReleaseId: number
+    version: string
+  } | null>(null)
+  const tabs = [
+    {
+      id: 'codex',
+      label: t('workbench.plugins_wework_surface', 'Codex 插件'),
+      testId: 'plugin-management-surface-wework',
+    },
+    {
+      id: 'core-dsh',
+      label: t('workbench.plugins_core_dsh_surface', 'Wework 插件'),
+      testId: 'plugin-management-surface-core-dsh',
+    },
+    {
+      id: 'marketplaces',
+      label: t('workbench.plugins_marketplace_sources'),
+      testId: 'plugin-management-surface-marketplaces',
+    },
+  ] satisfies { id: PluginManagementTab; label: string; testId: string }[]
 
   const marketplaceById = useMemo(
     () => new Map(marketplaceItems.map(item => [String(item.id), item])),
@@ -381,6 +431,8 @@ function PluginManagementWorkspaceContent({
         {showCoreDshTab ? (
           <TabsRoot
             value={activeTab}
+            activation="automatic"
+            loop
             onValueChange={next => {
               if (next) setActiveTab(next)
             }}
@@ -391,42 +443,27 @@ function PluginManagementWorkspaceContent({
               aria-label={t('workbench.plugins_management_tabs_label', '插件类型')}
               data-testid="plugin-management-surface-tabs"
             >
-              <TabsTab
-                value={'codex'}
-                type="button"
-                id="plugin-management-codex-tab"
-                aria-controls="plugin-management-codex-panel"
-                data-testid="plugin-management-surface-wework"
-                className={[
-                  'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
-                  activeTab === 'codex'
-                    ? 'text-text-primary'
-                    : 'text-text-muted hover:text-text-secondary',
-                ].join(' ')}
-              >
-                {t('workbench.plugins_wework_surface', 'Codex 插件')}
-                {activeTab === 'codex' ? (
-                  <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
-                ) : null}
-              </TabsTab>
-              <TabsTab
-                value={'core-dsh'}
-                type="button"
-                id="plugin-management-core-dsh-tab"
-                aria-controls="plugin-management-core-dsh-panel"
-                data-testid="plugin-management-surface-core-dsh"
-                className={[
-                  'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
-                  activeTab === 'core-dsh'
-                    ? 'text-text-primary'
-                    : 'text-text-muted hover:text-text-secondary',
-                ].join(' ')}
-              >
-                {t('workbench.plugins_core_dsh_surface', 'Wework 插件')}
-                {activeTab === 'core-dsh' ? (
-                  <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
-                ) : null}
-              </TabsTab>
+              {tabs.map(tab => (
+                <TabsTab
+                  key={tab.id}
+                  value={tab.id}
+                  type="button"
+                  id={`plugin-management-${tab.id}-tab`}
+                  aria-controls={`plugin-management-${tab.id}-panel`}
+                  data-testid={tab.testId}
+                  className={[
+                    'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
+                    activeTab === tab.id
+                      ? 'text-text-primary'
+                      : 'text-text-muted hover:text-text-secondary',
+                  ].join(' ')}
+                >
+                  {tab.label}
+                  {activeTab === tab.id && (
+                    <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+                  )}
+                </TabsTab>
+              ))}
             </TabsList>
           </TabsRoot>
         ) : null}
@@ -440,6 +477,16 @@ function PluginManagementWorkspaceContent({
             <CoreDshPluginManagementSection onCreatePlugin={onCreateWeworkPlugin} />
           </div>
         ) : null}
+        {showCoreDshTab && activeTab === 'marketplaces' && (
+          <PluginMarketplaceManagement
+            api={localPluginApi}
+            checkingMarketplaces={checkingMarketplaces}
+            onCheck={checkGitMarketplace}
+            onSourcesLoaded={reconcileGitMarketplaceSources}
+            onRemoved={removeConfiguredMarketplaceFromInventory}
+            onReconcile={() => void refresh()}
+          />
+        )}
         {!showCoreDshTab || activeTab === 'codex' ? (
           <div
             id={showCoreDshTab ? 'plugin-management-codex-panel' : undefined}
@@ -462,6 +509,14 @@ function PluginManagementWorkspaceContent({
                     : undefined
                   const listing =
                     marketplaceItem ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
+                  const update = resolvePublishedPluginUpdate(
+                    plugin,
+                    findMarketplaceItemForInstalled(plugin, publishedMarketplaceItems)
+                  )
+                  const versionHint = findGitMarketplaceVersionHint(
+                    plugin.raw,
+                    gitMarketplaceVersions
+                  )
                   const ownedMarketplace = findOwnedMarketplacePlugin(plugin)
                   const packableCreated =
                     listing && !marketplaceItemOwnsLocalCreatedPackage(listing)
@@ -485,6 +540,26 @@ function PluginManagementWorkspaceContent({
                       <InstalledPluginRow
                         plugin={plugin}
                         marketplaceItem={marketplaceItem}
+                        availableUpdate={update ?? versionHint ?? undefined}
+                        updating={updatingPluginId === plugin.id}
+                        updateDisabled={updatingPluginId !== null || !currentDeviceId}
+                        onUpdate={
+                          update
+                            ? async () => {
+                                const expectedCurrentReleaseId = await preparePublishedPluginUpdate(
+                                  update.id
+                                )
+                                if (expectedCurrentReleaseId === null) return
+                                setPendingUpdate({
+                                  id: plugin.id,
+                                  name: plugin.name,
+                                  releaseId: update.releaseId,
+                                  expectedCurrentReleaseId,
+                                  version: update.version,
+                                })
+                              }
+                            : undefined
+                        }
                         onOpen={() => openInstalledPluginDetail(plugin)}
                         onTry={() => tryPluginInChat(plugin.raw)}
                         onPublish={
@@ -541,6 +616,28 @@ function PluginManagementWorkspaceContent({
         ) : null}
       </div>
       {pluginOperationNoticeOverlay}
+      {pendingUpdate && (
+        <ConfirmDialog
+          open
+          title={t('workbench.plugins_update_title_named', { name: pendingUpdate.name })}
+          description={t('workbench.plugins_update_confirm')}
+          cancelLabel={t('common.cancel', '取消')}
+          confirmLabel={t('workbench.plugins_update_target_version', {
+            version: pendingUpdate.version.replace(/^v/i, ''),
+          })}
+          confirmTestId="plugin-management-update-confirm"
+          dialogTestId="plugin-management-update-dialog"
+          onClose={() => setPendingUpdate(null)}
+          onConfirm={() => {
+            setPendingUpdate(null)
+            void updatePublishedPlugin(
+              pendingUpdate.id,
+              pendingUpdate.releaseId,
+              pendingUpdate.expectedCurrentReleaseId
+            )
+          }}
+        />
+      )}
       {pendingUninstall && (
         <UninstallPluginDialog
           pluginName={pendingUninstall.name}

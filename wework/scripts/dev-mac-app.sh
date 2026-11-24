@@ -315,7 +315,7 @@ fi
 cd "$WEWORK_DIR"
 node "$SCRIPT_DIR/prepare-dev-dependencies.mjs"
 if [ "$PREBUILD_SOURCE_EXECUTOR" = "true" ]; then
-  cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor
+  build_wegent_cargo_in_target --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor
 fi
 if [ ! -f resources/icons/32x32.png ]; then
   echo "Error: Electron development icons are unavailable." >&2
