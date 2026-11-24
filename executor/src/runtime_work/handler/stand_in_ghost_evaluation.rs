@@ -192,6 +192,12 @@ struct Evaluation<'a> {
     model: ExecutionRequest,
 }
 
+enum ComparisonOutcome {
+    Improvement(Vec<Value>),
+    Tied(usize),
+    Incomplete,
+}
+
 impl Evaluation<'_> {
     fn current(&self) -> Result<(), AppIpcError> {
         self.handler.current_arrangement(self.run)?;
@@ -323,7 +329,7 @@ impl Evaluation<'_> {
         samples: &Samples,
         old: &str,
         new: &str,
-    ) -> Result<Vec<Value>, AppIpcError> {
+    ) -> Result<ComparisonOutcome, AppIpcError> {
         let mut evaluations = Vec::new();
         let mut outcomes = Vec::new();
         for (index, case) in samples.holdout.iter().enumerate() {
@@ -336,14 +342,14 @@ impl Evaluation<'_> {
             let mut answers = json!({"caseId":case["id"],"baseline":baseline["answer"],"candidate":candidate["answer"]});
             let (verdict, reason) = self.judge(samples, case, &answers, index % 2 == 1).await?;
             if verdict.blocks_proposal() {
-                return Ok(Vec::new());
+                return Ok(ComparisonOutcome::Incomplete);
             }
             answers["reason"] = reason;
             evaluations.push(answers);
             outcomes.push(verdict);
         }
         if !improved(&outcomes) {
-            return Ok(Vec::new());
+            return Ok(ComparisonOutcome::Tied(outcomes.len()));
         }
         // Reuse the exact answers. Only prospective suggestions incur a second adjudication.
         for (index, ((case, answers), first)) in samples
@@ -359,15 +365,17 @@ impl Evaluation<'_> {
             let (reverse, reason) = self.judge(samples, case, answers, index % 2 == 0).await?;
             *first = first.confirmed_by(reverse);
             if first.blocks_proposal() {
-                return Ok(Vec::new());
+                return Ok(ComparisonOutcome::Incomplete);
             }
             answers["confirmationReason"] = reason;
         }
-        Ok(if improved(&outcomes) {
-            evaluations
-        } else {
-            Vec::new()
-        })
+        if !improved(&outcomes) {
+            return Ok(ComparisonOutcome::Tied(outcomes.len()));
+        }
+        for (answer, outcome) in evaluations.iter_mut().zip(outcomes) {
+            answer["candidateWon"] = json!(outcome == Preference::Better);
+        }
+        Ok(ComparisonOutcome::Improvement(evaluations))
     }
 
     async fn evaluate(&self, samples: Samples, old: &str) -> Result<(), AppIpcError> {
@@ -392,15 +400,19 @@ impl Evaluation<'_> {
             .ok_or_else(invalid_response)?
             .trim();
         let reason = candidate["reason"].as_str().ok_or_else(invalid_response)?;
-        let evaluations = if !new.is_empty() && old.trim() != new {
+        let outcome = if !new.is_empty() && old.trim() != new {
             self.confirmed_improvements(&samples, old, new).await?
         } else {
-            Vec::new()
+            ComparisonOutcome::Incomplete
         };
         self.current()?;
         let device = self.device;
         let role = (self.role != "@primary").then_some(self.role);
-        if evaluations.is_empty() {
+        let ComparisonOutcome::Improvement(evaluations) = outcome else {
+            let tied_samples = match outcome {
+                ComparisonOutcome::Tied(count) => Some(count),
+                _ => None,
+            };
             return self
                 .store
                 .record_ghost_evaluation_no_change(
@@ -409,9 +421,10 @@ impl Evaluation<'_> {
                     role,
                     self.version,
                     &self.evidence,
+                    tied_samples,
                 )
                 .map_err(settings_error);
-        }
+        };
         self.store
             .propose_trained_ghost(
                 self.user,

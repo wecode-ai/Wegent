@@ -383,21 +383,30 @@ export function StandInOverviewPage({
       description: t('standIn.memory.settings_help'),
       onClick: openMemory,
     })
-    if (
-      (roleId ? saved.roles.find(item => item.id === roleId) : saved.primary)
-        ?.selfLearningEnabled !== undefined
-    ) {
+    const savedRole = roleId ? saved.roles.find(item => item.id === roleId) : undefined
+    const savedIdentity = roleId ? savedRole : saved.primary
+    if (savedIdentity?.selfLearningEnabled !== undefined) {
+      const reportDeviceId = savedRole?.executionDeviceId || saved.executionDeviceId
       shortcuts.push({
         id: 'revision',
         testId: 'stand-in-ghost-revision-open',
-        label: t('standIn.workspace.ghost_revision'),
+        label: t('standIn.workspace.learning_report.title'),
         content: (
           <StandInGhostRevisionPanel
-            key={JSON.stringify([saved.userId, saved.executionDeviceId, saved.version, roleId])}
+            key={JSON.stringify([saved.userId, reportDeviceId, saved.version, roleId])}
             api={api}
             userId={saved.userId}
-            deviceId={saved.executionDeviceId}
+            deviceId={reportDeviceId}
             roleId={roleId}
+            identityName={
+              savedRole
+                ? standInRoleName(
+                    savedRole,
+                    saved.roles.indexOf(savedRole),
+                    t('standIn.personal.default_role')
+                  )
+                : t('standIn.title')
+            }
             requestLeave={leavePanel}
           />
         ),

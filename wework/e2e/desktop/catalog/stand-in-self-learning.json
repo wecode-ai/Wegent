@@ -10,6 +10,7 @@
     "executor/crates/task-store/src/task_runtime/stand_in_ghost_proposals.rs",
     "executor/crates/task-store/src/task_runtime/stand_in_training_cases.rs",
     "wework/src/features/todo/StandInSelfLearningSetting.tsx",
+    "wework/src/features/todo/StandInGhostRevisionPanel.tsx",
     "wework/src/features/todo/StandInRecentReview.tsx",
     "wework/src/features/todo/StandInGhostEvidence.tsx"
   ],

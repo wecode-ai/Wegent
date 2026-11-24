@@ -2077,8 +2077,8 @@ export function createHybridWorkbenchServices(
       async proposal(userId, deviceId, roleId) {
         return (await standInApiForDevice(deviceId)).proposal(userId, deviceId, roleId)
       },
-      async latestAppliedGhost(userId, deviceId, roleId) {
-        return (await standInApiForDevice(deviceId)).latestAppliedGhost(userId, deviceId, roleId)
+      async learningReport(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).learningReport(userId, deviceId, roleId)
       },
       async resolveProposal(userId, deviceId, proposalId, accept, undoVersion) {
         return (await standInApiForDevice(deviceId)).resolveProposal(

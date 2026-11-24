@@ -143,6 +143,19 @@ export interface StandInGhostRevision {
   version: number
 }
 
+export interface StandInLearningReport {
+  iterations: number
+  latest: {
+    status: 'pending' | 'accepted' | 'rejected' | 'reverted' | 'obsolete' | 'unchanged'
+    evaluatedAt: string
+    currentScore: number | null
+    baselineScore: number | null
+    candidateScore: number | null
+    sampleCount: number | null
+  } | null
+  revision: StandInGhostRevision | null
+}
+
 export type StandInMemoryScope =
   | { kind: 'personal' }
   | { kind: 'role'; roleId: string }
@@ -466,11 +479,7 @@ export interface StandInExecutorApi {
     options?: Record<string, unknown>
   ): Promise<{ taskId: string; address: WorkspaceRuntimeTaskAddress | null }>
   proposal(userId: number, deviceId: string, roleId?: string): Promise<StandInProposal | null>
-  latestAppliedGhost(
-    userId: number,
-    deviceId: string,
-    roleId?: string
-  ): Promise<StandInGhostRevision | null>
+  learningReport(userId: number, deviceId: string, roleId?: string): Promise<StandInLearningReport>
   resolveProposal(
     userId: number,
     deviceId: string,
@@ -750,16 +759,21 @@ export function createStandInExecutorApi(
       ),
     proposal: (userId, deviceId, roleId) =>
       request('runtime.stand_in.proposal.get', { userId, roleId }, deviceId),
-    latestAppliedGhost: async (userId, deviceId, roleId) => {
-      const revision = await request<StandInGhostRevision | null>(
+    learningReport: async (userId, deviceId, roleId) => {
+      const report = await request<StandInLearningReport | null>(
         'runtime.stand_in.proposal.get',
-        { userId, roleId, latestAppliedGhost: true },
+        { userId, roleId, learningReport: true },
         deviceId
       )
-      if (revision && (!revision.id?.startsWith('ghost:') || !Number.isInteger(revision.version))) {
+      const revision = report?.revision
+      if (
+        !report ||
+        !Number.isInteger(report.iterations) ||
+        (revision && (!revision.id?.startsWith('ghost:') || !Number.isInteger(revision.version)))
+      ) {
         throw new Error(getStandInErrorMessage({ code: 'stand_in_unavailable' }))
       }
-      return revision
+      return report
     },
     resolveProposal: async (userId, deviceId, proposalId, accept, undoVersion) => {
       const saved = await request<PersonalStandInSettings>(

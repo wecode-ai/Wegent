@@ -6045,7 +6045,27 @@
       "ghost_confirmation_evaluation": "交换答复顺序后的复评",
       "ghost_evaluation": "评测依据",
       "ghost_revision": "最近采纳的助理职责",
-      "ghost_no_revision": "当前没有可撤回的职责调整。",
+      "learning_report": {
+        "title": "自主学习报告",
+        "refresh": "刷新报告",
+        "iterations": "已完成迭代",
+        "current_score": "当前职责评分",
+        "baseline_score": "优化前评分",
+        "candidate_score": "优化后评分",
+        "evaluated_at": "评测于 {{date}}",
+        "unavailable": "暂无",
+        "empty": "还没有完成评测。自主学习开启且积累了足够的独立案例后，助理会在后台评测。",
+        "no_score": "最近一轮没有可用的优化前后评分。",
+        "score_help": "最近一轮使用了 {{count}} 个独立案例。每例胜出得 1 分，持平各得半分，折算为百分制的相对评分。优化后评分对应候选职责。",
+        "status": {
+          "pending": "改进建议待确认",
+          "accepted": "已采纳改进建议",
+          "rejected": "已拒绝改进建议",
+          "reverted": "已撤回本轮改进",
+          "obsolete": "本轮建议已失效",
+          "unchanged": "本轮未提出改进建议"
+        }
+      },
       "ghost_current": "当前职责",
       "ghost_restore_to": "撤回后恢复为",
       "ghost_undo": "确认撤回本次调整",
