@@ -313,8 +313,18 @@ async fn health_check() -> Json<Value> {
     Json(json!({"status": "healthy", "service": "task_executor"}))
 }
 
-async fn envd_health_check() -> StatusCode {
-    StatusCode::NO_CONTENT
+async fn envd_health_check(request_headers: HeaderMap) -> Response {
+    let mut response_headers = HeaderMap::new();
+    if let Some(digest) = request_headers
+        .get("x-wegent-callback-digest")
+        .and_then(|value| value.to_str().ok())
+    {
+        response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        if digest.len() == 64 && crate::callback::projected_callback_ready(digest) {
+            response_headers.insert("x-wegent-callback-ready", HeaderValue::from_static("true"));
+        }
+    }
+    (StatusCode::NO_CONTENT, response_headers).into_response()
 }
 
 async fn envd_metrics() -> Json<MetricsResponse> {

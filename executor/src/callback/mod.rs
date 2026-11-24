@@ -282,6 +282,18 @@ fn runtime_config_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/root/.wegent/.config"))
 }
 
+/// Confirm the warm-pool projection without returning the callback credential.
+pub(crate) fn projected_callback_ready(digest: &str) -> bool {
+    use sha2::{Digest, Sha256};
+
+    let config_dir = runtime_config_dir();
+    let Some(token) = read_config_value(&config_dir, "executor_callback_token") else {
+        return false;
+    };
+    read_config_value(&config_dir, "callback_url").is_some()
+        && format!("{:x}", Sha256::digest(token.as_bytes())) == digest
+}
+
 fn read_config_value(config_dir: &Path, file_name: &str) -> Option<String> {
     let content = std::fs::read_to_string(config_dir.join(file_name)).ok()?;
     let content = content.trim();

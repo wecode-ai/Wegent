@@ -82,12 +82,14 @@ def _confirm_executor_binding(
         raise RuntimeError("Executor binding acknowledgement is invalid")
 
 
-def require_callback_token(task_id: int) -> None:
+def require_callback_token(task_id: int) -> str:
     """Refuse reuse of a container whose callback credential is unavailable."""
     from executor_manager.services.sandbox.repository import get_sandbox_repository
 
-    if not get_sandbox_repository().load_executor_callback_token(task_id):
+    token = get_sandbox_repository().load_executor_callback_token(task_id)
+    if not token:
         raise RuntimeError("Executor has no callback credential provisioned")
+    return token
 
 
 def prepare_callback_token(task_id: int, executor_name: str) -> str:

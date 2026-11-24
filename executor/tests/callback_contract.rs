@@ -56,6 +56,59 @@ impl Drop for EnvGuard {
 static CONFIG_ENV_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 #[tokio::test]
+async fn health_acknowledges_only_the_matching_callback_projection() {
+    use axum::{body::Body, http::Request};
+    use sha2::{Digest, Sha256};
+    use tower::ServiceExt;
+    use wegent_executor::server::create_docker_router_from_env;
+
+    let _config_env = CONFIG_ENV_LOCK.lock().await;
+    let config_dir = tempfile::tempdir().unwrap();
+    let _config_dir = EnvGuard::set("WEGENT_CONFIG_DIR", config_dir.path().to_str().unwrap());
+    let app = create_docker_router_from_env().unwrap();
+    let probe = |token: &str| {
+        let request = Request::builder()
+            .uri("/health")
+            .header(
+                "x-wegent-callback-digest",
+                format!("{:x}", Sha256::digest(token.as_bytes())),
+            )
+            .body(Body::empty())
+            .unwrap();
+        app.clone().oneshot(request)
+    };
+    let token = "fixture-callback-token";
+
+    assert!(!probe(token)
+        .await
+        .unwrap()
+        .headers()
+        .contains_key("x-wegent-callback-ready"));
+
+    std::fs::write(config_dir.path().join("executor_callback_token"), token).unwrap();
+    assert!(!probe(token)
+        .await
+        .unwrap()
+        .headers()
+        .contains_key("x-wegent-callback-ready"));
+
+    std::fs::write(
+        config_dir.path().join("callback_url"),
+        "http://localhost/executor-manager/callback",
+    )
+    .unwrap();
+    assert!(!probe("previous-token")
+        .await
+        .unwrap()
+        .headers()
+        .contains_key("x-wegent-callback-ready"));
+
+    let response = probe(token).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(response.headers()["x-wegent-callback-ready"], "true");
+}
+
+#[tokio::test]
 async fn callback_sink_posts_event_envelope_as_json() {
     let received = Arc::new(Mutex::new(Vec::<Value>::new()));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
