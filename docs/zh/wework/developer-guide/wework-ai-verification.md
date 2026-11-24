@@ -20,6 +20,14 @@ pnpm --filter wework e2e:desktop --segment idle-executor-requests
 
 检查点注册在现有 Core CI 分片，独立运行不依赖前序场景。本地 macOS arm64 验证含启动与清理耗时约 52 秒，共享构建另计。结果目录的 `idle-executor-requests.json` 只保存方法名、时间、状态和必要布尔标志，不保存请求参数、头或查询字符串；日志和截图不得提交。
 
+## 桌面 CPU 回归检查
+
+现有 Linux Core CI 对 `idle-executor-requests`、`streaming-conversation-switching` 和 `executor-stream-recovery` 记录 CPU。测量覆盖场景验证函数的完整运行区间，包含场景内的准备和重载。例如空闲场景的数值包含重载和后续验证，不能当成纯空闲 CPU 占用。CPU 时间以毫秒分别记录 Electron Renderer 进程和 Executor 主进程。Executor 子进程的 CPU 单独留待后续覆盖。采样窗口两端必须是同一批被测进程，采集失败或进程变化时，日志会标记样本不可用。
+
+Linux Core 分片复用现有独占调度，先单独运行空闲工作台和 Executor 流恢复检查点，再启动分片中的并行检查点。这样可以避免多个桌面会话争抢 runner 时抬高被测进程的 CPU 用量。
+
+[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) 维护每个检查点和 runner 平台的基线。现有 `main` 夜间任务或在 `main` 手动运行的 Wework E2E 更新基线，PR 和合并队列只读取基线。CI 在已有分片运行相应检查点时显示当前值、基线和比值。已有基线时，任一进程的 CPU 时间超过基线的 150%，或检查点未产出 CPU 样本，都会让 CI 失败。首次无基线时，CI 仍可通过并显示可用的样本。
+
 ## 插件周期恢复 E2E
 
 `plugin-periodic-reconcile` checkpoint 使用真实 Electron、Executor、Socket.IO、数据库和插件包存储，丢弃一次真实插件变更通知后，验证定时对账恢复状态、持久化 ACK、设备身份以及未受影响插件的内容。测试实例设置 `LOCAL_PLUGIN_RECONCILE_INTERVAL=90`、`LOCAL_PLUGIN_RECONCILE_JITTER=18`（单位为秒），并用已有的 `LOCAL_HEARTBEAT_INTERVAL=1` 保留至少 10 次心跳的活性断言。检查点根据真实对账 tick 对齐故障注入；准备流程跨过某个 tick 时等待当前定时器窗口，而不是因负载延长周期。
@@ -224,6 +232,37 @@ CPU 录制成功停止后，即使 trace 读取、解析或报告写入失败，
 
 所有桌面 checkpoint 共用结果目录内的 `desktop-control` 注册表，便于按需诊断自己的隔离实例。macOS 原生进程快照先读取 PID 父子关系，再只读取 Electron 进程树的详细指标和命令行，避免全机无关进程的参数撑满采集缓冲区。
 
+### Renderer CPU 和 JS 堆基准
+
+在 macOS 上用同一台机器和相同构建配置分别测量基线与候选版本。命令启动隔离的 Electron 和真实执行器，测试模型每 100 ms 发送一段 Markdown，共 120 段。脚本确认首段在流式输出期间可见，并等待末段出现在页面上。隔离窗口沿用前台渲染路径，且无需抢占桌面焦点。报告的 `window` 记录原生活动状态、文档可见性与焦点。
+
+```bash
+pnpm --filter wework ai:verify:electron:build
+pnpm --filter wework profile:renderer --check
+pnpm --filter wework profile:renderer --history --check
+pnpm --filter wework profile:renderer --capture
+pnpm --filter wework profile:renderer --processes
+```
+
+- `--check` 在空闲 CPU ≥ 10%、单任务 CPU ≥ 15% 或采样 JS 堆峰值 ≥ 200 MB（200,000,000 字节）时退出失败。省略参数仅输出测量结果。CPU 按隔离窗口 Renderer PID 的累计 CPU 时间除以墙钟时间计算，100% 代表占用一个逻辑核心。空闲窗口约 7 秒，单任务窗口从模型开始响应到末段可见。V8 堆使用量每秒采样，不强制 GC。
+- `--capture` 复用上面的性能录制，额外生成 `renderer-performance.json` 和原始证据。原生调用的 `caller` 字段可以定位到触发布局等操作的 JavaScript 代码。录制本身会增加开销，阈值验收用 `--check` 单独复测。测量报告统一保存在控制台列出的测试目录下，文件名为 `renderer-threshold-measurements.json`。
+- `--history` 在测量前依次完成 16 个真实持久化会话，逐个记录堆使用量，然后在同一 Renderer 启动基准任务。它使用可复现的测试模型结果，报告中的 `historicalTasks` 标明会话数量。
+- `--processes` 记录空闲、流式中段和任务完成后的进程树快照。用 `processSamples` 分别检查主进程、Renderer、GPU、执行器及其子进程。进程快照 CPU 为操作系统或 Electron 的采样值，阈值验收使用单独运行的 `--check`。共享内存页可能出现在多个进程的统计中，进程内存应逐项阅读。
+- 排查堆峰值时，先按 `heapSamples` 的阶段定位触发操作。自然 GC 后迅速回落的峰值，可以用 Chromium Memory 面板的 Allocation sampling 按调用栈查找短寿命的大量分配；阈值仍使用未开启分配采样的峰值复测。
+- 排查长期内存增长时，在同一隔离实例中用相同历史数据反复切换任务后记录 JS 堆，再用 Chromium Memory 面板采集两份堆快照。先比较对象数量和 retained size，再检查 `Retainers` 中仍可达的引用路径，尤其是 detached DOM、回调闭包和缓存。使用 Memory 面板之前先断开同一目标上的 CDP 录制。报告和快照仅保存在本地。
+
+### 工作台资源预算
+
+以下是稳定运行的单窗口工作台建议预算，用于发现回归。启动、更新、索引、嵌入浏览器、文件预览和本地模型需要按各自的负载记录。
+
+| 场景 | 建议长期目标 | 测量要点 |
+| --- | --- | --- |
+| 可见窗口空闲 | Renderer 约 1–3% CPU，桌面 UI 进程合计约 5% 以内 | 等启动收敛后记录可见和后台状态。进程 CPU 按逻辑核心计算，同时检查后台唤醒。 |
+| 单任务纯文本流式输出 | Renderer 约 8–12% CPU | 模型以每秒 10 段输出时，8–12% 对应每秒 80–120 ms 的 Renderer CPU 时间。保持首段可见、后续持续更新、滚动跟随和手动阅读锚点。 |
+| 单窗口 JS 堆 | 新会话约 100 MB，带常用历史约 120–160 MB | 对比同一数据集、采样频率和阶段。历史翻页仍从持久化记录读取，反复切换任务后堆使用量应能趋于稳定。 |
+
+主进程负责窗口、IPC 和运行时协调，GPU 进程负责合成与绘制，执行器和任务子进程负责模型连接、命令和工具执行。普通文字流式任务增加的数据量有限，全页样式失效或常驻任务驱动整页重渲染都值得排查。工具密集型任务应单独记录执行器、任务子进程及磁盘活动。通过系统进程指标区分 Renderer 的 JS 堆、Renderer 的原生内存、GPU 资源和其他进程内存。进程 CPU 指标也不描述 GPU 利用率。 [Electron 进程指标](https://www.electronjs.org/docs/latest/api/app#appgetappmetrics) [Chrome DevTools 内存分析](https://developer.chrome.com/docs/devtools/memory-problems)
+
 ### 差异预览 CPU 与工作台内存回归
 
 差异预览使用 Pierre 的虚拟化渲染。行事件回调、渲染选项、行注解和布局度量应保持稳定；父组件刷新或更换事件处理函数不应重建未变化的代码 DOM。实际选项、差异内容或行注解变化时仍须更新。`FileChangesPatchDiff.test.tsx` 使用真实 Pierre 实例检查连续刷新时的节点身份及卸载清理。
@@ -246,6 +285,6 @@ BOMBADIL_BIN=/absolute/path/bombadil pnpm --filter wework ai:verify bombadil --s
 
 每个规格使用独立的真实 Electron 与 Executor，自动获取临时 loopback 调试端口，拒绝已有 Executor Home 和多页面目标。执行前处理隔离实例的首次隐私弹窗，再建立规格前置条件。每个规格预算 1—600 秒；多个规格串行执行，结束或失败均清理实例。默认不执行模型请求或云端授权。
 
-结果保存在 wework/test-results/bombadil/<时间>/，包括 summary.json、日志和 Bombadil 原生轨迹。失败或清理失败返回非零；零操作不能通过。轨迹可能含界面截图和内容，只用于本地诊断，不提交仓库，也不上传包含 session.json、认证文件或整个 ai-verify 目录的产物。仅做定向、预算受控的 CI 接入；随机通过不替代确定性回归、权限验证或发布门禁。
+结果保存在 `wework/test-results/bombadil/<时间>/`，包括 summary.json、日志和 Bombadil 原生轨迹。失败或清理失败返回非零；零操作不能通过。轨迹可能含界面截图和内容，只用于本地诊断，不提交仓库，也不上传包含 session.json、认证文件或整个 ai-verify 目录的产物。仅做定向、预算受控的 CI 接入；随机通过不替代确定性回归、权限验证或发布门禁。
 
 GitHub Actions 的 Wework Bombadil exploration 工作流仅支持手动触发：选择 PR 分支，填写 base（默认 origin/main）和每个规格的秒数。普通 PR 不增加自动探索。工作流下载固定版本并校验 SHA-256，只把 summary.json 写入步骤摘要，不上传原始轨迹或认证目录。

@@ -1,3 +1,4 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { verifyCloudAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
@@ -244,6 +245,10 @@ export function createDesktopScenario({
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-board-toolbar"]`, {
           timeoutMs: uiTimeoutMs,
         })
+        await seedStandInRoleFixture(
+          (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+          user.id
+        )
         await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
           requirements: false,
         })
@@ -251,6 +256,8 @@ export function createDesktopScenario({
         assert.ok(currentDevice)
         assert.notEqual(currentDevice, REMOTE_DOCKER_DEVICE_ID)
         await stopBoundStandIn(control, uiTimeoutMs)
+        // Seed before the bound device's settings are loaded by the renderer.
+        await seedStandInRoleFixture(rpc, user.id)
         await bindStoppedStandIn(control, user.id, REMOTE_DOCKER_DEVICE_ID, uiTimeoutMs)
         await finishStandInOnboarding(control)
         const remoteDraft = await rpc('runtime.stand_in.get', settingsParams())

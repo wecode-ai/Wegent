@@ -160,6 +160,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (handler, store) = fixture(root.path());
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         settings["roles"][0]["enabled"] = json!(true);
         store.save_personal_stand_in(7, "mac", settings).unwrap();
         let origins = [

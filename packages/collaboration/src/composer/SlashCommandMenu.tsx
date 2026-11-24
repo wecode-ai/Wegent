@@ -113,7 +113,7 @@ export function SlashCommandMenu<T extends SlashCommand>({
                       <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
                     )}
                     <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                      <span className="shrink-0 truncate text-sm font-normal leading-5 text-text-primary">
+                      <span className="min-w-0 truncate text-sm font-normal leading-5 text-text-primary">
                         {command.title}
                       </span>
                       {command.description && (

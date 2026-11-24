@@ -1,6 +1,6 @@
 import { createDesktopPaneSurfacePort } from './desktopPaneSurfacePort'
 import type { DesktopWorkbenchPaneProps } from './desktopWorkbenchMainHelpers'
-import { useElementGeometry } from '@wegent/collaboration/dom-events'
+import { useElementWidth } from '@wegent/collaboration/dom-events'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { WorkspaceFileOpenRequest } from '@/types/workspace-files'
 import {
@@ -28,7 +28,6 @@ import type { Dispatch, SetStateAction } from 'react'
 interface Input {
   workbenchVisible: DesktopWorkbenchPaneProps['workbenchVisible']
   sidebarResizing: DesktopWorkbenchPaneProps['sidebarResizing']
-  sharedWorkbenchContentWidth: DesktopWorkbenchPaneProps['sharedWorkbenchContentWidth']
   onEnvironmentInfoVisibilityChange: DesktopWorkbenchPaneProps['onEnvironmentInfoVisibilityChange']
   activeLocalHarnessSession: DesktopWorkbenchPaneProps['activeLocalHarnessSession']
   paneActive: boolean
@@ -56,7 +55,6 @@ interface Input {
 export function useDesktopPaneLayout({
   workbenchVisible,
   sidebarResizing,
-  sharedWorkbenchContentWidth,
   onEnvironmentInfoVisibilityChange,
   activeLocalHarnessSession,
   paneActive,
@@ -87,11 +85,9 @@ export function useDesktopPaneLayout({
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
   const workbenchScrollbarRef = useRef<HTMLDivElement | null>(null)
   const conversationSurfaceRef = useRef<HTMLDivElement | null>(null)
-  const workbenchGeometry = useElementGeometry(
-    [workbenchMainRef],
+  const [workbenchContentWidth, measureWorkbenchWidth] = useElementWidth<HTMLElement>(
     paneActive && paneVisible && workbenchVisible
   )
-  const measuredWorkbenchContentWidth = workbenchGeometry?.elements[0]?.width ?? 0
   const restoreSurfaceScope = useMemo(
     () =>
       createDesktopPaneSurfacePort(
@@ -104,13 +100,14 @@ export function useDesktopPaneLayout({
     (element: HTMLElement | null) => {
       workbenchMainRef.current = element
       restoreSurfaceScope(element)
+      const stopMeasuring = measureWorkbenchWidth(element)
+      return () => {
+        stopMeasuring?.()
+        workbenchMainRef.current = null
+      }
     },
-    [restoreSurfaceScope]
+    [measureWorkbenchWidth, restoreSurfaceScope]
   )
-  const workbenchContentWidth =
-    !splitMode && sharedWorkbenchContentWidth > 0
-      ? sharedWorkbenchContentWidth
-      : measuredWorkbenchContentWidth
   const [environmentInfoPanelElement, setEnvironmentInfoPanelRef] = useState<HTMLElement | null>(
     null
   )

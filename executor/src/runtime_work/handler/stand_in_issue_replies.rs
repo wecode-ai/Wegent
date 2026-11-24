@@ -64,15 +64,21 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let project = origin["cloudProjectId"].as_str().unwrap_or_default();
         let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
+        if origin["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            return self
+                .current_personal_issue(
+                    user,
+                    issue_id,
+                    origin["assignmentId"].as_str().unwrap_or_default(),
+                )
+                .await;
+        }
         let issue = if origin["projectStore"] == "local" {
             serde_json::to_value(store.get_task(project, issue_id).map_err(settings_error)?)
                 .unwrap()
         } else {
-            self.verify_runtime_user(&json!({"userId":user})).await?;
-            let path = format!("/v1/loop-items/{issue_id}");
-            let response = self
-                .runtime_request(reqwest::Method::GET, &path, None)
-                .await?;
+            let path = super::stand_in_issue_training::issue_path(&["v1", "loop-items", issue_id])?;
+            let response = self.get_cloud_issue_as(user, &path).await?;
             if response.status() == reqwest::StatusCode::NOT_FOUND {
                 return Err(AppIpcError::new(
                     "not_found",
@@ -88,6 +94,33 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         Ok(issue)
+    }
+
+    pub(super) async fn get_cloud_issue_as(
+        &self,
+        user: i64,
+        path: &str,
+    ) -> Result<reqwest::Response, AppIpcError> {
+        let connection = self.require_runtime_connection()?;
+        if Self::connected_runtime_user(&connection).await? != user {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Issue account changed",
+            ));
+        }
+        let response =
+            Self::runtime_request_on(&connection, reqwest::Method::GET, path, None).await?;
+        let current = self.require_runtime_connection()?;
+        if connection.authenticated_user_id != current.authenticated_user_id
+            || connection.backend_url != current.backend_url
+            || connection.auth_token != current.auth_token
+        {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Issue connection changed",
+            ));
+        }
+        Ok(response)
     }
 
     pub(super) async fn validate_stand_in_issue_request(
@@ -133,18 +166,39 @@ impl RuntimeWorkRpcHandler {
         {
             return Err("Issue conversation owner does not match".into());
         }
-        issue_reply_role(&roles, origin).ok_or("Issue stand-in is unavailable")?;
+        let role = issue_reply_role(&roles, origin).ok_or("Issue stand-in is unavailable")?;
         let issue = self
             .read_stand_in_issue(&store, user, origin)
             .await
             .map_err(|error| error.message)?;
-        if origin["projectStore"] != "local" && issue["permissions"]["execute"] != true {
+        if origin["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            let config = super::stand_in_personal_issues::personal_issue_role(role, user)
+                .ok_or("Independent Issues are no longer connected to this assistant")?;
+            if !settings["lifecycle"]["status"].is_null()
+                || !self.stand_in_role_runs_here(&config)
+                || !super::stand_in_personal_issues::personal_assignment_after_enable(
+                    &issue, &config,
+                )
+            {
+                return Err("Independent Issue execution permission is unavailable".into());
+            }
+        } else if origin["projectStore"] != "local" && issue["permissions"]["execute"] != true {
             return Err("Issue execution permission is unavailable".into());
         }
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) fn persist_public_issue_reply(&self, task: &str, message: &CodexNotification) {
+        self.persist_public_issue_reply_for_request(task, message, None)
+    }
+
+    pub(super) fn persist_public_issue_reply_for_request(
+        &self,
+        task: &str,
+        message: &CodexNotification,
+        request: Option<&ExecutionRequest>,
+    ) {
         let notification = codex_notification(message);
         if notification.method != "turn/started" && notification.method != "item/completed" {
             return;
@@ -258,7 +312,18 @@ impl RuntimeWorkRpcHandler {
             if autonomous_collaboration && item["phase"] == "commentary" {
                 return;
             }
-            let public_turn = public_turn.clone();
+            let mut public_turn = public_turn.clone();
+            if item["phase"] == "final_answer" {
+                if let Some(delivery) = request.and_then(|request| {
+                    super::stand_in_issue_training::issue_delivery_at_completion(
+                        link,
+                        &public_turn,
+                        request,
+                    )
+                }) {
+                    public_turn["trainingDelivery"] = delivery;
+                }
+            }
             queue_public_issue_reply(
                 link,
                 &key,
@@ -391,7 +456,8 @@ impl RuntimeWorkRpcHandler {
                         "collaboration": source,
                     }),
                 )
-                .await;
+                .await
+                .map(|_| ());
         }
         let user = origin["userId"]
             .as_i64()
@@ -406,8 +472,21 @@ impl RuntimeWorkRpcHandler {
         self.local_task_link(task)
             .ok_or_else(|| AppIpcError::new("source_removed", "Conversation no longer exists"))?;
         self.read_stand_in_issue(&store, user, origin).await?;
+        if origin["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            let id = origin["loopItemId"].as_str().unwrap_or_default();
+            return self
+                .send_issue_reply(
+                    &format!("/v1/personal-issues/{id}/assistant-replies"),
+                    json!({
+                        "assignment": self.personal_issue_assignment_address(origin)?,
+                        "message_id":report["messageId"],"body":report["body"],
+                    }),
+                )
+                .await
+                .map(|_| ());
+        }
         if origin["projectStore"] == "local" {
-            store
+            let comment = store
                 .publish_stand_in_reply(
                     &self.device_id,
                     task,
@@ -417,27 +496,45 @@ impl RuntimeWorkRpcHandler {
                     report["body"].as_str().unwrap_or_default(),
                 )
                 .map_err(|error| AppIpcError::new("public_reply_rejected", error.to_string()))?;
+            self.record_issue_training_delivery(&store, user, report, Some(&comment.message_id));
             emit_runtime_work_changed(&self.event_tx, &self.device_id, task);
             return Ok(());
         }
-        self.send_cloud_issue_reply(origin, json!({
+        let native_id = self.send_cloud_issue_reply(origin, json!({
             "body":report["body"],"stand_in":{
                 "device_id":self.cloud_device_id()?,"task_id":task,"role_id":origin["standInId"],
                 "role_name":origin["roleName"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Stand-in"),
                 "message_id":report["messageId"],"human_assignment_id":if origin["trigger"] == "mention" {Value::Null} else {origin["humanAssignmentId"].clone()},
                 "trigger_comment_id":origin["triggerCommentId"]
             }
-        })).await
+        })).await?;
+        self.record_issue_training_delivery(&store, user, report, native_id.as_deref());
+        Ok(())
     }
 
-    async fn send_cloud_issue_reply(&self, origin: &Value, body: Value) -> Result<(), AppIpcError> {
-        let path = format!(
-            "/v1/cloud-projects/{}/loop-items/{}/activity-comments",
-            id_field(origin, "cloudProjectId").unwrap_or_default(),
-            id_field(origin, "loopItemId").unwrap_or_default(),
-        );
+    async fn send_cloud_issue_reply(
+        &self,
+        origin: &Value,
+        body: Value,
+    ) -> Result<Option<String>, AppIpcError> {
+        let path = super::stand_in_issue_training::issue_path(&[
+            "v1",
+            "cloud-projects",
+            origin["cloudProjectId"].as_str().unwrap_or_default(),
+            "loop-items",
+            origin["loopItemId"].as_str().unwrap_or_default(),
+            "activity-comments",
+        ])?;
+        self.send_issue_reply(&path, body).await
+    }
+
+    async fn send_issue_reply(
+        &self,
+        path: &str,
+        body: Value,
+    ) -> Result<Option<String>, AppIpcError> {
         let response = self
-            .runtime_request(reqwest::Method::POST, &path, Some(&body))
+            .runtime_request(reqwest::Method::POST, path, Some(&body))
             .await?;
         if !response.status().is_success() {
             let permanent = matches!(response.status().as_u16(), 400 | 403 | 404 | 409 | 422);
@@ -450,7 +547,13 @@ impl RuntimeWorkRpcHandler {
                 format!("Public reply returned {}", response.status()),
             ));
         }
-        Ok(())
+        // A successful remote publication must never be retried solely for analytics.
+        Ok(response.json::<Value>().await.ok().and_then(|row| {
+            row["id"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+        }))
     }
 }
 
@@ -481,454 +584,5 @@ fn queue_public_issue_reply(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn issue_conversations_do_not_depend_on_intake_or_current_assignment() {
-        let root = tempfile::tempdir().unwrap();
-        let (handler, store, origin, mut settings) = paused_issue_fixture(root.path());
-        let mut request = ExecutionRequest::default();
-        request.extra.insert("origin".into(), origin.clone());
-        handler
-            .validate_stand_in_issue_request(&request)
-            .await
-            .unwrap();
-        let roles = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
-        assert!(issue_reply_role(&roles, &origin).is_some());
-        for field in ["trigger", "humanAssignmentId", "triggerCommentId"] {
-            let mut forged = origin.clone();
-            forged[field] = json!("forged");
-            request.extra.insert("origin".into(), forged);
-            assert_eq!(
-                handler
-                    .validate_stand_in_issue_request(&request)
-                    .await
-                    .unwrap_err(),
-                "Issue conversation owner does not match"
-            );
-        }
-        let mut automatic = origin.clone();
-        automatic["trigger"] = json!("assignment");
-        handler.store.update_task("issue-chat", |link| {
-            link.runtime_handle["origin"] = automatic.clone()
-        });
-        request.extra.insert("origin".into(), automatic.clone());
-        assert!(issue_reply_role(&roles, &automatic).is_some());
-        handler
-            .validate_stand_in_issue_request(&request)
-            .await
-            .unwrap();
-        assert!(issue_reply_role(&[], &origin).is_none());
-        handler.store.update_task("issue-chat", |link| {
-            link.runtime_handle["origin"] = origin.clone()
-        });
-        request.extra.insert("origin".into(), origin);
-        settings["roles"][0]["collaboration"]["enabled"] = json!(false);
-        store
-            .save_personal_stand_in(7, "mac", settings.clone())
-            .unwrap();
-        handler
-            .validate_stand_in_issue_request(&request)
-            .await
-            .unwrap();
-        let link = handler.local_task_link("issue-chat").unwrap();
-        assert_eq!(
-            handler
-                .validate_followup_role(&store, 7, &settings["roles"][0], &link)
-                .await
-                .unwrap_err()
-                .message,
-            "Work project is no longer connected"
-        );
-        let project = link.runtime_handle["origin"]["cloudProjectId"]
-            .as_str()
-            .unwrap();
-        let issue_id = link.runtime_handle["origin"]["loopItemId"]
-            .as_str()
-            .unwrap();
-        let issue = store.get_task(project, issue_id).unwrap();
-        store
-            .update_task(
-                project,
-                issue_id,
-                serde_json::from_value(json!({"version":issue.version,"assignee_user_id":8}))
-                    .unwrap(),
-            )
-            .unwrap();
-        handler
-            .validate_stand_in_issue_request(&request)
-            .await
-            .unwrap();
-        let issue = store.get_task(project, issue_id).unwrap();
-        store
-            .update_task(
-                project,
-                issue_id,
-                serde_json::from_value(json!({"version":issue.version,"assignee_user_id":null}))
-                    .unwrap(),
-            )
-            .unwrap();
-        handler
-            .validate_stand_in_issue_request(&request)
-            .await
-            .unwrap();
-    }
-
-    fn paused_issue_fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value, Value) {
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-        handler.store = RuntimeWorkStore::new(root.join("runtime.json"));
-        handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
-        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-        let project = store
-            .create_project(serde_json::from_value(json!({"name":"Manual Issue"})).unwrap())
-            .unwrap();
-        let issue = store
-            .create_task(
-                &project.id,
-                serde_json::from_value(json!({"title":"Review","assignee_user_id":7})).unwrap(),
-            )
-            .unwrap();
-        let mut settings = store.personal_stand_in(7, "mac").unwrap();
-        settings["roles"][0]["enabled"] = json!(false);
-        settings["roles"][0]["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[{"id":project.id,"store":"local"}],"excludedProjects":[],"tags":[],"policy":{"automatic":false,"askBeforeAct":false}});
-        let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
-        let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","trigger":"manual","publicConversation":true,"runtimeTaskId":"issue-chat","userId":7,"standInId":"default","projectStore":"local","cloudProjectId":project.id,"loopItemId":issue.id,"humanAssignmentId":format!("{}-{}",issue.id,issue.metadata["assignment_history"].as_array().unwrap().len())});
-        handler.upsert_local_task(RuntimeTaskLink {
-            local_task_id: "issue-chat".into(),
-            runtime_handle: json!({"origin":origin}),
-            ..Default::default()
-        });
-        (handler, store, origin, settings)
-    }
-
-    #[tokio::test]
-    async fn queued_stand_in_turns_recheck_current_issue_execution_permission() {
-        use axum::{routing::get, Json, Router};
-
-        let root = tempfile::tempdir().unwrap();
-        let (mut handler, _, mut origin, _) = paused_issue_fixture(root.path());
-        origin["projectStore"] = json!("cloud");
-        handler.store.update_task("issue-chat", |link| {
-            link.runtime_handle["origin"] = origin.clone()
-        });
-        let mut request = ExecutionRequest::default();
-        request.extra.insert("origin".into(), origin.clone());
-        let issue = Arc::new(Mutex::new(json!({
-            "cloud_project_id":origin["cloudProjectId"],"permissions":{"execute":true}
-        })));
-        let current = issue.clone();
-        let router = Router::new()
-            .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
-            .route(
-                &format!(
-                    "/api/v1/loop-items/{}",
-                    origin["loopItemId"].as_str().unwrap()
-                ),
-                get(move || {
-                    let value = current.lock().unwrap().clone();
-                    async move { Json(value) }
-                }),
-            );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
-            backend_url: format!("http://{}", listener.local_addr().unwrap()),
-            auth_token: "test".into(),
-            authenticated_user_id: Some(7),
-            ..Default::default()
-        })));
-        let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
-        handler
-            .validate_project_coordinator_request(&request)
-            .await
-            .unwrap();
-        for permission in [json!(false), Value::Null] {
-            issue.lock().unwrap()["permissions"]["execute"] = permission;
-            assert_eq!(
-                handler
-                    .validate_project_coordinator_request(&request)
-                    .await
-                    .unwrap_err(),
-                "Issue execution permission is unavailable"
-            );
-        }
-        issue.lock().unwrap()["permissions"]["execute"] = json!(true);
-        handler
-            .validate_project_coordinator_request(&request)
-            .await
-            .unwrap();
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn a_public_issue_request_cannot_change_its_trusted_origin_kind() {
-        let root = tempfile::tempdir().unwrap();
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
-        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
-        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-        let mut settings = store.personal_stand_in(7, "mac").unwrap();
-        settings["roles"][0]["enabled"] = json!(true);
-        store.save_personal_stand_in(7, "mac", settings).unwrap();
-        let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","publicConversation":true,"runtimeTaskId":"issue-chat","userId":7,"standInId":"default","projectStore":"cloud","cloudProjectId":"project","loopItemId":"one"});
-        handler.upsert_local_task(RuntimeTaskLink {
-            local_task_id: "issue-chat".into(),
-            runtime_handle: json!({"origin":origin}),
-            ..Default::default()
-        });
-        for key in ["type", "initiatedBy"] {
-            let mut request = ExecutionRequest::default();
-            let mut untrusted = origin.clone();
-            untrusted[key] = json!("different-kind");
-            request.extra.insert("origin".into(), untrusted);
-            assert_eq!(
-                handler
-                    .validate_stand_in_issue_request(&request)
-                    .await
-                    .unwrap_err(),
-                "Issue conversation owner does not match"
-            );
-        }
-    }
-
-    #[test]
-    fn a_failed_outbox_write_never_exposes_an_uncommitted_reply() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("state/runtime.json");
-        fs::create_dir_all(&path).unwrap();
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-        handler.store = RuntimeWorkStore::new(path.clone());
-        let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in"});
-        handler.upsert_local_task(RuntimeTaskLink {
-            local_task_id: "issue-chat".into(),
-            thread_id: Some("parent".into()),
-            runtime_handle: json!({"lastTurnId":"turn","origin":origin,"standInPublicTurn":{"thread":"parent","turn":"turn","generation":0,"origin":origin}}),
-            ..Default::default()
-        });
-        // The conflicting index directory forces a real atomic replacement failure.
-        handler.persist_public_issue_reply("issue-chat", &json!({"method":"item/completed","params":{"threadId":"parent","turnId":"turn","item":{"id":"reply","type":"agentMessage","phase":"commentary","text":"Received"}}}).into());
-        assert!(handler
-            .local_task_link("issue-chat")
-            .unwrap()
-            .runtime_handle["standInIssueReplies"]
-            .is_null());
-    }
-
-    #[test]
-    fn autonomous_group_turn_only_queues_start_and_final_output() {
-        let root = tempfile::tempdir().unwrap();
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
-        handler.upsert_local_task(RuntimeTaskLink {
-            local_task_id: "issue-chat".into(),
-            thread_id: Some("parent".into()),
-            runtime_handle: json!({
-                "lastTurnId":"turn",
-                "origin":{"type":"issue_dispatch","dispatchRole":"member",
-                    "dispatchId":"dispatch","cloudProjectId":"project","loopItemId":"one"}
-            }),
-            ..Default::default()
-        });
-        handler.persist_public_issue_reply(
-            "issue-chat",
-            &json!({"method":"turn/started","params":{"threadId":"parent","turnId":"turn"}}).into(),
-        );
-        for (phase, text) in [
-            ("commentary", "Routine progress"),
-            ("final_answer", "Finished"),
-        ] {
-            handler.persist_public_issue_reply(
-                "issue-chat",
-                &json!({"method":"item/completed","params":{"threadId":"parent","turnId":"turn",
-                    "item":{"id":phase,"type":"agentMessage","phase":phase,"text":text}}})
-                .into(),
-            );
-        }
-        let link = handler.local_task_link("issue-chat").unwrap();
-        let reports = link.runtime_handle["standInIssueReplies"]
-            .as_object()
-            .unwrap();
-        assert_eq!(reports.len(), 2);
-        assert_eq!(reports["turn"]["body"], "开始处理");
-        assert_eq!(reports["turn"]["phase"], "start");
-        assert!(reports
-            .values()
-            .any(|report| report["phase"] == "output" && report["body"] == "Finished"));
-    }
-
-    #[test]
-    fn public_issue_replies_are_distinct_durable_messages_not_turn_aggregates() {
-        let root = tempfile::tempdir().unwrap();
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-        let path = root.path().join("runtime.json");
-        handler.store = RuntimeWorkStore::new(path.clone());
-        handler.upsert_local_task(RuntimeTaskLink {
-            local_task_id:"issue-chat".into(), thread_id:Some("parent".into()),
-            runtime_handle:json!({"lastTurnId":"turn", "origin":{"type":"issue_dispatch","initiatedBy":"stand_in","userId":7,"standInId":"review","loopItemId":"one","humanAssignmentId":"first"}}),
-            ..Default::default()
-        });
-        handler.persist_public_issue_reply(
-            "issue-chat",
-            &json!({"method":"turn/started","params":{"threadId":"parent","turnId":"turn"}}).into(),
-        );
-        let notification = |id: &str, thread: &str, kind: &str, phase: &str| {
-            CodexNotification::from(json!({
-                "method":"item/completed","params":{"threadId":thread,"turnId":"turn","item":{"id":id,"type":kind,"phase":phase,"text":id}}
-            }))
-        };
-        for id in ["Received", "Result", "Result"] {
-            handler.persist_public_issue_reply(
-                "issue-chat",
-                &notification(id, "parent", "agentMessage", "commentary"),
-            );
-        }
-        for (id, thread, kind, phase) in [
-            ("Child raw result", "child", "agentMessage", "final_answer"),
-            ("Tool log", "parent", "commandExecution", "commentary"),
-            ("Reasoning", "parent", "agentMessage", "analysis"),
-        ] {
-            handler
-                .persist_public_issue_reply("issue-chat", &notification(id, thread, kind, phase));
-        }
-        // A reassignment cannot relabel an old turn's late output with its new grant.
-        handler.store.update_task("issue-chat", |link| {
-            link.runtime_handle["origin"]["humanAssignmentId"] = json!("second")
-        });
-        handler.persist_public_issue_reply(
-            "issue-chat",
-            &notification("Late", "parent", "agentMessage", "final_answer"),
-        );
-        let reopened = RuntimeWorkStore::new(path);
-        let link = reopened.get_task("issue-chat").unwrap();
-        let reports = link.runtime_handle["standInIssueReplies"]
-            .as_object()
-            .unwrap();
-        assert_eq!(reports.len(), 3);
-        assert_eq!(
-            reports
-                .values()
-                .map(|report| report["body"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            ["Received", "Result", "Late"]
-        );
-        assert!(reports
-            .values()
-            .all(|report| report["origin"]["humanAssignmentId"] == "first"));
-        handler.store.update_task("issue-chat", |link| {
-            link.runtime_handle["origin"]["type"] = json!("stand_in_identity")
-        });
-        handler.persist_public_issue_reply(
-            "issue-chat",
-            &json!({"method":"turn/started","params":{"threadId":"parent","turnId":"turn"}}).into(),
-        );
-        handler.persist_public_issue_reply(
-            "issue-chat",
-            &notification("Private", "parent", "agentMessage", "final_answer"),
-        );
-        assert_eq!(
-            handler
-                .local_task_link("issue-chat")
-                .unwrap()
-                .runtime_handle["standInIssueReplies"]
-                .as_object()
-                .unwrap()
-                .len(),
-            3
-        );
-    }
-
-    #[test]
-    fn issue_conversations_reuse_history_but_reassignment_is_a_new_wakeup() {
-        let root = tempfile::tempdir().unwrap();
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
-        let config = json!({"id":"review","userId":7,"projectId":"project","projectStore":"cloud"});
-        let issue = json!({"id":"one"});
-        let id = handler.stand_in_task_id(&config, &issue);
-        handler.upsert_local_task(RuntimeTaskLink {
-            local_task_id:id.clone(), status:"done".into(),
-            runtime_handle:json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"cloudProjectId":"project","projectStore":"cloud","loopItemId":"one","humanAssignmentId":"first"},"standInIssueWakeups":["first"]}),
-            ..Default::default()
-        });
-        assert_eq!(handler.stand_in_task_id(&config, &issue), id);
-        assert!(handler.stand_in_assignment_is_handled(
-            &config,
-            &id,
-            &json!({"humanAssignmentId":"first"})
-        ));
-        assert!(!handler.stand_in_assignment_is_handled(
-            &config,
-            &id,
-            &json!({"humanAssignmentId":"second"})
-        ));
-        assert_ne!(handler.stand_in_task_id(&config, &json!({"id":"two"})), id);
-        for field in ["id", "userId", "projectId", "projectStore"] {
-            let mut other = config.clone();
-            other[field] = json!("other");
-            assert_ne!(handler.stand_in_task_id(&other, &issue), id, "{field}");
-        }
-    }
-
-    #[test]
-    fn a_reserved_legacy_conversation_survives_restart_before_native_task_creation() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("runtime.json");
-        let store = RuntimeWorkStore::new(path.clone());
-        let config = json!({"id":"review","userId":7,"projectId":"project","projectStore":"cloud"});
-        let issue = json!({"id":"one"});
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-        handler.store = store.clone();
-        let identity = handler.stand_in_task_id(&config, &issue);
-        store
-            .bind_issue_conversation(&identity, "stand-in-old-assignment-review")
-            .unwrap();
-        assert!(store
-            .bind_issue_conversation(&identity, "different-reservation")
-            .is_err());
-        handler.store = RuntimeWorkStore::new(path);
-        assert_eq!(
-            handler.stand_in_task_id(&config, &issue),
-            "stand-in-old-assignment-review"
-        );
-        assert!(handler
-            .local_task_link("stand-in-old-assignment-review")
-            .is_none());
-    }
-
-    #[test]
-    fn mentions_and_assignments_respect_the_same_device_reservation_without_a_current_grant() {
-        let root = tempfile::tempdir().unwrap();
-        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
-        let config = json!({"id":"review","userId":7,"projectId":"project","projectStore":"cloud"});
-        let issue = json!({"id":"one"});
-        let canonical = handler.stand_in_task_id(&config, &issue);
-        for (task, grant) in [
-            (canonical.as_str(), Value::Null),
-            ("stand-in-old-grant-review", json!("old-grant")),
-        ] {
-            let rows = json!([{"task_id":task,"task_user_id":7,"device_id":"other-device","human_assignment_id":grant}]);
-            assert!(!handler
-                .use_stand_in_issue_reservation(&config, &issue, &rows)
-                .unwrap());
-        }
-        let rows = json!([{"task_id":"stand-in-old-grant-review","task_user_id":7,"device_id":"mac","human_assignment_id":"old-grant"}]);
-        assert!(handler
-            .use_stand_in_issue_reservation(&config, &issue, &rows)
-            .unwrap());
-        assert_eq!(
-            handler.stand_in_task_id(&config, &issue),
-            "stand-in-old-grant-review"
-        );
-        let established = json!([
-            {"task_id":"stand-in-old-grant-review","task_user_id":7,"device_id":"mac","human_assignment_id":"old-grant"},
-            {"task_id":"another-legacy-thread","task_user_id":7,"device_id":"other-device","stand_in_conversation_id":canonical}
-        ]);
-        assert!(
-            !handler
-                .use_stand_in_issue_reservation(&config, &issue, &established)
-                .unwrap(),
-            "An established reservation takes precedence over an older local alias"
-        );
-    }
-}
+#[path = "stand_in_issue_replies_tests.rs"]
+mod tests;

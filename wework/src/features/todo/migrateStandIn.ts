@@ -91,8 +91,10 @@ export async function migrateStandIn(
   const imported = await api.memories(targetUser, targetDevice)
   for (const memory of memories.filter(
     memory =>
-      memory.scope.kind === 'personal' ||
-      (memory.scope.kind === 'role' && memory.scope.roleId === roleId)
+      !memory.evidenceUnavailable &&
+      !memory.evidence?.trainingCase &&
+      (memory.scope.kind === 'personal' ||
+        (memory.scope.kind === 'role' && memory.scope.roleId === roleId))
   )) {
     if (
       imported.some(

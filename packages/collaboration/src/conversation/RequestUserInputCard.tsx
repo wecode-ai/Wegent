@@ -1,12 +1,7 @@
-import { useCallback, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import { Button as ControlButton } from '../markdown/Button'
-import {
-  ChevronDown,
-  CornerDownLeft,
-  MessageCircleQuestion,
-  Pencil,
-} from 'lucide-react'
+import { ChevronDown, CornerDownLeft, MessageCircleQuestion, Pencil } from 'lucide-react'
 import { useConversationTranslation } from './ConversationTranslation'
 import { isImeEnterEvent } from '@wegent/chat-core/ime'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
@@ -29,10 +24,7 @@ import {
   requestUserInputApprovalDescription,
 } from '@wegent/chat-core/runtime-user-input'
 import { McpUrlAuthorizationCard } from './McpUrlAuthorizationCard'
-import {
-  requestUserInputExpired,
-  useRequestUserInputDeadline,
-} from './useRequestUserInputDeadline'
+import { requestUserInputExpired, useRequestUserInputDeadline } from './useRequestUserInputDeadline'
 import {
   implementationPlanOptionQuestion,
   initialActiveQuestionId,
@@ -60,9 +52,7 @@ export interface RequestUserInputCardProps {
   }) => void
   composerServices?: RequestUserInputComposerServices
   allowSkip?: boolean
-  onSubmit?: (
-    response: RequestUserInputResponse,
-  ) => boolean | void | Promise<boolean | void>
+  onSubmit?: (response: RequestUserInputResponse) => boolean | void | Promise<boolean | void>
   onSkip?: () => boolean | void | Promise<boolean | void>
   onIgnore?: () => void
   onCollapse?: () => void
@@ -75,16 +65,11 @@ export function RequestUserInputCard(props: RequestUserInputCardProps) {
   if (
     expired ||
     hasRequestUserInputResponse(props.payload) ||
-    (props.payload.interactionStatus &&
-      props.payload.interactionStatus !== 'pending')
+    (props.payload.interactionStatus && props.payload.interactionStatus !== 'pending')
   ) {
     return (
       <RequestUserInputSummary
-        payload={
-          expired
-            ? { ...props.payload, interactionStatus: 'expired' }
-            : props.payload
-        }
+        payload={expired ? { ...props.payload, interactionStatus: 'expired' } : props.payload}
       />
     )
   }
@@ -123,7 +108,7 @@ function RequestUserInputForm({
   const submitInFlightRef = useRef(false)
   const questions = useMemo(
     () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
-    [payload, t],
+    [payload, t]
   )
   const isCommandApproval =
     (payload.interactionKind ?? payload.interaction_kind) === 'approval' &&
@@ -134,88 +119,76 @@ function RequestUserInputForm({
     questions.length === 1 &&
     questions[0].options.length > 0 &&
     !questions[0].allowCustom
-  const [localAnswers, setLocalAnswers] = useState<Record<string, string>>(
-    () => ({
-      ...initialAnswers(questions),
-      ...draftOptionAnswers,
-    }),
-  )
+  const [localAnswers, setLocalAnswers] = useState<Record<string, string>>(() => ({
+    ...initialAnswers(questions),
+    ...draftOptionAnswers,
+  }))
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
   const [customModes, setCustomModes] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(
-      questions.flatMap<[string, boolean]>((question) => {
-        if (question.id in (draftOptionAnswers ?? {}))
-          return [[question.id, false]]
+      questions.flatMap<[string, boolean]>(question => {
+        if (question.id in (draftOptionAnswers ?? {})) return [[question.id, false]]
         return question.allowCustom && draftAttachments?.[question.id]?.length
           ? [[question.id, true]]
           : []
-      }),
-    ),
+      })
+    )
   )
-  const [answerAttachments, setAnswerAttachments] = useState(
-    draftAttachments ?? {},
-  )
+  const [answerAttachments, setAnswerAttachments] = useState(draftAttachments ?? {})
   const answerAttachmentsRef = useRef(answerAttachments)
-  const draftOptionsRef = useRef(draftOptionAnswers ?? {})
-  const [previousOptionDrafts, setPreviousOptionDrafts] =
-    useState(draftOptionAnswers)
+  const [previousOptionDrafts, setPreviousOptionDrafts] = useState(draftOptionAnswers)
   const [processedAttachmentDrafts, setProcessedAttachmentDrafts] = useState<
     Record<string, Attachment[] | undefined>
   >(() => draftAttachments ?? {})
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(
     () =>
       Object.keys(draftOptionAnswers ?? {})[0] ??
-      initialActiveQuestionId(questions, draftAnswers, draftAttachments),
+      initialActiveQuestionId(questions, draftAnswers, draftAttachments)
   )
   const selectCustomQuestion = useCallback(
     (id: string) => {
       setActiveQuestionId(id)
-      setCustomModes((current) => ({ ...current, [id]: true }))
-      if (id in draftOptionsRef.current || isImplementationPlanRequest) {
-        const next = isImplementationPlanRequest
-          ? {}
-          : { ...draftOptionsRef.current }
+      setCustomModes(current => ({ ...current, [id]: true }))
+      if (id in (draftOptionAnswers ?? {}) || isImplementationPlanRequest) {
+        const next = isImplementationPlanRequest ? {} : { ...draftOptionAnswers }
         delete next[id]
-        draftOptionsRef.current = next
         onDraftOptionAnswersChange?.(next)
       }
     },
-    [isImplementationPlanRequest, onDraftOptionAnswersChange],
+    [draftOptionAnswers, isImplementationPlanRequest, onDraftOptionAnswersChange]
   )
-  const [inputReadiness, setInputReadiness] = useState<Record<string, boolean>>(
-    {},
-  )
+  const [inputReadiness, setInputReadiness] = useState<Record<string, boolean>>({})
   const ready = questions.every(
-    (question) =>
+    question =>
       !question.allowCustom ||
       (inputReadiness[question.id] !== false &&
-        (answerAttachments[question.id] ?? []).every(
-          (attachment) => attachment.status === 'ready',
-        )),
+        (answerAttachments[question.id] ?? []).every(attachment => attachment.status === 'ready'))
   )
+  useLayoutEffect(() => {
+    answerAttachmentsRef.current = answerAttachments
+  }, [answerAttachments])
   const [previousDrafts, setPreviousDrafts] = useState(draftAnswers)
   if (!sameOptionDrafts(previousOptionDrafts, draftOptionAnswers)) {
     setPreviousOptionDrafts(draftOptionAnswers)
     const nextOptions = draftOptionAnswers ?? {}
     const changedIds = new Set([
-      ...Object.keys(draftOptionsRef.current),
+      ...Object.keys(previousOptionDrafts ?? {}),
       ...Object.keys(nextOptions),
     ])
     for (const id of changedIds) {
-      if (draftOptionsRef.current[id] === nextOptions[id]) continue
-      setLocalAnswers((current) => {
+      if (previousOptionDrafts?.[id] === nextOptions[id]) continue
+      setLocalAnswers(current => {
         const next = { ...current }
         if (id in nextOptions) next[id] = nextOptions[id]
         else delete next[id]
         return next
       })
-      if (questions.find((question) => question.id === id)?.allowCustom)
-        setCustomModes((current) => ({
+      if (questions.find(question => question.id === id)?.allowCustom)
+        setCustomModes(current => ({
           ...current,
           [id]: !(id in nextOptions),
         }))
     }
-    draftOptionsRef.current = nextOptions
   }
   const nextAttachments = draftAttachments ?? {}
   const attachmentDraftIds = new Set([
@@ -223,31 +196,26 @@ function RequestUserInputForm({
     ...Object.keys(nextAttachments),
   ])
   const settledAttachmentIds = [...attachmentDraftIds].filter(
-    (id) =>
+    id =>
       inputReadiness[id] !== false &&
-      !sameAttachmentDrafts(processedAttachmentDrafts[id], nextAttachments[id]),
+      !sameAttachmentDrafts(processedAttachmentDrafts[id], nextAttachments[id])
   )
   if (settledAttachmentIds.length) {
-    const local = { ...answerAttachmentsRef.current }
+    const local = { ...answerAttachments }
     const changedIds = settledAttachmentIds.filter(
-      (id) => !sameAttachmentDrafts(local[id], nextAttachments[id]),
+      id => !sameAttachmentDrafts(local[id], nextAttachments[id])
     )
-    setProcessedAttachmentDrafts((current) => ({
+    setProcessedAttachmentDrafts(current => ({
       ...current,
-      ...Object.fromEntries(
-        settledAttachmentIds.map((id) => [id, nextAttachments[id]]),
-      ),
+      ...Object.fromEntries(settledAttachmentIds.map(id => [id, nextAttachments[id]])),
     }))
     for (const id of changedIds) local[id] = nextAttachments[id] ?? []
     if (changedIds.length) {
-      answerAttachmentsRef.current = local
       setAnswerAttachments(local)
-      setCustomModes((current) => ({
+      setCustomModes(current => ({
         ...current,
         ...Object.fromEntries(
-          changedIds
-            .filter((id) => nextAttachments[id]?.length)
-            .map((id) => [id, true]),
+          changedIds.filter(id => nextAttachments[id]?.length).map(id => [id, true])
         ),
       }))
     }
@@ -255,18 +223,16 @@ function RequestUserInputForm({
   if (previousDrafts !== draftAnswers) {
     setPreviousDrafts(draftAnswers)
     const changes = Object.entries(draftAnswers ?? {}).filter(
-      ([id, value]) => previousDrafts?.[id] !== value,
+      ([id, value]) => previousDrafts?.[id] !== value
     )
     if (changes.length) {
-      const customChanges = changes.filter(
-        ([id]) => !(id in (draftOptionAnswers ?? {})),
-      )
+      const customChanges = changes.filter(([id]) => !(id in (draftOptionAnswers ?? {})))
       if (customChanges.length) {
-        setCustomAnswers((current) => ({
+        setCustomAnswers(current => ({
           ...current,
           ...Object.fromEntries(customChanges),
         }))
-        setCustomModes((current) => ({
+        setCustomModes(current => ({
           ...current,
           ...Object.fromEntries(customChanges.map(([id]) => [id, true])),
         }))
@@ -279,22 +245,15 @@ function RequestUserInputForm({
     ...initialAnswers(questions),
     ...localAnswers,
     ...Object.fromEntries(
-      questions.flatMap((question) =>
+      questions.flatMap(question =>
         (customModes[question.id] ?? Boolean(draftAnswers?.[question.id]))
-          ? [
-              [
-                question.id,
-                customAnswers[question.id] ?? draftAnswers?.[question.id] ?? '',
-              ],
-            ]
-          : [],
-      ),
+          ? [[question.id, customAnswers[question.id] ?? draftAnswers?.[question.id] ?? '']]
+          : []
+      )
     ),
   }
   const setSelectedAnswers = (
-    update:
-      | Record<string, string>
-      | ((current: Record<string, string>) => Record<string, string>),
+    update: Record<string, string> | ((current: Record<string, string>) => Record<string, string>)
   ) => {
     const next = typeof update === 'function' ? update(selectedAnswers) : update
     setLocalAnswers(next)
@@ -302,25 +261,16 @@ function RequestUserInputForm({
   const selectedQuestionId = activeQuestionId
   const [submitted, setSubmitted] = useState(false)
   const questionIds = useMemo(
-    () => JSON.stringify(questions.map((question) => question.id)),
-    [questions],
+    () => JSON.stringify(questions.map(question => question.id)),
+    [questions]
   )
-  const [skippedQuestionIds, setSkippedQuestionIds] = useState<string | null>(
-    null,
-  )
+  const [skippedQuestionIds, setSkippedQuestionIds] = useState<string | null>(null)
   const skipped = skippedQuestionIds === questionIds
   const [submissionError, setSubmissionError] = useState<string | null>(null)
   const isDisabled = disabled || submitted
 
-  const submitAnswers = async (
-    answers: RequestUserInputResponse['answers'],
-  ): Promise<boolean> => {
-    if (
-      isDisabled ||
-      requestUserInputExpired(payload) ||
-      submitInFlightRef.current ||
-      !onSubmit
-    )
+  const submitAnswers = async (answers: RequestUserInputResponse['answers']): Promise<boolean> => {
+    if (isDisabled || requestUserInputExpired(payload) || submitInFlightRef.current || !onSubmit)
       return false
 
     submitInFlightRef.current = true
@@ -329,12 +279,8 @@ function RequestUserInputForm({
       const accepted = await onSubmit({
         requestId: payload.requestId ?? payload.request_id,
         itemId: payload.itemId ?? payload.item_id,
-        ...(payload.interactionScope
-          ? { interactionScope: payload.interactionScope }
-          : {}),
-        ...(isAsyncRequestUserInputPayload(payload)
-          ? { delivery: 'async' as const }
-          : {}),
+        ...(payload.interactionScope ? { interactionScope: payload.interactionScope } : {}),
+        ...(isAsyncRequestUserInputPayload(payload) ? { delivery: 'async' as const } : {}),
         answers,
       })
       if (accepted !== false) setSubmitted(true)
@@ -349,13 +295,13 @@ function RequestUserInputForm({
 
   const handleSubmit = (
     answersOverride?: Record<string, string>,
-    activeQuestionIdOverride?: string | null,
+    activeQuestionIdOverride?: string | null
   ): Promise<boolean> => {
     if (questions.length === 0 || !ready) return Promise.resolve(false)
     const answers = responseAnswers(
       questions,
       answersOverride ?? selectedAnswers,
-      activeQuestionIdOverride ?? selectedQuestionId,
+      activeQuestionIdOverride ?? selectedQuestionId
     )
     for (const [id, answer] of Object.entries(answers)) {
       const attachments = answerAttachments[id]
@@ -370,23 +316,15 @@ function RequestUserInputForm({
     allowSkip &&
     !['approval', 'mcp_form', 'mcp_url'].includes(interactionKind ?? '') &&
     !isImplementationPlanRequest
-  const canIgnore =
-    Boolean(onCollapse) || (isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore))
+  const canIgnore = Boolean(onCollapse) || (isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore))
   const handleSkip = async () => {
     if (!isAsyncRequestUserInputPayload(payload)) {
       await submitAnswers(
-        Object.fromEntries(
-          questions.map((question) => [question.id, { answers: [] }]),
-        ),
+        Object.fromEntries(questions.map(question => [question.id, { answers: [] }]))
       )
       return
     }
-    if (
-      isDisabled ||
-      requestUserInputExpired(payload) ||
-      submitInFlightRef.current
-    )
-      return
+    if (isDisabled || requestUserInputExpired(payload) || submitInFlightRef.current) return
     submitInFlightRef.current = true
     setSubmissionError(null)
     try {
@@ -411,7 +349,7 @@ function RequestUserInputForm({
 
   const selectOption = (
     question: ReturnType<typeof normalizeQuestions>[number],
-    option: RequestUserInputOption,
+    option: RequestUserInputOption
   ) => {
     const nextAnswers = {
       ...selectedAnswers,
@@ -419,13 +357,12 @@ function RequestUserInputForm({
       ...emptyCustomAnswersForImplementationPlan(questions),
     }
     setActiveQuestionId(question.id)
-    setCustomModes((current) => ({ ...current, [question.id]: false }))
+    setCustomModes(current => ({ ...current, [question.id]: false }))
     setSelectedAnswers(nextAnswers)
-    draftOptionsRef.current = {
-      ...draftOptionsRef.current,
+    onDraftOptionAnswersChange?.({
+      ...(draftOptionAnswers ?? {}),
       [question.id]: option.value ?? '',
-    }
-    onDraftOptionAnswersChange?.(draftOptionsRef.current)
+    })
     if (shouldSubmitOnOptionSelect(question, option, questions)) {
       void handleSubmit(nextAnswers, question.id)
     }
@@ -443,13 +380,7 @@ function RequestUserInputForm({
 
     if (isImeEnterEvent(event)) return
 
-    if (
-      event.key !== 'Enter' ||
-      event.shiftKey ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.altKey
-    ) {
+    if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
       return
     }
 
@@ -470,10 +401,7 @@ function RequestUserInputForm({
           variant="unstyled"
           type="button"
           data-testid="request-user-input-skip-button"
-          disabled={
-            isDisabled ||
-            (!isAsyncRequestUserInputPayload(payload) && !onSubmit)
-          }
+          disabled={isDisabled || (!isAsyncRequestUserInputPayload(payload) && !onSubmit)}
           onClick={() => void handleSkip()}
           className="inline-flex h-11 min-w-[44px] shrink-0 items-center justify-center rounded-lg px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-50 md:h-8"
         >
@@ -489,11 +417,7 @@ function RequestUserInputForm({
           onClick={handleIgnore}
           className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
         >
-          {t(
-            onCollapse
-              ? 'request_user_input.collapse'
-              : 'request_user_input.ignore',
-          )}
+          {t(onCollapse ? 'request_user_input.collapse' : 'request_user_input.ignore')}
           <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
             ESC
           </kbd>
@@ -542,7 +466,7 @@ function RequestUserInputForm({
           skipped ? 'hidden' : 'flex',
           compact
             ? 'rounded-lg bg-muted/70'
-            : 'rounded-2xl border border-border/70 bg-base shadow-sm',
+            : 'rounded-2xl border border-border/70 bg-base shadow-sm'
         )}
       >
         {remainingTime && (
@@ -580,17 +504,11 @@ function RequestUserInputForm({
                   {isCommandApproval ? highlightRm(question.question) : question.question}
                 </div>
                 {question.options.length > 0 ? (
-                  <div
-                    className={cn(
-                      'flex',
-                      compact ? 'flex-wrap gap-2' : 'flex-col gap-1',
-                    )}
-                  >
+                  <div className={cn('flex', compact ? 'flex-wrap gap-2' : 'flex-col gap-1')}>
                     {question.options.map((option, index) => {
                       const isSelected =
                         selectedAnswers[question.id] === option.value &&
-                        (!isImplementationPlanRequest ||
-                          selectedQuestionId === question.id)
+                        (!isImplementationPlanRequest || selectedQuestionId === question.id)
                       return (
                         <ControlButton
                           variant="unstyled"
@@ -605,7 +523,7 @@ function RequestUserInputForm({
                               ? 'min-h-11 rounded-md border border-border md:min-h-7'
                               : 'min-h-9 w-full rounded-xl',
                             isSelected ? 'bg-muted' : 'hover:bg-muted/70',
-                            isDisabled && 'cursor-not-allowed opacity-60',
+                            isDisabled && 'cursor-not-allowed opacity-60'
                           )}
                         >
                           {!compact && (
@@ -614,7 +532,7 @@ function RequestUserInputForm({
                                 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold leading-none',
                                 isSelected
                                   ? 'bg-text-primary text-background'
-                                  : 'bg-muted text-text-muted',
+                                  : 'bg-muted text-text-muted'
                               )}
                             >
                               {index + 1}
@@ -646,15 +564,11 @@ function RequestUserInputForm({
                     <RequestUserInputAnswerEditor
                       questionId={question.id}
                       labelId={`${formId}-${questionIndex}`}
-                      value={
-                        customAnswers[question.id] ??
-                        draftAnswers?.[question.id] ??
-                        ''
-                      }
+                      value={customAnswers[question.id] ?? draftAnswers?.[question.id] ?? ''}
                       disabled={isDisabled}
                       services={composerServices}
                       initialAttachments={answerAttachments[question.id]}
-                      onChange={(value) => {
+                      onChange={value => {
                         selectCustomQuestion(question.id)
                         const next = {
                           ...draftAnswers,
@@ -664,14 +578,11 @@ function RequestUserInputForm({
                         setCustomAnswers(next)
                         onDraftAnswersChange?.(next)
                       }}
-                      onSubmit={(value) => {
+                      onSubmit={value => {
                         setActiveQuestionId(question.id)
-                        void handleSubmit(
-                          { ...selectedAnswers, [question.id]: value },
-                          question.id,
-                        )
+                        void handleSubmit({ ...selectedAnswers, [question.id]: value }, question.id)
                       }}
-                      onAttachmentsChange={(attachments) => {
+                      onAttachmentsChange={attachments => {
                         const current = answerAttachmentsRef.current
                         if (
                           current[question.id] === attachments ||
@@ -681,8 +592,7 @@ function RequestUserInputForm({
                         const next = { ...current, [question.id]: attachments }
                         answerAttachmentsRef.current = next
                         setAnswerAttachments(next)
-                        if (attachments.length)
-                          selectCustomQuestion(question.id)
+                        if (attachments.length) selectCustomQuestion(question.id)
                         onDraftAttachmentsChange?.(next)
                         onDraftAttachmentDelta?.({
                           questionId: question.id,
@@ -690,14 +600,14 @@ function RequestUserInputForm({
                           next: attachments,
                         })
                       }}
-                      onReadyChange={(ready) =>
-                        setInputReadiness((current) =>
+                      onReadyChange={ready =>
+                        setInputReadiness(current =>
                           current[question.id] === ready
                             ? current
                             : {
                                 ...current,
                                 [question.id]: ready,
-                              },
+                              }
                         )
                       }
                     />
@@ -717,48 +627,29 @@ function RequestUserInputForm({
   )
 }
 
-export function RequestUserInputSummary({
-  payload,
-}: {
-  payload: RequestUserInputPayload
-}) {
+export function RequestUserInputSummary({ payload }: { payload: RequestUserInputPayload }) {
   const { t } = useConversationTranslation()
   const questions = useMemo(
     () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
-    [payload, t],
+    [payload, t]
   )
   const response =
-    payload.response ??
-    payload.requestUserInputResponse ??
-    payload.request_user_input_response
-  const rows = questions.map((question) => {
+    payload.response ?? payload.requestUserInputResponse ?? payload.request_user_input_response
+  const rows = questions.map(question => {
     const answer = responseAnswerText(response, question.id)
     return {
       id: question.id,
       question: question.question,
-      answer:
-        question.options.find((option) => option.value === answer)?.label ??
-        answer,
-      filenames:
-        response?.answers?.[question.id]?.attachments?.map(
-          (file) => file.filename,
-        ) ?? [],
+      answer: question.options.find(option => option.value === answer)?.label ?? answer,
+      filenames: response?.answers?.[question.id]?.attachments?.map(file => file.filename) ?? [],
     }
   })
 
-  const interactionStatus = requestUserInputExpired(payload)
-    ? 'expired'
-    : payload.interactionStatus
+  const interactionStatus = requestUserInputExpired(payload) ? 'expired' : payload.interactionStatus
   if (interactionStatus === 'expired' || interactionStatus === 'cancelled') {
     return (
-      <div
-        data-testid="request-user-input-summary"
-        className="text-sm text-text-secondary"
-      >
-        <p
-          role="status"
-          data-testid={`request-user-input-${interactionStatus}`}
-        >
+      <div data-testid="request-user-input-summary" className="text-sm text-text-secondary">
+        <p role="status" data-testid={`request-user-input-${interactionStatus}`}>
           {t(`request_user_input.${interactionStatus}`)}
         </p>
       </div>
@@ -767,10 +658,7 @@ export function RequestUserInputSummary({
 
   if (payload.interactionKind === 'mcp_url') {
     return (
-      <div
-        data-testid="request-user-input-summary"
-        className="text-sm text-text-secondary"
-      >
+      <div data-testid="request-user-input-summary" className="text-sm text-text-secondary">
         {t('request_user_input.url_summary')}
       </div>
     )
@@ -783,30 +671,16 @@ export function RequestUserInputSummary({
       className="min-w-0 overflow-x-hidden text-sm leading-6 text-text-secondary"
     >
       <div className="mb-1.5 inline-flex max-w-full items-center gap-1.5 text-text-muted">
-        <MessageCircleQuestion
-          className="h-4 w-4 shrink-0"
-          strokeWidth={1.7}
-          aria-hidden="true"
-        />
-        <span>
-          {t('request_user_input.asked_count', { count: rows.length })}
-        </span>
-        <ChevronDown
-          className="h-3.5 w-3.5 shrink-0"
-          strokeWidth={2}
-          aria-hidden="true"
-        />
+        <MessageCircleQuestion className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
+        <span>{t('request_user_input.asked_count', { count: rows.length })}</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
       </div>
       <div className="ml-5 flex min-w-0 flex-col gap-1.5">
-        {rows.map((row) => (
+        {rows.map(row => (
           <div key={row.id} className="min-w-0">
-            <div className="font-medium text-text-secondary">
-              {row.question}
-            </div>
+            <div className="font-medium text-text-secondary">{row.question}</div>
             {row.answer ? (
-              <div className="mt-0.5 whitespace-pre-wrap text-text-muted">
-                {row.answer}
-              </div>
+              <div className="mt-0.5 whitespace-pre-wrap text-text-muted">{row.answer}</div>
             ) : null}
             {row.filenames.map((filename, index) => (
               <div key={`${filename}-${index}`} className="text-text-muted">
@@ -836,13 +710,12 @@ function highlightRm(commandText: string) {
 
 function localizeApprovalQuestions(
   payload: RequestUserInputPayload,
-  t: ReturnType<typeof useConversationTranslation>['t'],
+  t: ReturnType<typeof useConversationTranslation>['t']
 ): RequestUserInputQuestion[] | undefined {
   const interactionKind = payload.interactionKind ?? payload.interaction_kind
   if (interactionKind !== 'approval') return payload.questions
 
-  const { detail, key: questionKey } =
-    requestUserInputApprovalDescription(payload)
+  const { detail, key: questionKey } = requestUserInputApprovalDescription(payload)
 
   return [
     {
@@ -851,13 +724,9 @@ function localizeApprovalQuestions(
       question: t(questionKey, {
         detail: detail || t('request_user_input.approval_no_detail'),
       }),
-      options: (payload.questions?.[0]?.options ?? []).map((option) => {
+      options: (payload.questions?.[0]?.options ?? []).map(option => {
         const value = option.label?.trim() ?? ''
-        const localized = localizeApprovalOption(
-          value,
-          option.description ?? '',
-          t,
-        )
+        const localized = localizeApprovalOption(value, option.description ?? '', t)
         return {
           value,
           label: localized.label,
@@ -871,15 +740,12 @@ function localizeApprovalQuestions(
 function localizeApprovalOption(
   value: string,
   detail: string,
-  t: ReturnType<typeof useConversationTranslation>['t'],
+  t: ReturnType<typeof useConversationTranslation>['t']
 ): { label: string; description: string } {
   if (value === 'allow_execpolicy' || value.startsWith('allow_execpolicy:')) {
     return {
       label: t('request_user_input.approval_allow_execpolicy'),
-      description: t(
-        'request_user_input.approval_allow_execpolicy_description',
-        { detail },
-      ),
+      description: t('request_user_input.approval_allow_execpolicy_description', { detail }),
     }
   }
   if (value.startsWith('apply_network_policy:')) {
@@ -904,20 +770,15 @@ function localizeApprovalOption(
 function responseAnswers(
   questions: ReturnType<typeof normalizeQuestions>,
   selectedAnswers: Record<string, string>,
-  activeQuestionId: string | null,
+  activeQuestionId: string | null
 ): RequestUserInputResponse['answers'] {
   if (!isImplementationPlanQuestions(questions)) {
     return Object.fromEntries(
-      questions.map((question) => [
-        question.id,
-        { answers: [selectedAnswers[question.id] ?? ''] },
-      ]),
+      questions.map(question => [question.id, { answers: [selectedAnswers[question.id] ?? ''] }])
     )
   }
 
-  const activeQuestion = questions.find(
-    (question) => question.id === activeQuestionId,
-  )
+  const activeQuestion = questions.find(question => question.id === activeQuestionId)
   if (activeQuestion?.allowCustom) {
     return {
       [activeQuestion.id]: {
@@ -931,52 +792,44 @@ function responseAnswers(
 
   return {
     [implementQuestion.id]: {
-      answers: [
-        selectedAnswers[implementQuestion.id] ??
-          implementQuestion.options[0]?.value ??
-          '',
-      ],
+      answers: [selectedAnswers[implementQuestion.id] ?? implementQuestion.options[0]?.value ?? ''],
     },
   }
 }
 
 function emptyCustomAnswersForImplementationPlan(
-  questions: ReturnType<typeof normalizeQuestions>,
+  questions: ReturnType<typeof normalizeQuestions>
 ): Record<string, string> {
   if (!isImplementationPlanQuestions(questions)) return {}
 
   return Object.fromEntries(
     questions
-      .filter(
-        (question) => question.allowCustom && question.options.length === 0,
-      )
-      .map((question) => [question.id, '']),
+      .filter(question => question.allowCustom && question.options.length === 0)
+      .map(question => [question.id, ''])
   )
 }
 
 function shouldSubmitOnOptionSelect(
   question: ReturnType<typeof normalizeQuestions>[number],
   option: RequestUserInputOption,
-  questions: ReturnType<typeof normalizeQuestions>,
+  questions: ReturnType<typeof normalizeQuestions>
 ): boolean {
   if (questions.length === 1) return true
   if (question.id === 'implement') return true
   return hasImplementationPlanText(option.label)
 }
 
-function isImplementationPlanQuestions(
-  questions: ReturnType<typeof normalizeQuestions>,
-): boolean {
+function isImplementationPlanQuestions(questions: ReturnType<typeof normalizeQuestions>): boolean {
   return Boolean(implementationPlanOptionQuestion(questions))
 }
 
 function responseAnswerText(
   response: RequestUserInputResponse | undefined,
-  questionId: string,
+  questionId: string
 ): string {
   return (
     response?.answers?.[questionId]?.answers
-      ?.map((answer) => answer.trim())
+      ?.map(answer => answer.trim())
       .filter(Boolean)
       .join('\n') ?? ''
   )

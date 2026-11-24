@@ -1,0 +1,29 @@
+[package]
+name = "wegent-project-scheduler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Recurring and incoming-event project automation admission"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-schedule = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
+chrono-tz = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+wegent-backend-persistence = { workspace = true }
+wegent-device-identity = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-project-coordination = { workspace = true }
+wegent-project-polling = { workspace = true }
+wegent-protocol = { workspace = true }
+wegent-python-compat = { workspace = true }
+wegent-storage = { workspace = true }

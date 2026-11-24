@@ -26,8 +26,15 @@ export type ArtifactDevice = {
   id: string
   recordId: number
   targetId: string
+  workbenchHome: string
+  logPath: string
   stop(): Promise<void>
   close(): Promise<void>
+}
+
+type ExecutorDeviceOptions = {
+  codeServer?: { port: number; password: string }
+  nativeUserInputTimeoutMs?: number
 }
 
 export function artifactHeaders(token: string) {
@@ -79,7 +86,16 @@ export async function startIdeDevice(
   testInfo: TestInfo,
   codeServer: { port: number; password: string }
 ): Promise<ArtifactDevice> {
-  return startExecutorDevice(request, token, 'ClaudeCode', testInfo, codeServer)
+  return startExecutorDevice(request, token, 'ClaudeCode', testInfo, { codeServer })
+}
+
+export async function startLocalCodexDevice(
+  request: APIRequestContext,
+  token: string,
+  testInfo: TestInfo,
+  nativeUserInputTimeoutMs: number
+): Promise<ArtifactDevice> {
+  return startExecutorDevice(request, token, 'Codex', testInfo, { nativeUserInputTimeoutMs })
 }
 
 async function startExecutorDevice(
@@ -87,9 +103,11 @@ async function startExecutorDevice(
   token: string,
   shell: ArtifactShell,
   testInfo: TestInfo,
-  codeServer?: { port: number; password: string }
+  { codeServer, nativeUserInputTimeoutMs }: ExecutorDeviceOptions = {}
 ): Promise<ArtifactDevice> {
-  const kind = codeServer ? 'ide' : 'artifact'
+  const deviceType =
+    nativeUserInputTimeoutMs !== undefined ? 'local' : codeServer ? 'remote' : 'app'
+  const kind = codeServer ? 'ide' : deviceType === 'local' ? 'native-input' : 'artifact'
   const id = `e2e-${kind}-${shell.toLowerCase()}-${crypto.randomUUID()}`
   const binary =
     process.env.E2E_EXECUTOR_BINARY || join(repository, 'executor/target/release/wegent-executor')
@@ -110,7 +128,9 @@ async function startExecutorDevice(
     await rm(root, { recursive: true })
     throw error
   })
-  const log = createWriteStream(testInfo.outputPath(`${id}.log`))
+  const logPath = testInfo.outputPath(`${id}.log`)
+  const workbenchHome = join(root, 'workbench')
+  const log = createWriteStream(logPath)
   const child = spawn(binary, [], {
     cwd: root,
     detached: true,
@@ -123,7 +143,7 @@ async function startExecutorDevice(
       WEGENT_AUTH_TOKEN: token,
       DEVICE_ID: id,
       DEVICE_NAME: id,
-      DEVICE_TYPE: codeServer ? 'remote' : 'app',
+      DEVICE_TYPE: deviceType,
       DEVICE_SESSION_GATEWAY_HOST:
         (codeServer && process.env.E2E_TEST_CONTAINER_ADDRESS) || '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
@@ -140,6 +160,10 @@ async function startExecutorDevice(
       HOME: join(root, 'home'),
       USERPROFILE: join(root, 'home'),
       WEGENT_EXECUTOR_HOME: join(root, 'home'),
+      ...(nativeUserInputTimeoutMs !== undefined && {
+        WEGENT_WORKBENCH_HOME: workbenchHome,
+        WEGENT_CODEX_USER_INPUT_TIMEOUT_MS: String(nativeUserInputTimeoutMs),
+      }),
       WORKSPACE_ROOT: join(root, 'workspace'),
       LOCAL_WORKSPACE_ROOT: join(root, 'workspace'),
       LOCAL_HEARTBEAT_INTERVAL: '2',
@@ -223,12 +247,12 @@ async function startExecutorDevice(
         { timeout: 60_000, message: `The real ${shell} ${kind} executor did not register` }
       )
       .toBe('online')
-    if (!codeServer) {
+    if (deviceType === 'app') {
       expect(targetId).toMatch(/^app-record-\d+$/)
       recordId = Number(targetId.slice('app-record-'.length))
     }
     if (!recordId) throw new Error(`The online executor did not return a device record: ${id}`)
-    return { id, recordId, targetId: targetId || id, stop, close }
+    return { id, recordId, targetId: targetId || id, workbenchHome, logPath, stop, close }
   } catch (error) {
     await close()
     throw error

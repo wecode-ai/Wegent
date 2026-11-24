@@ -485,6 +485,10 @@ class CloudProjectFile(LoopNode):
         super().__init__(**kwargs)
 
 
+class LoopItemShareSource(LoopNode):
+    __mapper_args__ = {"polymorphic_identity": "issue_share_source"}
+
+
 class LoopItemAttachment(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "attachment"}
 

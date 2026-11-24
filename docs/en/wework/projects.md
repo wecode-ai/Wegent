@@ -673,9 +673,13 @@ Local project space Issues have no corresponding Wegent webpage, so this action 
 
 ## Independent Issues and My issues
 
-<!-- ui-source: src/features/todo/IndependentIssueDialog.tsx -->
-<!-- ui-source: src/features/todo/IndependentIssueEditor.tsx -->
-<!-- ui-source: src/features/todo/PersonalIssuesView.tsx -->
+When a cloud Issue is created, the creator and invited participants receive a notification in their connected private IM chats. When participants are added later, only the newly invited people receive an invitation notification. The message includes the Issue title and a link to open it, and follows the IM setting under **Notification settings → Collaboration notifications**. **Save without notifying** skips the assignee notification.
+
+Wegent on the web has the same New Issue, Needs my action, Created by me, and Participating entries in the Collaboration sidebar. Choose View issue on the web in an independent Issue notification to open the details in the matching list. Sign in to view the to-do, download shared attachments, and join the discussion.
+
+<!-- ui-source: ../packages/collaboration/src/platform/IndependentIssueDialog.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/IndependentIssueEditor.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/PersonalIssuesView.tsx -->
 
 The collaboration sidebar keeps the three personal Issue entries above **Projects**. **Needs my action**, **Created by me**, and **Participating** query the current account's local and cloud project Issues and cloud independent Issues. Home keeps its existing composer, project-grouped list and assistant workspace. Project navigation uses one list and preserves group ownership. In all three Issue pages, **Show archived independent Issues** is in the filter toolbar. Issue lists show their creation timestamp alongside other metadata. Selecting an Issue opens its detail drawer on the current page; expanding the detail area remains effective when switching Issues; opening a linked task expands the second conversation drawer. Closing that drawer returns to the Issue. Select a project heading to open its board.
 

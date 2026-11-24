@@ -418,8 +418,9 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn fail_local_task_execution_start(&self, local_task_id: &str, error: &AppIpcError) {
-        self.store
-            .update_task(local_task_id, |link| apply_local_task_failure(link, error));
+        self.store.update_task(local_task_id, |link| {
+            apply_local_task_failure(link, error);
+        });
         self.record_stand_in_completion_outbox(local_task_id, "failed");
         log_executor_event(
             "runtime work turn start failed",

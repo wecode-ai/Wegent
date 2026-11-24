@@ -24,6 +24,8 @@ import {
 } from './workbenchCloudProjectContextModel'
 export { cloudItemAsLocalWorkItem } from './workbenchCloudProjectContextModel'
 
+const EMPTY_MENTION_CANDIDATES: ComposerCloudMentionCandidate[] = []
+
 export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjectContextOptions) {
   const { t } = useTranslation('common')
   const tabs = useOptionalWorkspaceTabs()
@@ -160,6 +162,8 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
     associateRuntimeTaskWithExistingItem: source.associateRuntimeTaskWithExistingItem,
     todoBindingError: snapshot.todoBindingError ?? snapshot.contextAvailabilityError,
     visibleCloudMentionCandidates:
-      mentionScope && snapshot.mentions?.scope === mentionScope ? snapshot.mentions.candidates : [],
+      mentionScope && snapshot.mentions?.scope === mentionScope
+        ? snapshot.mentions.candidates
+        : EMPTY_MENTION_CANDIDATES,
   }
 }

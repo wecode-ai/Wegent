@@ -1,3 +1,4 @@
+import { useMemo, useRef, useState, useSyncExternalStore, type ComponentProps } from 'react'
 import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
@@ -14,7 +15,7 @@ import { localHarnessLabel } from '@/lib/local-harness'
 import { cn } from '@/lib/utils'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ChevronRight, Loader2, MessageCircle } from 'lucide-react'
-import { BufferedChatInput } from './BufferedChatInput'
+import { ScopedDraftChatInput } from './BufferedChatInput'
 import { CentralHarnessTerminal } from './CentralHarnessTerminal'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DESKTOP_MESSAGE_LIST_CLASS, DESKTOP_MESSAGE_LIST_WIDTH_CLASS } from './desktopChatLayout'
@@ -34,16 +35,34 @@ import {
 } from './requestUserInputOverlay'
 import { TaskDetailScrollArea } from './TaskDetailScrollArea'
 import { SupervisorSuggestionCards } from './TaskSupervisorControl'
+import { TaskIssueShare, type TaskIssueShareHandle } from '@/features/todo/TaskIssueShare'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { WorktreeCreationStatus } from './WorktreeCreationStatus'
+import type { PaneTranscript } from './workbenchPaneConversationPresentation'
+
+function DesktopTranscript({
+  transcript,
+  ...props
+}: Omit<ComponentProps<typeof ScrollableMessageArea>, 'messages' | 'turns'> & {
+  transcript: PaneTranscript
+}) {
+  const { messages, turns } = useSyncExternalStore(
+    transcript.subscribe,
+    transcript.getSnapshot,
+    transcript.getSnapshot
+  )
+  return <ScrollableMessageArea {...props} messages={messages} turns={turns} />
+}
 
 export function DesktopWorkbenchConversationView({
   model,
 }: {
   model: DesktopWorkbenchPaneRenderModel
 }) {
+  const issueShareRef = useRef<TaskIssueShareHandle>(null)
+  const [issueShareToolbarHost, setIssueShareToolbarHost] = useState<HTMLDivElement | null>(null)
   const {
     workbenchVisible,
     presentation,
@@ -128,7 +147,7 @@ export function DesktopWorkbenchConversationView({
     activeNewChatRuntime,
     activeHarnessDisplayError,
     submitWorkbenchInput,
-    paneMessages,
+    workbenchTitle,
     pendingRequestUserInput,
     paneQueuedMessages,
     paneGuidanceMessages,
@@ -148,7 +167,7 @@ export function DesktopWorkbenchConversationView({
     composerDisabled,
     inlineComposerDisabledReason,
     projectChatWithModelSelectorSignal,
-    branchNameProjectWork,
+    projectWork,
     emptyProjectWork,
     popoutComposerPlaceholder,
     selectTaskSuggestion,
@@ -170,6 +189,27 @@ export function DesktopWorkbenchConversationView({
     clearCurrentGoal,
     showPageTopBar,
   } = model
+  const { messages: paneMessages, transcript } = paneSession
+  const hasTask = currentRuntimeTask !== null
+  const transcriptLoading = paneSession.transcriptLoading
+  const selectionSharingMounted = hasTask && paneVisible && workbenchVisible
+  const composerContextHeader = useMemo(
+    () =>
+      (projectSpaceContext || hasTask) && (
+        <div
+          className={cn(
+            'flex min-w-0 items-center justify-between gap-1 [container-type:inline-size]',
+            transcriptLoading && 'invisible'
+          )}
+          inert={transcriptLoading}
+        >
+          {projectSpaceContext}
+          {selectionSharingMounted && <div ref={setIssueShareToolbarHost} className="contents" />}
+        </div>
+      ),
+    [projectSpaceContext, hasTask, transcriptLoading, selectionSharingMounted]
+  )
+  const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
   return (
     <TaskDetailScrollArea
       viewportRef={workbenchScrollRef}
@@ -195,6 +235,32 @@ export function DesktopWorkbenchConversationView({
       }
     >
       <>
+        {selectionSharingMounted && currentRuntimeTask && (
+          <TaskIssueShare
+            toolbarContainer={issueShareToolbarHost}
+            shareRef={issueShareRef}
+            key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
+            title={workbenchTitle ?? ''}
+            readTranscript={transcript.getSnapshot}
+            address={{
+              ...currentRuntimeTask,
+              workspacePath: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath,
+            }}
+            readWorkspaceFileChunk={workspaceFileApi.readWorkspaceFileChunk}
+            readHistoryPage={
+              paneSession.transcriptHasMoreBefore && services?.runtimeWorkApi
+                ? (request, signal) =>
+                    services.runtimeWorkApi!.getRuntimeTranscript(
+                      {
+                        ...currentRuntimeTask,
+                        ...request,
+                      },
+                      { signal }
+                    )
+                : undefined
+            }
+          />
+        )}
         <div className="grid w-full flex-1 grid-cols-[minmax(0,1fr)_auto]">
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
@@ -244,12 +310,11 @@ export function DesktopWorkbenchConversationView({
               className="relative flex min-w-0 flex-col"
               onClick={focusComposerFromConversationClick}
             >
-              <ScrollableMessageArea
+              <DesktopTranscript
                 mcpApp={mcpAppConversationServices}
                 searchActive={paneActive && paneVisible && workbenchVisible}
                 imageTarget={remoteImageTarget}
-                messages={paneMessages}
-                turns={paneSession.turns}
+                transcript={transcript}
                 loading={paneSession.transcriptLoading}
                 transcriptError={paneSession.transcriptError}
                 onRetryTranscript={paneSession.reloadRuntimeTranscript}
@@ -480,19 +545,20 @@ export function DesktopWorkbenchConversationView({
                                       }
                                     />
                                   )}
-                                  <BufferedChatInput
+                                  <ScopedDraftChatInput
                                     alwaysShowComposerToolbar={alwaysShowComposerToolbar}
                                     autoFocus
                                     insertion={conversationSelectionInsertion}
-                                    value={paneSession.input}
-                                    replaceDraftKey={paneSession.replaceDraftKey}
-                                    onChange={paneSession.setInput}
+                                    draftStore={paneSession.draftStore}
+                                    draftScope={paneSession.scopeKey}
+                                    writeDraft={paneSession.setInputForScope}
                                     onDraftEdit={paneSession.onDraftEdit}
                                     onSubmit={submitPaneInput}
                                     disabled={composerDisabled || !paneVisible || !workbenchVisible}
                                     showPluginPicker={!hasConversation}
                                     submitDisabled={paneSession.status.isSubmitting}
                                     error={paneSession.error}
+                                    onDismissError={paneSession.clearError}
                                     disabledReason={inlineComposerDisabledReason}
                                     placeholder={t(
                                       'workbench.follow_up_placeholder',
@@ -500,7 +566,7 @@ export function DesktopWorkbenchConversationView({
                                     )}
                                     variant="desktop"
                                     projectChat={projectChatWithModelSelectorSignal}
-                                    projectWork={branchNameProjectWork}
+                                    projectWork={projectWork}
                                     showProjectWorkBar={false}
                                     queuedMessages={paneQueuedMessages}
                                     guidanceMessages={paneGuidanceMessages}
@@ -511,20 +577,9 @@ export function DesktopWorkbenchConversationView({
                                       experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
-                                    contextHeader={
-                                      projectSpaceContext && (
-                                        <div
-                                          className={cn(
-                                            'flex',
-                                            paneSession.transcriptLoading && 'invisible'
-                                          )}
-                                          inert={paneSession.transcriptLoading}
-                                        >
-                                          {projectSpaceContext}
-                                        </div>
-                                      )
-                                    }
+                                    contextHeader={composerContextHeader}
                                     isStreaming={paneIsBusy}
+                                    showPauseButton={showPauseButton}
                                     onPause={pauseCurrentResponse}
                                     onCompactContext={
                                       currentRuntimeUsesCodex ||
@@ -611,7 +666,12 @@ export function DesktopWorkbenchConversationView({
                       }
                 }
                 onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
+                  loadTurnFileChangesDiff(
+                    subtaskId,
+                    transcript.getSnapshot().messages,
+                    fileChanges,
+                    currentRuntimeTask
+                  )
                 }
                 onRevertFileChanges={
                   issueExecutionReadOnly
@@ -619,7 +679,7 @@ export function DesktopWorkbenchConversationView({
                     : (subtaskId, fileChanges) =>
                         revertTurnFileChanges(
                           subtaskId,
-                          paneMessages,
+                          transcript.getSnapshot().messages,
                           fileChanges,
                           currentRuntimeTask
                         )
@@ -691,6 +751,11 @@ export function DesktopWorkbenchConversationView({
                 }
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+                onShareSelectionAsIssue={
+                  selectionSharingMounted
+                    ? (text, context) => issueShareRef.current?.openSelection(text, context)
+                    : undefined
+                }
                 onAddSelectionToConversation={addSelectionToConversation}
                 onAskSelectionInSidebar={askSelectionInSidebar}
                 onOpenSubagent={openSubagentConversation}
@@ -721,13 +786,13 @@ export function DesktopWorkbenchConversationView({
                       hideAvailableUpdates
                       className="mb-3"
                     />
-                    <BufferedChatInput
+                    <ScopedDraftChatInput
                       alwaysShowComposerToolbar={alwaysShowComposerToolbar}
                       showProjectWorkBar={presentation !== 'popout'}
                       autoFocus
-                      value={paneSession.input}
-                      replaceDraftKey={paneSession.replaceDraftKey}
-                      onChange={paneSession.setInput}
+                      draftStore={paneSession.draftStore}
+                      draftScope={paneSession.scopeKey}
+                      writeDraft={paneSession.setInputForScope}
                       onDraftEdit={() => {
                         paneSession.onDraftEdit()
                         setCentralHarnessError(null)
@@ -748,6 +813,10 @@ export function DesktopWorkbenchConversationView({
                           paneSession.status.isSubmitting)
                       }
                       error={centralHarnessError ?? paneSession.error}
+                      onDismissError={() => {
+                        if (centralHarnessError) setCentralHarnessError(null)
+                        else paneSession.clearError()
+                      }}
                       disabledReason={
                         activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
                           ? inlineComposerDisabledReason
@@ -821,6 +890,7 @@ export function DesktopWorkbenchConversationView({
                       }
                       onSelectCloudProject={handleSelectCloudProject}
                       isStreaming={paneIsBusy}
+                      showPauseButton={showPauseButton}
                       onPause={pauseCurrentResponse}
                       onCompactContext={
                         activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'

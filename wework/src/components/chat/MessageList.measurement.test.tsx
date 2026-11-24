@@ -11,7 +11,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-test('commits a restored row before paint while a native scroll event is still active', () => {
+test('commits a restored row before paint while a native scroll event is still active', async () => {
   const viewport = document.createElement('div')
   const list = document.createElement('div')
   const row = document.createElement('article')
@@ -55,7 +55,10 @@ test('commits a restored row before paint while a native scroll event is still a
   vi.spyOn(restored, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 736, 24))
   row.replaceWith(restored)
 
-  act(() => result.current.measureRows([restored]))
+  await act(async () => {
+    result.current.measureRows([restored])
+    await Promise.resolve()
+  })
 
   expect(result.current.virtualizer.isScrolling).toBe(true)
   expect(result.current.virtualizer.itemSizeCache.get(9)).toBe(24)
@@ -63,7 +66,7 @@ test('commits a restored row before paint while a native scroll event is still a
   expect(unregisteredMeasurements).toEqual([])
 })
 
-test('measures every restored row before paint during a native scroll', () => {
+test('measures every restored row before paint during a native scroll', async () => {
   const viewport = document.createElement('div')
   const list = document.createElement('div')
   viewport.append(list)
@@ -101,7 +104,10 @@ test('measures every restored row before paint during a native scroll', () => {
   act(() => observeOffset(13000, true))
   list.replaceChildren(...makeRows(24))
 
-  expect(() => rerender()).not.toThrow()
+  await act(async () => {
+    expect(() => rerender()).not.toThrow()
+    await Promise.resolve()
+  })
   expect(result.current.elementsCache.size).toBe(count)
   expect(result.current.getVirtualItems().map(item => item.size)).toEqual(
     Array.from({ length: count }, () => 24)

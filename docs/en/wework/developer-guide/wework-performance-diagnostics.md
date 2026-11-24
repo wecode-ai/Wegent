@@ -50,6 +50,12 @@ Pending requests with the same task ID are coalesced, and idle tasks start seria
 
 After first paint, the bundled plugin marketplace computes a deterministic content SHA-256. When `.wework-content-sha256` in the destination matches the current content, Wework skips the copy. Changed content is replaced through a staging directory, and the hash participates in the Codex local-marketplace registration key. Bundled plugins therefore refresh after a Wework upgrade without recopied content on every launch of the same version.
 
+## Local RPC Queueing
+
+When `/wework/executor/v1/rpc` and `/wework/electron-host/v1/invoke` slow down together, inspect Timing in DevTools Network. If most time is spent in `Blocked` before sending, group the requests in that interval by the RPC body's `method` and correlate `x-request-id` with the Core DSH `RPC HTTP response` log. The log's `elapsed_ms` starts when DSH handles the request, which helps distinguish browser queueing from runtime processing.
+
+Concurrent task reads in the hybrid workbench share an in-flight local device discovery when their device routes are missing. Once discovery settles, a later route miss can still read live state. The `idle-executor-requests` desktop E2E checks that 30 concurrent reads send one `runtime.worktrees.capabilities` request and retain their individual task results.
+
 ## Diagnosing Runtime Task Creation
 
 The frontend writes key task-creation stages to the persisted log with the `[Wework] Runtime task create diagnostic` prefix. This does not require Performance Diagnostics to be enabled. Records contain only the stage, task/device identifiers, model identifiers, elapsed time, and result; they do not contain message content, credentials, or model connection configuration.
@@ -205,9 +211,9 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # enable runtime work cache/emit mapping de
 
 ## Streaming Message Rendering
 
-Wework separates high-frequency executor text deltas from the visible Markdown cadence. Message state still receives and retains the complete content in real time, while `AssistantMarkdown` uses a lightweight buffer to advance visible text on browser frames. It catches up adaptively when the backlog grows, then retains a small character reserve and drains it slowly near the tail to smooth executor bursts and short delivery gaps. The renderer immediately aligns with complete content when streaming ends, content is replaced, or an update is not append-only, preserving final-message correctness.
+The desktop conversation cache keeps the full executor text as deltas arrive and coalesces high-frequency presentation notifications. Shared Markdown passes each published prefix directly to Streamdown. Terminal and interactive updates publish immediately.
 
-Live process-text, thinking, and plan block updates carry only `content_delta`; they must not resend cumulative `content` after every delta or at the completion boundary. A completion update normally carries only `status: done`. If the provider completion snapshot contains only an unstreamed suffix, the executor sends that suffix as one final delta. Wework coalesces consecutive updates for the same block within a browser animation frame before updating React state, preventing quadratic IPC copying and rendering pressure during long-running tasks. Streaming block updates are droppable bulk events: terminal events retain priority under app IPC backpressure, and transcript reconciliation restores authoritative content. The Electron main process must not write every `response.*` delta to stdout; a synchronous console write can block the Browser main thread and all window input when a terminal or parent process does not consume output promptly.
+Live process-text, thinking, and plan block updates carry only `content_delta`; they must not resend cumulative `content` after every delta or at the completion boundary. A completion update normally carries only `status: done`. If the provider completion snapshot contains only an unstreamed suffix, the executor sends that suffix as one final delta. Wework coalesces consecutive updates for the same block in a 16 ms window at the runtime event boundary, preventing quadratic IPC copying and rendering pressure during long-running tasks. Streaming block updates are droppable bulk events: terminal events retain priority under app IPC backpressure, and transcript reconciliation restores authoritative content. The Electron main process must not write every `response.*` delta to stdout; a synchronous console write can block the Browser main thread and all window input when a terminal or parent process does not consume output promptly.
 
 Streaming messages skip full Pretext height measurement and use a stable offscreen intrinsic height. Completed messages are measured precisely and cached. Height lookup first uses the message object and width, avoiding repeated full-text hashes for unchanged historical messages during every stream update. Stable props and memo boundaries also keep the composer, workspace actions, right workspace, and bottom terminal from rerendering for every text delta.
 
@@ -216,10 +222,8 @@ While the bottom Terminal panel is being resized, height updates are coalesced t
 Distinguish these cases when investigating streaming stalls:
 
 - The frame rate is stable but output alternates between fast and slow: inspect stream `message` event intervals. Executor batching or network/IPC delivery gaps are usually responsible.
-- Long frames, dense style recalculation, or Markdown parsing appear: check whether code bypasses the text buffer, destabilizes Streamdown component references, or reintroduces per-character DOM animation.
+- Long frames, dense style recalculation, or Markdown parsing appear: check whether code bypasses batched conversation updates, destabilizes Streamdown component references, or reintroduces per-character DOM animation.
 - GC time is unexpectedly high: verify whether DevTools has **Heap Allocations** enabled. That instrument can significantly amplify GC during longer recordings and should be disabled when diagnosing interaction smoothness alone.
-
-Streaming-buffer unit tests live in `wework/src/components/chat/useBufferedStreamingText.test.ts`. Changes to the reserve or advance rate must continue to cover Unicode boundaries, non-append updates, and immediate alignment when streaming ends.
 
 ## Persistent Animation Rendering
 

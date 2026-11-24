@@ -96,7 +96,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Avoid repeated JSON serialization and deserialization, especially in hot paths. Reuse parsed data and convert to or from JSON only where required.
-- Prefer algorithms with `O(log n)` or better time complexity per operation whenever feasible.
+- Every algorithm must have time complexity of `O(log n)` or better per operation.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
 - Delete dead code. Do not add compatibility shims or fallback paths without agreement; correct the primary path.
 - Fix defects discovered while working when they are in scope or block correctness.

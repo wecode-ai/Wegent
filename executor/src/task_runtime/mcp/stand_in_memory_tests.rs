@@ -53,6 +53,7 @@ fn memory_recall_drops_revoked_sources_but_owner_can_still_delete_records() {
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let source = json!({"providerId":"@example/calendar/events","profile":"owner","kind":"calendar","id":"work","name":"Work calendar","policy":{"automatic":true,"askBeforeAct":true}});
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["connections"] = json!([source.clone()]);
     let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
     let scope = crate::task_runtime::personal_stand_in::connection_memory_scope(&source);
@@ -70,7 +71,7 @@ fn memory_recall_drops_revoked_sources_but_owner_can_still_delete_records() {
     }))
     .unwrap();
     let identity = stand_in_identity(&request).unwrap();
-    let search = || memory_call(&store, &identity, "search_memories", json!({})).unwrap();
+    let search = || memory_call(None, &store, &identity, "search_memories", json!({})).unwrap();
     assert_eq!(search()["items"], json!([saved]));
     assert_eq!(
         store
@@ -91,6 +92,7 @@ fn memory_recall_drops_revoked_sources_but_owner_can_still_delete_records() {
         .is_empty());
     assert_eq!(store.stand_in_memories(7).unwrap(), vec![saved.clone()]);
     memory_call(
+        None,
         &store,
         &identity,
         "forget_memory",
@@ -277,6 +279,7 @@ fn connected_work_keeps_bounded_payloads_and_revalidates_each_provider_scope() {
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
         let source = json!({"providerId":provider,"profile":"account","kind":"repository","id":"42","name":"org/repo","policy":{"automatic":true,"askBeforeAct":true}});
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         settings["roles"][0]["connections"] = json!([source.clone()]);
         store.save_personal_stand_in(7, "mac", settings).unwrap();
         let work = store
@@ -551,7 +554,8 @@ async fn stand_in_review_has_only_generic_read_tools_and_other_schedules_have_no
 fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.db")).unwrap();
-    let settings = store.personal_stand_in(7, "mac").unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     let primary = StandInMcpIdentity {
         task_id: "primary".into(),
@@ -567,6 +571,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
         coordinator_batch: None,
     };
     let personal = memory_call(
+        None,
         &store,
         &primary,
         "remember",
@@ -578,6 +583,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
         ..primary.clone()
     };
     assert!(memory_call(
+        None,
         &store,
         &role,
         "forget_memory",
@@ -585,6 +591,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     )
     .is_err());
     assert!(memory_call(
+        None,
         &store,
         &role,
         "remember",
@@ -592,6 +599,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     )
     .is_err());
     let saved = memory_call(
+        None,
         &store,
         &role,
         "remember",
@@ -600,6 +608,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     .unwrap();
     assert_eq!(saved["scope"], json!({"kind":"role","roleId":"default"}));
     let found = memory_call(
+        None,
         &store,
         &role,
         "search_memories",
@@ -608,6 +617,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     .unwrap();
     assert_eq!(found["items"].as_array().unwrap().len(), 1);
     memory_call(
+        None,
         &store,
         &role,
         "forget_memory",
@@ -616,6 +626,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     .unwrap();
     assert_eq!(store.stand_in_memories(7).unwrap().len(), 1);
     assert!(memory_call(
+        None,
         &store,
         &role,
         "remember",
@@ -627,6 +638,7 @@ fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
         ..role
     };
     assert!(memory_call(
+        None,
         &store,
         &external,
         "remember",

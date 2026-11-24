@@ -66,7 +66,6 @@ it('reuses registered selection, distinguishes equal ids, and retries only the f
     } as never)
   render(
     <KnowledgeAccessDialog
-      resourceCreated
       kbId={29}
       kbNamespace="default"
       canManage
@@ -75,7 +74,7 @@ it('reuses registered selection, distinguishes equal ids, and retries only the f
       onAccessLost={jest.fn()}
     />
   )
-  expect(screen.getByRole('heading')).toHaveTextContent('document.creation.created')
+  expect(screen.getByRole('heading')).toHaveTextContent('document.navigation.permissionDetails')
   await userEvent.setup().click(await screen.findByTestId('permission-add-collaborator'))
   await userEvent.setup().click(screen.getByTestId('select-test-a'))
   await userEvent.setup().click(screen.getByTestId('select-test-b'))
@@ -101,7 +100,7 @@ it('reuses registered selection, distinguishes equal ids, and retries only the f
     ],
   })
   await userEvent.setup().keyboard('{Escape}')
-  await userEvent.setup().click(screen.getByTestId('finish-created-authorization'))
+  await userEvent.setup().click(screen.getByTestId('close-knowledge-access'))
   expect(close).toHaveBeenCalledTimes(1)
   await waitFor(() => expect(changed).toHaveBeenCalled())
 })
@@ -151,7 +150,6 @@ it('rechecks access and leaves management after the first grant is authoritative
     close = jest.fn()
   render(
     <KnowledgeAccessDialog
-      resourceCreated
       kbId={29}
       canManage
       onChanged={jest.fn()}

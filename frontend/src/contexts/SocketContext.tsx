@@ -21,7 +21,11 @@ import React, {
   useMemo,
   ReactNode,
 } from 'react'
-import { createAuthenticatedSocketClient, type SocketClientSocket } from '@wegent/chat-core'
+import {
+  createAuthenticatedSocketClient,
+  type AuthenticatedSocketClient,
+  type SocketClientSocket,
+} from '@wegent/chat-core'
 import { getToken, removeToken } from '@/apis/user'
 import {
   ClientEvents,
@@ -62,6 +66,39 @@ import { paths } from '@/config/paths'
 import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
 
 const SOCKETIO_PATH = '/socket.io'
+const CANCELLATION_ACK_TIMEOUT_MS = 20_000
+type ChatCancellationResult = { success: boolean; error?: string }
+
+function requestChatCancellation(
+  client: AuthenticatedSocketClient,
+  payload: { subtask_id: number; partial_content?: string; shell_type?: string }
+): Promise<ChatCancellationResult> {
+  return new Promise(resolve => {
+    let settled = false
+    let unsubscribe = () => {}
+    const finish = (result: ChatCancellationResult) => {
+      if (settled) return
+      settled = true
+      globalThis.clearTimeout(timeout)
+      unsubscribe()
+      resolve(result)
+    }
+    const timeout = globalThis.setTimeout(
+      () => finish({ success: false, error: 'Cancellation acknowledgement timed out' }),
+      CANCELLATION_ACK_TIMEOUT_MS
+    )
+    unsubscribe = client.subscribe(state => {
+      if (!state.isConnected) {
+        finish({ success: false, error: 'Connection lost before cancellation was acknowledged' })
+      }
+    })
+    if (settled) {
+      unsubscribe()
+      return
+    }
+    client.socket.emit('chat:cancel', payload, finish)
+  })
+}
 
 /** Callback type for reconnect event */
 export type ReconnectCallback = () => void
@@ -118,7 +155,7 @@ interface SocketContextType {
     subtaskId: number,
     partialContent?: string,
     shellType?: string
-  ) => Promise<{ success: boolean; error?: string }>
+  ) => Promise<ChatCancellationResult>
   /** Close a device task session via WebSocket */
   closeTaskSession: (taskId: number) => Promise<{ success: boolean; error?: string }>
   /** Retry a failed message via WebSocket */
@@ -497,18 +534,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return { success: false, error: 'Not connected to server' }
       }
 
-      return new Promise(resolve => {
-        currentSocket.emit(
-          'chat:cancel',
-          {
-            subtask_id: subtaskId,
-            partial_content: partialContent,
-            shell_type: shellType,
-          },
-          (response: { success: boolean; error?: string }) => {
-            resolve(response)
-          }
-        )
+      return requestChatCancellation(socketClient, {
+        subtask_id: subtaskId,
+        partial_content: partialContent,
+        shell_type: shellType,
       })
     },
     [socketClient]

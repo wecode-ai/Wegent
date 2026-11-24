@@ -2,7 +2,13 @@
 import { act, useRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { useElementGeometry, type GeometrySnapshot } from './dom-events'
+import {
+  createBodyFlagRef,
+  useElementGeometry,
+  useElementTypography,
+  useElementWidth,
+  type GeometrySnapshot,
+} from './dom-events'
 
 let root: Root
 let container: HTMLDivElement
@@ -78,6 +84,16 @@ test('measures attached refs before display and retains native subscriptions acr
   )
 })
 
+test('retains the body flag until every overlapping surface unmounts', () => {
+  const ref = createBodyFlagRef('data-test-overlay')
+  act(() => root.render([<div key="first" ref={ref} />, <div key="second" ref={ref} />]))
+  expect(document.body.hasAttribute('data-test-overlay')).toBe(true)
+  act(() => root.render([<div key="second" ref={ref} />]))
+  expect(document.body.hasAttribute('data-test-overlay')).toBe(true)
+  act(() => root.render(null))
+  expect(document.body.hasAttribute('data-test-overlay')).toBe(false)
+})
+
 test('updates from observed geometry changes and captured descendant scrolls', () => {
   act(() => root.render(<Probe />))
   left = 30
@@ -88,6 +104,33 @@ test('updates from observed geometry changes and captured descendant scrolls', (
     container.querySelector('[data-anchor]')!.dispatchEvent(new Event('scroll', { bubbles: false }))
   )
   expect(snapshot()?.elements[0]?.left).toBe(50)
+})
+
+test('width-only consumers measure the border box and ignore descendant scrolling', () => {
+  function WidthProbe() {
+    const [width, attach] = useElementWidth<HTMLDivElement>()
+    return (
+      <div ref={attach}>
+        <span>{width}</span>
+      </div>
+    )
+  }
+  act(() => root.render(<WidthProbe />))
+  const child = container.querySelector('span')!
+  expect(child.textContent).toBe('80')
+  const measure = vi.mocked(HTMLElement.prototype.getBoundingClientRect)
+  measure.mockClear()
+  act(() => child.dispatchEvent(new Event('scroll')))
+  expect(measure).not.toHaveBeenCalled()
+  act(() =>
+    observers[0].callback(
+      [{ borderBoxSize: [{ inlineSize: 120 }] }] as ResizeObserverEntry[],
+      observers[0] as unknown as ResizeObserver
+    )
+  )
+  expect(child.textContent).toBe('120')
+  act(() => root.render(null))
+  expect(observers[0].disconnect).toHaveBeenCalledOnce()
 })
 
 test('rebinds a replacement element even when the RefObject remains unchanged', () => {
@@ -101,6 +144,39 @@ test('rebinds a replacement element even when the RefObject remains unchanged', 
   expect(snapshot()?.elements[0]?.left).toBe(40)
   notify(1)
   expect(snapshot()?.elements[0]?.left).toBe(130)
+})
+
+test('coalesces repeated commits without synchronously flushing layout', () => {
+  const frames = new Map<number, FrameRequestCallback>()
+  let sequence = 0
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+    frames.set(++sequence, callback)
+    return sequence
+  })
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => {
+    frames.delete(id)
+  })
+  const flush = () =>
+    act(() => {
+      const pending = [...frames.values()]
+      frames.clear()
+      pending.forEach(callback => callback(0))
+    })
+  act(() => root.render(<Probe />))
+  flush()
+  const measure = vi.mocked(HTMLElement.prototype.getBoundingClientRect)
+  measure.mockClear()
+  left = 80
+  for (const label of ['first', 'second', 'third']) {
+    act(() => root.render(<Probe label={label} />))
+  }
+  expect(measure).not.toHaveBeenCalled()
+  expect(frames.size).toBe(1)
+  flush()
+  expect(measure).toHaveBeenCalledOnce()
+  expect(snapshot()?.elements[0]?.left).toBe(80)
+  act(() => root.render(<Probe enabled={false} />))
+  expect(frames.size).toBe(0)
 })
 
 test('disconnects when disabled and reads current geometry when reenabled', () => {
@@ -133,4 +209,34 @@ test('detaches native listeners when the owner unmounts', () => {
   expect(observers[0].disconnect).toHaveBeenCalledOnce()
   expect(remove).toHaveBeenCalledWith('resize', expect.any(Function))
   expect(remove).toHaveBeenCalledWith('scroll', expect.any(Function), true)
+})
+
+test('measures typography on layout changes without reading it on content-only commits', async () => {
+  let width = 400
+  const readWidth = vi
+    .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+    .mockImplementation(() => width)
+  function TypographyProbe({ theme, text }: { theme: string; text: string }) {
+    const ref = useRef<HTMLDivElement>(null)
+    const typography = useElementTypography(ref, [])
+    return (
+      <div className="collaboration-theme" data-theme={theme}>
+        <div ref={ref}>{text}</div>
+        <output>{typography?.contentWidth}</output>
+      </div>
+    )
+  }
+
+  act(() => root.render(<TypographyProbe theme="light" text="partial" />))
+  expect(container.querySelector('output')?.textContent).toBe('400')
+  readWidth.mockClear()
+  act(() => root.render(<TypographyProbe theme="light" text="complete" />))
+  expect(readWidth).not.toHaveBeenCalled()
+
+  width = 320
+  notify()
+  expect(container.querySelector('output')?.textContent).toBe('320')
+  readWidth.mockClear()
+  await act(async () => root.render(<TypographyProbe theme="dark" text="complete" />))
+  expect(readWidth).toHaveBeenCalledOnce()
 })

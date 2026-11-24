@@ -13,6 +13,7 @@ const unsupported = async (): Promise<never> => {
   throw new Error('This preview only supports directory search')
 }
 function Example({ disabled = false, empty = false, failure = false }) {
+  const [assigneeKey, setAssigneeKey] = useState('human:1')
   const [selected, onChange] = useState<IssueParticipant[]>([
     { id: 1, kind: 'human', key: 'human:1', name: 'Me' },
   ])
@@ -48,6 +49,9 @@ function Example({ disabled = false, empty = false, failure = false }) {
         onChange={onChange}
         disabled={disabled}
         userId={1}
+        ownerId={1}
+        assigneeKey={assigneeKey}
+        onAssign={person => setAssigneeKey(person?.key ?? '')}
       />
       <output>{selected.map(item => item.name).join(', ')}</output>
     </div>

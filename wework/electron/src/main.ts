@@ -76,6 +76,7 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
+import { DownloadTargetPolicy } from './host/download-target-policy.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
 import { DesktopAppearanceController } from './host/appearance-theme.js'
@@ -98,7 +99,7 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
-import { requestE2ERuntime } from './host/e2e-runtime-request.js'
+import { completeE2ERuntimeControl } from './host/e2e-runtime-request.js'
 import {
   dshBrowserAuthenticationCookies,
   dshBrowserRequestHeaders,
@@ -165,11 +166,7 @@ import { CloudCredentialError, CloudCredentialService } from './host/cloud-crede
 import { PluginNativeAuthorization } from './host/plugin-native-authorization.js'
 import { cloudFetch } from './host/cloud-http.js'
 import { installE2eDshReleaseRedirect } from './host/e2e-dsh-release-redirect.js'
-import {
-  cleanupStaleTemporaryImages,
-  createNativeContextMenuActions,
-  installContextMenu,
-} from './host/image-context-actions.js'
+import { cleanupStaleTemporaryImages, installContextMenu } from './host/image-context-actions.js'
 import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
@@ -383,6 +380,13 @@ const desktopAppearance = new DesktopAppearanceController({
   nativeTheme,
   windows: () => [mainWindow, processExplorerWindow, ...workspaceWindows.values()],
 })
+const desktopDownloadPolicy = new DownloadTargetPolicy({
+  defaultDownloadsDirectory: () => downloadsDirectory(),
+  onDownloadCompleted: savePath => {
+    if (process.platform === 'darwin') app.dock?.downloadFinished(savePath)
+  },
+  onDirectoryWarning: (message, error) => console.warn(message, error),
+})
 let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let systemDragPresentationSequence = 0
@@ -464,6 +468,9 @@ const pluginDevelopmentChildRuntime =
       })
     : null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
+let pendingTrayState:
+  | Parameters<ElectronTrayManager<Electron.Menu | null, Tray>['setState']>[0]
+  | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
 const startupTelemetry = new StartupTelemetryLifecycle({
@@ -890,14 +897,6 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       ownerId: contents.id,
     })
     embeddedBrowser.attach(pending.label, guestContents)
-    const browserManager = embeddedBrowser
-    installContextMenu(
-      guestContents,
-      'browser',
-      createNativeContextMenuActions(guestContents, url =>
-        browserManager.requestPopupTab(pending.label, url)
-      )
-    )
   })
   contents.once('destroyed', () => pendingEmbeddedBrowserAttachments.delete(contents.id))
 }
@@ -1008,6 +1007,10 @@ function installDshWindowLabelHeaders(): void {
       ),
     })
   })
+  session.defaultSession.on('will-download', (_event, item, webContents) => {
+    desktopDownloadPolicy.apply(item, webContents)
+  })
+  void desktopDownloadPolicy.prepare()
 }
 
 function layoutPrimaryView(): void {
@@ -1158,6 +1161,32 @@ function scheduleCoreDshRestart(): void {
   }, 100)
 }
 
+const presentedWorkbenchWindows = new WeakSet<BrowserWindow>()
+
+function workbenchWindowActivity(window: BrowserWindow) {
+  // The macOS headless runner renders an initially unshown window for DOM assertions.
+  if (keepE2EWindowInBackground && window === mainWindow && !presentedWorkbenchWindows.has(window))
+    return 'foreground'
+  if (!window.isVisible() || window.isMinimized()) return 'hidden'
+  return window.isFocused() ? 'foreground' : 'background'
+}
+
+function observeWorkbenchWindowActivity(window: BrowserWindow) {
+  const notify = () => {
+    if (!window.webContents.isDestroyed())
+      window.webContents.send('window:workbench-activity', workbenchWindowActivity(window))
+  }
+  window.on('focus', notify)
+  window.on('blur', notify)
+  window.on('show', () => {
+    presentedWorkbenchWindows.add(window)
+    notify()
+  })
+  window.on('hide', notify)
+  window.on('minimize', notify)
+  window.on('restore', notify)
+}
+
 async function openWorkspaceWindow(input: {
   label: string
   route: string
@@ -1196,6 +1225,7 @@ async function openWorkspaceWindow(input: {
   workspaceWindows.set(input.label, workspaceWindow)
   secureDshContents(workspaceWindow.webContents, dshUrl)
   registerDshWindowLabel(workspaceWindow.webContents, input.label)
+  observeWorkbenchWindowActivity(workspaceWindow)
   workspaceWindow.on('closed', () => {
     if (workspaceWindows.get(input.label) === workspaceWindow) {
       workspaceWindows.delete(input.label)
@@ -1295,6 +1325,7 @@ async function createAuxiliaryWindow(
   secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
   if (!isSystemDrag) {
+    observeWorkbenchWindowActivity(auxiliaryWindow)
     auxiliaryWindow.webContents.on('before-input-event', (event, input) => {
       handlePopoutWindowInput(event, input, () => auxiliaryWindow.hide())
     })
@@ -1492,6 +1523,21 @@ async function togglePopoutWindow(): Promise<void> {
   await showPopoutWindow()
 }
 
+async function waitWithBudget(task: Promise<void>, budgetMs: number): Promise<void> {
+  const safeTask = task.catch(() => {})
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      safeTask,
+      new Promise<void>(resolve => {
+        timer = setTimeout(resolve, budgetMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 async function updateDesktopPreferences(
   patch: Record<string, unknown>,
   expectedTelemetryConsentRevision?: number
@@ -1505,6 +1551,13 @@ async function updateDesktopPreferences(
   const updated = await desktopPreferences.update(patch, expectedTelemetryConsentRevision)
   if (Object.hasOwn(patch, 'appearanceMode') || Object.hasOwn(patch, 'appearanceThemeSnapshot')) {
     desktopAppearance.update(updated)
+  }
+  if (
+    Object.hasOwn(patch, 'browserDownloadDirectory') ||
+    Object.hasOwn(patch, 'browserAskBeforeDownload')
+  ) {
+    // Bound the wait so an unresponsive network share cannot stall preference saves.
+    await waitWithBudget(desktopDownloadPolicy.update(updated), 200)
   }
   return updated
 }
@@ -1542,6 +1595,7 @@ async function createWindow(
     },
   })
   installE2ERendererCpuProfiling(mainWindow.webContents)
+  observeWorkbenchWindowActivity(mainWindow)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     ...startupLayout.bounds,
@@ -2010,14 +2064,23 @@ async function startupDiagnosticsText(): Promise<string> {
 }
 
 function installIpc(): void {
+  ipcMain.handle('window:get-workbench-activity', event => {
+    if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame)
+      throw new Error('Workbench activity requires a Wework main frame')
+    const window = BrowserWindow.fromWebContents(event.sender)
+    return window ? workbenchWindowActivity(window) : 'hidden'
+  })
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
     const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
-    if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
+    if (downloadsPath) {
+      app.setPath('downloads', resolve(downloadsPath))
+      void desktopDownloadPolicy.prepare()
+    }
     ipcMain.handle('e2e:runtime-request', (event, input) => {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')
       }
-      return requestE2ERuntime(process.env, input, url =>
+      return completeE2ERuntimeControl(process.env, input, url =>
         dshBrowserAuthenticationCookies(session.defaultSession, url)
       )
     })
@@ -2385,6 +2448,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('runtime-preferences-read', 'started')
   const { preferences: codexSubscriptionPreferences, readable: codexPreferenceReadable } =
     await preferences.readSnapshot()
+  if (codexPreferenceReadable) void desktopDownloadPolicy.update(codexSubscriptionPreferences)
   logStartupStep('runtime-preferences-read', 'completed')
   // The Electron PreferencesStore returns raw JSON without normalization, so an
   // absent field (e.g. a fresh install or a user who never toggled it) must fall
@@ -2441,7 +2505,8 @@ async function configureDesktopRuntime(): Promise<void> {
     event => {
       desktopHostEvents.publish('browser.event', { ...event })
     },
-    openSchemeInMainWindow
+    openSchemeInMainWindow,
+    desktopDownloadPolicy
   )
   browserAnnotations = new BrowserAnnotationController({
     browser: embeddedBrowser,
@@ -2518,7 +2583,22 @@ async function configureDesktopRuntime(): Promise<void> {
     })
   }
   computerUse = new ComputerUseService(
-    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+    process.platform,
+    90_000,
+    currentTool => {
+      if (currentTool === 'list_windows' && process.env.VITE_WEWORK_E2E === 'true') {
+        console.info(
+          '[computer-use] Host window geometry ' +
+            JSON.stringify({
+              pid: process.pid,
+              bounds: mainWindow?.getBounds(),
+              focused: mainWindow?.isFocused(),
+            })
+        )
+      }
+      desktopHostEvents.publish('computerUse.changed', { currentTool })
+    }
   )
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
@@ -2563,7 +2643,7 @@ async function configureDesktopRuntime(): Promise<void> {
     confirmPluginInstall: request =>
       confirmCoreDshPluginInstall(request, mainWindow, nativeDialogLanguage),
     modelConfiguration,
-    environment,
+    environment: { ...environment, WEWORK_APP_VERSION: app.getVersion() },
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
     onStartupStep: logStartupStep,
@@ -2759,6 +2839,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
+            pendingTrayState = state
             trayManager?.setState(state)
             syncDockBadge(app.dock, state.unreadCount, developmentDockIdentity?.badge)
             void trayNativeStatus?.refresh()
@@ -2801,6 +2882,7 @@ async function configureDesktopRuntime(): Promise<void> {
             const owner = presentationId ?? systemDragPresentationId
             if (owner !== systemDragPresentationId) return false
             pendingSystemDrops.push(payload)
+            desktopHostEvents.publish('systemDrag.pending', {})
             await showPopoutWindow()
             return owner === systemDragPresentationId
           },
@@ -3149,6 +3231,7 @@ if (hasSingleInstanceLock) {
         const settings = await preferenceStore.read()
         if (quitting) return
         desktopAppearance.update(settings)
+        void desktopDownloadPolicy.update(settings)
         nativeTheme.on('updated', () => desktopAppearance.update())
         logStartupStep('startup-preferences-read', 'completed')
         const saved = settings.mainWindowState
@@ -3184,6 +3267,7 @@ if (hasSingleInstanceLock) {
           const manager = createTrayManager()
           manager.create()
           trayManager = manager
+          if (pendingTrayState) manager.setState(pendingTrayState)
         })
       }
       void startDesktopRuntime()

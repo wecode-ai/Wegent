@@ -813,6 +813,9 @@ async fn legacy_dispatch_searches_rollout_without_native_history_requests() {
         json!({"type":"event_msg", "payload":{"type":"user_message", "message":"visible question", "client_id":"user-client"}}),
         json!({"type":"event_msg", "payload":{"type":"agent_message", "message":"visible needle answer"}}),
         json!({"type":"event_msg", "payload":{"type":"task_complete", "turn_id":"turn-legacy"}}),
+        json!({"type":"event_msg", "payload":{"type":"task_started", "turn_id":"turn-later"}}),
+        json!({"type":"event_msg", "payload":{"type":"user_message", "message":"later question"}}),
+        json!({"type":"event_msg", "payload":{"type":"task_complete", "turn_id":"turn-later"}}),
     ];
     fs::write(
         &rollout,
@@ -885,6 +888,28 @@ done
     assert!(items
         .iter()
         .any(|item| item["id"] == "item-2" && item["text"] == "visible needle answer"));
+    let start = first_history_cursor().unwrap();
+    let first_page = super::super::codex_transcript_page::load_codex_transcript(
+        &client,
+        super::super::codex_transcript_page::CodexTranscriptRequest {
+            thread_id: "thread-legacy",
+            cursor: Some(&start),
+            limit: 1,
+            direction: super::super::codex_transcript_page::CodexTranscriptDirection::Ascending,
+            full_content: false,
+            bounded_items: true,
+            prefer_rollout_history: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first_page.thread["turns"].as_array().unwrap().len(), 1);
+    assert_eq!(first_page.thread["turns"][0]["id"], "turn-legacy");
+    assert!(first_page.thread["turns"][0]["items"][0]
+        .to_string()
+        .contains("visible question"));
+    assert!(first_page.before_cursor.is_none());
+    assert!(first_page.after_cursor.is_some());
     let requests = calls(&log);
     let methods: Vec<_> = requests
         .iter()
@@ -892,7 +917,13 @@ done
         .collect();
     assert_eq!(
         methods,
-        ["initialize", "initialized", "thread/read", "thread/read"]
+        [
+            "initialize",
+            "initialized",
+            "thread/read",
+            "thread/read",
+            "thread/read"
+        ]
     );
     for request in requests
         .iter()

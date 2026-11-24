@@ -191,23 +191,34 @@ mod stand_in_diagnostics;
 mod stand_in_dispatches;
 mod stand_in_events;
 mod stand_in_execution;
+mod stand_in_ghost_evaluation;
 mod stand_in_history;
+mod stand_in_identity_rework;
 mod stand_in_ingress;
 mod stand_in_issue_mentions;
 mod stand_in_issue_replies;
+mod stand_in_issue_training;
 mod stand_in_lifecycle;
 mod stand_in_memory;
 mod stand_in_memory_progress;
 mod stand_in_memory_review;
+mod stand_in_personal_issues;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
 mod stand_in_review;
+mod stand_in_role_cancellation;
+mod stand_in_role_delegation;
+mod stand_in_role_dependencies;
+mod stand_in_role_results;
 mod stand_in_schedules;
 mod stand_in_source_tasks;
 mod stand_in_task_results;
 mod stand_in_tasks;
 mod stand_in_telemetry;
+mod stand_in_training;
+mod stand_in_training_connections;
+mod stand_in_training_progress;
 mod stand_in_work;
 mod stand_in_workspace;
 mod submitted_model;
@@ -552,6 +563,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
+    transcript_transfer_cleanup: Arc<super::transcript_transport::TransferCleanup>,
     #[cfg(test)]
     transcript_test_workers: Option<Arc<tokio::sync::Semaphore>>,
     device_id: String,
@@ -580,6 +592,7 @@ pub struct RuntimeWorkRpcHandler {
     preparing_turns: Arc<Mutex<HashMap<String, PreparingTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_text_generations: Arc<Mutex<HashMap<String, Option<oneshot::Sender<()>>>>>,
+    training_preflights: Arc<Mutex<HashMap<String, stand_in_training_progress::TrainingPreflight>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     codex_transcript_navigation_cache: Arc<Mutex<HashMap<String, CachedCodexTranscriptNavigation>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
@@ -684,7 +697,7 @@ struct CachedCodexTranscriptNavigation {
 }
 
 struct RuntimeThreadEventRoute {
-    goal_model_route: Option<Arc<crate::agents::LocalProxyRegistration>>,
+    goal_model_route: Option<crate::agents::ModelActionRegistration>,
     local_task_id: String,
     request: ExecutionRequest,
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
@@ -947,6 +960,7 @@ impl RuntimeWorkRpcHandler {
             );
         }
         let handler = Self {
+            transcript_transfer_cleanup: Arc::default(),
             #[cfg(test)]
             transcript_test_workers: None,
             device_id,
@@ -980,6 +994,7 @@ impl RuntimeWorkRpcHandler {
             preparing_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_text_generations: Arc::new(Mutex::new(HashMap::new())),
+            training_preflights: Default::default(),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             codex_transcript_navigation_cache: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
@@ -1328,17 +1343,20 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
         || method.starts_with("runtime.stand_in.telemetry.")
         || method.starts_with("runtime.stand_in.onboarding.")
         || method == "runtime.stand_in.processing.status"
+        || method == "runtime.stand_in.memory.rework_report"
         || method == "runtime.stand_in.binding"
         || method == "runtime.stand_in.personal.lifecycle"
     {
         return false;
     }
+    // Task inventory remains readable while worktrees and queued turns recover.
     !matches!(
         method,
         "runtime.tasks.running_count"
             | "runtime.python.has_demand"
             | "runtime.stand_in.assignment_tasks"
             | "runtime.tasks.get"
+            | "runtime.tasks.list"
             | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
             | "runtime.worktrees.preflight"

@@ -15,6 +15,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Mutex as StdMutex, OnceLock,
 };
+use wegent_protocol::chat_errors::error_info;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -29,6 +30,29 @@ static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 fn interrupted_by_runtime_stop(result: &Result<crate::agents::CodexAppServerTurn, String>) -> bool {
     matches!(result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
         || error == CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED)
+}
+
+fn record_preparation_failure(
+    link: &mut RuntimeTaskLink,
+    request: &ExecutionRequest,
+    error: &AppIpcError,
+    failure_info: &Value,
+    timestamp: i64,
+) {
+    let mut diagnostic = link.runtime_handle["startupFailure"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let message = crate::agents::redact_diagnostic_text(&error.message);
+    diagnostic.insert("code".into(), json!(error.code));
+    diagnostic.insert("message".into(), json!(message));
+    diagnostic.insert("subtaskId".into(), json!(request.subtask_id));
+    diagnostic.insert("createdAt".into(), json!(timestamp));
+    diagnostic.insert("failedAt".into(), json!(timestamp));
+    diagnostic.insert("errorInfo".into(), failure_info.clone());
+    link.runtime_handle["startupFailure"] = Value::Object(diagnostic);
+    link.runtime_handle["lastError"] = json!(message);
+    link.runtime_handle["lastErrorCode"] = json!(error.code);
 }
 
 fn initial_turn_presentation(request: &ExecutionRequest) -> Option<(String, Option<String>)> {
@@ -1140,9 +1164,28 @@ impl RuntimeWorkRpcHandler {
                 ("error", error.message.clone()),
             ],
         );
-        self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
-        self.store
-            .update_task(local_task_id, |link| apply_local_task_failure(link, error));
+        let failure_info = error_info(None, Some(&error.message));
+        let mut failed_at = None;
+        self.store.update_task(local_task_id, |link| {
+            let diagnostic = link.runtime_handle["startupFailure"].clone();
+            apply_local_task_failure(link, error);
+            link.runtime_handle["startupFailure"] = diagnostic;
+            let timestamp = link.completed_at.unwrap_or_else(now_ms);
+            record_preparation_failure(link, &turn.request, error, &failure_info, timestamp);
+            link.completed_at = Some(timestamp);
+            link.updated_at = timestamp;
+            failed_at = Some(timestamp);
+        });
+        if let Some(timestamp) = failed_at {
+            self.persist_failed_assistant_message_with_timestamp(
+                local_task_id,
+                &turn.request,
+                &error.message,
+                failure_info.clone(),
+                false,
+                timestamp,
+            );
+        }
     }
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
@@ -1494,7 +1537,7 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         if let Some(payload) = turn.send_payload.as_ref() {
-            if payload["startNewSession"] != true {
+            if !turn.request.new_session {
                 if let Some(link) = self
                     .local_task_link(&turn.local_task_id)
                     .filter(super::super::conversation_sessions::is_identity_conversation)
@@ -1554,6 +1597,7 @@ impl RuntimeWorkRpcHandler {
             self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
             return;
         }
+        let witness = crate::task_runtime::mcp::begin_stand_in_turn_witness(&mut turn.request);
         let recovery_turn = turn.clone();
         let recovery_account = codex_accounts::quota_account_identity(&turn.request);
         let owner_input = turn
@@ -1650,6 +1694,7 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
+            let _witness = witness;
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let mut scheduled_turn_guard = ScheduledTurnGuard::new(
                 handler.clone(),
@@ -1780,6 +1825,10 @@ impl RuntimeWorkRpcHandler {
                     ) {
                         return;
                     }
+                    crate::task_runtime::mcp::observe_stand_in_turn_boundary(
+                        &active_turn_request,
+                        Some(&turn_id),
+                    );
                     active_turn_handler
                         .start_queue_run(&active_turn_local_task_id, &active_turn_request);
                     *callback_hook_turn
@@ -1872,7 +1921,12 @@ impl RuntimeWorkRpcHandler {
             let finished_turn_handler = handler.clone();
             let finished_turn_local_task_id = turn_local_task_id.clone();
             let finished_turn_presentation = Arc::clone(&pending_turn_presentation);
+            let finished_turn_request = request.clone();
             let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                crate::task_runtime::mcp::observe_stand_in_turn_boundary(
+                    &finished_turn_request,
+                    None,
+                );
                 *finished_turn_presentation
                     .lock()
                     .expect("turn presentation lock should not be poisoned") = None;
@@ -2437,6 +2491,17 @@ impl RuntimeWorkRpcHandler {
                 self.register_codex_thread_workspace_root(&thread_id, &event_request, false);
                 let response_item_id = turn.response_item_id;
                 let response_value_origin = turn.response_value_origin;
+                if response_value_origin == crate::agents::CodexResponseValueOrigin::Final
+                    && matches!(&turn.outcome, ExecutionOutcome::Completed {content} if !content.trim().is_empty())
+                {
+                    self.record_identity_completion(
+                        local_task_id,
+                        request,
+                        active_turn,
+                        response_item_id.as_deref(),
+                        turn.completed_at_ms,
+                    );
+                }
                 match turn.outcome {
                     ExecutionOutcome::Completed { .. }
                     | ExecutionOutcome::Cancelled { .. }
@@ -2488,10 +2553,13 @@ impl RuntimeWorkRpcHandler {
                         }),
                     ),
                     ExecutionOutcome::Failed { message } => {
-                        self.persist_failed_assistant_message(
+                        let failure_info = error_info(turn.error_type.as_deref(), Some(&message));
+                        self.persist_failed_assistant_message_with_info(
                             local_task_id,
                             &event_request,
                             &message,
+                            failure_info.clone(),
+                            false,
                         );
                         let mut fields =
                             task_fields(&event_request.task_id, &event_request.subtask_id);
@@ -2504,8 +2572,9 @@ impl RuntimeWorkRpcHandler {
                             local_task_id,
                             &event_request,
                             json!({
-                                "error": {"message": message},
-                                "type": turn.error_type,
+                                "error": {"message": message, "code": failure_info["code"]},
+                                "error_info": failure_info,
+                                "type": failure_info["code"],
                                 "startedAt": turn.started_at_ms,
                                 "completedAt": turn.completed_at_ms,
                                 "durationMs": turn.duration_ms,
@@ -2527,6 +2596,7 @@ impl RuntimeWorkRpcHandler {
                     return;
                 }
                 self.mark_thread_event_routes_idle_for_local_task(local_task_id);
+                let failure_info = error_info(None, Some(&error));
                 self.persist_failed_assistant_message(local_task_id, &event_request, &error);
                 let mut fields = task_fields(&event_request.task_id, &event_request.subtask_id);
                 fields.push(("local_task_id", local_task_id.to_owned()));
@@ -2537,7 +2607,10 @@ impl RuntimeWorkRpcHandler {
                     "response.failed",
                     local_task_id,
                     &event_request,
-                    json!({"error": {"message": error}}),
+                    json!({
+                        "error": {"message": error, "code": failure_info["code"]},
+                        "error_info": failure_info,
+                    }),
                 );
             }
         }
@@ -2559,7 +2632,50 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         error: &str,
     ) {
-        let timestamp = now_ms();
+        self.persist_failed_assistant_message_with_info(
+            local_task_id,
+            request,
+            error,
+            error_info(None, Some(error)),
+            true,
+        );
+    }
+
+    fn persist_failed_assistant_message_with_info(
+        &self,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        error: &str,
+        failure_info: Value,
+        preparation: bool,
+    ) {
+        let timestamp = if preparation {
+            self.store
+                .read_task(local_task_id, |link| link.completed_at)
+                .flatten()
+                .unwrap_or_else(now_ms)
+        } else {
+            now_ms()
+        };
+        self.persist_failed_assistant_message_with_timestamp(
+            local_task_id,
+            request,
+            error,
+            failure_info,
+            preparation,
+            timestamp,
+        );
+    }
+
+    fn persist_failed_assistant_message_with_timestamp(
+        &self,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        error: &str,
+        failure_info: Value,
+        preparation: bool,
+        timestamp: i64,
+    ) {
         let message = json!({
             "id": format!("{local_task_id}:assistant:{}", request.subtask_id),
             "role": "assistant",
@@ -2567,12 +2683,26 @@ impl RuntimeWorkRpcHandler {
             "status": "failed",
             "error": error,
             "errorType": "response.failed",
+            "errorCode": failure_info["code"],
+            "errorInfo": failure_info,
             "subtaskId": request.subtask_id,
             "createdAt": timestamp,
             "completedAt": timestamp,
         });
         self.store.update_task(local_task_id, |link| {
-            record_runtime_start_failure(link, &AppIpcError::new("runtime_start_failed", error));
+            if preparation {
+                let diagnostic = link.runtime_handle["startupFailure"].clone();
+                let startup_error = AppIpcError::new("runtime_start_failed", error);
+                apply_local_task_failure_at(link, &startup_error, timestamp);
+                link.runtime_handle["startupFailure"] = diagnostic;
+                record_preparation_failure(
+                    link,
+                    request,
+                    &startup_error,
+                    &message["errorInfo"],
+                    timestamp,
+                );
+            }
             if link.thread_id.is_some() {
                 return;
             }

@@ -34,11 +34,7 @@ import { getWorkbenchPaneKey } from './workbenchPaneIdentity'
 
 import { type ProjectHoverSource } from './ProjectSidebarHoverCardContent'
 
-import {
-  getRuntimeTaskAddress,
-  getRuntimeTaskTime,
-  shortenSidebarHomePath,
-} from './runtimeTaskSidebarHelpers'
+import { getRuntimeTaskAddress, shortenSidebarHomePath } from './runtimeTaskSidebarHelpers'
 
 import type { WorkbenchSplitGroupMembership } from './workbenchSplitGroups'
 import type {
@@ -402,14 +398,6 @@ export function getRuntimeTaskSplitGroup(
       currentProject: null,
     })
   ]
-}
-
-export function getRuntimeTaskPriorityTime(task: RuntimeTaskSummary): number {
-  const value = getRuntimeTaskTime(task)
-  if (value === undefined) return 0
-  const numeric = typeof value === 'number' ? value : Number(value)
-  const timestamp = Number.isFinite(numeric) ? numeric : new Date(value).getTime()
-  return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
 export function getRuntimeTaskSortableId(

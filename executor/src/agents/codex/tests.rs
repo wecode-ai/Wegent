@@ -41,7 +41,7 @@ fn global_mcps_without_backend_context_do_not_enter_native_configuration() {
             assert!(params["developerInstructions"]
                 .as_str()
                 .unwrap()
-                .contains(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT));
+                .contains(effective_instructions::OMITTED_MCP_CONTEXT));
         }
         let request = ExecutionRequest {
             mcp_servers: Vec::new(),
@@ -398,6 +398,15 @@ fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
     assert!(result
         .contains(&"mcp_servers.wework_stand_in.default_tools_approval_mode=\"approve\"".into()));
     assert!(result.contains(&"mcp_servers.business.default_tools_approval_mode=\"writes\"".into()));
+    let specialist = serde_json::from_value(json!({
+        "origin":{"type":"stand_in_task","initiatedBy":"stand_in","askBeforeAct":true,"roleDelegation":{"root":"owner-request"}}
+    })).unwrap();
+    let result =
+        stand_in_mcp_approval_overrides(&specialist, root.path(), &overrides, &Map::new()).unwrap();
+    assert!(result.contains(
+        &"mcp_servers.wework_stand_in.tools.delegate_role_task.approval_mode=\"approve\"".into()
+    ));
+    assert!(result.contains(&"mcp_servers.business.tools.send.approval_mode=\"writes\"".into()));
 }
 
 #[test]
@@ -4064,7 +4073,7 @@ fn invalid_control_context_preserves_independent_managed_mcps() {
         assert!(params["developerInstructions"]
             .as_str()
             .unwrap()
-            .contains(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT));
+            .contains(effective_instructions::OMITTED_MCP_CONTEXT));
     }
 }
 

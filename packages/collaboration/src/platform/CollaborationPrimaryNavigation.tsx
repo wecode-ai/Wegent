@@ -92,8 +92,8 @@ export function CollaborationPrimaryNavigation({ domain, host, messages }: Navig
     <nav className="collaboration-primary-navigation" aria-label={messages.collaborationHome}>
       {link(
         'home',
-        host.renderPersonalHome ? messages.personalHome : messages.home,
-        host.renderPersonalHome ? CircleUserRound : FilePlus2,
+        host.renderPersonalHome || host.createIndependentIssue ? messages.personalHome : messages.home,
+        host.renderPersonalHome || host.createIndependentIssue ? CircleUserRound : FilePlus2,
         'collaboration-primary-home'
       )}
       {host.renderIssueList || host.createIndependentIssue ? (

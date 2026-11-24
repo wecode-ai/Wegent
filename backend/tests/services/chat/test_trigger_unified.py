@@ -211,6 +211,35 @@ class TestBuildExecutionRequestUserSubtaskId:
 
         assert result.device_id == "device-1"
 
+    async def test_propagates_new_session_fallback_to_request_builder(self):
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = ExecutionRequest(task_id=1, subtask_id=2)
+
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.chat.trigger.request_preparation.SessionLocal",
+                return_value=mock_db,
+            ),
+            patch(
+                "app.services.execution.TaskRequestBuilder",
+                return_value=mock_builder,
+            ),
+        ):
+            await trigger_unified.build_execution_request(
+                task=MagicMock(id=1, json={}),
+                assistant_subtask=MagicMock(id=2),
+                team=MagicMock(),
+                user=MagicMock(id=7),
+                message="continue",
+                allow_new_session_fallback=True,
+            )
+
+        assert mock_builder.build.call_args.kwargs["allow_new_session_fallback"] is True
+
     async def test_propagates_user_subtask_id_to_execution_request(self):
         """Ensure user_subtask_id is always propagated for downstream RAG persistence."""
         from app.services.chat.trigger import unified as trigger_unified

@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.6.12-beta.3",
+  "version": "0.6.13-beta.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -43,6 +43,7 @@
     "e2e:desktop:local-terminal": "node e2e/desktop/run-checkpoints.mjs --segment local-harness",
     "e2e:desktop:streaming-text": "node e2e/desktop/run-checkpoints.mjs --segment streaming-text",
     "ai:verify": "node scripts/ai-verify.mjs",
+    "profile:renderer": "node scripts/profile-renderer.mjs",
     "ai:verify:electron:prepare": "node scripts/prepare-ai-verify-electron.mjs",
     "ai:verify:electron:build": "node scripts/build-ai-verify-electron.mjs",
     "e2e:ui": "playwright test --ui",
@@ -117,6 +118,7 @@
     "semver": "7.8.5",
     "tailwind-merge": "^3.6.0",
     "unified": "^11.0.5",
+    "ws": "8.23.0",
     "yauzl": "3.4.0"
   },
   "devDependencies": {

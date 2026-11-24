@@ -673,9 +673,13 @@ Wework 会打开指定目录；应用已经运行时会复用现有窗口。
 
 ## 独立事项与我的事项
 
-<!-- ui-source: src/features/todo/IndependentIssueDialog.tsx -->
-<!-- ui-source: src/features/todo/IndependentIssueEditor.tsx -->
-<!-- ui-source: src/features/todo/PersonalIssuesView.tsx -->
+创建云端 Issue 后，创建者和受邀参与者会在已连接的 IM 私聊中收到通知。后续添加参与者时，仅新加入的人收到邀请通知。消息包含事项标题和打开链接，并遵循 **通知设置 → 协作通知** 的 IM 开关。选择 **仅保存不通知** 时，跳过负责人分配通知。
+
+网页版 Wegent 的「协作」侧栏提供同样的「新建事项」「待我处理」「我创建的」和「我参与的」入口。收到独立事项的分享消息后，点击「在网页中查看事项」会打开所属列表中的事项详情。登录后可在详情里查看待办、下载分享附件和参与讨论。
+
+<!-- ui-source: ../packages/collaboration/src/platform/IndependentIssueDialog.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/IndependentIssueEditor.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/PersonalIssuesView.tsx -->
 
 协作左侧固定提供 **待我处理**、**我创建的**、**我参与的** 三个入口，下方是 **项目**。这些入口按当前账户查询本地和云端项目事项，并显示云端独立事项。首页继续使用原有发起区、按项目组织的事项列表和右侧助理工作区；项目部分使用统一列表，并保留分组归属。三个事项页中，**查看已归档的独立事项** 位于列表上方的筛选工具栏；点击 Issue 在当前页打开详情抽屉，放大后切换其他 Issue 保持放大状态，打开关联任务会展开二级任务抽屉，关闭二级抽屉返回详情。点击项目标题进入该项目看板。
 

@@ -72,6 +72,8 @@ import {
   sendRuntimeQueuedMessage,
 } from '@/features/workbench/runtimeQueuedMessageSender'
 import { RUNTIME_RETRY_CONTINUATION_PROMPT } from './runtimeRetry'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { modelSelectionScopeFingerprint } from '@/features/workbench/modelSelectionDiagnostics'
 
 import {
   rollbackRejectedRuntimeConversationTurn,
@@ -105,10 +107,22 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     const selectedModelOptions = currentRuntimeTask
       ? (taskModelSelection?.selectedModelOptions ?? {})
       : (projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions)
-    return selectedModelExecutionFields(selectedModel, {
+    const fields = selectedModelExecutionFields(selectedModel, {
       ...selectedModelOptions,
       ...modelOptionsOverride,
     })
+    if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+      logRuntimeTaskCreateStage('pane-send-model-resolved', {
+        taskId: currentRuntimeTask?.taskId ?? null,
+        modelFingerprint: modelSelectionScopeFingerprint(fields.modelId ?? ''),
+        modelType: fields.modelType ?? null,
+        selectionReady: taskModelSelection?.selectionReady ?? null,
+        composerModelFingerprint: modelSelectionScopeFingerprint(
+          projectChat.getSelectedModel?.()?.name ?? projectChat.selectedModel?.name ?? ''
+        ),
+      })
+    }
+    return fields
   }
 
   const appendLocalUserMessage = (

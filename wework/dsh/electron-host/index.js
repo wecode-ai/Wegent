@@ -1,4 +1,5 @@
 import { createRequestSecurity } from './request-security.js'
+import { registerHostEventStream } from './event-stream.js'
 import { ElectronHostClient, ElectronHostError } from './electron-host-client.js'
 import { createWeworkDesktopService, WEWORK_DESKTOP_SERVICE_KEY } from './desktop-service.js'
 
@@ -18,6 +19,10 @@ export async function apply(ctx) {
     onDisconnect: hostDisconnectHandler(ctx),
   })
   await client.start()
+  ctx.effect(
+    () => registerHostEventStream(ctx, security, client, `${BASE_PATH}/events`),
+    'wework-electron-host: event stream'
+  )
   const generation = createWeworkDesktopService(client)
   ctx.effect(() => {
     const unprovide = ctx.reflect.provide(WEWORK_DESKTOP_SERVICE_KEY, generation.service)
@@ -41,7 +46,11 @@ export async function apply(ctx) {
       ctx.webServer.register({
         kind: 'exact',
         path: `${BASE_PATH}/invoke`,
-        handler: security.wrap((req, res) => invoke(req, res, client)),
+        handler: security.wrap((req, res) => invoke(req, res, client), {
+          rpc: true,
+          // Runtime preparation has its own deadline of up to 21 minutes.
+          rpcTimeoutMs: 22 * 60_000,
+        }),
       }),
     `wework-electron-host: ${BASE_PATH}/invoke`
   )
@@ -81,6 +90,7 @@ async function invoke(req, res, client) {
   }
   try {
     const body = await readJsonBody(req)
+    if (res.writableEnded || res.destroyed) return
     if (!isRecord(body) || typeof body.capability !== 'string' || !isRecord(body.params)) {
       throw new ElectronHostError('invalid_params', 'Request must contain capability and params')
     }
@@ -91,6 +101,8 @@ async function invoke(req, res, client) {
     const result = await client.invoke(body.capability, body.params)
     sendJson(res, 200, { ok: true, result: result ?? null })
   } catch (error) {
+    if (res.writableEnded || res.destroyed) return
+    if (res.headersSent) return res.destroy()
     const normalized =
       error instanceof ElectronHostError
         ? error
@@ -112,7 +124,7 @@ async function invoke(req, res, client) {
 async function readJsonBody(req) {
   let bytes = 0
   const chunks = []
-  for await (const chunk of req) {
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     bytes += buffer.byteLength
     if (bytes > MAX_REQUEST_BODY_BYTES) {
@@ -133,6 +145,7 @@ function sendJson(res, status, value, head = false) {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'content-length': Buffer.byteLength(body),
+    ...(status >= 400 ? { connection: 'close' } : {}),
   })
   res.end(head ? undefined : body)
 }
@@ -143,7 +156,8 @@ function methodNotAllowed(res, allow) {
 }
 
 function statusForError(error) {
-  if (['invalid_json', 'invalid_params', 'request_too_large'].includes(error.code)) {
+  if (error.code === 'request_too_large') return 413
+  if (['invalid_json', 'invalid_params'].includes(error.code)) {
     return 400
   }
   if (error.code === 'capability_denied') return 403

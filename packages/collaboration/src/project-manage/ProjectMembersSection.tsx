@@ -128,7 +128,39 @@ export function ProjectMembersSection<
           </div>
           {canManage && (
             <div className="relative shrink-0" ref={memberComposerRef}>
-              <Popover open={membersOpen} onOpenChange={setMembersOpen}>
+              <Popover
+                open={membersOpen}
+                onOpenChange={(open, details) => {
+                  if (!open) {
+                    const describeFocus = (target: EventTarget | null | undefined) =>
+                      target instanceof Element
+                        ? {
+                            tag: target.tagName,
+                            testId: target.getAttribute('data-testid'),
+                            insidePicker: Boolean(
+                              target.closest('[data-testid="cloud-project-member-picker"]')
+                            ),
+                          }
+                        : null
+                    const event = details.event
+                    console.debug(
+                      '[project-members] picker closed',
+                      details.reason,
+                      JSON.stringify({
+                        event: event?.type,
+                        target: describeFocus(event?.target),
+                        previous: describeFocus(
+                          event instanceof FocusEvent ? event.relatedTarget : null
+                        ),
+                        active: describeFocus(
+                          memberComposerRef.current?.ownerDocument.activeElement
+                        ),
+                      })
+                    )
+                  }
+                  setMembersOpen(open)
+                }}
+              >
                 <PopoverTrigger
                   render={
                     <ControlButton
@@ -141,11 +173,16 @@ export function ProjectMembersSection<
                     />
                   }
                 >
-                  <span aria-hidden="true" className="mr-1">＋</span>
+                  <span aria-hidden="true" className="mr-1">
+                    ＋
+                  </span>
                   {host.translate('todo.add_member', '添加成员')}
                 </PopoverTrigger>
                 {membersOpen && (
-                  <PopoverContent data-testid="cloud-project-member-picker">
+                  <PopoverContent
+                    data-testid="cloud-project-member-picker"
+                    initialFocus={() => memberSearchInputRef.current}
+                  >
                     <MemberSearchPicker
                       error={memberSearchError}
                       query={memberQuery}

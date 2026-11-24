@@ -52,8 +52,11 @@ export async function listKnowledgeBases(
 /**
  * Get a knowledge base by ID
  */
-export async function getKnowledgeBase(id: number): Promise<KnowledgeBase> {
-  return apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`)
+export async function getKnowledgeBase(
+  id: number,
+  options?: { cache?: RequestCache }
+): Promise<KnowledgeBase> {
+  return apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`, options)
 }
 
 /** Return the effective reader capability used only for knowledge UI state. */
@@ -90,19 +93,6 @@ export async function deleteKnowledgeBase(
   return apiClient.delete<ContentDeletionOutcome>(
     `/knowledge-bases/${id}?include_cleanup_result=true&continue_on_external_engine_failure=${continueOnExternalFailure}`
   )
-}
-
-/**
- * Update the knowledge base default opening view.
- * @param id Knowledge base ID
- * @param kbType New default view value: 'notebook' or 'classic'
- * @returns Updated knowledge base
- */
-export async function updateKnowledgeBaseType(
-  id: number,
-  kbType: 'notebook' | 'classic'
-): Promise<KnowledgeBase> {
-  return apiClient.patch<KnowledgeBase>(`/knowledge-bases/${id}/type`, { kb_type: kbType })
 }
 
 // ============== Knowledge Document APIs ==============

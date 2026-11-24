@@ -1,4 +1,5 @@
 import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
+import { createBackgroundWindowRefreshChecks } from '../modules/background-window-refresh.mjs'
 import { createComposerLayoutChecks } from '../modules/streaming-text-composer-layout.mjs'
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
 import { createRichTaskSwitchChecks } from '../modules/streaming-text-rich-task-switch.mjs'
@@ -87,6 +88,7 @@ export function createDesktopScenario({
 }) {
   const completion = createStreamingCompletionChecks({ resultDir, uiTimeoutMs })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
+  const backgroundWindowRefresh = createBackgroundWindowRefreshChecks({ uiTimeoutMs })
   const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
   const richTaskSwitch = createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqliteHome })
   const composerLayout = createComposerLayoutChecks({ workspacePath, resultDir, uiTimeoutMs })
@@ -121,6 +123,7 @@ export function createDesktopScenario({
   let resolveSubagentChildRequestStarted
   let resolveSubagentPartialWritten
   let targetRequest
+  let completionRequestHeaders
   const appendRelease = new Promise(resolve => {
     releaseAppend = resolve
   })
@@ -182,6 +185,7 @@ export function createDesktopScenario({
 
   return {
     cleanup() {
+      backgroundWindowRefresh.cleanup()
       completion.cleanup()
       guidanceOrder.cleanup()
     },
@@ -247,11 +251,15 @@ export function createDesktopScenario({
       const body = await readJson(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `wework-streaming-text-${Date.now()}`
+      if (await backgroundWindowRefresh.handleModelRequest(body, response, responseId)) return true
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
       if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
       if (await composerLayout.handleModelRequest(body, response, responseId)) return true
       if (await richTaskSwitch.handleModelRequest(body, response, responseId)) return true
-      if (await completion.handleModelRequest(body, response, responseId)) return true
+      if (await completion.handleModelRequest(body, response, responseId)) {
+        completionRequestHeaders = request.headers
+        return true
+      }
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       if (await guidanceOrder.handleModelRequest(body, response, responseId)) return true
       if (await interactiveVisualization.handleModelRequest(body, response, responseId)) return true
@@ -572,6 +580,19 @@ export function createDesktopScenario({
           'streaming-content',
           async control => {
             await completion.verify(control)
+            assert.match(
+              completionRequestHeaders?.['x-wework-version'] ?? '',
+              /^\d+\.\d+\.\d+(?:[-+][\w.+-]+)?$/,
+              'The upstream model request did not receive the Wework version'
+            )
+            assert.ok(
+              completionRequestHeaders['x-wework-platform'],
+              'The upstream model request did not receive the Wework platform'
+            )
+            assert.ok(
+              completionRequestHeaders['x-wework-arch'],
+              'The upstream model request did not receive the Wework architecture'
+            )
             await verifyContent(control)
             await interactiveVisualization.verify(control)
             await visualizationScroll.verify(control)
@@ -582,6 +603,7 @@ export function createDesktopScenario({
         [
           'streaming-conversation-switching',
           async control => {
+            await backgroundWindowRefresh.verify(control)
             await composerLayout.verify(control)
             await conversationSwitching.verify(control)
             await conversationScrollbar.verify(control)

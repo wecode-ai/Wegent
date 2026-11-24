@@ -251,6 +251,11 @@
                   "maximum": 20,
                   "default": 20
                 },
+                "trainingUntil": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Read attributed native messages in the exact conversation before this exclusive cutoff for retrospective review."
+                },
                 "includeImages": {
                   "type": "boolean",
                   "default": false,
@@ -267,7 +272,8 @@
                   "minLength": 1
                 },
                 "at": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "When DingTalk sent this message, from its original createTime. The provider preserves its precision and timezone offset when supplied."
                 },
                 "text": {
                   "type": "string",
@@ -308,6 +314,12 @@
               ]
             },
             "pagination": "cursor"
+          },
+          "reviewHistory": {
+            "resourceKinds": [
+              "direct",
+              "group"
+            ]
           }
         }
       ]

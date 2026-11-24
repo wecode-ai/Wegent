@@ -18,7 +18,6 @@ import {
   LocalConnectorAuthLogoutError,
   localQrManageActionFromHealth,
   pluginLocalConnectorAuthTarget,
-  type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
 import { isGithubCliTarget } from '@/api/local/githubCli'
 import {
@@ -39,9 +38,9 @@ import {
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { connectorDisplayName } from '../connectorDisplayName'
 import { type InstalledPluginItem } from '../PluginManagementRows'
-import { isCloudManagedInstalledPlugin } from '../installedPluginMerge'
+import { isCloudManagedInstalledPlugin, isWegentManagedStorePlugin } from '../installedPluginMerge'
 import { isLocalMarketplaceItem } from '../marketplaceCatalogMerge'
-import { marketplaceItemMarketplaceId } from '../pluginDistribution'
+import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from '../pluginDistribution'
 import { pluginUsesWegentConnectorOAuth } from '../workspace/marketplaceWorkspaceHelpers'
 import type { PluginWorkspaceServices } from './pluginWorkspaceTypes'
 
@@ -175,15 +174,18 @@ export function usePluginWorkspaceConnectors({
     if (required.length === 0) return
 
     const pluginKey = plugin.spec.source.pluginKey || item.name
+    const marketplaceId = installedPluginMarketplaceId(plugin) ?? ''
     const displayName = plugin.spec.displayName || item.displayName || item.name
 
     for (const connector of required) {
       if (!isCurrent()) return
-      const target: LocalConnectorAuthTarget = {
+      const target = pluginLocalConnectorAuthTarget(
         pluginKey,
-        connectorSlug: connector.slug,
-        localAuth: connector.localAuth ?? null,
-      }
+        marketplaceId,
+        connector,
+        isCloudManagedInstalledPlugin(plugin) || isWegentManagedStorePlugin(plugin)
+      )
+      if (!target) continue
       try {
         const health = await waitForLocalConnectorAuthAvailability(target)
         if (!isCurrent()) return
@@ -245,13 +247,20 @@ export function usePluginWorkspaceConnectors({
       plugin && 'raw' in plugin ? plugin.raw.spec.source.pluginKey : String(plugin?.name ?? slug)
     const marketplaceId =
       plugin && 'raw' in plugin
-        ? plugin.raw.spec.source.marketplace || String(plugin.raw.metadata.namespace ?? '')
+        ? (installedPluginMarketplaceId(plugin.raw) ?? '')
         : plugin
           ? marketplaceItemMarketplaceId(plugin) || ''
           : ''
     const localConnector = connectors.find(connector => connector.slug === slug)
     const target = localConnector
-      ? pluginLocalConnectorAuthTarget(pluginKey, marketplaceId, localConnector)
+      ? pluginLocalConnectorAuthTarget(
+          pluginKey,
+          marketplaceId,
+          localConnector,
+          plugin && 'raw' in plugin
+            ? isCloudManagedInstalledPlugin(plugin.raw) || isWegentManagedStorePlugin(plugin.raw)
+            : Boolean(plugin && !isLocalMarketplaceItem(plugin))
+        )
       : null
     if (localConnector && target) {
       const githubCli = isGithubCliTarget(target)

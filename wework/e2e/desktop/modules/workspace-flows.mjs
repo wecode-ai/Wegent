@@ -604,18 +604,19 @@ export async function completeLocalCollaborationFolderImport(control, projectNam
 
 async function waitForFolderPathReady(control, expectedPath) {
   const startedAt = Date.now()
+  let inputValue = ''
+  let directoryText = ''
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const inputValue = await control.command('getValue', '[data-testid="device-folder-path-input"]')
-    const directoryText = await control.command(
-      'getText',
-      '[data-testid="device-folder-directory-list"]'
-    )
+    inputValue = await control.command('getValue', '[data-testid="device-folder-path-input"]')
+    directoryText = await control.command('getText', '[data-testid="device-folder-directory-list"]')
     if (inputValue === expectedPath && !/Loading directories|正在加载目录/.test(directoryText)) {
       return
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`The device folder picker did not finish loading ${expectedPath}`)
+  throw new Error(
+    `The device folder picker did not finish loading ${expectedPath}: ${JSON.stringify({ inputValue, directoryText })}`
+  )
 }
 
 async function waitForFolderPickerInitialized(control) {
@@ -718,13 +719,14 @@ async function waitForWorkbenchDebugState(
   control,
   predicate,
   message,
-  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
+  snapshotType = 'state-only'
 ) {
   const startedAt = Date.now()
   let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(
-      await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+      await control.command('getWorkbenchDebugSnapshot', 'body', { value: snapshotType })
     )
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
@@ -1354,6 +1356,10 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     { text: comment, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
+  await control.command('waitFor', activeTaskConversationSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoView', activeTaskConversationSelector, { visible: true })
   await control.command('waitFor', activeTaskConversationSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

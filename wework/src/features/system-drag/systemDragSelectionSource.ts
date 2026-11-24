@@ -14,7 +14,7 @@ import {
   resolveStoredWorkspacePaths,
 } from '@/lib/workspace-path-transfer'
 import { applyWorkspacePathTransfer } from '@/components/chat/composer/composerPathTransfer'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import {
   prepareSelectedTextDrag,
   type SelectedTextChangedDetail,
@@ -164,10 +164,12 @@ export function createSystemDragSelectionSource() {
     if (observed())
       context!.setWorkbenchError(error instanceof Error ? error.message : String(error))
   }
-  const apply = async (payload: SystemDropPayload, input = context?.projectChat.input ?? '') => {
+  const apply = async (payload: SystemDropPayload, inputOverride?: string) => {
     if (!observed()) return
     const current = context!
     const owner = generation
+    const { draftStore, scopeKey } = current.projectChat
+    const input = inputOverride ?? draftStore.read(scopeKey).value
     let nextInput = input
     if (payload.text?.trim()) {
       const text = payload.text.trim()
@@ -307,9 +309,18 @@ export function createSystemDragSelectionSource() {
           enabled = preferences.systemDragEnabled
       })
       .catch(error => console.error('[Wework] Failed to read system drag preferences:', error))
+    let retry: ReturnType<typeof setTimeout> | undefined
     let pending = false
+    let dirty = false
     const takePending = async () => {
-      if (pending || disposed || !observed()) return
+      if (disposed || !observed()) return
+      if (pending) {
+        dirty = true
+        return
+      }
+      dirty = false
+      clearTimeout(retry)
+      retry = undefined
       pending = true
       try {
         const payloads = await invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending', {
@@ -317,16 +328,23 @@ export function createSystemDragSelectionSource() {
         })
         if (!disposed && observed()) payloads.forEach(handlePayload)
       } catch (error) {
-        if (!disposed) reportTransferError(error)
+        if (!disposed) {
+          reportTransferError(error)
+          retry = setTimeout(() => void takePending(), 1_000)
+        }
       } finally {
         pending = false
+        if (dirty) void takePending()
       }
     }
+    const unsubscribe = subscribeDesktopHostEvents(event => {
+      if (event.type === 'systemDrag.pending') void takePending()
+    })
     void takePending()
-    const poll = window.setInterval(() => void takePending(), 250)
     stop = () => {
       disposed = true
-      window.clearInterval(poll)
+      clearTimeout(retry)
+      unsubscribe()
       frames.forEach(frame => cancelAnimationFrame(frame))
       frames.clear()
       timers.forEach(timer => clearTimeout(timer))
@@ -374,11 +392,9 @@ export function createSystemDragSelectionSource() {
       if (!observed() || !selection) return
       const current = context!
       const owner = generation
-      current.projectChat.setInput(
-        current.projectChat.input
-          ? `${current.projectChat.input}\n${selection.text}`
-          : selection.text
-      )
+      const { draftStore, scopeKey, setInput } = current.projectChat
+      const input = draftStore.read(scopeKey).value
+      setInput(input ? `${input}\n${selection.text}` : selection.text)
       setSelection(null)
       document.getSelection()?.removeAllRanges()
       scheduleFrame(() => {

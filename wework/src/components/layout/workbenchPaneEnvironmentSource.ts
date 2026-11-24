@@ -1,10 +1,12 @@
 import { createWorkbenchDeviceReconnect } from '@/features/workbench/workbenchDeviceReconnect'
+import { pollWorkbenchPresentation } from '@/desktop/workbenchWindowActivity'
 import type { WorkbenchPaneContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { resolveWorkspaceTarget } from '@/lib/workspace-target'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
+import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { isCloudDevice } from '@/lib/device-selection'
 import { isRemoteTaskDevice } from '@/lib/device-capabilities'
 import { resolveEnvironmentExecutionDeviceId } from './workbenchPaneEnvironmentHelpers'
@@ -28,11 +30,41 @@ interface EnvironmentSnapshot {
   workspaceTargetResolving: boolean
   environmentInfo: EnvironmentInfo
 }
+
+function environmentReadKey({
+  workspaceProject,
+  workspaceRoots,
+  devices,
+  autoLoad,
+}: EnvironmentSourceInput) {
+  // Project projections contain task lists that change during execution.
+  return JSON.stringify([
+    workspaceProject?.config?.execution?.targetType,
+    workspaceProject?.config?.workspace?.source,
+    workspaceProject ? configuredWorkspacePath(workspaceProject) : null,
+    workspaceProject ? executionDeviceId(workspaceProject) : null,
+    workspaceRoots,
+    autoLoad,
+    devices.map(device => [
+      device.device_id,
+      device.device_type,
+      device.execution_target_id,
+      device.app_device_id,
+      device.runtime_instance_id,
+      device.socket_device_id,
+      device.is_default,
+      device.status,
+      device.runtime_routes,
+      device.runtime_features,
+    ]),
+  ])
+}
+
 /** A pane workspace owns target resolution, partial environment reads and active-run polling. */
 export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceInput) {
   const reconnect = createWorkbenchDeviceReconnect()
   let input = initial
-  let metadataKey: string | undefined
+  let readKey: string | undefined
   const directTarget = input.currentRuntimeTask
     ? input.runtimeWorkspaceTarget
     : input.projectRuntimeWorkspaceTarget
@@ -54,7 +86,7 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
   let resolutionRevision = 0
   let started = false
   let refreshActive = false
-  let timer: ReturnType<typeof setInterval> | undefined
+  let stopPolling: (() => void) | undefined
   const isCurrent = () => started && listeners.size > 0
   function publish(change: Partial<EnvironmentSnapshot>) {
     if (!isCurrent()) return
@@ -260,19 +292,15 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
     },
     updateEnvironmentInfo,
     load,
-    subscribe(
-      listener: () => void,
-      next: EnvironmentSourceInput,
-      nextMetadataKey: string,
-      active: boolean
-    ) {
+    subscribe(listener: () => void, next: EnvironmentSourceInput, active: boolean) {
+      const nextReadKey = environmentReadKey(next)
       const queryChanged =
-        metadataKey !== nextMetadataKey ||
+        readKey !== nextReadKey ||
         input.apiOwner !== next.apiOwner ||
         input.loadEnvironmentInfo !== next.loadEnvironmentInfo ||
         input.getProjectWorkspaceRoot !== next.getProjectWorkspaceRoot
       input = next
-      metadataKey = nextMetadataKey
+      readKey = nextReadKey
       listeners.add(listener)
       reconnect.update({
         deviceId: snapshot.workspaceTarget?.deviceId,
@@ -284,9 +312,14 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
       const wasRefreshActive = refreshActive
       refreshActive = active
       if (!started || wasRefreshActive !== active) {
-        clearInterval(timer)
-        if (active)
-          timer = setInterval(() => void load({ force: true, showLoading: false }), 30_000)
+        stopPolling?.()
+        stopPolling = active
+          ? pollWorkbenchPresentation(
+              () => void load({ force: true, showLoading: false }),
+              30_000,
+              120_000
+            )
+          : undefined
       }
       if (!started) {
         started = true
@@ -305,7 +338,8 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
           started = false
           generation += 1
           requestSequence += 1
-          clearInterval(timer)
+          stopPolling?.()
+          stopPolling = undefined
         })
       }
     },

@@ -43,6 +43,14 @@ Issue 悬浮标题检查使用 1440×720 内容视口，先验证滚动区存在
 
 ## 运行方式
 
+在 macOS 上，可以用既有的流式会话检查点对比多窗口 renderer CPU：
+
+```bash
+WEWORK_E2E_SAMPLE_BACKGROUND_CPU=1 pnpm --filter wework e2e:desktop --segment streaming-conversation-switching
+```
+
+保持第二个窗口打开，分别测量任务窗口获得焦点、可见但失焦和最小化时的 renderer 进程累计 CPU 时间。每段向同一任务发送等量、同节奏的模型增量。`[background-window-cpu]` 记录采样时长、进程数和 CPU 时间。普通 CI 只验证最小化期间的任务进度接收、聚焦恢复和完成未读状态。
+
 首次运行需要安装 Playwright 浏览器：
 
 ```bash

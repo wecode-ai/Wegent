@@ -109,7 +109,7 @@ test.describe('Collaboration module', () => {
     await page.goto('/collaboration')
     await expect(page).toHaveURL(/\/collaboration$/)
     await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
-    await expect(page.getByTestId('collaboration-workspaces-section-toggle')).toBeVisible()
+    await expect(page.getByTestId('collaboration-project-tree')).toBeVisible()
     await expect(page.getByTestId('collaboration-workspace-sidebar-create')).toBeVisible()
 
     await page.getByTestId('collaboration-workspace-create').click()

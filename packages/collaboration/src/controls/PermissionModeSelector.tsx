@@ -232,7 +232,7 @@ function FullAccessConfirmDialog({
                   key={mode}
                   value={mode}
                   data-testid={`command-approval-confirm-option-${mode}`}
-                  className="flex min-h-11 cursor-pointer items-center gap-3 px-3 py-2 hover:bg-muted/60 data-[checked]:bg-muted/60 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40"
+                  className="flex min-h-11 w-full cursor-pointer items-center gap-3 px-3 py-2 text-left outline-none hover:bg-muted/60 data-[checked]:bg-muted/60 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/40"
                 >
                   <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-background">
                     <RadioIndicator className="h-2 w-2 rounded-full bg-text-primary" />

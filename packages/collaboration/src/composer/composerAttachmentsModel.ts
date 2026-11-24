@@ -72,6 +72,36 @@ export interface ComposerAttachmentsInitialState {
   files?: File[]
 }
 
+export function includeDraftAttachmentGroup({
+  submittedAttachments,
+  draftAttachments,
+  sourceAttachmentId,
+}: {
+  submittedAttachments: Attachment[]
+  draftAttachments: Attachment[]
+  sourceAttachmentId?: number
+}): Attachment[] {
+  if (sourceAttachmentId === undefined) return submittedAttachments
+  const source = draftAttachments.find(attachment => attachment.id === sourceAttachmentId)
+  if (!source?.ui_group_id) return submittedAttachments
+
+  const submittedIds = new Set(submittedAttachments.map(attachment => attachment.id))
+  const companions = draftAttachments.filter(
+    attachment =>
+      attachment.ui_group_id === source.ui_group_id &&
+      attachment.id !== source.id &&
+      !submittedIds.has(attachment.id)
+  )
+  const [admitted] = submittedAttachments
+  if (!admitted) return submittedAttachments
+  Object.assign(admitted, {
+    ui_group_id: source.ui_group_id,
+    ui_group_role: source.ui_group_role,
+    ui_kind: source.ui_kind,
+  })
+  return submittedAttachments.concat(companions)
+}
+
 export function createComposerAttachmentsModel(
   options: ComposerAttachmentsOptions,
   initial?: ComposerAttachmentsInitialState
@@ -408,20 +438,85 @@ export function createComposerAttachmentsModel(
     })
   }
 
-  const removeAttachmentForScope = async (targetScopeKey: string, attachmentId: number) => {
+  const replaceImageAttachmentForScope = async (
+    scopeKey: string,
+    attachmentId: number,
+    file: File,
+    comments: NonNullable<Attachment['image_markup_comments']>,
+    signal: AbortSignal
+  ) => {
+    const original = getScopeSnapshot(scopeKey).attachments.find(item => item.id === attachmentId)
+    if (!original || signal.aborted) return null
+
+    const upload = config.uploadAttachment
+    const remove = config.deleteAttachment
+    const uploaded = await upload(file)
+    if (
+      signal.aborted ||
+      uploaded.status === 'failed' ||
+      !getScopeSnapshot(scopeKey).attachments.some(item => item === original)
+    ) {
+      releaseAttachmentPreview(uploaded)
+      if (uploaded.id > 0) await remove(uploaded.id)
+      return null
+    }
+
+    const replacement = {
+      ...uploaded,
+      ui_group_id: original.ui_group_id,
+      ui_group_role: original.ui_group_role,
+      ui_kind: original.ui_kind,
+      image_markup_comments: comments,
+    }
+    updateScopeState(scopeKey, current => ({
+      ...current,
+      attachments: current.attachments.map(item => (item === original ? replacement : item)),
+    }))
+    releaseAttachmentPreview(original)
+    const sources = attachmentSourcesByScope.get(scopeKey)
+    const source = sources?.get(original.id)
+    if (source) {
+      source.attachment = replacement
+      sources?.delete(original.id)
+      sources?.set(replacement.id, source)
+    }
+    if (original.id > 0 && original.id !== uploaded.id) {
+      void remove(original.id).catch(() => config.onAction?.('failed'))
+    }
+    return replacement
+  }
+
+  const attachmentsForScope = (targetScopeKey: string, attachmentId: number) => {
     const scopedState = stateByScope[targetScopeKey] ?? emptyAttachmentState()
     const attachment = scopedState.attachments.find(item => item.id === attachmentId)
-    const attachmentsToRemove = attachment?.ui_group_id
+    return attachment?.ui_group_id
       ? scopedState.attachments.filter(item => item.ui_group_id === attachment.ui_group_id)
       : attachment
         ? [attachment]
         : []
-    attachmentsToRemove.forEach(releaseAttachmentPreview)
-    const idsToRemove = new Set(attachmentsToRemove.map(item => item.id))
+  }
+
+  const discardAttachments = (targetScopeKey: string, attachments: Attachment[]) => {
+    attachments.forEach(releaseAttachmentPreview)
+    const ids = new Set(attachments.map(item => item.id))
     updateScopeState(targetScopeKey, current => ({
       ...current,
-      attachments: current.attachments.filter(attachment => !idsToRemove.has(attachment.id)),
+      attachments: current.attachments.filter(attachment => !ids.has(attachment.id)),
     }))
+  }
+
+  const releaseAttachmentForScope = (targetScopeKey: string, attachmentId: number) => {
+    discardAttachments(targetScopeKey, attachmentsForScope(targetScopeKey, attachmentId))
+  }
+
+  const getAttachmentForScope = (targetScopeKey: string, attachmentId: number) =>
+    (stateByScope[targetScopeKey] ?? emptyAttachmentState()).attachments.find(
+      item => item.id === attachmentId
+    )
+
+  const removeAttachmentForScope = async (targetScopeKey: string, attachmentId: number) => {
+    const attachmentsToRemove = attachmentsForScope(targetScopeKey, attachmentId)
+    discardAttachments(targetScopeKey, attachmentsToRemove)
     try {
       await Promise.all(
         attachmentsToRemove.filter(item => item.id > 0).map(item => deleteAttachment(item.id))
@@ -481,6 +576,9 @@ export function createComposerAttachmentsModel(
       attachmentSourcesByScope.get(scopeKey)?.get(attachmentId)?.file
     const removeAttachment = (attachmentId: number) =>
       removeAttachmentForScope(scopeKey, attachmentId)
+    const getAttachment = (attachmentId: number) => getAttachmentForScope(scopeKey, attachmentId)
+    const releaseAttachment = (attachmentId: number) =>
+      releaseAttachmentForScope(scopeKey, attachmentId)
     const resetAttachments = () => resetAttachmentsForScope(scopeKey)
     const dismissAttachmentError = (filename: string) =>
       dismissAttachmentErrorForScope(scopeKey, filename)
@@ -504,8 +602,13 @@ export function createComposerAttachmentsModel(
       addExistingAttachment,
       addExistingSourceAttachment,
       addExistingAttachmentForScope,
+      replaceImageAttachmentForScope,
+      getAttachment,
+      getAttachmentForScope,
       removeAttachment,
       removeAttachmentForScope,
+      releaseAttachment,
+      releaseAttachmentForScope,
       resetAttachments,
       resetAttachmentsForScope,
     }

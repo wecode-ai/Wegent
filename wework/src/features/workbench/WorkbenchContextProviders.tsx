@@ -1,4 +1,4 @@
-import { WorkbenchOwnerLeaseContext } from './workbenchContexts'
+import { WorkbenchOwnerLeaseContext, WorkbenchQueueActionsContext } from './workbenchContexts'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
@@ -11,7 +11,7 @@ import {
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import type { WorkbenchContextValue, WorkbenchPaneContextValue } from './workbenchContextTypes'
 import type { WorkbenchSessionOperations } from './workbenchSessionOperations'
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 export function WorkbenchContextProviders({
   value,
   paneValue,
@@ -29,6 +29,11 @@ export function WorkbenchContextProviders({
   retainOwner: () => () => void
   children: ReactNode
 }) {
+  const { forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError } = value
+  const queueActions = useMemo(
+    () => ({ forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError }),
+    [forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError]
+  )
   return (
     <RuntimeTaskLifecycleProvider store={sharedLifecycleStore} writerStore={lifecycleStore}>
       <AttachmentDownloadProvider
@@ -45,7 +50,9 @@ export function WorkbenchContextProviders({
                     devices={value.state.devices}
                     refreshDevices={refreshDevicesAfterRestart}
                   >
-                    <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                    <WorkbenchQueueActionsContext.Provider value={queueActions}>
+                      <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                    </WorkbenchQueueActionsContext.Provider>
                   </WorkbenchCloudDeviceRestarts>
                 </DesktopGitAccountConfigurationProvider>
               </WorkbenchOwnerLeaseContext.Provider>

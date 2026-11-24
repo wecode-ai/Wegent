@@ -61,6 +61,45 @@ fn refresh_execution_policy(request: &mut ExecutionRequest) -> Result<(), String
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn role_rework_report(
+        &self,
+        user: i64,
+        role: &str,
+        completed_run: Option<&str>,
+    ) -> Result<Value, AppIpcError> {
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let identities = self.connection_learning_roles(&store, user)?;
+        let role_device = identities
+            .iter()
+            .find(|identity| identity["id"] == role)
+            .and_then(|identity| identity["executionDeviceId"].as_str())
+            .ok_or_else(|| AppIpcError::new("permission_denied", "Role review is unavailable"))?;
+        let mut visible = self
+            .visible_issue_review_sources(&store, user, role)
+            .await?;
+        self.verify_local_stand_in_owner(user)?;
+        let settings = store
+            .configured_personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        if self.local_stand_in_role_device(&settings, role).as_deref() != Some(role_device) {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Role review device changed",
+            ));
+        }
+        visible.extend(self.visible_identity_tasks(user, &settings, role));
+        store
+            .verified_stand_in_rework_report(
+                user,
+                &self.device_id,
+                role,
+                role_device,
+                completed_run,
+                &visible,
+            )
+            .map_err(settings_error)
+    }
+
     pub(super) fn stand_in_memory(
         &self,
         payload: Value,
@@ -73,11 +112,19 @@ impl RuntimeWorkRpcHandler {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         match action {
             "list_rules" => store
-                .stand_in_memory_rule_records(user)
+                .stand_in_memory_rule_records(
+                    user,
+                    &self.device_id,
+                    self.cloud_device_id().ok().as_deref(),
+                )
                 .map(|items| json!({"items":items}))
                 .map_err(settings_error),
             "list" => store
-                .stand_in_memories(user)
+                .stand_in_management_memories(
+                    user,
+                    &self.device_id,
+                    self.cloud_device_id().ok().as_deref(),
+                )
                 .map(|items| json!({"items":items}))
                 .map_err(settings_error),
             "save" => {
@@ -117,6 +164,8 @@ impl RuntimeWorkRpcHandler {
         &self,
         request: &mut ExecutionRequest,
     ) -> Result<(), String> {
+        request.extra.remove("standInDeliveryContext");
+        request.extra.remove("standInTurnWitness");
         refresh_execution_policy(request)?;
         self.refresh_connection_guidance(request)?;
         let Some(origin) = request.extra.get("origin") else {
@@ -140,7 +189,7 @@ impl RuntimeWorkRpcHandler {
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(|error| error.to_string())?;
         let settings = store
-            .personal_stand_in(user, &self.device_id)
+            .configured_personal_stand_in(user, &self.device_id)
             .map_err(|error| error.to_string())?;
         let role = if let Some(id) = role_id {
             settings["roles"]
@@ -166,8 +215,22 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
+        let role_device = role["executionDeviceId"]
+            .as_str()
+            .or_else(|| settings["executionDeviceId"].as_str())
+            .unwrap_or(&self.device_id);
+        let runs_here = self.stand_in_device_runs_here(role_device);
         let memories = store
-            .recall_stand_in_memories(user, &self.device_id, role_id, source.as_ref())
+            .recall_stand_in_memories(
+                user,
+                if runs_here {
+                    role_device
+                } else {
+                    &self.device_id
+                },
+                role_id,
+                source.as_ref(),
+            )
             .map_err(|error| error.to_string())?;
         let memories = bounded_memories(memories);
         let forgetting_policy = crate::task_runtime::memory_policy::STAND_IN_FORGETTING_POLICY;
@@ -186,6 +249,41 @@ impl RuntimeWorkRpcHandler {
             context.push('\n');
             context.push_str(crate::task_runtime::NATIVE_SUBAGENT_INSTRUCTIONS);
             context.push_str("\nYou are the primary stand-in coordinating concrete work. Create an independent Runtime task/thread only when the work needs its own durable conversation, workspace, lifecycle, separate tracking or explicit user-requested separation; reuse suitable existing work instead of fragmenting it. For future-time, recurring or condition-monitoring requests such as notify me when Wework releases a new version, create a native scheduled arrangement after the required preparation and confirmation. Do not substitute a one-time thread or a permanently running subagent for a durable schedule. Keep internal subagent execution out of the user-facing activity inventory; independently tracked work and arrangements are different entities. When related task evidence or a separately tracked Runtime task is needed, first discover the wework_stand_in task tools with tool search if needed, then use the general list_tasks and read_task conversation tools to find related work and evidence. These tools include permitted identity conversations as well as ordinary tasks, support pagination and optional time bounds, and are available read-only to delegated workers. Follow every relevant cursor; never replace actual reads with a statement that a task was created. Identity conversations are readable evidence, not targets for continue_task. When a separately tracked thread is appropriate, use continue_task for suitable existing work, or create_task with a stable requestId. create_task creates an independent Runtime task, not a native subagent; never relabel one as the other. Saved stand-in source subscriptions and installed execution plugins are distinct capability paths. list_connection_providers and get_profile describe the source subscriptions, not all installed skills or execution-plugin accounts. An empty source directory, missing saved subscription or absent provider read capability does not prove an execution plugin is unavailable or unauthenticated. For requested one-time reads, use relevant already-installed skills or tools directly, or use a bounded permitted native subagent when useful, under the existing native permissions and account authorization; do not require creating a new subscription first or ask the user to reconfirm their requested business scope. For the host read_source path, read get_profile and pass only the exact selected readSources to create_task. That snapshot grants no other source access; workers do not inherit later added subscriptions and cannot configure them. Discovering a skill is not proof of account access or actual content read. If an actual operation requires authentication, preserve its exact identity and use native authorization; if access is denied, stop that operation without using another path to evade it. Continuing a task preserves its existing read scope; create a new task when a different source selection is required. When delegating to either a subagent or an independent task, pass the complete user requirements, necessary source context, deliverables and authorization limits; do not reduce or omit requirements. Delegation is not an execution grant: every participant remains subject to the same native permission, connector-authentication, source-scope and exact-operation confirmation boundaries. Never use delegation to bypass a denial, supply credentials, expand a captured readSources selection or let a worker reconfigure sources. If native subagent tools are unavailable or not permitted, do the work directly when authorized, or use an independently tracked task only when its lifecycle is justified; do not invent a subagent. Concrete research, shell execution and deliverable writing may run in this identity conversation when that is the appropriate authorized mode. After dispatch, report the actual task and its current state; use read_task to retrieve progress and results, and never claim completion without evidence. Profile proposals and schedule creation or cancellation belong directly in this identity conversation. Use its scheduling tools and native confirmations yourself; worker tasks do not receive these identity configuration tools. Report preparation may run directly, in a permitted subagent or in an independently tracked task as appropriate; scheduled execution uses the host arrangement. Never delegate creation of the arrangement to a worker that lacks the identity scheduling tools. After dispatching a separately tracked Runtime task, provide a concise acknowledgement and end this turn when appropriate; the host completion event will wake this conversation to deliver the actual result. Do not loop over sleep and read_task merely to wait for a worker. Read progress on an explicit user request, or retrieve a result when completion evidence is already available. An initial status is not the final delivery; the completed useful outcome must still return to this original conversation. Keep routine tool, reasoning and subagent progress internal. Normally communicate acceptance and the final useful result, plus material failures, required questions or native approvals. Never claim a schedule was saved, a notification was enabled or work completed without a successful corresponding tool result; do not invent notification-configuration prerequisites or failure explanations.");
+        }
+        if (origin["type"] == "stand_in_identity"
+            || origin["type"] == "issue_dispatch"
+            || (origin["workId"].is_string()
+                && matches!(
+                    origin["type"].as_str(),
+                    Some("dingtalk_work" | "connection_work")
+                )))
+            && role["enabled"] == true
+            && role["selfLearningEnabled"] == true
+            && runs_here
+        {
+            use sha2::{Digest, Sha256};
+            let prompt = role["prompt"].as_str().unwrap_or_default();
+            let issue_source = (origin["type"] == "issue_dispatch")
+                .then(|| {
+                    use crate::task_runtime::personal_stand_in::{
+                        issue_training_source, stand_in_identities,
+                    };
+                    let identity = stand_in_identities(&settings)
+                        .into_iter()
+                        .find(|item| item["id"] == role_id.unwrap_or("@primary"))?;
+                    issue_training_source(
+                        &identity,
+                        origin["cloudProjectId"].as_str()?,
+                        origin["projectStore"].as_str()?,
+                        origin["loopItemId"].as_str()?,
+                    )
+                })
+                .flatten();
+            request.extra.insert(
+                "standInDeliveryContext".into(),
+                json!({"ghostVersion":format!("{:x}", Sha256::digest(prompt.as_bytes())), "roleDeviceId":role_device,
+                    "issueSource":issue_source}),
+            );
         }
         let additional = request
             .extra
@@ -443,6 +541,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         for (kind, role, primary) in [
             ("stand_in_identity", Value::Null, true),
             ("stand_in_identity", json!("@primary"), true),
@@ -543,7 +645,9 @@ mod tests {
         let wire = &transport["additionalContext"];
         assert!(wire.get("wework.stand-in").is_none());
         assert!(wire.get("wework.execution-policy").is_none());
-        assert_eq!(wire.as_object().unwrap().len(), 2);
+        assert_eq!(wire.as_object().unwrap().len(), 3);
+        assert_eq!(wire["wework.execution"]["kind"], "application");
+        assert_eq!(wire["wework.host-policy.z-manifest"]["kind"], "application");
         assert_eq!(wire["wework.stand-in.memories"]["kind"], "untrusted");
         let full = transport["developerInstructions"].as_str().unwrap();
         assert!(
@@ -551,6 +655,46 @@ mod tests {
             "The full role must reach native policy without loss"
         );
         assert!(full.contains(EXECUTION_POLICY));
+    }
+
+    #[test]
+    fn sending_turn_uses_its_role_prompt_and_clears_attribution_when_learning_stops() {
+        use sha2::{Digest, Sha256};
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"account",
+            "kind":"group","id":"group","name":"Group","policy":{"automatic":true,"askBeforeAct":true}});
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
+        settings["roles"][0]["connections"] = json!([source]);
+        settings["roles"][0]["enabled"] = json!(true);
+        settings["roles"][0]["selfLearningEnabled"] = json!(true);
+        settings["roles"][0]["prompt"] = json!("Confirm receipt");
+        let mut saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        store
+            .ensure_coordinated_work(7, "default", "work", &source, "Work")
+            .unwrap();
+        let mut request: ExecutionRequest = serde_json::from_value(json!({"origin":{
+            "type":"connection_work","workId":"work","standInId":"default","deviceId":"mac","userId":7
+        }})).unwrap();
+        handler.refresh_stand_in_context(&mut request).unwrap();
+        let version = format!("{:x}", Sha256::digest(b"Confirm receipt"));
+        assert_eq!(
+            request.extra["standInDeliveryContext"]["ghostVersion"],
+            version
+        );
+        assert!(
+            request.extra["additionalContext"]["wework.stand-in"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("Confirm receipt")
+        );
+        saved["roles"][0]["selfLearningEnabled"] = json!(false);
+        store.save_personal_stand_in(7, "mac", saved).unwrap();
+        handler.refresh_stand_in_context(&mut request).unwrap();
+        assert!(!request.extra.contains_key("standInDeliveryContext"));
     }
 
     #[test]

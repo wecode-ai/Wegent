@@ -3,6 +3,7 @@ import {
   clearLocalModelConfigs,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { getLocalRuntimeSourceIdentity } from '@/lib/local-runtime-sidebar-identity'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   createLocalAppServices,
@@ -291,26 +292,32 @@ test('work reads use their proven owner without a default-device lookup and reje
       runtimeInstanceId: 'native-instance',
       provenance: 'local-ipc' as const,
     }
+    const readIdentity = vi
+      .fn()
+      .mockResolvedValueOnce(identity)
+      .mockResolvedValueOnce(
+        replaced ? { ...identity, runtimeInstanceId: 'replacement-instance' } : identity
+      )
     const api = createRuntimeWorkApiFromIpc(
       vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
       () => new Promise<string>(() => {}),
       {
-        getLocalRuntimeSidebarIdentity: vi
-          .fn()
-          .mockResolvedValueOnce(identity)
-          .mockResolvedValueOnce(
-            replaced ? { ...identity, runtimeInstanceId: 'replacement-instance' } : identity
-          ),
+        getLocalRuntimeSidebarIdentity: readIdentity,
       }
     )
     if (replaced) {
       await expect(api.listRuntimeWork()).rejects.toThrow('local-sidebar-runtime-changed')
     } else {
-      await expect(api.listRuntimeWork()).resolves.toMatchObject({
+      const work = await api.listRuntimeWork()
+      expect(work).toMatchObject({
         projects: [],
         chats: [],
         totalTasks: 0,
       })
+      expect(getLocalRuntimeSourceIdentity(work)).toEqual(identity)
+      expect(getLocalRuntimeSourceIdentity({ ...work })).toBeUndefined()
+      expect(JSON.stringify(work)).not.toContain(identity.runtimeInstanceId)
     }
+    expect(readIdentity).toHaveBeenCalledTimes(2)
   }
 })

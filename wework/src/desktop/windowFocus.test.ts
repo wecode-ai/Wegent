@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isMainWindowFocused, subscribeMainWindowFocus } from './windowFocus'
+import { pollWorkbenchPresentation } from './workbenchWindowActivity'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(),
@@ -37,4 +38,45 @@ describe('windowFocus', () => {
     unsubscribe()
     expect(unsubscribeNative).toHaveBeenCalledOnce()
   })
+})
+
+test('window presentation polls slow down, pause, and refresh as soon as focus returns', async () => {
+  vi.useFakeTimers()
+  const initial = Promise.withResolvers<unknown>()
+  let notify: (activity: unknown) => void = () => undefined
+  window.weworkElectronLifecycle = {
+    onSystemResume: () => () => undefined,
+    getWorkbenchActivity: () => initial.promise,
+    onWorkbenchActivityChanged: listener => {
+      notify = listener
+      return () => undefined
+    },
+  }
+  const refresh = vi.fn()
+  const stop = pollWorkbenchPresentation(refresh, 1000, 5000)
+  try {
+    vi.advanceTimersByTime(1000)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    notify('background')
+    vi.advanceTimersByTime(4999)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1)
+    expect(refresh).toHaveBeenCalledTimes(2)
+
+    notify('hidden')
+    initial.resolve('foreground')
+    await initial.promise
+    vi.advanceTimersByTime(10_000)
+    expect(refresh).toHaveBeenCalledTimes(2)
+
+    notify('foreground')
+    expect(refresh).toHaveBeenCalledTimes(3)
+    stop()
+    vi.advanceTimersByTime(1000)
+    expect(refresh).toHaveBeenCalledTimes(3)
+  } finally {
+    stop()
+    delete window.weworkElectronLifecycle
+    vi.useRealTimers()
+  }
 })

@@ -71,8 +71,19 @@ export function reduceRuntimeTaskLifecycle(
         expectedExecutorRunning: null,
       }
     case 'executor_snapshot_received': {
+      // Task lists can omit the origin even when their execution state is newer.
+      const previousOrigin = state.task?.runtimeHandle?.origin
+      const task =
+        state.task?.taskId === event.task.taskId &&
+        previousOrigin != null &&
+        !Object.hasOwn(event.task.runtimeHandle ?? {}, 'origin')
+          ? {
+              ...event.task,
+              runtimeHandle: { ...event.task.runtimeHandle, origin: previousOrigin },
+            }
+          : event.task
       if (event.task.executionState || state.task?.executionState) {
-        return reduceNativeSnapshot(state, event)
+        return reduceNativeSnapshot(state, { ...event, task })
       }
       const goalExecutionActive = isRuntimeGoalExecutionActive(event.task)
       const snapshotRunning =
@@ -180,7 +191,7 @@ export function reduceRuntimeTaskLifecycle(
       const nextState: RuntimeTaskLifecycleState = {
         ...state,
         address: mergeAddress(state.address, event.address),
-        task: event.task,
+        task,
         executionPhase,
         turnPhase,
         turnOutcome: restoredTurnId ? null : state.turnOutcome,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
@@ -9,7 +10,9 @@ import {
 import { waitForWindowState } from '../modules/native-window-state.mjs'
 import { verifyRuntimeWorkRefreshBurst } from '../modules/runtime-work-refresh-burst.mjs'
 import { verifyPendingInventoryProjection } from '../modules/idle-executor-pending-inventory.mjs'
+import { verifyStandInDeviceDiscoveryBurst } from '../modules/stand-in-device-discovery-burst.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   assertIdleExecutorTraffic,
   summarizeExecutorTraffic,
@@ -33,6 +36,17 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         snapshot.workbench.runtimeWorkSummary?.runningTaskCount === 0 &&
         snapshot.workbench.devices?.length > 0
       await waitForWorkbenchDebugState(control, empty, 'The fixture must start without tasks')
+      // Keep both bootstrap reconciliations from overlapping across the reload.
+      const executorLog = join(resultDir, 'executor.log')
+      await waitForValue(
+        async () =>
+          (await readFile(executorLog, 'utf8')).includes(
+            'runtime work cached list reconciliation finished'
+          ),
+        Boolean,
+        'Executor did not finish reconciling the initial task catalog',
+        uiTimeoutMs
+      )
       const client = await createDevtoolsClient(resultDir, uiTimeoutMs)
       const targets = await client({ action: 'targets' })
       const main = targets.find(
@@ -79,6 +93,19 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           rows.some(row => row.method === 'runtime.worktrees.capabilities' && row.status === 200),
           'Initial worktree capability discovery never completed'
         )
+        await waitForValue(
+          read,
+          traffic =>
+            traffic.some(
+              row =>
+                row.method === 'runtime.tasks.list' &&
+                !row.pendingOnly &&
+                !row.preferCached &&
+                row.status === 200
+            ),
+          'The reloaded renderer did not read the reconciled task catalog',
+          uiTimeoutMs
+        )
         const observe = async name => {
           const start = Date.now()
           // Negative observation window, not a sleep used to infer UI readiness.
@@ -103,6 +130,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         assertIdleExecutorTraffic(rows, windows)
         await verifyRuntimeWorkRefreshBurst(control, read)
         await verifyPendingInventoryProjection(control, { executorHome, resultDir })
+        await verifyStandInDeviceDiscoveryBurst(control, read)
         return { idleExecutorRequests: true, observationMs: OBSERVATION_MS, windows }
       } finally {
         await client({ action: 'detach', target })

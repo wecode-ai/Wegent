@@ -91,34 +91,43 @@ export function RequestUserInputAnswerEditor({
     },
     [attachments.source, bindEditor, initialAttachments]
   )
-  const notifyReadiness = (transferIsReady = transferReady) => {
-    if (!mountedRef.current) return
-    const state = attachments.source.getSnapshot()
-    onReadyChange(
-      transferIsReady &&
-        state.uploadingFiles.size === 0 &&
-        state.attachments.every(attachment => attachment.status === 'ready') &&
-        state.errors.size === 0
-    )
-  }
-  const notifyAttachments = () => {
-    if (!mountedRef.current) return
+  const notifyReadiness = useCallback(
+    (transferIsReady = transferReady) => {
+      const state = attachments.source.getSnapshot()
+      onReadyChange(
+        transferIsReady &&
+          state.uploadingFiles.size === 0 &&
+          state.attachments.every(attachment => attachment.status === 'ready') &&
+          state.errors.size === 0
+      )
+    },
+    [attachments.source, onReadyChange, transferReady]
+  )
+  const notifyAttachments = useCallback(() => {
     onAttachmentsChange(attachments.source.getSnapshot().attachments)
-  }
+  }, [attachments.source, onAttachmentsChange])
+  const removeAttachment = useCallback(
+    (id: number) => {
+      void attachments.removeAttachment(id)
+      notifyAttachments()
+      notifyReadiness()
+    },
+    [attachments, notifyAttachments, notifyReadiness]
+  )
+  const dismissAttachmentError = useCallback(
+    (filename: string) => {
+      attachments.dismissAttachmentError(filename)
+      notifyReadiness()
+    },
+    [attachments, notifyReadiness]
+  )
 
   return (
     <div ref={bindAndSync} className="min-w-0 flex-1">
       {services?.renderAttachments?.({
         state: attachments.state,
-        remove: id => {
-          void attachments.removeAttachment(id)
-          notifyAttachments()
-          notifyReadiness()
-        },
-        dismissError: filename => {
-          attachments.dismissAttachmentError(filename)
-          notifyReadiness()
-        },
+        remove: removeAttachment,
+        dismissError: dismissAttachmentError,
       })}
       {!services?.renderAttachments &&
         [...attachments.errors].map(([filename, error]) => (
@@ -128,10 +137,7 @@ export function RequestUserInputAnswerEditor({
               variant="unstyled"
               type="button"
               data-testid={`request-user-input-dismiss-file-error-${questionId}-${filename}`}
-              onClick={() => {
-                attachments.dismissAttachmentError(filename)
-                notifyReadiness()
-              }}
+              onClick={() => dismissAttachmentError(filename)}
               className="ml-2 rounded px-1 underline"
             >
               {translate('common.close')}

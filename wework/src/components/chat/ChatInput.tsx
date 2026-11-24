@@ -1,5 +1,6 @@
 import type { CloudProject } from '@/api/deliveries'
 import { Button } from '@/components/ui/button'
+import { X } from 'lucide-react'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
 import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
@@ -148,12 +149,9 @@ export interface ProjectWorkControls {
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
   branchName?: string
   branchLoading?: boolean
-  onRefreshBranch?: () => Promise<void>
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-  onGenerateBranchName?: (sourceText: string) => Promise<string>
-  branchNameSource?: string
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
   // When false, the project trigger renders a static folder icon instead of the
@@ -183,6 +181,7 @@ export interface ChatInputProps {
   requireText?: boolean
   allowEmptySubmit?: boolean
   error?: string | null
+  onDismissError?: () => void
   disabledReason?: string
   placeholder?: string
   inputTestId?: string
@@ -230,6 +229,7 @@ export interface ChatInputProps {
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
   contextHeader?: ReactNode
@@ -326,6 +326,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     requireText = false,
     allowEmptySubmit = false,
     error,
+    onDismissError,
     disabledReason,
     placeholder,
     inputTestId,
@@ -369,6 +370,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     onSelectExternalMention,
     onSelectCloudProject,
     isStreaming = false,
+    showPauseButton,
     onPause,
     showWorkspaceMenu,
     contextHeader,
@@ -647,7 +649,27 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     followUpBehavior,
     isStreaming,
   }
-  const errorBanner = <ComposerErrorBanner error={error} />
+  const errorBanner = (
+    <ComposerErrorBanner
+      error={error}
+      action={
+        onDismissError && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 text-current md:h-7 md:w-7"
+            aria-label={t('workbench.dismiss_composer_error')}
+            title={t('workbench.dismiss_composer_error')}
+            data-testid="dismiss-chat-input-error"
+            onClick={onDismissError}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        )
+      }
+    />
+  )
   const quotaWaitStatus = (
     <QuotaWaitStatus
       onCancel={onPause}
@@ -800,6 +822,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             onListLocalSkills={controls.listLocalSkills}
             onListLocalApps={controls.listLocalApps}
             isStreaming={isStreaming}
+            showPauseButton={showPauseButton}
             onPause={onPause}
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
@@ -928,6 +951,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
           modelSelectorOverride={modelSelectorOverride}
           isStreaming={isStreaming}
+          showPauseButton={showPauseButton}
           onPause={onPause}
           projectPhrases={projectQuickPhrases}
         />

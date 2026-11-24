@@ -22,6 +22,26 @@ import { isImeComposingEvent } from '@wegent/chat-core/ime'
 export { focusEditorTarget } from './editorFocus'
 export type { EditorFocusTarget, EditorFocusGuard } from './editorFocus'
 
+/** Keep a document-level style flag for the lifetime of each mounted owner. */
+export function createBodyFlagRef(attribute: string) {
+  const ownersByBody = new WeakMap<HTMLElement, number>()
+  return (element: HTMLElement | null) => {
+    if (!element) return
+    const body = element.ownerDocument.body
+    const owners = ownersByBody.get(body) ?? 0
+    ownersByBody.set(body, owners + 1)
+    if (owners === 0) body.setAttribute(attribute, '')
+    return () => {
+      const remaining = (ownersByBody.get(body) ?? 1) - 1
+      if (remaining > 0) ownersByBody.set(body, remaining)
+      else {
+        ownersByBody.delete(body)
+        body.removeAttribute(attribute)
+      }
+    }
+  }
+}
+
 export interface DomEventOptions extends AddEventListenerOptions {
   enabled?: boolean
 }
@@ -542,11 +562,30 @@ function sameGeometry(first: GeometrySnapshot | null, second: GeometrySnapshot |
   )
 }
 
+/** Width-only consumers have no dependency on scrolling or subtree layout. */
+export function useElementWidth<T extends HTMLElement>(enabled = true) {
+  const [width, setWidth] = useState(0)
+  const attach = useCallback(
+    (element: T | null) => {
+      if (!enabled || !element) return
+      setWidth(element.getBoundingClientRect().width)
+      const observer = new ResizeObserver(([entry]) => {
+        setWidth(entry.borderBoxSize[0]?.inlineSize ?? entry.contentRect.width)
+      })
+      observer.observe(element, { box: 'border-box' })
+      return () => observer.disconnect()
+    },
+    [enabled]
+  )
+  return [enabled ? width : 0, attach] as const
+}
+
 function observeElementGeometry(
   nodes: readonly (HTMLElement | null)[],
   publish: (value: GeometrySnapshot) => void
 ) {
   let active = true
+  let frame: number | null = null
   const update = () => {
     if (!active) return
     publish({
@@ -569,16 +608,33 @@ function observeElementGeometry(
   }
   const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
   for (const node of new Set(nodes)) if (node) observer?.observe(node)
+  const onScroll = (event: Event) => {
+    const target = event.target
+    if (
+      target === window ||
+      (target instanceof Node && nodes.some(node => node !== null && target.contains(node)))
+    ) {
+      update()
+    }
+  }
   window.addEventListener('resize', update)
-  window.addEventListener('scroll', update, true)
+  window.addEventListener('scroll', onScroll, true)
   return {
     nodes,
     update,
+    scheduleUpdate() {
+      if (frame !== null) return
+      frame = window.requestAnimationFrame(() => {
+        frame = null
+        update()
+      })
+    },
     stop() {
       active = false
+      if (frame !== null) window.cancelAnimationFrame(frame)
       observer?.disconnect()
       window.removeEventListener('resize', update)
-      window.removeEventListener('scroll', update, true)
+      window.removeEventListener('scroll', onScroll, true)
     },
   }
 }
@@ -611,8 +667,11 @@ export function useElementGeometry(
     ) {
       binding.current?.stop()
       binding.current = observeElementGeometry(nodes, publish)
+      binding.current.update()
+    } else {
+      // Repeated commits must not force layout between unrelated DOM writes.
+      binding.current.scheduleUpdate()
     }
-    binding.current.update()
   })
   useLayoutEffect(
     () => () => {
@@ -667,7 +726,11 @@ function observeElementTypography(
   const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
   resize?.observe(element)
   const mutation = typeof MutationObserver === 'undefined' ? null : new MutationObserver(update)
-  mutation?.observe(root, { attributes: true, attributeFilter: ['style', 'class'] })
+  const themeScope = element.closest('.collaboration-theme')
+  const styleChanges = { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] }
+  mutation?.observe(root, styleChanges)
+  mutation?.observe(element, styleChanges)
+  if (themeScope) mutation?.observe(themeScope, styleChanges)
   const fontsLoaded = () => {
     if (!active) return
     advanceFontRevision()
@@ -675,10 +738,10 @@ function observeElementTypography(
     queueMicrotask(update)
   }
   fonts?.addEventListener('loadingdone', fontsLoaded)
+  update()
   return {
     element,
     propertyKey: JSON.stringify(propertyNames),
-    update,
     stop() {
       active = false
       resize?.disconnect()
@@ -726,7 +789,6 @@ export function useElementTypography(
         publish
       )
     }
-    binding.current.update()
   })
   useLayoutEffect(
     () => () => {

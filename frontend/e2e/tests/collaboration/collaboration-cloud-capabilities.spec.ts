@@ -357,9 +357,12 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.goto('/collaboration')
       await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
 
+      const management = page.getByTestId('collaboration-management-toggle')
       for (const resource of ['agents', 'teams', 'devices'] as const) {
-        await expect(page.getByTestId(`collaboration-nav-${resource}`)).toBeVisible()
-        await page.getByTestId(`collaboration-nav-${resource}`).click()
+        if ((await management.getAttribute('aria-expanded')) !== 'true') await management.click()
+        const entry = page.getByTestId(`collaboration-primary-${resource}`)
+        await expect(entry).toBeVisible()
+        await entry.click()
         await expect(page).toHaveURL(`/collaboration/${resource}`)
         await expect(page.getByTestId(`collaboration-${resource}-page`)).toBeVisible()
       }
@@ -888,6 +891,9 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
 
       await page.getByTestId('collaboration-project-settings-members').click()
+      await expect(page).toHaveURL(url => url.searchParams.get('section') === 'members', {
+        timeout: 10_000,
+      })
       await page.getByTestId('cloud-project-members-toggle').click()
       await page.getByTestId('cloud-member-search').fill(REGULAR_USER.username)
       await chooseCollaborationOption(page, page.getByTestId('cloud-member-role'), {

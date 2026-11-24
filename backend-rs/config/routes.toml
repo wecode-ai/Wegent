@@ -389,6 +389,9 @@ path = "/api/plugins/marketplace/:plugin_id/owner"
 methods = ["GET"]
 path = "/api/models/unified"
 [[routes]]
+methods = ["GET", "PUT"]
+path = "/api/models/primary-group-icons"
+[[routes]]
 methods = ["GET", "POST"]
 path = "/api/models/decisions"
 [[routes]]
@@ -1239,6 +1242,21 @@ path = "/api/plugins/native-auth/exchange"
 methods = ["GET", "POST"]
 path = "/api/v1/personal-issues"
 [[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/share"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/me/issue-assignment-count"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/personal-issues/shared-from"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/personal-issues/:issue_id/source"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/personal-issues/:issue_id/attachments/:attachment_id"
+[[routes]]
 methods = ["GET", "PATCH", "DELETE"]
 path = "/api/v1/personal-issues/:issue_id"
 [[routes]]
@@ -1247,6 +1265,12 @@ path = "/api/v1/personal-issues/:issue_id/comments"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/personal-issues/:issue_id/project"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/:issue_id/assistant-binding"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/:issue_id/assistant-replies"
 
 [[routes]]
 methods = ["GET", "POST"]

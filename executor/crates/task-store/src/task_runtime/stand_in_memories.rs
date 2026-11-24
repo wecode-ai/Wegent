@@ -13,20 +13,27 @@ mod suppression_tests;
 
 #[path = "stand_in_memory_rules.rs"]
 mod rules;
-use rules::suppress_memory;
+use rules::{forgotten_evidence_key, forgotten_key, memory_forgotten_key, suppress_memory};
 
-fn forgotten_key(user: i64, scope: &Value, content: &str) -> String {
-    // Scope key order must not change the identity of a forgotten fact.
-    let scope: std::collections::BTreeMap<_, _> = scope.as_object().into_iter().flatten().collect();
-    let fingerprint = Sha256::digest(json!([user, scope, content.trim()]).to_string());
-    format!("stand-in-forgotten:{fingerprint:x}")
+#[path = "stand_in_training_cases.rs"]
+mod training_cases;
+use training_cases::{case_binding, case_visible, recent_lesson, reserve_memory_slot};
+pub(super) use training_cases::{local_issue_visible, training_cases_on};
+
+fn validate_memory_content(content: Option<&str>) -> Result<&str, TaskRuntimeError> {
+    content
+        .map(str::trim)
+        .filter(|text| !text.is_empty() && text.len() <= 4000)
+        .ok_or_else(|| TaskRuntimeError::Invalid("Memory content must contain 1–4000 bytes".into()))
 }
 
-fn forgotten_evidence_key(user: i64, evidence: &Value) -> Option<String> {
-    let task = evidence["taskId"].as_str()?;
-    let message = evidence["messageId"].as_str()?;
-    let fingerprint = Sha256::digest(json!([user, task, message]).to_string());
-    Some(format!("stand-in-forgotten-evidence:{fingerprint:x}"))
+fn validate_memory_evidence(evidence: Option<&Value>) -> Result<(), TaskRuntimeError> {
+    if evidence.is_some_and(|value| value.to_string().len() > 8000) {
+        return Err(TaskRuntimeError::Invalid(
+            "Memory evidence exceeds 8000 bytes".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl LocalTaskStore {
@@ -48,7 +55,20 @@ impl LocalTaskStore {
         source: Option<&Value>,
         rows: Vec<Value>,
     ) -> Result<Vec<Value>, TaskRuntimeError> {
-        let mut settings = self.personal_stand_in(user, device)?;
+        // A role may be addressed by its registered backend id; recall must never rebind the profile.
+        let connection = self.connection()?;
+        let mut settings = read_personal(&connection, user, device)?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let case_role = rows
+            .iter()
+            .any(|row| case_binding(row).is_object())
+            .then(|| {
+                stand_in_identities(&settings).into_iter().find(|identity| {
+                    identity["id"] == role.unwrap_or("@primary")
+                        && identity["executionDeviceId"] == device
+                })
+            })
+            .flatten();
         let primary = role.map_or(true, |id| id == "@primary") && source.is_none();
         if !primary {
             if let Some(role) = role.filter(|id| *id != "@primary") {
@@ -74,6 +94,13 @@ impl LocalTaskStore {
         };
         Ok(candidates
             .into_iter()
+            .filter(|row| {
+                !case_binding(row).is_object()
+                    || case_role.as_ref().is_some_and(|identity| {
+                        case_visible(&connection, identity, row)
+                            && (row["kind"] == "forgetting_rule" || recent_lesson(row, now_ms))
+                    })
+            })
             .filter(|row| valid_scope(&settings, &row["scope"]))
             .filter(|row| {
                 let scope = &row["scope"];
@@ -83,6 +110,20 @@ impl LocalTaskStore {
                 scope["kind"] != "project_coordinator"
                     || source == Some(scope)
                     || project_scope_connected(&settings, scope)
+            })
+            .map(|mut row| {
+                if case_binding(&row).is_object() {
+                    if case_binding(&row)["kind"] == "observation" {
+                        row["attribution"] = json!("source_record_excerpt");
+                        row["content"] = row["evidence"]["excerpt"].clone();
+                        row["observedAt"] = row["evidence"]["observedAt"].clone();
+                    }
+                    let fields = row.as_object_mut().unwrap();
+                    fields.remove("evidence");
+                    fields.remove("sourceTaskId");
+                    fields.remove("trainingScope");
+                }
+                row
             })
             .collect())
     }
@@ -216,13 +257,7 @@ impl LocalTaskStore {
 
     pub fn stand_in_memories(&self, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_memory' AND json_extract(metadata,'$.userId')=?1 ORDER BY updated_at DESC,id")?;
-        let rows = statement.query_map(params![user], |row| row.get::<_, String>(0))?;
-        rows.map(|raw| {
-            serde_json::from_str(&raw?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-        })
-        .collect()
+        memory_rows_on(&connection, user)
     }
 
     pub fn save_stand_in_memory(
@@ -231,13 +266,27 @@ impl LocalTaskStore {
         device: &str,
         input: Value,
     ) -> Result<Value, TaskRuntimeError> {
-        let content = input["content"]
-            .as_str()
-            .map(str::trim)
-            .filter(|text| !text.is_empty() && text.len() <= 4000)
-            .ok_or_else(|| {
-                TaskRuntimeError::Invalid("Memory content must contain 1–4000 bytes".into())
-            })?;
+        self.save_memory_with_evidence(user, device, input, false)
+    }
+
+    /// Store a case whose source, speaker, sequence and text the runtime verified.
+    pub fn save_verified_training_memory(
+        &self,
+        user: i64,
+        device: &str,
+        input: Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.save_memory_with_evidence(user, device, input, true)
+    }
+
+    fn save_memory_with_evidence(
+        &self,
+        user: i64,
+        device: &str,
+        input: Value,
+        training: bool,
+    ) -> Result<Value, TaskRuntimeError> {
+        let content = validate_memory_content(input["content"].as_str())?;
         let scope = &input["scope"];
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -247,14 +296,51 @@ impl LocalTaskStore {
                 "Memory scope is not connected to this stand-in".into(),
             ));
         }
+        let case = &input["evidence"]["trainingCase"];
         let id = input["id"].as_str().unwrap_or_default();
-        let mut key = if id.is_empty() {
+        let mut key = if training {
+            training_cases::verified_memory_key(&connection, &settings, user, device, &input)?
+        } else if id.is_empty() {
             format!("stand-in-memory:{}", Uuid::new_v4())
         } else {
             id.to_owned()
         };
+        if training && training_cases::is_cloud_issue(&case["source"]) {
+            // The remote ACL cannot be revalidated by synchronous memory recall or Ghost evaluation.
+            // Retain only native references for the separately authorized rework comparison.
+            super::stand_in_rework::link_owner_correction(
+                &connection,
+                user,
+                &json!({"id":key,"evidence":input["evidence"]}),
+            )?;
+            connection.commit()?;
+            return Ok(json!({"saved":false,"status":"reviewed","textRetained":false}));
+        }
         let mut previous =
             get_item_from(&connection, &key, "stand_in_memory")?.map(|row| row.metadata);
+        if training {
+            if let Some(saved) = &previous {
+                return if saved["evidence"]["trainingCase"].is_object() {
+                    Ok(saved.clone())
+                } else {
+                    Err(TaskRuntimeError::MemorySuppressed)
+                };
+            }
+        } else if previous
+            .as_ref()
+            .is_some_and(|row| row["evidence"]["trainingCase"].is_object())
+            && input["restoreForgotten"] != true
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Edit a learned case from memory management".into(),
+            ));
+        } else if case.is_object()
+            && previous.as_ref().map(|row| &row["evidence"]) != Some(&input["evidence"])
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Training evidence must be verified by the host".into(),
+            ));
+        }
         if !id.is_empty() && previous.as_ref().map_or(true, |row| row["userId"] != user) {
             return Err(TaskRuntimeError::TaskNotFound);
         }
@@ -265,7 +351,17 @@ impl LocalTaskStore {
         if input["version"].as_i64().unwrap_or(0) != version {
             return Err(TaskRuntimeError::VersionConflict);
         }
-        let forgotten = forgotten_key(user, scope, content);
+        let forgotten = memory_forgotten_key(user, scope, content, case);
+        if training
+            && get_item_from(
+                &connection,
+                &forgotten_key(user, scope, content),
+                "stand_in_memory_tombstone",
+            )?
+            .is_some()
+        {
+            return Err(TaskRuntimeError::MemorySuppressed);
+        }
         if input["restoreForgotten"] == true {
             let id = forgotten.replace("stand-in-forgotten:", "stand-in-forgetting-rule:");
             if let Some(rule) = get_item_from(&connection, &id, "stand_in_memory_rule")? {
@@ -289,7 +385,7 @@ impl LocalTaskStore {
                 connection.execute("DELETE FROM loop_items WHERE id=?1 AND resource_type='stand_in_memory_tombstone'", params![key])?;
             }
         }
-        if previous.is_none() {
+        if !training && previous.is_none() {
             // Repeated extraction of the same fact must not grow the memory store.
             // Compare parsed scopes: JSON object key order is not scope identity.
             let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_memory' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.content')=?2 ORDER BY updated_at DESC,id")?;
@@ -298,7 +394,8 @@ impl LocalTaskStore {
             for raw in rows {
                 let existing: Value = serde_json::from_str(&raw?)
                     .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
-                if existing["scope"] == *scope {
+                if existing["scope"] == *scope && !existing["evidence"]["trainingCase"].is_object()
+                {
                     if !existing["evidence"].is_null() || input["evidence"].is_null() {
                         return Ok(existing);
                     }
@@ -309,12 +406,6 @@ impl LocalTaskStore {
                     previous = Some(existing);
                     break;
                 }
-            }
-            let count: i64 = connection.query_row("SELECT count(*) FROM loop_items WHERE resource_type='stand_in_memory' AND json_extract(metadata,'$.userId')=?1", params![user], |row| row.get(0))?;
-            if previous.is_none() && count >= 1000 {
-                return Err(TaskRuntimeError::Invalid(
-                    "Memory limit reached; remove unused memories first".into(),
-                ));
             }
         }
         let timestamp = now();
@@ -344,16 +435,23 @@ impl LocalTaskStore {
         } else if changed && !input["evidence"].is_object() {
             evidence = None;
         }
-        if evidence
+        validate_memory_evidence(evidence.as_ref())?;
+        let case = evidence
             .as_ref()
-            .is_some_and(|value| value.to_string().len() > 8000)
+            .map(|evidence| &evidence["trainingCase"])
+            .filter(|case| case.is_object());
+        if previous
+            .as_ref()
+            .map(|row| row["evidence"]["trainingCase"].is_object())
+            != Some(case.is_some())
         {
-            return Err(TaskRuntimeError::Invalid(
-                "Memory evidence exceeds 8000 bytes".into(),
-            ));
+            reserve_memory_slot(&connection, user, case)?;
         }
         let row = json!({"id":key,"userId":user,"scope":scope,"content":content,"version":version+1,"sourceTaskId":source,"evidence":evidence,"createdAt":previous.as_ref().map(|row|row["createdAt"].clone()).unwrap_or(json!(timestamp)),"updatedAt":timestamp});
         connection.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_memory',?2,?3,?3) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at", params![key,row.to_string(),timestamp])?;
+        if training {
+            super::stand_in_rework::link_owner_correction(&connection, user, &row)?;
+        }
         connection.commit()?;
         Ok(row)
     }
@@ -377,6 +475,15 @@ impl LocalTaskStore {
         connection.commit()?;
         Ok(())
     }
+}
+
+fn memory_rows_on(connection: &Connection, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
+    let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_memory' AND json_extract(metadata,'$.userId')=?1 ORDER BY updated_at DESC,id")?;
+    let rows = statement.query_map(params![user], |row| row.get::<_, String>(0))?;
+    rows.map(|raw| {
+        serde_json::from_str(&raw?).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+    })
+    .collect()
 }
 
 fn visible_memory_rows(

@@ -5,7 +5,6 @@ use crate::task_runtime::personal_stand_in::{
     source_collection_namespace, source_provider, stand_in_collection_connection,
     stand_in_identities,
 };
-use chrono::TimeZone;
 
 #[derive(Clone, Copy)]
 enum ConnectionSubscriber {
@@ -220,7 +219,10 @@ impl RuntimeWorkRpcHandler {
         {
             state = Value::Null;
         }
-        if collection_retry_pending(&state, version) {
+        // Older versions could leave this source waiting an hour on the same timed-out query.
+        let legacy_timeout = is_dingtalk_group_timeout(source, &state["error"]["code"])
+            && state["checkpoint"]["windowMinutes"].is_null();
+        if !legacy_timeout && collection_retry_pending(&state, version) {
             return Ok(());
         }
         let outcome = self
@@ -272,9 +274,25 @@ impl RuntimeWorkRpcHandler {
             )
         })?;
         validate_collection_version(store, user, &self.device_id, settings_version)?;
+        let event_count = messages.len();
         let page = (messages, json!({"checkpoint":checkpoint}));
-        self.collect_connection_page(store, user, source, roles, page)
-            .await
+        let next = self
+            .collect_connection_page(store, user, source, roles, page)
+            .await?;
+        if event_count > 0 {
+            log_executor_event(
+                "Stand-in source page collected",
+                &[
+                    ("provider", source_provider(source).to_owned()),
+                    (
+                        "kind",
+                        source["kind"].as_str().unwrap_or_default().to_owned(),
+                    ),
+                    ("event_count", event_count.to_string()),
+                ],
+            );
+        }
+        Ok(next)
     }
 
     async fn collect_connection_page(
@@ -306,18 +324,21 @@ impl RuntimeWorkRpcHandler {
                 .map_err(settings_error)?;
             message_time(&message["at"])?;
             {
-                let eligible: Vec<Value> = roles
-                    .iter()
-                    .filter(|role| {
-                        stand_in_collection_connection(role, source).is_some_and(|connection| {
-                            connection["policy"]["automatic"] == true
-                                && source_accepts_message(connection, &message)
+                for role in roles {
+                    let Some(grant) =
+                        stand_in_collection_connection(role, source).filter(|grant| {
+                            grant["policy"]["automatic"] == true
+                                && source_accepts_message(grant, &message)
                         })
-                    })
-                    .map(|role| role["id"].clone())
-                    .collect();
-                for role in eligible {
-                    let event = json!({"kind":"connection","source":source,"message":message,"roleIds":[role],"roleScoped":true});
+                    else {
+                        continue;
+                    };
+                    let role = &role["id"];
+                    // A shared poll starts at the earliest activation. Dispatch and
+                    // later receipt matching use this recipient's concrete grant.
+                    let scoped = concrete_role_grant(grant, source);
+                    let event = json!({"kind":"connection","source":scoped,"message":message,"roleIds":[role],
+                        "roleScoped":true,"roleEnabledAfter":grant["enabledAfter"]});
                     let event_identity = LocalTaskStore::canonical_connection_event_identity(
                         &event,
                     )
@@ -376,12 +397,7 @@ impl RuntimeWorkRpcHandler {
         let target = self.connection_session_target(store, user, role, source, message)?;
         let connection = stand_in_collection_connection(role, source)
             .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
-        let mut connection = connection.clone();
-        if connection["scope"] == "all" {
-            connection.as_object_mut().unwrap().remove("scope");
-            connection["id"] = source["id"].clone();
-            connection["name"] = source["name"].clone();
-        }
+        let connection = concrete_role_grant(connection, source);
         if let Some(id) = &target {
             store
                 .ensure_coordinated_work(
@@ -398,6 +414,16 @@ impl RuntimeWorkRpcHandler {
             .map_err(settings_error)?;
         Ok(())
     }
+}
+
+fn concrete_role_grant(grant: &Value, source: &Value) -> Value {
+    let mut scoped = grant.clone();
+    if scoped["scope"] == "all" {
+        scoped.as_object_mut().unwrap().remove("scope");
+        scoped["id"] = source["id"].clone();
+        scoped["name"] = source["name"].clone();
+    }
+    scoped
 }
 
 fn collection_sources(
@@ -460,6 +486,44 @@ fn collection_retry_pending(state: &Value, version: &Value) -> bool {
             .is_some_and(|at| at > chrono::Utc::now().timestamp_millis())
 }
 
+fn is_dingtalk_group_timeout(source: &Value, code: &Value) -> bool {
+    source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+        && source["kind"] == "group"
+        && source["collectionKey"] == "all-messages"
+        && code == "request_timeout"
+}
+
+fn recover_dingtalk_group_checkpoint(
+    source: &Value,
+    state: &mut Value,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    let checkpoint = &state["checkpoint"];
+    let after = checkpoint["after"]
+        .as_str()
+        .or_else(|| state["after"].as_str())
+        .unwrap_or_else(|| source["enabledAfter"].as_str().unwrap_or_default());
+    let window = checkpoint["windowMinutes"].as_u64().unwrap_or(15);
+    let (minutes, backlog_cutoff) = match window {
+        1 => (1, Some(now - chrono::Duration::minutes(1))),
+        5 => (1, Some(now - chrono::Duration::minutes(5))),
+        _ => (5, None),
+    };
+    if let Some(cutoff) = backlog_cutoff.filter(|cutoff| {
+        chrono::DateTime::parse_from_rfc3339(after).is_ok_and(|start| start < *cutoff)
+    }) {
+        log_executor_event(
+            "DingTalk group collection skipped timed-out backlog",
+            &[("from", after.to_owned()), ("until", cutoff.to_rfc3339())],
+        );
+        state["checkpoint"] =
+            json!({"after":cutoff.to_rfc3339(),"cursor":"0","windowMinutes":minutes});
+    } else if window != minutes {
+        // A cursor belongs to its original time window. Replay from the same start when shrinking.
+        state["checkpoint"] = json!({"after":after,"cursor":"0","windowMinutes":minutes});
+    }
+}
+
 fn save_collection_result(
     store: &LocalTaskStore,
     user: i64,
@@ -485,17 +549,32 @@ fn save_collection_result(
             if let Some(delay) = error.retry_after_ms.or_else(|| {
                 super::super::connection_host::collection_runtime_retry_after_ms(&error.code)
             }) {
+                let now = chrono::Utc::now();
                 let failures = state["failures"]
                     .as_u64()
                     .unwrap_or(0)
                     .saturating_add(1)
                     .min(10);
                 next["failures"] = json!(failures);
-                // Apply the base delay on the first failure, then back off repeated failures.
-                next["retryAt"] = json!(
-                    chrono::Utc::now().timestamp_millis()
-                        + ((30_000_i64 << failures.saturating_sub(1).min(7)).min(3_600_000))
-                            .max(delay as i64)
+                let retry_after_ms = if is_dingtalk_group_timeout(source, &next["error"]["code"]) {
+                    recover_dingtalk_group_checkpoint(source, &mut next, now);
+                    30_000
+                } else {
+                    (30_000_i64 << failures.saturating_sub(1).min(7)).min(3_600_000)
+                }
+                .max(delay as i64);
+                next["retryAt"] = json!(now.timestamp_millis() + retry_after_ms);
+                log_executor_event(
+                    "Stand-in source collection retry scheduled",
+                    &[
+                        ("provider", source_provider(source).to_owned()),
+                        (
+                            "kind",
+                            source["kind"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                        ("code", error.code),
+                        ("retry_after_ms", retry_after_ms.to_string()),
+                    ],
                 );
             } else {
                 next.as_object_mut().unwrap().remove("retryAt");
@@ -630,14 +709,9 @@ mod ordered_email_tests {
 }
 
 pub(super) fn message_time(value: &Value) -> Result<i64, AppIpcError> {
-    let text = value.as_str().unwrap_or_default();
-    if let Ok(time) = chrono::DateTime::parse_from_rfc3339(text) {
-        return Ok(time.timestamp_millis());
-    }
-    chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
-        .ok()
-        .and_then(|time| chrono::Local.from_local_datetime(&time).single())
-        .map(|time| time.timestamp_millis())
+    value
+        .as_str()
+        .and_then(wegent_local_task_store::store::connection_message_millis)
         .ok_or_else(|| {
             AppIpcError::new(
                 "connection_response_invalid",

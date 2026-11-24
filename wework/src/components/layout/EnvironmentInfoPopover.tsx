@@ -20,16 +20,22 @@ import { controlPopup } from '@wegent/collaboration/controls/recipes'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import { GitBranch, Info, Link2 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { memo, useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 import { EnvironmentSummaryOverview } from './EnvironmentSummaryOverview'
 import { TaskSupervisorStatusButton } from './TaskSupervisorControl'
+import type { PaneTranscript } from './workbenchPaneConversationPresentation'
+
+const EMPTY_MESSAGES: readonly WorkbenchMessage[] = []
+const readEmptyMessages = () => EMPTY_MESSAGES
+const ignoreTranscript = () => () => {}
+const EnvironmentContribution = memo(DshContributionSlotSurface)
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
   isGitRepository?: boolean
-  messages?: readonly WorkbenchMessage[]
+  transcript: PaneTranscript
   popoverContainer: HTMLElement | null
   docked?: boolean
   open: boolean
@@ -80,7 +86,7 @@ function gitRepositoryContextValue(
 export function EnvironmentInfoPopover({
   info,
   isGitRepository,
-  messages = [],
+  transcript,
   popoverContainer,
   docked = true,
   open,
@@ -112,62 +118,89 @@ export function EnvironmentInfoPopover({
     onOpenChange(next)
     if (next) void onRefresh?.()
   }
-  const environmentService: EnvironmentHostService = {
-    read: () => ({ devices, info }),
-  }
-  const outputsService: ConversationOutputsHostService = {
-    read: () => buildConversationOutputs(messages),
-  }
-  const commandHandlers: Record<string, ((args?: unknown) => unknown) | undefined> = {
-    'environment.refresh': onRefresh,
-    'git.commit': args => onCommitChanges?.(commandStringArgument(args, 'message')),
-    'git.commit-and-push': args => onCommitAndPushChanges?.(commandStringArgument(args, 'message')),
-    'git.push': onPushChanges,
-    'git.list-branches': () => onListBranches?.() ?? [],
-    'git.checkout-branch': args => onCheckoutBranch?.(commandStringArgument(args, 'branchName')),
-    'git.create-branch': args => onCreateBranch?.(commandStringArgument(args, 'branchName')),
-    'git.generate-branch-name': args =>
-      onGenerateBranchName?.(commandStringArgument(args, 'sourceText')) ?? '',
-    'git.open-changes-review': onOpenChangesReview,
-  }
-  const services: ConversationSummarySurfaceServices = {
-    canExecuteCommand(id) {
-      return commandHandlers[id] !== undefined
-    },
-    getService<T>(id: string): T | undefined {
-      if (id === WEWORK_HOST_SERVICES.environment) return environmentService as T
-      if (id === WEWORK_HOST_SERVICES.conversationOutputs) return outputsService as T
-      return undefined
-    },
-    async openResource(resource: ConversationSummaryResource) {
-      if (resource.kind === 'url') {
-        await openExternalUrl(resource.url, { target: 'system' })
-        return
-      }
-      onOpenWorkspaceFile?.(resource.path)
-    },
-    async executeCommand(id, args) {
-      const handler = commandHandlers[id]
-      if (!handler) throw new Error(`Unavailable conversation summary command: ${id}`)
-      return handler(args)
-    },
-  }
+  const visibleMessages = useSyncExternalStore(
+    open ? transcript.subscribe : ignoreTranscript,
+    open ? () => transcript.getSnapshot().messages : readEmptyMessages,
+    readEmptyMessages
+  )
+  const outputs = useMemo(() => buildConversationOutputs(visibleMessages), [visibleMessages])
+  const workspaceIsGitRepository = gitRepositoryContextValue(info, isGitRepository)
+  const contribution = useMemo(() => {
+    const environmentService: EnvironmentHostService = {
+      read: () => ({ devices, info }),
+    }
+    const outputsService: ConversationOutputsHostService = {
+      read: () => outputs,
+    }
+    const commandHandlers: Record<string, ((args?: unknown) => unknown) | undefined> = {
+      'git.commit': args => onCommitChanges?.(commandStringArgument(args, 'message')),
+      'git.commit-and-push': args =>
+        onCommitAndPushChanges?.(commandStringArgument(args, 'message')),
+      'git.push': onPushChanges,
+      'git.list-branches': () => onListBranches?.() ?? [],
+      'git.checkout-branch': args => onCheckoutBranch?.(commandStringArgument(args, 'branchName')),
+      'git.create-branch': args => onCreateBranch?.(commandStringArgument(args, 'branchName')),
+      'git.generate-branch-name': args =>
+        onGenerateBranchName?.(commandStringArgument(args, 'sourceText')) ?? '',
+      'git.open-changes-review': onOpenChangesReview,
+    }
+    const services: ConversationSummarySurfaceServices = {
+      canExecuteCommand(id) {
+        return commandHandlers[id] !== undefined
+      },
+      getService<T>(id: string): T | undefined {
+        if (id === WEWORK_HOST_SERVICES.environment) return environmentService as T
+        if (id === WEWORK_HOST_SERVICES.conversationOutputs) return outputsService as T
+        return undefined
+      },
+      async openResource(resource: ConversationSummaryResource) {
+        if (resource.kind === 'url') {
+          await openExternalUrl(resource.url, { target: 'system' })
+          return
+        }
+        onOpenWorkspaceFile?.(resource.path)
+      },
+      async executeCommand(id, args) {
+        const handler = commandHandlers[id]
+        if (!handler) throw new Error(`Unavailable conversation summary command: ${id}`)
+        return handler(args)
+      },
+    }
+    return {
+      context: {
+        'conversation.available': true,
+        'conversation.title': branchNameSource,
+        'workspace.isGitRepository': workspaceIsGitRepository,
+      },
+      docked,
+      onClose: () => onOpenChange(false),
+      services,
+    }
+  }, [
+    branchNameSource,
+    devices,
+    docked,
+    info,
+    onCheckoutBranch,
+    onCommitAndPushChanges,
+    onCommitChanges,
+    onCreateBranch,
+    onGenerateBranchName,
+    onListBranches,
+    onOpenChange,
+    onOpenChangesReview,
+    onOpenWorkspaceFile,
+    onPushChanges,
+    outputs,
+    workspaceIsGitRepository,
+  ])
 
   const content = (
     <>
       <EnvironmentSummaryOverview devices={devices} info={info} />
-      <DshContributionSlotSurface
+      <EnvironmentContribution
         attachedClassName="contents"
-        props={{
-          context: {
-            'conversation.available': true,
-            'conversation.title': branchNameSource,
-            'workspace.isGitRepository': gitRepositoryContextValue(info, isGitRepository),
-          },
-          docked,
-          onClose: () => onOpenChange(false),
-          services,
-        }}
+        props={contribution}
         slot={WEWORK_DSH_SLOTS.conversationSummary}
       />
 
@@ -177,12 +210,11 @@ export function EnvironmentInfoPopover({
             <section className="border-t border-border pt-3">
               {onManageTodo && (
                 <ControlButton
-                  variant="ghost"
-                  size="sm"
+                  variant="unstyled"
                   type="button"
                   data-testid="environment-todo-binding-button"
                   onClick={onManageTodo}
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-muted"
                 >
                   <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                     <Link2 className="h-[18px] w-[18px]" />
@@ -192,12 +224,11 @@ export function EnvironmentInfoPopover({
               )}
               {onDeliver && (
                 <ControlButton
-                  variant="ghost"
-                  size="sm"
+                  variant="unstyled"
                   type="button"
                   data-testid="environment-delivery-button"
                   onClick={onDeliver}
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-muted"
                 >
                   <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                     <GitBranch className="h-[18px] w-[18px]" />
@@ -265,7 +296,7 @@ export function EnvironmentInfoPopover({
             <div
               data-environment-info-popover
               data-testid="environment-info-popover"
-              className="pointer-events-auto ml-2 mt-3 w-75 rounded-xl border border-border bg-background p-5 text-text-primary shadow-lg"
+              className="pointer-events-auto ml-2 mr-5 mt-3 rounded-xl border border-border bg-background p-5 text-text-primary shadow-lg"
             >
               {content}
             </div>,

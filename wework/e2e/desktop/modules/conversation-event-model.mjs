@@ -111,7 +111,7 @@ export function createConversationEventModel({
         assert.equal(external.payload.head_sha, 'a'.repeat(40))
         assert.equal(external.url, 'https://github.com/org/repo/pull/17')
       }
-      if (['goal', 'human'].includes(phase) && !goalCompleted) {
+      if (['goal', 'human', 'resumed_goal'].includes(phase) && !goalCompleted) {
         return selectedToolCall(
           `${marker}_complete`,
           selectTool(body, 'update_goal', { status: 'complete' })
@@ -120,7 +120,11 @@ export function createConversationEventModel({
       completed.add(phase)
       return [assistantMessage(`${marker}_DONE：已收到文档变化，在原会话继续处理。`)]
     }
-    if (usesGoal && !requestContainsToolOutput(body, `${marker}_create_goal`)) {
+    if (
+      usesGoal &&
+      phase !== 'resumed_goal' &&
+      !requestContainsToolOutput(body, `${marker}_create_goal`)
+    ) {
       return selectedToolCall(
         `${marker}_create_goal`,
         selectTool(body, 'create_goal', {

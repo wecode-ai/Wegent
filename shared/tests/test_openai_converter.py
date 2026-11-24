@@ -73,6 +73,26 @@ def test_legacy_session_bindings_round_trip_without_seeding_inherited_sessions()
     )
 
 
+def test_legacy_session_fallback_round_trip_is_distinct_from_new_session():
+    for fallback in (False, True):
+        request = ExecutionRequest(new_session=True, legacy_session_fallback=fallback)
+
+        wire = OpenAIRequestConverter.from_execution_request(request)
+        restored = OpenAIRequestConverter.to_execution_request(wire)
+
+        assert wire["metadata"]["legacy_session_fallback"] is fallback
+        assert restored.new_session is True
+        assert restored.legacy_session_fallback is fallback
+        assert (
+            ExecutionRequest.from_dict(request.to_dict()).legacy_session_fallback
+            is fallback
+        )
+    assert ExecutionRequest().legacy_session_fallback is False
+    assert not OpenAIRequestConverter.to_execution_request(
+        {"model": "test", "input": "hello", "metadata": {}}
+    ).legacy_session_fallback
+
+
 def test_legacy_session_bindings_default_is_empty_and_not_shared():
     first = ExecutionRequest()
     second = ExecutionRequest()

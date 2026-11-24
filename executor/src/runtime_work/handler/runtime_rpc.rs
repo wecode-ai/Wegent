@@ -45,6 +45,41 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
+            if matches!(
+                method.as_str(),
+                "runtime.stand_in.role_task.start"
+                    | "runtime.stand_in.role_task.verify"
+                    | "runtime.stand_in.role_task.status"
+                    | "runtime.stand_in.role_task.accept_cancel"
+            ) {
+                if data["appTaskAccessScope"] != "stand-in-role-task" {
+                    return Err(AppIpcError::new(
+                        "permission_denied",
+                        "A verified role-task route is required",
+                    ));
+                }
+                return match method.as_str() {
+                    "runtime.stand_in.role_task.start" => {
+                        self.accept_remote_role_task(&payload).await
+                    }
+                    "runtime.stand_in.role_task.status" => {
+                        self.remote_role_task_status(&payload).await
+                    }
+                    "runtime.stand_in.role_task.accept_cancel" => {
+                        self.accept_remote_role_cancellation(&payload).await
+                    }
+                    _ => self.verify_remote_role_task(&payload).await,
+                };
+            }
+            if matches!(
+                method.as_str(),
+                "runtime.stand_in.role_task.branches"
+                    | "runtime.stand_in.role_task.cancel"
+                    | "runtime.stand_in.role_task.retry"
+            ) && data["appTaskAccessScope"] == "stand-in-role-task"
+            {
+                self.verify_runtime_user(&payload).await?;
+            }
             self.bind_submitted_interface(&method, &mut payload, data.get("modelBinding"))?;
             self.dispatch(&method, payload).await
         })
@@ -62,6 +97,12 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     "unsupported_codex_app_server_method",
                     format!("Unsupported Codex app-server method: {method}"),
                 ));
+            }
+            if method == "marketplace/remove" && data["params"].get("confirmedPluginIds").is_some()
+            {
+                return self
+                    .remove_marketplace_with_plugins(data["params"].clone())
+                    .await;
             }
             // Bundled reconciliation rewrites the same complete configuration that
             // marketplace RPCs update. Keep an accepted native edit out of that window.
@@ -92,6 +133,7 @@ impl RuntimeWorkRpcHandler {
             .cloned()
             .filter(Value::is_object)
             .unwrap_or_else(|| json!({}));
+        super::plugin_marketplace::check_marketplace_write(&method, &params).await?;
         if method == "app/list" {
             log_executor_event(
                 "codex app catalog read started",

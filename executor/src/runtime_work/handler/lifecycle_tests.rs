@@ -168,6 +168,11 @@ fn rpc_results_do_not_repeat_native_terminal_events() {
         handler.route_codex_notification(notification("turn/started", "turn-1"));
         let mut completed = notification("turn/completed", "turn-1");
         completed["params"]["turn"]["status"] = json!(status);
+        if status == "failed" {
+            completed["params"]["turn"]["error"] = json!({
+                "message":"server overloaded","codexErrorInfo":"serverOverloaded"
+            });
+        }
         handler.route_codex_notification(completed);
         if next_turn {
             handler.route_codex_notification(notification("turn/started", "turn-2"));
@@ -225,6 +230,13 @@ fn rpc_results_do_not_repeat_native_terminal_events() {
         }
         assert_eq!(terminal.len(), 1, "{status}: {terminal:?}");
         assert_eq!(terminal[0]["payload"]["subtaskId"], "turn-1");
+        if status == "failed" {
+            let data = &terminal[0]["payload"]["data"];
+            assert_eq!(data["type"], "server_overloaded");
+            assert_eq!(data["error"]["code"], data["type"]);
+            assert_eq!(data["error_info"]["category"], "model");
+            assert_eq!(data["error_info"]["retry_policy"], "after_backoff");
+        }
         let _ = fs::remove_dir_all(root);
     }
 }
@@ -493,19 +505,146 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
     let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
     link.thread_id = Some("thread-1".into());
     link.goal_status = Some("active".into());
-    let request = ExecutionRequest {
+    let mut request = ExecutionRequest {
         task_id: "task-1".into(),
         subtask_id: "request-1".into(),
         ..Default::default()
     };
+    request.new_session = true;
     handler.upsert_local_task(link);
     handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), false);
     (handler, root, request)
 }
 
 #[tokio::test]
+async fn saved_backend_fallback_resumes_on_the_next_local_send() {
+    let (handler, root, mut request) = setup("saved-backend-fallback");
+    request.legacy_session_fallback = true;
+    handler.store.update_task("task-1", |link| {
+        link.goal_status = None;
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
+    });
+    let execution = start_test_execution(&handler, "task-1");
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task-1".into(), RuntimeTaskKind::Personal);
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    let saved = runtime_event_request_from_link(&handler.local_task_link("task-1").unwrap());
+
+    let continuation = handler
+        .send_message(json!({
+            "taskId": "task-1", "message": "continue", "executionRequest": saved
+        }))
+        .await
+        .unwrap();
+    assert_eq!(continuation["accepted"], true);
+    assert_eq!(continuation["status"], "queued");
+    {
+        let scheduler = handler.turn_scheduler.lock().unwrap();
+        let queued_turn = scheduler.queued_turns.front().unwrap();
+        assert!(!queued_turn.request.new_session);
+        assert!(!queued_turn.request.legacy_session_fallback);
+        assert_eq!(queued_turn.resume_thread_id.as_deref(), Some("thread-1"));
+    }
+    assert!(handler.remove_queued_turn("task-1").await.unwrap());
+    assert!(handler.finish_local_task_execution("task-1", execution));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
+    assert_completed_send_session_routing(false).await;
+}
+
+#[tokio::test]
+async fn native_completed_backend_fallback_waits_in_scheduler_for_old_process_cleanup() {
+    assert_completed_send_session_routing(true).await;
+}
+
+#[tokio::test]
+async fn backend_fallback_admits_an_existing_task_without_a_native_thread() {
+    let (handler, root, mut request) = setup("backend-fallback-without-thread");
+    request.legacy_session_fallback = true;
+    handler.store.update_task("task-1", |link| {
+        link.thread_id = None;
+        link.goal_status = None;
+    });
+    let execution = start_test_execution(&handler, "task-1");
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task-1".into(), RuntimeTaskKind::Personal);
+
+    let result = handler
+        .send_message(json!({
+            "taskId": "task-1", "message": "continue", "executionRequest": request,
+            "queueIfBusy": true
+        }))
+        .await
+        .unwrap();
+    assert_eq!(result["accepted"], true);
+    assert_eq!(result["status"], "queued");
+    assert!(handler.remove_queued_turn("task-1").await.unwrap());
+    assert!(handler.finish_local_task_execution("task-1", execution));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn starting_a_backend_fallback_does_not_rebind_an_identity_thread() {
+    let (handler, root, mut request) = setup("backend-fallback-identity");
+    request.new_session = true;
+    request.legacy_session_fallback = true;
+    handler.store.update_task("task-1", |link| {
+        link.goal_status = None;
+        link.runtime_handle["origin"] =
+            json!({"type":"stand_in_identity","userId":7,"deviceId":"mac"});
+        link.runtime_handle["completedTranscriptMessages"] = json!([{"id":"old-message"}]);
+    });
+    assert!(
+        crate::runtime_work::conversation_sessions::is_identity_conversation(
+            &handler.local_task_link("task-1").unwrap()
+        )
+    );
+    handler.start_authorized_turn(
+        SpawnTurnRequest {
+            task_kind: None,
+            local_task_id: "task-1".into(),
+            runtime: "codex".into(),
+            request,
+            send_payload: Some(json!({"taskId":"task-1","message":"continue"})),
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_goal: None,
+        },
+        None,
+    );
+    let link = handler.local_task_link("task-1").unwrap();
+    assert!(link
+        .runtime_handle
+        .get("completedTranscriptMessages")
+        .is_none());
+    assert_eq!(link.thread_id.as_deref(), Some("thread-1"));
+    handler.record_local_task_thread("task-1", "thread-2");
+    let link = handler.local_task_link("task-1").unwrap();
+    assert_eq!(
+        crate::runtime_work::conversation_sessions::thread_ids(&link).unwrap(),
+        ["thread-1", "thread-2"]
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+async fn assert_completed_send_session_routing(backend_fallback: bool) {
     let (handler, root, request) = setup("native-completed-send-cleanup");
+    let mut request = request;
+    request.legacy_session_fallback = backend_fallback;
     handler
         .store
         .update_task("task-1", |link| link.goal_status = None);
@@ -533,6 +672,24 @@ async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
     assert_eq!(continuation["accepted"], true);
     assert_eq!(continuation["status"], "queued");
     assert_eq!(handler.queued_local_task_position("task-1"), Some(0));
+    {
+        let scheduler = handler.turn_scheduler.lock().unwrap();
+        let queued_turn = scheduler.queued_turns.front().unwrap();
+        assert_eq!(queued_turn.request.new_session, backend_fallback);
+        assert_eq!(
+            queued_turn.request.legacy_session_fallback,
+            backend_fallback
+        );
+        assert!(queued_turn.direct_thread_id.is_none());
+        assert_eq!(
+            queued_turn.resume_thread_id.as_deref(),
+            if backend_fallback {
+                None
+            } else {
+                Some("thread-1")
+            }
+        );
+    }
     assert!(handler.is_current_local_task_execution("task-1", execution));
     assert_eq!(
         handler.turn_scheduler.lock().unwrap().active_task_ids.len(),

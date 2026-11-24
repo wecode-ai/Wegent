@@ -6,10 +6,11 @@ import {
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkspaceNavigationDetail } from '@/lib/navigation'
-import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
+import { navigateTo, WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -17,7 +18,7 @@ import { StandInIcon } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { useDOMEvent, useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { Check, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
+import { Check, PanelRight, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
 import type { ComponentProps, ReactNode, Ref } from 'react'
 import {
   useCallback,
@@ -31,15 +32,18 @@ import {
 import { createPortal } from 'react-dom'
 import { StandInConversation } from './StandInConversation'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
+import type { activeStandInBranchRows } from './standInDelegatedBranches'
+import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
+import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInOnboarding } from './StandInOnboarding'
 import { createStandInOverviewSource, standInOverviewSourceKey } from './standInOverviewSource'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
+import { standInProcessingFailure } from './standInProcessingFailure'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
-import { StandInScheduleDialog } from './StandInScheduleDialog'
-import { StandInSettingsEntry } from './StandInSettingsLayout'
+import type { StandInSettingsShortcut } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
@@ -123,9 +127,6 @@ export function StandInOverviewPage({
   )
   const setDetailsAnchor = (anchor: null) => setDetailsTarget(anchor)
   const detailsTrigger = useRef<HTMLButtonElement>(null)
-  const [scheduleTarget, setScheduleTarget] = useState<{ id: string; scope: string }>()
-  const scheduleTrigger = useRef<HTMLElement | null>(null)
-  const [scheduleFocusRequest, setScheduleFocusRequest] = useState<{ scope: string }>()
   const profileTrigger = useRef<HTMLElement | null>(null)
   const rememberProfileTrigger = useCallback(
     (trigger?: HTMLElement) => {
@@ -148,6 +149,7 @@ export function StandInOverviewPage({
   } = overview
   const [review, setReview] = useState<'proposal' | 'status' | 'work' | null>(null)
   const [guideOpen, setGuideOpen] = useState(false)
+  const [imDialogOpen, setImDialogOpen] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
   useImperativeHandle(ref, () => ({
     requestLeave: action => (panelRef.current ? panelRef.current.requestLeave(action) : action()),
@@ -243,27 +245,11 @@ export function StandInOverviewPage({
     if (panelRef.current) panelRef.current.requestLeave(action)
     else action()
   }
+  const openMemory = useStableEvent(() => leavePanel(() => openProfile('memory')))
+  const [delegationPanelScope, setDelegationPanelScope] = useState<string | null>(null)
   const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
-  const selectedScheduleId = scheduleTarget?.scope === detailsScope ? scheduleTarget.id : undefined
-  const setSelectedScheduleId = (id?: string) =>
-    setScheduleTarget(id ? { id, scope: detailsScope } : undefined)
+  const delegationPanelOpen = delegationPanelScope === detailsScope
   const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
-  const scheduleFocusTarget = useMemo(
-    () => ({
-      get current() {
-        return scheduleTrigger.current?.isConnected
-          ? scheduleTrigger.current
-          : detailsTrigger.current
-      },
-    }),
-    []
-  )
-  useFocusRequest(scheduleFocusTarget, scheduleFocusRequest, {
-    enabled:
-      Boolean(detailsAnchor) && scheduleFocusRequest?.scope === detailsScope && !selectedScheduleId,
-    animationFrame: true,
-    preventScroll: true,
-  })
   const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
   const role =
     roleLocations?.find(entry => entry.role.id === roleId && entry.deviceId === deviceId)?.role ??
@@ -285,7 +271,14 @@ export function StandInOverviewPage({
             standInWorkRole(item) === roleId))
     )
     .sort((a, b) => standInState(b).updatedAt.localeCompare(standInState(a).updatedAt))
-  const roleItems = roleId ? items.filter(item => standInWorkRole(item) === roleId) : items
+  const conversationTaskId = standInConversationTaskId(props.userId, roleId)
+  const roleItems = items.filter(item => {
+    if (roleId && standInWorkRole(item) !== roleId) return false
+    const origin = item.task.runtimeHandle?.origin as
+      | { roleDelegation?: { ancestors?: string[] } }
+      | undefined
+    return origin?.roleDelegation?.ancestors?.[0] !== conversationTaskId
+  })
   const chooseRole = (id?: string, executionDevice?: string) =>
     leavePanel(() => {
       const target =
@@ -341,23 +334,153 @@ export function StandInOverviewPage({
       {proposalFailureMessage}
     </p>
   )
-  const processingIssue = !!(
-    processing.error ||
-    processing.status?.error ||
-    processing.status?.awaitingUser
+  const device = props.devices.find(
+    device => device.device_id === deviceId || device.app_device_id === deviceId
   )
-  const management = (
-    <section data-testid="stand-in-settings-tools" className="mt-6">
-      {api && saved && (
-        <StandInSettingsEntry
-          testId="stand-in-memory-open"
-          label={t('standIn.memory.title')}
-          disabled={false}
-          onClick={() => leavePanel(() => openProfile('memory'))}
+  const processingFailure = standInProcessingFailure(
+    processing.status,
+    processing.error,
+    props.userId,
+    t
+  )
+  const processingError =
+    processingFailure.summary ??
+    processingFailure.message ??
+    (processing.status?.awaitingUser ? t('standIn.processing.needs_input') : null)
+  const shortcuts: StandInSettingsShortcut[] = []
+  if (active && deviceId && (profile === 'primary' || profile === 'role')) {
+    shortcuts.push({
+      id: 'im',
+      testId: 'stand-in-im-channels-toggle',
+      containerTestId: 'stand-in-im-channels',
+      label: t('standIn.im.title'),
+      description: t('standIn.im.settings_help'),
+      content: (
+        <StandInImConnections
+          services={props.services}
+          devices={props.devices}
+          deviceId={deviceId}
+          roleId={profile === 'role' ? roleId : undefined}
+          name={
+            profile === 'role' && role
+              ? standInRoleName(
+                  role,
+                  Math.max(0, roles.indexOf(role)),
+                  t('standIn.personal.default_role')
+                )
+              : t('standIn.title')
+          }
+          onOpenChange={setImDialogOpen}
         />
-      )}
-    </section>
-  )
+      ),
+    })
+  }
+  if (api && saved) {
+    shortcuts.push({
+      id: 'memory',
+      testId: 'stand-in-memory-open',
+      label: t('standIn.memory.title'),
+      description: t('standIn.memory.settings_help'),
+      onClick: openMemory,
+    })
+    if (
+      (roleId ? saved.roles.find(item => item.id === roleId) : saved.primary)
+        ?.selfLearningEnabled !== undefined
+    ) {
+      shortcuts.push({
+        id: 'revision',
+        testId: 'stand-in-ghost-revision-open',
+        label: t('standIn.workspace.ghost_revision'),
+        content: (
+          <StandInGhostRevisionPanel
+            key={JSON.stringify([saved.userId, saved.executionDeviceId, saved.version, roleId])}
+            api={api}
+            userId={saved.userId}
+            deviceId={saved.executionDeviceId}
+            roleId={roleId}
+            requestLeave={leavePanel}
+          />
+        ),
+      })
+    }
+  }
+  const renderDetails =
+    detailsAnchor && active
+      ? (activeBranches: ReturnType<typeof activeStandInBranchRows>) => (
+          <StandInDetailsPopover
+            key={`${props.userId}:${deviceId}:${roleId ?? '@primary'}`}
+            anchor={detailsAnchor}
+            name={
+              role
+                ? standInRoleName(
+                    role,
+                    Math.max(0, roles.indexOf(role)),
+                    t('standIn.personal.default_role')
+                  )
+                : t('standIn.title')
+            }
+            enabled={role ? role.enabled : saved?.primary?.enabled !== false}
+            device={device}
+            items={roleItems.filter(
+              item =>
+                !(item.task.runtimeHandle?.origin as Record<string, unknown> | undefined)
+                  ?.inboxStatus
+            )}
+            activeDelegations={activeBranches}
+            inbox={visibleInbox}
+            sourceErrors={inbox.sourceErrors}
+            overviewError={overviewError}
+            processingError={processingError}
+            onClose={() => {
+              setDetailsAnchor(null)
+              detailsAnchor.focus()
+            }}
+            onSettings={() => {
+              setDetailsAnchor(null)
+              setCalendarRequest(0)
+              openProfile(role ? 'role' : 'primary')
+            }}
+            onGuide={() => {
+              setDetailsAnchor(null)
+              setGuideOpen(true)
+            }}
+            onAllActivity={() => {
+              setDetailsAnchor(null)
+              setReview('work')
+            }}
+            renderActivity={item => (
+              <TemporaryChatPanel
+                key={item.key}
+                currentProject={null}
+                source={null}
+                instanceId={`stand-in-activity:${item.address.deviceId}:${item.address.taskId}`}
+                testId="stand-in-activity-conversation"
+                initialAddress={item.address}
+                sendEphemeral={false}
+                showExecutionTools={false}
+                readOnly
+                expanded
+                active={active}
+                onOpenRuntimeTask={onOpenTask}
+              />
+            )}
+            onStatus={() => {
+              setDetailsAnchor(null)
+              setReview('status')
+            }}
+            onProposal={
+              currentProposal && state.saved
+                ? () => {
+                    setDetailsAnchor(null)
+                    setReview('proposal')
+                  }
+                : undefined
+            }
+            onOpenTask={onOpenTask}
+          />
+        )
+      : undefined
+  const conversationAvailable = api && deviceId && (state.saved || (!state.loading && !state.error))
   const content = (
     <section
       className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
@@ -436,7 +559,6 @@ export function StandInOverviewPage({
                     const trigger = event.currentTarget
                     leavePanel(() => {
                       setCalendarRequest(0)
-                      setSelectedScheduleId(undefined)
                       openProfile('create', trigger)
                     })
                   }}
@@ -447,6 +569,22 @@ export function StandInOverviewPage({
               </Tooltip>
             </div>
           </nav>
+          {api && deviceId && saved && (
+            <Tooltip label={t('standIn.delegation.panel')} side="bottom" align="end">
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="stand-in-delegation-panel-toggle"
+                aria-label={t('standIn.delegation.title')}
+                aria-expanded={delegationPanelOpen}
+                aria-controls={delegationPanelOpen ? 'stand-in-delegation-panel' : undefined}
+                onClick={() => setDelegationPanelScope(delegationPanelOpen ? null : detailsScope)}
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8 ${delegationPanelOpen ? 'bg-muted' : ''}`}
+              >
+                <PanelRight aria-hidden="true" className="size-4" />
+              </ControlButton>
+            </Tooltip>
+          )}
           <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
             <ControlButton
               variant="unstyled"
@@ -491,6 +629,13 @@ export function StandInOverviewPage({
           <>
             {api && deviceId ? (
               <StandInConversation
+                delegationPanelOpen={delegationPanelOpen}
+                sidebarTasks={{
+                  items: roleItems,
+                  inbox: visibleInbox,
+                  onAllActivity: () => setReview('work'),
+                }}
+                renderDetails={renderDetails}
                 contentFooter={
                   review !== 'proposal' && (proposalCard || proposalFailure) ? (
                     <>
@@ -516,124 +661,7 @@ export function StandInOverviewPage({
             ) : null}
           </>
         )}
-        {detailsAnchor && active && (
-          <StandInDetailsPopover
-            key={`${props.userId}:${deviceId}:${roleId ?? '@primary'}`}
-            anchor={detailsAnchor}
-            userId={props.userId}
-            roleId={roleId}
-            automationApi={props.services.automationApi}
-            imConnections={
-              deviceId
-                ? {
-                    services: props.services,
-                    devices: props.devices,
-                    deviceId,
-                    roleId,
-                  }
-                : undefined
-            }
-            suspended={!!selectedScheduleId}
-            onSchedule={(schedule, trigger) => {
-              setScheduleFocusRequest(undefined)
-              scheduleTrigger.current = trigger
-              setSelectedScheduleId(schedule.id)
-            }}
-            name={
-              role
-                ? standInRoleName(
-                    role,
-                    Math.max(0, roles.indexOf(role)),
-                    t('standIn.personal.default_role')
-                  )
-                : t('standIn.title')
-            }
-            configuration={role ?? saved?.primary}
-            projects={props.projects}
-            enabled={role ? role.enabled : saved?.primary?.enabled !== false}
-            device={props.devices.find(
-              device => device.device_id === deviceId || device.app_device_id === deviceId
-            )}
-            conversation={
-              deviceId
-                ? { deviceId, taskId: standInConversationTaskId(props.userId, roleId) }
-                : undefined
-            }
-            items={roleItems.filter(
-              item =>
-                !(item.task.runtimeHandle?.origin as Record<string, unknown> | undefined)
-                  ?.inboxStatus
-            )}
-            inbox={visibleInbox}
-            sourceErrors={inbox.sourceErrors}
-            error={
-              overviewError ||
-              processing.error ||
-              processing.status?.error?.message ||
-              (processing.status?.awaitingUser ? t('standIn.personal.activity_waiting') : null)
-            }
-            onClose={() => {
-              setDetailsAnchor(null)
-              detailsAnchor.focus()
-            }}
-            onSettings={() => {
-              setDetailsAnchor(null)
-              setCalendarRequest(0)
-              setSelectedScheduleId(undefined)
-              openProfile(role ? 'role' : 'primary')
-            }}
-            onGuide={() => {
-              setDetailsAnchor(null)
-              setGuideOpen(true)
-            }}
-            onAllActivity={() => {
-              setDetailsAnchor(null)
-              setReview('work')
-            }}
-            renderActivity={item => (
-              <TemporaryChatPanel
-                key={item.key}
-                currentProject={null}
-                source={null}
-                instanceId={`stand-in-activity:${item.address.deviceId}:${item.address.taskId}`}
-                testId="stand-in-activity-conversation"
-                initialAddress={item.address}
-                sendEphemeral={false}
-                showExecutionTools={false}
-                readOnly
-                expanded
-                active={active}
-                onOpenRuntimeTask={onOpenTask}
-              />
-            )}
-            onStatus={() => {
-              setDetailsAnchor(null)
-              setReview('status')
-            }}
-            onProposal={
-              currentProposal && state.saved
-                ? () => {
-                    setDetailsAnchor(null)
-                    setReview('proposal')
-                  }
-                : undefined
-            }
-            onOpenTask={onOpenTask}
-          />
-        )}
-        {selectedScheduleId && detailsAnchor && active && deviceId && (
-          <StandInScheduleDialog
-            key={`${detailsScope}:${selectedScheduleId}`}
-            id={selectedScheduleId}
-            userId={props.userId}
-            roleId={roleId ?? '@primary'}
-            deviceId={deviceId}
-            onClose={() => {
-              setSelectedScheduleId(undefined)
-              setScheduleFocusRequest({ scope: detailsScope })
-            }}
-          />
-        )}
+        {!conversationAvailable && renderDetails?.([])}
         <StandInReviewDialog
           open={active && review === 'work'}
           title={t('standIn.workspace.details_activity')}
@@ -687,7 +715,7 @@ export function StandInOverviewPage({
             detailsTrigger.current?.focus()
           }}
         >
-          {deviceId && processingIssue && (
+          {deviceId && processingError && (
             <StandInProcessingNotice
               snapshot={processing}
               api={api}
@@ -696,6 +724,10 @@ export function StandInOverviewPage({
               onOpen={() => {
                 setReview(null)
                 openProfile('primary')
+              }}
+              onOpenConnectionSettings={() => {
+                setReview(null)
+                navigateTo('/settings/connections')
               }}
               onOpenTask={
                 onOpenTask
@@ -707,15 +739,11 @@ export function StandInOverviewPage({
               }
             />
           )}
-          {props.devices
-            .filter(device => device.device_id === deviceId || device.app_device_id === deviceId)
-            .map(device =>
-              device.error ? (
-                <p key={device.device_id} role="alert" className="mb-4 text-sm text-error">
-                  {getStandInErrorMessage(device.error)}
-                </p>
-              ) : null
-            )}
+          {device?.error && (
+            <p role="alert" className="mb-4 text-sm text-error">
+              {getStandInErrorMessage(device.error)}
+            </p>
+          )}
           {overviewError && (
             <div role="alert" className="mb-4 flex items-center gap-3 text-sm">
               <span className="min-w-0 flex-1">{overviewError}</span>
@@ -760,7 +788,7 @@ export function StandInOverviewPage({
               </div>
             ))}
           </div>
-          {!inbox.sourceErrors.length && !overviewError && !processingIssue && (
+          {!inbox.sourceErrors.length && !overviewError && !processingError && !device?.error && (
             <p className="text-sm text-text-secondary">{t('standIn.workspace.status_clear')}</p>
           )}
         </StandInReviewDialog>
@@ -782,6 +810,7 @@ export function StandInOverviewPage({
               }}
             >
               <DialogSurface
+                suspended={imDialogOpen}
                 onClose={() => panelRef.current?.requestClose()}
                 render={
                   <aside
@@ -801,6 +830,7 @@ export function StandInOverviewPage({
                   <StandInMemoryPanel
                     ref={panelRef}
                     key={saved.executionDeviceId}
+                    reviewRoleId={roleId ?? '@primary'}
                     api={api}
                     settings={saved}
                     projects={props.projects.filter(
@@ -819,7 +849,7 @@ export function StandInOverviewPage({
                 ) : profile === 'primary' && state.draft ? (
                   <StandInPrimaryProfile
                     ref={panelRef}
-                    management={management}
+                    shortcuts={shortcuts}
                     footerLeading={
                       !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
                     }
@@ -856,7 +886,7 @@ export function StandInOverviewPage({
                     key={`${profile === 'create' ? '@create' : (roleId ?? '@default')}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
                     {...props}
-                    management={management}
+                    shortcuts={shortcuts}
                     footerLeading={
                       !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
                     }
@@ -907,6 +937,7 @@ export function StandInOverviewPage({
         projects: props.projects,
         localDeviceId: state.currentDeviceId,
         devices: props.devices,
+        services: props.services,
         onSelectDevice: primaryDeviceId
           ? undefined
           : device => {
@@ -927,7 +958,12 @@ export function StandInOverviewPage({
           overview.draftExample(text)
         })
       }
-      bypass={Boolean(props.initialProfileId || profile || (!saved && state.error))}
+      bypass={Boolean(
+        props.initialProfileId ||
+        profile ||
+        (roleId && primaryDeviceId && primaryDeviceId !== deviceId) ||
+        (!saved && state.error)
+      )}
       onClose={props.onCancel}
     >
       {content}

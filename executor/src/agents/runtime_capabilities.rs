@@ -458,6 +458,10 @@ pub(super) fn managed_mcp_configs(
     request: &ExecutionRequest,
 ) -> Result<BTreeMap<&'static str, crate::task_runtime::mcp::SpaceMcpClientConfig>, String> {
     crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    let independent_issue = request
+        .extra
+        .get("origin")
+        .is_some_and(crate::task_runtime::mcp::is_independent_issue_origin);
     let mut configs = BTreeMap::new();
     for (name, result) in [
         (
@@ -474,7 +478,11 @@ pub(super) fn managed_mcp_configs(
         ),
         (
             crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
-            crate::task_runtime::mcp::space_mcp_client_config(request).map(Some),
+            if independent_issue {
+                Ok(None)
+            } else {
+                crate::task_runtime::mcp::space_mcp_client_config(request).map(Some)
+            },
         ),
     ] {
         match result {
@@ -2331,7 +2339,10 @@ pub(crate) fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
         url::Url::parse(backend_url.trim()).map_err(|_| "invalid backend API URL".to_owned())?;
     let base_path = backend.path().trim_end_matches('/');
     // Normalize the backend root; API routes provide their own /api prefix.
-    let root = base_path.strip_suffix("/api").unwrap_or(base_path);
+    let root = base_path
+        .strip_suffix("/api/v1")
+        .or_else(|| base_path.strip_suffix("/api"))
+        .unwrap_or(base_path);
     backend.set_path(&format!("{root}/"));
     backend
         .join(path.trim_start_matches('/'))
@@ -2441,6 +2452,11 @@ mod tests {
                 "https://backend.example/wework/api/?old=value#fragment",
                 "/api/v1/kinds/skills?namespace=default",
                 "https://backend.example/wework/api/v1/kinds/skills?namespace=default",
+            ),
+            (
+                "https://backend.example/wework/api/v1/",
+                "/api/mcp/wework-space/sse",
+                "https://backend.example/wework/api/mcp/wework-space/sse",
             ),
         ] {
             assert_eq!(api_url(base, path).unwrap(), expected);

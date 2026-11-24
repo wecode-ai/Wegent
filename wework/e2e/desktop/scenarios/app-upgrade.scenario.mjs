@@ -227,8 +227,18 @@ export async function createDesktopScenario(options) {
     })
   const about = () => openAboutSettings(control)
   const send = text => continuity.send(text, `${ANSWER} ${modelRequests + 1}`)
+  // These immutable release sources predate native Runtime command admission.
+  const legacyRuntimeAcknowledgement = new Map([
+    ['0.6.9', 'd1b1a31ac632fdd7c55a9a105513a290115e181e'],
+    ['0.6.10-beta.2', '06f2cbee8b4371072fbd8477fcd2d6985431f710'],
+    ['0.6.11', '0d2699e45e40857bff72b4705a0934f8e12aa447'],
+    ['0.6.12-beta.6', 'fb949733757555c41a4b8c4a635a8efb8fb0984b'],
+  ])
   return {
     usesReleasePackageRuntimeAssets: true,
+    usesLegacyRuntimeAcknowledgement: version =>
+      version === pair.from.version &&
+      legacyRuntimeAcknowledgement.get(version) === pair.from.sourceSha,
     codexFixtureHome: migratesCodexHome ? join(legacyExecutorHome, 'codex') : options.codexHome,
     ...(!options.preparationOnly
       ? {
@@ -974,7 +984,6 @@ export async function createDesktopScenario(options) {
             })
           assert.equal(alive, false, 'The upgraded application did not exit during cleanup')
         }
-        if (passed) await fs.rm(root, { recursive: true, force: true })
         if (legacyDataDirectory) {
           const legacy = await lstat(legacyDataDirectory).catch(error => {
             if (error.code !== 'ENOENT') throw error

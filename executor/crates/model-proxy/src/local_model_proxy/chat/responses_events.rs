@@ -1,4 +1,5 @@
 use super::*;
+use crate::local_model_proxy::responses_stream::accept_responses_event;
 
 pub(super) fn extract_custom_tool_input(arguments: &str) -> Option<String> {
     if let Ok(value) = serde_json::from_str::<Value>(arguments) {
@@ -127,8 +128,12 @@ where
                     while let Some(block) =
                         crate::local_model_proxy::take_sse_block(&mut state.pending)
                     {
-                        if crate::local_model_proxy::is_responses_terminal_event(&block) {
-                            state.terminal_seen = true;
+                        if !accept_responses_event(
+                            &block,
+                            &mut state.terminal_seen,
+                            &mut state.output,
+                        ) {
+                            break;
                         }
                         let rewritten =
                             rewrite_responses_sse_block(&block, &mut state.context_state);
@@ -171,8 +176,12 @@ where
                     if !state.pending.trim().is_empty() {
                         let trailing = std::mem::take(&mut state.pending);
                         let trailing = trailing.trim_end();
-                        if crate::local_model_proxy::is_responses_terminal_event(trailing) {
-                            state.terminal_seen = true;
+                        if !accept_responses_event(
+                            trailing,
+                            &mut state.terminal_seen,
+                            &mut state.output,
+                        ) {
+                            continue;
                         }
                         let rewritten =
                             rewrite_responses_sse_block(trailing, &mut state.context_state);

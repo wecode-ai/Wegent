@@ -119,6 +119,7 @@ export function useDesktopPaneContext({
     currentRuntimeTask && initialWorkspaceState?.transferredFromBlank ? initialWorkspaceState : null
   const paneSession = useWorkbenchPaneSession({
     currentRuntimeTask,
+    separateTranscript: true,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
   const startupSurfaceReady =
@@ -132,7 +133,7 @@ export function useDesktopPaneContext({
     project: currentProject,
   })
   const sendPaneInput = paneSession.send
-  const paneInput = paneSession.input
+  const getPaneInput = paneSession.getInput
   const setPaneInput = paneSession.setInput
   const replacePaneInput = paneSession.replaceInput
   const getDraftEditVersion = paneSession.getDraftEditVersion
@@ -231,6 +232,7 @@ export function useDesktopPaneContext({
   } = useWorkbenchCloudProjectContext({
     active: paneActive && workbenchVisible,
     currentRuntimeTask: currentProjectSpaceRuntimeTask,
+    runtimeTaskCreationPending: paneSession.status.isCreatingTask,
     devices: state.devices,
     currentProjectId: currentProject?.id,
     defaultProjectSpace,
@@ -400,7 +402,7 @@ export function useDesktopPaneContext({
     startupSurfaceSource,
     refinePluginTrialPrompt,
     sendPaneInput,
-    paneInput,
+    getPaneInput,
     setPaneInput,
     replacePaneInput,
     getDraftEditVersion,
@@ -451,6 +453,7 @@ export function useDesktopPaneContext({
     environmentInfo,
     conversationSummaryIsGitRepository,
     paneProjectWork,
+    projectWork,
     refreshEnvironmentInfo,
     commitEnvironmentChanges,
     commitAndPushEnvironmentChanges,

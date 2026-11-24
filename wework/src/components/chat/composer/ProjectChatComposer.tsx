@@ -41,6 +41,7 @@ import {
 } from '@wegent/collaboration/composer'
 import { desktopComposerTransferServices } from './desktopComposerServices'
 import { useComposerModelSelector } from './useComposerModelSelector'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
 interface ProjectChatComposerProps {
   composerScopeKey?: string
@@ -115,6 +116,7 @@ interface ProjectChatComposerProps {
   showModelSelector?: boolean
   showExecutionTools?: boolean
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
   collapseWhenIdle?: boolean
@@ -206,6 +208,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       showExecutionTools = true,
       showModelSelector,
       isStreaming = false,
+      showPauseButton,
       onPause,
       showWorkspaceMenu,
       collapseWhenIdle = false,
@@ -276,6 +279,26 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             applyWorkspacePathTransfer(getLiveValue(), transfer, onChange, onFileSelect)
           )
           .catch(cause => setPhraseError(cause instanceof Error ? cause.message : String(cause)))
+      }
+    }
+
+    const previousAdmission = useRef('')
+    if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+      const admission = {
+        composerScopeKey,
+        disabled,
+        submitDisabled,
+        isModelSelectionReady,
+        hasText: Boolean(value.trim()),
+        attachmentCount: attachments.length,
+        uploadingCount: uploadingFiles.size,
+        requireText,
+        allowEmptySubmit,
+      }
+      const key = JSON.stringify(admission)
+      if (previousAdmission.current !== key) {
+        previousAdmission.current = key
+        logRuntimeTaskCreateStage('composer-admission', admission)
       }
     }
 
@@ -445,6 +468,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               goalDraftActive={goalDraftActive}
               onCancelGoalDraft={onCancelGoalDraft}
               isStreaming={isStreaming}
+              showPauseButton={showPauseButton}
               onPause={onPause}
               showWorkspaceMenu={showWorkspaceMenu}
               projectWorkMenuContext={

@@ -224,6 +224,7 @@ async fn manual_issue_work_needs_no_assignment_or_intake_subscription() {
     let payload =
         json!({"projectId":project.id,"issueId":issue.id,"userId":7,"projectStore":"local"});
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["enabled"] = json!(false);
     settings["roles"][0]["collaboration"]["enabled"] = json!(false);
     settings["roles"][0]["workspace"] = json!({"projectKey":"unregistered-manual-project","workspacePath":root.path(),"executionMode":"current_workspace"});
@@ -276,10 +277,12 @@ async fn redirected_role_polls_only_existing_local_issue_work() {
     handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["executionDeviceId"] = json!("remote");
     settings["roles"][0]["collaboration"]["enabled"] = json!(true);
-    settings["roles"][0]["collaboration"]["policy"]["immediate"] = json!(false);
+    settings["roles"][0]["collaboration"]["policy"] =
+        json!({"automatic":true,"askBeforeAct":true,"immediate":false});
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     let project = store
         .create_project(serde_json::from_value(json!({"name":"Redirected local work"})).unwrap())
@@ -1164,7 +1167,8 @@ async fn independent_stand_in_keeps_connections_when_old_project_binding_is_remo
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-    let initial = store.personal_stand_in(7, "mac").unwrap();
+    let mut initial = store.personal_stand_in(7, "mac").unwrap();
+    initial["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     let saved = store.save_personal_stand_in(7, "mac", initial).unwrap();
     let mut draft = saved.clone();
     draft["roles"][0]["agentId"] = json!("project-agent");

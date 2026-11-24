@@ -31,6 +31,7 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const PANEL = '[data-testid="stand-in-primary-profile"]'
+const PROFILE_MODEL = `${PANEL} [data-testid="model-selector-button"]`
 const CHAT =
   '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
 const marker = `STAND_IN_MODEL_EXECUTION_${process.pid}`
@@ -449,6 +450,10 @@ export function createDesktopScenario(options) {
         for (const testCase of cases) {
           current = testCase.name
           await openStandInSettings(control)
+          await control.command(
+            'clickWhenEnabled',
+            '[data-testid="stand-in-primary-execution-toggle"]'
+          )
           await control.command('waitFor', PANEL)
           await openExplicitModelMenu(control, `${PANEL} [data-testid="model-selector-button"]`)
           const option = selector(`model-option-${JSON.stringify(testCase.key)}`)
@@ -467,7 +472,7 @@ export function createDesktopScenario(options) {
           ).trim()
           await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
           await control.command('waitFor', PANEL, { visible: false })
-          const saved = await rpc('runtime.stand_in.personal.get', { userId })
+          let saved = await rpc('runtime.stand_in.personal.get', { userId })
           assert.equal(
             saved.primary.model.model_id,
             testCase.name === 'cloud' ? 'kimi-k3' : native.model_id
@@ -475,23 +480,27 @@ export function createDesktopScenario(options) {
           if (testCase.reasoning) {
             assert.equal(saved.primary.modelOptions.reasoning, testCase.reasoning)
           }
-          await control.command('waitFor', `${CHAT} [data-testid="model-selector-button"]`, {
-            text: configuredLabel,
-          })
+          assert.equal(
+            await control.command(
+              'getElementCount',
+              `${CHAT} [data-testid="model-selector-button"]`
+            ),
+            '0'
+          )
           if (testCase.reasoning) {
             assert.ok(configuredLabel.includes('高'), 'The saved native model must display High')
           }
           if (testCase.name === 'cloud') {
             const draft = `${marker}_CHAT_cloud`
-            const trigger = `${CHAT} [data-testid="model-selector-button"]`
             await control.command('fill', `${CHAT} [data-testid="chat-message-input"]`, {
               value: draft,
             })
-            await openExplicitModelMenu(control, trigger)
-            await control.command(
-              'clickWhenEnabled',
-              selector(`model-option-${official.local_model_id}`)
+            await openPrimaryExecutionSettings(control)
+            await openExplicitModelMenu(control, PROFILE_MODEL)
+            const officialOption = selector(
+              `model-option-${JSON.stringify(['codex', official.provider, official.model_id])}`
             )
+            await control.command('clickWhenEnabled', officialOption)
             await control.command('press', 'body', { key: 'Escape' })
             // Change the real native configuration rather than substituting a
             // directory response. The old provider identity leaves the catalog
@@ -512,16 +521,17 @@ export function createDesktopScenario(options) {
               ),
               'The same model name must remain available under the new provider identity'
             )
-            await openExplicitModelMenu(control, trigger)
-            const nativeOption = selector(`model-option-${official.local_model_id}`)
+            await openExplicitModelMenu(control, PROFILE_MODEL)
+            const nativeOption = selector(
+              `model-option-${JSON.stringify(['codex', native.provider, official.model_id])}`
+            )
             await control.command(
               'waitFor',
               `${nativeOption}[data-model-provider-id="${native.provider}"]`
             )
-            await control.command('waitFor', `${nativeOption}[data-model-provider-id="openai"]`, {
+            await control.command('waitFor', officialOption, {
               visible: false,
             })
-            await control.command('waitFor', `${CHAT} [data-testid="send-message-button"]:disabled`)
             const previous = (await rpc('runtime.tasks.get', { taskId: primaryTaskId })).task
             assert.equal(previous.threadId, primaryThreadId)
             assert.equal(previous.modelSelection, null)
@@ -529,14 +539,16 @@ export function createDesktopScenario(options) {
               threadId: primaryThreadId,
               provider: '~',
             })
-            await control.command('clickWhenEnabled', selector(`model-option-${testCase.model}`))
-            await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
-              visible: false,
-            })
             await control.command('press', 'body', { key: 'Escape' })
             await control.command('waitFor', '[data-testid="model-selector-menu"]', {
               visible: false,
             })
+            await control.command(
+              'clickWhenEnabled',
+              '[data-testid="stand-in-primary-profile-close"]'
+            )
+            await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-discard"]')
+            await control.command('waitFor', PANEL, { visible: false })
             await control.command('waitFor', CHAT)
             assert.equal(
               (
@@ -555,8 +567,10 @@ export function createDesktopScenario(options) {
               rpc,
               userId,
               modelName: testCase.model,
+              option,
               reasoning: saved.primary.modelOptions?.reasoning === 'high' ? 'low' : 'high',
             })
+            saved = refreshed.saved
             testCase.conversationReasoning = refreshed.reasoning
             testCase.conversationLimits = refreshed.limits
           }
@@ -848,7 +862,13 @@ function withModelLimits(modelJson, limits) {
   }
 }
 
-/** Refresh real Backend bytes in the mounted chat without another model turn or app lifecycle. */
+async function openPrimaryExecutionSettings(control) {
+  await openStandInSettings(control)
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
+  await control.command('waitFor', PROFILE_MODEL)
+}
+
+/** Refresh the real Backend catalog through the profile without sending a model turn. */
 async function verifyCloudModelRecovery({
   control,
   cloud,
@@ -856,6 +876,7 @@ async function verifyCloudModelRecovery({
   rpc,
   userId,
   modelName,
+  option,
   reasoning,
 }) {
   const request = (path, method, body) => cloudRequest(cloud, path, method, body)
@@ -866,7 +887,6 @@ async function verifyCloudModelRecovery({
   assert.equal(model.is_active, true)
   const update = active =>
     request(`/api/admin/public-models/${model.id}`, 'PUT', { is_active: active })
-  const trigger = `${CHAT} [data-testid="model-selector-button"]`
   const submit = `${CHAT} [data-testid="send-message-button"]`
   const editor = `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`
   const draft = `${marker}_CHAT_cloud`
@@ -874,15 +894,21 @@ async function verifyCloudModelRecovery({
   const previousRule = catalogProxy.rule
   try {
     await control.command('fill', editor, { value: draft })
-    // A visible cached option does not prove the settings picker's refresh has settled.
+    await openPrimaryExecutionSettings(control)
     await waitForDeliveredCloudCatalog(control, catalogProxy)
     const disabledRequestStart = catalogProxy.requests.length
     await update(false)
-    await control.command('clickWhenEnabled', trigger)
+    await openExplicitModelMenu(control, PROFILE_MODEL)
     await waitForDeliveredCloudCatalog(control, catalogProxy, disabledRequestStart)
-    await control.command('waitFor', selector(`model-option-${modelName}`), { visible: false })
-    await control.command('waitFor', `${submit}:disabled`)
+    await control.command('waitFor', option, { visible: false })
     await control.command('press', 'body', { key: 'Escape' })
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-profile-close"]')
+    await control.command('waitFor', PANEL, { visible: false })
+    await control.command('waitFor', `${submit}:disabled`)
+    await control.command('waitFor', CHAT, {
+      text: '助理详情 → 管理助理 → 运行环境',
+    })
+    await openPrimaryExecutionSettings(control)
     await update(true)
     catalogProxy.rule = entry => {
       const previousFault = previousRule(entry)
@@ -890,50 +916,36 @@ async function verifyCloudModelRecovery({
         ? 'hold-response'
         : previousFault
     }
-    await control.command('clickWhenEnabled', trigger)
+    await control.command('clickWhenEnabled', PROFILE_MODEL)
     const held = await until(
       () => catalogProxy.requests.slice(requestStart).find(entry => entry.committedResponseHeld),
       entry => Boolean(entry),
-      'Opening the stand-in model menu did not refresh the real cloud catalog'
+      'Opening the profile model menu did not refresh the real cloud catalog'
     )
     assert.equal(held.status, 200)
-    await control.command('waitFor', `${submit}:disabled`)
-    await control.command('waitFor', trigger, { enabled: true })
-    assert.equal(
-      held.released,
-      undefined,
-      'The catalog response must remain blocked until asserted'
-    )
-    await control.command('clickWhenEnabled', selector(`model-control-reasoning-${reasoning}`))
-    await control.command('waitFor', `${submit}:disabled`)
-    assert.equal(held.released, undefined, 'Editing options must not release the catalog barrier')
+    assert.equal(held.released, undefined)
     catalogProxy.rule = previousRule
     assert.equal(await held.release(), true, 'The original Backend response must be delivered')
-    await control.command('waitFor', submit, { enabled: true })
     await control.command('press', 'body', { key: 'Escape' })
-    assert.equal((await control.command('getText', editor)).trim(), draft)
-    const saved = await rpc('runtime.stand_in.personal.get', { userId })
-    assert.equal(saved.primary.model.cloud_model.name, modelName)
-    // Select the loaded model explicitly before its same-identity metadata changes.
-    await openExplicitModelMenu(control, trigger)
-    await control.command('clickWhenEnabled', selector(`model-option-${modelName}`))
-    await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
-      visible: false,
-    })
-    await control.command('press', 'body', { key: 'Escape' })
-    await control.command('waitFor', '[data-testid="model-selector-menu"]', { visible: false })
-    await waitForDeliveredCloudCatalog(control, catalogProxy)
     const updatedLabel = `${model.json.metadata.displayName} · updated limits`
     const updated = withModelLimits(model.json, UPDATED_LIMITS)
     updated.metadata = { ...updated.metadata, displayName: updatedLabel }
     await request(`/api/admin/public-models/${model.id}`, 'PUT', { json: updated })
     const updatedRequestStart = catalogProxy.requests.length
-    await control.command('clickWhenEnabled', trigger)
+    await openExplicitModelMenu(control, PROFILE_MODEL)
     await waitForDeliveredCloudCatalog(control, catalogProxy, updatedRequestStart)
+    await control.command('waitFor', option, { text: updatedLabel })
+    await control.command('clickWhenEnabled', option)
+    await control.command('clickWhenEnabled', selector(`model-control-reasoning-${reasoning}`))
     await control.command('press', 'body', { key: 'Escape' })
-    await control.command('waitFor', trigger, { text: updatedLabel })
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+    await control.command('waitFor', PANEL, { visible: false })
     await control.command('waitFor', submit, { enabled: true })
-    return { reasoning, limits: UPDATED_LIMITS }
+    assert.equal((await control.command('getText', editor)).trim(), draft)
+    const saved = await rpc('runtime.stand_in.personal.get', { userId })
+    assert.equal(saved.primary.model.cloud_model.name, modelName)
+    assert.equal(saved.primary.modelOptions.reasoning, reasoning)
+    return { reasoning, limits: UPDATED_LIMITS, saved }
   } finally {
     catalogProxy.rule = previousRule
     await Promise.all(

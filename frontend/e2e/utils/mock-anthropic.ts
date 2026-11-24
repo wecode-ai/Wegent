@@ -1,4 +1,5 @@
 import type * as http from 'http'
+import type { MockResponseGate } from './mock-response-gate'
 
 type AnthropicInputUsage = { input_tokens: number; cache_read_input_tokens?: number }
 
@@ -17,7 +18,8 @@ export function writeAnthropicStreamingResponse(
   model: string,
   chunkDelayMs: number,
   doneDelayMs: number,
-  inputUsage: AnthropicInputUsage = { input_tokens: 100 }
+  inputUsage: AnthropicInputUsage = { input_tokens: 100 },
+  doneGate?: MockResponseGate
 ): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -54,6 +56,7 @@ export function writeAnthropicStreamingResponse(
   let index = 0
 
   const sendChunk = () => {
+    if (res.destroyed) return
     if (index < chunks.length) {
       const text = index === 0 ? chunks[index] : ' ' + chunks[index]
       writeAnthropicSseEvent(res, 'content_block_delta', {
@@ -69,7 +72,9 @@ export function writeAnthropicStreamingResponse(
       return
     }
 
-    setTimeout(() => {
+    setTimeout(async () => {
+      await doneGate?.wait(res)
+      if (res.destroyed) return
       writeAnthropicSseEvent(res, 'content_block_stop', {
         type: 'content_block_stop',
         index: 0,

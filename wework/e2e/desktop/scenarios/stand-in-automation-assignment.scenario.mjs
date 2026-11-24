@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
@@ -117,7 +118,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
             role: 'Developer',
           })
           const personal = await rpc('runtime.stand_in.personal.get', { userId: user.id })
-          const role = personal.roles[0]
+          const role = standInRoleFixture(personal.executionDeviceId)
           let settings = await rpc('runtime.stand_in.personal.save', {
             userId: user.id,
             settings: {

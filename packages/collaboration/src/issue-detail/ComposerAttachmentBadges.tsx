@@ -160,8 +160,7 @@ function DocumentAttachmentCard({
       <AttachmentTileBorder />
       {onOpen && (
         <ControlButton
-          variant="primary"
-          size="sm"
+          variant="unstyled"
           type="button"
           data-testid="attachment-document-preview-button"
           aria-label={filename}
@@ -233,8 +232,7 @@ function TextAttachmentCard({
       </span>
       {onOpen && (
         <ControlButton
-          variant="primary"
-          size="sm"
+          variant="unstyled"
           type="button"
           data-testid="attachment-text-open-button"
           aria-label={preview || labels.pastedText}
@@ -308,6 +306,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
               <AttachmentImageView
                 services={imageServices}
                 attachment={attachment}
+                fromComposer
                 buttonTestId="attachment-image-preview-button"
                 imageTestId="attachment-image-preview"
                 loadingTestId="attachment-image-preview-loading"

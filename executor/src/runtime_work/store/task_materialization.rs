@@ -14,15 +14,13 @@ impl RuntimeWorkStore {
             {
                 return Ok(false);
             }
-            let inserted = !index.tasks.contains_key(&link.local_task_id);
-            current = Some(
-                index
-                    .tasks
-                    .entry(link.local_task_id.clone())
-                    .or_insert(link)
-                    .clone(),
-            );
-            Ok(inserted)
+            if let Some(existing) = index.tasks.get(&link.local_task_id) {
+                current = Some(existing.clone());
+                return Ok(false);
+            }
+            current = Some(link.clone());
+            index.insert_task(link);
+            Ok(true)
         })?;
         Ok(current)
     }
@@ -45,6 +43,10 @@ mod tests {
             .materialize_discovered_task(link.clone())
             .unwrap()
             .is_some());
+        assert_eq!(
+            store.workspace_task_summaries("/workspace", |_| true).len(),
+            1
+        );
         store.update_task("native-thread", |task| task.status = "done".into());
         assert_eq!(
             store

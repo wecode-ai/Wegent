@@ -396,7 +396,7 @@ export function runtimeConversationSnapshotSettlesLatestTurn(
 export function applyRuntimeConversationAction(
   address: RuntimeTaskAddress,
   action: RuntimePaneMessageAction
-): WorkbenchMessage[] {
+): void {
   const key = runtimeConversationKey(address)
   const hydration = hydrationByConversation.get(key)
   if (hydration) {
@@ -429,12 +429,12 @@ export function applyRuntimeConversationAction(
     }
   }
   const superseded = supersededTurnIdsByConversation.get(key)
-  const nextTurns = reduceRuntimeConversationTurns(currentTurns, action).filter(
-    turn => !turn.id || !superseded?.has(turn.id)
-  )
+  const reduced = reduceRuntimeConversationTurns(currentTurns, action)
+  const nextTurns = superseded?.size
+    ? reduced.filter(turn => !turn.id || !superseded.has(turn.id))
+    : reduced
   cacheRuntimeConversationTurns(key, nextTurns)
-  publishRuntimeConversationAction(key, action)
-  return projectRuntimeConversationMessages(key, nextTurns)
+  publishRuntimeConversationAction(key, action, nextTurns)
 }
 
 export function appendAcceptedRuntimeConversationMessage(
@@ -991,8 +991,12 @@ export function clearRuntimeConversationCacheForTests() {
   nextRuntimeGoalSnapshotVersion = 1
 }
 
-function publishRuntimeConversationAction(key: string, action: RuntimePaneMessageAction): void {
-  if (isStreamingConversationAction(action)) {
+function publishRuntimeConversationAction(
+  key: string,
+  action: RuntimePaneMessageAction,
+  turns: RuntimeConversationTurn[]
+): void {
+  if (isStreamingConversationAction(action, turns)) {
     scheduleStreamingConversationNotification(key)
     return
   }
@@ -1013,13 +1017,29 @@ function scheduleStreamingConversationNotification(key: string): void {
   pendingStreamingNotifications.set(key, () => globalThis.clearTimeout(timer))
 }
 
-function isStreamingConversationAction(action: RuntimePaneMessageAction): boolean {
-  return (
-    action.type === 'assistant_chunk' ||
-    action.type === 'block_updated' ||
-    (action.type === 'block_created' &&
-      (action.block.type === 'text' || action.block.type === 'thinking'))
+function isStreamingTextBlock(block: ProcessingBlock): boolean {
+  return block.type === 'text' || block.type === 'thinking'
+}
+
+function isStreamingConversationAction(
+  action: RuntimePaneMessageAction,
+  turns: RuntimeConversationTurn[]
+): boolean {
+  if (action.type === 'assistant_chunk') return action.blocks?.every(isStreamingTextBlock) ?? true
+  if (action.type === 'block_created') return isStreamingTextBlock(action.block)
+  if (action.type !== 'block_updated') return false
+
+  const { toolOutputDelta, status, ...metadata } = action.updates
+  if (
+    toolOutputDelta !== undefined &&
+    (status === undefined || status === 'streaming') &&
+    !Object.keys(metadata).length
   )
+    return true
+
+  const turn = turns.findLast(turn => turn.id === action.subtaskId)
+  const item = turn?.items.find(item => item.id === action.blockId)
+  return item?.type === 'block' && isStreamingTextBlock(item.block)
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {

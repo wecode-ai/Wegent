@@ -96,6 +96,11 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.memory.list" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "list") })
             }
+            "runtime.stand_in.memory.rework_report" => boxed_rpc(move || async move {
+                let user = super::runtime_owner::runtime_user(&payload)?;
+                let role = super::stand_in_tasks::required(&payload, "roleId")?;
+                self.role_rework_report(user, role, None).await
+            }),
             "runtime.stand_in.memory.save" => {
                 boxed_rpc(move || async move { self.stand_in_memory(payload, "save") })
             }
@@ -214,6 +219,15 @@ impl RuntimeWorkRpcHandler {
             }),
             "runtime.stand_in.work.list" => {
                 boxed_rpc(move || async move { self.list_connection_stand_in_work(payload) })
+            }
+            "runtime.stand_in.role_task.branches" => {
+                boxed_rpc(move || async move { self.stand_in_role_branches(&payload) })
+            }
+            "runtime.stand_in.role_task.cancel" => {
+                boxed_rpc(move || async move { self.request_role_cancellation(payload).await })
+            }
+            "runtime.stand_in.role_task.retry" => {
+                boxed_rpc(move || async move { self.request_role_retry(payload).await })
             }
             "runtime.stand_in.work.messages" => {
                 boxed_rpc(move || async move { self.connection_stand_in_messages(payload) })
@@ -502,6 +516,12 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.codex.plugin.install_local_first" => {
                 boxed_rpc(move || async move { self.install_local_plugin(payload).await })
+            }
+            "runtime.codex.marketplace.check_updates" => {
+                boxed_rpc(move || async move { self.check_git_marketplace_versions(payload).await })
+            }
+            "runtime.codex.marketplace.list_configured" => {
+                boxed_rpc(move || async move { self.list_configured_marketplaces().await })
             }
             "runtime.codex.plugin.sync_bundled" => {
                 boxed_rpc(move || async move { self.sync_bundled_plugin(payload).await })

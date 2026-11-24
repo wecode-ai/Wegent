@@ -29,6 +29,11 @@ impl RuntimeWorkRpcHandler {
         if payload["commentId"].is_string() {
             return self.process_stand_in_issue_mention(payload).await;
         }
+        if let Some(issue_id) = payload["personalIssueId"].as_str() {
+            return self
+                .process_personal_issue_assignment(&payload, issue_id)
+                .await;
+        }
         let (Some(project), Some(issue_id), Some(assignment)) = (
             payload["projectId"].as_str(),
             payload["itemId"].as_str(),

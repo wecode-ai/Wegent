@@ -1,3 +1,4 @@
+import { matchesRuntimeControlCommand } from '../../../scripts/desktop-control-queue.mjs'
 import {
   handleRiskyCommandApproval,
   RISKY_COMMAND_APPROVAL_SCENARIOS,
@@ -489,6 +490,15 @@ const HELD_RESPONSE_SCENARIOS = new Set([
   'cloud_device_restart_busy',
 ])
 
+const IMAGE_EDIT_COMPLETION_TEXT = {
+  image_preview_resize: 'Image resize received',
+  side_chat_image_preview_resize: 'Image resize received',
+  image_preview_comment: 'Image comment received',
+  image_preview_markup_save: 'Saved markup received',
+  image_preview_markup_instructions: 'Markup instructions received',
+  image_erase: 'Image erase received',
+}
+
 class DesktopE2EServer {
   constructor(
     workspacePath,
@@ -940,6 +950,12 @@ class DesktopE2EServer {
         'fresh_chat',
         'attachment_only',
         'pasted_zip_attachment',
+        'image_preview_resize',
+        'side_chat_image_preview_resize',
+        'image_preview_comment',
+        'image_preview_markup_save',
+        'image_preview_markup_instructions',
+        'image_erase',
         'pasted_workspace_paths',
         'dropped_workspace_paths',
         'workspace_selection_streaming',
@@ -1260,6 +1276,19 @@ class DesktopE2EServer {
       this.controlWindowsByClient.has(clientId),
       `Desktop control client ${clientId} is not registered`
     )
+    let usesLegacyRuntimeAcknowledgement = false
+    if (action === 'fetchLocalRuntime' && this.desktopScenario?.usesLegacyRuntimeAcknowledgement) {
+      const installed = JSON.parse(
+        await this.commandForClient(clientId, 'getInstalledAppVersion', 'body')
+      )
+      usesLegacyRuntimeAcknowledgement = this.desktopScenario.usesLegacyRuntimeAcknowledgement(
+        installed.version
+      )
+      assert.ok(
+        this.controlWindowsByClient.has(clientId),
+        `Desktop control client ${clientId} was replaced during package identification`
+      )
+    }
     const id = randomUUID()
     const command = {
       id,
@@ -1279,6 +1308,8 @@ class DesktopE2EServer {
         clientId,
         queuedAt: new Date().toISOString(),
         action,
+        value: command.value,
+        usesLegacyRuntimeAcknowledgement,
         resolve: resolvePromise,
         reject,
         resolveDelivery,
@@ -2185,6 +2216,16 @@ class DesktopE2EServer {
       if (started.clientId !== pending.clientId) {
         json(response, 409, {
           error: `Command ${started.id} belongs to a different desktop control client`,
+        })
+        return true
+      }
+      const legacyAcknowledgement =
+        pending.usesLegacyRuntimeAcknowledgement &&
+        !Object.hasOwn(started, 'action') &&
+        !Object.hasOwn(started, 'value')
+      if (!legacyAcknowledgement && !matchesRuntimeControlCommand(pending, started)) {
+        json(response, 409, {
+          error: `Command ${started.id} does not match the queued Runtime request`,
         })
         return true
       }
@@ -4431,6 +4472,55 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PASTED_ZIP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (
+      this.scenario === 'image_preview_resize' ||
+      this.scenario === 'side_chat_image_preview_resize' ||
+      this.scenario === 'image_preview_comment' ||
+      this.scenario === 'image_preview_markup_save' ||
+      this.scenario === 'image_preview_markup_instructions' ||
+      this.scenario === 'image_erase'
+    ) {
+      const turn = body.input?.findLast?.(item => item.role === 'user')
+      const parts = turn?.content ?? []
+      const editText = parts
+        .filter(part => part.type === 'input_text')
+        .map(part => part.text)
+        .join('\n')
+      const isComment = this.scenario === 'image_preview_comment'
+      const isSavedMarkup = this.scenario === 'image_preview_markup_save'
+      const isMarkupInstructions = this.scenario === 'image_preview_markup_instructions'
+      const isErase = this.scenario === 'image_erase'
+      if (isSavedMarkup) {
+        assert.match(editText, /Preserve this unsent image-edit draft/)
+        assert.match(editText, /[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Review the saved mark/)
+        assert.match(
+          editText,
+          /[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Review the mark saved in Files/
+        )
+      } else if (isComment) {
+        assert.match(editText, /(?:Image|图像) 1[:：]/)
+        assert.match(
+          editText,
+          /1\.\s*[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Inspect this area/
+        )
+      } else if (isMarkupInstructions) {
+        assert.match(editText, /Compare the highlighted regions before editing/)
+      } else if (isErase) {
+        assert.match(editText, /remove the area marked in white/i)
+      } else {
+        assert.match(editText, /aspect ratio 16:9/)
+      }
+      assert.equal(parts.filter(part => part.type === 'input_image').length, isErase ? 2 : 1)
+      if (!isSavedMarkup) assert.doesNotMatch(editText, /Preserve this unsent image-edit draft/)
+      this.recordScenarioRequest(this.scenario, modelRequest)
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(IMAGE_EDIT_COMPLETION_TEXT[this.scenario]),
         responseCompleted(responseId),
       ])
       return

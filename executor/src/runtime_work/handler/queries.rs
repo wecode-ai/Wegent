@@ -33,6 +33,9 @@ impl RuntimeWorkRpcHandler {
             self.is_active_local_task(&task_id),
             self.queued_local_task_position(&task_id),
         );
+        sidebar::apply_sidebar_task_pin(&mut link, |thread_id| {
+            CodexGlobalProjectIndex::load().pinned_thread_order(thread_id)
+        });
         link.git_info = crate::runtime_work::response::git_info_for_workspace(
             link.git_info.take(),
             &link.workspace_path,
@@ -438,7 +441,24 @@ impl RuntimeWorkRpcHandler {
             payload["limit"] = json!(limit);
         }
         let reconciliation_ids = super::transcript_read_link::reconciliation_ids(&payload)?;
+        let presentation_read = ![
+            "conversationContextOnly",
+            "conversation_context_only",
+            "navigationOnly",
+            "navigation_only",
+        ]
+        .iter()
+        .any(|key| payload[*key] == true);
         let mut response = self.read_transcript(payload).await?;
+        if presentation_read {
+            if let Some(link) = self.store.get_task_summary(&task_id).filter(|link| {
+                requested_session_id.as_ref().map_or(true, |id| {
+                    runtime_session_id_from_link(link).as_ref() == Some(id)
+                })
+            }) {
+                append_preparation_failure(&mut response, &link);
+            }
+        }
         if let Some(requested) = reconciliation_ids {
             if let Some(accepted) =
                 self.accepted_reconciliation_ids(&task_id, &response, &requested)
@@ -458,9 +478,10 @@ impl RuntimeWorkRpcHandler {
         }
         // A refresh can replace the linked provider session before publishing.
         let directory = snapshot_directory();
+        let cleanup = self.transcript_transfer_cleanup.clone();
         super::super::transcript_work::run(move |cancellation| {
             cancellation.check()?;
-            transcript_transport::remove_expired_transfers(&runtime_directory)?;
+            cleanup.run_if_due(&runtime_directory, Instant::now());
             transcript_transport::encode_cancellable(&directory, response, cancellation)
         })
         .await
@@ -479,8 +500,21 @@ impl RuntimeWorkRpcHandler {
         let limit = transcript_limit(&payload);
         let before_cursor = string_field(&payload, "beforeCursor")
             .or_else(|| string_field(&payload, "before_cursor"));
-        let after_cursor = string_field(&payload, "afterCursor")
+        let mut after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        if after_cursor.as_deref() == Some("start") {
+            let link = historical_link
+                .clone()
+                .or_else(|| self.store.get_task_summary(&local_task_id));
+            after_cursor = Some(
+                if link.as_ref().map_or(true, |link| link.runtime == "codex") {
+                    crate::runtime_work::codex_transcript_search::first_history_cursor()
+                        .map_err(|error| AppIpcError::new("history_cursor_invalid", error))?
+                } else {
+                    "offset:0".to_string()
+                },
+            );
+        }
         let search_match_requested = before_cursor
             .as_deref()
             .or(after_cursor.as_deref())

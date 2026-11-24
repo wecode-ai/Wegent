@@ -53,9 +53,14 @@ export function createStandInTelemetrySession() {
       let active = true
       let timer: ReturnType<typeof setTimeout>
       const poll = async () => {
+        let retryConfiguration = false
         try {
           const local = await identity()
-          if (!active || !local) return
+          if (!active) return
+          if (!local) {
+            retryConfiguration = true
+            return
+          }
           const targets = new Map<string, ExecutionTarget>([[local.deviceId, 'local']])
           for (const device of JSON.parse(devices) as {
             id: string
@@ -112,11 +117,13 @@ export function createStandInTelemetrySession() {
               await delivery.collect(api, userId, deviceId, () => active, location)
               if (!active) return
             } catch {
+              retryConfiguration = true
               // The next poll reconnects; neither queue is acknowledged on a failed handoff.
               console.warn('[Stand-in telemetry] Device delivery pending')
             }
           }
         } catch {
+          retryConfiguration = true
           console.warn('[Stand-in telemetry] Executor connection pending')
         } finally {
           try {
@@ -130,13 +137,20 @@ export function createStandInTelemetrySession() {
           } catch {
             console.warn('[Stand-in telemetry] Durable delivery pending')
           }
-          if (active) timer = setTimeout(() => void poll(), 5000)
+          if (active && (policy || retryConfiguration)) timer = setTimeout(() => void poll(), 5000)
         }
       }
+      const stopRecovery = source?.services?.chatStream?.subscribe({
+        onRuntimeTransportReplaced: () => {
+          signature = undefined
+          update(input)
+        },
+      })
       void poll()
       return () => {
         active = false
         clearTimeout(timer)
+        stopRecovery?.()
       }
     })()
   }

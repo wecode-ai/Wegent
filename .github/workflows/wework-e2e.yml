@@ -168,7 +168,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/*/Cargo.toml', 'backend-rs/*/src/**', 'backend-rs/src/task_export_docx/templates/thumbnail.jpeg', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/be-server/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -291,8 +291,8 @@ jobs:
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Verify isolated Xvfb lifecycle
-        run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs
+      - name: Verify desktop E2E runner helpers
+        run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs wework/e2e/desktop/desktop-cpu-benchmark.test.mjs
 
       - name: Set up ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
@@ -498,6 +498,7 @@ jobs:
         run: pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Run Wework desktop Core shard E2E
+        id: core-e2e
         env:
           CI: true
           WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ contains(matrix.segments, 'browser-toolbar-actions') && '1' || '0' }}
@@ -514,8 +515,10 @@ jobs:
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
+          WEWORK_E2E_CPU_BENCHMARK_DIR: ${{ github.workspace }}/.ci-artifacts/wework-cpu-benchmarks
         run: |
           WEWORK_E2E_SEGMENTS="$(node .github/scripts/order-wework-linux-e2e.mjs)"
+          echo "checkpoints=$WEWORK_E2E_SEGMENTS" >> "$GITHUB_OUTPUT"
           if [[ "$WEWORK_E2E_SEGMENTS" == *"native-window-startup"* || "$WEWORK_E2E_SEGMENTS" == *"workbench-mode"* ]]; then
             pnpm --dir wework/electron exec node -e "const fs=require('node:fs');const electron=require('electron');const stats=fs.statSync(electron);if(!stats.isFile()||!(stats.mode&0o111))throw new Error('Electron is not an executable regular file: '+electron)"
           fi
@@ -535,6 +538,27 @@ jobs:
           node .github/scripts/run-with-resource-logging.mjs \
             node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
+
+      - name: Compare idle workbench CPU
+        if: ${{ !cancelled() && contains(format(',{0},', steps.core-e2e.outputs.checkpoints), ',idle-executor-requests,') }}
+        uses: ./.github/actions/compare-wework-cpu-benchmark
+        with:
+          checkpoint: idle-executor-requests
+          save-cache: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+
+      - name: Compare streaming conversation CPU
+        if: ${{ !cancelled() && contains(format(',{0},', steps.core-e2e.outputs.checkpoints), ',streaming-conversation-switching,') }}
+        uses: ./.github/actions/compare-wework-cpu-benchmark
+        with:
+          checkpoint: streaming-conversation-switching
+          save-cache: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+
+      - name: Compare Executor stream recovery CPU
+        if: ${{ !cancelled() && contains(format(',{0},', steps.core-e2e.outputs.checkpoints), ',executor-stream-recovery,') }}
+        uses: ./.github/actions/compare-wework-cpu-benchmark
+        with:
+          checkpoint: executor-stream-recovery
+          save-cache: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
 
       - name: Prune transient Wework desktop E2E caches
         if: always()
@@ -815,7 +839,7 @@ jobs:
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Prepare DingTalk protocol fixture for the standard account
-        if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli')
+        if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli') || contains(matrix.segments, 'stand-in-self-learning')
         shell: pwsh
         env:
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}

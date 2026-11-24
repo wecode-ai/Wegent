@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
   type SyntheticEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -35,16 +36,33 @@ export interface ImageAttachment {
 
 export interface AttachmentImageServices<T extends ImageAttachment> {
   identity(attachment: T): string
-  load(attachment: T): Promise<{ url: string; release: (() => void) | null }>
+  load(attachment: T): Promise<{ url: string; blob?: Blob; release: (() => void) | null }>
   download(attachment: T, url: string, filename: string): Promise<void>
   localPath?(attachment: T): string | null
   onError?(attachment: T): void
   loadImmediately?: boolean
+  renderLightbox?(props: AttachmentImageLightboxProps<T>): ReactNode
+}
+
+export interface AttachmentImageLightboxProps<T extends ImageAttachment> {
+  attachment: T
+  fromComposer?: boolean
+  url: string | null
+  blob?: Blob
+  filename: string
+  localPath?: string | null
+  loading: boolean
+  onClose(): void
+  onError(event: SyntheticEvent<HTMLImageElement>): void
+  onDownload(): Promise<void>
+  onPrevious?: () => void
+  onNext?: () => void
 }
 
 export interface AttachmentImageViewProps<T extends ImageAttachment> {
   services: AttachmentImageServices<T>
   attachment: T
+  fromComposer?: boolean
   buttonTestId: string
   imageTestId: string
   loadingTestId: string
@@ -108,6 +126,7 @@ function createAttachmentImageResource<T extends ImageAttachment>(
 function AttachmentImageContent<T extends ImageAttachment>({
   services,
   attachment,
+  fromComposer,
   buttonTestId,
   imageTestId,
   loadingTestId,
@@ -236,7 +255,7 @@ function AttachmentImageContent<T extends ImageAttachment>({
         setLightboxIndex(current => (current >= gallery.length - 1 ? 0 : current + 1))
       }
     },
-    { enabled: isLightboxOpen && !disableLightbox }
+    { enabled: isLightboxOpen && !disableLightbox && !services.renderLightbox }
   )
   const lightboxRef = useRef<HTMLDivElement>(null)
   useFocusRequest(lightboxRef, undefined, {
@@ -272,8 +291,35 @@ function AttachmentImageContent<T extends ImageAttachment>({
   }
 
   if (previewUrl) {
+    const showLightbox = !disableLightbox && isLightboxOpen && typeof document !== 'undefined'
+    const renderLightbox = services.renderLightbox
+    const filename =
+      resolveDownloadFilename?.(currentLightboxAttachment, currentLightboxIndex) ??
+      currentLightboxAttachment.filename
+    const download = async () => {
+      if (lightboxUrl) await services.download(currentLightboxAttachment, lightboxUrl, filename)
+    }
+    const desktopLightbox =
+      showLightbox && renderLightbox
+        ? renderLightbox({
+            attachment: currentLightboxAttachment,
+            fromComposer,
+            url: lightboxUrl,
+            blob: lightboxRequest.reusedUrl
+              ? previewSnapshot.data?.blob
+              : lightboxSnapshot.data?.blob,
+            filename,
+            localPath: lightboxLocalPath,
+            loading: isLightboxLoading,
+            onClose: () => setIsLightboxOpen(false),
+            onError: handleLightboxError,
+            onDownload: download,
+            onPrevious: canNavigateLightbox ? goToPreviousImage : undefined,
+            onNext: canNavigateLightbox ? goToNextImage : undefined,
+          })
+        : null
     const lightbox =
-      !disableLightbox && isLightboxOpen && typeof document !== 'undefined'
+      showLightbox && !renderLightbox
         ? createPortal(
             <DialogSurface
               onClose={() => setIsLightboxOpen(false)}
@@ -300,16 +346,7 @@ function AttachmentImageContent<T extends ImageAttachment>({
                   className="flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={event => {
                     event.stopPropagation()
-                    if (lightboxUrl) {
-                      void services.download(
-                        currentLightboxAttachment,
-                        lightboxUrl,
-                        resolveDownloadFilename?.(
-                          currentLightboxAttachment,
-                          currentLightboxIndex
-                        ) ?? currentLightboxAttachment.filename
-                      )
-                    }
+                    void download()
                   }}
                   disabled={!lightboxUrl}
                   aria-label="Download image"
@@ -468,7 +505,7 @@ function AttachmentImageContent<T extends ImageAttachment>({
             onError={handlePreviewError}
           />
         </ControlButton>
-        {lightbox}
+        {desktopLightbox ?? lightbox}
       </>
     )
   }

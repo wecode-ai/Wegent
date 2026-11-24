@@ -14,13 +14,16 @@ fn legacy_fingerprints_are_owner_only_revision_checked_and_never_model_facts() {
     ).unwrap();
     drop(store);
     let store = LocalTaskStore::open(&path).unwrap();
-    let rows = store.stand_in_memory_rule_records(7).unwrap();
+    let rows = store.stand_in_memory_rule_records(7, "mac", None).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["kind"], "legacy_fingerprint");
     for forbidden in ["scope", "content", "evidence", "sourceTaskId"] {
         assert!(rows[0].get(forbidden).is_none());
     }
-    assert!(store.stand_in_memory_rule_records(8).unwrap().is_empty());
+    assert!(store
+        .stand_in_memory_rule_records(8, "mac", None)
+        .unwrap()
+        .is_empty());
     assert!(store
         .recall_stand_in_memory_rules(7, "mac", None, None)
         .unwrap()
@@ -42,7 +45,10 @@ fn legacy_fingerprints_are_owner_only_revision_checked_and_never_model_facts() {
     store
         .delete_stand_in_memory_rule(7, &id, 1, Some(timestamp))
         .unwrap();
-    assert!(store.stand_in_memory_rule_records(7).unwrap().is_empty());
+    assert!(store
+        .stand_in_memory_rule_records(7, "mac", None)
+        .unwrap()
+        .is_empty());
     store.save_stand_in_memory(7, "mac", input).unwrap();
 }
 
@@ -55,7 +61,7 @@ fn referenced_fingerprints_cannot_be_deleted_through_legacy_management() {
     store
         .delete_stand_in_memory(7, saved["id"].as_str().unwrap(), 1)
         .unwrap();
-    let records = store.stand_in_memory_rule_records(7).unwrap();
+    let records = store.stand_in_memory_rule_records(7, "mac", None).unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["kind"], "forgetting_rule");
     let id = forgotten_key(7, &input["scope"], "Protected fact");
@@ -192,6 +198,10 @@ fn forgetting_rule_recall_reuses_role_scope_isolation() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+        "default", "mac"
+    )]);
+    let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
     let role = settings["roles"][0]["id"].as_str().unwrap().to_owned();
     let row = store
         .save_stand_in_memory(

@@ -5,7 +5,10 @@ import {
   type ComposerAttachmentsModel,
   type ComposerAttachmentsOptions,
 } from './composerAttachmentsModel'
-export { createComposerAttachmentsModel } from './composerAttachmentsModel'
+export {
+  createComposerAttachmentsModel,
+  includeDraftAttachmentGroup,
+} from './composerAttachmentsModel'
 export type {
   ComposerAttachmentsModel,
   ComposerAttachmentsOptions,

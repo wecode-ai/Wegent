@@ -12,17 +12,17 @@ export function apply(ctx) {
   const runtime = new TerminalRuntime({ spawn })
   ctx.effect(() => () => runtime.dispose(), 'wework-terminal-runtime: PTY registry')
   register(ctx, BASE_PATH, (req, res) => describe(req, res, runtime))
-  register(ctx, `${BASE_PATH}/rpc`, (req, res) => rpc(req, res, runtime))
+  register(ctx, `${BASE_PATH}/rpc`, (req, res) => rpc(req, res, runtime), { rpc: true })
   register(ctx, `${BASE_PATH}/events`, (req, res) => events(req, res, runtime))
 }
 
-function register(ctx, path, handler) {
+function register(ctx, path, handler, options) {
   ctx.effect(
     () =>
       ctx.webServer.register({
         kind: 'exact',
         path,
-        handler: ctx.weworkRequestSecurity.wrap(handler),
+        handler: ctx.weworkRequestSecurity.wrap(handler, options),
       }),
     `wework-terminal-runtime: ${path}`
   )
@@ -39,6 +39,7 @@ async function rpc(req, res, runtime) {
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST')
   try {
     const body = await readJsonBody(req)
+    if (res.writableEnded || res.destroyed) return
     if (!isRecord(body) || typeof body.method !== 'string' || !isRecord(body.params)) {
       throw new TerminalRuntimeError(
         'invalid_params',
@@ -49,6 +50,8 @@ async function rpc(req, res, runtime) {
     const result = await runtime.request(body.method, body.params)
     sendJson(res, 200, { ok: true, result: result ?? null })
   } catch (error) {
+    if (res.writableEnded || res.destroyed) return
+    if (res.headersSent) return res.destroy()
     sendError(res, error)
   }
 }
@@ -69,7 +72,7 @@ function eventCursor(req) {
 async function readJsonBody(req) {
   let bytes = 0
   const chunks = []
-  for await (const chunk of req) {
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     bytes += buffer.byteLength
     if (bytes > MAX_REQUEST_BODY_BYTES) {
@@ -112,6 +115,7 @@ function sendJson(res, status, value, head = false) {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'content-length': Buffer.byteLength(body),
+    ...(status >= 400 ? { connection: 'close' } : {}),
   })
   res.end(head ? undefined : body)
 }

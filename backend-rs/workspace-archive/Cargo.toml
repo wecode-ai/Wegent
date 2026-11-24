@@ -1,0 +1,31 @@
+[package]
+name = "wegent-workspace-archive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Executor workspace archive storage, save, and restore"
+
+[dependencies]
+anyhow.workspace = true
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+chrono-tz = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+wegent-backend-config.workspace = true
+wegent-executor-manager.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-python-compat.workspace = true
+wegent-storage.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
+wegent-backend-test-support.workspace = true

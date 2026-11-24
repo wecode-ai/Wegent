@@ -261,16 +261,18 @@ export function createRuntimeConversationSearchSource(initial: RuntimeConversati
   return {
     commands,
     getSnapshot: () => snapshot,
-    subscribe(next: RuntimeConversationSearchOptions, listener: () => void) {
+    updateOptions(next: RuntimeConversationSearchOptions) {
       const changed =
         observation.target?.key !== next.target?.key ||
         (observation.reloadRevision ?? 0) !== (next.reloadRevision ?? 0)
       observation = next
-      listeners.add(listener)
       if (changed) {
         scopeRevision++
         commands.releasePage()
       }
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener)
       return () => {
         listeners.delete(listener)
         queueMicrotask(() => {

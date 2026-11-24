@@ -6,6 +6,7 @@ import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { SegmentedControl } from '@wegent/collaboration/controls/SegmentedControl'
 import {
   SelectContent,
   SelectItem,
@@ -27,6 +28,8 @@ import {
 } from 'react'
 import { StandInMemoryEvidence } from './StandInMemoryEvidence'
 import { StandInMemoryRules } from './StandInMemoryRules'
+import { StandInRecentReview } from './StandInRecentReview'
+import { StandInReworkReview } from './StandInReworkReview'
 import { StandInSettingsHeader } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
@@ -36,6 +39,7 @@ interface StandInMemoryPanelProps {
   settings: PersonalStandInSettings
   projects: CollaborationProject[]
   fixedScope?: StandInMemoryScope
+  reviewRoleId?: string
   scopeLabel?: string
   onClose(): void
   onBack?: () => void
@@ -45,7 +49,12 @@ interface StandInMemoryPanelProps {
 
 export function StandInMemoryPanel(props: StandInMemoryPanelProps) {
   const { api, settings, fixedScope } = props
-  const scope = JSON.stringify([settings.userId, settings.executionDeviceId, fixedScope])
+  const scope = JSON.stringify([
+    settings.userId,
+    settings.executionDeviceId,
+    fixedScope,
+    props.reviewRoleId,
+  ])
   const [owner, setOwner] = useState({ api, scope, revision: 0 })
   if (owner.api !== api || owner.scope !== scope) {
     setOwner({ api, scope, revision: owner.revision + 1 })
@@ -58,6 +67,7 @@ function StandInMemoryPanelContent({
   settings,
   projects,
   fixedScope,
+  reviewRoleId,
   scopeLabel,
   onClose,
   onBack,
@@ -69,6 +79,7 @@ function StandInMemoryPanelContent({
   const [editing, setEditing] = useState<Partial<StandInMemory> | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [view, setView] = useState<'all' | 'today' | 'week'>('all')
   const [discard, setDiscard] = useState<'close' | 'cancel' | null>(null)
   const scopeKey = fixedScope ? JSON.stringify(fixedScope) : undefined
   const scopes: { scope: StandInMemoryScope; label: string }[] = fixedScope
@@ -120,7 +131,7 @@ function StandInMemoryPanelContent({
   const resource = useMemo(
     () =>
       createAsyncResource(
-        JSON.stringify(['stand-in-memory', userId, executionDeviceId, scopeKey]),
+        JSON.stringify(['stand-in-memory', userId, executionDeviceId, scopeKey, settings.version]),
         async () => {
           const rows = await api.memories(userId, executionDeviceId)
           return rows.filter(row =>
@@ -130,7 +141,7 @@ function StandInMemoryPanelContent({
           )
         }
       ),
-    [api, userId, executionDeviceId, scopeKey]
+    [api, userId, executionDeviceId, scopeKey, settings.version]
   )
   const snapshot = useSyncExternalStore(
     resource.subscribe,
@@ -138,6 +149,14 @@ function StandInMemoryPanelContent({
     resource.getSnapshot
   )
   const items = snapshot.data ?? null
+  const reviewRole = settings.roles.find(role => role.id === reviewRoleId)
+  const reviewIdentity = reviewRoleId === '@primary' ? settings.primary : reviewRole
+  const showReviewTabs =
+    !!reviewRoleId &&
+    !!reviewIdentity &&
+    (!!reviewIdentity.selfLearningEnabled ||
+      items?.some(row => row.evidence?.trainingCase?.roleId === reviewRoleId))
+  const reviewing = showReviewTabs && view !== 'all'
   const visibleError =
     error ?? (snapshot.status === 'error' ? getStandInErrorMessage(snapshot.error) : null)
   const dirty =
@@ -198,7 +217,7 @@ function StandInMemoryPanelContent({
             : undefined
         }
       />
-      <p className="mb-5 text-sm text-text-muted">{t('standIn.memory.help')}</p>
+      <p className="mb-4 text-sm text-text-secondary">{t('standIn.memory.help')}</p>
       {visibleError && (
         <div role="alert" className="mb-4 text-sm text-error">
           <p>{visibleError}</p>
@@ -218,21 +237,78 @@ function StandInMemoryPanelContent({
         </div>
       )}
       {items === null && !visibleError && <p role="status">{t('standIn.loading')}</p>}
-      {items !== null && (
+      {showReviewTabs && (
+        <SegmentedControl
+          label={t('standIn.memory.title')}
+          className="mb-4 self-start"
+          value={view}
+          disabled={busy || editing !== null || deleting !== null}
+          onChange={next => {
+            setView(next)
+            if (next !== 'all' && snapshot.status !== 'loading') void resource.reload()
+          }}
+          options={[
+            { value: 'all', label: t('standIn.memory.manage_all'), testId: 'stand-in-memory-all' },
+            {
+              value: 'today',
+              label: t('standIn.memory.review_today'),
+              testId: 'stand-in-review-today',
+            },
+            {
+              value: 'week',
+              label: t('standIn.memory.review_week'),
+              testId: 'stand-in-review-week',
+            },
+          ]}
+        />
+      )}
+      {reviewing && snapshot.status === 'loading' && <p role="status">{t('standIn.loading')}</p>}
+      {items !== null && reviewing && snapshot.status === 'ready' && (
+        <StandInRecentReview
+          memories={items}
+          roleId={reviewRoleId}
+          name={
+            reviewRole
+              ? standInRoleName(
+                  reviewRole,
+                  settings.roles.indexOf(reviewRole),
+                  t('standIn.personal.default_role')
+                )
+              : t('standIn.memory.review_primary')
+          }
+          period={view}
+        />
+      )}
+      {reviewing && reviewIdentity.selfLearningEnabled && (
+        <StandInReworkReview
+          key={settings.version}
+          api={api}
+          userId={userId}
+          deviceId={reviewRole?.executionDeviceId ?? executionDeviceId}
+          roleId={reviewRoleId}
+        />
+      )}
+      {items !== null && !reviewing && (
         <>
           {!editing && (
-            <ControlButton
-              variant="outline"
-              size="sm"
-              type="button"
-              data-testid="stand-in-memory-add"
-              disabled={busy}
-              onClick={() => setEditing({ content: '', scope: fixedScope ?? { kind: 'personal' } })}
-              className="mb-4 inline-flex min-h-8 items-center gap-2 self-start rounded-md border border-border px-3 text-sm hover:bg-muted"
-            >
-              <Plus className="h-4 w-4" />
-              {t('standIn.memory.add')}
-            </ControlButton>
+            <div className="mb-3 space-y-3">
+              {!items.length && (
+                <p className="text-sm text-text-secondary">{t('standIn.memory.empty')}</p>
+              )}
+              <ControlButton
+                variant={items.length ? 'outline' : 'primary'}
+                size="sm"
+                type="button"
+                data-testid="stand-in-memory-add"
+                disabled={busy}
+                onClick={() =>
+                  setEditing({ content: '', scope: fixedScope ?? { kind: 'personal' } })
+                }
+              >
+                <Plus aria-hidden="true" className="size-4" />
+                {t('standIn.memory.add')}
+              </ControlButton>
+            </div>
           )}
           {editing && (
             <form
@@ -328,13 +404,12 @@ function StandInMemoryPanelContent({
               </div>
             </form>
           )}
-          {!items.length && !editing && (
-            <p className="py-8 text-sm text-text-muted">{t('standIn.memory.empty')}</p>
-          )}
           <ul className="divide-y divide-border">
             {items.map(row => (
               <li key={row.id} data-testid="stand-in-memory-item" className="py-4">
-                <p className="whitespace-pre-wrap break-words text-sm">{row.content}</p>
+                <p className="whitespace-pre-wrap break-words text-sm">
+                  {row.evidenceUnavailable ? t('standIn.memory.source_unavailable') : row.content}
+                </p>
                 <p className="mt-2 text-xs text-text-muted">
                   {label(row.scope)} · {new Date(row.updatedAt).toLocaleDateString()}
                 </p>
@@ -406,16 +481,18 @@ function StandInMemoryPanelContent({
           </ul>
         </>
       )}
-      <StandInMemoryRules
-        api={api}
-        userId={settings.userId}
-        deviceId={settings.executionDeviceId}
-        fixedScope={fixedScope}
-        label={label}
-        refreshKey={items}
-        disabled={busy || editing !== null || deleting !== null}
-        onBusyChange={setBusy}
-      />
+      {!reviewing && (
+        <StandInMemoryRules
+          api={api}
+          userId={settings.userId}
+          deviceId={settings.executionDeviceId}
+          fixedScope={fixedScope}
+          label={label}
+          refreshKey={items}
+          disabled={busy || editing !== null || deleting !== null}
+          onBusyChange={setBusy}
+        />
+      )}
       <ConfirmDialog
         open={discard !== null}
         destructive

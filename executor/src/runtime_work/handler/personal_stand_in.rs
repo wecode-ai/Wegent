@@ -172,6 +172,11 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if save {
+            if let Some(route) = payload.get("delegationRoute") {
+                return store
+                    .save_stand_in_delegation_route(user, &self.device_id, route)
+                    .map_err(settings_error);
+            }
             let git_settings = self.task_send_gate(&format!("stand-in-git-settings:{user}"));
             let _git_settings = git_settings.lock().await;
             let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));

@@ -264,16 +264,15 @@ pnpm --dir frontend run start
 受监督启动标识、活动版本和组件数据目录，使开发数据目录只使用自己的发布状态。
 不要通过创建正式版发布目录或删除启动校验来处理开发环境的 `release-bootstrap` 路径错误。
 
-Wework macOS 开发脚本会让 Git worktree 按组件共享 Cargo target，因此切换 worktree 时可以直接复用已编译的依赖产物，而不必再次完整编译。Cargo 会为同一 target 目录协调并发访问，并在 fingerprint 变化时重新编译失效产物。首次运行 `pnpm --dir wework run dev:mac` 时，如果本机缺少 `sccache`，脚本会通过 Homebrew 自动安装，以进一步复用编译器缓存。
+Wework macOS 开发脚本按组件和 worktree 隔离 Cargo target，避免启动时复用另一份源码的构建状态。安装 `sccache` 后，各 worktree 可复用缓存键相同的编译结果。开发构建通过 Cargo 的 `--target-dir` 指定产物目录，避免不同的 `CARGO_TARGET_DIR` 环境变量值改变 Rust 缓存键。
 
-- `pnpm --dir wework run dev:mac`、`pnpm --dir wework run build:mac`、开发模式 executor sidecar 和 `executor/local.sh build` 都使用 `$XDG_CACHE_HOME/wegent/cargo-target/<组件>`；未设置 `XDG_CACHE_HOME` 时使用 `~/.cache/wegent/cargo-target/...`。
-- 脚本检测到 `sccache` 后会自动设置 `RUSTC_WRAPPER` 和 `SCCACHE_BASEDIRS`，归一化不同 worktree 的源码及 target 绝对路径，并关闭与共享编译缓存不兼容的 Cargo incremental。
+- `pnpm --dir wework run dev:mac` 默认使用 `$XDG_CACHE_HOME/wegent/cargo-target/executor-dev/worktrees/<路径哈希>`。未设置 `XDG_CACHE_HOME` 时，缓存根目录为 `~/.cache/wegent/cargo-target`。
+- 脚本检测到 `sccache` 后，会为构建设置 `RUSTC_WRAPPER` 并关闭 Cargo 增量编译。
 - 如需指定其他 target 缓存根目录，设置 `WEGENT_CARGO_TARGET_ROOT=/path/to/cache`。
-- 如需使用仓库内 Cargo 默认的 `target/`，设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`。
-- 如需跳过自动安装并禁用 `sccache`，设置 `WEGENT_DISABLE_SCCACHE=1`。
-- 显式设置 `CARGO_TARGET_DIR` 或 `RUSTC_WRAPPER` 时，脚本会尊重该值。
+- 设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` 可把产物放在当前 worktree 的 `target/executor-dev` 中。
+- 设置 `WEGENT_DISABLE_SCCACHE=1` 可关闭脚本自动配置的 `sccache`。
+- 显式传入的 `CARGO_TARGET_DIR` 用作缓存根目录。脚本保留显式配置的 `RUSTC_WRAPPER`。
 - Wework 启动的 Codex 和 Claude Code 会话会按 Git common directory 生成稳定的仓库缓存键，并把 `CARGO_TARGET_DIR` 设置为 `$WEGENT_CARGO_TARGET_ROOT/repositories/<仓库键>`。因此即使智能体直接执行 `cargo test` 或 `cargo build`，同一仓库的所有 worktree 也会复用一份 Cargo 产物；不同仓库仍使用隔离目录。Electron 构建产物则位于 `wework/electron/release/`。
-- 升级前已经生成的各 worktree 内 `executor/target` 不会自动删除。确认没有 Cargo 构建正在运行后，可以手动删除这些旧缓存；新的 Executor 构建会写入上述共享目录。
 
 ---
 

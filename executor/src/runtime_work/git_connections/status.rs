@@ -23,10 +23,64 @@ pub(super) fn query(input: &Value) -> Result<Value, AppIpcError> {
 }
 
 pub(super) async fn read(instance: &str, input: &Value) -> Result<(ApiReply, String), AppIpcError> {
-    let mut response = api("github", instance, "POST", "graphql", Some(&query(input)?)).await?;
+    let query = query(input)?;
+    let mut response = api_request(
+        "github",
+        instance,
+        "POST",
+        "graphql",
+        Some(&query),
+        input["number"].as_u64(),
+    )
+    .await
+    .map_err(|failure| failure.error)?;
     let (request, profile) = checked_pull_request(instance, input, &response.data)?;
     response.data = request;
     Ok((response, profile))
+}
+
+pub(super) fn log_cli_failure(
+    number: u64,
+    http_status: Option<u16>,
+    exit_code: Option<i32>,
+    stderr: &[u8],
+) {
+    crate::logging::log_executor_event(
+        "GitHub PR status CLI failed",
+        &[
+            ("pr_number", number.to_string()),
+            (
+                "http_status",
+                http_status.map_or("none".into(), |code| code.to_string()),
+            ),
+            (
+                "exit_code",
+                exit_code.map_or("none".into(), |code| code.to_string()),
+            ),
+            ("gh_stderr", sanitized_stderr(stderr)),
+        ],
+    );
+}
+
+fn sanitized_stderr(stderr: &[u8]) -> String {
+    static SENSITIVE: OnceLock<regex::Regex> = OnceLock::new();
+    let sensitive = SENSITIVE.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)https?://[^\s"'<>]+|\b(?:gh[pousr]_|github_pat_)[a-z0-9_]+|\b(?:authorization|proxy-authorization|cookie|set-cookie|gh_(?:enterprise_)?token|github_(?:enterprise_)?token)["']?[ \t]*[:=][^\r\n]*"#,
+        )
+        .expect("gh diagnostic redaction pattern is valid")
+    });
+    let raw = String::from_utf8_lossy(stderr);
+    let redacted = sensitive.replace_all(&raw, "[redacted]");
+    let redacted = crate::agents::redact_diagnostic_text(&redacted);
+    redacted
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(512)
+        .collect()
 }
 
 fn checked_pull_request(
@@ -64,6 +118,23 @@ fn checked_pull_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_diagnostic_preserves_error_and_redacts_credentials() {
+        let stderr = b"gh: Post \"https://user:proxy-secret@api.github.com/graphql?key=url-secret\": unexpected EOF\nAuthorization: Basic header-secret\nCookie: session=cookie-secret\ntrace ghp_token123 and github_pat_token456 password='field secret'";
+        let diagnostic = sanitized_stderr(stderr);
+        assert_eq!(
+            diagnostic,
+            "gh: Post \"[redacted]\": unexpected EOF [redacted] [redacted] trace [redacted] and [redacted] password=[redacted]"
+        );
+        assert_eq!(
+            sanitized_stderr("错".repeat(600).as_bytes())
+                .chars()
+                .count(),
+            512
+        );
+    }
+
     #[test]
     fn status_query_is_fixed_read_only_and_binds_the_exact_resource() {
         let request = query(&json!({"repository":"org/repo","number":7})).unwrap();

@@ -45,6 +45,7 @@ pub(crate) struct ControlContext {
     pub request: ExecutionRequest,
     pub device_id: String,
     pub task_id: String,
+    pub use_runtime_backend: bool,
 }
 
 impl std::fmt::Debug for ControlContext {
@@ -75,6 +76,7 @@ impl ControlContext {
             request: request.clone(),
             device_id,
             task_id,
+            use_runtime_backend: false,
         })
     }
 }
@@ -92,6 +94,9 @@ pub(crate) fn restricted_origin(origin: Option<&Value>) -> bool {
 }
 
 pub(crate) fn origin_restriction(origin: Option<&Value>) -> Option<&'static str> {
+    if origin.is_some_and(crate::task_runtime::mcp::is_independent_issue_origin) {
+        return Some("projectStore");
+    }
     if matches!(
         origin.and_then(|value| value["type"].as_str()),
         Some("stand_in_identity" | "connection_work" | "dingtalk_work")

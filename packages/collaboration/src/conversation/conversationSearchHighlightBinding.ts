@@ -27,18 +27,28 @@ const SEARCH_CONTENT_SELECTOR =
 
 /** Read exactly the prose nodes used to build highlight offsets. */
 export function readConversationSearchContent(content: HTMLElement) {
-  const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
-    acceptNode: node =>
-      node.parentElement?.closest(
-        'button:not([data-testid="assistant-markdown-link"]), [data-search-excluded], [role="tooltip"], [data-testid="assistant-markdown-link-line"], [aria-hidden="true"], [data-testid="markdown-code-block-language"], [data-testid="user-message-goal-badge"], [data-testid="message-code-comment-context-badge"], script, style, textarea, [contenteditable="true"]'
-      )
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT,
-  })
+  const walker = document.createTreeWalker(
+    content,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
+    {
+      acceptNode: node =>
+        (node instanceof Element ? node : node.parentElement)?.closest(
+          'button:not([data-testid="assistant-markdown-link"]), [data-search-excluded], [role="tooltip"], [data-testid="assistant-markdown-link-line"], [aria-hidden="true"], [data-testid="markdown-code-block-language"], [data-testid="user-message-goal-badge"], [data-testid="message-code-comment-context-badge"], script, style, textarea, [contenteditable="true"]'
+        )
+          ? NodeFilter.FILTER_REJECT
+          : node.nodeType === Node.TEXT_NODE || (node instanceof Element && node.tagName === 'BR')
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_SKIP,
+    }
+  )
   const nodes: Array<{ node: Text; start: number; end: number }> = []
   let text = ''
   let previousBlock: Element | null = null
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node instanceof Element) {
+      text += '\n'
+      continue
+    }
     const value = node.textContent ?? ''
     const block =
       node.parentElement?.closest(

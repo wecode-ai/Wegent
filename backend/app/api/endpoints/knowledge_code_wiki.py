@@ -361,9 +361,14 @@ def create_code_wiki(
             summary_model_ref=data.summary_model_ref,
             execution_model_ref=data.execution_model_ref,
             retrieval_config=(
-                data.retrieval_config.model_dump() if data.retrieval_config else None
+                data.retrieval_config.model_dump(exclude_unset=True)
+                if data.retrieval_config
+                else None
             ),
             rag_config_mode=data.rag_config_mode,
+            guided_questions=data.guided_questions,
+            max_calls_per_conversation=data.max_calls_per_conversation,
+            exempt_calls_before_check=data.exempt_calls_before_check,
             multimodal_analysis_enabled=data.multimodal_analysis_enabled,
             multimodal_analysis_model_ref=data.multimodal_analysis_model_ref,
             multimodal_analysis_video_prompt=data.multimodal_analysis_video_prompt,

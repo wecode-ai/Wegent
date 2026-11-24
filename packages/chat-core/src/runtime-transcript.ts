@@ -110,6 +110,7 @@ export function runtimeTranscriptTurnsToConversationTurns(
         completedAt: turn.completedAt,
         error: turn.error ?? undefined,
         errorType: turn.errorType ?? undefined,
+        errorInfo: turn.errorInfo ?? undefined,
         stoppedNotice: turn.stoppedNotice,
         fileChanges: normalizeTurnFileChanges(turn.fileChanges),
         references: turn.references ?? undefined,
@@ -156,7 +157,10 @@ export function runtimeMessageToWorkbenchMessage(
       message.source?.source === "stand_in_activity")
       ? ({ ...message.source } as MessageSource)
       : undefined;
-  const createdAt = message.createdAt ?? new Date().toISOString();
+  const createdAt =
+    typeof message.createdAt === "string"
+      ? message.createdAt
+      : runtimeTimestampToIso(message.createdAt);
   const completedAt = message.completedAt ?? message.completed_at ?? undefined;
   const stoppedNotice =
     message.stoppedNotice ?? message.stopped_notice ?? undefined;
@@ -195,7 +199,9 @@ export function runtimeMessageToWorkbenchMessage(
     status,
     runtimeStatus,
     error: message.error ?? undefined,
-    errorType: message.errorType ?? message.error_type ?? undefined,
+    errorType:
+      message.errorCode ?? message.errorType ?? message.error_type ?? undefined,
+    errorInfo: message.errorInfo ?? message.error_info ?? undefined,
     source,
     attachments: message.attachments,
     runtimeGoalRequest: normalizeRuntimeGoalRequest(message),

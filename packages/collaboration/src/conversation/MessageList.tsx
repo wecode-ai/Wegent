@@ -6,9 +6,12 @@ import {
   shouldHideFailedAssistantContent,
   getDisplayProcessingBlocks,
 } from './assistantMessagePresentation'
-import { Fragment, memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, memo, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useDocumentEvent, useWindowEvent, useElementTypography } from '../dom-events'
-import { createMessageTextSelectionState } from './messageTextSelectionState'
+import {
+  createMessageTextSelectionState,
+  type ConversationShareSelectionContext,
+} from './messageTextSelectionState'
 import { createMessageListViewportPort } from './messageListViewportPort'
 import { defaultRangeExtractor, type Range as VirtualRange } from '@tanstack/react-virtual'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
@@ -107,6 +110,7 @@ export interface MessageListProps {
   onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onShareSelectionAsIssue?: (text: string, context: ConversationShareSelectionContext) => void
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   onFillSelectionToAnswer?: (text: string) => void
@@ -125,7 +129,7 @@ export interface MessageListProps {
 const EMPTY_TURNS: RuntimeConversationTurn[] = []
 const EMPTY_DEVICES: NonNullable<MessageListProps['devices']> = []
 const VIRTUAL_MESSAGE_OVERSCAN = 2
-const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
+const FULLY_RENDERED_MESSAGE_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
 const MESSAGE_LIST_PADDING_BOTTOM_PX = 8
@@ -177,6 +181,7 @@ export const MessageList = memo(function MessageList({
   onForkMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onShareSelectionAsIssue,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   onFillSelectionToAnswer,
@@ -283,18 +288,25 @@ export const MessageList = memo(function MessageList({
     !resolvedMessages.some(
       message => message.role === 'assistant' && message.status === 'streaming'
     )
-  const virtualMessages = virtualize && scrollElementRef !== undefined
+  const rowCount = visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0)
+  const hasViewportRows = virtualize && scrollElementRef !== undefined
+  // The complete list already fits within the virtualizer's render budget.
+  // Keep the same row nodes and let the browser size them directly.
+  const virtualMessages = hasViewportRows && rowCount > FULLY_RENDERED_MESSAGE_COUNT
   // Validate the actual column before hydrating sizes or preparing the transcript.
   const virtualLayoutReady = virtualMessages && layoutWidth > 0
-  const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
+  const virtualMeasurementKey =
+    virtualMessages && conversationKey != null ? String(conversationKey) : null
   const measurementLayout = useMemo(
     () => ({
       key: layoutKey,
       messages: new Map(
-        visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
+        virtualMessages
+          ? visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
+          : []
       ),
     }),
-    [layoutKey, visibleMessages]
+    [layoutKey, visibleMessages, virtualMessages]
   )
   const initialMeasurementsCache = useMemo(
     () =>
@@ -334,9 +346,27 @@ export const MessageList = memo(function MessageList({
     () => findLastIndex(visibleMessages, message => message.status === 'streaming'),
     [visibleMessages]
   )
+  const sizingKey = (message: WorkbenchMessage) =>
+    message.status === 'streaming' ? undefined : measurementLayout.messages.get(message.id)
+  const readRows = () =>
+    visibleMessages.map(message => ({
+      id: message.id,
+      size: sizingKey(message),
+    }))
+  const [previousRows, setRows] = useState(readRows)
+  const rowsChanged =
+    previousRows.length !== visibleMessages.length ||
+    visibleMessages.some(
+      (message, index) =>
+        message.id !== previousRows[index].id || sizingKey(message) !== previousRows[index].size
+    )
+  const geometryRows = rowsChanged ? readRows() : previousRows
+  if (rowsChanged) setRows(geometryRows)
+  // TanStack rebuilds its geometry when the key reader changes. Streamed text
+  // updates keep the same rows and ResizeObserver supplies their real sizes.
   const getItemKey = useCallback(
-    (index: number) => visibleMessages[index]?.id ?? 'assistant-waiting',
-    [visibleMessages]
+    (index: number) => geometryRows[index]?.id ?? 'assistant-waiting',
+    [geometryRows]
   )
   const estimateSize = useCallback(
     (index: number) =>
@@ -347,10 +377,7 @@ export const MessageList = memo(function MessageList({
   )
   const rangeExtractor = useCallback(
     (range: VirtualRange) => {
-      const indexes =
-        range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
-          ? Array.from({ length: range.count }, (_, index) => index)
-          : defaultRangeExtractor(range)
+      const indexes = defaultRangeExtractor(range)
       const forcedIndexes = [
         ...new Set([forcedVirtualMessageIndex, streamingVirtualMessageIndex]),
       ].filter(index => index >= 0 && !indexes.includes(index))
@@ -365,7 +392,7 @@ export const MessageList = memo(function MessageList({
     scrollMargin,
     viewportReady,
   } = useConversationVirtualizer({
-    count: visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0),
+    count: rowCount,
     enabled: virtualLayoutReady,
     getItemKey,
     estimateSize,
@@ -416,7 +443,10 @@ export const MessageList = memo(function MessageList({
   useMarkdownWindowingViewport(markdownWindowingState.scope)
 
   const hasSelectionActions = Boolean(
-    onAddSelectionToConversation || onAskSelectionInSidebar || onFillSelectionToAnswer
+    onShareSelectionAsIssue ||
+    onAddSelectionToConversation ||
+    onAskSelectionInSidebar ||
+    onFillSelectionToAnswer
   )
   const selectionState = useMemo(
     () =>
@@ -449,16 +479,27 @@ export const MessageList = memo(function MessageList({
   })
   useWindowEvent('scroll', () => selectionState.update(true), {
     capture: true,
-    enabled: observeSelection,
+    enabled: observeSelection && (isTextSelectionActive || textSelection !== null),
   })
   useWindowEvent('blur', () => selectionState.update(), {
     enabled: observeSelection,
   })
-  const attachList = (element: HTMLDivElement | null) => {
-    listRef.current = element
-    if (!element) return
-    const release = selectionState.attach(element)
-    const releaseViewport = viewportPort.bind(element, {
+  const attachList = useCallback(
+    (element: HTMLDivElement | null) => {
+      listRef.current = element
+      if (!element) return
+      const release = selectionState.attach(element)
+      const releaseViewport = viewportPort.attach(element)
+      return () => {
+        listRef.current = null
+        release()
+        releaseViewport()
+      }
+    },
+    [selectionState, viewportPort]
+  )
+  useLayoutEffect(() => {
+    viewportPort.update({
       scope: markdownWindowingState.scope,
       virtual: virtualMessages,
       ready: virtualLayoutReady,
@@ -474,12 +515,7 @@ export const MessageList = memo(function MessageList({
       measureRows,
       onLayoutChange: onVirtualLayoutChange,
     })
-    return () => {
-      listRef.current = null
-      release()
-      releaseViewport()
-    }
-  }
+  })
 
   const applySelectionAction = (action: (text: string) => void) => {
     if (!textSelection) return
@@ -518,6 +554,18 @@ export const MessageList = memo(function MessageList({
         textSelection.conversationKey === conversationKey && (
           <SelectionActionsPopover
             position={{ left: textSelection.left, top: textSelection.top }}
+            onShareAsIssue={
+              onShareSelectionAsIssue
+                ? () =>
+                    applySelectionAction(text =>
+                      onShareSelectionAsIssue(text, {
+                        ...textSelection,
+                        messages,
+                        turns,
+                      })
+                    )
+                : undefined
+            }
             onAddToConversation={
               onAddSelectionToConversation
                 ? () => applySelectionAction(onAddSelectionToConversation)
@@ -547,9 +595,9 @@ export const MessageList = memo(function MessageList({
               ),
             } satisfies CSSProperties,
           }))
-        : visibleMessages.map((_, index) => ({
+        : Array.from({ length: rowCount }, (_, index) => ({
             index,
-            key: visibleMessages[index].id,
+            key: visibleMessages[index]?.id ?? 'assistant-waiting',
             style: undefined,
           }))
       ).map(row => {
@@ -559,8 +607,8 @@ export const MessageList = memo(function MessageList({
           return (
             <article
               key={row.key}
-              data-index={index}
-              data-message-row
+              data-index={hasViewportRows ? index : undefined}
+              data-message-row={hasViewportRows ? true : undefined}
               style={row.style}
               className="min-w-0"
               data-testid="message-assistant-waiting"
@@ -637,7 +685,7 @@ export const MessageList = memo(function MessageList({
           </MarkdownWindowingDisabledContext.Provider>
         )
         const gap = renderGapAfterMessage?.(message, nextMessage)
-        return virtualMessages ? (
+        return hasViewportRows ? (
           <div key={row.key} data-index={index} data-message-row style={row.style}>
             {searchableArticle}
             {gap}
@@ -664,11 +712,6 @@ export const MessageList = memo(function MessageList({
             ),
           }}
         />
-      )}
-      {!virtualMessages && shouldShowWaitingIndicator && (
-        <article className="min-w-0" data-testid="message-assistant-waiting">
-          <AssistantThinkingIndicator />
-        </article>
       )}
     </div>
   )

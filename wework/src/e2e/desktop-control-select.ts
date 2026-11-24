@@ -1,5 +1,6 @@
 import { elementOf } from '@ui-sdk/core/observe'
 import { createAgent } from '@ui-sdk/react/agent'
+import { waitForDomChange } from './waitForDomChange'
 export type DesktopControlSelectMode = 'label' | 'value'
 
 export function chooseDesktopControlOption(element: HTMLElement, selection: string): string {
@@ -176,20 +177,27 @@ export async function selectDesktopControlChoice(
     await waitForSelection(element, target.ref, '', timeoutMs)
     return option.textContent?.trim() ?? ''
   }
-  const query = () => selectionAgent.query({ within: target.ref, text: selection })
-  let found = await query()
-  if ('error' in found) throw new Error(found.error)
-  if (!found[0]?.items?.length && target.actions.includes('setOpen')) {
-    const opened = await selectionAgent.act({
-      steps: [{ ref: target.ref, action: 'setOpen', args: [true] }],
-    })
-    if (!opened.ok) throw new Error(opened.error?.message ?? 'Unable to open selection target')
-    found = await query()
+  const findOption = async () => {
+    const found = await selectionAgent.query({ within: target.ref, text: selection })
     if ('error' in found) throw new Error(found.error)
+    return found[0]?.items?.find(item =>
+      mode === 'label' ? item.label.trim() === selection.trim() : item.value === selection
+    )
   }
-  const option = found[0]?.items?.find(item =>
-    mode === 'label' ? item.label.trim() === selection.trim() : item.value === selection
-  )
+  const deadline = performance.now() + timeoutMs
+  let option = await findOption()
+  if (!option && target.actions.includes('setOpen')) {
+    if (element.getAttribute('aria-expanded') !== 'true') {
+      const opened = await selectionAgent.act({
+        steps: [{ ref: target.ref, action: 'setOpen', args: [true] }],
+      })
+      if (!opened.ok) throw new Error(opened.error?.message ?? 'Unable to open selection target')
+    }
+    while (!option && element.isConnected && performance.now() < deadline) {
+      option = await findOption()
+      if (!option) await waitForDomChange(element.ownerDocument.documentElement)
+    }
+  }
   if (!option) {
     const available = includeOptionsOnError
       ? await selectionAgent.query({ within: target.ref })

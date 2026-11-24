@@ -119,7 +119,8 @@ async fn stand_in_general_read_task_uses_native_backward_pages_and_optional_time
     handler.upsert_local_task(RuntimeTaskLink {local_task_id:"role".into(),runtime_handle:json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"device-1","standInId":"default"},"executionRequest":{"user_id":7}}),..Default::default()});
     let store =
         crate::task_runtime::LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-    let settings = store.personal_stand_in(7, "device-1").unwrap();
+    let mut settings = store.personal_stand_in(7, "device-1").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("device-1")]);
     store
         .save_personal_stand_in(7, "device-1", settings)
         .unwrap();

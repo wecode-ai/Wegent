@@ -74,6 +74,7 @@ from app.services.plugin_device_installation_service import (
 from app.services.plugin_device_sync import (
     sync_cloud_plugins_after_local_change,
     sync_global_capabilities,
+    sync_installed_plugin_on_device,
     sync_plugin_after_change,
     sync_plugin_to_other_devices_after_change,
 )
@@ -90,6 +91,7 @@ from app.services.plugin_package_storage import PluginPackageStorageError
 from app.services.plugin_write_coordination import (
     get_plugin_db,
 )
+from app.services.plugin_write_errors import PluginWriteError
 from app.services.plugin_write_operations import run_plugin_operation
 from shared.telemetry.decorators import trace_async
 
@@ -205,23 +207,14 @@ async def sync_installed_plugin_to_device(
         device_id=normalized_device_id,
         installed_id=installed_id,
     )
-    try:
-        sync = (
-            await device_capability_sync_service.sync_installed_plugin_to_device_result(
-                db,
-                user_id=user_id,
-                device_id=normalized_device_id,
-                installed_plugin_id=installed_id,
-            )
-        )
-    finally:
-        db.close()
-    await run_plugin_operation(
-        plugin_device_installation_service.record_plugin_sync_response,
+    sync = await sync_installed_plugin_on_device(
+        db,
         user_id=user_id,
-        installed_kind_id=installed_id,
-        response=sync,
+        device_id=normalized_device_id,
+        installed_id=installed_id,
     )
+    if sync is None:
+        raise PluginWriteError("plugin_device_sync_failed")
     return PluginDeviceSyncResponse(
         deviceId=normalized_device_id,
         pendingCount=pending_count,
@@ -503,6 +496,7 @@ async def install_marketplace_plugin(
     local_instance_id: str | None = None,
     local_intent_order: int | None = None,
     operation_id: str | None = None,
+    restore_deleted: bool = False,
     response: Response = None,
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
@@ -521,7 +515,10 @@ async def install_marketplace_plugin(
             source_device_id=source_device_id,
             action="install",
             target_id=marketplace_id,
-            payload={"releaseId": release_id},
+            payload={
+                "releaseId": release_id,
+                **({"restoreDeleted": True} if restore_deleted else {}),
+            },
         )
         background_tasks.add_task(
             sync_cloud_plugins_after_local_change,
@@ -543,6 +540,7 @@ async def install_marketplace_plugin(
         user_id=user_id,
         plugin_id=marketplace_id,
         release_id=release_id,
+        restore_deleted=restore_deleted,
     )
     sync = await sync_plugin_after_change(
         db,
@@ -840,6 +838,7 @@ async def uninstall_installed_plugin(
 @router.post(
     "/submissions/init",
     response_model=PluginSubmissionInitResponse,
+    response_model_exclude_none=True,
     status_code=status.HTTP_201_CREATED,
 )
 def init_plugin_submission(

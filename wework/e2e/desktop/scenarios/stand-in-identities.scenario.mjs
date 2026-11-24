@@ -11,7 +11,6 @@ import assert from 'node:assert/strict'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -160,8 +159,8 @@ export function createDesktopScenario({
           },
         ],
       }
-      await selectE2EModel(control, undefined, undefined, CHAT)
       await control.command('fill', INPUT, { value: PROPOSE })
+      await control.command('waitFor', `${CHAT} [data-testid="send-message-button"]:enabled`)
       await control.command('press', INPUT, { key: 'Enter' })
       await openStandInDetails(control)
       await control.command('waitFor', '[data-testid="stand-in-proposal-open"]', {

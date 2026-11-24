@@ -68,8 +68,14 @@ test('runs providers with injected read capabilities without an Executor or mode
                 displayName: 'Mail',
                 uses: ['mail'],
                 collectionModes: ['poll'],
-                resourceKinds: ['folder'],
-                resourceLabels: { folder: 'Folder' },
+                resourceKinds: ['folder', 'thread'],
+                resourceLabels: { folder: 'Folder', thread: 'Thread' },
+                read: {
+                  pagination: 'cursor',
+                  inputSchema: { type: 'object' },
+                  itemSchema: { type: 'object' },
+                },
+                reviewHistory: { resourceKinds: ['thread'] },
                 eventTypes: ['mail.received'],
                 versionedEventTypes: [],
               },
@@ -83,6 +89,7 @@ test('runs providers with injected read capabilities without an Executor or mode
         check: async () => ({ status: 'ready' }),
         listResources: async () => ({ items: [] }),
         validate: async (_ctx, source) => source,
+        readSource: async () => ({ items: [], hasMore: false, reviewCoverage: 'complete' }),
         initialize: async ctx => {
           assert.equal(ctx.initializationMode, 'fresh')
           return {}
@@ -124,7 +131,14 @@ test('runs providers with injected read capabilities without an Executor or mode
         operation: 'listTools',
       },
     ])
-    assert.deepEqual(runtime.registration().dependencyReferences, [
+    const registration = runtime.registration()
+    assert.deepEqual(registration.reviewHistoryProviders, [
+      { providerId: source.providerId, resourceKinds: ['thread'] },
+    ])
+    assert.deepEqual(registration.observationOnlyProviders, [
+      { providerId: source.providerId, resourceKinds: ['folder'] },
+    ])
+    assert.deepEqual(registration.dependencyReferences, [
       {
         providerId: source.providerId,
         alias: 'mail',

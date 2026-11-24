@@ -395,6 +395,12 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await waitForValue(
+        () => targetRequest,
+        Boolean,
+        'The model did not receive the referenced conversation after the tool read',
+        modelResponseTimeoutMs
+      )
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TARGET_COMPLETION,
         timeoutMs: uiTimeoutMs,

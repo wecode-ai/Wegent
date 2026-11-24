@@ -9,7 +9,12 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForTaskRowByText } from '../modules/task-state-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { isDetachedResponsesContext } from '../modules/model-tool-output.mjs'
 import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
+import {
+  ONBOARDING_FIRST_MESSAGE,
+  ONBOARDING_FOLLOWUP,
+} from './stand-in-onboarding-skip.scenario.mjs'
 import {
   assistantMessage,
   createSse,
@@ -30,26 +35,25 @@ const FOLLOWUP = 'SILENT_PROGRESS_CHECK'
 
 function processingInput(body) {
   const input = Array.isArray(body.input) ? body.input : [body.input]
-  return JSON.stringify(
-    input.filter(item => {
-      if (
-        item?.type === 'function_call_output' &&
-        item.namespace === 'agent' &&
-        item.name === 'weworkstandinrecall'
-      )
-        return false
-      const text =
-        typeof item?.content === 'string'
-          ? item.content
-          : (item?.content ?? []).map(part => part?.text ?? '').join('')
-      // Quoted recall remains in the real request, but cannot select a scripted command.
-      return !(
-        item?.role === 'user' &&
-        text.trim().startsWith('<external_wework.stand-in.recall>') &&
-        text.trim().endsWith('</external_wework.stand-in.recall>')
-      )
-    })
-  )
+  return input.filter(item => {
+    if (isDetachedResponsesContext(item)) return false
+    if (
+      item?.type === 'function_call_output' &&
+      item.namespace === 'agent' &&
+      item.name === 'weworkstandinrecall'
+    )
+      return false
+    const text =
+      typeof item?.content === 'string'
+        ? item.content
+        : (item?.content ?? []).map(part => part?.text ?? '').join('')
+    // Quoted recall remains in the real request, but cannot select a scripted command.
+    return !(
+      item?.role === 'user' &&
+      text.trim().startsWith('<external_wework.stand-in.recall>') &&
+      text.trim().endsWith('</external_wework.stand-in.recall>')
+    )
+  })
 }
 
 export function createDesktopScenario({
@@ -124,10 +128,18 @@ export function createDesktopScenario({
       const body = await readRequestBody(req)
       if (handleModelMaintenanceRequest(body, response)) return true
       if (isReplyPredictionRequest(body)) return false
-      const input = processingInput(body)
+      const messages = processingInput(body)
+      const input = JSON.stringify(messages)
+      const latestUserInput = JSON.stringify(
+        messages.findLast(item => item?.role === 'user')?.content ?? []
+      )
       let events = delegatedTaskResultEvents(body)
       if (events) {
         // A result wake is a new host turn, even when its history quotes the original request.
+      } else if (latestUserInput.includes(ONBOARDING_FIRST_MESSAGE)) {
+        events = [assistantMessage(`${ONBOARDING_FIRST_MESSAGE}_ANSWERED`)]
+      } else if (latestUserInput.includes(ONBOARDING_FOLLOWUP)) {
+        events = [assistantMessage(`${ONBOARDING_FOLLOWUP}_ANSWERED`)]
       } else if (input.includes('Review this silent intake batch')) {
         coordinatorCalls++
         const readId = `silent-read-${round}`
@@ -159,8 +171,8 @@ export function createDesktopScenario({
             toolCallId: readId,
           }).events
         }
-      } else if (input.includes('PRIMARY_ORCHESTRATE_TASK')) {
-        const followup = input.includes('PRIMARY_ORCHESTRATE_TASK_CONTINUE')
+      } else if (latestUserInput.includes('PRIMARY_ORCHESTRATE_TASK')) {
+        const followup = latestUserInput.includes('PRIMARY_ORCHESTRATE_TASK_CONTINUE')
         const callId = followup ? 'primary-continue-task' : 'primary-create-task'
         if (requestContainsToolOutput(body, callId)) {
           const result = JSON.parse(readMcpToolOutput(body, callId))
@@ -190,12 +202,12 @@ export function createDesktopScenario({
           }).events
         }
       } else if (
-        input.includes('PRIMARY_CONCRETE_WORK') ||
-        input.includes('ORDINARY_PROGRESS_CHECK')
+        latestUserInput.includes('PRIMARY_CONCRETE_WORK') ||
+        latestUserInput.includes('ORDINARY_PROGRESS_CHECK')
       ) {
         events = [
           assistantMessage(
-            input.includes('ORDINARY_PROGRESS_CHECK')
+            latestUserInput.includes('ORDINARY_PROGRESS_CHECK')
               ? 'ORDINARY_FOLLOWUP_DONE'
               : 'PRIMARY_CONCRETE_DONE'
           ),

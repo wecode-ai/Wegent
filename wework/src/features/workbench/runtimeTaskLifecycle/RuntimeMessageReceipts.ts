@@ -2,12 +2,13 @@ export interface ReceivedAssistantMessage {
   id: string
   createdAt: number
   text: string
+  notificationTurnId?: string | null
 }
 
 interface Receipt {
   readAt: number
   baselineAt: number
-  messages: Record<string, { at: number; unread: boolean }>
+  messages: Record<string, { at: number; unread: boolean; notificationTurnId?: string }>
 }
 
 /** Persist identities and read markers only, never private message text. */
@@ -44,7 +45,14 @@ export class RuntimeMessageReceipts {
               'unread' in message &&
               typeof message.unread === 'boolean'
             ) {
-              messages[id] = { at: message.at, unread: message.unread }
+              messages[id] = {
+                at: message.at,
+                unread: message.unread,
+                notificationTurnId:
+                  'notificationTurnId' in message && typeof message.notificationTurnId === 'string'
+                    ? message.notificationTurnId
+                    : undefined,
+              }
             }
           }
           this.records[key] = {
@@ -84,17 +92,29 @@ export class RuntimeMessageReceipts {
       message.createdAt >= latest.createdAt ? message : latest
     )
     const incoming: ReceivedAssistantMessage[] = []
+    const notifiedTurns = new Set(
+      Object.values(record.messages).map(receipt => receipt.notificationTurnId)
+    )
     let changed = initial
     for (const message of messages) {
-      if (Object.hasOwn(record.messages, message.id)) continue
       const live = message.createdAt > this.startedAt
-      const unread =
-        !this.viewed.has(key) &&
-        (initial
-          ? live || (previouslyUnread && message.id === newest.id)
-          : message.createdAt > Math.max(record.readAt, record.baselineAt))
-      record.messages[message.id] = { at: message.createdAt, unread }
-      if (unread && (!initial || live)) incoming.push(message)
+      let receipt = record.messages[message.id]
+      if (!receipt) {
+        const unread =
+          !this.viewed.has(key) &&
+          (initial
+            ? live || (previouslyUnread && message.id === newest.id)
+            : message.createdAt > Math.max(record.readAt, record.baselineAt))
+        receipt = { at: message.createdAt, unread }
+        record.messages[message.id] = receipt
+        changed = true
+      }
+      if (message.notificationTurnId === null) continue
+      const turnId = message.notificationTurnId ?? message.id
+      if (notifiedTurns.has(turnId)) continue
+      notifiedTurns.add(turnId)
+      receipt.notificationTurnId = turnId
+      if (receipt.unread && live) incoming.push(message)
       changed = true
     }
     if (this.viewed.has(key)) record.readAt = Math.max(record.readAt, Date.now(), newest.createdAt)
@@ -134,6 +154,9 @@ export class RuntimeMessageReceipts {
     const current = this.records[key]
     const readAt = Math.max(previous.readAt, current?.readAt ?? 0)
     const messages = { ...previous.messages, ...current?.messages }
+    for (const [id, receipt] of Object.entries(previous.messages)) {
+      messages[id].notificationTurnId ??= receipt.notificationTurnId
+    }
     for (const message of Object.values(messages)) {
       if (message.at <= readAt) message.unread = false
     }

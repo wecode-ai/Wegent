@@ -48,7 +48,7 @@ POST /api/v1/responses
 | `model` | string | Yes | Agent identifier. Format: `namespace#team_name` or `namespace#team_name#model_id` |
 | `input` | string \| array | Yes | User input prompt or conversation history |
 | `stream` | boolean | No | Enable streaming output (default: `false`) |
-| `background` | boolean | No | Execute in the background and immediately return a queued response; when `true`, no SSE is returned (default: `false`) |
+| `background` | boolean | No | Execute in the background and immediately return `in_progress` for an unbound Chat Shell or `queued` for device and other executor requests; when `true`, no SSE is returned (default: `false`) |
 | `execution` | object | No | Execution configuration; traditional executor devices use `type: "wegent"` |
 | `execution.device_id` | string | No | Select a traditional executor device when `execution.type="wegent"`; when omitted, retain default execution or the existing task device binding |
 | `previous_response_id` | string | No | Previous response ID for follow-up conversations |
@@ -80,7 +80,7 @@ curl -N -X POST "https://your-domain/api/v1/responses" \
   }'
 ```
 
-SSE uses the existing events listed below, including `response.created`, `response.output_text.delta`, and `response.completed` or `response.failed`. `stream:false` or `background:true` returns a `queued` response, whose result can still be retrieved with `GET /api/v1/responses/{response_id}`. Omitting `execution` preserves existing execution behavior.
+SSE uses the existing events listed below, including `response.created`, `response.output_text.delta`, and `response.completed` or `response.failed`. `stream:false` returns `queued` for a device request. `background:true` returns `in_progress` for an unbound Chat Shell and `queued` for device and other executor requests. In either case, retrieve the result with `GET /api/v1/responses/{response_id}`. Omitting `execution` preserves existing execution behavior.
 
 #### MCP binary output
 
@@ -262,7 +262,7 @@ When a request includes `previous_response_id` and does not provide a new `knowl
 
 #### Response Behavior
 
-Response behavior depends on the Team's Shell type, device binding, and `background`. `background:true` takes precedence over `stream:true` and returns a queued response.
+Response behavior depends on the Team's Shell type, device binding, and `background`. `background:true` takes precedence over `stream:true`. It returns `in_progress` for an unbound Chat Shell and `queued` for device and other executor requests.
 
 | Shell Type | Streaming Support | Response Mode |
 |------------|-------------------|---------------|
@@ -367,7 +367,8 @@ POST /api/v1/responses/{response_id}/cancel
 #### Behavior
 
 - **Chat Shell tasks**: Stops the model request and saves partial content
-- **Executor-based tasks**: Calls executor_manager to cancel
+- **Traditional executor devices**: Sends `task:cancel` to the bound device and commits the cancellation result
+- **Other executor-based tasks**: Calls executor_manager to cancel
 
 #### Example Request
 
@@ -470,8 +471,8 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 
 | Status | Description |
 |--------|-------------|
-| `queued` | Task is queued for execution (non-streaming device or executor requests, and background requests) |
-| `in_progress` | Task is currently running |
+| `queued` | Task is queued for execution (non-streaming device or executor requests, and background device or executor requests) |
+| `in_progress` | Task is currently running, including an unbound Chat Shell background request |
 | `completed` | Task completed successfully |
 | `failed` | Task failed with error |
 | `cancelled` | Task was cancelled |
@@ -552,5 +553,5 @@ To continue with streaming, also set `stream:true` and `background:false`:
 - By default, API calls use "clean mode" without server-side enhancements
 - Bot/Ghost MCP tools configured in the CRD are always available
 - Use `wegent_chat_bot` tool to enable full server-side capabilities
-- Streaming output supports Chat Shell and traditional executor tasks; `background:true` returns a queued response
+- Streaming output supports Chat Shell and traditional executor tasks; `background:true` returns `in_progress` for an unbound Chat Shell and `queued` for device and other executor requests
 - Raw `mcp_call` output is returned by default; set `omit_mcp_binary_output` to `true` to replace media payloads such as base64 images with a summary placeholder like `<image/jpeg payload omitted: 2048 bytes>`. Non-media output is returned unchanged and model calls still use the complete original content

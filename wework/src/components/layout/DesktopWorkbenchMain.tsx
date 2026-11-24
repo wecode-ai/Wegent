@@ -15,8 +15,7 @@ import {
 import { closeLocalTerminal } from '@/lib/local-terminal'
 import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
-import { useElementGeometry } from '@wegent/collaboration/dom-events'
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import styles from './DesktopWorkbenchMain.module.css'
 import {
   DEFAULT_ENVIRONMENT_INFO_VISIBILITY,
@@ -56,9 +55,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
     Record<string, EnvironmentInfoVisibilityState>
   >({})
-  const sharedWorkbenchContentRef = useRef<HTMLDivElement | null>(null)
-  const sharedGeometry = useElementGeometry([sharedWorkbenchContentRef])
-  const sharedWorkbenchContentWidth = sharedGeometry?.elements[0]?.width ?? 0
   const [internalHarnessSessions, setInternalHarnessSessions] = useState<
     LocalHarnessWorkbenchSession[]
   >([])
@@ -278,7 +274,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         presentation={props.presentation ?? 'workbench'}
         workspaceSessionApi={services?.workspaceSessionApi}
         environmentInfoVisibilityByPane={environmentInfoVisibilityByPane}
-        sharedWorkbenchContentWidth={splitMode ? 0 : sharedWorkbenchContentWidth}
         onSidebarCollapsedChange={props.onSidebarCollapsedChange}
         onEnvironmentInfoVisibilityChange={updateEnvironmentInfoVisibility}
         onPaneResourceRetained={setPaneResourceRetained}
@@ -305,8 +300,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       props.onSidebarCollapsedChange,
       services?.workspaceSessionApi,
       environmentInfoVisibilityByPane,
-      splitMode,
-      sharedWorkbenchContentWidth,
       updateEnvironmentInfoVisibility,
       setPaneResourceRetained,
       pendingBrowserOpenRequests,
@@ -352,7 +345,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
 
   const mainContent = (
     <div
-      ref={sharedWorkbenchContentRef}
       data-testid="desktop-workbench-pane-stack-container"
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
     >

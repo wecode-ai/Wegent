@@ -230,10 +230,6 @@
       "types": "./src/composer/index.ts",
       "import": "./src/composer/index.ts"
     },
-    "./conversation/streamingScrollFollow": {
-      "types": "./src/conversation/streamingScrollFollow.ts",
-      "import": "./src/conversation/streamingScrollFollow.ts"
-    },
     "./conversation/conversationLayout": {
       "types": "./src/conversation/conversationLayout.ts",
       "import": "./src/conversation/conversationLayout.ts"

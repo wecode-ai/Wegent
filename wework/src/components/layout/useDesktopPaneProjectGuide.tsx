@@ -11,23 +11,36 @@ import type { useDesktopPaneContext } from './useDesktopPaneContext'
 import type { useDesktopPanePanelActions } from './useDesktopPanePanelActions'
 export function useDesktopPaneProjectGuide(
   paneContext: ReturnType<typeof useDesktopPaneContext>,
-  panelActions: ReturnType<typeof useDesktopPanePanelActions>
+  openRightPanelTab: ReturnType<typeof useDesktopPanePanelActions>['openRightPanelTab']
 ) {
   const taskOwnerKey = useRuntimeTaskOwnerKey(
     paneContext.currentRuntimeTask,
     paneContext.state.devices
   )
+  const {
+    t,
+    cloudProjects,
+    currentProjectSpaceRuntimeTask: task,
+    boundCloudItem: item,
+    boundProjectSpaceApi: api,
+    handleSelectCloudProject: onSelectProject,
+    removeCloudProjectContext,
+    clearPendingProjectContext,
+    openBoundProjectSpaceTask,
+    paneSession: { goal, goalDraftActive, status },
+  } = paneContext
+  const userId = paneContext.state.user?.id ?? 0
   const defaultWorkItemPreviewProject = useMemo<CloudProject>(
     () => ({
       id: DEFAULT_WORK_ITEM_PROJECT_ID,
       public_id: DEFAULT_WORK_ITEM_PROJECT_ID,
       project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
-      name: paneContext.t('workbench.default_work_item_board', '我的任务'),
+      name: t('workbench.default_work_item_board', '我的任务'),
       description: '',
       project_store: 'local',
       task_provider: 'local',
       provider_config: {},
-      created_by_user_id: paneContext.state.user?.id ?? 0,
+      created_by_user_id: userId,
       status: 'active',
       tags: [],
       version: 1,
@@ -35,52 +48,55 @@ export function useDesktopPaneProjectGuide(
       updated_at: '',
       metadata: { system_kind: 'default_work_items' },
     }),
-    [paneContext]
+    [t, userId]
   )
   const currentWorkItemGuideProject =
     paneContext.boundCloudProject ??
     paneContext.pendingCloudProject ??
     paneContext.defaultProject ??
     (paneContext.defaultProjectSpace ? null : defaultWorkItemPreviewProject)
-  const availableWorkItemProjects =
-    paneContext.cloudProjects.length > 0
-      ? paneContext.cloudProjects.filter(project => !isDefaultWorkItemProject(project))
-      : currentWorkItemGuideProject
-        ? isDefaultWorkItemProject(currentWorkItemGuideProject)
-          ? []
-          : [currentWorkItemGuideProject]
-        : []
-  const projectSpaceContext = currentWorkItemGuideProject ? (
-    <WorkItemComposerGuide
-      taskOwnerKey={taskOwnerKey}
-      integrated
-      toolbar={!paneContext.currentProjectSpaceRuntimeTask}
-      project={currentWorkItemGuideProject}
-      item={paneContext.boundCloudItem}
-      api={paneContext.boundProjectSpaceApi}
-      currentTask={paneContext.currentProjectSpaceRuntimeTask}
-      projects={availableWorkItemProjects}
-      onSelectProject={paneContext.handleSelectCloudProject}
-      onRemoveProject={
-        paneContext.currentProjectSpaceRuntimeTask
-          ? paneContext.removeCloudProjectContext
-          : paneContext.clearPendingProjectContext
-      }
-      goalPresent={Boolean(
-        paneContext.currentProjectSpaceRuntimeTask &&
-        paneContext.paneSession.goal &&
-        !paneContext.paneSession.goalDraftActive
-      )}
-      refreshKey={
-        paneContext.boundCloudItem
-          ? `${paneContext.paneSession.status.taskExecution.running}:${paneContext.paneSession.status.taskExecution.status ?? ''}`
-          : undefined
-      }
-      onOpen={
-        paneContext.boundCloudItem ? () => panelActions.openRightPanelTab('work-item') : undefined
-      }
-      onOpenBoard={paneContext.boundCloudItem ? paneContext.openBoundProjectSpaceTask : undefined}
-    />
-  ) : null
-  return { projectSpaceContext, availableWorkItemProjects }
+  const onRemoveProject = task ? removeCloudProjectContext : clearPendingProjectContext
+  const onOpenBoard = item ? openBoundProjectSpaceTask : undefined
+  const goalPresent = Boolean(task && goal && !goalDraftActive)
+  const refreshKey = item
+    ? `${status.taskExecution.running}:${status.taskExecution.status ?? ''}`
+    : undefined
+  return useMemo(() => {
+    const project = currentWorkItemGuideProject
+    if (!project) return null
+    const projects = (cloudProjects.length ? cloudProjects : [project]).filter(
+      candidate => !isDefaultWorkItemProject(candidate)
+    )
+    return (
+      <WorkItemComposerGuide
+        taskOwnerKey={taskOwnerKey}
+        integrated
+        toolbar={!task}
+        project={project}
+        item={item}
+        api={api}
+        currentTask={task}
+        projects={projects}
+        onSelectProject={onSelectProject}
+        onRemoveProject={onRemoveProject}
+        goalPresent={goalPresent}
+        refreshKey={refreshKey}
+        onOpen={item ? () => openRightPanelTab('work-item') : undefined}
+        onOpenBoard={onOpenBoard}
+      />
+    )
+  }, [
+    currentWorkItemGuideProject,
+    cloudProjects,
+    taskOwnerKey,
+    task,
+    item,
+    api,
+    onSelectProject,
+    onRemoveProject,
+    goalPresent,
+    refreshKey,
+    openRightPanelTab,
+    onOpenBoard,
+  ])
 }

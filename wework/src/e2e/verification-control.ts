@@ -1,4 +1,8 @@
 import type {
+  RuntimeControlInput,
+  RuntimeControlReceipt,
+} from '../../electron/src/host/e2e-runtime-request'
+import type {
   DesktopControlCommand,
   DesktopControlExtensionResult,
 } from '@/extensions/desktop-control-contract'
@@ -13,6 +17,7 @@ import { getDesktopE2ERuntimeConfig } from './runtime-config'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { createInteractionDraftStore } from '@/features/notifications/useInteractionDrafts'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   localConnectorAuthHealth,
   localConnectorAuthLogout,
@@ -20,6 +25,25 @@ import {
   localConnectorAuthPoll,
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
+
+/** Keep authenticated Runtime control transport in the existing native IPC owner. */
+export function dispatchDesktopRuntimeControl(command: DesktopControlCommand, clientId: string) {
+  const bridge = (
+    window as Window & {
+      weworkElectronVerification?: {
+        requestRuntime: (input: RuntimeControlInput) => Promise<RuntimeControlReceipt>
+      }
+    }
+  ).weworkElectronVerification
+  if (!bridge) throw new Error('Runtime verification bridge is unavailable')
+  if (command.action !== 'fetchLocalRuntime' || typeof command.value !== 'string') {
+    throw new Error('Expected an authenticated Runtime control command')
+  }
+  return bridge.requestRuntime({
+    command: { id: command.id, action: command.action, value: command.value },
+    clientId,
+  })
+}
 
 interface VerificationControlDependencies {
   elementEnabled: (element: HTMLElement) => boolean
@@ -98,6 +122,18 @@ function clickAt(
     throw new Error(`Element at ${coordinates.x},${coordinates.y} is disabled`)
   }
 
+  logRuntimeTaskCreateStage('e2e-coordinate-click-target', {
+    ...coordinates,
+    hit: describeHitElement(clickable),
+    stack: document
+      .elementsFromPoint(coordinates.x!, coordinates.y!)
+      .slice(0, 12)
+      .map(describeHitElement),
+    topLayer: Array.from(document.querySelectorAll(':popover-open, dialog[open]')).map(
+      describeHitElement
+    ),
+    dialogs: Array.from(document.querySelectorAll('[role="dialog"]')).map(describeHitElement),
+  })
   clickable.dispatchEvent(
     new MouseEvent('click', {
       bubbles: true,
@@ -108,6 +144,22 @@ function clickAt(
     })
   )
   return clickable.textContent?.trim() ?? ''
+}
+
+function describeHitElement(element: Element) {
+  const style = getComputedStyle(element)
+  return {
+    tag: element.tagName,
+    testId: element.getAttribute('data-testid'),
+    slot: element.getAttribute('data-slot'),
+    role: element.getAttribute('role'),
+    pointerEvents: style.pointerEvents,
+    inert: element.closest('[inert]') !== null,
+    ariaHidden: element.closest('[aria-hidden="true"]') !== null,
+    zIndex: style.zIndex,
+    position: style.position,
+    bounds: element.getBoundingClientRect().toJSON(),
+  }
 }
 
 async function seedLocalProject(command: DesktopControlCommand): Promise<string> {
@@ -312,18 +364,6 @@ export async function executeVerificationControlCommand(
       const { ensureLocalModelCatalogReady } = await import('./local-model-catalog-readiness')
       await ensureLocalModelCatalogReady()
       return { handled: true, value: '' }
-    }
-    case 'fetchLocalRuntime': {
-      const bridge = (
-        window as Window & {
-          weworkElectronVerification?: { requestRuntime: (input: unknown) => Promise<unknown> }
-        }
-      ).weworkElectronVerification
-      if (!bridge) throw new Error('Runtime verification bridge is unavailable')
-      return {
-        handled: true,
-        value: JSON.stringify(await bridge.requestRuntime(JSON.parse(command.value ?? '{}'))),
-      }
     }
     case 'configurePluginNativeAuthorization': {
       const { configurePluginNativeAuthorization } =

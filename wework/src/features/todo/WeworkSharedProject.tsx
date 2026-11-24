@@ -49,6 +49,8 @@ import { issueDispatchPersonalTaskInput } from '@/features/notifications/Notific
 import { humanTaskDispatchInput } from './humanTaskDispatch'
 
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useCloudIssueApis } from './useCloudIssueApis'
+import { SharedIssueSourceButton } from './SharedIssueSourceButton'
 
 import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
@@ -117,6 +119,7 @@ export function WeworkSharedProject({
   const detailExpanded = personalIssue?.detailExpanded ?? localDetailExpanded
   const setDetailExpanded = personalIssue?.onDetailExpandedChange ?? setLocalDetailExpanded
   const cloudConnection = useOptionalCloudConnection()
+  const personalIssuesApi = useCloudIssueApis(cloudConnection)?.personal
   const sessionOwner = [
     project.id,
     project.project_store,
@@ -588,6 +591,16 @@ export function WeworkSharedProject({
       showFullscreenControl={!personalIssue}
       headerActions={
         <>
+          {project.project_store === 'backend' &&
+            personalIssuesApi &&
+            Number(cloudConnection.user?.id) === issue.created_by_user_id && (
+              <SharedIssueSourceButton
+                key={issue.id}
+                api={personalIssuesApi}
+                issueId={issue.id}
+                onOpen={closeDrawers}
+              />
+            )}
           {personalIssue?.presentation === 'drawer' ? (
             <ControlButton
               variant="unstyled"

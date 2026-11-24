@@ -1,6 +1,7 @@
 import type { WeworkNotificationPreferences } from '@/api/notifications'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { standInOrigin } from '@/features/notifications/standInNotifications'
+import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { isStandInIdentity } from './useStandInMessageReminders'
@@ -28,6 +29,13 @@ function notificationIdentity(item: RuntimeTaskReminderItem): string {
   return `${item.task.taskId}\0${item.address.workspacePath ?? item.workspace.workspacePath ?? ''}`
 }
 
+function reportsToStandIn(task: RuntimeTaskReminderItem['task']): boolean {
+  const execution = task.runtimeHandle?.executionRequest as
+    | { standInReportTo?: { taskId?: unknown } }
+    | undefined
+  return typeof execution?.standInReportTo?.taskId === 'string'
+}
+
 /** Canonical read markers, delivery de-duplication and visible unread keys share one owner. */
 export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore) {
   let input: Input | undefined
@@ -42,6 +50,17 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
   let observation = 0
   let reconciling = false
   let pending = false
+  function isMemoryReview(item: RuntimeTaskReminderItem): boolean {
+    const latestTask = store.getTask(item.address)?.task
+    return (
+      isStandInMemoryReviewTask(item.task) ||
+      (latestTask != null && isStandInMemoryReviewTask(latestTask))
+    )
+  }
+  function hasStandInReport(item: RuntimeTaskReminderItem): boolean {
+    const latestTask = store.getTask(item.address)?.task
+    return reportsToStandIn(item.task) || (latestTask != null && reportsToStandIn(latestTask))
+  }
   function deliver(item: RuntimeTaskReminderItem) {
     const epoch = generation
     if (globalThis.localStorage?.getItem('wework:debug-runtime') === '1')
@@ -55,6 +74,8 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         if (
           epoch !== generation ||
           !listeners.size ||
+          isMemoryReview(item) ||
+          hasStandInReport(item) ||
           !input?.notificationPreferences[runtimeTaskNotificationCategory(item)].system
         )
           return
@@ -75,7 +96,9 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         const current = input
         const lifecycle = store.getSnapshot()
         const byKey = new Map(current.items.map(item => [item.key, item]))
-        const newlyUnread = [...lifecycle.unreadTaskKeys].filter(key => !previousUnread.has(key))
+        const newlyUnread = [...lifecycle.unreadTaskKeys].filter(
+          key => !previousUnread.has(key) && store.isNewlyUnread(key)
+        )
         previousUnread = new Set(lifecycle.unreadTaskKeys)
         for (const key of awaitingMetadata.keys())
           if (!lifecycle.unreadTaskKeys.has(key)) awaitingMetadata.delete(key)
@@ -100,6 +123,8 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
               (originalPreferences &&
                 !originalPreferences[runtimeTaskNotificationCategory(item)].system) ||
               isStandInIdentity(item) ||
+              isMemoryReview(item) ||
+              hasStandInReport(item) ||
               standInOrigin(item) ||
               !current.notificationPreferences[runtimeTaskNotificationCategory(item)].system ||
               item.lifecycle?.interactionStatus ||
@@ -121,6 +146,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         const visibleItems = current.listedItems.filter(
           item =>
             !isStandInIdentity(item) &&
+            !isMemoryReview(item) &&
             (current.notificationPreferences[runtimeTaskNotificationCategory(item)].in_app ||
               standInOrigin(item))
         )

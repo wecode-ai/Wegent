@@ -18,8 +18,8 @@ export function createPaneSessionView(
     browserAnnotationCommand,
     inputScopeKey,
     attachmentState,
-    input,
-    replaceDraftKey,
+    draftStore,
+    setInputForScope,
     error,
     answeredRequestUserInputIds,
     transcriptError,
@@ -43,6 +43,7 @@ export function createPaneSessionView(
   } = frame
   const { handleFileSelect, removeAttachment, dismissAttachmentError } = attachmentCommands
   const {
+    getInput,
     replaceInput,
     getDraftEditVersion,
     setError,
@@ -99,10 +100,11 @@ export function createPaneSessionView(
     guidanceMessages,
     codeCommentContexts,
     browserAnnotationCommand,
-    input,
+    draftStore,
+    getInput,
+    setInputForScope,
     setInput,
     replaceInput,
-    replaceDraftKey,
     onDraftEdit,
     getDraftEditVersion,
     error,

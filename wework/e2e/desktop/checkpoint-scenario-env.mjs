@@ -52,6 +52,7 @@ export function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'core-task-flow' ||
     checkpoint === 'task-completion-notifications' ||
     checkpoint === 'project-assignment-notification' ||
+    checkpoint === 'collaboration-personal-issues' ||
     checkpoint === 'stand-in-profile-settings' ||
     checkpoint === 'stand-in-git' ||
     checkpoint.startsWith('human-interactions')

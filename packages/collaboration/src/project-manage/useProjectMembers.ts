@@ -83,6 +83,7 @@ export function useProjectMembers<
   const [handledOpenRequestId, setHandledOpenRequestId] = useState<number | undefined>()
 
   if (renderedSource !== resource) {
+    if (membersOpen) console.debug('[project-members] picker reset after member resource changed')
     setRenderedSource(resource)
     setHandledOpenRequestId(undefined)
     setMembersOpen(false)
@@ -108,13 +109,18 @@ export function useProjectMembers<
   useDocumentEvent(
     'mousedown',
     event => {
-      if (event.target instanceof Node && !memberComposerRef.current?.contains(event.target))
+      if (event.target instanceof Node && !memberComposerRef.current?.contains(event.target)) {
+        console.debug('[project-members] picker closed by document mousedown')
         setMembersOpen(false)
+      }
     },
     { enabled: membersOpen }
   )
   useEscapeKey(() => setMembersOpen(false), membersOpen, memberComposerRef)
-  useFocusRequest(memberSearchInputRef, openMembersRequestId, { enabled: membersOpen })
+  // The popover owns initial focus when its trigger opens it.
+  useFocusRequest(memberSearchInputRef, openMembersRequestId, {
+    enabled: membersOpen && openMembersRequestId !== undefined,
+  })
   const query = memberQuery.trim()
   const searchResource = useMemo(
     () =>

@@ -883,7 +883,6 @@ export function createRuntimeInteractionsSource(
     settle: settleFromConversation,
   })
   function publish() {
-    const previousNativeItems = snapshot.nativeItems
     snapshot = buildSnapshot()
     if (!active()) return
     if (persistedPending !== pending) {
@@ -892,26 +891,21 @@ export function createRuntimeInteractionsSource(
     }
     listeners.forEach(listener => listener())
     settlements.synchronize()
-    nativeReplies.synchronize(previousNativeItems !== snapshot.nativeItems)
+    nativeReplies.synchronize()
     if (lastResolved !== issueDiscovery.resolved) {
       lastResolved = issueDiscovery.resolved
       for (const item of lastResolved) void archiveResolved(item)
     }
-    const nextNotifications = [
-      pending,
-      focused,
-      preferences,
-      context.source?.currentAddress,
-      context.tabs.activeTab,
-      context.t,
-    ]
+    const nextNotifications = [pending, focused, preferences]
     if (changed(notificationInputs, nextNotifications)) {
       notificationInputs = nextNotifications
-      clearTimeout(notificationTimer)
       // Publish request data before delivering; the displayed page commits its viewed lease first.
-      notificationTimer = setTimeout(() => {
-        if (active()) deliverNotices()
-      }, 0)
+      if (pending.length && notificationTimer === undefined) {
+        notificationTimer = setTimeout(() => {
+          notificationTimer = undefined
+          if (active() && pending.length) deliverNotices()
+        }, 0)
+      }
     }
     const nextDebug = [focused, pending, noticeIds]
     if (changed(debugInputs, nextDebug)) {
@@ -943,6 +937,7 @@ export function createRuntimeInteractionsSource(
     discoveryTimer = undefined
     clearTimeout(notificationTimer)
     notificationTimer = undefined
+    notificationInputs = []
     lastSignature = undefined
     lastTranslation = undefined
     lastRetainDraft = undefined

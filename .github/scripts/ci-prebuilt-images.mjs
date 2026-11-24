@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveCiImage } from "./resolve-ci-image.mjs";
@@ -28,7 +28,8 @@ const definitions = {
     inputs: [
       "backend-rs/Cargo.toml",
       "backend-rs/Cargo.lock",
-      "backend-rs/crates",
+      "backend-rs/be-server/Cargo.toml",
+      "backend-rs/src/task_export_docx/templates/thumbnail.jpeg",
       "shared/rust",
       "shared/assets/calendars",
       ".github/ci/rust-toolchain",
@@ -66,6 +67,18 @@ function files(directory, input) {
   }
 }
 
+function backendLibraries(directory) {
+  const workspace = resolve(directory, "backend-rs");
+  return readdirSync(workspace, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name !== "be-server" &&
+        existsSync(resolve(workspace, entry.name, "Cargo.toml")),
+    )
+    .map((entry) => `backend-rs/${entry.name}`);
+}
+
 export function prebuiltImage(kind, owner, baseImage = "", directory = root) {
   const definition = definitions[kind];
   if (!definition) throw new Error(`Unsupported prebuilt image: ${kind}`);
@@ -76,7 +89,10 @@ export function prebuiltImage(kind, owner, baseImage = "", directory = root) {
   }
   const hash = createHash("sha256").update("linux-amd64-v1\n");
   if (kind === "executor-deps") hash.update(baseImage);
-  const inputs = [definition.dockerfile, ...definition.inputs].flatMap(
+  const paths = kind === "backend-rs-deps"
+    ? [...definition.inputs, ...backendLibraries(directory)]
+    : definition.inputs;
+  const inputs = [definition.dockerfile, ...paths].flatMap(
     (input) => files(directory, input),
   );
   for (const input of [...new Set(inputs)].sort()) {
@@ -90,6 +106,7 @@ export function prebuiltImage(kind, owner, baseImage = "", directory = root) {
   return {
     kind,
     ...definition,
+    inputs: paths,
     image,
     restoreImage: resolveCiImage(image, directory),
   };

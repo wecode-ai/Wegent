@@ -2521,7 +2521,8 @@ fn unlinked_failed_codex_turn_persists_assistant_error_in_runtime_handle() {
         ..ExecutionRequest::default()
     };
 
-    handler.persist_failed_assistant_message("task-1", &request, "Codex failure");
+    let error_message = "Agent Skills directory contains unmanaged entries";
+    handler.persist_failed_assistant_message("task-1", &request, error_message);
 
     let task = handler
         .local_task_link("task-1")
@@ -2530,9 +2531,19 @@ fn unlinked_failed_codex_turn_persists_assistant_error_in_runtime_handle() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "assistant");
     assert_eq!(messages[0]["status"], "failed");
-    assert_eq!(messages[0]["error"], "Codex failure");
+    assert_eq!(messages[0]["error"], error_message);
     assert_eq!(messages[0]["errorType"], "response.failed");
+    assert_eq!(messages[0]["errorCode"], "skills_unmanaged_entries");
+    assert_eq!(messages[0]["errorInfo"]["code"], "skills_unmanaged_entries");
+    assert_eq!(messages[0]["errorInfo"]["stage"], "prepare");
     assert_eq!(messages[0]["subtaskId"], "turn-1");
+    let restored = RuntimeWorkStore::new(index_path.clone())
+        .get_task("task-1")
+        .unwrap();
+    assert_eq!(
+        restored.runtime_handle["startupFailure"]["errorInfo"],
+        messages[0]["errorInfo"],
+    );
 
     let _ = fs::remove_file(index_path);
 }
@@ -2921,6 +2932,15 @@ fn failed_responses_emit_runtime_turn_duration() {
         .expect("failed response should be emitted");
     assert_eq!(event["event"], "response.failed");
     assert_eq!(event["payload"]["data"]["type"], "server_overloaded");
+    assert_eq!(
+        event["payload"]["data"]["error"]["code"],
+        "server_overloaded"
+    );
+    assert_eq!(event["payload"]["data"]["error_info"]["category"], "model");
+    assert_eq!(
+        event["payload"]["data"]["error_info"]["retry_policy"],
+        "after_backoff",
+    );
     assert_eq!(event["payload"]["subtaskId"], "turn-failed-duration");
     assert_eq!(event["payload"]["data"]["startedAt"], 1_780_000_000_000_i64);
     assert_eq!(event["payload"]["data"]["durationMs"], 2_500);
@@ -3665,6 +3685,25 @@ async fn codex_model_discovery_waits_for_app_server_restart() {
 #[tokio::test]
 #[allow(clippy::await_holding_lock)] // Isolate process-wide Codex authentication paths.
 async fn codex_account_switch_waits_for_model_discovery() {
+    const ISOLATED: &str = "WEGENT_TEST_ISOLATED_ACCOUNT_SWITCH";
+    if env::var_os(ISOLATED).is_none() {
+        // Other native tests read the process-wide Home without taking ENV_LOCK.
+        // Isolate this test's no-write contract from their background startup.
+        let thread = std::thread::current();
+        let output = tokio::process::Command::new(env::current_exe().unwrap())
+            .args(["--exact", thread.name().unwrap(), "--nocapture"])
+            .env(ISOLATED, "1")
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "Isolated account switch failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let _lock = crate::test_env::lock();
     let home = tempfile::tempdir().unwrap();
     let _home = ScalarEnv::set("WEGENT_CODEX_HOME", home.path().to_str().unwrap());
@@ -3682,7 +3721,14 @@ async fn codex_account_switch_waits_for_model_discovery() {
         .unwrap_err();
     assert_eq!(error.code, "codex_account_switch_failed");
     assert_eq!(error.message, "Codex account was not found");
-    assert!(fs::read_dir(home.path()).unwrap().next().is_none());
+    let entries = fs::read_dir(home.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert!(
+        entries.is_empty(),
+        "Unexpected Codex home entries: {entries:?}"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -5965,6 +6011,8 @@ async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktree
         .worktrees
         .prepare(&source, "regular", None, false)
         .unwrap();
+    let unrelated_git = Path::new(&unrelated.path).join(".git");
+    fs::remove_file(unrelated_git).unwrap();
     for (id, path) in [
         ("regular", source.display().to_string()),
         ("shared-a", prepared.path.clone()),
@@ -5987,6 +6035,16 @@ async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktree
     assert!(source.join("tracked.txt").exists());
     assert!(Path::new(&unrelated.path).exists());
     assert!(Path::new(&prepared.path).exists());
+    assert_eq!(
+        handler
+            .worktrees
+            .worktree_for_cleanup(Path::new(&unrelated.path))
+            .unwrap()
+            .unwrap()
+            .state,
+        "active",
+        "Archiving tasks must not reconcile unrelated worktrees"
+    );
     let result = handler
         .archive_task(json!({"taskId":"shared-b", "cleanupWorktree":true}))
         .await

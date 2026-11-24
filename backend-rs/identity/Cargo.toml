@@ -1,0 +1,36 @@
+[package]
+name = "wegent-identity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Session and service authentication with explicit identity dependencies"
+
+[features]
+test-support = []
+
+[dependencies]
+getrandom = { workspace = true }
+anyhow = { workspace = true }
+regex = { workspace = true }
+base64 = { workspace = true }
+wegent-crypto = { workspace = true }
+async-trait = { workspace = true }
+brz-http-server = { workspace = true }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+jsonwebtoken = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-backend-persistence = { workspace = true }
+wegent-http-compat = { workspace = true }
+
+[dev-dependencies]
+aes = { workspace = true }
+cbc = { workspace = true, features = ["alloc", "block-padding"] }
+wegent-backend-test-support = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
