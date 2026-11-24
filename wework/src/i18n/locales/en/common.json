@@ -6618,10 +6618,14 @@
   },
   "workbench_error": {
     "startup_title": "Wework could not start",
-    "startup_description": "The frontend could not initialize. Refresh the page to try again. If the problem persists, open the debug panel to view the logs.",
+    "startup_description": "The frontend could not initialize. Refresh the page to try again. You can copy debug info first to include in a problem report.",
     "crash_title": "Something went wrong in Wework",
-    "crash_description": "An unexpected error prevented this page from displaying. Refresh the page to try again; unsaved changes may be lost. If the problem persists, open the debug panel to view the logs.",
-    "reload": "Refresh page"
+    "crash_description": "Refresh the page to try again. Unsaved changes may be lost. You can copy debug info first to include in a problem report.",
+    "reload": "Refresh page",
+    "copy_debug": "Copy debug info",
+    "copying": "Copying debug info",
+    "copied": "Debug info copied",
+    "copy_failed": "Could not copy debug info. Try again."
   },
   "mcp_apps": {
     "title": "MCP App",
