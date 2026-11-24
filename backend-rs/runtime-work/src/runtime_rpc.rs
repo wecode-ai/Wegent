@@ -228,6 +228,7 @@ pub(crate) async fn resolve_route(
 
 /// `RuntimeRpcService.call`.
 #[allow(clippy::result_large_err)]
+#[allow(clippy::too_many_arguments)]
 pub async fn call(
     app: &RuntimeRequestServices<'_>,
     user_id: i64,
@@ -236,6 +237,7 @@ pub async fn call(
     payload: Value,
     timeout_seconds: i64,
     allow_app_device_task_reading: bool,
+    authenticated_user_name: Option<&str>,
 ) -> Result<Value, CallFailure> {
     let normalized_timeout = normalize_timeout(timeout_seconds);
     let route = resolve_route(app, user_id, submitted_device_id).await?;
@@ -288,8 +290,23 @@ pub async fn call(
             })
         })?;
 
+    let personal_runtime_token = if let Some(user_name) = authenticated_user_name
+        && can_issue_personal_runtime_token(route.device_type, method, &payload)
+    {
+        Some(
+            wegent_identity::task_token::create_personal_runtime_token(
+                app.auth, user_id, user_name,
+            )
+            .map_err(|_| CallFailure::Internal)?,
+        )
+    } else {
+        None
+    };
     let mut request = runtime_request_envelope(method, payload, user_id, &route.runtime_device_id)
         .map_err(|message| CallFailure::Rpc(rpc_error("bad_request", message)))?;
+    if let Some(token) = personal_runtime_token {
+        request["personalRuntimeToken"] = Value::String(token);
+    }
     match grant {
         TaskGrant::ProjectRead => request["appTaskAccessScope"] = json!("project-session"),
         TaskGrant::StandInRole => request["appTaskAccessScope"] = json!("stand-in-role-task"),
@@ -348,6 +365,36 @@ fn role_task_source<'a>(
         .filter(|source| !source.trim().is_empty())
         .map(Some)
         .ok_or("A current owned source device is required")
+}
+
+fn can_issue_personal_runtime_token(
+    device_type: DeviceType,
+    method: &str,
+    payload: &Value,
+) -> bool {
+    REMOTE_RUNTIME_DEVICE_TYPES.contains(&device_type)
+        && matches!(
+            method,
+            "runtime.tasks.create" | "runtime.tasks.send" | "runtime.tasks.interrupt_and_send"
+        )
+        && payload
+            .get("executionRequest")
+            .or_else(|| payload.get("execution_request"))
+            .is_some_and(|execution| {
+                execution.is_object()
+                    && ["origin", "cloudProjectId", "cloud_project_id"]
+                        .iter()
+                        .all(|key| execution[*key].is_null())
+            })
+        && [
+            "origin",
+            "cloudProjectId",
+            "cloud_project_id",
+            "wegentTeamId",
+            "wegent_team_id",
+        ]
+        .iter()
+        .all(|key| payload[*key].is_null())
 }
 
 fn runtime_request_envelope(

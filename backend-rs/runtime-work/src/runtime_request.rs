@@ -76,6 +76,7 @@ pub struct RuntimeRequestIdentity<'a> {
     pub user_id: i64,
     pub user_name: &'a str,
     pub email: Option<&'a str>,
+    pub credential_expires_at: Option<i64>,
 }
 
 /// One failed command relay.
@@ -197,6 +198,11 @@ pub async fn handle(
             params,
             timeout_seconds,
             project_transcript,
+            identity
+                .credential_expires_at
+                .filter(|expires_at| *expires_at > chrono::Utc::now().timestamp())
+                .map(|_| identity.user_name.trim())
+                .filter(|name| !name.is_empty()),
         )
         .await;
         if let Some((retain, instance)) = owned_app {

@@ -5,6 +5,43 @@
 use super::*;
 
 #[test]
+fn personal_runtime_credentials_are_only_issued_for_remote_personal_turns() {
+    let payload = json!({"executionRequest": {"user_id": 23}});
+    for method in [
+        "runtime.tasks.create",
+        "runtime.tasks.send",
+        "runtime.tasks.interrupt_and_send",
+    ] {
+        assert!(can_issue_personal_runtime_token(
+            DeviceType::Cloud,
+            method,
+            &payload
+        ));
+        assert!(can_issue_personal_runtime_token(
+            DeviceType::Remote,
+            method,
+            &payload
+        ));
+        assert!(!can_issue_personal_runtime_token(
+            DeviceType::App,
+            method,
+            &payload
+        ));
+    }
+    assert!(!can_issue_personal_runtime_token(
+        DeviceType::Cloud,
+        "runtime.tasks.transcript",
+        &payload
+    ));
+    let scoped = json!({"executionRequest": {"origin": {"type": "issue_dispatch"}}});
+    assert!(!can_issue_personal_runtime_token(
+        DeviceType::Cloud,
+        "runtime.tasks.send",
+        &scoped
+    ));
+}
+
+#[test]
 fn submitted_interface_is_bound_to_the_authenticated_runtime_command() {
     let config = json!({"wework_model_kind":"model-interface","model_id":"local-model:test","model_provider":"test"});
     let payload = json!({"executionRequest":{"user_id":23,"model_config":config},
