@@ -164,6 +164,10 @@ function isGenerateMode(taskType: TaskType): taskType is GenerateMode {
   return taskType === 'video' || taskType === 'image'
 }
 
+function buildUrlTeamSelectionKey(scope: string, teamId: string | null) {
+  return teamId === null ? null : JSON.stringify([scope, teamId])
+}
+
 const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
   'attachment',
   'knowledge_base',
@@ -1193,8 +1197,7 @@ function ChatAreaContent({
     [teamSelectionScope]
   )
   const lastSyncedTaskIdRef = useRef<number | null>(null)
-  const urlTeamSelectionKey =
-    teamIdFromUrl === null ? null : JSON.stringify([teamSelectionScope, teamIdFromUrl])
+  const urlTeamSelectionKey = buildUrlTeamSelectionKey(teamSelectionScope, teamIdFromUrl)
   const [ignoredUrlTeam, setIgnoredUrlTeam] = useState<string | null>(null)
   const isExitingGenerationRef = useRef(false)
   const restoreConfiguredDefaultRef = useRef(false)
@@ -1220,6 +1223,23 @@ function ChatAreaContent({
     isUrlTeamRequired && !isTeamSelectionReady
       ? (linkedAgentError ?? t('input.loading_teams_placeholder'))
       : null
+  const linkedAgentErrorContent = linkedAgentError && (
+    <div className="mt-2 flex items-center gap-2 text-sm text-text-secondary">
+      <p role="status">{linkedAgentError}</p>
+      {retryUrlTeam && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="min-h-11"
+          onClick={retryUrlTeam}
+          data-testid="retry-linked-agent"
+        >
+          {t('actions.retry')}
+        </Button>
+      )}
+    </div>
+  )
   const handleTeamChange = chatState.handleTeamChange
   const findDefaultTeamForMode = chatState.findDefaultTeamForMode
   const showGenerateModeSelector =
@@ -1228,7 +1248,6 @@ function ChatAreaContent({
   const handleUserTeamChange = useCallback(
     (team: Team | null) => {
       restoreConfiguredDefaultRef.current = false
-      setIgnoredUrlTeam(urlTeamSelectionKey)
       handleTeamChange(team)
       const routeTaskId =
         typeof window === 'undefined'
@@ -1239,6 +1258,7 @@ function ChatAreaContent({
           ? getTeamGenerateMode(team, taskType)
           : null
       const nextScope = nextMode ? `${user?.id}:${nextMode}` : teamSelectionScope
+      setIgnoredUrlTeam(buildUrlTeamSelectionKey(nextScope, teamIdFromUrl))
       markTeamSelectionInitialized(team, nextScope)
       if (nextMode && nextMode !== taskType && onGenerateModeChange) {
         teamSelectionScopeRef.current = nextScope
@@ -1251,7 +1271,7 @@ function ChatAreaContent({
       markTeamSelectionInitialized,
       onGenerateModeChange,
       taskType,
-      urlTeamSelectionKey,
+      teamIdFromUrl,
       teamSelectionScope,
       user?.id,
     ]
@@ -2839,23 +2859,7 @@ function ChatAreaContent({
                 autoFocus={!hasMessages}
                 inputControlsRef={inputControlsRef}
               />
-              {linkedAgentError && (
-                <div className="mt-2 flex items-center gap-2 text-sm text-text-secondary">
-                  <p role="status">{linkedAgentError}</p>
-                  {retryUrlTeam && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="min-h-11"
-                      onClick={retryUrlTeam}
-                      data-testid="retry-linked-agent"
-                    >
-                      {t('actions.retry')}
-                    </Button>
-                  )}
-                </div>
-              )}
+              {linkedAgentErrorContent}
               {taskType !== 'knowledge' && !hideSelectors && !activeProject && (
                 <QuickAccessCards
                   teams={teams}
@@ -2944,6 +2948,7 @@ function ChatAreaContent({
                 </div>
               )}
             <div className="relative w-full max-w-[820px] mx-auto px-4 sm:px-6">
+              {linkedAgentErrorContent}
               <div className="py-4">
                 <ChatInputCard
                   {...inputCardProps}

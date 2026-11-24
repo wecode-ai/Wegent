@@ -56,6 +56,7 @@ let mockRecentTeamsLoading = false
 let mockEarlyDefaultTeam: Team | null = null
 let mockUrlTeam: Team | null = null
 let mockUrlTeamFailed = false
+let mockQuickAccessSelectedTeam = mockSelectedTeam
 const mockRetryUrlTeam = jest.fn()
 let mockUseStatefulSelection = false
 let mockAutoSentTeamIds: Array<number | null> = []
@@ -319,7 +320,7 @@ jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
     <button
       data-testid="quick-access-cards"
       data-recommended-team={recommendedTeam?.id}
-      onClick={() => onTeamSelect(mockSelectedTeam)}
+      onClick={() => onTeamSelect(mockQuickAccessSelectedTeam)}
     >
       Select agent
     </button>
@@ -487,6 +488,7 @@ describe('ChatArea pipeline next-step dialog', () => {
     mockEarlyDefaultTeam = null
     mockUrlTeam = null
     mockUrlTeamFailed = false
+    mockQuickAccessSelectedTeam = mockSelectedTeam
     mockRetryUrlTeam.mockClear()
     mockUseStatefulSelection = false
     mockHandleTeamChange.mockReset()
@@ -1026,6 +1028,57 @@ describe('ChatArea selection while the catalog loads', () => {
     view.rerender(<ChatArea {...props} />)
     expect(onConsumed).toHaveBeenCalledTimes(1)
     expect(mockHandleSendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a manual generation-mode switch after a linked video agent', () => {
+    mockUseStatefulSelection = true
+    const linkedVideoTeam = { ...mockSelectedTeam, id: 65, bind_mode: ['video'] } as Team
+    const imageOnlyTeam = { ...mockSelectedTeam, id: 66, bind_mode: ['image'] } as Team
+    mockQuickAccessSelectedTeam = imageOnlyTeam
+    mockNewChatParams = new URLSearchParams('teamId=65')
+    mockUrlTeam = linkedVideoTeam
+    const onGenerateModeChange = jest.fn()
+    const view = render(
+      <ChatArea
+        teams={[linkedVideoTeam, imageOnlyTeam]}
+        isTeamsLoading={false}
+        taskType="video"
+        onGenerateModeChange={onGenerateModeChange}
+      />
+    )
+    expect(mockNewChatTeam?.id).toBe(linkedVideoTeam.id)
+
+    fireEvent.click(screen.getByTestId('quick-access-cards'))
+    expect(onGenerateModeChange).toHaveBeenCalledWith('image')
+
+    view.rerender(
+      <ChatArea
+        teams={[linkedVideoTeam, imageOnlyTeam]}
+        isTeamsLoading={false}
+        taskType="image"
+        onGenerateModeChange={onGenerateModeChange}
+      />
+    )
+    expect(mockNewChatTeam?.id).toBe(imageOnlyTeam.id)
+  })
+
+  it('shows linked-agent retry in the bottom-input layout', () => {
+    mockUseStatefulSelection = true
+    mockNewChatParams = new URLSearchParams('teamId=65')
+    mockUrlTeamFailed = true
+    render(
+      <ChatArea
+        teams={[defaultTeam]}
+        isTeamsLoading={false}
+        taskType="knowledge"
+        inputAlwaysAtBottom
+      />
+    )
+
+    expect(screen.getByTestId('chat-floating-input')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('input.linked_agent_unavailable')
+    fireEvent.click(screen.getByTestId('retry-linked-agent'))
+    expect(mockRetryUrlTeam).toHaveBeenCalledTimes(1)
   })
 
   it('rejects scheme sends while a linked agent is pending or a named agent is unavailable', () => {

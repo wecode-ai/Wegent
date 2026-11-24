@@ -170,6 +170,21 @@ it('honors an explicit ID ahead of a team name without waiting for the catalog',
   expect(initial.onSendMessage).toHaveBeenCalledWith('100% match')
 })
 
+it.each([
+  ['empty', ''],
+  ['non-numeric', 'abc'],
+])('falls back to the team name when teamId is %s', (_label, teamId) => {
+  setQuery(`q=hello&autoSend=true&teamId=${teamId}&teamName=recent-team&teamNamespace=default`)
+  const initial = props({ isTeamSelectionReady: false })
+  const { rerender } = render(<QueryParamAutoSend {...initial} />)
+
+  expect(initial.onTeamChange).toHaveBeenCalledWith(recentTeam)
+  rerender(<QueryParamAutoSend {...initial} selectedTeam={recentTeam} isTeamSelectionReady />)
+  advance()
+  expect(initial.onSendMessage).toHaveBeenCalledTimes(1)
+  expect(initial.onSendMessage).toHaveBeenCalledWith('hello')
+})
+
 it('preserves modifier keys and cancels automatic sending after user input', () => {
   const initial = props({ isTeamSelectionReady: false })
   const { rerender } = render(<QueryParamAutoSend {...initial} />)

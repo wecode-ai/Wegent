@@ -184,7 +184,11 @@ export default function QueryParamAutoSend({
     }
 
     const teamIdParam = searchParams.get('teamId')
-    const targetTeamId = teamIdParam === null ? null : Number(teamIdParam)
+    const parsedTeamId = teamIdParam === null ? null : Number(teamIdParam)
+    const targetTeamId =
+      parsedTeamId !== null && Number.isSafeInteger(parsedTeamId) && parsedTeamId > 0
+        ? parsedTeamId
+        : null
 
     // Support team lookup by name and namespace (user-friendly alternative to teamId)
     const teamNameParam = searchParams.get('teamName')
