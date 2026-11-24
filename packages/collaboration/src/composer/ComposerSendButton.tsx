@@ -54,20 +54,22 @@ export function ComposerSendButton({
       : `${composerIconActionDensity} rounded-full`
   return (
     <Tooltip label={label} align="end" testId={tooltipTestId} disabled={disabled}>
-      <ControlButton
-        variant="unstyled"
-        type="submit"
-        data-composer-primary-action="true"
-        data-testid={testId}
-        disabled={disabled}
-        showTooltip={false}
-        onMouseDown={event => event.preventDefault()}
-        className={`${appearance} flex shrink-0 items-center justify-center gap-1.5 disabled:cursor-not-allowed ${split ? '' : 'bg-text-primary text-background disabled:bg-text-muted/45'}`}
-        aria-label={label}
-      >
-        {text || <span className="sr-only">{label}</span>}
-        <Icon className="h-4 w-4" aria-hidden="true" />
-      </ControlButton>
+      <span className="inline-flex" aria-label={label}>
+        <ControlButton
+          variant="unstyled"
+          type="submit"
+          data-composer-primary-action="true"
+          data-testid={testId}
+          disabled={disabled}
+          showTooltip={false}
+          onMouseDown={event => event.preventDefault()}
+          className={`${appearance} flex shrink-0 items-center justify-center gap-1.5 disabled:cursor-not-allowed ${split ? '' : 'bg-text-primary text-background disabled:bg-text-muted/45'}`}
+          aria-label={label}
+        >
+          {text || <span className="sr-only">{label}</span>}
+          <Icon className="h-4 w-4" aria-hidden="true" />
+        </ControlButton>
+      </span>
     </Tooltip>
   )
 }
