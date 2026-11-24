@@ -119,7 +119,9 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     let dev_sidecar = fs::read_to_string("../wework/scripts/dev-executor-sidecar.sh").unwrap();
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_DEV_RELOAD:-1"));
     assert!(dev_sidecar.contains("dev-executor-reload.mjs"));
-    assert!(dev_sidecar.contains("cargo build"));
+    assert!(dev_sidecar.contains(
+        "build_wegent_cargo_in_target --manifest-path \"$EXECUTOR_DIR/Cargo.toml\" --bin wegent-executor"
+    ));
     assert!(
         dev_sidecar.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor-dev\"")
     );
@@ -131,8 +133,12 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(!dev_sidecar.contains("exec cargo run"));
 
     let dev_reload = fs::read_to_string("../wework/scripts/dev-executor-reload.mjs").unwrap();
-    assert!(dev_reload.contains("'cargo'"));
-    assert!(dev_reload.contains("'--bin', 'wegent-executor'"));
+    let build_args = dev_reload
+        .split_ascii_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(build_args.contains("spawn( 'cargo', [ 'build', '--target-dir',"));
+    assert!(build_args.contains("'--bin', 'wegent-executor',"));
     assert!(dev_reload.contains("watch(sourceDir, { recursive: true }"));
     assert!(!dev_reload.contains("wegent-executor-dev"));
 
