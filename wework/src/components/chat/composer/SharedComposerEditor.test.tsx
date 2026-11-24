@@ -11,11 +11,11 @@ function renderEditor(value = '', services?: ComposerEditorServices) {
   const ref = createRef<ComposerEditorHandle>()
   const textareaRef = createRef<HTMLElement>()
   const onChange = vi.fn()
-  const result = render(
+  const element = (text: string) => (
     <ComposerProseMirrorEditor
       ref={ref}
       services={services}
-      value={value}
+      value={text}
       onChange={onChange}
       onSnapshotChange={vi.fn()}
       onKeyDown={() => false}
@@ -34,7 +34,14 @@ function renderEditor(value = '', services?: ComposerEditorServices) {
       className="min-h-12"
     />
   )
-  return { ...result, ref, onChange, editor: screen.getByTestId('shared-editor') }
+  const result = render(element(value))
+  return {
+    ...result,
+    ref,
+    onChange,
+    editor: screen.getByTestId('shared-editor'),
+    rerenderValue: (text: string) => result.rerender(element(text)),
+  }
 }
 
 describe('shared rich editor in a browser host', () => {
@@ -144,13 +151,14 @@ describe('shared rich editor in a browser host', () => {
   test('uses injected window focus and unsubscribes when the editor unmounts', () => {
     let notifyFocus: (value: boolean) => void = () => undefined
     const unsubscribe = vi.fn()
-    const { editor, unmount } = renderEditor('text', {
+    const subscribeWindowFocus = vi.fn((callback: (value: boolean) => void) => {
+      notifyFocus = callback
+      return unsubscribe
+    })
+    const { editor, ref, rerenderValue, unmount } = renderEditor('text', {
       preserveNativeEmptyCaret: false,
       isWindowFocused: () => true,
-      subscribeWindowFocus(callback) {
-        notifyFocus = callback
-        return unsubscribe
-      },
+      subscribeWindowFocus,
     })
     act(() => editor.focus())
     expect(editor).toHaveAttribute('data-composer-focus-visible')
@@ -158,6 +166,11 @@ describe('shared rich editor in a browser host', () => {
     expect(editor).not.toHaveAttribute('data-composer-focus-visible')
     act(() => notifyFocus(true))
     expect(editor).toHaveAttribute('data-composer-focus-visible')
+    rerenderValue('updated text')
+    expect(ref.current?.getSnapshot().value).toBe('updated text')
+    expect(screen.getByTestId('shared-editor')).toBe(editor)
+    expect(subscribeWindowFocus).toHaveBeenCalledOnce()
+    expect(unsubscribe).not.toHaveBeenCalled()
     unmount()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
