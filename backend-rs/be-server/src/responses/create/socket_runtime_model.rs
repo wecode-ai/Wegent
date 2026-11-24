@@ -251,7 +251,7 @@ mod tests {
     fn keeps_runtime_protocol_and_explicit_anthropic_endpoint() {
         let spec = json!({"modelConfig":{"env":{
             "model": "claude", "model_id": "claude-provider", "base_url": "https://example.test/",
-            "api_key": "test-key", "DEFAULT_HEADERS": {"X-Test":"value"}
+            "api_key": "sk-test-key", "DEFAULT_HEADERS": {"X-Test":"value"}
         }}});
         let mut config = Map::from_iter([("protocol".into(), json!("openai-responses"))]);
         apply_crd(&mut config, &spec, "model").unwrap();

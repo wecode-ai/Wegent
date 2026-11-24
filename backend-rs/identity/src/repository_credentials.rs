@@ -85,6 +85,9 @@ pub fn decrypt_git_token(token: &str) -> Result<String, CryptoConfigurationError
 /// AES-CBC envelope as Git tokens, but common provider-key prefixes always
 /// identify plaintext and must not be treated as encrypted payloads.
 pub fn decrypt_model_api_key(key: &str) -> Result<String, CryptoConfigurationError> {
+    if !is_model_api_key_encrypted(key) {
+        return Ok(key.to_string());
+    }
     let aes_key = crate::config::env_or_dotenv("GIT_TOKEN_AES_KEY")
         .unwrap_or_else(|| DEFAULT_AES_KEY.to_string());
     let aes_iv =
