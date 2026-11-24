@@ -47,8 +47,8 @@ export function recordConversationScrollWrite<T>(
   } finally {
     const observer = fromVirtualizer ? undefined : offsetObservers.get(element)
     const scrollTop = observer || diagnosticsEnabled ? element.scrollTop : 0
-    // Native scroll events arrive after ResizeObserver. Publish instant external
-    // writes first so a virtualizer cannot compensate from its previous offset.
+    // Notify the virtualizer of programmatic writes even if the browser does not
+    // deliver a native scroll event. The observer can coalesce writes in a commit.
     observer?.(scrollTop)
     if (diagnosticsEnabled) {
       const clientHeight = element.clientHeight

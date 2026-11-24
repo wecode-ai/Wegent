@@ -4,6 +4,7 @@ import { createComposerLayoutChecks } from '../modules/streaming-text-composer-l
 import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
 import { createRichTaskSwitchChecks } from '../modules/streaming-text-rich-task-switch.mjs'
 import { createStreamingCompletionChecks } from '../modules/streaming-text-completion.mjs'
+import { createStreamingCommandCancellationChecks } from '../modules/streaming-command-cancellation.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { handleEmptyReplyPrediction, selectTool } from '../modules/response-protocol.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -87,6 +88,11 @@ export function createDesktopScenario({
   subagentTextRelease,
 }) {
   const completion = createStreamingCompletionChecks({ resultDir, uiTimeoutMs })
+  const commandCancellation = createStreamingCommandCancellationChecks({
+    workspacePath,
+    resultDir,
+    uiTimeoutMs,
+  })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
   const backgroundWindowRefresh = createBackgroundWindowRefreshChecks({ uiTimeoutMs })
   const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
@@ -187,6 +193,7 @@ export function createDesktopScenario({
     cleanup() {
       backgroundWindowRefresh.cleanup()
       completion.cleanup()
+      commandCancellation.cleanup()
       guidanceOrder.cleanup()
     },
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
@@ -260,6 +267,7 @@ export function createDesktopScenario({
         completionRequestHeaders = request.headers
         return true
       }
+      if (commandCancellation.handleModelRequest(body, response, responseId)) return true
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       if (await guidanceOrder.handleModelRequest(body, response, responseId)) return true
       if (await interactiveVisualization.handleModelRequest(body, response, responseId)) return true
@@ -598,6 +606,7 @@ export function createDesktopScenario({
             await visualizationScroll.verify(control)
             await transcriptIdentity.verify(control)
             await guidanceOrder.verify(control)
+            await commandCancellation.verify(control)
           },
         ],
         [

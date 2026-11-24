@@ -122,6 +122,7 @@ export function TemporaryChatPanel({
   assistantMessageStyle,
   markReadWhenActive = false,
   nativeConversation = false,
+  allowMessagesDuringApproval = false,
   modelControls,
   allowInitialGoal = false,
   expanded = false,
@@ -532,8 +533,18 @@ export function TemporaryChatPanel({
       : explicitNewSession && (activeProviderPending || requiresNewSession))
       ? { startNewSession: true, expectedThreadId: activeThreadId }
       : {}
+  const pendingRequest =
+    focusedRequest === undefined
+      ? pendingRequestUserInputPayload(presentation.messages, hiddenRequestUserInputIds)
+      : focusedRequest &&
+          !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
+        ? focusedRequest
+        : null
+  const showComposerWhilePending =
+    allowMessagesDuringApproval &&
+    (pendingRequest?.interactionKind ?? pendingRequest?.interaction_kind) === 'approval'
   const canSendWithCurrentModel = () => {
-    if (nativeConversation && taskLifecycle?.interactionStatus) {
+    if (nativeConversation && taskLifecycle?.interactionStatus && !showComposerWhilePending) {
       setError(t('standIn.native_input_pending'))
       return false
     }
@@ -859,13 +870,6 @@ export function TemporaryChatPanel({
     releaseDraftAttachment: attachmentSelection.releaseAttachmentForScope,
     getDraftAttachment: attachmentSelection.getAttachment,
   })
-  const pendingRequest =
-    focusedRequest === undefined
-      ? pendingRequestUserInputPayload(presentation.messages, hiddenRequestUserInputIds)
-      : focusedRequest &&
-          !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
-        ? focusedRequest
-        : null
   const pendingRequestKey = pendingRequest && requestUserInputPayloadKey(pendingRequest)
   const recoveryAvailable =
     needsSessionConfirmation &&
@@ -975,6 +979,7 @@ export function TemporaryChatPanel({
             <RequestUserInputComposer
               payload={pendingRequest}
               source={address}
+              showComposerWhilePending={showComposerWhilePending}
               renderQuestion={onCollapse =>
                 pendingRequest ? (
                   <RequestUserInputCard

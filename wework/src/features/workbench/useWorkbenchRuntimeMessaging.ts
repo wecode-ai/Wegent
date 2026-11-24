@@ -634,6 +634,11 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
+        if (response.guided) {
+          if (sendRequested) lifecycleStore.sendAccepted(outboundRequest.address)
+          options?.onGuided?.()
+          return true
+        }
         if (options?.silentBusyRetry && !userInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
         }

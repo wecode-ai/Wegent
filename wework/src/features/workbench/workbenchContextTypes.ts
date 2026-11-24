@@ -194,6 +194,7 @@ export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void
   onAccepted?: (response: RuntimeSendResponse) => void
+  onGuided?: () => void
   silentBusyRetry?: boolean
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
 }

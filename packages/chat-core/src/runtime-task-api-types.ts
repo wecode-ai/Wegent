@@ -206,6 +206,7 @@ export interface RuntimeSendResponse {
   guidanceId?: string
   taskId: string
   status?: 'queued' | 'running'
+  guided?: boolean
   queuePosition?: number | null
   turnId?: string
   turn_id?: string

@@ -64,6 +64,8 @@ Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 nam
 
 打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
+Core DSH 以固定路径提供内置界面插件的 JavaScript 入口。渲染器在入口 URL 中带上当前构建的源码 SHA，避开同源下旧版本遗留的缓存。入口响应使用 `no-store`，带内容哈希的资源仍可长期缓存，以保证工作台与插件从同一构建加载 React 上下文。
+
 本地优先模式包含 Electron 主进程、executor sidecar 和 core DSH 三个本机运行时角色：
 
 ```mermaid

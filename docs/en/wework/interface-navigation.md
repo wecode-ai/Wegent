@@ -102,6 +102,8 @@ Prepare a voice input model: **bottom-left account menu → Settings → Persona
 
 To report a problem or export runtime logs, select **Report a problem** in the upper-right corner of any Wework desktop page. Plugins, My Stand-in, Scheduled and Settings use the same entry; task pages can also include task context. See [Getting help](./troubleshooting.md#getting-help).
 
+If the page error or startup error screen appears, select **Copy debug info** next to **Refresh page**. See [Getting help](./troubleshooting.md#getting-help).
+
 Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.
 
 At the bottom of a business question card, **Skip** hides asynchronous questions without sending a message. Blocking questions receive empty answers to end their wait. **Collapse** keeps text and attachment drafts available for later. See [Answer AI questions](./tasks.md#question-answers) for input and attachment controls.

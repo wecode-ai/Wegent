@@ -6335,12 +6335,31 @@ async fn prepare_codex_execution_request(
     };
     let mut generated_files = Vec::new();
     text_generation::prepare_text_model_catalog(&mut request, &mut generated_files).await?;
+    let resize_images = !is_official_codex_model(&request.model_config);
+    Ok(prepare_codex_input_attachments(
+        request,
+        generated_files,
+        resize_images,
+    ))
+}
+
+pub(crate) async fn codex_guidance_input(request: ExecutionRequest) -> Vec<Value> {
+    let request = super::runtime_capabilities::prepare_runtime_attachments(request).await;
+    let prepared = prepare_codex_input_attachments(request, Vec::new(), false);
+    turn_input(&prepared.request.prompt)
+}
+
+fn prepare_codex_input_attachments(
+    mut request: ExecutionRequest,
+    mut generated_files: Vec<PathBuf>,
+    resize_images: bool,
+) -> PreparedCodexExecutionRequest {
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
-        return Ok(PreparedCodexExecutionRequest {
+        return PreparedCodexExecutionRequest {
             request,
             generated_files,
-        });
+        };
     }
     log_executor_event(
         "codex attachment payload received",
@@ -6374,7 +6393,6 @@ async fn prepare_codex_execution_request(
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut local_images = Vec::new();
-    let resize_images = !is_official_codex_model(&request.model_config);
     for attachment in attachments {
         if let Some(local_path) = attachment
             .local_path
@@ -6434,10 +6452,10 @@ async fn prepare_codex_execution_request(
         request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
     }
 
-    Ok(PreparedCodexExecutionRequest {
+    PreparedCodexExecutionRequest {
         request,
         generated_files,
-    })
+    }
 }
 
 async fn ensure_codex_mcp_endpoints() -> Result<(), String> {

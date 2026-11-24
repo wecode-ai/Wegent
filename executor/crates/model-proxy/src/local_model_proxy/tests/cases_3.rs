@@ -425,8 +425,9 @@ async fn keeps_foreign_encrypted_history_sanitized_after_the_switch_request() {
 }
 
 #[tokio::test]
-async fn forwards_native_chatgpt_http_body_and_stream_unchanged() {
-    const BODY: &str = r#"{ "model": "gpt-6.2-sol", "input": [{"type":"message","role":"user","id":"wework_event_native","content":[]}], "tools":[{"type":"custom","name":"exec","description":"native contract"}] }"#;
+async fn forwards_native_chatgpt_http_and_repairs_mismatched_history_ids() {
+    const BODY: &str = r#"{ "model": "gpt-6.2-sol", "input": [{"type":"message","role":"user","id":"msg_native","content":[]}], "tools":[{"type":"custom","name":"exec","description":"native contract"}] }"#;
+    const LEGACY_BODY: &str = r#"{"input":[{"type":"custom_tool_call","id":"fc_old","call_id":"call_old","name":"exec","input":"text(42)"},{"type":"custom_tool_call_output","call_id":"call_old","output":"42"}]}"#;
     const SSE: &str =
         "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_native\"}}\n\n";
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -437,8 +438,25 @@ async fn forwards_native_chatgpt_http_body_and_stream_unchanged() {
             Router::new().route(
                 "/backend-api/codex/responses",
                 post(|body: Bytes| async move {
-                    assert_eq!(body.as_ref(), BODY.as_bytes());
-                    ([(header::CONTENT_TYPE, "text/event-stream")], SSE)
+                    let request: Value = serde_json::from_slice(&body).unwrap();
+                    let first = &request["input"][0];
+                    if first["type"] == "custom_tool_call"
+                        && first["id"].as_str().is_some_and(|id| !id.starts_with("ctc_"))
+                    {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            [(header::CONTENT_TYPE, "application/json")],
+                            r#"{"error":{"message":"Invalid 'input[0].id': 'fc_old'. Expected an ID that begins with 'ctc'.","type":"invalid_request_error","param":"input[0].id","code":"invalid_value"}}"#,
+                        );
+                    }
+                    if first["type"] == "custom_tool_call" {
+                        let mut expected: Value = serde_json::from_str(LEGACY_BODY).unwrap();
+                        expected["input"][0].as_object_mut().unwrap().remove("id");
+                        assert_eq!(request, expected);
+                    } else {
+                        assert_eq!(body.as_ref(), BODY.as_bytes());
+                    }
+                    (StatusCode::OK, [(header::CONTENT_TYPE, "text/event-stream")], SSE)
                 }),
             ),
         )
@@ -452,14 +470,18 @@ async fn forwards_native_chatgpt_http_body_and_stream_unchanged() {
     .unwrap()
     .unwrap();
     let token = register("official-native-http-passthrough", upstream);
-    let response = handle(proxy_headers(&token), Bytes::from_static(BODY.as_bytes()))
+    for request in [BODY, LEGACY_BODY] {
+        let response = handle(
+            proxy_headers(&token),
+            Bytes::from_static(request.as_bytes()),
+        )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-        SSE.as_bytes()
-    );
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        assert_eq!(body, SSE.as_bytes());
+    }
     unregister(&token);
     server.abort();
 }

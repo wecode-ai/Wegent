@@ -38,6 +38,7 @@ export async function sendTemporaryConversationMessage(
   const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
   let error: string | null = null
   let queued = false
+  let guided = false
   const sendMessage = interrupt
     ? context.interruptAndSendRuntimePaneMessage
     : context.sendRuntimePaneMessage
@@ -71,6 +72,9 @@ export async function sendTemporaryConversationMessage(
           onError: value => {
             error = value
           },
+          onGuided: () => {
+            guided = true
+          },
           onQueued: () => {
             queued = true
           },
@@ -80,7 +84,7 @@ export async function sendTemporaryConversationMessage(
     error = result.error ?? null
     queued = result.queued === true
   }
-  if (result.sent && !queued)
+  if (result.sent && !queued && !guided)
     context.setMessages(
       appendAcceptedRuntimeConversationMessage(
         address,
@@ -89,5 +93,5 @@ export async function sendTemporaryConversationMessage(
         turnIdsBeforeSend
       )
     )
-  return { sent: result.sent, error }
+  return { sent: result.sent, error, guided }
 }
