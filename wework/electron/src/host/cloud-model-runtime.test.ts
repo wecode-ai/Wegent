@@ -15,18 +15,30 @@ beforeEach(() => {
   vi.mocked(createCloudRuntimeIpcClient).mockReturnValue(cloud as never)
 })
 
-test('uses the saved socket destination and current native token for the selected device', async () => {
-  const refresh = vi.fn().mockResolvedValueOnce('first').mockResolvedValue('rotated')
+test('reuses the current native socket until the product token rotates', async () => {
+  const refresh = vi
+    .fn()
+    .mockResolvedValueOnce('first')
+    .mockResolvedValueOnce('first')
+    .mockResolvedValue('rotated')
+  const rotated = { request: vi.fn().mockResolvedValue({ accepted: true }), dispose: vi.fn() }
+  const createClient = vi.mocked(createCloudRuntimeIpcClient)
+  createClient.mockReturnValueOnce(cloud as never).mockReturnValueOnce(rotated as never)
   const runtime = new CloudModelRuntime(async () => ({ ...target, user: { id: 7 } }), refresh)
   const transport = await runtime.transport(input)
   await transport.request('runtime.tasks.create', { modelConfig: {} }, 'chosen-device')
   await runtime.transport(input)
-  expect(createCloudRuntimeIpcClient).toHaveBeenCalledOnce()
-  const options = vi.mocked(createCloudRuntimeIpcClient).mock.calls[0][0]
+  expect(createClient).toHaveBeenCalledOnce()
+  expect(cloud.dispose).not.toHaveBeenCalled()
+  const current = await runtime.transport(input)
+  await current.request('runtime.tasks.send', {}, 'chosen-device')
+  expect(createClient).toHaveBeenCalledTimes(2)
+  const options = createClient.mock.calls[1][0]
   expect(options).toMatchObject({
     socketBaseUrl: target.socketBaseUrl,
     socketPath: target.socketPath,
   })
+  expect(createClient.mock.calls[0][0].getToken()).toBe('first')
   expect(options.getToken()).toBe('rotated')
   expect(refresh).toHaveBeenCalledWith(target.apiBaseUrl, 7)
   expect(cloud.request).toHaveBeenCalledWith(
@@ -35,7 +47,40 @@ test('uses the saved socket destination and current native token for the selecte
     'chosen-device',
     undefined
   )
+  expect(rotated.request).toHaveBeenCalledWith('runtime.tasks.send', {}, 'chosen-device', undefined)
+  expect(cloud.dispose).toHaveBeenCalledOnce()
   runtime.dispose()
+  expect(cloud.dispose).toHaveBeenCalledOnce()
+  expect(rotated.dispose).toHaveBeenCalledOnce()
+})
+
+test('drains in-flight calls while new requests use the rotated socket', async () => {
+  const started = Promise.withResolvers<void>()
+  const reply = Promise.withResolvers<{ accepted: boolean }>()
+  const original = {
+    request: vi.fn(() => {
+      started.resolve()
+      return reply.promise
+    }),
+    dispose: vi.fn(),
+  }
+  vi.mocked(createCloudRuntimeIpcClient).mockReturnValueOnce(original as never)
+  const refresh = vi.fn().mockResolvedValueOnce('first').mockResolvedValue('rotated')
+  const runtime = new CloudModelRuntime(async () => ({ ...target, user: { id: 7 } }), refresh)
+  const transport = await runtime.transport(input)
+  const pending = transport.request('runtime.tasks.create', {}, input.deviceId)
+  await started.promise
+
+  await runtime.transport(input)
+  await transport.request('runtime.tasks.send', {}, input.deviceId)
+  expect(cloud.request).toHaveBeenCalledWith('runtime.tasks.send', {}, input.deviceId, undefined)
+  expect(original.dispose).not.toHaveBeenCalled()
+
+  reply.resolve({ accepted: true })
+  await expect(pending).resolves.toEqual({ accepted: true })
+  expect(original.dispose).toHaveBeenCalledOnce()
+  runtime.dispose()
+  expect(original.dispose).toHaveBeenCalledOnce()
   expect(cloud.dispose).toHaveBeenCalledOnce()
 })
 

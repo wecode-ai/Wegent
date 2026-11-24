@@ -11,6 +11,7 @@ fn personal_runtime_credentials_are_only_issued_for_remote_personal_turns() {
         "runtime.tasks.create",
         "runtime.tasks.send",
         "runtime.tasks.interrupt_and_send",
+        "runtime.tasks.rollback",
     ] {
         assert!(can_issue_personal_runtime_token(
             DeviceType::Cloud,

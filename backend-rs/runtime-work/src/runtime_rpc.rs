@@ -377,7 +377,10 @@ fn can_issue_personal_runtime_token(
     REMOTE_RUNTIME_DEVICE_TYPES.contains(&device_type)
         && matches!(
             method,
-            "runtime.tasks.create" | "runtime.tasks.send" | "runtime.tasks.interrupt_and_send"
+            "runtime.tasks.create"
+                | "runtime.tasks.send"
+                | "runtime.tasks.interrupt_and_send"
+                | "runtime.tasks.rollback"
         )
         && payload
             .get("executionRequest")
