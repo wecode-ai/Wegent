@@ -119,6 +119,7 @@ export function useDesktopPaneContext({
     currentRuntimeTask && initialWorkspaceState?.transferredFromBlank ? initialWorkspaceState : null
   const paneSession = useWorkbenchPaneSession({
     currentRuntimeTask,
+    separateTranscript: true,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
   const startupSurfaceReady =
@@ -452,6 +453,7 @@ export function useDesktopPaneContext({
     environmentInfo,
     conversationSummaryIsGitRepository,
     paneProjectWork,
+    projectWork,
     refreshEnvironmentInfo,
     commitEnvironmentChanges,
     commitAndPushEnvironmentChanges,

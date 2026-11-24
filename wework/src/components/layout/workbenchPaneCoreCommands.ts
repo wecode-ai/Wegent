@@ -213,6 +213,7 @@ export function createPaneCoreCommands(sessionOwner: PaneCommandContext) {
     scopedSetInput,
     replaceInputForScope,
     replaceInput,
+    getInput: sessionOwner.frame.getInput,
     getDraftEditVersion,
     setErrorForScope,
     setError,

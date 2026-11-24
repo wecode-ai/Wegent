@@ -63,13 +63,13 @@ export function createWorkbenchSessionState(
       )
     )
   }
-  const syncLifecycle = (previous: typeof snapshot.state | null) => {
+  const syncLifecycle = (previous: typeof snapshot.state | null, receivedRuntimeWork = false) => {
     const state = snapshot.state
     if (!previous || previous.devices !== state.devices) {
       syncRuntimeConversationDeviceAliases(state.devices)
       lifecycleStore.syncDevices(state.devices)
     }
-    if (!previous || previous.runtimeWork !== state.runtimeWork)
+    if (receivedRuntimeWork || !previous || previous.runtimeWork !== state.runtimeWork)
       lifecycleStore.syncRuntimeWork(state.runtimeWork)
     if (!previous || previous.currentRuntimeTask !== state.currentRuntimeTask)
       lifecycleStore.setCurrentTask(state.currentRuntimeTask)
@@ -84,7 +84,14 @@ export function createWorkbenchSessionState(
       return
     const previousPreferenceKey = getProjectWorkPreferenceKey(preferenceScope())
     const state = workbenchReducer(previous, action)
-    if (state === previous) return
+    const receivedRuntimeWork =
+      action.type === 'runtime_work_refreshed' ||
+      (action.type === 'lists_refreshed' && action.runtimeWork !== undefined)
+    if (state === previous) {
+      // A fresh executor snapshot can settle an optimistic lifecycle transition.
+      if (receivedRuntimeWork) syncLifecycle(previous, true)
+      return
+    }
     snapshot = { ...snapshot, state }
     if (
       previous.user?.preferences !== state.user?.preferences ||
@@ -100,7 +107,7 @@ export function createWorkbenchSessionState(
         projectWorktreeBranch: preference.worktreeBranch,
       }
     }
-    syncLifecycle(previous)
+    syncLifecycle(previous, receivedRuntimeWork)
     publish()
   }
   const resources = {

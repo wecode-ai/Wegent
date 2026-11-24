@@ -67,8 +67,11 @@ export function WindowedMarkdownChunk({
       eager: effectiveEager,
     }
   }, [content, shouldRender, effectiveEager])
+  const diagnosticsEnabled = isConversationDiagnosticsEnabled()
   const reservedHeight =
-    retainedLayout?.content === content
+    shouldRender && !diagnosticsEnabled
+      ? undefined
+      : retainedLayout?.content === content
       ? retainedLayout.height
       : estimateMarkdownChunkHeight(content, scope?.rootFontSize)
 
@@ -143,9 +146,14 @@ export function WindowedMarkdownChunk({
   useLayoutEffect(() => {
     const chunk = chunkRef.current
     if (!chunk) return
-    const rect = chunk.getBoundingClientRect()
     const wasEager = previousEagerRef.current
     previousEagerRef.current = effectiveEager
+    if (effectiveEager && !diagnosticsEnabled) {
+      // The row owner measures visible content. An eager chunk has no placeholder to size.
+      scope?.onChunkLayout(chunk)
+      return
+    }
+    const rect = chunk.getBoundingClientRect()
     if (shouldRender) {
       saveRenderedLayout(rect)
       scope?.onChunkLayout(chunk)
@@ -160,7 +168,7 @@ export function WindowedMarkdownChunk({
       if (viewportHasSize(viewport) && isNearViewport(rect, viewport)) setNearViewport(true)
     }
 
-    if (!isConversationDiagnosticsEnabled()) return
+    if (!diagnosticsEnabled) return
     const previous = diagnosticLayoutRef.current
     const now = performance.now()
     diagnosticDetailsRef.current = {
@@ -171,7 +179,7 @@ export function WindowedMarkdownChunk({
       eager: effectiveEager,
       nearViewport,
       rendered: shouldRender,
-      reservedHeight,
+      reservedHeight: reservedHeight ?? 0,
       retainedHeight: retainedLayout?.content === content ? retainedLayout.height : 0,
       height: rect.height,
       previousHeight: previous?.height ?? rect.height,
@@ -184,6 +192,7 @@ export function WindowedMarkdownChunk({
   }, [
     chunkIndex,
     content,
+    diagnosticsEnabled,
     effectiveEager,
     saveRenderedLayout,
     retainPlaceholderLayout,

@@ -1,4 +1,5 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import type { PaneTranscript } from '@/components/layout/workbenchPaneConversationPresentation'
 import { readSelectedDeliveryFiles, type SelectedDeliveryFile } from '@/desktop/droppedFiles'
 import type { LocalWorkItem } from '@/features/todo/todoModel'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -12,14 +13,14 @@ import { TextField as ControlInput } from '@wegent/collaboration/controls/TextFi
 import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { FileText, Folder, GitBranch, MessageSquare, Paperclip, Plus, X } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 
 interface DeliveryDialogProps {
   item: Omit<LocalWorkItem, 'projectId'>
   runtimeTask: RuntimeTaskAddress
   runtimeTaskTitle?: string | null
-  messages: WorkbenchMessage[]
+  transcript: PaneTranscript
   deliveryApi: NonNullable<WorkbenchServices['deliveryApi']>
   onCancel: () => void
   onDelivered: () => void
@@ -57,11 +58,16 @@ export function DeliveryDialog({
   item,
   runtimeTask,
   runtimeTaskTitle,
-  messages,
+  transcript,
   deliveryApi,
   onCancel,
   onDelivered,
 }: DeliveryDialogProps) {
+  const { messages } = useSyncExternalStore(
+    transcript.subscribe,
+    transcript.getSnapshot,
+    transcript.getSnapshot
+  )
   const { t } = useTranslation('common')
   const [title, setTitle] = useState(item.title)
   const [markdown, setMarkdown] = useState('')

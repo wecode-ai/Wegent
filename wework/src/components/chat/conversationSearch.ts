@@ -10,7 +10,7 @@ import {
   type AsyncRequestUserInputReply,
 } from '@wegent/chat-core/runtime-user-input'
 import {
-  getAssistantRenderProjection,
+  getAssistantSearchRegions,
   getUserMessageTextProjection,
   projectConversationSearchRegion,
 } from '@wegent/collaboration/conversation'
@@ -59,7 +59,7 @@ export function getConversationSearchProjection(
   }
   let regions: ConversationSearchRegion[]
   if (message.role === 'assistant') {
-    regions = getAssistantRenderProjection(message).regions.map(region =>
+    regions = getAssistantSearchRegions(message).map(region =>
       projectConversationSearchRegion(region)
     )
   } else {

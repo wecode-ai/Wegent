@@ -33,6 +33,7 @@ import type {
   MessageTurnNavigationProps,
   MessageTurnMarker,
   PendingScrollTarget,
+  UserTurn,
 } from './turnNavigationTypes'
 import { isConversationScrollInput, scrollToContentPosition } from './conversationViewportScroll'
 import { getClampedPreviewTopPx } from './turnNavigationGeometry'
@@ -44,11 +45,17 @@ interface PreviewClampMeasurement {
   regionBottomPx: number
 }
 
-export function MessageTurnNavigation({
+export function MessageTurnNavigation(props: MessageTurnNavigationProps) {
+  const userTurns = buildUserTurnsForNavigation(props.messages, props.turnNavigation)
+  if (userTurns.length < 2 && !props.messageTarget) return null
+  return <ConversationTurnNavigation {...props} userTurns={userTurns} />
+}
+
+function ConversationTurnNavigation({
   messageTarget,
   translate: t,
   messages,
-  turnNavigation,
+  userTurns,
   scrollRef,
   interactionRef,
   contentRef,
@@ -57,7 +64,7 @@ export function MessageTurnNavigation({
   onNavigationScrollTargetChange,
   portalTarget,
   bottomInsetPx = 0,
-}: MessageTurnNavigationProps) {
+}: MessageTurnNavigationProps & { userTurns: UserTurn[] }) {
   const portalTheme = useCollaborationPortalTheme()
   const insetPx = Math.max(0, Math.round(bottomInsetPx))
   const locatedRequest = useRef<string | null>(null)
@@ -72,7 +79,7 @@ export function MessageTurnNavigation({
   const navigationCleanupRef = useRef<(() => void) | null>(null)
   const openingTargetCleanupRef = useRef<(() => void) | null>(null)
   const messagesRef = useRef(messages)
-  const turnNavigationRef = useRef(turnNavigation)
+  const userTurnsRef = useRef(userTurns)
   const [geometry] = useState(createTurnNavigationGeometrySource)
   const clearNavigationPosition = useCallback(() => {
     navigationCleanupRef.current?.()
@@ -106,7 +113,7 @@ export function MessageTurnNavigation({
       scroll: scrollRef,
       content: contentRef,
       messages: messagesRef,
-      turns: turnNavigationRef,
+      turns: userTurnsRef,
       onLoadOwnerInvalidated(owner) {
         if (geometry.getLoadOwner() === owner) cancelNavigation()
       },
@@ -309,14 +316,12 @@ export function MessageTurnNavigation({
     scrollToMessageId,
   ])
 
-  const nextUserTurns = buildUserTurnsForNavigation(messages, turnNavigation)
-  const userTurnsSignature = getUserTurnsSignature(nextUserTurns)
+  const userTurnsSignature = getUserTurnsSignature(userTurns)
 
   useLayoutEffect(() => {
-    geometry.bindInputs(scrollRef, contentRef, messagesRef, turnNavigationRef)
     messagesRef.current = messages
-    turnNavigationRef.current = turnNavigation
-  }, [contentRef, geometry, messages, scrollRef, turnNavigation, userTurnsSignature])
+    userTurnsRef.current = userTurns
+  }, [messages, userTurns])
 
   useLayoutEffect(() => {
     if (!hoveredMarkerId) return

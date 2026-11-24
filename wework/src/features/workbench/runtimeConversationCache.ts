@@ -396,7 +396,7 @@ export function runtimeConversationSnapshotSettlesLatestTurn(
 export function applyRuntimeConversationAction(
   address: RuntimeTaskAddress,
   action: RuntimePaneMessageAction
-): WorkbenchMessage[] {
+): void {
   const key = runtimeConversationKey(address)
   const hydration = hydrationByConversation.get(key)
   if (hydration) {
@@ -429,12 +429,12 @@ export function applyRuntimeConversationAction(
     }
   }
   const superseded = supersededTurnIdsByConversation.get(key)
-  const nextTurns = reduceRuntimeConversationTurns(currentTurns, action).filter(
-    turn => !turn.id || !superseded?.has(turn.id)
-  )
+  const reduced = reduceRuntimeConversationTurns(currentTurns, action)
+  const nextTurns = superseded?.size
+    ? reduced.filter(turn => !turn.id || !superseded.has(turn.id))
+    : reduced
   cacheRuntimeConversationTurns(key, nextTurns)
   publishRuntimeConversationAction(key, action, nextTurns)
-  return projectRuntimeConversationMessages(key, nextTurns)
 }
 
 export function appendAcceptedRuntimeConversationMessage(

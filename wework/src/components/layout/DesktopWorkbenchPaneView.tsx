@@ -88,8 +88,7 @@ export function DesktopWorkbenchPaneView({
     submit: model.submitPaneInput,
     replaceImageAttachment: model.projectChat.replaceImageAttachmentForScope,
     releaseDraftAttachment: model.projectChat.releaseAttachmentForScope,
-    getDraftAttachment: attachmentId =>
-      model.projectChat.getAttachmentForScope(model.paneSession.scopeKey, attachmentId),
+    getDraftAttachment: model.getDraftAttachment,
   })
   const {
     workbenchVisible,
@@ -183,7 +182,7 @@ export function DesktopWorkbenchPaneView({
     rightWorkspacePanelRef,
     bottomPanelOpenByKey,
     openFileRequest,
-    setOpenFileRequest,
+    openAttachment,
     forkDialogOpen,
     setForkDialogOpen,
     isDesktop,
@@ -212,7 +211,6 @@ export function DesktopWorkbenchPaneView({
     rightPanelPlanContent,
     paneIsBusy,
     hasMainBackground,
-    openRightPanelTab,
     backgroundTerminals,
     openSubagentConversation,
     rightWorkspaceExtensionScope,
@@ -576,7 +574,7 @@ export function DesktopWorkbenchPaneView({
             item={activeDeliveryItem}
             runtimeTask={currentRuntimeTask}
             runtimeTaskTitle={runtimeTaskTitle}
-            messages={paneSession.messages}
+            transcript={paneSession.transcript}
             deliveryApi={boundProjectSpaceApi}
             onCancel={closeDeliveryDialog}
             onDelivered={finishDelivery}
@@ -586,17 +584,7 @@ export function DesktopWorkbenchPaneView({
     </main>
   )
   return (
-    <AttachmentPreviewContext.Provider
-      value={source => {
-        setOpenFileRequest(current => ({
-          id: (current?.id ?? 0) + 1,
-          path: source.filename,
-          target: current?.target,
-          attachment: source,
-        }))
-        openRightPanelTab('files')
-      }}
-    >
+    <AttachmentPreviewContext.Provider value={openAttachment}>
       <ImageEditProvider actions={imageEditSubmission}>{content}</ImageEditProvider>
       {model.panelActionDialogs}
     </AttachmentPreviewContext.Provider>

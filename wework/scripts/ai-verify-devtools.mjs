@@ -77,7 +77,12 @@ export async function collectProtocolEvents(client, target, after = 0) {
   }
 }
 
-export async function startPerformanceRecording(client, directory, target) {
+export async function startPerformanceRecording(
+  client,
+  directory,
+  target,
+  { styleInvalidations = false } = {}
+) {
   const statePath = join(directory, `performance-${target}.json`)
   try {
     await readFile(statePath)
@@ -97,7 +102,15 @@ export async function startPerformanceRecording(client, directory, target) {
     await command('Profiler.start')
     profiling = true
     await command('Tracing.start', {
-      categories: 'devtools.timeline,v8,blink.user_timing,disabled-by-default-devtools.timeline',
+      categories: [
+        'devtools.timeline',
+        'v8',
+        'blink.user_timing',
+        'disabled-by-default-devtools.timeline',
+        ...(styleInvalidations
+          ? ['disabled-by-default-devtools.timeline.invalidationTracking']
+          : []),
+      ].join(','),
       transferMode: 'ReturnAsStream',
     })
     tracing = true
@@ -202,17 +215,30 @@ export function analyzeCpuProfile(profile, maps) {
       cursor = parents.get(cursor)
     }
   }
+  const mappedCaller = id => {
+    const visited = new Set([id])
+    let cursor = parents.get(id)
+    while (cursor !== undefined && !visited.has(cursor)) {
+      visited.add(cursor)
+      const frame = nodes.get(cursor)?.callFrame
+      if (frame?.url) {
+        return { function: frame.functionName, location: sourceLocation(frame, maps) }
+      }
+      cursor = parents.get(cursor)
+    }
+  }
   return [...costs]
-    .map(([id, cost]) => ({
-      function: nodes.get(id)?.callFrame.functionName ?? '(unknown)',
-      location: sourceLocation(
-        nodes.get(id)?.callFrame ?? { lineNumber: -1, columnNumber: -1 },
-        maps
-      ),
-      selfMs: cost.selfUs / 1000,
-      totalMs: cost.totalUs / 1000,
-      samples: cost.samples,
-    }))
+    .map(([id, cost]) => {
+      const frame = nodes.get(id)?.callFrame ?? { lineNumber: -1, columnNumber: -1 }
+      return {
+        function: frame.functionName ?? '(unknown)',
+        location: sourceLocation(frame, maps),
+        caller: frame.url ? undefined : mappedCaller(id),
+        selfMs: cost.selfUs / 1000,
+        totalMs: cost.totalUs / 1000,
+        samples: cost.samples,
+      }
+    })
     .sort((a, b) => b.selfMs - a.selfMs)
     .slice(0, 50)
 }

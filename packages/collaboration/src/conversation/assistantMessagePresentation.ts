@@ -198,18 +198,25 @@ export interface AssistantProseRegion {
   sources: ConversationSearchSource[];
 }
 
-/** This is the renderer's prose layout, including the sources used by its index. */
-export function getAssistantRenderProjection(message: WorkbenchMessage) {
+/** Rendering and search share the prose layout. Only the index needs source offsets. */
+export function getAssistantRenderProjection(
+  message: WorkbenchMessage,
+  includeSearchSources = false,
+) {
   const presentation = getAssistantContentPresentation(message);
   const blocks = getDisplayProcessingBlocks(
     message.blocks,
     isCancelledAssistantMessage(message),
     presentation.content,
   );
-  const ordered = getOrderedRuntimeDisplaySegments(
-    message.runtimeDisplayItems,
-    blocks,
-  );
+  const ordered =
+    blocks.length || includeSearchSources
+      ? getOrderedRuntimeDisplaySegments(
+          message.runtimeDisplayItems,
+          blocks,
+          includeSearchSources,
+        )
+      : [];
   const contentSegments = ordered.filter(
     (segment) => segment.kind === "content",
   );
@@ -232,11 +239,11 @@ export function getAssistantRenderProjection(message: WorkbenchMessage) {
     content: presentation.content,
     sources: [],
   };
-  if (!firstItem && presentation.content) {
+  if (includeSearchSources && !firstItem && presentation.content) {
     finalRegion.sources = projectPluginWorkspaceResultText(
       message.content,
     ).sources.map((source) => ({ ...source, itemId: message.id }));
-  } else {
+  } else if (includeSearchSources) {
     let cursor = 0;
     for (const segment of contentSegments) {
       const offset = presentation.content.indexOf(segment.content, cursor);
@@ -261,7 +268,20 @@ export function getAssistantRenderProjection(message: WorkbenchMessage) {
           ? [{ kind: "content" as const, ...finalRegion }]
           : []),
       ];
-  const regions = segments.flatMap<AssistantProseRegion>((segment) =>
+  return {
+    ...presentation,
+    blocks,
+    segments,
+    interleaved,
+    finalRegion,
+  };
+}
+
+export function getAssistantSearchRegions(message: WorkbenchMessage) {
+  return getAssistantRenderProjection(
+    message,
+    true,
+  ).segments.flatMap<AssistantProseRegion>((segment) =>
     segment.kind === "content"
       ? [segment]
       : segment.blocks.flatMap((block) =>
@@ -284,14 +304,6 @@ export function getAssistantRenderProjection(message: WorkbenchMessage) {
             : [],
         ),
   );
-  return {
-    ...presentation,
-    blocks,
-    segments,
-    regions,
-    interleaved,
-    finalRegion,
-  };
 }
 
 export function getMessageDisplayStateKey(
@@ -327,9 +339,10 @@ export type RuntimeDisplaySegment =
       blocks: ProcessingBlock[];
     };
 
-export function getOrderedRuntimeDisplaySegments(
+function getOrderedRuntimeDisplaySegments(
   items: RuntimeAssistantDisplayItem[] | undefined,
   displayBlocks: ProcessingBlock[],
+  includeSearchSources: boolean,
 ): RuntimeDisplaySegment[] {
   if (!items?.length) return [];
 
@@ -346,30 +359,35 @@ export function getOrderedRuntimeDisplaySegments(
 
   items.forEach((item) => {
     if (item.type === "assistant_text") {
-      const projection = projectPluginWorkspaceResultText(item.content);
-      const content = projection.content;
+      const projection = includeSearchSources
+        ? projectPluginWorkspaceResultText(item.content)
+        : undefined;
+      const content =
+        projection?.content ?? stripPluginWorkspaceResultMarkers(item.content);
       if (!content.trim()) return;
       const previous = segments.at(-1);
       if (previous?.kind === "content") {
         const start = previous.content.length + 2;
-        previous.sources.push(
-          ...projection.sources.map((source) => ({
-            ...source,
-            itemId: item.id,
-            start: source.start + start,
-            end: source.end + start,
-          })),
-        );
+        if (projection)
+          previous.sources.push(
+            ...projection.sources.map((source) => ({
+              ...source,
+              itemId: item.id,
+              start: source.start + start,
+              end: source.end + start,
+            })),
+          );
         previous.content = `${previous.content}\n\n${content}`;
       } else {
         segments.push({
           kind: "content",
           id: item.id,
           content,
-          sources: projection.sources.map((source) => ({
-            ...source,
-            itemId: item.id,
-          })),
+          sources:
+            projection?.sources.map((source) => ({
+              ...source,
+              itemId: item.id,
+            })) ?? [],
         });
       }
       return;

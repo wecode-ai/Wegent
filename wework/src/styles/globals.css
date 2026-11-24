@@ -34,8 +34,8 @@ input.content-find-input:focus-visible {
 
 /* Native drag regions intercept clicks even beneath renderer overlays. */
 body[data-wework-anchor-popover-open] .electron-titlebar-drag-region,
-body:has([data-wework-file-preview]) .electron-titlebar-drag-region,
-body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
+body[data-wework-file-preview-open] .electron-titlebar-drag-region,
+body[data-wework-debug-panel-expanded] .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }
 
@@ -49,7 +49,7 @@ body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
 }
 
 /* Chromium can omit promoted sidebar overlays from a backdrop filter. */
-body:has([data-testid='cloud-todo-create-panel'])
+body[data-collaboration-issue-create-open]
   :is([data-testid='desktop-sidebar'], [data-testid='collaboration-platform-sidebar'])
   svg {
   filter: blur(2px);
