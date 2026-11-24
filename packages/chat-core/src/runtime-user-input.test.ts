@@ -386,3 +386,26 @@ describe('async reply ownership', () => {
     })
   })
 })
+
+describe('async reply client identity', () => {
+  test('rejects the optimistic turn prompt without a turn id', () => {
+    const question = {
+      ...assistantMessage(ASYNC_PAYLOAD),
+      turnId: 'turn-1',
+      runtimeClientUserMessageId: 'queued-prompt',
+    }
+    const prompt = { ...userMessage('Start the review'), id: 'queued-prompt' }
+    const messages = [question, prompt]
+
+    expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+    expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
+  })
+
+  test('requires turn identity for a non-guidance reply once the question has one', () => {
+    const question = { ...assistantMessage(ASYNC_PAYLOAD), turnId: 'turn-1' }
+    const replyWithoutTurn = userMessage('Reading')
+    const messages = [question, replyWithoutTurn]
+
+    expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+  })
+})

@@ -202,7 +202,10 @@ export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
   for (const message of messages) {
     if (isDeliveredRequestUserInputReply(message)) {
       const eligible = questions.filter(question =>
-        asyncReplyCanAnswerTurn(message, question.turnId)
+        asyncReplyCanAnswerTurn(message, {
+          clientUserMessageId: question.clientUserMessageId,
+          turnId: question.turnId,
+        })
       )
       if (eligible.length > 0) {
         const rows = pairQuestionsWithReply(
@@ -222,12 +225,16 @@ export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
 interface PendingAsyncQuestion {
   prompt: string
   turnId: string | null
+  clientUserMessageId: string | null
 }
 
 function asyncQuestionPrompts<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>
 ): PendingAsyncQuestion[] {
   const turnId = message.turnId?.trim() || null
+  const clientUserMessageId =
+    (message as WorkbenchMessage & { runtimeClientUserMessageId?: string | null })
+      .runtimeClientUserMessageId?.trim() || null
   return (message.blocks ?? []).flatMap(block => {
     if (block.type !== 'tool') return []
     const payload = block.renderPayload
@@ -242,6 +249,7 @@ function asyncQuestionPrompts<TAttachment, TFileChanges>(
       prompt:
         question.question?.trim() || question.id?.trim() || `question_${index + 1}`,
       turnId,
+      clientUserMessageId,
     }))
   })
 }
@@ -304,14 +312,23 @@ function asyncReplyByMessageIndex<TAttachment, TFileChanges>(
   return replies
 }
 
+type AsyncReplyMessage = Pick<WorkbenchMessage, 'id' | 'turnId'> & {
+  runtimeClientUserMessageId?: string | null
+  runtimeGuidance?: boolean | null
+}
+
+interface AsyncQuestionTurn {
+  clientUserMessageId?: string | null
+  turnId?: string | null
+}
+
 /** A turn prompt introduces its questions; only later turns or guidance can answer them. */
-function asyncReplyCanAnswerTurn(
-  reply: Pick<WorkbenchMessage, 'turnId'> & { runtimeGuidance?: boolean | null },
-  question: Pick<WorkbenchMessage, 'turnId'> | string | null
-): boolean {
-  const questionTurnId = typeof question === 'string' ? question : question?.turnId
+function asyncReplyCanAnswerTurn(reply: AsyncReplyMessage, question: AsyncQuestionTurn): boolean {
+  if (question.clientUserMessageId && reply.id === question.clientUserMessageId) return false
   const replyTurnId = reply.turnId
-  if (!questionTurnId || !replyTurnId || questionTurnId !== replyTurnId) return true
+  if (!question.turnId) return true
+  if (!replyTurnId) return reply.runtimeGuidance === true
+  if (question.turnId !== replyTurnId) return true
   return reply.runtimeGuidance === true
 }
 
