@@ -356,6 +356,8 @@ def test_cp14_issue_detail_only_returns_visible_relations(
     test_db.commit()
     assert relations(parent.id) == [visible.id]
     assert relations(visible.id) == [parent.id]
+    loop_item_service.delete(test_db, visible.id, test_user.id, version=visible.version)
+    assert relations(parent.id) == []
 
 
 @pytest.mark.parametrize("remove_issue", [False, True])

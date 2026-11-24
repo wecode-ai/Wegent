@@ -1271,6 +1271,7 @@ class LoopItemService:
                 db.query(LoopItem)
                 .filter(
                     LoopItem.cloud_project_id == item.cloud_project_id,
+                    loop_datetime_is_unset(LoopItem.deleted_at),
                     or_(LoopItem.parent_id == item.id, LoopItem.id == item.parent_id),
                 )
                 .order_by(LoopItem.created_at, LoopItem.id)

@@ -590,6 +590,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'independent-issue-delete')
       await wait(control, '[data-testid="independent-issue-confirm-delete"]')
       await click(control, 'independent-issue-confirm-delete')
+      await wait(control, '[data-testid="independent-issue-confirm-delete"]', { visible: false })
       await wait(control, '[data-testid="independent-issue-dialog"]', { visible: false })
       await request(
         `/api/v1/personal-issues/${deletion.id}`,
