@@ -520,7 +520,7 @@ class DockerExecutor(Executor):
         except subprocess.CalledProcessError as e:
             # For validation tasks, report image pull or container start failure
             if is_validation_task:
-                error_msg = e.stderr or str(e)
+                error_msg = e.stderr or f"Docker exited with status {e.returncode}"
                 stage = (
                     "pulling_image"
                     if "pull" in error_msg.lower() or "not found" in error_msg.lower()

@@ -677,6 +677,48 @@ class SandboxRepository(metaclass=SingletonMeta):
         binding = self.load_executor_binding_full(task_id)
         return binding.get("executor_name") if binding else None
 
+    def reserve_executor_callback_token(
+        self, task_id: int, executor_name: str, candidate: str
+    ) -> Optional[str]:
+        """Return the single credential shared by concurrent runtime preparations."""
+        if self.redis_client is None:
+            return None
+
+        key = f"task_executor:{task_id}"
+        new_binding = {
+            "executor_name": executor_name,
+            "task_id": task_id,
+            "created_at": time.time(),
+            "callback_token": candidate,
+        }
+        try:
+            token = self.redis_client.eval(
+                """
+                local current = redis.call('GET', KEYS[1])
+                if current then
+                    local token = cjson.decode(current).callback_token
+                    if type(token) == 'string' and token ~= '' then
+                        return token
+                    end
+                end
+                redis.call('SETEX', KEYS[1], ARGV[1], ARGV[2])
+                return ARGV[3]
+                """,
+                1,
+                key,
+                self._config.executor.executor_binding_ttl,
+                json.dumps(new_binding),
+                candidate,
+            )
+            return token.decode() if isinstance(token, bytes) else token
+        except (redis.RedisError, ValueError) as error:
+            logger.error(
+                "Could not reserve executor callback credential for task %s: %s",
+                task_id,
+                type(error).__name__,
+            )
+            return None
+
     def load_executor_callback_token(self, task_id: int) -> Optional[str]:
         """Load the callback credential issued for one task runtime.
 

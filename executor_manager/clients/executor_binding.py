@@ -94,14 +94,9 @@ def prepare_callback_token(task_id: int, executor_name: str) -> str:
     """Return the callback credential for the task's prepared runtime."""
     from executor_manager.services.sandbox.repository import get_sandbox_repository
 
-    repository = get_sandbox_repository()
-    callback_token = repository.load_executor_callback_token(task_id)
-    if callback_token:
-        return callback_token
-
-    callback_token = generate_callback_token()
-    if not repository.save_executor_binding(
-        task_id=task_id, executor_name=executor_name, callback_token=callback_token
-    ):
+    callback_token = get_sandbox_repository().reserve_executor_callback_token(
+        task_id, executor_name, generate_callback_token()
+    )
+    if not callback_token:
         raise RuntimeError("Could not persist executor callback credential")
     return callback_token
