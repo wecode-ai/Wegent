@@ -28,6 +28,10 @@ function searchResult(...conversationMessagesList) {
   return { result: { conversationMessagesList, hasMore: false, nextCursor: '0' } }
 }
 
+function searchPage(nextCursor, ...conversationMessagesList) {
+  return { result: { conversationMessagesList, hasMore: true, nextCursor } }
+}
+
 function fixture() {
   const calls = []
   const state = {
@@ -74,7 +78,9 @@ function fixture() {
             failedCount: 0,
           }
         if (input.tool === 'listMentions') return state.mentions
-        if (input.tool === 'searchMessages') return state.search
+        if (input.tool === 'searchMessages') {
+          return typeof state.search === 'function' ? state.search(input.arguments) : state.search
+        }
         assert.fail(`Unexpected DingTalk operation ${input.tool}`)
       },
     },
@@ -227,6 +233,154 @@ test('delegated private intake binds native direct conversation and ignores othe
     const search = calls.find(row => row.tool === 'searchMessages')
     assert.equal(search.arguments.conversationIds, 'direct')
     assert.equal(search.arguments.senderIds, 'peer')
+  } finally {
+    dispose()
+  }
+})
+
+test('delegated private history detects the owner taking over even on a later search page', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, calls, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    state.search = ({ cursor }) => {
+      if (cursor === '0') {
+        return searchPage(
+          'page-two',
+          conversation(
+            'direct',
+            [message('evidence', '2026-11-24T00:08:00Z'), message('ask')],
+            true
+          )
+        )
+      }
+      assert.equal(cursor, 'page-two')
+      return searchResult(
+        conversation(
+          'direct',
+          [
+            message('clarification', '2026-11-24T00:10:10Z'),
+            message('owner-response', '2026-11-24T00:10:30Z', { senderOpenDingTalkId: 'self' }),
+          ],
+          true
+        )
+      )
+    }
+
+    const snapshot = await registry.call(providerId, 'readSource', {
+      source: { ...source, kind: 'direct', id: 'peer' },
+      query: { delegatedMessage: { id: 'ask', at, conversationId: 'direct' } },
+    })
+
+    assert.equal(snapshot.target.id, 'ask')
+    assert.equal(snapshot.ownerIntervened, true)
+    assert.deepEqual(
+      snapshot.messages.map(row => row.id),
+      ['evidence']
+    )
+    assert.deepEqual(
+      snapshot.laterMessages.map(row => row.id),
+      ['clarification']
+    )
+    assert.deepEqual(
+      calls
+        .filter(row => row.tool === 'searchMessages')
+        .map(({ arguments: args }) => ({
+          cursor: args.cursor,
+          conversationIds: args.conversationIds,
+          senderIds: args.senderIds,
+        })),
+      ['0', 'page-two'].map(cursor => ({
+        cursor,
+        conversationIds: 'direct',
+        senderIds: 'peer,self',
+      }))
+    )
+  } finally {
+    dispose()
+  }
+})
+
+test('delegated history refuses context that changes or cannot finish during pagination', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const firstPage = searchPage('page-two', conversation('group', [message('ask')]))
+    const input = {
+      source,
+      query: { delegatedMessage: { id: 'ask', at, conversationId: 'group' } },
+    }
+
+    state.search = ({ cursor }) =>
+      cursor === '0'
+        ? firstPage
+        : searchResult(conversation('group', [message('ask', at, { content: 'Changed question' })]))
+    await assert.rejects(registry.call(providerId, 'readSource', input), {
+      code: 'dingtalk_response_invalid',
+      message: 'DingTalk context changed during pagination',
+    })
+
+    state.search = () => firstPage
+    await assert.rejects(registry.call(providerId, 'readSource', input), {
+      code: 'dingtalk_response_invalid',
+      message: 'Incomplete DingTalk context pagination',
+    })
+  } finally {
+    dispose()
+  }
+})
+
+test('a recalled direct message cannot be revalidated for delegation', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const original = message('ask')
+    state.search = searchResult(conversation('direct', [original], true))
+    const input = {
+      source: { ...source, kind: 'direct', id: 'peer' },
+      query: { delegatedMessage: { id: 'ask', at, conversationId: 'direct' } },
+    }
+    assert.equal((await registry.call(providerId, 'readSource', input)).target.id, 'ask')
+
+    original.isRecalled = true
+    await assert.rejects(registry.call(providerId, 'readSource', input), {
+      code: 'dingtalk_response_invalid',
+      message: 'The original message is missing or changed',
+    })
+  } finally {
+    dispose()
+  }
+})
+
+test('the owner speaking in another group topic does not count as taking over', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const original = message('ask', at, { openConvThreadId: 'release-topic' })
+    state.mentions = searchResult(conversation('group', [original]))
+    state.search = searchResult(
+      conversation('group', [
+        original,
+        message('clarification', '2026-11-24T00:10:10Z', { openConvThreadId: 'release-topic' }),
+        message('owner-in-other-topic', '2026-11-24T00:10:30Z', {
+          senderOpenDingTalkId: 'self',
+          openConvThreadId: 'unrelated-topic',
+        }),
+      ])
+    )
+
+    const snapshot = await registry.call(providerId, 'readSource', {
+      source,
+      query: { delegatedMessage: { id: 'ask', at, conversationId: 'group' } },
+    })
+    assert.equal(snapshot.ownerIntervened, false)
+    assert.deepEqual(
+      snapshot.laterMessages.map(row => row.id),
+      ['clarification']
+    )
   } finally {
     dispose()
   }
