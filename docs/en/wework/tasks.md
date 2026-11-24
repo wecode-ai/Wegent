@@ -312,6 +312,8 @@ A plan generated in Plan mode remains part of the visible response instead of be
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
 
+You can click Archive on several tasks in succession. After each task's undo window closes, its request joins the same queue as batch archives. Tasks leave the list once they are successfully archived.
+
 Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
 
 ### Export a conversation
