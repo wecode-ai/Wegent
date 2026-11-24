@@ -501,7 +501,8 @@ export interface StandInExecutorApi {
   personalSave(
     userId: number,
     settings: PersonalStandInSettings,
-    deviceId: string
+    deviceId: string,
+    transferRoleId?: string
   ): Promise<PersonalStandInSettings>
   saveDelegationRoute(
     userId: number,
@@ -819,10 +820,10 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    personalSave: async (userId, settings, deviceId) => {
+    personalSave: async (userId, settings, deviceId, transferRoleId) => {
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
-        { userId, settings },
+        { userId, settings, ...(transferRoleId !== undefined ? { transferRoleId } : {}) },
         deviceId
       )
       publishPersonalStandIn(saved)

@@ -5924,6 +5924,7 @@
       "role_name": "Assistant name",
       "execution_device": "Execution device",
       "device_change_help": "New tasks run on the selected device. Existing tasks and conversations stay on their original device. Reselect the model and working directory after changing devices.",
+      "device_change_permissions_help": "Save the device change first, then reopen this assistant’s settings to set its task permissions.",
       "role_name_placeholder": "For example: Meeting notes, Code review, Project follow-up",
       "role_name_required": "Enter an assistant name.",
       "requirements": "Responsibilities (optional)",

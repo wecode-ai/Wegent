@@ -173,6 +173,12 @@ impl RuntimeWorkRpcHandler {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if save {
             if let Some(route) = payload.get("delegationRoute") {
+                if payload.get("transferRoleId").is_some() {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "A role transfer cannot save a delegation route",
+                    ));
+                }
                 return store
                     .save_stand_in_delegation_route(user, &self.device_id, route)
                     .map_err(settings_error);
@@ -185,6 +191,26 @@ impl RuntimeWorkRpcHandler {
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
             let mut settings = payload["settings"].clone();
+            if let Some(transfer) = payload.get("transferRoleId") {
+                let invalid =
+                    || AppIpcError::new("bad_request", "Invalid transferred stand-in role");
+                let id = transfer
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(invalid)?;
+                let role = settings["roles"]
+                    .as_array_mut()
+                    .and_then(|roles| roles.iter_mut().find(|role| role["id"] == id))
+                    .filter(|role| {
+                        role["migrationSource"]
+                            .as_str()
+                            .is_some_and(|source| !source.is_empty())
+                            && self.stand_in_role_runs_here(role)
+                    })
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(invalid)?;
+                role.remove("taskPermissions");
+            }
             store
                 .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
                 .map_err(settings_error)?;

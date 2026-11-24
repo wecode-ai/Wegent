@@ -5914,6 +5914,7 @@
       "role_name": "助理名称",
       "execution_device": "执行设备",
       "device_change_help": "新任务在所选设备运行；已有任务和会话继续留在原设备。更换设备后请重新选择模型和工作目录。",
+      "device_change_permissions_help": "保存设备变更后，重新打开该助理的设置即可调整任务默认权限。",
       "role_name_placeholder": "例如：会议纪要、代码审查、项目跟进",
       "role_name_required": "请填写助理名称。",
       "requirements": "职责（选填）",

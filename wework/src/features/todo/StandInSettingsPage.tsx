@@ -189,6 +189,13 @@ function StandInSettingsEditor({
   const role =
     draft?.roles.find(role => role.id === (initialProject ? projectRoleId : selectedId)) ??
     draft?.roles[0]
+  const previousRole = saved?.roles.find(row => row.id === role?.id)
+  const changingDevice =
+    role &&
+    (previousRole
+      ? role.executionDeviceId !== previousRole.executionDeviceId
+      : role.executionDeviceId !== draft?.executionDeviceId &&
+        role.executionDeviceId !== state.loadedDeviceId)
   const executionDeviceId = role?.executionDeviceId ?? draft?.executionDeviceId
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const tagScope = JSON.stringify([userId, executionDeviceId, role?.id])
@@ -342,11 +349,6 @@ function StandInSettingsEditor({
             }
           : draft
     const changedRole = value.roles.find(row => row.id === role.id)!
-    const previousRole = saved?.roles.find(row => row.id === role.id)
-    const changingDevice = previousRole
-      ? changedRole.executionDeviceId !== previousRole.executionDeviceId
-      : changedRole.executionDeviceId !== value.executionDeviceId &&
-        changedRole.executionDeviceId !== state.loadedDeviceId
     if (changingDevice) {
       if (!services.standInApi || !saved) return
       setMoving(true)
@@ -425,7 +427,6 @@ function StandInSettingsEditor({
           model: undefined,
           modelOptions: undefined,
           workspace: undefined,
-          taskPermissions: undefined,
         }))
       }}
     />
@@ -715,14 +716,18 @@ function StandInSettingsEditor({
                   services={services}
                 />
                 <StandInTaskPermissionSettings
-                  value={role.taskPermissions}
-                  disabled={saving}
+                  value={changingDevice ? undefined : role.taskPermissions}
+                  disabled={saving || Boolean(changingDevice)}
                   onChange={taskPermissions =>
                     updateRole(role.id, current => ({ ...current, taskPermissions }))
                   }
                 />
                 <p className="text-xs text-text-secondary">
-                  {t('standIn.personal.device_change_help')}
+                  {t(
+                    changingDevice
+                      ? 'standIn.personal.device_change_permissions_help'
+                      : 'standIn.personal.device_change_help'
+                  )}
                 </p>
                 <StandInSettingsError
                   error={runtimeError}

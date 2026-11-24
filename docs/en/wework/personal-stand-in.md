@@ -208,7 +208,7 @@ Open **My assistants → select an assistant → Assistant details → Manage as
 
 When an assistant creates a Codex task for work you initiate, the task starts with the assigned assistant’s saved mode. Open the full task conversation to change its mode in the composer. The change takes effect starting with the next turn you submit. Resolve approvals for the current turn in their original cards. Existing delegations without a selection default to read-only. Background follow-ups and work triggered by an Issue, connection, or calendar use their own execution policies.
 
-Changing an assistant’s execution device in its profile resets its default task permissions to Read-only. Choose Workspace or Full access again before saving if needed.
+Moving an assistant to another execution device resets its default task permissions to Read-only on the receiving device. Save the move, then open the assistant on that device to choose its default task permissions.
 
 <a id="stand-in-source-session-policy"></a>
 
