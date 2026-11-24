@@ -1221,6 +1221,13 @@ describe('registerDesktopServiceCapabilities', () => {
         expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: true })
         await handler({ waitForSystemProcesses: false }, { principal: 'test' })
         expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: false })
+        await handler({ fresh: true }, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: true, fresh: true })
+        await handler({ waitForSystemProcesses: false, fresh: false }, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: false, fresh: false })
+        await expect(handler({ fresh: 'true' }, { principal: 'test' })).rejects.toThrow(
+          'fresh is invalid'
+        )
         const failure = new Error('Snapshot collection failed')
         snapshot.mockRejectedValueOnce(failure)
         await expect(handler({}, { principal: 'test' })).rejects.toBe(failure)

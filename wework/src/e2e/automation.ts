@@ -3145,7 +3145,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getDesktopRuntimeDiagnostics':
       return JSON.stringify(await invokeDesktopHost('e2e.getRuntimeDiagnostics'))
     case 'getOwnedProcessSnapshot':
-      return JSON.stringify(await invokeDesktopHost('diagnostics.processSnapshot'))
+      return JSON.stringify(
+        await invokeDesktopHost(
+          'diagnostics.processSnapshot',
+          JSON.parse(command.value?.trim() || '{}')
+        )
+      )
     case 'showSystemDragPanel': {
       await invokeDesktopHost<void>('systemDrag.showPanel')
       return ''

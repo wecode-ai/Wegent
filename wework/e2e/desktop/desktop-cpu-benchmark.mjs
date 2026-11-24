@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { waitForClosedStartupSplash } from './modules/native-window-state.mjs'
 
 const execute = promisify(execFile)
 const CHECKPOINTS = new Set([
@@ -32,7 +33,11 @@ export function readLinuxCpuCounters(pid, stat) {
 }
 
 async function sampleCpu(control) {
-  const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+  const snapshot = JSON.parse(
+    await control.command('getOwnedProcessSnapshot', 'body', {
+      value: JSON.stringify({ fresh: true }),
+    })
+  )
   const renderers = snapshot.processes.filter(
     record => record.source === 'electron' && record.kind === 'window'
   )
@@ -67,36 +72,23 @@ export function desktopCpuMetrics(before, after, ticksPerSecond) {
   })
 }
 
-async function observeCpu(checkpoint, collect) {
-  try {
-    return await collect()
-  } catch (error) {
-    console.warn(`[desktop-e2e] CPU benchmark unavailable for ${checkpoint}: ${error.message}`)
-    return null
-  }
-}
-
 export function instrumentDesktopCpuBenchmark(scenario, checkpoint) {
   const directory = process.env.WEWORK_E2E_CPU_BENCHMARK_DIR
   if (!directory || process.platform !== 'linux' || !CHECKPOINTS.has(checkpoint)) return
 
   const verify = scenario.verify
   scenario.verify = async function (control) {
-    const before = await observeCpu(checkpoint, async () => {
-      const { stdout } = await execute('getconf', ['CLK_TCK'], { timeout: 2000 })
-      return { sample: await sampleCpu(control), ticksPerSecond: Number(stdout.trim()) }
-    })
+    // The startup splash owns a transient renderer outside these workloads.
+    await waitForClosedStartupSplash(control)
+    const { stdout } = await execute('getconf', ['CLK_TCK'], { timeout: 2000 })
+    const before = await sampleCpu(control)
     const result = await verify.call(this, control)
-    if (before) {
-      await observeCpu(checkpoint, async () => {
-        const after = await sampleCpu(control)
-        const metrics = desktopCpuMetrics(before.sample, after, before.ticksPerSecond)
-        await mkdir(directory, { recursive: true })
-        await writeFile(join(directory, `${checkpoint}.json`), `${JSON.stringify(metrics)}\n`, {
-          flag: 'wx',
-        })
-      })
-    }
+    const after = await sampleCpu(control)
+    const metrics = desktopCpuMetrics(before, after, Number(stdout.trim()))
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, `${checkpoint}.json`), `${JSON.stringify(metrics)}\n`, {
+      flag: 'wx',
+    })
     return result
   }
 }

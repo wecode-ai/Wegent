@@ -186,6 +186,7 @@ export class StartupSplash {
   private handoffPromise: Promise<StartupSplashSnapshot> | null = null
   private handoffEvidence: StartupSplashSnapshot['handoff']
   private handoffGeneration = 0
+  private readonly nativeClosed: Promise<void>
 
   constructor(private readonly options: StartupSplashOptions) {
     this.now = options.now ?? Date.now
@@ -196,6 +197,12 @@ export class StartupSplash {
       options.onCloseRequest?.()
     })
     this.record('created')
+    this.nativeClosed = new Promise(resolve => {
+      options.window.once('closed', () => {
+        this.markClosed()
+        resolve()
+      })
+    })
   }
 
   show(): Promise<StartupSplashSnapshot> {
@@ -357,14 +364,26 @@ export class StartupSplash {
     try {
       await this.capture(options.capturePath)
     } finally {
-      if (!target.isDestroyed()) {
-        this.controlledClose = true
-        target.close()
-      }
-      this.markClosed()
+      await this.closeNativeWindow()
     }
 
     return this.snapshot()
+  }
+
+  private async closeNativeWindow(): Promise<void> {
+    const target = this.options.window
+    if (target.isDestroyed()) {
+      this.markClosed()
+      return
+    }
+    this.controlledClose = true
+    try {
+      target.close()
+    } catch (error) {
+      this.controlledClose = false
+      throw error
+    }
+    await this.nativeClosed
   }
 
   snapshot(): StartupSplashSnapshot {
@@ -386,8 +405,6 @@ export class StartupSplash {
   private async createAndShow(): Promise<StartupSplashSnapshot> {
     this.state = 'loading'
     const target = this.options.window
-    target.once('closed', () => this.markClosed())
-
     if (!target.webContents.isDestroyed()) {
       void target.webContents
         .executeJavaScript(WAIT_FOR_ANIMATION_READY)
