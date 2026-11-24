@@ -1,3 +1,8 @@
+import type {
+  BrowserDownloadChange,
+  BrowserDownloadEvent,
+  BrowserDownloadRecord,
+} from '../../electron/src/shared/browser-download'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { normalizeBrowserUrl } from './browser-url'
 import { isElectronRuntime } from './runtime-environment'
@@ -86,16 +91,14 @@ export interface EmbeddedBrowserCloseRequest {
 
 export type EmbeddedBrowserDataKind = 'cookies' | 'cache' | 'storage' | 'history'
 
-export interface EmbeddedBrowserDownloadEvent {
-  id: string
-  label: string
-  nativeLabel: string
-  url: string
-  path: string | null
-  status: 'started' | 'progress' | 'paused' | 'finished' | 'failed' | 'deleted'
-  receivedBytes: number | null
-  totalBytes: number | null
-}
+export type EmbeddedBrowserDownloadEvent = BrowserDownloadEvent
+export type EmbeddedBrowserDownloadChange = BrowserDownloadChange
+export {
+  BROWSER_DOWNLOAD_SNAPSHOT_SIZE,
+  browserDownloadSnapshot,
+  isLiveDownload,
+} from '../../electron/src/shared/browser-download'
+export type EmbeddedBrowserDownloadRecord = BrowserDownloadRecord
 
 export interface EmbeddedBrowserLocalFilePreviewEvent {
   label: string
@@ -216,6 +219,30 @@ export function listenEmbeddedBrowserAnnotationState(
   return Promise.resolve(unlisten)
 }
 
+export function listEmbeddedBrowserDownloads() {
+  return invokeDesktopHost<{
+    downloads: BrowserDownloadRecord[]
+    revision: number
+    historyUnavailable: boolean
+  }>('browser.listDownloads')
+}
+
+export function removeEmbeddedBrowserDownloadRecord(id: string): Promise<void> {
+  return invokeDesktopHost<void>('browser.removeDownloadRecord', { id })
+}
+
+export function openEmbeddedBrowserDownload(id: string): Promise<void> {
+  return invokeDesktopHost<void>('browser.openDownload', { id })
+}
+
+export function revealEmbeddedBrowserDownload(id: string): Promise<void> {
+  return invokeDesktopHost<void>('browser.revealDownload', { id })
+}
+
+export function openEmbeddedBrowserDownloadsFolder(): Promise<void> {
+  return invokeDesktopHost<void>('browser.openDownloadsFolder')
+}
+
 export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {
   await invokeDesktopHost<void>('browser.pauseDownload', { id })
 }
@@ -258,7 +285,7 @@ export async function resolveEmbeddedBrowserAgentApproval(
 }
 
 export function listenEmbeddedBrowserDownloads(
-  handler: (event: EmbeddedBrowserDownloadEvent) => void
+  handler: (event: EmbeddedBrowserDownloadChange) => void
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
   return listenElectronBrowserEvents('download', handler)

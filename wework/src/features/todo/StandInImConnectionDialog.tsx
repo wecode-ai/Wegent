@@ -111,7 +111,7 @@ export function StandInImConnectionDialog({
                         data-testid={`stand-in-im-connect-${session.session_key}`}
                         aria-pressed={picked}
                         disabled={loading || Boolean(saving)}
-                        className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50 ${picked ? 'bg-muted' : 'hover:bg-muted/50'}`}
+                        className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-3 text-left disabled:opacity-50 ${picked ? 'bg-muted' : 'hover:bg-muted/50'}`}
                         onClick={() => setSelection(session.session_key)}
                       >
                         <span className="min-w-0 flex-1">

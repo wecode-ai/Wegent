@@ -12,6 +12,10 @@ You can keep multiple task tabs open at the top, and each task owns an independe
 
 Background page-state synchronization does not overwrite the address while you are editing it. If a page is already open, leaving the address field without submitting restores the current page URL. If no page is open yet, the unsubmitted address is preserved and restored after switching conversations.
 
+<a id="browser-address-suggestions"></a>
+
+Type part of a page title or URL in the address bar to find a previous visit. Use the arrow keys to select a suggestion and press Enter to open it. Choosing **Search the web** sends your input to Google.
+
 If a Wework dialog, menu, or overlay intersects the right browser area, the browser temporarily hides so the native page cannot cover the main interface. It returns automatically when the overlay closes or moves away.
 
 ## HTTP and certificate warnings
@@ -67,7 +71,11 @@ Late search or pagination responses do not replace current results. Failed refre
 | History               | … → history                                                              | Opens browsing history management                                                |
 | Clear cookies / cache | … → corresponding data action                                            | Cookies affect sign-in; cache/storage cleanup affects site data. Save work first |
 | Browser settings      | … → browser settings                                                     | Opens the settings controls below                                                |
-| Downloads             | Toolbar → downloads → record → reveal, pause, resume or delete           | Available actions depend on download state; check the record before deleting     |
+| Downloads             | Toolbar → Downloads, or … → Downloads                                    | Shows download progress and completed records                                    |
+
+<a id="browser-download-controls"></a>
+
+When a download finishes, use the notification to open the file or show it in its folder. The folder button at the top of the list opens your downloads folder. Select a completed file's name to open it or its folder button to reveal it. Choose **… → Remove from list** to remove the record and keep the file. You can pause, resume, or delete an unfinished download according to its status.
 
 <!-- ui-source: src/components/settings/BrowserSettingsPage.tsx -->
 
@@ -81,8 +89,10 @@ Open **bottom-left account menu → Settings → Integrations → Browser**.
 | Web URL and link target              | Choose built-in or system browser                                       | Controls ordinary web links, not the execution device                                                                            |
 | Local URL target                     | Choose the destination for local links separately                       | Independent of HTTP/HTTPS link preferences                                                                                       |
 | Browsing history                     | Open Manage, then open or delete entries in the history page            | Not task conversation history; clearing browser data is not required to inspect it                                               |
-| Browsing data                        | Choose Clear and confirm or cancel after reading the dialog             | Signs you out of websites; save unsent webpage content first                                                                     |
+| Browsing data                        | Choose Clear browsing data, then confirm or cancel in the dialog        | Clears browsing and download history, cookies, caches, and site storage                                                          |
 | Downloads → Location                 | Choose Change and a directory; restore the default beside a custom path | Affects future downloads, not previously downloaded files                                                                        |
 | Ask where to save before downloading | Enable before downloading                                               | Choose the destination for each download; otherwise use the configured directory                                                 |
+
+After clearing browsing data, you may need to sign in to websites again. Downloaded files and your Wework sign-in are preserved.
 
 Back, forward and reload in the browser toolbar affect this task's page. Submit an address-bar edit to navigate. For element-specific feedback, enable annotation, select the element, enter feedback, then review it in the composer before sending. Close overlapping dialogs to reveal the browser again.

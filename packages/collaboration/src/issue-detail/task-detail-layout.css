@@ -1419,11 +1419,6 @@
   border-radius: 4px;
 }
 
-:where(html:not([data-input-modality='pointer'])) .task-detail-tag-editor input:focus-visible {
-  outline: 2px solid rgb(var(--color-focus) / 70%);
-  outline-offset: 2px;
-}
-
 .task-detail-workspace-tag button:hover {
   color: rgb(var(--color-focus));
 }

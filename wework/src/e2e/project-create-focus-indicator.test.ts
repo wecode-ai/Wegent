@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { expect, test } from 'vitest'
+import { focusLayers } from '../../e2e/desktop/modules/focus-paint.mjs'
 import { assertFocusIndicatorMetrics } from '../../e2e/desktop/modules/project-create-focus-indicator.mjs'
 
 function metrics(outline = 'rgb(37, 99, 235)', row = 'rgb(245, 245, 245)') {
@@ -72,4 +73,82 @@ test('does not treat a non-clipping ancestor axis as a clip', () => {
   value.rect.right = 110
   value.clips[0].x = false
   expect(() => assertFocusIndicatorMetrics(value, { checkClipping: true })).not.toThrow()
+})
+
+const blue = 'rgb(37, 99, 235)'
+const lightBlue = 'rgba(37, 99, 235, 0.4)'
+const white = 'rgb(255, 255, 255)'
+const elevation = 'rgba(0, 0, 0, 0.15) 0px 4px 12px 0px'
+const ring = (color: string, width: number, inset = false) =>
+  `${color} 0px 0px 0px ${width}px${inset ? ' inset' : ''}`
+const paint = (shadow = 'none', outline = 'none', offset = 2) => ({
+  visible: true,
+  shadow,
+  outlineStyle: outline === 'none' ? 'none' : 'solid',
+  outlineWidth: '2px',
+  outlineColor: outline,
+  outlineOffset: `${offset}px`,
+  offsetShadow: '',
+  backgrounds: [white, white],
+  borders: Array.from({ length: 4 }, () => ({ width: 0, color: 'transparent' })),
+})
+
+test('compares focus to the same unfocused paint and ignores ordinary elevation', () => {
+  const rest = paint(`${elevation}, ${ring(blue, 1)}`)
+  expect(focusLayers(rest, rest)).toBe(0)
+  expect(focusLayers(paint(elevation), paint())).toBe(0)
+  expect(focusLayers(paint(`${ring(blue, 3)}, ${elevation}`), rest)).toBe(1)
+})
+
+test('counts visible concentric bands in CSS paint order, including translucency', () => {
+  expect(
+    focusLayers(paint(`${ring(lightBlue, 2)}, ${ring('rgb(20, 150, 185)', 4)}`), paint())
+  ).toBe(2)
+  expect(focusLayers(paint(`${ring(blue, 4)}, ${ring('rgb(255, 0, 0)', 2)}`), paint())).toBe(1)
+  expect(focusLayers(paint(`${ring(blue, 2)}, ${ring(blue, 4)}`), paint())).toBe(1)
+  expect(focusLayers(paint(`${ring(blue, 2, true)}, ${ring('rgb(255, 0, 0)', 2)}`), paint())).toBe(
+    2
+  )
+})
+
+test('ignores the Tailwind offset spacer and transparent rings, but counts the outside ring', () => {
+  const offsetShadow = ring(white, 2)
+  const backgrounds = [white, 'rgb(35, 35, 35)']
+  const focus = {
+    ...paint(`${offsetShadow}, ${ring(blue, 4)}, ${elevation}`),
+    backgrounds,
+    offsetShadow,
+  }
+  expect(focusLayers(focus, { ...paint(elevation), backgrounds })).toBe(1)
+  expect(focusLayers(paint(ring('color(srgb 0.1 0.3 0.7 / 0)', 3)), paint())).toBe(0)
+  expect(focusLayers({ ...focus, visible: false }, paint())).toBe(0)
+})
+
+test('counts an added outline only where it is separately visible', () => {
+  expect(focusLayers(paint(`${ring(blue, 2)}, ${ring(lightBlue, 4)}`, blue, 6), paint())).toBe(3)
+  expect(focusLayers(paint(ring(blue, 2), 'rgb(190, 50, 90)', 3), paint())).toBe(2)
+  expect(focusLayers(paint(ring(blue, 2), blue, 0), paint())).toBe(1)
+  expect(focusLayers(paint(ring(blue, 1), blue, 3), paint())).toBe(2)
+  expect(focusLayers({ ...paint('none', blue), outlineStyle: 'hidden' }, paint())).toBe(0)
+})
+
+test('counts a focus border once, including a single changed side, and leaves resting borders alone', () => {
+  const edge = (color: string) => ({ width: 2, color })
+  const rest = { ...paint(), borders: Array(4).fill(edge('rgb(210, 210, 210)')) }
+  const focused = { ...paint('none', blue), borders: rest.borders }
+  expect(focusLayers(focused, rest)).toBe(1)
+  expect(focusLayers({ ...focused, borders: Array(4).fill(edge(blue)) }, rest)).toBe(2)
+  const underline = { ...rest, borders: rest.borders.with(2, edge(blue)) }
+  expect(focusLayers(underline, rest)).toBe(1)
+  expect(focusLayers({ ...focused, borders: underline.borders }, rest)).toBe(2)
+  expect(focusLayers({ ...focused, borders: underline.borders, outlineOffset: '0px' }, rest)).toBe(
+    1
+  )
+  const covered = {
+    ...focused,
+    borders: underline.borders,
+    outlineOffset: '-2px',
+    outlineColor: 'rgb(190, 50, 90)',
+  }
+  expect(focusLayers(covered, rest)).toBe(1)
 })

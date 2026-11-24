@@ -200,7 +200,7 @@ export function StandInConnectionCatalog({
             data-testid="stand-in-connection-configured-filter"
             aria-pressed={configuredOnly}
             onClick={() => setConfiguredOnly(value => !value)}
-            className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted"
           >
             {configuredOnly
               ? t('standIn.workspace.connection_show_all')
@@ -210,7 +210,7 @@ export function StandInConnectionCatalog({
             <ChevronRight aria-hidden="true" className="h-4 w-4" />
           </ControlButton>
         </div>
-        <label className="flex min-h-11 items-center gap-2 rounded-xl bg-muted px-3 text-text-secondary focus-within:ring-2 focus-within:ring-focus">
+        <label className="flex min-h-11 items-center gap-2 rounded-xl bg-muted px-3 text-text-secondary">
           <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
           <ControlInput
             appearance="plain"
@@ -312,7 +312,7 @@ function ConnectionRow({
       data-testid={testId}
       disabled={disabled}
       onClick={onSelect}
-      className="group flex min-h-11 w-full items-center gap-3 rounded-xl px-2 py-4 text-left hover:bg-muted/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-40"
+      className="group flex min-h-11 w-full items-center gap-3 rounded-xl px-2 py-4 text-left hover:bg-muted/60 disabled:opacity-40"
     >
       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/50 text-text-primary">
         <Icon aria-hidden="true" className="h-6 w-6" strokeWidth={1.5} />
