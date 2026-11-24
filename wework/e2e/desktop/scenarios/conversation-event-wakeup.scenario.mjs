@@ -349,6 +349,9 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
         )
       if (goalCompletion) {
         goalCompletionItemId = goalCompletion.item.id
+        const progress = assistantMessage('正在处理收到的文档事件。')
+        progress.item.phase = 'commentary'
+        modelOutput.unshift(progress)
         // Simulate model latency so this resumed turn has whole seconds to display.
         await delay(1200)
       }
