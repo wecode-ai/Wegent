@@ -82,6 +82,7 @@ export function installTurnUpdateProbe() {
     if (event !== 'runtime.turn.updated' || !payload.data?.task) return
     if (status !== 'started' && status !== 'settled') return
     updates.push({ taskId: payload.taskId, status, observedAt: performance.now() })
+    performance.mark?.(`wework-profile:turn-${status}`)
     if (status === 'settled') {
       settled.add(payload.taskId)
       onSettled?.(payload.taskId)
