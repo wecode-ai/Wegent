@@ -4,10 +4,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { beforeAll, describe, expect, test } from 'vitest'
 
-let currentSessionContext: (
-  body: unknown,
-  options?: { required: boolean }
-) => Record<string, unknown> | null
+let currentSessionContext: (body: unknown) => Record<string, unknown>
 
 beforeAll(async () => {
   const scenarioUrl = pathToFileURL(
@@ -63,7 +60,6 @@ describe('currentSessionContext', () => {
     expect(() => currentSessionContext(request(JSON.stringify(session())))).toThrow(
       'The model request did not receive current session context'
     )
-    expect(currentSessionContext(request(), { required: false })).toBeNull()
   })
 
   test('rejects malformed current context instead of accepting an older turn', () => {

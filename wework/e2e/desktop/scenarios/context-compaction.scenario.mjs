@@ -75,7 +75,7 @@ function requestKind(body) {
   }
 }
 
-export function currentSessionContext(body, { required = true } = {}) {
+export function currentSessionContext(body) {
   const texts = (body?.input ?? []).flatMap(item =>
     Array.isArray(item.content) ? item.content.map(part => part.text ?? '') : [item.content ?? '']
   )
@@ -85,10 +85,7 @@ export function currentSessionContext(body, { required = true } = {}) {
       match => match[1]
     )
   )
-  if (contexts.length === 0) {
-    assert.ok(!required, 'The model request did not receive current session context')
-    return null
-  }
+  assert.ok(contexts.length > 0, 'The model request did not receive current session context')
   const content = contexts.at(-1)
   const jsonStart = content.indexOf('\n')
   assert.ok(jsonStart >= 0, 'The current session context is missing its JSON payload')
@@ -389,11 +386,8 @@ export function createDesktopScenario(options) {
           true,
           'The follow-up model request did not contain the compacted context summary'
         )
-        // Compaction can discard the earlier fragment, and Codex skips unchanged context.
-        const followUpSession = currentSessionContext(followUpRequest, { required: false })
-        if (followUpSession) {
-          assert.equal(followUpSession.conversation_id, initialSession.conversation_id)
-        }
+        const followUpSession = currentSessionContext(followUpRequest)
+        assert.equal(followUpSession.conversation_id, initialSession.conversation_id)
         await captureScreenshot(control, 'context-compaction-05-follow-up-verified.png', 'body')
         await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
         // Run the interrupted-compaction coverage first: it asserts on the
