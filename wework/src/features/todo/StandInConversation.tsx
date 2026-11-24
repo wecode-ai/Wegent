@@ -24,7 +24,12 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import { selectStandInDelegatedWork } from './standInDelegatedBranches'
+import {
+  activeStandInBranchRows,
+  groupStandInDelegations,
+  selectStandInDelegatedWork,
+  standInDelegationsByMessage,
+} from './standInDelegatedBranches'
 import { StandInDelegatedWork } from './StandInDelegatedWork'
 import { useStandInConversationModel } from './useStandInConversationModel'
 
@@ -39,6 +44,9 @@ export function StandInConversation({
   draftRequest,
   onDraftRequestConsumed,
   contentFooter,
+  delegationPanelOpen,
+  taskList,
+  renderDetails,
   settings,
   services,
   scope,
@@ -53,6 +61,9 @@ export function StandInConversation({
   draftRequest?: { id: number; text: string }
   onDraftRequestConsumed?(id: number): void
   contentFooter?: ReactNode
+  delegationPanelOpen?: boolean
+  taskList?: ReactNode
+  renderDetails?(activeBranches: ReturnType<typeof activeStandInBranchRows>): ReactNode
   settings?: Pick<WorkspaceStandInSettings, 'model' | 'modelOptions'>
   services?: WorkbenchServices
   scope?: 'collaboration'
@@ -152,16 +163,62 @@ export function StandInConversation({
       </ControlButton>
     </div>
   ) : null
-  if (error && address === undefined) return failureNotice
-  if (address === undefined)
+  const [expandedDelegations, setExpandedDelegations] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  const groups = groupStandInDelegations(delegatedWork)
+  const delegationTitle = t('standIn.delegation.title')
+  const renderDelegation = (group: (typeof groups)[number], showTitle = false) => {
+    const expansionKey = `${showTitle ? 'panel' : 'message'}:${group.root}`
     return (
-      <p role="status" className="p-5 text-sm text-text-secondary">
-        {t('standIn.loading')}
-      </p>
+      <StandInDelegatedWork
+        key={group.root}
+        branches={group.branches}
+        showTitle={showTitle}
+        expanded={expandedDelegations.has(expansionKey)}
+        onExpandedChange={expanded => {
+          setExpandedDelegations(previous => {
+            const next = new Set(previous)
+            if (expanded) next.add(expansionKey)
+            else next.delete(expansionKey)
+            return next
+          })
+        }}
+        taskId={taskId}
+        onOpenTask={onOpenTask}
+        onCancel={async (root, branch) => {
+          await api.cancelRoleWork(
+            userId,
+            branch?.dispatcherDeviceId ?? deviceId,
+            taskId,
+            root,
+            branch?.taskId
+          )
+          void roleBranches.reload()
+        }}
+        onRetry={async branch => {
+          await api.retryRoleWork(
+            userId,
+            branch.dispatcherDeviceId,
+            taskId,
+            branch.root,
+            branch.taskId,
+            branch.attempt
+          )
+          await roleBranches.reload()
+        }}
+      />
     )
-  return (
-    <>
-      {failureNotice}
+  }
+  const details = renderDetails?.(activeStandInBranchRows(delegatedWork))
+  const conversation =
+    address === undefined ? (
+      error ? null : (
+        <p role="status" className="p-5 text-sm text-text-secondary">
+          {t('standIn.loading')}
+        </p>
+      )
+    ) : (
       <TemporaryChatPanel
         key={taskId}
         currentProject={null}
@@ -169,40 +226,19 @@ export function StandInConversation({
         instanceId={`stand-in:${deviceId}:${taskId}`}
         testId="stand-in-conversation"
         draftRequest={draftRequest}
-        contentFooter={
-          delegatedWork.length ? (
-            <>
-              <StandInDelegatedWork
-                tasks={delegatedWork}
-                taskId={taskId}
-                onOpenTask={onOpenTask}
-                onCancel={async (root, branch) => {
-                  await api.cancelRoleWork(
-                    userId,
-                    branch?.dispatcherDeviceId ?? deviceId,
-                    taskId,
-                    root,
-                    branch?.taskId
+        contentFooter={contentFooter}
+        renderMessageGaps={
+          groups.length
+            ? messages =>
+                new Map(
+                  [...standInDelegationsByMessage(messages, groups)].map(
+                    ([messageId, messageGroups]) => [
+                      messageId,
+                      messageGroups.map(group => renderDelegation(group)),
+                    ]
                   )
-                  void roleBranches.reload()
-                }}
-                onRetry={async branch => {
-                  await api.retryRoleWork(
-                    userId,
-                    branch.dispatcherDeviceId,
-                    taskId,
-                    branch.root,
-                    branch.taskId,
-                    branch.attempt
-                  )
-                  await roleBranches.reload()
-                }}
-              />
-              {contentFooter}
-            </>
-          ) : (
-            contentFooter
-          )
+                )
+            : undefined
         }
         onDraftRequestConsumed={onDraftRequestConsumed}
         initialAddress={address}
@@ -252,6 +288,43 @@ export function StandInConversation({
           }
         }}
       />
+    )
+  return (
+    <>
+      {failureNotice}
+      <div className="flex min-h-0 flex-1">
+        <div
+          className={delegationPanelOpen ? 'hidden min-w-0 flex-1 md:flex' : 'flex min-w-0 flex-1'}
+        >
+          {conversation}
+        </div>
+        {delegationPanelOpen && (
+          <aside
+            id="stand-in-delegation-panel"
+            aria-label={t('standIn.delegation.panel')}
+            data-testid="stand-in-delegation-panel"
+            className="flex min-w-0 flex-1 flex-col border-border bg-background md:w-80 md:flex-none md:border-l"
+          >
+            <h2 className="border-b border-border px-4 py-3 text-sm font-medium">
+              {t('standIn.delegation.panel')}
+            </h2>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3">
+              <section aria-label={delegationTitle} className="pt-3">
+                <h3 className="px-1 text-sm font-medium">{delegationTitle}</h3>
+                {groups.length ? (
+                  groups.toReversed().map(group => renderDelegation(group, true))
+                ) : (
+                  <p className="px-1 py-3 text-sm text-text-secondary">
+                    {t('standIn.delegation.empty')}
+                  </p>
+                )}
+              </section>
+              {taskList}
+            </div>
+          </aside>
+        )}
+      </div>
+      {details}
     </>
   )
 }

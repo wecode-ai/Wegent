@@ -1,4 +1,8 @@
-import { roleSelectsProject, standInRoleName } from '@/api/personalStandIn'
+import {
+  roleSelectsProject,
+  standInConversationTaskId,
+  standInRoleName,
+} from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
@@ -14,7 +18,7 @@ import { StandInIcon } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { useDOMEvent, useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { Check, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
+import { Check, PanelRight, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
 import type { ComponentProps, ReactNode, Ref } from 'react'
 import {
   useCallback,
@@ -28,6 +32,7 @@ import {
 import { createPortal } from 'react-dom'
 import { StandInConversation } from './StandInConversation'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
+import type { activeStandInBranchRows } from './standInDelegatedBranches'
 import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
@@ -43,6 +48,7 @@ import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
 import { StandInWorkList } from './StandInWorkList'
+import { StandInSidebarTaskList } from './StandInSidebarTaskList'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { useStandInInbox } from './useStandInInbox'
 import { useStandInProcessingStatus } from './useStandInProcessingStatus'
@@ -241,7 +247,9 @@ export function StandInOverviewPage({
     else action()
   }
   const openMemory = useStableEvent(() => leavePanel(() => openProfile('memory')))
+  const [delegationPanelScope, setDelegationPanelScope] = useState<string | null>(null)
   const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
+  const delegationPanelOpen = delegationPanelScope === detailsScope
   const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
   const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
   const role =
@@ -264,7 +272,14 @@ export function StandInOverviewPage({
             standInWorkRole(item) === roleId))
     )
     .sort((a, b) => standInState(b).updatedAt.localeCompare(standInState(a).updatedAt))
-  const roleItems = roleId ? items.filter(item => standInWorkRole(item) === roleId) : items
+  const conversationTaskId = standInConversationTaskId(props.userId, roleId)
+  const roleItems = items.filter(item => {
+    if (roleId && standInWorkRole(item) !== roleId) return false
+    const origin = item.task.runtimeHandle?.origin as
+      | { roleDelegation?: { ancestors?: string[] } }
+      | undefined
+    return origin?.roleDelegation?.ancestors?.[0] !== conversationTaskId
+  })
   const chooseRole = (id?: string, executionDevice?: string) =>
     leavePanel(() => {
       const target =
@@ -390,6 +405,83 @@ export function StandInOverviewPage({
       })
     }
   }
+  const renderDetails =
+    detailsAnchor && active
+      ? (activeBranches: ReturnType<typeof activeStandInBranchRows>) => (
+          <StandInDetailsPopover
+            key={`${props.userId}:${deviceId}:${roleId ?? '@primary'}`}
+            anchor={detailsAnchor}
+            name={
+              role
+                ? standInRoleName(
+                    role,
+                    Math.max(0, roles.indexOf(role)),
+                    t('standIn.personal.default_role')
+                  )
+                : t('standIn.title')
+            }
+            enabled={role ? role.enabled : saved?.primary?.enabled !== false}
+            device={device}
+            items={roleItems.filter(
+              item =>
+                !(item.task.runtimeHandle?.origin as Record<string, unknown> | undefined)
+                  ?.inboxStatus
+            )}
+            activeDelegations={activeBranches}
+            inbox={visibleInbox}
+            sourceErrors={inbox.sourceErrors}
+            overviewError={overviewError}
+            processingError={processingError}
+            onClose={() => {
+              setDetailsAnchor(null)
+              detailsAnchor.focus()
+            }}
+            onSettings={() => {
+              setDetailsAnchor(null)
+              setCalendarRequest(0)
+              openProfile(role ? 'role' : 'primary')
+            }}
+            onGuide={() => {
+              setDetailsAnchor(null)
+              setGuideOpen(true)
+            }}
+            onAllActivity={() => {
+              setDetailsAnchor(null)
+              setReview('work')
+            }}
+            renderActivity={item => (
+              <TemporaryChatPanel
+                key={item.key}
+                currentProject={null}
+                source={null}
+                instanceId={`stand-in-activity:${item.address.deviceId}:${item.address.taskId}`}
+                testId="stand-in-activity-conversation"
+                initialAddress={item.address}
+                sendEphemeral={false}
+                showExecutionTools={false}
+                readOnly
+                expanded
+                active={active}
+                onOpenRuntimeTask={onOpenTask}
+              />
+            )}
+            onStatus={() => {
+              setDetailsAnchor(null)
+              setReview('status')
+            }}
+            onProposal={
+              currentProposal && state.saved
+                ? () => {
+                    setDetailsAnchor(null)
+                    setReview('proposal')
+                  }
+                : undefined
+            }
+            onOpenTask={onOpenTask}
+          />
+        )
+      : undefined
+  const conversationAvailable = api && deviceId && (state.saved || (!state.loading && !state.error))
   const content = (
     <section
       className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
@@ -478,6 +570,22 @@ export function StandInOverviewPage({
               </Tooltip>
             </div>
           </nav>
+          {api && deviceId && saved && (
+            <Tooltip label={t('standIn.delegation.panel')} side="bottom" align="end">
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="stand-in-delegation-panel-toggle"
+                aria-label={t('standIn.delegation.title')}
+                aria-expanded={delegationPanelOpen}
+                aria-controls={delegationPanelOpen ? 'stand-in-delegation-panel' : undefined}
+                onClick={() => setDelegationPanelScope(delegationPanelOpen ? null : detailsScope)}
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8 ${delegationPanelOpen ? 'bg-muted' : ''}`}
+              >
+                <PanelRight aria-hidden="true" className="size-4" />
+              </ControlButton>
+            </Tooltip>
+          )}
           <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
             <ControlButton
               variant="unstyled"
@@ -522,6 +630,18 @@ export function StandInOverviewPage({
           <>
             {api && deviceId ? (
               <StandInConversation
+                delegationPanelOpen={delegationPanelOpen}
+                taskList={
+                  delegationPanelOpen && (
+                    <StandInSidebarTaskList
+                      items={roleItems}
+                      inbox={visibleInbox}
+                      onOpenTask={onOpenTask}
+                      onAllActivity={() => setReview('work')}
+                    />
+                  )
+                }
+                renderDetails={renderDetails}
                 contentFooter={
                   review !== 'proposal' && (proposalCard || proposalFailure) ? (
                     <>
@@ -547,78 +667,7 @@ export function StandInOverviewPage({
             ) : null}
           </>
         )}
-        {detailsAnchor && active && (
-          <StandInDetailsPopover
-            key={`${props.userId}:${deviceId}:${roleId ?? '@primary'}`}
-            anchor={detailsAnchor}
-            name={
-              role
-                ? standInRoleName(
-                    role,
-                    Math.max(0, roles.indexOf(role)),
-                    t('standIn.personal.default_role')
-                  )
-                : t('standIn.title')
-            }
-            enabled={role ? role.enabled : saved?.primary?.enabled !== false}
-            device={device}
-            items={roleItems.filter(
-              item =>
-                !(item.task.runtimeHandle?.origin as Record<string, unknown> | undefined)
-                  ?.inboxStatus
-            )}
-            inbox={visibleInbox}
-            sourceErrors={inbox.sourceErrors}
-            overviewError={overviewError}
-            processingError={processingError}
-            onClose={() => {
-              setDetailsAnchor(null)
-              detailsAnchor.focus()
-            }}
-            onSettings={() => {
-              setDetailsAnchor(null)
-              setCalendarRequest(0)
-              openProfile(role ? 'role' : 'primary')
-            }}
-            onGuide={() => {
-              setDetailsAnchor(null)
-              setGuideOpen(true)
-            }}
-            onAllActivity={() => {
-              setDetailsAnchor(null)
-              setReview('work')
-            }}
-            renderActivity={item => (
-              <TemporaryChatPanel
-                key={item.key}
-                currentProject={null}
-                source={null}
-                instanceId={`stand-in-activity:${item.address.deviceId}:${item.address.taskId}`}
-                testId="stand-in-activity-conversation"
-                initialAddress={item.address}
-                sendEphemeral={false}
-                showExecutionTools={false}
-                readOnly
-                expanded
-                active={active}
-                onOpenRuntimeTask={onOpenTask}
-              />
-            )}
-            onStatus={() => {
-              setDetailsAnchor(null)
-              setReview('status')
-            }}
-            onProposal={
-              currentProposal && state.saved
-                ? () => {
-                    setDetailsAnchor(null)
-                    setReview('proposal')
-                  }
-                : undefined
-            }
-            onOpenTask={onOpenTask}
-          />
-        )}
+        {!conversationAvailable && renderDetails?.([])}
         <StandInReviewDialog
           open={active && review === 'work'}
           title={t('standIn.workspace.details_activity')}

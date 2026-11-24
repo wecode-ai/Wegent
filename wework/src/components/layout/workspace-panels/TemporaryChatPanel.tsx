@@ -123,6 +123,7 @@ export function TemporaryChatPanel({
   projectWorkBarTrailingContext,
   composerHeader,
   contentFooter,
+  renderMessageGaps,
   onRestoreConversation,
   onFillSelectionToAnswer,
   initialScrollPosition = 'restore',
@@ -843,6 +844,7 @@ export function TemporaryChatPanel({
   const submittingInput =
     pendingRequest &&
     (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
+  const messageGaps = renderMessageGaps?.(presentation.messages)
   const layout = (
     <TemporaryConversationLayout
       messageCount={presentation.messages.length}
@@ -986,6 +988,7 @@ export function TemporaryChatPanel({
         className="min-h-0 flex-1"
         contentClassName="min-h-full shrink-0"
         messageListClassName={`${DESKTOP_MESSAGE_LIST_CLASS} pb-4 pt-5`}
+        renderGapAfterMessage={messageGaps && (message => messageGaps.get(message.id))}
         contentFooter={contentFooter}
         contentFooterClassName={DESKTOP_MESSAGE_LIST_CLASS}
         scrollTestId="right-workspace-chat-scroll-area"
