@@ -379,7 +379,11 @@ function ChatAreaContent({
       !selectedTeamForNewTask
   )
   const isNewChat = !effectiveTaskId && !taskIdFromUrl
-  const { team: urlTeam, failed: urlTeamFailed } = useUrlTeam(teamIdFromUrl, isNewChat)
+  const {
+    team: urlTeam,
+    failed: urlTeamFailed,
+    retry: retryUrlTeam,
+  } = useUrlTeam(teamIdFromUrl, isNewChat)
   const recommendedTeam =
     explicitTeamId && getSearchParam(searchParams, 'recommend') === '1' ? urlTeam : null
   // Explicit navigation is resolved by ID; offset pages can omit existing agents.
@@ -1189,7 +1193,9 @@ function ChatAreaContent({
     [teamSelectionScope]
   )
   const lastSyncedTaskIdRef = useRef<number | null>(null)
-  const ignoredTeamIdParamRef = useRef<string | null>(null)
+  const urlTeamSelectionKey =
+    teamIdFromUrl === null ? null : JSON.stringify([teamSelectionScope, teamIdFromUrl])
+  const [ignoredUrlTeam, setIgnoredUrlTeam] = useState<string | null>(null)
   const isExitingGenerationRef = useRef(false)
   const restoreConfiguredDefaultRef = useRef(false)
 
@@ -1202,7 +1208,7 @@ function ChatAreaContent({
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
   const isUrlTeamRequired =
-    isNewChat && teamIdFromUrl !== null && ignoredTeamIdParamRef.current !== teamIdFromUrl
+    isNewChat && urlTeamSelectionKey !== null && ignoredUrlTeam !== urlTeamSelectionKey
   const linkedAgentError =
     isUrlTeamRequired && urlTeamFailed ? t('input.linked_agent_unavailable') : null
   const isTeamSelectionReady =
@@ -1210,6 +1216,10 @@ function ChatAreaContent({
     initializedTeamSelection?.scope === teamSelectionScope &&
     initializedTeamSelection.teamId != null &&
     initializedTeamSelection.teamId === selectedTeam?.id
+  const urlTeamBlockedReason =
+    isUrlTeamRequired && !isTeamSelectionReady
+      ? (linkedAgentError ?? t('input.loading_teams_placeholder'))
+      : null
   const handleTeamChange = chatState.handleTeamChange
   const findDefaultTeamForMode = chatState.findDefaultTeamForMode
   const showGenerateModeSelector =
@@ -1218,7 +1228,7 @@ function ChatAreaContent({
   const handleUserTeamChange = useCallback(
     (team: Team | null) => {
       restoreConfiguredDefaultRef.current = false
-      ignoredTeamIdParamRef.current = teamIdFromUrl
+      setIgnoredUrlTeam(urlTeamSelectionKey)
       handleTeamChange(team)
       const routeTaskId =
         typeof window === 'undefined'
@@ -1241,7 +1251,7 @@ function ChatAreaContent({
       markTeamSelectionInitialized,
       onGenerateModeChange,
       taskType,
-      teamIdFromUrl,
+      urlTeamSelectionKey,
       teamSelectionScope,
       user?.id,
     ]
@@ -1259,13 +1269,13 @@ function ChatAreaContent({
     hasInitializedTeamRef.current = false
   }, [taskType])
 
+  useEffect(() => {
+    setIgnoredUrlTeam(current => (current === urlTeamSelectionKey ? current : null))
+  }, [urlTeamSelectionKey])
+
   // Explicit selections take priority over recent history and configured defaults.
   useEffect(() => {
     if (isExitingGenerationRef.current) return
-    if (filteredTeams.length === 0 && (!selectedTeam || isTeamsLoading || loadError)) return
-    if (!teamIdFromUrl) {
-      ignoredTeamIdParamRef.current = null
-    }
 
     // Extract team ID from task detail
     const detailTeamId = selectedTaskDetail?.team
@@ -1314,7 +1324,7 @@ function ChatAreaContent({
 
     // Case 2a: teamId URL param present - select specific team regardless of initialization state
     // This handles navigation after accepting a share invite (/chat?teamId=xxx)
-    if (!taskIdFromUrl && teamIdFromUrl && teamIdFromUrl !== ignoredTeamIdParamRef.current) {
+    if (isUrlTeamRequired) {
       if (urlTeam) {
         handleTeamChange(urlTeam)
         markTeamSelectionInitialized(urlTeam)
@@ -1323,6 +1333,8 @@ function ChatAreaContent({
       // Never silently substitute a default while resolving an explicit agent.
       return
     }
+
+    if (filteredTeams.length === 0 && (!selectedTeam || isTeamsLoading || loadError)) return
 
     if (!taskIdFromUrl && selectedTeamForNewTask) {
       markTeamSelectionInitialized(selectedTeamForNewTask)
@@ -1375,7 +1387,7 @@ function ChatAreaContent({
     teams,
     selectedTaskDetail,
     taskIdFromUrl,
-    teamIdFromUrl,
+    isUrlTeamRequired,
     urlTeam,
     selectedTeam,
     handleTeamChange,
@@ -1532,6 +1544,10 @@ function ChatAreaContent({
   // Scheme URL action bridge - handles wegent://action/send-message and wegent://action/prefill-message
   useSchemeMessageActions({
     onSendMessage: streamHandlers.handleSendMessage,
+    sendBlockedReason: urlTeamBlockedReason,
+    onSendRejected: reason => {
+      toast({ variant: 'destructive', title: reason ?? t('input.linked_agent_unavailable') })
+    },
     onPrefillMessage: chatState.setTaskInputMessage,
     onTeamChange: teamId => {
       const targetTeam =
@@ -1656,9 +1672,7 @@ function ChatAreaContent({
 
   const submitBlockedReason = useMemo(() => {
     if (disabledReason) return disabledReason
-    if (isUrlTeamRequired && !isTeamSelectionReady) {
-      return linkedAgentError ?? t('input.loading_teams_placeholder')
-    }
+    if (urlTeamBlockedReason) return urlTeamBlockedReason
     if (isModelSelectionRequired) {
       return t('generate.material_errors.model_required')
     }
@@ -1698,10 +1712,8 @@ function ChatAreaContent({
     generationAttachmentCounts.material,
     isModeSpecVideo,
     isModelSelectionRequired,
-    isTeamSelectionReady,
-    isUrlTeamRequired,
-    linkedAgentError,
     t,
+    urlTeamBlockedReason,
     videoCapabilities?.image_input_required,
     videoCapabilities?.reference_material_required,
   ])
@@ -1785,9 +1797,11 @@ function ChatAreaContent({
   const handleRestoreDefaultTeam = useCallback(() => {
     hasInitializedTeamRef.current = true
     const url = new URL(window.location.href)
-    ignoredTeamIdParamRef.current = teamIdFromUrl
+    setIgnoredUrlTeam(urlTeamSelectionKey)
     setQuickLaunchIntent(null)
     const removedTeam = removeTeamQueryParam(url.searchParams)
+    const removedRecommendation = url.searchParams.has('recommend')
+    url.searchParams.delete('recommend')
 
     if (isGenerateMode(effectiveTaskType)) {
       isExitingGenerationRef.current = true
@@ -1798,7 +1812,7 @@ function ChatAreaContent({
       return
     }
 
-    if (removedTeam) {
+    if (removedTeam || removedRecommendation) {
       window.history.replaceState(
         window.history.state,
         '',
@@ -1815,7 +1829,7 @@ function ChatAreaContent({
     restoreDefaultTeam,
     router,
     selectedTeam,
-    teamIdFromUrl,
+    urlTeamSelectionKey,
   ])
 
   const shouldConfirmPendingReplacement =
@@ -1990,6 +2004,7 @@ function ChatAreaContent({
   useEffect(() => {
     if (
       !externalPromptRequest ||
+      submitBlockedReason ||
       consumedExternalPromptRef.current === externalPromptRequest.requestId
     ) {
       return
@@ -1999,7 +2014,12 @@ function ChatAreaContent({
     void sendOrConfirmPendingReplacement(externalPromptRequest.message, {
       artifactContext: externalPromptRequest.artifactContext,
     })
-  }, [externalPromptRequest, onExternalPromptConsumed, sendOrConfirmPendingReplacement])
+  }, [
+    externalPromptRequest,
+    onExternalPromptConsumed,
+    sendOrConfirmPendingReplacement,
+    submitBlockedReason,
+  ])
 
   const consumedExternalDraftRef = useRef<string | null>(null)
   const applyExternalDraft = useCallback(
@@ -2820,9 +2840,21 @@ function ChatAreaContent({
                 inputControlsRef={inputControlsRef}
               />
               {linkedAgentError && (
-                <p role="status" className="mt-2 text-sm text-text-secondary">
-                  {linkedAgentError}
-                </p>
+                <div className="mt-2 flex items-center gap-2 text-sm text-text-secondary">
+                  <p role="status">{linkedAgentError}</p>
+                  {retryUrlTeam && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="min-h-11"
+                      onClick={retryUrlTeam}
+                      data-testid="retry-linked-agent"
+                    >
+                      {t('actions.retry')}
+                    </Button>
+                  )}
+                </div>
               )}
               {taskType !== 'knowledge' && !hideSelectors && !activeProject && (
                 <QuickAccessCards
