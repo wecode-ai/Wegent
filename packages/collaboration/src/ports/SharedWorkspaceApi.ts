@@ -1130,7 +1130,6 @@ export interface SharedWorkspaceRuntimeApi extends RuntimeConversationClient {
 
 export interface WorkspaceStandInWorkspace {
   projectKey: string;
-  workspacePath: string;
   executionMode: "current_workspace" | "git_worktree";
   branch?: string | null;
 }
