@@ -4532,6 +4532,20 @@ button.collaboration-project-offline:hover {
   display: none;
 }
 
+@container issue-list (max-width: 21rem) {
+  .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-col-assignee,
+  .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-assignee {
+    display: none;
+  }
+}
+
+@container issue-list (max-width: 12rem) {
+  .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-col-status,
+  .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-status {
+    display: none;
+  }
+}
+
 .collaboration-issue-table-col-select {
   width: 48px;
 }

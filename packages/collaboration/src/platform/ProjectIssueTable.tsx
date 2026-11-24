@@ -640,8 +640,10 @@ function ProjectIssueTableContent<Issue extends CollaborationIssue>({
                         {button}
                         {row?.details}
                       </td>
-                      <td>{statusName(issue.status)}</td>
-                      <td>
+                      <td className="collaboration-issue-table-status">
+                        {statusName(issue.status)}
+                      </td>
+                      <td className="collaboration-issue-table-assignee">
                         {assignee ? (
                           <span data-testid={`cloud-todo-card-assignee-${issue.id}`}>
                             {assignee}
