@@ -556,10 +556,20 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.syncRuntimeTask(other, task({ taskId: other.taskId, title: 'Newer title' }))
     const otherSnapshot = store.getTask(other)
     workspace.tasks[0] = task({ title: 'Updated title' })
+    const pointUpdates: string[] = []
+    store.subscribeTaskChanges((keys, before, after) => {
+      for (const key of keys) {
+        const previous = before.get(key)?.task?.title
+        const current = after.get(key)?.task
+        pointUpdates.push(`${current?.taskId}: ${previous} → ${current?.title}`)
+      }
+    })
+    const previousTitle = store.getTask(address)?.task?.title
 
     store.syncRuntimeWork(work, address)
 
     expect(store.getTask(address)?.task?.title).toBe('Updated title')
+    expect(pointUpdates).toEqual([`${address.taskId}: ${previousTitle} → Updated title`])
     expect(store.getTask(other)?.task?.title).toBe('Newer title')
     expect(store.getTask(other)).toBe(otherSnapshot)
   })
