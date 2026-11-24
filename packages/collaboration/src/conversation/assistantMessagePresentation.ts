@@ -272,11 +272,16 @@ export function getAssistantRenderProjection(
   const orderedContent = contentSegments
     .map((segment) => segment.content)
     .join("\n\n");
+  const firstProseIndex = ordered.findIndex(
+    (segment) => segment.kind === "content",
+  );
   const interleaved =
     hasContent &&
     orderedContent === presentation.content &&
-    ordered.findLastIndex((segment) => segment.kind === "processing") >
-      ordered.findIndex((segment) => segment.kind === "content");
+    ordered.some(
+      (segment, index) =>
+        index > firstProseIndex && segment.kind === "processing",
+    );
   const firstItem = message.runtimeDisplayItems?.find(
     (item) => item.type === "assistant_text",
   );

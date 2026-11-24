@@ -12,11 +12,13 @@ import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 const executorEventReconnectors = new Set<() => void>()
-const executorEventSubscribers = new Map<symbol, (event: DshExecutorEventEnvelope) => void>()
-const executorEventSubscriberSources = new Map<symbol, string[]>()
+const executorEventSubscribers = new Map<number, (event: DshExecutorEventEnvelope) => void>()
+const executorEventSubscriberSources = new Map<number, string[]>()
+let lastExecutorEventSubscriber = 0
 let disconnectExecutorEventStream: (() => void) | null = null
 const INITIAL_RECONNECT_DELAY_MS = 500
 const MAX_RECONNECT_DELAY_MS = 10_000
+const EVENT_DELIVERY_SLICE_MS = 8
 const modelDiagnosticsDeadline = performance.now() + 30_000
 const modelDiagnosticMethods = new Set([
   'runtime.tasks.list',
@@ -51,6 +53,12 @@ interface DshExecutorEventEnvelope {
   emittedAt: string
   event: string
   payload: Record<string, unknown>
+}
+
+interface PendingExecutorEvent {
+  event: DshExecutorEventEnvelope
+  throughSubscriber: number
+  next?: PendingExecutorEvent
 }
 
 interface DshExecutorErrorBody {
@@ -284,7 +292,7 @@ function connectionError(error: unknown): unknown {
 export function subscribeDshExecutorEvents(
   listener: (event: DshExecutorEventEnvelope) => void
 ): () => void {
-  const subscription = Symbol('executor-event-subscriber')
+  const subscription = ++lastExecutorEventSubscriber
   executorEventSubscribers.set(subscription, listener)
   const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
   if (e2e) {
@@ -296,9 +304,9 @@ export function subscribeDshExecutorEvents(
     )
   }
   if (!disconnectExecutorEventStream) {
-    disconnectExecutorEventStream = connectDshExecutorEventStream(event => {
-      for (const [id, subscriber] of [...executorEventSubscribers]) {
-        if (!executorEventSubscribers.has(id)) continue
+    disconnectExecutorEventStream = connectDshExecutorEventStream((event, throughSubscriber) => {
+      for (const [id, subscriber] of executorEventSubscribers) {
+        if (id > throughSubscriber) break
         const startedAt = e2e ? performance.now() : 0
         try {
           subscriber(event)
@@ -334,7 +342,7 @@ export function subscribeDshExecutorEvents(
 
 // All subscribers in a renderer share one SSE connection, leaving HTTP slots for RPCs.
 function connectDshExecutorEventStream(
-  listener: (event: DshExecutorEventEnvelope) => void
+  listener: (event: DshExecutorEventEnvelope, throughSubscriber: number) => void
 ): () => void {
   let cursor = 0
   let source: EventSource | null = null
@@ -342,6 +350,39 @@ function connectDshExecutorEventStream(
   let reconnectTimer: number | null = null
   let reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
   let connected = false
+  // EventSource can dispatch several messages in a browser task, with a
+  // microtask checkpoint (and a React commit) after each listener. Deliver
+  // bursts together so presentation observes the ordered state once per slice.
+  const delivery = new MessageChannel()
+  let head: PendingExecutorEvent | undefined
+  let tail: PendingExecutorEvent | undefined
+  let deliveryScheduled = false
+  function scheduleDelivery() {
+    if (deliveryScheduled) return
+    deliveryScheduled = true
+    delivery.port2.postMessage(null)
+  }
+  delivery.port1.onmessage = () => {
+    const deadline = performance.now() + EVENT_DELIVERY_SLICE_MS
+    while (head) {
+      const { event, throughSubscriber, next } = head
+      head = next
+      if (!head) tail = undefined
+      listener(event, throughSubscriber)
+      if (performance.now() >= deadline) break
+    }
+    deliveryScheduled = false
+    if (head) scheduleDelivery()
+  }
+
+  function enqueue(event: DshExecutorEventEnvelope, throughSubscriber: number) {
+    if (closed) return
+    const entry = { event, throughSubscriber }
+    if (tail) tail.next = entry
+    else head = entry
+    tail = entry
+    scheduleDelivery()
+  }
 
   const scheduleReconnect = () => {
     if (closed || reconnectTimer !== null) return
@@ -402,11 +443,14 @@ function connectDshExecutorEventStream(
       cursor = event.sequence
       reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
       if (event.event === 'executor.stream.cursor') return
+      const throughSubscriber = lastExecutorEventSubscriber
       try {
         if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
-          deliverRuntimeTransport('event', event.event, event, () => listener(event))
+          deliverRuntimeTransport('event', event.event, event, () =>
+            enqueue(event, throughSubscriber)
+          )
         } else {
-          listener(event)
+          enqueue(event, throughSubscriber)
         }
       } catch (error) {
         console.error('[Wework] Executor event listener failed', {
@@ -444,6 +488,9 @@ function connectDshExecutorEventStream(
     if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
     source?.close()
     source = null
+    delivery.port1.close()
+    delivery.port2.close()
+    head = tail = undefined
   }
 }
 
