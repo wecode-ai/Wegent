@@ -239,6 +239,12 @@ pub async fn call(
 ) -> Result<Value, CallFailure> {
     let normalized_timeout = normalize_timeout(timeout_seconds);
     let route = resolve_route(app, user_id, submitted_device_id).await?;
+    if method == "runtime.tasks.permissions.set" && payload["userId"].as_i64() != Some(user_id) {
+        return Err(CallFailure::Rpc(rpc_error(
+            "permission_denied",
+            "The requested owner must match the connected account",
+        )));
+    }
 
     let grant = runtime_rpc_policy::authorize(&route, method, allow_app_device_task_reading)
         .ok_or_else(|| {

@@ -114,6 +114,7 @@ import {
   type PersonalStandInSettings,
   type StandInDelegationRoute,
   type StandInSourceConnection,
+  type StandInTaskPermissions,
 } from './personalStandIn'
 
 export interface StandInProposal {
@@ -304,6 +305,11 @@ export interface RemoteStandInRoleBranch {
   cancelGroup?: boolean
 }
 
+export interface StandInTaskPermissionSnapshot {
+  taskPermissions: StandInTaskPermissions
+  snapshotRevision?: string | null
+}
+
 export interface StandInExecutorApi {
   deviceIdentity(deviceId: string): Promise<{ deviceId: string; backendDeviceId: string }>
   gitConnection(deviceId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>
@@ -340,6 +346,12 @@ export interface StandInExecutorApi {
     operation: 'start' | 'stop'
   ): Promise<PersonalStandInSettings>
   taskCommands: RuntimeTaskCommandsApi
+  setTaskPermissions(
+    userId: number,
+    deviceId: string,
+    taskId: string,
+    taskPermissions: StandInTaskPermissions
+  ): Promise<StandInTaskPermissionSnapshot>
   checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
     userId: number,
@@ -489,7 +501,8 @@ export interface StandInExecutorApi {
   personalSave(
     userId: number,
     settings: PersonalStandInSettings,
-    deviceId: string
+    deviceId: string,
+    transferRoleId?: string
   ): Promise<PersonalStandInSettings>
   saveDelegationRoute(
     userId: number,
@@ -583,6 +596,8 @@ export function createStandInExecutorApi(
   }
   return {
     taskCommands: createRuntimeTaskCommandsApi(request),
+    setTaskPermissions: (userId, deviceId, taskId, taskPermissions) =>
+      request('runtime.tasks.permissions.set', { userId, taskId, taskPermissions }, deviceId),
     gitConnection: (deviceId, input) => {
       const { channel, ...payload } = input
       if (channel === 'auth') {
@@ -805,10 +820,10 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    personalSave: async (userId, settings, deviceId) => {
+    personalSave: async (userId, settings, deviceId, transferRoleId) => {
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
-        { userId, settings },
+        { userId, settings, ...(transferRoleId !== undefined ? { transferRoleId } : {}) },
         deviceId
       )
       publishPersonalStandIn(saved)

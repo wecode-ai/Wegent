@@ -200,6 +200,16 @@ Stand-in chats currently require the Codex runtime for operation approvals. If t
 
 If the current model is unavailable, select **Reload models** in the chat. When an older session’s provider cannot be read or is incompatible with the profile model, select **Continue in a new session**. After confirmation, your next message starts a new session in the same stand-in chat and preserves its history and draft.
 
+<a id="stand-in-task-permissions"></a>
+
+## Assistant task permissions
+
+Open **My assistants → select an assistant → Assistant details → Manage assistant → Execution environment**. Under **Default task permissions**, choose **Read-only**, **Workspace**, or **Full access**, then save. Read-only is the default. Full access uses the same confirmation and high-risk command approval options as ordinary conversations.
+
+When an assistant creates a Codex task for work you initiate, the task starts with the assigned assistant’s saved mode. Open the full task conversation to change its mode in the composer. The change takes effect starting with the next turn you submit. Resolve approvals for the current turn in their original cards. Existing delegations without a selection default to read-only. Background follow-ups and work triggered by an Issue, connection, or calendar use their own execution policies.
+
+Moving an assistant to another execution device resets its default task permissions to Read-only on the receiving device. Save the move, then open the assistant on that device to choose its default task permissions.
+
 <a id="stand-in-source-session-policy"></a>
 
 ## DingTalk and collaboration sources

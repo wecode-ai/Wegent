@@ -211,6 +211,7 @@ mod stand_in_role_dependencies;
 mod stand_in_role_results;
 mod stand_in_schedules;
 mod stand_in_source_tasks;
+mod stand_in_task_permissions;
 mod stand_in_task_results;
 mod stand_in_tasks;
 mod stand_in_telemetry;

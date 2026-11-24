@@ -875,6 +875,11 @@ fn runtime_task_address(link: &RuntimeTaskLink, device_id: &str) -> Value {
 
 fn runtime_handle_with_thread_id(link: &RuntimeTaskLink) -> Map<String, Value> {
     let mut runtime_handle = runtime_handle_list_summary_map(&link.runtime_handle);
+    use super::stand_in_task_permissions::{task_permissions, TASK_PERMISSIONS};
+    runtime_handle.remove(TASK_PERMISSIONS);
+    if let Some(permissions) = task_permissions(link) {
+        runtime_handle.insert(TASK_PERMISSIONS.to_owned(), json!(permissions));
+    }
     runtime_handle.remove("modelProviderRouting");
     if let Some(routing) = model_provider_routing(&link.runtime) {
         runtime_handle.insert("modelProviderRouting".to_owned(), json!(routing));
