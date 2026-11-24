@@ -401,11 +401,19 @@ describe('async reply client identity', () => {
     expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
   })
 
-  test('requires turn identity for a non-guidance reply once the question has one', () => {
-    const question = { ...assistantMessage(ASYNC_PAYLOAD), turnId: 'turn-1' }
-    const replyWithoutTurn = userMessage('Reading')
-    const messages = [question, replyWithoutTurn]
+  test('still settles from an ordinary reply without turn identity', () => {
+    const question = {
+      ...assistantMessage(ASYNC_PAYLOAD),
+      turnId: 'turn-1',
+      runtimeClientUserMessageId: 'queued-prompt',
+    }
+    const reply = userMessage('Reading')
+    const resolved = resolveAsyncRequestUserInputAnswers([question, reply])
+    const block = resolved[0].blocks?.[0]
 
-    expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+    expect(block?.status).toBe('done')
+    expect(block && 'renderPayload' in block && block.renderPayload).toMatchObject({
+      response: { answers: { question_1: { answers: ['Reading'] } } },
+    })
   })
 })

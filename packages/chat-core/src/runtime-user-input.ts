@@ -326,9 +326,7 @@ interface AsyncQuestionTurn {
 function asyncReplyCanAnswerTurn(reply: AsyncReplyMessage, question: AsyncQuestionTurn): boolean {
   if (question.clientUserMessageId && reply.id === question.clientUserMessageId) return false
   const replyTurnId = reply.turnId
-  if (!question.turnId) return true
-  if (!replyTurnId) return reply.runtimeGuidance === true
-  if (question.turnId !== replyTurnId) return true
+  if (!question.turnId || !replyTurnId || question.turnId !== replyTurnId) return true
   return reply.runtimeGuidance === true
 }
 
