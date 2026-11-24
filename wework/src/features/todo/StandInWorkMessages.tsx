@@ -1,4 +1,5 @@
 import type { StandInExecutorApi, StandInInboxMessage, StandInInboxWork } from '@/api/standIn'
+import { delegationResultLabel } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
@@ -56,7 +57,12 @@ export function StandInWorkMessages({
     [resource, messageCount]
   )
   const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
-  const messages = snapshot.data?.messages ?? []
+  const messages =
+    snapshot.data?.messages.filter(
+      message =>
+        !message.source.delegated ||
+        (message.delegationResult && message.delegationResult.action !== 'skip')
+    ) ?? []
   const error =
     snapshot.status === 'error' || snapshot.error !== undefined
       ? getStandInErrorMessage(snapshot.error)
@@ -130,6 +136,13 @@ export function StandInWorkMessages({
                     {message.source.name} · {new Date(message.at).toLocaleString()}
                   </p>
                   <p className="mt-1 whitespace-pre-wrap break-words text-sm">{message.text}</p>
+                  {message.delegationResult && (
+                    <p className="mt-1 break-words text-xs text-text-secondary">
+                      {t(delegationResultLabel(message.delegationResult) ?? '')}
+                      {' · '}
+                      {message.delegationResult.reason}
+                    </p>
+                  )}
                 </div>
               </div>
               {(canSplit || canMove) && (

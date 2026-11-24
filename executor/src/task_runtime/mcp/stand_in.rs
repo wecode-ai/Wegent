@@ -539,7 +539,7 @@ pub(super) async fn call(
             .personal_stand_in(identity.user, &identity.device)
             .map_err(|e| e.to_string()),
         "propose_profile" => super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await,
-        "list_work" => store.list_stand_in_work(identity.user,identity.role.as_deref()).map(|items| json!({"items":items,"runtime":crate::runtime_work::dingtalk::runtime_work_summaries(identity.user,identity.role.as_deref())})).map_err(|e|e.to_string()),
+        "list_work" => list_visible_work(store, identity),
         "read_work" => read_connected_work(runtime, identity, &arguments).await,
         "reply" | "send_email" => reply_to_work(runtime,identity,&arguments, name == "send_email", context.stand_in_delivery.as_ref()).await,
         "git_read" | "git_write" => super::git_connections::call(runtime, identity, arguments, name=="git_write",context.stand_in_delivery.as_ref()).await,
@@ -554,6 +554,35 @@ pub(super) async fn call(
         Ok(value) => text_result(value.to_string(), false),
         Err(error) => text_result(error, true),
     }
+}
+
+fn list_visible_work(
+    store: &LocalTaskStore,
+    identity: &StandInMcpIdentity,
+) -> Result<Value, String> {
+    use crate::task_runtime::personal_stand_in::matches_delegation_account;
+
+    let settings = store
+        .configured_personal_stand_in(identity.user, &identity.device)
+        .map_err(|error| error.to_string())?;
+    let mut items = store
+        .list_stand_in_work(identity.user, identity.role.as_deref())
+        .map_err(|error| error.to_string())?;
+    items.retain(|work| matches_delegation_account(&settings, &work["roleId"], &work["source"]));
+    let mut runtime = crate::runtime_work::dingtalk::runtime_work_summaries(
+        identity.user,
+        identity.role.as_deref(),
+    );
+    runtime.retain(|run| {
+        let origin = &run["runtimeHandle"]["origin"];
+        origin["standInId"] != "@primary"
+            || !matches!(
+                origin["type"].as_str(),
+                Some("connection_work" | "dingtalk_work")
+            )
+            || items.iter().any(|work| work["id"] == origin["workId"])
+    });
+    Ok(json!({"items":items,"runtime":runtime}))
 }
 
 async fn read_connected_work(
@@ -603,6 +632,13 @@ fn read_connected_work_store(
     let settings = store
         .personal_stand_in(identity.user, &identity.device)
         .map_err(|error| error.to_string())?;
+    if !crate::task_runtime::personal_stand_in::matches_delegation_account(
+        &settings,
+        &work["roleId"],
+        &work["source"],
+    ) {
+        return Err("Work belongs to a different DingTalk account".into());
+    }
     let roles = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
     let role = roles
         .iter()
@@ -757,6 +793,20 @@ async fn reply_to_work(
     let source =
         crate::task_runtime::personal_stand_in::stand_in_connection(role, &message["source"])
             .ok_or("Source connection was removed; reply was not sent")?;
+    if !email && crate::task_runtime::personal_stand_in::is_primary_dingtalk(role, source) {
+        if source["delegated"] == true || !identity.ask_before_act {
+            return Err(
+                "Automatic primary DingTalk replies require an eligible delegation decision".into(),
+            );
+        }
+        if !crate::task_runtime::personal_stand_in::matches_delegation_account(
+            &settings,
+            &record["roleId"],
+            &message["source"],
+        ) {
+            return Err("Work belongs to a different DingTalk account".into());
+        }
+    }
     if !identity.ask_before_act
         && (role["enabled"] != true || source["policy"]["automatic"] != true)
     {

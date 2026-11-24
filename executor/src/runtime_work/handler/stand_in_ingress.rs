@@ -2,6 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
+    active_delegated_source, is_primary_dingtalk, requires_dingtalk_delegation,
     source_collection_namespace, source_provider, stand_in_collection_connection,
     stand_in_identities,
 };
@@ -170,14 +171,32 @@ impl RuntimeWorkRpcHandler {
                 else {
                     continue;
                 };
+                if work["source"]["delegated"] == true && is_primary_dingtalk(role, &work["source"])
+                {
+                    if active_delegated_source(role, &work["source"]).is_some() {
+                        let work_id = work["id"].as_str().unwrap_or_default();
+                        if let Err(error) = self
+                            .dispatch_connection_work(user, work_id, false, None, None)
+                            .await
+                        {
+                            log_executor_event(
+                                "DingTalk delegation dispatch deferred",
+                                &[("code", error.code)],
+                            );
+                        }
+                    }
+                    continue;
+                }
                 for message in store
                     .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
                     .map_err(settings_error)?
                 {
                     let source = &message["source"];
                     if message["dispatchStatus"] != "pending"
-                        || !stand_in_collection_connection(role, source)
-                            .is_some_and(|connection| connection["policy"]["automatic"] == true)
+                        || !stand_in_collection_connection(role, source).is_some_and(|connection| {
+                            connection["policy"]["automatic"] == true
+                                && !requires_dingtalk_delegation(role, connection)
+                        })
                     {
                         continue;
                     }
@@ -228,6 +247,16 @@ impl RuntimeWorkRpcHandler {
         let outcome = self
             .collect_connection_source(store, user, source, roles, &state, version)
             .await;
+        if source["delegated"] == true
+            && outcome
+                .as_ref()
+                .is_err_and(|error| error.code == "dingtalk_account_changed")
+        {
+            store
+                .invalidate_delegation_account(user, &self.device_id, source, version)
+                .map_err(settings_error)?;
+            return Ok(());
+        }
         save_collection_result(store, user, source, version, &state, outcome)
     }
 
@@ -325,14 +354,20 @@ impl RuntimeWorkRpcHandler {
             message_time(&message["at"])?;
             {
                 for role in roles {
-                    let Some(grant) =
-                        stand_in_collection_connection(role, source).filter(|grant| {
-                            grant["policy"]["automatic"] == true
-                                && source_accepts_message(grant, &message)
-                        })
-                    else {
+                    let Some(grant) = stand_in_collection_connection(role, source) else {
                         continue;
                     };
+                    if requires_dingtalk_delegation(role, grant) {
+                        if let Some(grant) = active_delegated_source(role, source) {
+                            self.store_delegated_event(store, user, role, grant, &message)?;
+                        }
+                        continue;
+                    }
+                    if grant["policy"]["automatic"] != true
+                        || !source_accepts_message(grant, &message)
+                    {
+                        continue;
+                    }
                     let role = &role["id"];
                     // A shared poll starts at the earliest activation. Dispatch and
                     // later receipt matching use this recipient's concrete grant.
@@ -359,7 +394,8 @@ impl RuntimeWorkRpcHandler {
             }
             for role in roles.iter().filter(|role| {
                 stand_in_collection_connection(role, source).is_some_and(|connection| {
-                    connection["policy"]["automatic"] != true
+                    !requires_dingtalk_delegation(role, connection)
+                        && connection["policy"]["automatic"] != true
                         && source_accepts_message(connection, &message)
                 })
             }) {
@@ -435,6 +471,11 @@ fn collection_sources(
         .filter(|identity| identity["enabled"] == true)
     {
         for source in identity["connections"].as_array().into_iter().flatten() {
+            if requires_dingtalk_delegation(identity, source)
+                && active_delegated_source(identity, source).is_none()
+            {
+                continue;
+            }
             let key = json!([
                 source_collection_namespace(source),
                 source["kind"],
