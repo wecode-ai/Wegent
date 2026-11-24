@@ -83,6 +83,7 @@ jobs:
             git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$changed_files"
             while IFS= read -r path; do
               case "$path" in
+                wework/src/api/runtime/*|wework/src/stream/*|wework/src/e2e/runtime-config.ts|\
                 wework/src/components/chat/*|wework/src/components/layout/*|\
                 wework/src/features/notifications/*|wework/src/features/workbench/*|\
                 wework/electron/*|wework/scripts/profile-renderer*|wework/scripts/ai-verify-devtools*|\
@@ -90,6 +91,7 @@ jobs:
                 wework/e2e/desktop/modules/response-protocol.mjs|\
                 wework/e2e/desktop/modules/shell-command-response.mjs|\
                 packages/chat-core/*|packages/collaboration/src/conversation/*|\
+                packages/collaboration/src/markdown/*|\
                 executor/src/runtime_work/*|executor/src/agents/codex/*|\
                 .github/workflows/wework-e2e.yml)
                   echo 'renderer_profile=true' >> "$GITHUB_OUTPUT"

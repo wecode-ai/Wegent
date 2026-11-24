@@ -265,6 +265,7 @@ async function measureConcurrentTasks({
   windowState,
   pids,
   concurrentResponses,
+  getForegroundToolsSent,
   startConcurrent,
   finishConcurrent,
   streamMilestones,
@@ -316,6 +317,15 @@ async function measureConcurrentTasks({
     })
     assert.equal(result.accepted, true, `The executor did not admit ${taskId}`)
     deviceId ??= result.deviceId
+  }
+  for (let offset = 0; offset < foregroundToolCalls; offset += foregroundToolBatch) {
+    const sent = Math.min(offset + foregroundToolBatch, foregroundToolCalls)
+    await waitForValue(
+      getForegroundToolsSent,
+      count => count >= sent,
+      `Foreground task did not emit history batch ending at tool call ${sent}`,
+      uiTimeoutMs
+    )
   }
   await waitForValue(
     async () => [...concurrentResponses.keys()],
@@ -855,6 +865,7 @@ export function createDesktopScenario({
           windowState,
           pids,
           concurrentResponses,
+          getForegroundToolsSent: () => foregroundToolsSent,
           startConcurrent,
           finishConcurrent,
           streamMilestones,
