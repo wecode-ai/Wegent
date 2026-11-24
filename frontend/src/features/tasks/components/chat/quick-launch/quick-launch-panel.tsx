@@ -26,6 +26,7 @@ interface QuickLaunchPanelProps {
   onPresetSelect: (selection: QuickPresetSelection) => void
   currentMode: TeamModeFilter
   defaultTeam?: Team | null
+  recommendedTeam?: Team | null
   launchIntent?: QuickLaunchIntent | null
   onLaunchIntentConsumed?: () => void
   renderMoreButton?: () => ReactNode
@@ -39,6 +40,7 @@ export function QuickLaunchPanel({
   onPresetSelect,
   currentMode,
   defaultTeam,
+  recommendedTeam,
   launchIntent,
   onLaunchIntentConsumed,
   renderMoreButton,
@@ -59,7 +61,7 @@ export function QuickLaunchPanel({
     isLoading: isQuickLaunchLoading,
     systemLaunchers,
     favoriteLaunchers,
-  } = useQuickLaunchers({ currentMode, defaultTeam })
+  } = useQuickLaunchers({ currentMode, defaultTeam, recommendedTeam })
   const currentTargetPage = getCurrentTargetPageByMode(currentMode)
 
   const shouldNavigateToLauncherPage = useCallback(
@@ -168,7 +170,7 @@ export function QuickLaunchPanel({
     }
   }, [launchIntent, systemLaunchers, favoriteLaunchers, activateLauncher])
 
-  if (isQuickLaunchLoading) {
+  if (isQuickLaunchLoading && !recommendedTeam) {
     return (
       <div className="mx-auto mt-6 h-[108px] w-full max-w-[820px] animate-pulse rounded-lg bg-surface" />
     )

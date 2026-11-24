@@ -19,7 +19,7 @@ beforeEach(() => {
 it('reads an explicit agent independently of the paginated catalog', async () => {
   getTeam.mockResolvedValue(team)
   const { result } = renderHook(() => useUrlTeam('65', true))
-  await waitFor(() => expect(result.current).toBe(team))
+  await waitFor(() => expect(result.current.team).toBe(team))
   expect(getTeam).toHaveBeenCalledWith(65, expect.any(AbortSignal))
 })
 
@@ -32,15 +32,15 @@ it('ignores stale responses after URL and account changes', async () => {
   })
   const signal = getTeam.mock.calls[0][1]
   rerender({ id: '66' })
-  await waitFor(() => expect(result.current?.id).toBe(66))
+  await waitFor(() => expect(result.current.team?.id).toBe(66))
   await act(async () => resolveOld(team))
   expect(signal?.aborted).toBe(true)
-  expect(result.current?.id).toBe(66)
+  expect(result.current.team?.id).toBe(66)
 
   mockUserId = 2
   getTeam.mockReturnValueOnce(new Promise(() => {}))
   rerender({ id: '66' })
-  expect(result.current).toBeNull()
+  expect(result.current).toEqual({ team: null, failed: false })
 })
 
 it.each([null, '', 'bad', '0', '-1', '1.5'])('does not request an invalid ID: %s', id => {
@@ -55,16 +55,15 @@ it('does not contribute to an existing task or after leaving the explicit URL', 
   })
   expect(getTeam).not.toHaveBeenCalled()
   rerender({ enabled: true })
-  await waitFor(() => expect(result.current).toBe(team))
+  await waitFor(() => expect(result.current.team).toBe(team))
   rerender({ enabled: false })
-  expect(result.current).toBeNull()
+  expect(result.current).toEqual({ team: null, failed: false })
 })
 
 it('does not replace an unavailable explicit agent with a catalog default', async () => {
   const log = jest.spyOn(console, 'error').mockImplementation(() => {})
   getTeam.mockRejectedValue(new Error('Forbidden'))
   const { result } = renderHook(() => useUrlTeam('65', true))
-  await waitFor(() => expect(log).toHaveBeenCalled())
-  expect(result.current).toBeNull()
+  await waitFor(() => expect(result.current).toEqual({ team: null, failed: true }))
   log.mockRestore()
 })

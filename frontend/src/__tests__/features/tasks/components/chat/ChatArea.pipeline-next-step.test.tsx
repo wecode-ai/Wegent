@@ -76,7 +76,10 @@ jest.mock('@/features/tasks/hooks/useDefaultTeam', () => ({
   useDefaultTeam: (_mode: string, enabled: boolean) => (enabled ? mockEarlyDefaultTeam : null),
 }))
 jest.mock('@/features/tasks/hooks/useUrlTeam', () => ({
-  useUrlTeam: (_id: string | null, enabled: boolean) => (enabled ? mockUrlTeam : null),
+  useUrlTeam: (_id: string | null, enabled: boolean) => ({
+    team: enabled ? mockUrlTeam : null,
+    failed: false,
+  }),
 }))
 let mockChatAreaSelectedModel: Record<string, unknown> | null = null
 let mockChatAreaAttachments: Array<Record<string, unknown>> = []
@@ -303,8 +306,18 @@ jest.mock(
     }
 )
 jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
-  QuickAccessCards: ({ onTeamSelect }: { onTeamSelect: (team: Team) => void }) => (
-    <button data-testid="quick-access-cards" onClick={() => onTeamSelect(mockSelectedTeam)}>
+  QuickAccessCards: ({
+    onTeamSelect,
+    recommendedTeam,
+  }: {
+    onTeamSelect: (team: Team) => void
+    recommendedTeam?: Team | null
+  }) => (
+    <button
+      data-testid="quick-access-cards"
+      data-recommended-team={recommendedTeam?.id}
+      onClick={() => onTeamSelect(mockSelectedTeam)}
+    >
       Select agent
     </button>
   ),
@@ -313,8 +326,18 @@ jest.mock('@/features/tasks/components/chat/SloganDisplay', () => ({
   SloganDisplay: () => <div data-testid="slogan-display" />,
 }))
 jest.mock('@/features/tasks/components/input/ChatInputCard', () => ({
-  ChatInputCard: ({ canSubmit }: { canSubmit: boolean }) => (
-    <div data-testid="chat-input-card" data-can-submit={String(canSubmit)} />
+  ChatInputCard: ({
+    canSubmit,
+    handleSendMessage,
+  }: {
+    canSubmit: boolean
+    handleSendMessage: (message: string) => Promise<void>
+  }) => (
+    <div data-testid="chat-input-card" data-can-submit={String(canSubmit)}>
+      <button type="button" onClick={() => void handleSendMessage('hello')}>
+        Send test message
+      </button>
+    </div>
   ),
 }))
 jest.mock('@/features/tasks/components/chat/ScrollToBottomIndicator', () => ({
@@ -895,6 +918,7 @@ describe('ChatArea selection while the catalog loads', () => {
     mockRecentTeamIds = [manualTeam.id]
     const { rerender } = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
     expect(mockNewChatTeam?.id).toBe(defaultTeam.id)
+    expect(screen.getByTestId('quick-access-cards')).not.toHaveAttribute('data-recommended-team')
     fireEvent.click(screen.getByTestId('quick-access-cards'))
     mockHandleTeamChange.mockClear()
 
@@ -922,15 +946,29 @@ describe('ChatArea selection while the catalog loads', () => {
     expect(mockHandleTeamChange.mock.calls.every(([team]) => team?.id === 65)).toBe(true)
   })
 
-  it('blocks keyboard submission while an explicit agent is unresolved, then enables it', () => {
+  it('sends the first manual message to the linked agent after it resolves', async () => {
     mockUseStatefulSelection = true
-    mockNewChatParams = new URLSearchParams(`teamId=${mockSelectedTeam.id}`)
-    const view = render(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
-    expect(screen.getByTestId('chat-input-card')).toHaveAttribute('data-can-submit', 'false')
+    mockAutoSentTeamIds = []
+    const catalog = [defaultTeam]
+    const view = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(defaultTeam.id)
 
-    mockUrlTeam = mockSelectedTeam
-    view.rerender(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
+    mockNewChatParams = new URLSearchParams('teamId=65&recommend=1')
+    view.rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(screen.getByTestId('chat-input-card')).toHaveAttribute('data-can-submit', 'false')
+    expect(screen.getByTestId('quick-access-cards')).not.toHaveAttribute('data-recommended-team')
+    fireEvent.click(screen.getByRole('button', { name: 'Send test message' }))
+    expect(mockHandleSendMessage).not.toHaveBeenCalled()
+
+    mockUrlTeam = { ...defaultTeam, id: 65 }
+    view.rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
     expect(screen.getByTestId('chat-input-card')).toHaveAttribute('data-can-submit', 'true')
+    expect(screen.getByTestId('quick-access-cards')).toHaveAttribute('data-recommended-team', '65')
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send test message' }))
+    })
+    expect(mockAutoSentTeamIds).toEqual([65])
+    expect(mockHandleSendMessage).toHaveBeenCalledTimes(1)
   })
 
   it('waits for the requested agent before auto-sending instead of using the catalog default', async () => {
