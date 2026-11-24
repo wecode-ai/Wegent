@@ -123,6 +123,32 @@ function summarize({ timing, cpu, memory, readyMs }) {
   }
 }
 
+async function findMainRenderer(client) {
+  const targets = await client({ action: 'targets' })
+  for (const { id, type, url } of targets) {
+    if (type !== 'window' || !url.includes('/wework/app/') || url.includes('startup-splash')) {
+      continue
+    }
+    let isMain = false
+    try {
+      const { result, exceptionDetails } = await client({
+        action: 'command',
+        target: id,
+        method: 'Runtime.evaluate',
+        params: {
+          expression: 'window.__WEWORK_RUNTIME_CONFIG__?.desktopWindowLabel === "main"',
+          returnByValue: true,
+        },
+      })
+      isMain = !exceptionDetails && result?.value === true
+      if (isMain) return id
+    } finally {
+      if (!isMain) await client({ action: 'detach', target: id })
+    }
+  }
+  throw new Error('The isolated main Wework renderer is unavailable')
+}
+
 export async function withRendererPerformanceBudget(control, { resultDir, name }, verify) {
   const evidence = { limits: RENDERER_PERFORMANCE_BUDGET, cpu: {}, memory: [], readyMs: {} }
   const errors = []
@@ -131,13 +157,8 @@ export async function withRendererPerformanceBudget(control, { resultDir, name }
   try {
     await control.command('focusMainWindow', 'body')
     const client = await createDevtoolsClient(resultDir, 5_000)
-    const target = (await client({ action: 'targets' })).find(
-      entry =>
-        entry.type === 'window' &&
-        entry.url.includes('/wework/app/') &&
-        !entry.url.includes('startup-splash')
-    )?.id
-    assert.ok(target, 'The isolated Wework renderer is unavailable')
+    const target = await findMainRenderer(client)
+    evidence.target = target
     const command = (method, params) => client({ action: 'command', target, method, params })
     detach = () => client({ action: 'detach', target })
     const evaluate = async expression => {
