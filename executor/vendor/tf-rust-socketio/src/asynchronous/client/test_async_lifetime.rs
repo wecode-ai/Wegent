@@ -542,14 +542,14 @@ struct PollingState {
     next_session: AtomicUsize,
     reconnected_poll: AtomicBool,
     behavior: PollingBehavior,
-    close_received: mpsc::UnboundedSender<()>,
+    close_received: mpsc::UnboundedSender<String>,
     close_cancelled: mpsc::UnboundedSender<()>,
 }
 
 struct PollingServer {
     url: String,
     task: JoinHandle<()>,
-    close_received: mpsc::UnboundedReceiver<()>,
+    close_received: mpsc::UnboundedReceiver<String>,
     close_cancelled: mpsc::UnboundedReceiver<()>,
     request_failed: Arc<AtomicBool>,
 }
@@ -676,7 +676,7 @@ async fn serve_polling_request(mut stream: TcpStream, state: Arc<PollingState>) 
             || (matches!(state.behavior, PollingBehavior::StallNamespaceDisconnect)
                 && body == "41/local-executor,"))
     {
-        state.close_received.send(()).unwrap();
+        state.close_received.send(body.clone()).unwrap();
         // Never answer this Close POST. Only cancellation can finish it.
         assert_eq!(stream.read(&mut [0]).await.unwrap(), 0);
         state.close_cancelled.send(()).unwrap();
@@ -865,10 +865,19 @@ async fn assert_manual_disconnect_releases_polling(behavior: PollingBehavior) {
         .expect("manual disconnect must bound an unanswered polling Close POST");
     assert!(matches!(result, Err(crate::Error::IncompleteIo(error))
         if error.kind() == std::io::ErrorKind::TimedOut));
-    tokio::time::timeout(DEADLINE, server.close_received.recv())
+    let packet = tokio::time::timeout(DEADLINE, server.close_received.recv())
         .await
         .expect("manual disconnect must reach the stalled Close send")
         .unwrap();
+    assert_eq!(
+        packet,
+        if matches!(behavior, PollingBehavior::StallNamespaceDisconnect) {
+            "41/local-executor,"
+        } else {
+            "1"
+        },
+        "manual disconnect timed out on the wrong protocol packet"
+    );
     tokio::time::timeout(DEADLINE, server.close_cancelled.recv())
         .await
         .expect("manual disconnect must release the unanswered HTTP connection")
