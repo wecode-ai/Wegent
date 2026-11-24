@@ -6,16 +6,16 @@ import { useStandInInbox } from './useStandInInbox'
 function inboxWork(id: string): StandInInboxWork {
   return {
     id,
-    taskId: id,
-    roleId: '@primary',
-    title: id,
+    taskId: `task-${id}`,
+    roleId: 'assistant-role',
+    title: 'Incoming work',
     source: {
       providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
-      profile: 'fixture-account',
-      id: 'fixture-group',
-      name: 'Fixture group',
+      id: 'group-1',
+      profile: 'dingtalk',
+      name: 'Test group',
       kind: 'group',
-      policy: { automatic: false, askBeforeAct: true },
+      policy: { automatic: true, askBeforeAct: false },
     },
     status: 'pending',
     updatedAt: '2026-01-01T00:00:00Z',
@@ -28,7 +28,9 @@ it('retains same-scope inbox data on failures and owns polling only while enable
   vi.useFakeTimers()
   try {
     const items = [inboxWork('work')]
-    const inbox = vi.fn().mockResolvedValue({ items, sourceErrors: [] })
+    const inbox = vi
+      .fn<StandInExecutorApi['inbox']>()
+      .mockResolvedValue({ items, sourceErrors: [] })
     const api = { inbox } as unknown as StandInExecutorApi
     const { result, rerender, unmount } = renderHook(
       ({ enabled }) => useStandInInbox(api, 7, 'mac', enabled),
@@ -72,9 +74,9 @@ it('retains same-scope inbox data on failures and owns polling only while enable
 it('isolates an API change and refuses to restart polling after a detached read settles', async () => {
   vi.useFakeTimers()
   try {
-    let finish!: (value: { items: StandInInboxWork[]; sourceErrors: [] }) => void
+    let finish!: (value: Awaited<ReturnType<StandInExecutorApi['inbox']>>) => void
     const first = {
-      inbox: vi.fn(
+      inbox: vi.fn<StandInExecutorApi['inbox']>(
         () =>
           new Promise(resolve => {
             finish = resolve
@@ -82,7 +84,9 @@ it('isolates an API change and refuses to restart polling after a detached read 
       ),
     } as unknown as StandInExecutorApi
     const second = {
-      inbox: vi.fn().mockResolvedValue({ items: [inboxWork('new')], sourceErrors: [] }),
+      inbox: vi
+        .fn<StandInExecutorApi['inbox']>()
+        .mockResolvedValue({ items: [inboxWork('new')], sourceErrors: [] }),
     } as unknown as StandInExecutorApi
     const { result, rerender, unmount } = renderHook(({ api }) => useStandInInbox(api, 7, 'mac'), {
       initialProps: { api: first },
