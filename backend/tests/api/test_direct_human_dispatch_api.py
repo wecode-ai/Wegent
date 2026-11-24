@@ -85,6 +85,72 @@ def direct_human_project(test_db: Session, test_user: User) -> CloudProject:
     return project
 
 
+@pytest.mark.parametrize("notify_target", [True, False])
+@pytest.mark.parametrize("assignment_api", ["project", "issue"])
+def test_explicit_self_assignment_wakeup_matches_notification_choice(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+    test_db: Session,
+    direct_human_project: CloudProject,
+    notify_target: bool,
+    assignment_api: str,
+) -> None:
+    project_id = direct_human_project.id
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project_id}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Review release notes",
+            "status": "pending",
+            "notify_assignee": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    issue = created.json()
+    issue_id = issue["id"]
+    cleared = test_client.patch(
+        f"/api/v1/loop-items/{issue_id}",
+        headers=_auth(test_token),
+        json={"version": issue["version"], "assignee_user_id": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    if assignment_api == "project":
+        assigned = test_client.post(
+            f"/api/v1/cloud-projects/{project_id}/loop-items/{issue_id}/assign",
+            headers=_auth(test_token),
+            json={
+                "version": cleared.json()["version"],
+                "assigneeType": "user",
+                "assigneeId": str(test_user.id),
+                "notifyAssignee": notify_target,
+            },
+        )
+        assert assigned.status_code == 200, assigned.text
+        binding = assigned.json()["human_task_binding"]
+    else:
+        assigned = test_client.post(
+            f"/api/v1/loop-items/{issue_id}/assignments",
+            headers=_auth(test_token),
+            json={
+                "target_type": "human",
+                "target_id": str(test_user.id),
+                "notify_target": notify_target,
+            },
+        )
+        assert assigned.status_code == 201, assigned.text
+        binding = assigned.json()["issue"]["human_task_binding"]
+    events = (
+        test_db.query(LoopNode)
+        .filter_by(resource_type="stand_in_issue_event", user_id=test_user.id)
+        .all()
+    )
+    assert len(events) == int(notify_target)
+    if notify_target:
+        assert events[0].metadata_json["itemId"] == issue_id
+        assert events[0].metadata_json["assignmentId"] == binding["assignmentId"]
+
+
 def test_direct_human_assignment_notification_opens_original_issue(
     test_client: TestClient,
     test_token: str,
