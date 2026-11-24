@@ -126,8 +126,7 @@ import {
   registerApplicationActivation,
 } from './host/window-presentation.js'
 import {
-  captureWindowActivationSnapshot,
-  logWindowActivation,
+  logWindowActivationForElectron,
   type WindowActivationEvent,
 } from './host/window-activation-diagnostics.js'
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
@@ -513,7 +512,7 @@ function queueScheme(url: string): void {
  * fields are redacted by the shared formatter.
  */
 function logActivation(event: WindowActivationEvent, target?: BrowserWindow): void {
-  logWindowActivation(event, captureWindowActivationSnapshot({ app, BrowserWindow }, target))
+  logWindowActivationForElectron(event, { app, BrowserWindow }, target)
 }
 
 function openSchemeInMainWindow(url: string): void {
@@ -1233,23 +1232,29 @@ function observeWorkbenchWindowActivity(window: BrowserWindow) {
   window.on('restore', notify)
 }
 
-async function openWorkspaceWindow(input: {
-  label: string
-  route: string
-  title: string
-}): Promise<void> {
+async function openWorkspaceWindow(
+  input: {
+    label: string
+    route: string
+    title: string
+  },
+  activation?: WindowActivationEvent
+): Promise<void> {
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   if (!/^workspace-[a-zA-Z0-9_-]+$/.test(input.label)) {
     throw new Error(`Workspace window label is invalid: ${input.label}`)
   }
   const existing = workspaceWindows.get(input.label)
   if (existing && !existing.isDestroyed()) {
-    presentWindow(existing, {
-      reason: 'workspace-open',
-      initiator: 'user',
-      userInitiated: true,
-      target: input.label,
-    })
+    presentWindow(
+      existing,
+      activation ?? {
+        reason: 'workspace-open',
+        initiator: 'unknown',
+        userInitiated: null,
+        target: input.label,
+      }
+    )
     return
   }
   const dshUrl = desktopRuntime.coreDshUrl()
@@ -1288,12 +1293,15 @@ async function openWorkspaceWindow(input: {
     await workspaceWindow.loadURL(target.toString(), {
       extraHeaders: `X-Wework-Window-Label: ${input.label}`,
     })
-    presentWindow(workspaceWindow, {
-      reason: 'workspace-open',
-      initiator: 'user',
-      userInitiated: true,
-      target: input.label,
-    })
+    presentWindow(
+      workspaceWindow,
+      activation ?? {
+        reason: 'workspace-open',
+        initiator: 'unknown',
+        userInitiated: null,
+        target: input.label,
+      }
+    )
   } catch (error) {
     workspaceWindows.delete(input.label)
     workspaceWindow.destroy()
@@ -1305,7 +1313,12 @@ async function restoreFixedWorkspaceWindows(): Promise<void> {
   const descriptors = fixedWorkspaceWindowDescriptors(await requiredPreferences().read())
   await Promise.all(
     descriptors.map(descriptor =>
-      openWorkspaceWindow(descriptor).catch(error => {
+      openWorkspaceWindow(descriptor, {
+        reason: 'workspace-restore',
+        initiator: 'system',
+        userInitiated: null,
+        target: descriptor.label,
+      }).catch(error => {
         console.error(`[workspace-window] failed to restore ${descriptor.label}`, error)
       })
     )
@@ -1452,16 +1465,16 @@ async function createAuxiliaryWindow(
  * resizable window that loads the renderer's /process-explorer route, mirroring
  * how the popout and system-drag auxiliary windows are created.
  */
-async function openProcessExplorerWindow(): Promise<void> {
+async function openProcessExplorerWindow(activation?: WindowActivationEvent): Promise<void> {
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const existing = processExplorerWindow
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore()
     logActivation(
-      {
+      activation ?? {
         reason: 'process-explorer-open',
-        initiator: 'user',
-        userInitiated: true,
+        initiator: 'unknown',
+        userInitiated: null,
         target: 'process-explorer',
       },
       existing
@@ -1505,10 +1518,10 @@ async function openProcessExplorerWindow(): Promise<void> {
     })
     await waitForRendererSelector(window.webContents, '[data-testid="process-explorer-window"]')
     logActivation(
-      {
+      activation ?? {
         reason: 'process-explorer-open',
-        initiator: 'user',
-        userInitiated: true,
+        initiator: 'unknown',
+        userInitiated: null,
         target: 'process-explorer',
       },
       window
@@ -1573,7 +1586,7 @@ async function showSystemDragPanel(): Promise<number> {
   return presentationId
 }
 
-async function showPopoutWindow(): Promise<void> {
+async function showPopoutWindow(activation?: WindowActivationEvent): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
   await popoutWindowReadyPromise
   if (keepE2EWindowInBackground) {
@@ -1586,12 +1599,15 @@ async function showPopoutWindow(): Promise<void> {
     Math.round(display.workArea.x + (display.workArea.width - bounds.width) / 2),
     Math.round(display.workArea.y + (display.workArea.height - bounds.height) / 2)
   )
-  presentWindow(target, {
-    reason: 'popout-show',
-    initiator: 'user',
-    userInitiated: true,
-    target: 'popout',
-  })
+  presentWindow(
+    target,
+    activation ?? {
+      reason: 'popout-show',
+      initiator: 'unknown',
+      userInitiated: null,
+      target: 'popout',
+    }
+  )
 }
 
 async function togglePopoutWindow(): Promise<void> {
@@ -1599,7 +1615,12 @@ async function togglePopoutWindow(): Promise<void> {
     popoutWindow.hide()
     return
   }
-  await showPopoutWindow()
+  await showPopoutWindow({
+    reason: 'popout-show',
+    initiator: 'user',
+    userInitiated: true,
+    target: 'popout',
+  })
 }
 
 async function waitWithBudget(task: Promise<void>, budgetMs: number): Promise<void> {
@@ -2041,7 +2062,12 @@ function revealApplicationMenuWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (window.isMinimized()) window.restore()
   logActivation(
-    { reason: 'menu-reveal', initiator: 'user', userInitiated: true, target: 'main' },
+    {
+      reason: 'menu-reveal',
+      initiator: 'user',
+      userInitiated: true,
+      target: menuLabelForWindow(window),
+    },
     window
   )
   window.show()
@@ -2099,7 +2125,13 @@ function installApplicationMenu(): void {
     },
     openDevTools: window => openWindowDevTools(window),
     openLogDirectory: openApplicationLogDirectory,
-    openProcessExplorer: openProcessExplorerWindow,
+    openProcessExplorer: () =>
+      openProcessExplorerWindow({
+        reason: 'process-explorer-open',
+        initiator: 'user',
+        userInitiated: true,
+        target: 'process-explorer',
+      }),
     showMain: () =>
       reactivateMainWindow({
         reason: 'menu-show-main',
@@ -2985,8 +3017,8 @@ async function configureDesktopRuntime(): Promise<void> {
           showMain: () =>
             reactivateMainWindow({
               reason: 'show-main',
-              initiator: 'user',
-              userInitiated: true,
+              initiator: 'unknown',
+              userInitiated: null,
               target: 'main',
             }),
           closeWorkspace: label => {
@@ -3022,7 +3054,12 @@ async function configureDesktopRuntime(): Promise<void> {
             if (owner !== systemDragPresentationId) return false
             pendingSystemDrops.push(payload)
             desktopHostEvents.publish('systemDrag.pending', {})
-            await showPopoutWindow()
+            await showPopoutWindow({
+              reason: 'popout-show',
+              initiator: 'system',
+              userInitiated: null,
+              target: 'popout',
+            })
             return owner === systemDragPresentationId
           },
           dismissPopout: () => popoutWindow?.hide(),

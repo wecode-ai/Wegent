@@ -46,7 +46,7 @@ export interface AppshotDriver {
 export interface AppshotsServiceOptions {
   captureRoot: string
   events: AppshotEventPublisher
-  showMain: () => void | Promise<void>
+  showMain: (origin: 'shortcut' | 'capability') => void | Promise<void>
   playSound?: () => void | Promise<void>
   platform?: NodeJS.Platform
   appPid?: number
@@ -90,7 +90,7 @@ export class AppshotsService {
     this.createId = options.createId ?? randomUUID
     this.shortcutController = new GlobalShortcutController(
       options.shortcutRegistry ?? globalShortcut,
-      () => this.capture(),
+      () => this.capture('shortcut'),
       error => this.reportFailure(error)
     )
   }
@@ -135,7 +135,7 @@ export class AppshotsService {
     await this.openAccessibilitySettings()
   }
 
-  async capture(): Promise<void> {
+  async capture(origin: 'shortcut' | 'capability' = 'capability'): Promise<void> {
     if (this.stopped) throw new Error('Appshots are stopping')
     if (this.platform !== 'darwin') {
       throw new Error('Appshots are available only on macOS')
@@ -204,7 +204,7 @@ export class AppshotsService {
       })
       completed = true
       void Promise.resolve()
-        .then(() => this.options.showMain())
+        .then(() => this.options.showMain(origin))
         .catch(error => {
           console.error('[appshots] Captured the window but could not reveal Wework', error)
         })

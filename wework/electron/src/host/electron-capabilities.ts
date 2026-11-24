@@ -718,7 +718,7 @@ export function createElectronCapabilityRouter(
     return appshots
   }
   router.register('appshots.getStatus', () => requireAppshots().status())
-  router.register('appshots.capture', () => requireAppshots().capture())
+  router.register('appshots.capture', () => requireAppshots().capture('capability'))
   router.register('appshots.openPermissionSettings', params => {
     const permission = enumParam(params, 'permission', ['screenCapture', 'accessibility'])
     if (permission !== 'screenCapture' && permission !== 'accessibility') {

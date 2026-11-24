@@ -172,6 +172,8 @@ export class EmbeddedBrowserManager {
   private readonly agentControlPaused = new Set<string>()
   private readonly agentActive = new Set<string>()
   private readonly lastAgentStatuses = new Map<string, string>()
+  private readonly backgroundOperationsLogged = new Set<string>()
+  private readonly backgroundNavigationsLogged = new Set<string>()
   private readonly agentApprovals = new BrowserAgentApprovals(label =>
     this.emitAgentState(label, 'idle')
   )
@@ -322,7 +324,7 @@ export class EmbeddedBrowserManager {
     logWindowActivation(
       {
         reason: 'browser-background-create',
-        initiator: 'agent',
+        initiator: 'plugin',
         userInitiated: false,
         target: 'browser',
         label: normalizedId,
@@ -364,6 +366,7 @@ export class EmbeddedBrowserManager {
     view.webContents.once('destroyed', () => {
       if (this.backgroundPages.get(normalizedId)?.view === view) {
         this.backgroundPages.delete(normalizedId)
+        this.backgroundNavigationsLogged.delete(normalizedId)
       }
     })
     return this.backgroundPageState(normalizedId)
@@ -371,17 +374,20 @@ export class EmbeddedBrowserManager {
 
   async navigateBackgroundPage(id: string, rawUrl: string): Promise<BrowserBackgroundPageState> {
     const entry = this.requiredBackgroundPage(id)
-    logWindowActivation(
-      {
-        reason: 'browser-background-navigate',
-        initiator: 'agent',
-        userInitiated: false,
-        target: 'browser',
-        label: id,
-        url: rawUrl,
-      },
-      captureWindowActivationSnapshot({ app, BrowserWindow })
-    )
+    if (!app.isActive() && !this.backgroundNavigationsLogged.has(id)) {
+      this.backgroundNavigationsLogged.add(id)
+      logWindowActivation(
+        {
+          reason: 'browser-background-navigate',
+          initiator: 'plugin',
+          userInitiated: false,
+          target: 'browser',
+          label: id,
+          url: rawUrl,
+        },
+        captureWindowActivationSnapshot({ app, BrowserWindow })
+      )
+    }
     entry.navigationError = null
     entry.httpResponseCode = null
     entry.httpStatusText = null
@@ -542,8 +548,8 @@ export class EmbeddedBrowserManager {
       logWindowActivation(
         {
           reason: isNewEntry ? 'browser-open' : 'browser-reopen',
-          initiator: 'agent',
-          userInitiated: false,
+          initiator: 'unknown',
+          userInitiated: null,
           target: 'browser',
           label,
           agentActive: this.agentActive.has(label),
@@ -908,6 +914,12 @@ export class EmbeddedBrowserManager {
       this.lastAgentStatuses.delete(fromLabel)
       this.lastAgentStatuses.set(target, previousAgentStatus)
     }
+    if (this.backgroundOperationsLogged.delete(fromLabel)) {
+      this.backgroundOperationsLogged.add(target)
+    }
+    if (this.backgroundNavigationsLogged.delete(fromLabel)) {
+      this.backgroundNavigationsLogged.add(target)
+    }
     if (attached && !attached.isDestroyed()) this.resolveAttachmentWaiters(target, attached)
   }
 
@@ -979,6 +991,7 @@ export class EmbeddedBrowserManager {
     const awaitingApproval =
       approval &&
       (status === 'idle' || status === 'running' || detail.errorCode === 'approval_required')
+    const effectiveStatus = awaitingApproval ? 'needs_user' : status
     if (status === 'running') {
       this.agentActive.add(normalizedLabel)
       this.clearAgentCursorHide(normalizedLabel)
@@ -987,11 +1000,16 @@ export class EmbeddedBrowserManager {
       if (status === 'idle') this.scheduleAgentCursorHide(normalizedLabel)
       else this.hideAgentCursor(normalizedLabel)
     }
-    const previousAgentStatus = this.lastAgentStatuses.get(normalizedLabel)
-    this.lastAgentStatuses.set(normalizedLabel, status)
-    const crossedIdleBoundary =
-      (previousAgentStatus === undefined || previousAgentStatus === 'idle') !== (status === 'idle')
-    if (crossedIdleBoundary || !app.isActive()) {
+    const previousAgentStatus = this.lastAgentStatuses.get(normalizedLabel) ?? 'idle'
+    this.lastAgentStatuses.set(normalizedLabel, effectiveStatus)
+    const wasEngaged = previousAgentStatus === 'running' || previousAgentStatus === 'needs_user'
+    const isEngaged = effectiveStatus === 'running' || effectiveStatus === 'needs_user'
+    const crossedEngagementBoundary = wasEngaged !== isEngaged
+    const approvalRequested =
+      effectiveStatus === 'needs_user' && previousAgentStatus !== 'needs_user'
+    const firstBackgroundOperation =
+      !app.isActive() && !this.backgroundOperationsLogged.has(normalizedLabel)
+    if (crossedEngagementBoundary || approvalRequested || firstBackgroundOperation) {
       logWindowActivation(
         {
           reason: 'agent-control',
@@ -1000,9 +1018,11 @@ export class EmbeddedBrowserManager {
           target: 'browser',
           label: normalizedLabel,
           agentActive: this.agentActive.has(normalizedLabel),
+          agentStatus: effectiveStatus,
         },
         captureWindowActivationSnapshot({ app, BrowserWindow })
       )
+      if (firstBackgroundOperation) this.backgroundOperationsLogged.add(normalizedLabel)
     }
     this.emit('agent-state', {
       label: normalizedLabel,
@@ -1163,6 +1183,8 @@ export class EmbeddedBrowserManager {
     this.agentControlPaused.delete(label)
     this.agentActive.delete(label)
     this.lastAgentStatuses.delete(label)
+    this.backgroundOperationsLogged.delete(label)
+    this.backgroundNavigationsLogged.delete(label)
     this.clearAgentCursorHide(label)
     this.agentCursorStates.delete(label)
     this.agentCursorArrivals.delete(label)

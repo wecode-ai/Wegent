@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
-  captureWindowActivationSnapshot,
+  captureWindowActivationSnapshotSafe,
   formatWindowActivationLine,
-  logWindowActivation,
+  logWindowActivationForElectron,
   noteWindowActivationRequest,
   redactUrl,
   takeCorrelatedActivationRequest,
@@ -30,6 +30,21 @@ describe('redactUrl', () => {
     )
   })
 
+  test('redacts userinfo credentials', () => {
+    expect(redactUrl('wework://user:secret@host/path?token=abc')).toBe(
+      'wework://redacted:redacted@host/path?token=*'
+    )
+  })
+
+  test('redacts the opaque requestKey of interaction deep links', () => {
+    expect(redactUrl('wework://interactions/dev-1/task-9/request-abc')).toBe(
+      'wework://interactions/dev-1/task-9/*'
+    )
+    expect(redactUrl('wework://tasks/local:device/task-1')).toBe(
+      'wework://tasks/local:device/task-1'
+    )
+  })
+
   test('flattens control characters and caps the length of unparseable input', () => {
     const raw = `not-a-url\n${'x'.repeat(400)}`
     const redacted = redactUrl(raw)
@@ -39,7 +54,7 @@ describe('redactUrl', () => {
 })
 
 describe('formatWindowActivationLine', () => {
-  const before = captureWindowActivationSnapshot(fakeElectron, {
+  const before = captureWindowActivationSnapshotSafe(fakeElectron, {
     id: 9,
     isDestroyed: () => false,
     isVisible: () => false,
@@ -70,14 +85,18 @@ describe('formatWindowActivationLine', () => {
     expect(payload.focusedWindowIdAfter).toBe(9)
   })
 
-  test('omits fields that are not provided', () => {
-    const line = formatWindowActivationLine(
-      { reason: 'did-become-active', initiator: 'external_or_user', userInitiated: null },
-      { appActive: true, appHidden: null, dockVisible: null, focusedWindowId: null }
-    )
+  test('omits fields that are not provided, including missing snapshots', () => {
+    const line = formatWindowActivationLine({
+      reason: 'did-become-active',
+      initiator: 'agent',
+      userInitiated: false,
+      activationOutcome: 'requested',
+      requestedReason: 'popout-show',
+    })
     const payload = JSON.parse(line.slice('[window-activation] '.length)) as Record<string, unknown>
-    expect(payload.userInitiated).toBeNull()
-    expect(payload.url).toBeUndefined()
+    expect(payload.activationOutcome).toBe('requested')
+    expect(payload.requestedReason).toBe('popout-show')
+    expect(payload.appActiveBefore).toBeUndefined()
     expect(payload.appActiveAfter).toBeUndefined()
   })
 })
@@ -92,21 +111,43 @@ describe('activation request correlation', () => {
     vi.useRealTimers()
   })
 
-  test('returns the newest request once and null afterwards', () => {
-    const correlationId = noteWindowActivationRequest()
-    expect(takeCorrelatedActivationRequest()).toBe(correlationId)
+  test('returns the newest request with its origin once and null afterwards', () => {
+    const correlationId = noteWindowActivationRequest({
+      reason: 'popout-show',
+      initiator: 'user',
+      userInitiated: true,
+      target: 'popout',
+    })
+    const pending = takeCorrelatedActivationRequest()
+    expect(pending?.correlationId).toBe(correlationId)
+    expect(pending?.reason).toBe('popout-show')
+    expect(pending?.initiator).toBe('user')
+    expect(pending?.userInitiated).toBe(true)
+    expect(pending?.target).toBe('popout')
     expect(takeCorrelatedActivationRequest()).toBeNull()
   })
 
   test('expires requests outside the correlation window', () => {
-    noteWindowActivationRequest()
+    noteWindowActivationRequest({ reason: 'popout-show', initiator: 'user', userInitiated: true })
     vi.advanceTimersByTime(6000)
     expect(takeCorrelatedActivationRequest()).toBeNull()
   })
 })
 
-describe('logWindowActivation', () => {
-  test('emits a single console line and never throws on hostile payloads', () => {
+describe('diagnostics safety boundary', () => {
+  test('a throwing Electron accessor leaves the snapshot undefined', () => {
+    const throwingElectron = {
+      app: {
+        isActive: () => {
+          throw new Error('boom')
+        },
+      },
+      BrowserWindow: { getFocusedWindow: () => null },
+    }
+    expect(captureWindowActivationSnapshotSafe(throwingElectron)).toBeUndefined()
+  })
+
+  test('capture, format, and console failures never reach the caller', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     const hostile = {
       toString: () => {
@@ -114,9 +155,9 @@ describe('logWindowActivation', () => {
       },
     } as unknown as string
     expect(() =>
-      logWindowActivation(
+      logWindowActivationForElectron(
         { reason: 'browser-open', initiator: 'agent', userInitiated: false, url: hostile },
-        { appActive: true, appHidden: null, dockVisible: null, focusedWindowId: null }
+        fakeElectron
       )
     ).not.toThrow()
     expect(info).not.toHaveBeenCalled()

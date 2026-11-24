@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import {
-  captureWindowActivationSnapshot,
+  captureWindowActivationSnapshotSafe,
   logWindowActivation,
   noteWindowActivationRequest,
   takeCorrelatedActivationRequest,
@@ -52,20 +52,24 @@ export function registerApplicationActivation(
     void actions.openWorkbenchWindow().catch(actions.reportError)
   })
   application.on('did-become-active', () => {
-    const correlatedRequestId = takeCorrelatedActivationRequest()
+    const correlated = takeCorrelatedActivationRequest()
     // An activation without a recent programmatic request is an external or
     // user switch (Cmd+Tab, LaunchServices, system resume). It must never
     // produce a focus-steal diagnostic line; only a correlated activation
-    // confirms that a presentation request reached the OS.
-    if (correlatedRequestId) {
+    // confirms that a presentation request reached the OS, and it keeps the
+    // original request's initiator instead of guessing one here.
+    if (correlated) {
       logWindowActivation(
         {
           reason: 'did-become-active',
-          initiator: 'external_or_user',
-          userInitiated: null,
-          correlationId: correlatedRequestId,
+          initiator: correlated.initiator,
+          userInitiated: correlated.userInitiated,
+          target: correlated.target,
+          correlationId: correlated.correlationId,
+          activationOutcome: 'requested',
+          requestedReason: correlated.reason,
         },
-        captureWindowActivationSnapshot(activationElectron)
+        captureWindowActivationSnapshotSafe(activationElectron)
       )
     }
     if (actions.keepInBackground()) application.hide()
@@ -86,15 +90,32 @@ export function createSingleFlight<T>(action: () => Promise<T>): () => Promise<T
 
 export function presentWindow(target: PresentableWindow, info: PresentationInfo): boolean {
   if (target.isDestroyed()) return false
-  const before = captureWindowActivationSnapshot(activationElectron, target)
-  const correlationId = noteWindowActivationRequest()
+  const before = captureWindowActivationSnapshotSafe(activationElectron, target)
+  let correlationId: string | undefined
+  if (before && before.appActive === false) {
+    try {
+      // macOS may deliver did-become-active synchronously during focus(), so
+      // the correlation request must be registered before the presentation.
+      // Only an app that was inactive before the presentation may register
+      // one; while the app is already active the before/after snapshots carry
+      // the evidence, and an unrelated user switch inside the correlation
+      // window must not be misattributed to this presentation.
+      correlationId = noteWindowActivationRequest({
+        reason: info.reason,
+        initiator: info.initiator,
+        userInitiated: info.userInitiated,
+        target: info.target,
+      })
+    } catch {
+      correlationId = undefined
+    }
+  }
   if (target.isMinimized()) target.restore()
   target.show()
   target.focus()
   if (!target.webContents.isDestroyed()) target.webContents.focus()
-  // macOS activates asynchronously: take the after snapshot one event-loop
-  // tick later so it reflects the settled state, and leave the correlation id
-  // for the following did-become-active event.
+  // macOS settles asynchronously: capture the after snapshot and emit the
+  // line one event-loop tick later, inside the diagnostics safety boundary.
   const settleTimer = setTimeout(() => {
     logWindowActivation(
       {
@@ -106,7 +127,7 @@ export function presentWindow(target: PresentableWindow, info: PresentationInfo)
         correlationId,
       },
       before,
-      captureWindowActivationSnapshot(activationElectron, target)
+      captureWindowActivationSnapshotSafe(activationElectron, target)
     )
   }, 0)
   settleTimer.unref()

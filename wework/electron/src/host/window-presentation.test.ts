@@ -8,8 +8,16 @@ import {
   type PresentableWindow,
 } from './window-presentation.js'
 
+const electronMocks = vi.hoisted(() => ({ appActive: false, throwOnActive: false }))
+
 vi.mock('electron', () => ({
-  app: { isActive: () => false, isHidden: () => false },
+  app: {
+    isActive: () => {
+      if (electronMocks.throwOnActive) throw new Error('isActive failed')
+      return electronMocks.appActive
+    },
+    isHidden: () => false,
+  },
   BrowserWindow: { getFocusedWindow: () => null },
 }))
 
@@ -19,34 +27,58 @@ const testPresentation = {
   userInitiated: null,
 }
 
+async function flushPresentationLogging(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 5))
+}
+
+function activationHarness() {
+  const application = Object.assign(new EventEmitter(), { hide: vi.fn() })
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  return { application, info }
+}
+
+function activationLines(info: ReturnType<typeof vi.spyOn>): Array<Record<string, unknown>> {
+  return info.mock.calls
+    .map(([line]) => (typeof line === 'string' ? line : ''))
+    .filter(line => line.startsWith('[window-activation] '))
+    .map(line => JSON.parse(line.slice('[window-activation] '.length)) as Record<string, unknown>)
+}
+
 describe('application activation', () => {
-  function setup(keepInBackground = false) {
+  test('does not reactivate the workbench when focusing an auxiliary window activates the app', () => {
     const application = Object.assign(new EventEmitter(), { hide: vi.fn() })
     const actions = {
-      keepInBackground: () => keepInBackground,
+      keepInBackground: () => false,
       openWorkbenchWindow: vi.fn(async () => undefined),
       reportError: vi.fn(),
     }
     registerApplicationActivation(application, actions)
-    return { application, actions }
-  }
-
-  test('does not reactivate the workbench when focusing an auxiliary window activates the app', () => {
-    const { application, actions } = setup()
     application.emit('did-become-active')
     expect(actions.openWorkbenchWindow).not.toHaveBeenCalled()
     expect(application.hide).not.toHaveBeenCalled()
   })
 
   test('still reactivates the workbench for an explicit Dock activation', () => {
-    const { application, actions } = setup()
+    const application = Object.assign(new EventEmitter(), { hide: vi.fn() })
+    const actions = {
+      keepInBackground: () => false,
+      openWorkbenchWindow: vi.fn(async () => undefined),
+      reportError: vi.fn(),
+    }
+    registerApplicationActivation(application, actions)
     application.emit('activate')
     application.emit('did-become-active')
     expect(actions.openWorkbenchWindow).toHaveBeenCalledOnce()
   })
 
   test('preserves background verification until foreground activation is allowed', () => {
-    const { application, actions } = setup(true)
+    const application = Object.assign(new EventEmitter(), { hide: vi.fn() })
+    const actions = {
+      keepInBackground: () => true,
+      openWorkbenchWindow: vi.fn(async () => undefined),
+      reportError: vi.fn(),
+    }
+    registerApplicationActivation(application, actions)
     application.emit('activate')
     application.emit('did-become-active')
     expect(actions.openWorkbenchWindow).not.toHaveBeenCalled()
@@ -54,12 +86,110 @@ describe('application activation', () => {
   })
 
   test('reports a workbench activation failure', async () => {
-    const { application, actions } = setup()
+    const application = Object.assign(new EventEmitter(), { hide: vi.fn() })
+    const actions = {
+      keepInBackground: () => false,
+      openWorkbenchWindow: vi.fn(async () => undefined),
+      reportError: vi.fn(),
+    }
+    registerApplicationActivation(application, actions)
     const error = new Error('Window unavailable')
     actions.openWorkbenchWindow.mockRejectedValueOnce(error)
     application.emit('activate')
     await Promise.resolve()
     expect(actions.reportError).toHaveBeenCalledWith(error)
+  })
+})
+
+describe('did-become-active correlation', () => {
+  test('attributes an activation that follows a background presentation', async () => {
+    electronMocks.appActive = false
+    const { application, info } = activationHarness()
+    const actions = {
+      keepInBackground: () => false,
+      openWorkbenchWindow: vi.fn(async () => undefined),
+      reportError: vi.fn(),
+    }
+    registerApplicationActivation(application, actions)
+    const { target } = createWindow()
+    presentWindow(target, {
+      reason: 'popout-show',
+      initiator: 'user',
+      userInitiated: true,
+      target: 'popout',
+    })
+    application.emit('did-become-active')
+    await flushPresentationLogging()
+
+    const lines = activationLines(info)
+    const didBecomeActive = lines.find(line => line.reason === 'did-become-active')
+    expect(didBecomeActive).toBeDefined()
+    expect(didBecomeActive?.initiator).toBe('user')
+    expect(didBecomeActive?.userInitiated).toBe(true)
+    expect(didBecomeActive?.activationOutcome).toBe('requested')
+    expect(didBecomeActive?.requestedReason).toBe('popout-show')
+    info.mockRestore()
+    electronMocks.appActive = false
+  })
+
+  test('does not misattribute a user switch after a presentation while the app was active', async () => {
+    electronMocks.appActive = true
+    const { application, info } = activationHarness()
+    const actions = {
+      keepInBackground: () => false,
+      openWorkbenchWindow: vi.fn(async () => undefined),
+      reportError: vi.fn(),
+    }
+    registerApplicationActivation(application, actions)
+    const { target } = createWindow()
+    presentWindow(target, {
+      reason: 'workspace-open',
+      initiator: 'unknown',
+      userInitiated: null,
+      target: 'workspace-1',
+    })
+    application.emit('did-become-active')
+    await flushPresentationLogging()
+
+    const lines = activationLines(info)
+    expect(lines.find(line => line.reason === 'did-become-active')).toBeUndefined()
+    expect(lines.find(line => line.reason === 'workspace-open')).toBeDefined()
+    info.mockRestore()
+    electronMocks.appActive = false
+  })
+
+  test('consumes the pending request when focus synchronously emits did-become-active', async () => {
+    electronMocks.appActive = false
+    const { application, info } = activationHarness()
+    const actions = {
+      keepInBackground: () => false,
+      openWorkbenchWindow: vi.fn(async () => undefined),
+      reportError: vi.fn(),
+    }
+    registerApplicationActivation(application, actions)
+    const { target } = createWindow()
+    target.focus = vi.fn(() => {
+      application.emit('did-become-active')
+    })
+
+    presentWindow(target, {
+      reason: 'popout-show',
+      initiator: 'user',
+      userInitiated: true,
+      target: 'popout',
+    })
+    await flushPresentationLogging()
+
+    const lines = activationLines(info)
+    const didBecomeActive = lines.find(line => line.reason === 'did-become-active')
+    expect(didBecomeActive).toBeDefined()
+    expect(didBecomeActive?.initiator).toBe('user')
+    expect(didBecomeActive?.activationOutcome).toBe('requested')
+    expect(didBecomeActive?.requestedReason).toBe('popout-show')
+    const presentation = lines.find(line => line.reason === 'popout-show')
+    expect(presentation?.correlationId).toBe(didBecomeActive?.correlationId)
+    info.mockRestore()
+    electronMocks.appActive = false
   })
 })
 
@@ -112,6 +242,23 @@ describe('presentWindow', () => {
     expect(target.focus).toHaveBeenCalledOnce()
     expect(webContents.focus).not.toHaveBeenCalled()
   })
+
+  test('still shows and focuses when every diagnostics accessor throws', async () => {
+    electronMocks.throwOnActive = true
+    const { target: hostileTarget, webContents: hostileContents } = createWindow()
+    hostileTarget.isFocused = () => {
+      throw new Error('isFocused failed')
+    }
+
+    expect(presentWindow(hostileTarget, testPresentation)).toBe(true)
+
+    expect(hostileTarget.show).toHaveBeenCalledOnce()
+    expect(hostileTarget.focus).toHaveBeenCalledOnce()
+    expect(hostileContents.focus).toHaveBeenCalledOnce()
+    await flushPresentationLogging()
+    electronMocks.appActive = false
+    electronMocks.throwOnActive = false
+  })
 })
 
 describe('presentWorkbenchWindow', () => {
@@ -147,7 +294,6 @@ describe('createSingleFlight', () => {
 
     const first = singleFlight()
     const second = singleFlight()
-
     expect(second).toBe(first)
     expect(action).toHaveBeenCalledOnce()
     resolveAction()
