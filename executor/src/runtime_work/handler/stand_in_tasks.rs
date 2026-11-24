@@ -411,6 +411,9 @@ mod operation_tests {
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
         for operation in ["create_task", "continue_task"] {
             let mut settings = store.personal_stand_in(7, "mac").unwrap();
+            if settings["roles"].as_array().unwrap().is_empty() {
+                settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
+            }
             settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
             let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
             store

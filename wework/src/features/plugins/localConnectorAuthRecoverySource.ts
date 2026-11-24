@@ -3,7 +3,7 @@ import type { TFunction } from 'i18next'
 import type { LocalConnectorAuthTarget } from '@/api/local/localConnectorAuth'
 import { localConnectorAuthHealth } from '@/api/local/localConnectorAuth'
 import { GITHUB_CLI_TARGET, isGithubCliTarget } from '@/api/local/githubCli'
-import { latestConnectorAuthMessage, resolveConnectorAuthHint } from './localConnectorAuthGate'
+import { latestConnectorAuthMessage } from './localConnectorAuthGate'
 import type { WorkbenchMessage } from '@/types/workbench'
 
 export interface PendingConnectorAuth {
@@ -54,7 +54,7 @@ export function createLocalConnectorAuthRecoverySource() {
     const candidate = latestConnectorAuthMessage(next.messages)
     const messageId = candidate?.message.id
     const status = candidate?.message.status
-    const hint = resolveConnectorAuthHint(candidate?.text)
+    const hint = candidate?.hint
     const nextScope = JSON.stringify([
       next.active !== false,
       messageId,
@@ -135,7 +135,9 @@ export function createLocalConnectorAuthRecoverySource() {
         handled.add(messageId)
         if (health.status === 'ok') return
         if (health.status !== 'need_login' && health.status !== 'need_scan') {
-          input?.onError?.(input.t('workbench.plugins_local_auth_health_failed'))
+          input?.onError?.(
+            input.t('workbench.plugins_local_auth_health_failed_for', { plugin: hint.displayName })
+          )
           return
         }
         pendingMessageId = messageId
@@ -152,7 +154,9 @@ export function createLocalConnectorAuthRecoverySource() {
             ? input.t('workbench.plugins_local_auth_plugin_missing', {
                 plugin: hint.displayName ?? hint.pluginKey,
               })
-            : input.t('workbench.plugins_local_auth_health_failed')
+            : input.t('workbench.plugins_local_auth_health_failed_for', {
+                plugin: hint.displayName,
+              })
         )
       } finally {
         if (request === probe) request = null

@@ -523,6 +523,7 @@ export function createTemporaryChatSession() {
           noteDraftEdit: () => {
             if (currentScope(requested)) draftEditVersion += 1
           },
+          getDraftEditVersion: () => draftEditVersion,
           markCreatedAddress: (address: RuntimeTaskAddress) => {
             if (currentScope(requested)) {
               createdAddressKey = addressKey(address)

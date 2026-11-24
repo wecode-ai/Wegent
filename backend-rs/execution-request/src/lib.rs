@@ -33,6 +33,8 @@ pub mod skill_generation;
 pub mod subscription_window;
 pub mod tokens;
 
+pub use session_context::normalize_executor_session;
+
 use wegent_execution_preparation::{
     bot_config, ghost, mcp_servers, model_config, reasoning, resolution, skills, subtask_bot,
 };

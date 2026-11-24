@@ -346,6 +346,22 @@ class ExternalLoopItemProvider:
             source="issue",
             content=f"{values.title}\n{values.description}",
         )
+        from app.services.wework_notifications import notify_issue_participation
+
+        target = self._notification_target(project, issue, item_id)
+        notify_issue_participation(
+            db, user_id=user_id, actor_user_id=user_id, target=target, created=True
+        )
+        assignee = self._assignee_from_labels(labels)
+        if (
+            values.notify_assignee
+            and assignee
+            and assignee["type"] == "user"
+            and assignee["id"] != str(user_id)
+        ):
+            notify_issue_participation(
+                db, user_id=int(assignee["id"]), actor_user_id=user_id, target=target
+            )
         if values.assignee_agent_id:
             agent = db.get(ProjectChatAgent, values.assignee_agent_id)
             if agent is None:  # Already validated while building the label.
@@ -370,7 +386,6 @@ class ExternalLoopItemProvider:
                 automation_context=automation_context,
                 instruction=instruction,
             )
-            db.commit()
         elif values.assignee_team_id:
             team = runnable_wegent_team(
                 db, user_id, values.assignee_team_id, project_id=project.id
@@ -393,7 +408,6 @@ class ExternalLoopItemProvider:
                 assigner_user_id=user_id,
                 priority=values.priority,
             )
-            db.commit()
         elif values.assignee_group_id:
             from app.services.workspaces.service import workspace_service
 
@@ -422,7 +436,6 @@ class ExternalLoopItemProvider:
                 group=group,
                 user_id=user_id,
             )
-            db.commit()
         db.commit()
         return self._response(db, project, issue, access, user_id)
 

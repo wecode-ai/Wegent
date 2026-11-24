@@ -200,3 +200,94 @@ fn task_lookup_uses_same_live_execution_state_as_desktop() {
     handler.finish_local_task_execution("task-1", execution_id);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn task_lookup_preserves_sidebar_pin_during_and_after_execution() {
+    // Sidebar state and its operation log use process-wide home directories.
+    const CHILD: &str = "WEGENT_TEST_TASK_LOOKUP_PIN_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let fixture_home = tempfile::tempdir().unwrap();
+        let test_module = module_path!().split_once("::").unwrap().1;
+        let test_name =
+            format!("{test_module}::task_lookup_preserves_sidebar_pin_during_and_after_execution");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &test_name])
+            .env(CHILD, "1")
+            .env("CODEX_HOME", fixture_home.path().join("codex"))
+            .env("WEGENT_WORKBENCH_HOME", fixture_home.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let (handler, root) = isolated_runtime_work_handler("api-pinned-task");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".into(),
+        root.to_string_lossy().into_owned(),
+        "Pinned task".into(),
+    );
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+
+    for thread_id in ["first-thread", "thread-1"] {
+        let result = handler
+            .dispatch(
+                "runtime.sidebar.tasks.pin",
+                json!({ "threadId": thread_id, "pinned": true }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["accepted"], true);
+    }
+    let catalog = handler
+        .dispatch("runtime.tasks.list", json!({ "preferCached": true }))
+        .await
+        .unwrap();
+    let listed = catalog["workspaces"][0]["tasks"][0].clone();
+    assert_eq!(listed["taskId"], "task-1");
+    assert_eq!(listed["pinned"], true);
+    assert_eq!(listed["pinnedOrder"], 1);
+
+    let execution_id = start_test_execution(&handler, "task-1");
+    let address = json!({ "taskId": "task-1" });
+    for running in [true, false] {
+        let task = handler
+            .dispatch("runtime.tasks.get", address.clone())
+            .await
+            .unwrap()["task"]
+            .clone();
+        assert_eq!(task["running"], running);
+        assert_eq!(task["pinned"], listed["pinned"], "running={running}");
+        assert_eq!(
+            task["pinnedOrder"], listed["pinnedOrder"],
+            "running={running}"
+        );
+        if running {
+            finish_test_native_turn(&handler, "task-1", "thread-1");
+            assert!(handler.finish_local_task_execution("task-1", execution_id));
+        }
+    }
+
+    let result = handler
+        .dispatch(
+            "runtime.sidebar.tasks.pin",
+            json!({ "threadId": "thread-1", "pinned": false }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["accepted"], true);
+    let task = handler
+        .dispatch("runtime.tasks.get", address)
+        .await
+        .unwrap()["task"]
+        .clone();
+    assert_eq!(task["pinned"], false);
+    assert!(task.get("pinnedOrder").is_none());
+    fs::remove_dir_all(root).unwrap();
+}

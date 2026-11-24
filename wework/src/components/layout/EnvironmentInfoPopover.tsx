@@ -119,7 +119,6 @@ export function EnvironmentInfoPopover({
     read: () => buildConversationOutputs(messages),
   }
   const commandHandlers: Record<string, ((args?: unknown) => unknown) | undefined> = {
-    'environment.refresh': onRefresh,
     'git.commit': args => onCommitChanges?.(commandStringArgument(args, 'message')),
     'git.commit-and-push': args => onCommitAndPushChanges?.(commandStringArgument(args, 'message')),
     'git.push': onPushChanges,
@@ -263,7 +262,7 @@ export function EnvironmentInfoPopover({
             <div
               data-environment-info-popover
               data-testid="environment-info-popover"
-              className="pointer-events-auto ml-2 mt-3 w-75 rounded-xl border border-border bg-background p-5 text-text-primary shadow-lg"
+              className="pointer-events-auto ml-2 mr-5 mt-3 rounded-xl border border-border bg-background p-5 text-text-primary shadow-lg"
             >
               {content}
             </div>,

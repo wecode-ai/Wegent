@@ -1,0 +1,7 @@
+{
+  "order": 35100,
+  "scenario": "./scenarios/stand-in-shared-settings.scenario.mjs",
+  "scenarioOnly": true,
+  "ciHost": "stand-in-profile-settings",
+  "paths": ["wework/src/features/todo/StandInSettingsLayout.tsx"]
+}

@@ -270,6 +270,16 @@ export function createConversationScrollState(
         (measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport)) > BOTTOM_THRESHOLD,
     })
   }
+  const followEnd = (viewport: HTMLDivElement) => {
+    const nativeHeight = viewport.scrollHeight
+    const engine = readVirtualizer()
+    // Newly mounted overscan Markdown can temporarily extend the DOM beyond
+    // the virtual range. Following that overflow can unmount the same row.
+    const height = engine
+      ? Math.min(nativeHeight, Math.round(engine.getTotalSize() + engine.options.scrollMargin))
+      : nativeHeight
+    return Math.max(0, height - viewport.clientHeight)
+  }
   const follow = (smooth = false) => {
     if (!owned()) return
     if (
@@ -281,7 +291,9 @@ export function createConversationScrollState(
       return
     const viewport = scrollRef.current
     if (!viewport) return
-    const distanceFromBottom = motion.position === null ? getDistanceFromBottom(viewport) : null
+    const end = followEnd(viewport)
+    const distanceFromBottom =
+      motion.position === null ? Math.max(0, end - viewport.scrollTop) : null
     if (distanceFromBottom !== null && distanceFromBottom < 1) {
       cancelMotion()
       save(distanceFromBottom)
@@ -290,7 +302,6 @@ export function createConversationScrollState(
     const animate = smooth || followBehavior === 'smooth' || motion.frame !== null
     if (!animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
       cancelMotion()
-      const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
       writeOffset(end)
       save(Math.max(0, end - (readerState.lastScrollPosition ?? viewport.scrollTop)))
       return
@@ -319,7 +330,7 @@ export function createConversationScrollState(
         cancelMotion()
         return
       }
-      const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+      const end = followEnd(viewport)
       // Keep subpixel progress even when the browser quantizes scrollTop writes.
       const position = Math.min(end, motion.position ?? viewport.scrollTop)
       const lag = Math.max(0, end - position)

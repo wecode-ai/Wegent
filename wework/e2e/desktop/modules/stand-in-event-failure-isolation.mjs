@@ -1,3 +1,4 @@
+import { standInRoleFixture } from './stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -80,8 +81,7 @@ export function createEventFailureIsolation({ executorHome, uiTimeoutMs, modelRe
           roles: [
             ...original.roles.filter(role => role.id !== roleId),
             {
-              ...original.roles[0],
-              id: roleId,
+              ...standInRoleFixture(original.executionDeviceId, roleId),
               name: MESSAGE,
               enabled: true,
               executionDeviceId: original.executionDeviceId,

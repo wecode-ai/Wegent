@@ -49,7 +49,7 @@ export interface WorkbenchStreamOwner {
 }
 
 /** Own native parser registrations and listeners for the lifetime of an actual Workbench tab. */
-export function createWorkbenchSessionStreams(owner: WorkbenchStreamOwner) {
+export function createWorkbenchSessionStreams(owner: WorkbenchStreamOwner, tabId?: string) {
   let services: WorkbenchServices | null = null
   let registration: RuntimeConversationStreamRegistration | null = null
   let unsubscribeWork: (() => void) | null = null
@@ -135,7 +135,7 @@ export function createWorkbenchSessionStreams(owner: WorkbenchStreamOwner) {
         console.debug('[Wework] Local workspace listener was unavailable during cleanup', error)
       )
   }
-  const workListener = installMainRuntimeWorkChangedListener(refreshChangedWork)
+  const workListener = installMainRuntimeWorkChangedListener(refreshChangedWork, tabId)
   function update() {
     if (!owner.canNavigate()) releaseWorkspaceListener()
     else if (!workspaceListener)

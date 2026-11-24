@@ -90,6 +90,42 @@ describe('external link helpers', () => {
     expect(listener).not.toHaveBeenCalled()
     cleanup()
   })
+
+  test('allows same-origin blob download anchors while blocking blob navigation and auxclick', () => {
+    const cleanup = installExternalLinkHandler()
+    const sameOriginBlob = `blob:${window.location.origin}/550e8400-e29b-41d4-a716-446655440000`
+
+    const downloadAnchor = document.createElement('a')
+    downloadAnchor.href = sameOriginBlob
+    downloadAnchor.download = 'video.mp4'
+    document.body.appendChild(downloadAnchor)
+
+    const primaryClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    downloadAnchor.dispatchEvent(primaryClick)
+    expect(primaryClick.defaultPrevented).toBe(false)
+
+    const auxClick = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 })
+    downloadAnchor.dispatchEvent(auxClick)
+    expect(auxClick.defaultPrevented).toBe(true)
+
+    const navAnchor = document.createElement('a')
+    navAnchor.href = sameOriginBlob
+    document.body.appendChild(navAnchor)
+    const navClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    navAnchor.dispatchEvent(navClick)
+    expect(navClick.defaultPrevented).toBe(true)
+
+    const crossOriginAnchor = document.createElement('a')
+    crossOriginAnchor.href = 'blob:https://untrusted.example/550e8400-e29b-41d4-a716-446655440000'
+    crossOriginAnchor.download = 'video.mp4'
+    document.body.appendChild(crossOriginAnchor)
+    const crossOriginClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    crossOriginAnchor.dispatchEvent(crossOriginClick)
+    expect(crossOriginClick.defaultPrevented).toBe(true)
+
+    cleanup()
+  })
+
   test('blocks unsafe document links inside open shadow roots', () => {
     const cleanup = installExternalLinkHandler()
     const host = document.createElement('div')

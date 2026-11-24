@@ -90,12 +90,12 @@ async fn seed(mysql: &MysqlService) {
         .unwrap();
     mysql
         .execute(
-            "CREATE TABLE users (id INT PRIMARY KEY,user_name VARCHAR(100),is_active BOOL)",
+            "CREATE TABLE users (id INT PRIMARY KEY,user_name VARCHAR(100),is_active BOOL,preferences TEXT)",
             (),
         )
         .await
         .unwrap();
-    mysql.execute("INSERT INTO users VALUES (7,'Owner',true),(8,'Participant',true),(9,'Outsider',true),(10,'Inactive',false)",()).await.unwrap();
+    mysql.execute("INSERT INTO users(id,user_name,is_active) VALUES (7,'Owner',true),(8,'Participant',true),(9,'Outsider',true),(10,'Inactive',false)",()).await.unwrap();
     mysql.execute("CREATE TABLE kinds (id BIGINT PRIMARY KEY,user_id INT,name TEXT,kind VARCHAR(50),namespace VARCHAR(100),is_active BOOL,json JSON,created_at DATETIME,updated_at DATETIME)",()).await.unwrap();
     mysql.execute("CREATE TABLE resource_members (id BIGINT PRIMARY KEY AUTO_INCREMENT,resource_type VARCHAR(50),resource_id BIGINT,entity_type VARCHAR(50),entity_id VARCHAR(100),status VARCHAR(50),role VARCHAR(50)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",()).await.unwrap();
     mysql.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,is_active,json) VALUES (2001,7,'Project space','CollaborationWorkspace','default',true,JSON_OBJECT())",()).await.unwrap();

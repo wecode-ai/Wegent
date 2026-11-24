@@ -188,6 +188,7 @@ fn chat_input<'a>(team: &'a KindRow, bot: &'a KindRow) -> BuildExecutionRequestI
         executor_namespace: "",
         executor_deleted: false,
         new_session: false,
+        allow_new_session_fallback: false,
         knowledge_base_refs: &[],
         knowledge_base_names: &[],
         web_runtime_guidance: false,
@@ -233,6 +234,43 @@ async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
             assert!(request.preload_skill_refs.get(ANALYSIS_SKILL).is_none());
         }
     }
+}
+
+#[tokio::test]
+async fn unproven_chat_continuation_carries_the_explicit_fallback_marker() {
+    let (team, mut bot) = chat_agent();
+    let bot_json = json!({
+        "ghostRef": {"name": "analysis-ghost", "namespace": "default"},
+        "modelRef": {"name": "test-model", "namespace": "default"},
+        "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+    });
+    bot.json = Json(json!({"spec": bot_json}));
+    let mut input = chat_input(&team, &bot);
+    input.allow_new_session_fallback = true;
+    let fixture = MysqlRows::start_results(|sql| {
+        if sql.contains("FROM tasks") && sql.contains("WHERE id = ? AND user_id = ?") {
+            let owner = vec![("id", SqlValue::I64(3))];
+            (owner.clone(), vec![owner])
+        } else if sql.contains("kinds.kind = 'Shell'") {
+            coordinate_fixture(sql)
+        } else {
+            skill_fixture(sql, false, false)
+        }
+    })
+    .await;
+    let state = crate::app_test_support::app(fixture.mysql.clone());
+    let request = build_chat_execution_request(&state, &input, false, &[], None, None, None)
+        .await
+        .expect("unproven continuation request");
+
+    assert!(request.new_session);
+    assert!(request.legacy_session_fallback);
+    assert!(
+        fixture
+            .queries()
+            .iter()
+            .any(|sql| sql.contains("FROM subtasks"))
+    );
 }
 
 #[tokio::test]

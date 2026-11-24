@@ -15,6 +15,7 @@ export function localRuntimeAttachments(attachments: Attachment[]): Attachment[]
       delete runtimeAttachment.ui_group_id
       delete runtimeAttachment.ui_group_role
       delete runtimeAttachment.ui_kind
+      delete runtimeAttachment.image_markup_comments
       return runtimeAttachment
     })
 }
@@ -29,37 +30,79 @@ export function remoteAttachmentIds(attachments: Attachment[]): number[] {
 const attachmentPreparation = Symbol('attachmentPreparation')
 const preparationFile = Symbol('preparationFile')
 type PreparingAttachment = Attachment & {
-  [attachmentPreparation]?: Promise<Attachment>
+  [attachmentPreparation]?: () => Promise<Attachment>
   [preparationFile]?: File
 }
 let pendingAttachmentSequence = 0
 
 export function createPreparingAttachment(file: File, ready: Promise<Attachment>): Attachment {
+  return pendingAttachment(file, ready, file)
+}
+
+export function prepareAttachmentFile(
+  name: string,
+  type: string,
+  loadFile: () => Promise<File>,
+  upload: (file: File) => Promise<Attachment>,
+  onPrepared?: (attachment: Attachment) => void
+): Attachment {
+  const attachment = pendingAttachment(
+    { name, type, size: 0 },
+    async () => {
+      const file = await loadFile()
+      attachment[preparationFile] = file
+      return upload(file)
+    },
+    undefined,
+    onPrepared
+  )
+  return attachment
+}
+
+function pendingAttachment(
+  metadata: Pick<File, 'name' | 'type' | 'size'>,
+  prepare: Promise<Attachment> | (() => Promise<Attachment>),
+  retryFile?: File,
+  onPrepared?: (attachment: Attachment) => void
+): PreparingAttachment {
+  const { name, type, size } = metadata
+  let ready: Promise<Attachment> | undefined
+  const retryable = typeof prepare === 'function'
+  const start = () => {
+    if (ready) return ready
+    attachment.status = 'uploading'
+    ready = retryable ? Promise.resolve().then(prepare) : prepare
+    void ready.then(
+      result => {
+        delete attachment[preparationFile]
+        const prepared = Object.assign(attachment, {
+          ...result,
+          local_preview_url: result.local_preview_url?.startsWith('blob:')
+            ? result.local_path
+            : result.local_preview_url,
+        })
+        if (prepared.status === 'ready') onPrepared?.(prepared)
+        return prepared
+      },
+      () => {
+        attachment.status = 'failed'
+        if (retryable) ready = undefined
+      }
+    )
+    return ready
+  }
   const attachment: PreparingAttachment = {
     id: -(Date.now() * 1000 + ++pendingAttachmentSequence),
-    filename: file.name,
-    file_size: file.size,
-    mime_type: file.type,
-    file_extension: file.name.includes('.') ? `.${file.name.split('.').at(-1)}` : '',
+    filename: name,
+    file_size: size,
+    mime_type: type,
+    file_extension: name.includes('.') ? `.${name.split('.').at(-1)}` : '',
     created_at: new Date().toISOString(),
     status: 'uploading',
-    [attachmentPreparation]: ready,
-    [preparationFile]: file,
+    [attachmentPreparation]: start,
+    [preparationFile]: retryFile,
   }
-  void ready.then(
-    result => {
-      delete attachment[preparationFile]
-      return Object.assign(attachment, {
-        ...result,
-        local_preview_url: result.local_preview_url?.startsWith('blob:')
-          ? result.local_path
-          : result.local_preview_url,
-      })
-    },
-    () => {
-      attachment.status = 'failed'
-    }
-  )
+  if (typeof prepare !== 'function') start()
   return attachment
 }
 
@@ -70,8 +113,8 @@ export async function resolvePreparingAttachments(
 ): Promise<Attachment[]> {
   return Promise.all(
     attachments.map(attachment => {
-      const ready = (attachment as PreparingAttachment)[attachmentPreparation]
-      if (ready) return ready
+      const start = (attachment as PreparingAttachment)[attachmentPreparation]
+      if (start) return start()
       if (attachment.status !== 'ready') {
         throw new Error(unavailable(attachment.filename))
       }

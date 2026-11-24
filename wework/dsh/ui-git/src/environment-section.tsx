@@ -46,7 +46,6 @@ interface GitEnvironmentSectionProps {
   onListBranches?: () => Promise<string[]>
   onOpenChangesReview?: () => void
   onPushChanges?: () => Promise<void>
-  onRefresh?: () => Promise<void>
 }
 
 type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
@@ -134,13 +133,6 @@ export default function GitConversationSummary({
             }
           : undefined
       }
-      onRefresh={
-        canExecute('environment.refresh')
-          ? async () => {
-              await services.executeCommand('environment.refresh')
-            }
-          : undefined
-      }
     />
   )
 }
@@ -158,7 +150,6 @@ function GitEnvironmentSectionContent({
   onListBranches,
   onOpenChangesReview,
   onPushChanges,
-  onRefresh,
 }: GitEnvironmentSectionProps) {
   const { t } = useTranslation('common')
   const [commitFormOpen, setCommitFormOpen] = useState(false)
@@ -327,7 +318,6 @@ function GitEnvironmentSectionContent({
             variant="environment"
             currentBranch={info.branchName}
             loading={info.branchLoading ?? info.loading}
-            onRefresh={onRefresh}
             onListBranches={onListBranches}
             onCheckoutBranch={onCheckoutBranch}
             onCreateBranch={onCreateBranch}
