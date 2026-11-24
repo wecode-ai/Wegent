@@ -54,6 +54,10 @@ pub(super) fn normalize_stand_in_identity(
     let mut changed = migrate_agent_binding(identity)?;
     changed |= migrate_identity_connections(identity)?;
     changed |= migrate_connection_timing(identity, immediate);
+    changed |= identity
+        .get_mut("workspace")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|workspace| workspace.remove("workspacePath").is_some());
     Ok(changed)
 }
 

@@ -6,6 +6,18 @@ import {
   runtimeTaskSummaryTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { weworkIssueScheme } from './scheme'
+import type { TFunction } from 'i18next'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+
+export function standInStartFailureCopy(t: TFunction<'common'>, itemTitle: string, code?: string) {
+  return {
+    title: t('notifications.stand_in_start_failure_title', { itemTitle }),
+    body:
+      code === 'workspace_unavailable' || code === 'workspace_not_git'
+        ? getStandInErrorMessage({ code })
+        : t('notifications.stand_in_start_failure_detail'),
+  }
+}
 
 export interface StandInNotificationState {
   deviceId: string

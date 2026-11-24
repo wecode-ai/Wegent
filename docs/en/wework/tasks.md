@@ -273,6 +273,7 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 | Interrupt and send      | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
+If a command's exit result arrives after the response stops, its tool entry still updates to show the outcome and any output received.
 
 While a subagent is running, the composer keeps the Send button visible. Enter a draft to send a follow-up message.
 
@@ -310,6 +311,8 @@ A plan generated in Plan mode remains part of the visible response instead of be
 ## Manage conversations
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+You can click Archive on several tasks in succession. After each task's undo window closes, its request joins the same queue as batch archives. Tasks leave the list once they are successfully archived.
 
 Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
 

@@ -1,5 +1,4 @@
 import { DSH_BACKGROUND_CONCURRENCY } from '@/api/dsh/backgroundRequests'
-import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
 import type { RuntimeTaskAddress, RuntimeTaskArchiveResponse } from '@/types/api'
 
 export type RuntimeTaskArchiveAttempt =
@@ -14,22 +13,42 @@ export type RuntimeTaskArchiveAttempt =
       error: unknown
     }
 
-export async function archiveRuntimeTaskAddresses(
+// Share the admission limit across sidebar clicks and batch calls in this renderer.
+// Waiting here keeps the DSH transport's background deadline from starting early.
+const pendingArchives = new Set<() => Promise<void>>()
+let activeArchives = 0
+
+function startNextArchive() {
+  if (activeArchives >= DSH_BACKGROUND_CONCURRENCY) return
+  const next = pendingArchives.values().next().value
+  if (!next) return
+
+  pendingArchives.delete(next)
+  activeArchives += 1
+  void next().finally(() => {
+    activeArchives -= 1
+    startNextArchive()
+  })
+}
+
+export function archiveRuntimeTaskAddresses(
   addresses: readonly RuntimeTaskAddress[],
   archiveConversation: (address: RuntimeTaskAddress) => Promise<RuntimeTaskArchiveResponse>
 ): Promise<RuntimeTaskArchiveAttempt[]> {
-  const results = await allSettledWithConcurrency(
-    addresses,
-    DSH_BACKGROUND_CONCURRENCY,
-    async address => ({
-      address,
-      response: await archiveConversation(address),
-    })
-  )
-  return results.map((result, index) =>
-    result.status === 'fulfilled'
-      ? result.value
-      : { address: addresses[index], error: result.reason }
+  return Promise.all(
+    addresses.map(
+      address =>
+        new Promise<RuntimeTaskArchiveAttempt>(resolve => {
+          pendingArchives.add(async () => {
+            try {
+              resolve({ address, response: await archiveConversation(address) })
+            } catch (error) {
+              resolve({ address, error })
+            }
+          })
+          startNextArchive()
+        })
+    )
   )
 }
 
