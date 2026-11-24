@@ -3,9 +3,9 @@ import type {
   MessageTurnNavigationProps,
   MessageTurnMarker,
   MeasuredScrollGeometry,
+  UserTurn,
 } from './turnNavigationTypes'
 import {
-  buildUserTurnsForNavigation,
   getMessageAnchorById,
   getTurnVisibilityBounds,
   equalStringArrays,
@@ -20,7 +20,7 @@ export function createTurnNavigationGeometrySource() {
   let scrollRef: MessageTurnNavigationProps['scrollRef'] = { current: null }
   let contentRef: MessageTurnNavigationProps['contentRef'] = { current: null }
   let messages: RefObject<MessageTurnNavigationProps['messages']> = { current: [] }
-  let turns: RefObject<MessageTurnNavigationProps['turnNavigation']> = { current: undefined }
+  let turns: RefObject<UserTurn[]> = { current: [] }
   let snapshot: { markers: MessageTurnMarker[]; activeMarkerIds: string[] } = {
     markers: [],
     activeMarkerIds: [],
@@ -58,7 +58,7 @@ export function createTurnNavigationGeometrySource() {
     void reason
     const scroller = scrollRef.current
     const content = contentRef.current
-    const userTurns = buildUserTurnsForNavigation(messages.current, turns.current)
+    const userTurns = turns.current
     if (!scroller || !content || userTurns.length < 2) {
       snapshot = { markers: [], activeMarkerIds: [] }
       measured = null
@@ -166,7 +166,6 @@ export function createTurnNavigationGeometrySource() {
     turns = nextTurns
   }
   return {
-    bindInputs,
     getSnapshot: () => snapshot,
     getLoadOwner: () => (listeners.size ? loadOwner : null),
     isLoadOwnerCurrent(owner: object) {

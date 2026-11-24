@@ -19,7 +19,6 @@ export function createPaneSessionView(
     inputScopeKey,
     attachmentState,
     draftStore,
-    getInput,
     setInputForScope,
     error,
     answeredRequestUserInputIds,
@@ -44,6 +43,7 @@ export function createPaneSessionView(
   } = frame
   const { handleFileSelect, removeAttachment, dismissAttachmentError } = attachmentCommands
   const {
+    getInput,
     replaceInput,
     getDraftEditVersion,
     setError,

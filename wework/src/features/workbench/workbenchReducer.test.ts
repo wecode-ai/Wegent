@@ -4,6 +4,54 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { createRuntimeProjectRemoval } from './workbenchDataRefreshHelpers'
 
 describe('workbenchReducer', () => {
+  test('reuses identical inventories and preserves unaffected task rows across refreshes', () => {
+    const work: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local',
+          available: true,
+          workspacePath: '/tmp/chat',
+          tasks: [
+            {
+              taskId: 'first',
+              workspacePath: '/tmp/chat',
+              runtime: 'codex',
+              title: 'First',
+              status: 'done',
+              turnStatus: 'completed',
+            },
+            {
+              taskId: 'second',
+              workspacePath: '/tmp/chat',
+              runtime: 'codex',
+              title: 'Second',
+              status: 'done',
+              turnStatus: 'completed',
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    }
+    const state = { ...initialWorkbenchState, runtimeWork: work }
+    expect(
+      workbenchReducer(state, {
+        type: 'runtime_work_refreshed',
+        runtimeWork: structuredClone(work),
+      })
+    ).toBe(state)
+
+    const changed = structuredClone(work)
+    changed.chats[0].tasks[1].pinned = true
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: changed,
+    })
+    expect(refreshed.runtimeWork?.chats[0].tasks[0]).toBe(work.chats[0].tasks[0])
+    expect(refreshed.runtimeWork?.chats[0].tasks[1].pinned).toBe(true)
+  })
+
   test('moves a fresh composer source selection to the new primary after refresh', () => {
     const project = {
       id: 7,

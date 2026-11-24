@@ -32,13 +32,12 @@ import {
 } from '@wegent/chat-core/async-resource'
 import { ActionMenu } from '@wegent/collaboration/controls/ActionMenu'
 import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
-import { useDOMEvent, useElementGeometry } from '@wegent/collaboration/dom-events'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Bot, Boxes, CheckSquare2, CloudOff, Columns3, Pin, Plus, X } from 'lucide-react'
 import {
   useCallback,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -308,8 +307,6 @@ export function WorkspaceTabStrip({
     restoreClosedTab,
     moveTab,
   } = useWorkspaceTabs()
-  const tabStripRef = useRef<HTMLDivElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
   const [focusedTabId, setFocusedTabId] = useState<string | null>(null)
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null)
@@ -353,24 +350,29 @@ export function WorkspaceTabStrip({
     ? focusedTabId
     : visibleActiveTabId
 
-  const geometryTargets = useMemo(() => [containerRef, tabStripRef], [])
-  const geometry = useElementGeometry(geometryTargets)
   const bindTabStrip = useCallback(
     (strip: HTMLDivElement | null) => {
-      tabStripRef.current = strip
-      if (!strip?.clientWidth) return
-      strip.style.setProperty('--workspace-tab-viewport-width', `${strip.clientWidth}px`)
-      const targetId = visibleTabs.find(tab => tab.id === rovingTabId)?.id ?? visibleActiveTabId
-      const active = Array.from(strip.querySelectorAll<HTMLElement>('[role="tab"]')).find(
-        tab => tab.dataset.tabId === targetId
-      )?.parentElement
-      if (!active) return
-      const viewport = geometry?.elements[1] ?? strip.getBoundingClientRect()
-      const tab = active.getBoundingClientRect()
-      if (tab.left < viewport.left) strip.scrollLeft += tab.left - viewport.left
-      else if (tab.right > viewport.right) strip.scrollLeft += tab.right - viewport.right
+      if (!strip) return
+      const revealTab = () => {
+        const width = strip.clientWidth
+        if (!width) return
+        strip.style.setProperty('--workspace-tab-viewport-width', `${width}px`)
+        const targetId = visibleTabs.find(tab => tab.id === rovingTabId)?.id ?? visibleActiveTabId
+        const active = Array.from(strip.querySelectorAll<HTMLElement>('[role="tab"]')).find(
+          tab => tab.dataset.tabId === targetId
+        )?.parentElement
+        if (!active) return
+        const viewport = strip.getBoundingClientRect()
+        const tab = active.getBoundingClientRect()
+        if (tab.left < viewport.left) strip.scrollLeft += tab.left - viewport.left
+        else if (tab.right > viewport.right) strip.scrollLeft += tab.right - viewport.right
+      }
+      revealTab()
+      const observer = new ResizeObserver(revealTab)
+      observer.observe(strip)
+      return () => observer.disconnect()
     },
-    [geometry, rovingTabId, visibleActiveTabId, visibleTabs]
+    [rovingTabId, visibleActiveTabId, visibleTabs]
   )
 
   useDOMEvent<KeyboardEvent>('window', 'keydown', event => {
@@ -519,7 +521,6 @@ export function WorkspaceTabStrip({
   return (
     <>
       <div
-        ref={containerRef}
         data-testid="workspace-tab-strip-container"
         className={cn('flex h-full min-w-0 flex-1 items-center px-2', className)}
       >

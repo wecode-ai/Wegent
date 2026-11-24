@@ -33,114 +33,31 @@ import {
   setPreferredWorkspaceOpener,
   usePreferredWorkspaceOpener,
 } from '@/lib/workspace-opener-preferences'
-import type { DeviceInfo, ProjectWithTasks, RuntimeSupervisorState } from '@/types/api'
-import type { EnvironmentInfo } from '@/types/environment'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { AlertCircle, Loader2, Maximize2, Minimize2, PanelBottom, PanelRight } from 'lucide-react'
-import type { ReactNode } from 'react'
 import { memo, useState } from 'react'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
-import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
-import { WorkspaceToolbarExtensions } from './WorkspaceToolbarExtensions'
 
-interface WorkspacePanelActionsProps {
-  mode?:
-    | 'all'
-    | 'environment'
-    | 'primary-target'
-    | 'panel-toggles'
-    | 'bottom-panel-toggle'
-    | 'right-panel-toggle'
+interface WorkspaceTargetActionsProps {
   currentProject?: ProjectWithTasks | null
   devices?: DeviceInfo[]
   workspaceTarget?: WorkspaceTarget | null
   workspaceSessionApi?: WorkspaceSessionApi
-  environmentInfo: EnvironmentInfo
-  conversationSummaryIsGitRepository?: boolean
-  conversationMessages?: readonly WorkbenchMessage[]
-  environmentInfoPopoverContainer: HTMLElement | null
-  environmentInfoVisible?: boolean
-  environmentInfoDocked?: boolean
-  environmentInfoOpen: boolean
-  onEnvironmentInfoOpenChange: (open: boolean) => void
-  environmentInfoFooter?: ReactNode
-  onRefreshEnvironmentInfo: () => Promise<void>
-  onCommitEnvironmentChanges: (message: string) => Promise<void>
-  onCommitAndPushEnvironmentChanges: (message: string) => Promise<void>
-  onPushEnvironmentChanges: () => Promise<void>
-  onListEnvironmentBranches: () => Promise<string[]>
-  onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
-  onCreateEnvironmentBranch: (branchName: string) => Promise<void>
-  onGenerateEnvironmentBranch?: (sourceText: string) => Promise<string>
-  environmentBranchNameSource?: string
-  onOpenEnvironmentChangesReview: () => void
-  onOpenConversationWorkspaceFile?: (path: string) => void
-  onDeliver?: () => void
-  todoLabel?: string
-  onManageTodo?: () => void
-  supervisor?: RuntimeSupervisorState | null
-  onConfigureSupervisor?: () => void
-  onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
-  rightPanelOpen: boolean
-  rightPanelExpanded: boolean
-  bottomPanelOpen: boolean
-  onToggleRightPanel: () => void
-  onToggleRightPanelExpanded: () => void
-  onToggleBottomPanel: () => void
 }
 
-export const WorkspacePanelActions = memo(function WorkspacePanelActions({
-  mode = 'all',
+export const WorkspaceTargetActions = memo(function WorkspaceTargetActions({
   currentProject = null,
   devices = [],
   workspaceTarget = null,
   workspaceSessionApi,
-  environmentInfo,
-  conversationSummaryIsGitRepository,
-  conversationMessages = [],
-  environmentInfoPopoverContainer,
-  environmentInfoVisible = true,
-  environmentInfoDocked = true,
-  environmentInfoOpen,
-  onEnvironmentInfoOpenChange,
-  environmentInfoFooter,
-  onRefreshEnvironmentInfo,
-  onCommitEnvironmentChanges,
-  onCommitAndPushEnvironmentChanges,
-  onPushEnvironmentChanges,
-  onListEnvironmentBranches,
-  onCheckoutEnvironmentBranch,
-  onCreateEnvironmentBranch,
-  onGenerateEnvironmentBranch,
-  environmentBranchNameSource,
-  onOpenEnvironmentChangesReview,
-  onOpenConversationWorkspaceFile,
-  onDeliver,
-  todoLabel,
-  onManageTodo,
-  supervisor,
-  onConfigureSupervisor,
-  onRunSupervisorNow,
-  rightPanelOpen,
-  rightPanelExpanded,
-  bottomPanelOpen,
-  onToggleRightPanel,
-  onToggleRightPanelExpanded,
-  onToggleBottomPanel,
-}: WorkspacePanelActionsProps) {
+}: WorkspaceTargetActionsProps) {
   const { t } = useTranslation('common')
   const [ideLoading, setIdeLoading] = useState(false)
   const [ideError, setIdeError] = useState<string | null>(null)
-  const showEnvironmentInfo = environmentInfoVisible && (mode === 'all' || mode === 'environment')
-  const showPrimaryTarget = mode === 'all' || mode === 'primary-target'
-  const showBottomPanelToggle =
-    mode === 'all' || mode === 'panel-toggles' || mode === 'bottom-panel-toggle'
-  const showRightPanelToggle =
-    mode === 'all' || mode === 'panel-toggles' || mode === 'right-panel-toggle'
   const codeServerProjectDeviceId = workspaceTarget?.deviceId ?? getProjectDeviceId(currentProject)
   const canOpenCodeServer = Boolean(
     codeServerProjectDeviceId && (currentProject || workspaceTarget)
@@ -177,7 +94,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       (codeServerDevice && supportsLocalTerminalLaunch(codeServerDevice)))
   )
 
-  const openers = useLocalWorkspaceOpeners(localWorkspaceEnabled && showPrimaryTarget)
+  const openers = useLocalWorkspaceOpeners(localWorkspaceEnabled)
   const catalog = openers.status === 'error' ? [] : openers.data
   const openerAvailability = catalog
     ? Object.fromEntries(catalog.map(item => [item.id, item.available]))
@@ -212,12 +129,6 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
     : codeServerEnabled
       ? t('workbench.open_project_ide')
       : t('workbench.project_ide_unavailable_tooltip')
-  const bottomPanelTitle = t('workbench.toggle_bottom_workspace_panel')
-  const rightPanelTitle = t('workbench.toggle_right_workspace_panel')
-  const rightPanelExpandedTitle = rightPanelExpanded
-    ? t('workbench.restore_right_workspace_panel')
-    : t('workbench.expand_right_workspace_panel')
-
   const getStartFailedMessage = (error: unknown) => {
     if (error instanceof Error && error.message) {
       return error.message
@@ -283,45 +194,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
 
   return (
     <>
-      {mode === 'all' && (
-        <WorkspaceToolbarExtensions
-          currentProject={currentProject}
-          environmentInfo={environmentInfo}
-          workspaceTarget={workspaceTarget}
-        />
-      )}
-      {showEnvironmentInfo && (
-        <EnvironmentInfoPopover
-          key={environmentInfoDocked ? 'docked' : 'floating'}
-          info={environmentInfo}
-          isGitRepository={conversationSummaryIsGitRepository}
-          messages={conversationMessages}
-          popoverContainer={environmentInfoPopoverContainer}
-          docked={environmentInfoDocked}
-          open={environmentInfoOpen}
-          onOpenChange={onEnvironmentInfoOpenChange}
-          footer={environmentInfoFooter}
-          devices={devices}
-          onRefresh={onRefreshEnvironmentInfo}
-          onCommitChanges={onCommitEnvironmentChanges}
-          onCommitAndPushChanges={onCommitAndPushEnvironmentChanges}
-          onPushChanges={onPushEnvironmentChanges}
-          onListBranches={onListEnvironmentBranches}
-          onCheckoutBranch={onCheckoutEnvironmentBranch}
-          onCreateBranch={onCreateEnvironmentBranch}
-          onGenerateBranchName={onGenerateEnvironmentBranch}
-          branchNameSource={environmentBranchNameSource}
-          onOpenChangesReview={onOpenEnvironmentChangesReview}
-          onOpenWorkspaceFile={onOpenConversationWorkspaceFile}
-          onDeliver={onDeliver}
-          todoLabel={todoLabel}
-          onManageTodo={onManageTodo}
-          supervisor={supervisor}
-          onConfigureSupervisor={onConfigureSupervisor}
-          onRunSupervisorNow={onRunSupervisorNow}
-        />
-      )}
-      {showPrimaryTarget && canOpenCodeServer && localWorkspaceEnabled && (
+      {canOpenCodeServer && localWorkspaceEnabled && (
         <div
           data-testid="local-workspace-titlebar-control"
           className={cn(
@@ -381,7 +254,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           </Tooltip>
         </div>
       )}
-      {showPrimaryTarget && canOpenCodeServer && !localWorkspaceEnabled && (
+      {canOpenCodeServer && !localWorkspaceEnabled && (
         <Tooltip
           label={ideTitle}
           side="bottom"
@@ -410,7 +283,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           </ControlButton>
         </Tooltip>
       )}
-      {showPrimaryTarget && localWorkspaceEnabled && openers.status === 'error' && (
+      {localWorkspaceEnabled && openers.status === 'error' && (
         <p
           role="alert"
           data-testid="workspace-opener-load-error"
@@ -421,72 +294,94 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
         </p>
       )}
       {ideError && <CodeServerErrorDialog message={ideError} onClose={() => setIdeError(null)} />}
-      {(showBottomPanelToggle || showRightPanelToggle) && (
-        <>
-          {showRightPanelToggle && rightPanelOpen && (
-            <TitlebarTooltip label={rightPanelExpandedTitle} align="end">
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="toggle-right-workspace-panel-expanded-button"
-                onClick={onToggleRightPanelExpanded}
-                className={cn(
-                  DESKTOP_TOP_BAR_BUTTON_CLASS,
-                  'disabled:opacity-50',
-                  rightPanelExpanded && 'bg-muted text-text-primary'
-                )}
-                aria-label={rightPanelExpandedTitle}
-                aria-pressed={rightPanelExpanded}
-              >
-                {rightPanelExpanded ? <Minimize2 /> : <Maximize2 />}
-              </ControlButton>
-            </TitlebarTooltip>
-          )}
-          {showBottomPanelToggle && (
-            <TitlebarTooltip
-              label={t('workbench.toggle_bottom_workspace_panel_visible', '切换底部面板显示')}
-              shortcut={getActiveKeybinding(OPEN_TERMINAL_COMMAND) ?? 'Command+J'}
-              align="end"
-            >
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="toggle-bottom-workspace-panel-button"
-                onClick={onToggleBottomPanel}
-                className={cn(
-                  DESKTOP_TOP_BAR_BUTTON_CLASS,
-                  bottomPanelOpen && 'bg-muted text-text-primary'
-                )}
-                aria-label={bottomPanelTitle}
-              >
-                <PanelBottom />
-              </ControlButton>
-            </TitlebarTooltip>
-          )}
-          {showRightPanelToggle && (
-            <TitlebarTooltip
-              label={rightPanelTitle}
-              shortcut={getActiveKeybinding(TOGGLE_SIDE_PANEL_COMMAND) ?? 'Alt+Command+B'}
-              align="end"
-            >
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="toggle-right-workspace-panel-button"
-                onClick={onToggleRightPanel}
-                className={cn(
-                  DESKTOP_TOP_BAR_BUTTON_CLASS,
-                  'disabled:opacity-50',
-                  rightPanelOpen && 'bg-muted text-text-primary'
-                )}
-                aria-label={rightPanelTitle}
-              >
-                <PanelRight />
-              </ControlButton>
-            </TitlebarTooltip>
-          )}
-        </>
+    </>
+  )
+})
+
+interface WorkspacePanelTogglesProps {
+  rightPanelOpen: boolean
+  rightPanelExpanded: boolean
+  bottomPanelOpen: boolean
+  onToggleRightPanel: () => void
+  onToggleRightPanelExpanded: () => void
+  onToggleBottomPanel: () => void
+}
+
+export const WorkspacePanelToggles = memo(function WorkspacePanelToggles({
+  rightPanelOpen,
+  rightPanelExpanded,
+  bottomPanelOpen,
+  onToggleRightPanel,
+  onToggleRightPanelExpanded,
+  onToggleBottomPanel,
+}: WorkspacePanelTogglesProps) {
+  const { t } = useTranslation('common')
+  const bottomPanelTitle = t('workbench.toggle_bottom_workspace_panel')
+  const rightPanelTitle = t('workbench.toggle_right_workspace_panel')
+  const rightPanelExpandedTitle = rightPanelExpanded
+    ? t('workbench.restore_right_workspace_panel')
+    : t('workbench.expand_right_workspace_panel')
+
+  return (
+    <>
+      {rightPanelOpen && (
+        <TitlebarTooltip label={rightPanelExpandedTitle} align="end">
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid="toggle-right-workspace-panel-expanded-button"
+            onClick={onToggleRightPanelExpanded}
+            className={cn(
+              DESKTOP_TOP_BAR_BUTTON_CLASS,
+              'disabled:opacity-50',
+              rightPanelExpanded && 'bg-muted text-text-primary'
+            )}
+            aria-label={rightPanelExpandedTitle}
+            aria-pressed={rightPanelExpanded}
+          >
+            {rightPanelExpanded ? <Minimize2 /> : <Maximize2 />}
+          </ControlButton>
+        </TitlebarTooltip>
       )}
+      <TitlebarTooltip
+        label={t('workbench.toggle_bottom_workspace_panel_visible', '切换底部面板显示')}
+        shortcut={getActiveKeybinding(OPEN_TERMINAL_COMMAND) ?? 'Command+J'}
+        align="end"
+      >
+        <ControlButton
+          variant="unstyled"
+          type="button"
+          data-testid="toggle-bottom-workspace-panel-button"
+          onClick={onToggleBottomPanel}
+          className={cn(
+            DESKTOP_TOP_BAR_BUTTON_CLASS,
+            bottomPanelOpen && 'bg-muted text-text-primary'
+          )}
+          aria-label={bottomPanelTitle}
+        >
+          <PanelBottom />
+        </ControlButton>
+      </TitlebarTooltip>
+      <TitlebarTooltip
+        label={rightPanelTitle}
+        shortcut={getActiveKeybinding(TOGGLE_SIDE_PANEL_COMMAND) ?? 'Alt+Command+B'}
+        align="end"
+      >
+        <ControlButton
+          variant="unstyled"
+          type="button"
+          data-testid="toggle-right-workspace-panel-button"
+          onClick={onToggleRightPanel}
+          className={cn(
+            DESKTOP_TOP_BAR_BUTTON_CLASS,
+            'disabled:opacity-50',
+            rightPanelOpen && 'bg-muted text-text-primary'
+          )}
+          aria-label={rightPanelTitle}
+        >
+          <PanelRight />
+        </ControlButton>
+      </TitlebarTooltip>
     </>
   )
 })

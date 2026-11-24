@@ -4,7 +4,7 @@ import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { WorkbenchOwnerLeaseContext } from '@/features/workbench/workbenchContexts'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useContext, useId, useState, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useId, useMemo, useState, useSyncExternalStore } from 'react'
 import { createWorkbenchPaneSessionSource } from './workbenchPaneSessionSource'
 import type { WorkbenchPaneSessionOptions } from './workbenchPaneSessionTypes'
 
@@ -20,6 +20,7 @@ export {
 export function useWorkbenchPaneSession({
   currentRuntimeTask,
   debugSnapshotEnabled = true,
+  separateTranscript = false,
 }: WorkbenchPaneSessionOptions) {
   const queueDiagnosticSessionId = useId()
   const { t } = useTranslation('common')
@@ -31,24 +32,38 @@ export function useWorkbenchPaneSession({
     ? getRuntimeTaskChatScopeKey(currentRuntimeTask)
     : workbench.projectChat.scopeKey
   const attachmentState = useScopedComposerAttachments(workbench.projectChat, inputScopeKey)
-  const external = {
-    t,
-    draftEditVersions,
-    currentRuntimeTask,
-    debugSnapshotEnabled,
-    queueDiagnosticSessionId,
-    workbench,
-    lifecycleStore,
-    attachmentState,
-  }
-  const [owner, setOwner] = useState(() => createWorkbenchPaneSessionSource(external))
+  const external = useMemo(
+    () => ({
+      t,
+      draftEditVersions,
+      currentRuntimeTask,
+      debugSnapshotEnabled,
+      queueDiagnosticSessionId,
+      workbench,
+      lifecycleStore,
+      attachmentState,
+    }),
+    [
+      t,
+      draftEditVersions,
+      currentRuntimeTask,
+      debugSnapshotEnabled,
+      queueDiagnosticSessionId,
+      workbench,
+      lifecycleStore,
+      attachmentState,
+    ]
+  )
+  const [owner, setOwner] = useState(() =>
+    createWorkbenchPaneSessionSource(external, separateTranscript)
+  )
   let source = owner
   if (!source.matches(external)) {
-    source = createWorkbenchPaneSessionSource(external)
+    source = createWorkbenchPaneSessionSource(external, separateTranscript)
     setOwner(source)
   }
-  return useSyncExternalStore(
-    listener => {
+  const subscribe = useCallback(
+    (listener: () => void) => {
       const releaseOwner = retainOwner?.()
       const unsubscribe = source.subscribe(external, listener)
       return () => {
@@ -56,8 +71,9 @@ export function useWorkbenchPaneSession({
         releaseOwner?.()
       }
     },
-    source.getSnapshot,
-    source.getSnapshot
+    [external, retainOwner, source]
   )
+  const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  return useMemo(() => ({ ...snapshot, transcript: source.transcript }), [snapshot, source])
 }
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>

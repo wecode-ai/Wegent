@@ -1,5 +1,5 @@
 name: Compare Wework desktop CPU benchmark
-description: Compare one desktop checkpoint with the latest main baseline for this runner hardware.
+description: Compare one desktop checkpoint with the latest main baseline for this runner platform, CPU model, and logical processor count.
 inputs:
   checkpoint:
     description: Desktop checkpoint that produced the metrics
@@ -19,9 +19,9 @@ runs:
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: .ci-cache/wework-cpu-benchmarks/${{ inputs.checkpoint }}.json
-        key: wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.checkpoint }}-${{ steps.hardware.outputs.fingerprint }}-${{ github.run_id }}-${{ github.run_attempt }}
+        key: wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.hardware.outputs.fingerprint }}-${{ inputs.checkpoint }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
-          wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.checkpoint }}-${{ steps.hardware.outputs.fingerprint }}-
+          wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.hardware.outputs.fingerprint }}-${{ inputs.checkpoint }}-
 
     - name: Report current sample and baseline availability
       id: sample
@@ -72,4 +72,4 @@ runs:
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: .ci-cache/wework-cpu-benchmarks/${{ inputs.checkpoint }}.json
-        key: wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.checkpoint }}-${{ steps.hardware.outputs.fingerprint }}-${{ github.run_id }}-${{ github.run_attempt }}
+        key: wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.hardware.outputs.fingerprint }}-${{ inputs.checkpoint }}-${{ github.run_id }}-${{ github.run_attempt }}
