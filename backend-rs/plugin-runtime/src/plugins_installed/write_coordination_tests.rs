@@ -234,7 +234,7 @@ async fn native_admission_keeps_the_unobserved_set_on_the_provisional_ttl() {
     let commands = redis.commands.lock().unwrap();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0][0], "SET");
-    assert_eq!(&commands[0][3..], ["PX", "1000", "NX"]);
+    assert_eq!(&commands[0][3..], ["PX", "200", "NX"]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -267,7 +267,7 @@ async fn native_admission_cleans_up_an_acknowledged_set_after_a_promotion_timeou
         ["SET", "EVAL", "EVALSHA"]
     );
     assert_eq!(&commands[1][3..5], &commands[0][1..3]);
-    assert_eq!(&commands[1][5..], ["800", "180000"]);
+    assert_eq!(&commands[1][5..], ["180000"]);
     assert_eq!(&commands[2][3..], &commands[0][1..3]);
     assert!(redis.owners.lock().unwrap().is_empty());
 }
