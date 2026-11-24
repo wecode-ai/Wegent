@@ -2,16 +2,12 @@
 
 import type { RuntimeTaskAddress, RuntimeTaskArchiveResponse } from '@/types/api'
 import { describe, expect, it, vi } from 'vitest'
-import {
-  archiveRuntimeTaskAddresses,
-  BULK_RUNTIME_TASK_CONCURRENCY,
-  findFailedRuntimeTaskArchive,
-} from './runtimeTaskArchive'
+import { archiveRuntimeTaskAddresses, findFailedRuntimeTaskArchive } from './runtimeTaskArchive'
 
 describe('archiveRuntimeTaskAddresses', () => {
-  it('limits bulk archive requests to the executor concurrency', async () => {
+  it('does not queue another archive while both background slots are occupied', async () => {
     const addresses = Array.from(
-      { length: BULK_RUNTIME_TASK_CONCURRENCY + 1 },
+      { length: 3 },
       (_, index): RuntimeTaskAddress => ({
         deviceId: 'device-1',
         taskId: `runtime-${index}`,
@@ -34,13 +30,13 @@ describe('archiveRuntimeTaskAddresses', () => {
 
     const resultsPromise = archiveRuntimeTaskAddresses(addresses, archiveConversation)
 
-    await expect.poll(() => archiveConversation.mock.calls.length).toBe(8)
+    await expect.poll(() => archiveConversation.mock.calls.length).toBe(2)
     releases.shift()?.({
       accepted: true,
       taskId: 'runtime-0',
       runtime: 'codex',
     })
-    await expect.poll(() => archiveConversation.mock.calls.length).toBe(9)
+    await expect.poll(() => archiveConversation.mock.calls.length).toBe(3)
     releases.splice(0).forEach((release, index) => {
       release({
         accepted: true,
@@ -49,8 +45,8 @@ describe('archiveRuntimeTaskAddresses', () => {
       })
     })
 
-    await expect(resultsPromise).resolves.toHaveLength(9)
-    expect(maxActive).toBe(BULK_RUNTIME_TASK_CONCURRENCY)
+    await expect(resultsPromise).resolves.toHaveLength(3)
+    expect(maxActive).toBe(2)
   })
 
   it('returns the failed archive attempt', () => {
