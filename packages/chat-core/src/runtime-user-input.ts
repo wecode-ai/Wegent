@@ -144,6 +144,7 @@ export function isAsyncRequestUserInputPayload(
 export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
   messages: WorkbenchMessage<TAttachment, TFileChanges>[]
 ): WorkbenchMessage<TAttachment, TFileChanges>[] {
+  if (!messages.some(hasAsyncRequestUserInput)) return messages
   const rowsByReply = resolveAsyncRequestUserInputReplies(messages)
   const replyByIndex = asyncReplyByMessageIndex(messages)
   const offsetByReply = new Map<string, number>()
@@ -182,6 +183,18 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
     return { ...message, blocks }
   })
   return changed ? resolved : messages
+}
+
+function hasAsyncRequestUserInput<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>
+): boolean {
+  return Boolean(
+    message.blocks?.some(block => {
+      if (block.type !== 'tool') return false
+      const payload = block.renderPayload
+      return isRequestUserInputPayload(payload) && isAsyncRequestUserInputPayload(payload)
+    })
+  )
 }
 
 export interface AsyncRequestUserInputReply {
