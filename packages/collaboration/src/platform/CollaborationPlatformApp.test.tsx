@@ -6230,7 +6230,7 @@ describe('CollaborationPlatformApp real component flow', () => {
     expect(api.issues.update).toHaveBeenLastCalledWith(issue.id, {
       version: issue.version,
       assigneeUserId: member.user_id,
-      notifyAssignee: false,
+      notifyAssignee: true,
     })
   })
 

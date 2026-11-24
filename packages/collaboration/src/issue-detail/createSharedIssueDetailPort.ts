@@ -368,7 +368,9 @@ export function createSharedIssueDetailPort(
       update: (issueId, input) =>
         api.issues.update(issueId, {
           version: input.version,
-          milestoneId: input.milestone_id,
+          ...(input.milestone_id !== undefined
+            ? { milestoneId: input.milestone_id }
+            : {}),
           ...(input.security_level !== undefined
             ? { securityLevel: input.security_level }
             : {}),
