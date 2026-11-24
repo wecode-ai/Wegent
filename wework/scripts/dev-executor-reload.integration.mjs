@@ -120,8 +120,10 @@ if (process.argv[2] === 'metadata') {
   process.exit(0)
 }
 appendFileSync(process.env.TEST_BUILD_LOG, 'build\\n')
-const output = join(process.env.CARGO_TARGET_DIR, 'debug', 'wegent-executor')
-mkdirSync(join(process.env.CARGO_TARGET_DIR, 'debug'), { recursive: true })
+if (process.env.CARGO_TARGET_DIR !== undefined) throw new Error('CARGO_TARGET_DIR changes the Rust cache key')
+const target = process.argv[process.argv.indexOf('--target-dir') + 1]
+const output = join(target, 'debug', 'wegent-executor')
+mkdirSync(dirname(output), { recursive: true })
 copyFileSync(process.env.TEST_EXECUTOR_TEMPLATE, output)
 chmodSync(output, 0o755)
 `
