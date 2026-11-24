@@ -409,3 +409,72 @@ async def test_workspace_artifact_enforces_50_mib_limit_on_header_and_stream(moc
             path="oversized-stream.bin",
         )
     assert stream_exc.value.status_code == 413
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("telemetry_enabled", [False, True])
+@pytest.mark.parametrize("upstream_status", [200, 404])
+async def test_workspace_artifact_keeps_request_correlation(
+    mocker: MockerFixture, telemetry_enabled: bool, upstream_status: int
+) -> None:
+    from shared.telemetry import decorators
+    from shared.telemetry.context.span import _request_id_var
+    from shared.utils.http_client import traced_async_client
+
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        if upstream_status == 200:
+            return httpx.Response(200, content=b"artifact content")
+        return httpx.Response(404, json={"detail": "Artifact missing"})
+
+    def client_factory(timeout):
+        return traced_async_client(
+            timeout=timeout, transport=httpx.MockTransport(handle)
+        )
+
+    mocker.patch.object(routers, "traced_async_client", side_effect=client_factory)
+    mocker.patch.object(
+        routers,
+        "_resolve_workspace_runtime_base_url",
+        mocker.AsyncMock(return_value="http://executor.local:8000"),
+    )
+    mocker.patch.object(
+        decorators, "_is_telemetry_enabled", return_value=telemetry_enabled
+    )
+    tracer = mocker.MagicMock()
+    mocker.patch.object(decorators, "_get_tracer", return_value=tracer)
+
+    token = _request_id_var.set("artifact-correlation")
+    try:
+        arguments = {
+            "task_id": 42,
+            "executor_name": "executor-1",
+            "binding_id": "b" * 64,
+            "subtask_id": "7",
+            "path": "outputs/report.md",
+        }
+        if upstream_status == 200:
+            response = await routers.get_executor_workspace_artifact(**arguments)
+            assert response.status_code == 200
+            assert response.body == b"artifact content"
+        else:
+            with pytest.raises(routers.HTTPException) as exc_info:
+                await routers.get_executor_workspace_artifact(**arguments)
+            assert exc_info.value.status_code == 404
+            assert exc_info.value.detail == "Artifact missing"
+    finally:
+        _request_id_var.reset(token)
+
+    assert len(seen) == 1
+    assert seen[0].headers["X-Request-ID"] == "artifact-correlation"
+    assert seen[0].url.path == "/filesystem/artifact"
+    assert seen[0].url.params["path"] == "outputs/report.md"
+    if telemetry_enabled:
+        assert tracer.start_as_current_span.call_count == 1
+        assert tracer.start_as_current_span.call_args.args[0] == (
+            "executor_manager.workspace_artifact"
+        )
+    else:
+        tracer.start_as_current_span.assert_not_called()

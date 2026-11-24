@@ -44,6 +44,7 @@ from shared.telemetry.context import (
     set_user_context,
 )
 from shared.telemetry.context.large_data import log_json_body
+from shared.telemetry.decorators import trace_async
 from shared.utils.http_client import traced_async_client
 from shared.utils.ip_util import get_host_ip
 
@@ -815,6 +816,10 @@ async def get_executor_workspace_file(
 
 
 @api_router.get("/executor/workspace/artifact")
+@trace_async(
+    span_name="executor_manager.workspace_artifact",
+    tracer_name="executor_manager.routers",
+)
 async def get_executor_workspace_artifact(
     task_id: int,
     executor_name: str,
@@ -861,7 +866,9 @@ async def get_executor_workspace_artifact(
     max_bytes = MAX_WORKSPACE_ARTIFACT_FILE_BYTES if path is not None else None
 
     try:
-        async with httpx.AsyncClient(timeout=WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
+        async with traced_async_client(
+            timeout=WORKSPACE_FILE_TIMEOUT_SECONDS
+        ) as client:
             async with client.stream("GET", artifact_url, params=params) as response:
                 if response.is_success:
                     body = await _read_bounded_artifact_response(response, max_bytes)
