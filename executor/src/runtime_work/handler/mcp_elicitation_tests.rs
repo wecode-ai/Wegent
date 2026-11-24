@@ -90,6 +90,34 @@ fn runtime_owner_uses_the_effective_profile_for_mcp_approval_visibility() {
 }
 
 #[test]
+fn forwarded_mcp_tool_approval_waits_for_user_input_without_single_approval() {
+    let (handler, root) = interaction_handler("mcp-external-automatic");
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "origin": {"type": "stand_in_task", "initiatedBy": "stand_in", "askBeforeAct": false}
+    }))
+    .unwrap();
+    handler.register_thread_event_route("thread-1", "task-1".into(), request, true);
+    let mut approval = ordinary_request(json!(1), "turn-1");
+    approval["params"]["questions"][0]["id"] = json!("mcp_tool_call_approval_call-1");
+    handler.route_codex_notification(approval);
+
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    let active = handler.active_codex_transcript_items.lock().unwrap();
+    let items = &active["task-1"].items;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["renderPayload"]["requestId"], 1);
+    assert!(items[0]["renderPayload"]["standInSingleApproval"].is_null());
+    drop(active);
+    assert_eq!(
+        handler
+            .request_user_input_response_key("task-1", "turn-1", &json!({"answers": {}}))
+            .as_deref(),
+        Some("1"),
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn ordinary_question_recovers_with_real_request_identity_and_persists_its_answer() {
     let (handler, root) = interaction_handler("ordinary-refresh-history");
     let ordinary = ordinary_request(json!(1), "turn-1");

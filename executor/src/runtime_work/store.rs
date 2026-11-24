@@ -40,6 +40,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "modelSelection",
     "model_selection",
     "origin",
+    super::stand_in_task_permissions::TASK_PERMISSIONS,
     "standInOwnerRequest",
     "standInResult",
     "standInResultReceipt",

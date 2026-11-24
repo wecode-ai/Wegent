@@ -1189,3 +1189,62 @@ async fn independent_stand_in_keeps_connections_when_old_project_binding_is_remo
     assert_eq!(result["roles"][0]["connections"][0]["id"], "group");
     assert_eq!(store.personal_stand_in(7, "mac").unwrap(), result);
 }
+
+#[tokio::test]
+async fn stand_in_role_transfer_excludes_permissions_on_first_save_and_retransfer() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut draft = store.personal_stand_in(7, "mac").unwrap();
+    let workspace_write = json!({"permissionMode":"workspace-write"});
+    let full_access = json!({"permissionMode":"full-access"});
+    let mut existing = crate::test_env::stand_in_role("mac");
+    existing["taskPermissions"] = workspace_write.clone();
+    let mut imported = crate::test_env::stand_in_role("mac");
+    imported["id"] = json!("moving");
+    imported["name"] = json!("Moving assistant");
+    imported["migrationSource"] = json!("source:moving");
+    imported["taskPermissions"] = full_access.clone();
+    draft["roles"] = json!([existing, imported]);
+    let save = "runtime.stand_in.personal.save";
+    for invalid in [json!(7), json!("missing"), json!("default")] {
+        let error = handler
+            .dispatch_method(
+                save,
+                json!({"userId":7,"settings":draft,"transferRoleId":invalid}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "bad_request");
+    }
+    let mut saved = handler
+        .dispatch_method(
+            save,
+            json!({"userId":7,"settings":draft,"transferRoleId":"moving"}),
+        )
+        .await
+        .unwrap();
+    assert!(saved["roles"][1].get("taskPermissions").is_none());
+    assert_eq!(saved["roles"][1]["name"], "Moving assistant");
+    saved["roles"][1]["taskPermissions"] = workspace_write.clone();
+    let mut edited = handler
+        .dispatch_method(save, json!({"userId":7,"settings":saved}))
+        .await
+        .unwrap();
+    assert_eq!(edited["roles"][1]["taskPermissions"], workspace_write);
+    edited["roles"][1]["taskPermissions"] = full_access;
+    let retransferred = handler
+        .dispatch_method(
+            save,
+            json!({"userId":7,"settings":edited,"transferRoleId":"moving"}),
+        )
+        .await
+        .unwrap();
+    assert!(retransferred["roles"][1].get("taskPermissions").is_none());
+    assert_eq!(
+        retransferred["roles"][0]["taskPermissions"],
+        workspace_write
+    );
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), retransferred);
+}

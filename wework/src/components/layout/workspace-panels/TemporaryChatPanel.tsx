@@ -61,6 +61,7 @@ import {
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
+import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import { findModelForSelection } from '@/features/workbench/runtimeContextUsage'
 import {
   deriveRuntimePaneStatus,
@@ -167,6 +168,7 @@ export function TemporaryChatPanel({
     loadRuntimeTranscriptForPane,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
+    refreshWorkLists,
   } = useWorkbenchPaneContext()
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: services.attachmentApi?.uploadAttachment,
@@ -203,6 +205,14 @@ export function TemporaryChatPanel({
     contextUsageStore.getSnapshot
   )
   const taskLifecycle = useRuntimeTaskLifecycle(address)
+  const taskPermissions = useRuntimeTaskPermissions(
+    address,
+    taskLifecycle?.task,
+    state.user?.id,
+    services.standInApi,
+    refreshWorkLists,
+    active && !readOnly
+  )
   const activeThreadId = taskLifecycle?.task?.threadId ?? address?.threadId
   const taskModelSelection = address ? projectChat.resolveRuntimeTaskModelSelection(address) : null
   const activeModelSelection =
@@ -296,6 +306,7 @@ export function TemporaryChatPanel({
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
+      ...taskPermissions,
       scopeKey: instanceId,
       trialTemplates: trialGuide?.templates ?? [],
       trialPluginName: trialGuide?.pluginName,
@@ -359,6 +370,7 @@ export function TemporaryChatPanel({
       attachmentSelection,
       contextUsage,
       projectChat,
+      taskPermissions,
       taskModelSelection,
       instanceId,
       trialGuide,

@@ -5,10 +5,16 @@
 #[cfg(test)]
 use super::context_compaction::context_compaction_outcome;
 use super::context_compaction::wait_for_context_compaction;
+use super::turns::TurnAdmission;
 use super::*;
 
 #[path = "startup_recovery.rs"]
 mod startup_recovery;
+
+enum OwnerMessage {
+    Direct,
+    Interrupt,
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn create_collaboration_dispatch(
@@ -444,8 +450,19 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn create_task_with_activity(
         &self,
+        payload: Value,
+        activity: bool,
+    ) -> Result<Value, AppIpcError> {
+        self.create_task_with_initial_permissions(payload, activity, None, None)
+            .await
+    }
+
+    pub(super) async fn create_task_with_initial_permissions(
+        &self,
         mut payload: Value,
         activity: bool,
+        initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
@@ -457,13 +474,16 @@ impl RuntimeWorkRpcHandler {
             Some(gate) => Some(gate.lock().await),
             None => None,
         };
-        self.create_task_after_local_checks(payload, activity).await
+        self.create_task_after_local_checks(payload, activity, initial_permissions, owner_request)
+            .await
     }
 
     async fn create_task_after_local_checks(
         &self,
         mut payload: Value,
         activity: bool,
+        initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         let schema_version = payload
             .get("schemaVersion")
@@ -535,7 +555,6 @@ impl RuntimeWorkRpcHandler {
         set_runtime_task_title(&mut request, &title);
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
-        self.retain_runtime_model_config(&local_task_id, &request.model_config);
         log_executor_event(
             "runtime task create identity",
             &[
@@ -791,6 +810,16 @@ impl RuntimeWorkRpcHandler {
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         store_runtime_execution_request(&mut link.runtime_handle, &request);
         apply_runtime_profile_handle(&mut link.runtime_handle, &payload);
+        if is_codex_runtime(&runtime) {
+            let permissions = failed_start
+                .as_ref()
+                .and_then(super::stand_in_task_permissions::task_permissions)
+                .or(initial_permissions);
+            if let Some(permissions) = permissions {
+                link.runtime_handle[super::stand_in_task_permissions::TASK_PERMISSIONS] =
+                    json!(permissions);
+            }
+        }
         if let Some(executable_path) = request
             .extra
             .get("runtime_executable_path")
@@ -855,7 +884,25 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let mut runtime_handle = runtime_handle_json(&link);
-        self.upsert_local_task(link);
+        {
+            // Owner admissions publish under the queue lock and cancellation
+            // uses the lifecycle lock, including the preparation fast path.
+            let _queue = if owner_request.is_some() {
+                Some(self.turn_queue_operation.lock().await)
+            } else {
+                None
+            };
+            let _lifecycle = owner_request.map(|_| {
+                self.stand_in_lifecycle_gate
+                    .lock()
+                    .expect("stand-in lifecycle gate poisoned")
+            });
+            if owner_request.is_some_and(|actor| !self.has_current_stand_in_owner_request(actor)) {
+                return Err(super::stand_in_role_delegation::denied());
+            }
+            self.retain_runtime_model_config(&local_task_id, &request.model_config);
+            self.upsert_local_task(link);
+        }
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
@@ -883,11 +930,14 @@ impl RuntimeWorkRpcHandler {
                 resume_thread_id: None,
                 initial_thread_goal,
             };
-            let spawn_result = if force_start {
-                self.spawn_forced_turn(turn).await
+            let admission = if force_start {
+                TurnAdmission::Forced
             } else {
-                self.spawn_turn(turn).await
+                TurnAdmission::Normal
             };
+            let spawn_result = self
+                .schedule_turn(turn, admission, initial_permissions.is_some())
+                .await;
             if let Err(error) = spawn_result {
                 self.retain_failed_runtime_task(&local_task_id, &error);
                 self.forget_runtime_model_config(&local_task_id);
@@ -1082,7 +1132,7 @@ impl RuntimeWorkRpcHandler {
         }) {
             return Ok(json!({"success": false, "accepted": false, "code": "owner_unavailable"}));
         }
-        self.send_message_with_activity_checks(payload, true, false, true, None, None)
+        self.send_message_with_activity_checks(payload, true, None, true, None, None)
             .await
     }
 
@@ -1095,7 +1145,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, false, false, false, None, Some(attempt))
+        self.send_message_with_activity_checks(payload, false, None, false, None, Some(attempt))
             .await
     }
 
@@ -1119,10 +1169,11 @@ impl RuntimeWorkRpcHandler {
         let prepared = self.prepare_question_reply(&payload).await?;
         let gate = self.task_send_gate(&self.canonical_local_task_id(&local_task_id));
         let _guard = gate.lock().await;
+        let owner_message = owner_input.then_some(OwnerMessage::Direct);
         self.send_message_with_activity_checks(
             payload,
             false,
-            owner_input,
+            owner_message,
             from_event,
             prepared,
             None,
@@ -1185,11 +1236,11 @@ impl RuntimeWorkRpcHandler {
             self.bind_stand_in_owner_command(&mut payload, false);
             normalize_user_message_presentation(&mut payload)?;
             return self
-                .create_task_after_local_checks(payload, false)
+                .create_task_after_local_checks(payload, false, None, None)
                 .await
                 .map(Some);
         }
-        self.send_message_after_local_checks(payload, None)
+        self.send_message_after_local_checks(payload, None, None)
             .await
             .map(Some)
     }
@@ -1198,8 +1249,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
         prepared: Option<PreparedQuestionReply>,
+        owner_message: Option<OwnerMessage>,
     ) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false, false, false, prepared, None)
+        self.send_message_with_activity_checks(payload, false, owner_message, false, prepared, None)
             .await
     }
 
@@ -1212,7 +1264,7 @@ impl RuntimeWorkRpcHandler {
         let prepared = self.prepare_question_reply(&payload).await?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true, false, false, prepared, None)
+        self.send_message_with_activity_checks(payload, true, None, false, prepared, None)
             .await
     }
 
@@ -1220,7 +1272,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
         activity: bool,
-        owner_input: bool,
+        owner_message: Option<OwnerMessage>,
         from_event: bool,
         prepared: Option<PreparedQuestionReply>,
         role_retry_attempt: Option<u64>,
@@ -1231,7 +1283,7 @@ impl RuntimeWorkRpcHandler {
             .dispatch_message_with_activity_checks(
                 payload,
                 activity,
-                owner_input,
+                owner_message,
                 from_event,
                 prepared,
                 role_retry_attempt,
@@ -1254,7 +1306,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         mut payload: Value,
         activity: bool,
-        owner_input: bool,
+        owner_message: Option<OwnerMessage>,
         from_event: bool,
         prepared: Option<PreparedQuestionReply>,
         role_retry_attempt: Option<u64>,
@@ -1330,11 +1382,11 @@ impl RuntimeWorkRpcHandler {
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
         let question_response = request_user_input_response(&payload);
         // The desktop delivers an async answer as the next ordinary user message.
-        let owner_input = owner_input
-            && question_response.is_none()
-            && !existing_link.as_ref().is_some_and(|link| {
+        let reply_input = question_response.is_some()
+            || existing_link.as_ref().is_some_and(|link| {
                 link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
             });
+        let owner_input = matches!(owner_message, Some(OwnerMessage::Direct)) && !reply_input;
         let ordinary_input = question_response.is_none();
         if let Some(response) = question_response {
             if response["delivery"] == "async" {
@@ -1668,7 +1720,12 @@ impl RuntimeWorkRpcHandler {
             || (start_fresh_native_session && existing_link.is_some());
         if thread_id.is_none() && !can_start_without_thread {
             if let Some(result) = self
-                .recover_failed_session_start(existing_link.as_ref(), payload.clone(), activity)
+                .recover_failed_session_start(
+                    existing_link.as_ref(),
+                    payload.clone(),
+                    activity,
+                    owner_message,
+                )
                 .await?
             {
                 return Ok(result);
@@ -1718,6 +1775,8 @@ impl RuntimeWorkRpcHandler {
         );
 
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
+        let use_saved_stand_in_permissions =
+            (owner_message.is_some() && !reply_input) || role_retry_attempt.is_some();
         let turn = SpawnTurnRequest {
             // A verified retry already restored its origin and advanced only the attempt.
             // Rebinding at admission would replace it with the preceding attempt.
@@ -1733,9 +1792,11 @@ impl RuntimeWorkRpcHandler {
             initial_thread_goal,
         };
         if was_busy && !completed_native_turn {
-            self.submit_continuation(turn).await?;
+            self.submit_continuation(turn, use_saved_stand_in_permissions)
+                .await?;
         } else {
-            self.spawn_turn(turn).await?;
+            self.schedule_turn(turn, TurnAdmission::Normal, use_saved_stand_in_permissions)
+                .await?;
         }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
@@ -1795,7 +1856,7 @@ impl RuntimeWorkRpcHandler {
             }
             // Ordinary admission rechecks a newer owner under the reacquired gate.
             return self
-                .send_message_after_local_checks(payload, prepared)
+                .send_message_after_local_checks(payload, prepared, Some(OwnerMessage::Interrupt))
                 .await;
         }
         if let Some(thread_id) = thread_id.as_deref() {
@@ -1809,7 +1870,11 @@ impl RuntimeWorkRpcHandler {
                 .await
             {
                 return self
-                    .send_message_after_local_checks(payload, prepared)
+                    .send_message_after_local_checks(
+                        payload,
+                        prepared,
+                        Some(OwnerMessage::Interrupt),
+                    )
                     .await;
             }
             let provider_stopped = tokio::time::timeout(
@@ -1825,7 +1890,7 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
-        self.send_message_after_local_checks(payload, prepared)
+        self.send_message_after_local_checks(payload, prepared, Some(OwnerMessage::Interrupt))
             .await
     }
 
@@ -2064,18 +2129,22 @@ impl RuntimeWorkRpcHandler {
         } else {
             (None, Some(thread_id))
         };
-        self.spawn_turn(SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: local_task_id.clone(),
-            runtime: "codex".to_owned(),
-            request,
-            send_payload: None,
-            direct_thread_id,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id,
-            initial_thread_goal: None,
-        })
+        self.schedule_turn(
+            SpawnTurnRequest {
+                task_kind: None,
+                local_task_id: local_task_id.clone(),
+                runtime: "codex".to_owned(),
+                request,
+                send_payload: None,
+                direct_thread_id,
+                fork_thread_id: None,
+                fork_thread_path: None,
+                resume_thread_id,
+                initial_thread_goal: None,
+            },
+            TurnAdmission::Normal,
+            true,
+        )
         .await?;
 
         Ok(json!({

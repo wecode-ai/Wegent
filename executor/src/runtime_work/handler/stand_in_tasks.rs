@@ -1,5 +1,6 @@
 //! Primary stand-in orchestration uses the same task lifecycle as the workbench.
 use super::*;
+use crate::protocol::StandInTaskPermissions;
 use crate::task_runtime::mcp::{stand_in_tasks, StandInMcpIdentity};
 
 pub(super) fn owns_task(link: &RuntimeTaskLink, user: i64) -> bool {
@@ -191,7 +192,14 @@ impl RuntimeWorkRpcHandler {
                 .await;
         }
         if name == "create_task" {
-            return self.create_primary_task(&identity, &args).await;
+            let owner_request =
+                (actor.runtime_handle["origin"]["type"] == "stand_in_identity").then_some(&actor);
+            if owner_request.is_some_and(|actor| !self.has_current_stand_in_owner_request(actor)) {
+                return Err(super::stand_in_role_delegation::denied());
+            }
+            return self
+                .create_primary_task(&identity, &args, owner_request)
+                .await;
         }
         let id = required(&args, "taskId")?;
         let gate = self.task_send_gate(&format!("stand-in-task-operation:{id}"));
@@ -294,6 +302,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         identity: &StandInMcpIdentity,
         args: &Value,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         use sha2::{Digest, Sha256};
         let key = json!([
@@ -321,9 +330,19 @@ impl RuntimeWorkRpcHandler {
             .map_err(super::stand_in::settings_error)?;
         let mut config = settings["primary"].clone();
         config["userId"] = json!(identity.user);
-        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":false});
+        let owner_task = owner_request.is_some();
+        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":owner_task});
         let sources = self.capture_delegated_read_sources(identity, args)?;
-        self.start_delegated_task(args, &id, &config, json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":false,"readSources":sources})).await
+        let permissions = owner_task.then(|| StandInTaskPermissions::from_role(&config));
+        self.start_delegated_task(
+            args,
+            &id,
+            &config,
+            json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":owner_task,"readSources":sources}),
+            permissions,
+            owner_request,
+        )
+        .await
     }
 
     pub(super) async fn start_delegated_task(
@@ -332,6 +351,8 @@ impl RuntimeWorkRpcHandler {
         id: &str,
         config: &Value,
         delegation: Value,
+        initial_permissions: Option<StandInTaskPermissions>,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         let ask = delegation["askBeforeAct"] == true;
         let mut origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":delegation["userId"],"deviceId":self.device_id,"sourceTaskId":delegation["sourceTaskId"],"askBeforeAct":ask});
@@ -364,7 +385,13 @@ impl RuntimeWorkRpcHandler {
             let result = Box::pin(self.send_stand_in_role_retry(payload, attempt)).await?;
             return super::stand_in_execution::accepted_stand_in_result(result);
         }
-        Box::pin(self.create_task(payload)).await
+        Box::pin(self.create_task_with_initial_permissions(
+            payload,
+            false,
+            initial_permissions,
+            owner_request,
+        ))
+        .await
     }
 }
 
@@ -387,6 +414,80 @@ mod tests {
 #[cfg(test)]
 mod operation_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn task_creation_rejects_superseded_or_cancelled_owner_requests() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        handler.turn_queue_path = Arc::new(root.path().join("turn-queue.json"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        let mut specialist = crate::test_env::stand_in_role("mac");
+        specialist["id"] = json!("review");
+        specialist["name"] = json!("Review");
+        specialist["enabled"] = json!(true);
+        settings["roles"] = json!([specialist]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let identity = StandInMcpIdentity {
+            task_id: "primary".into(),
+            user: 7,
+            device: "mac".into(),
+            role: Some("@primary".into()),
+            work: None,
+            project: None,
+            review: false,
+            memory_review: false,
+            readonly_worker: false,
+            ask_before_act: true,
+            coordinator_batch: None,
+        };
+        let owner = json!({"id":"original","taskId":"primary","userId":7,"deviceId":"mac","roleId":"@primary","revision":1,"cancelled":false});
+        for (operation, revision, cancelled, after_admission) in [
+            ("create_task", 2, false, false),
+            ("create_task", 1, true, false),
+            ("create_task", 2, false, true),
+            ("create_task", 1, true, true),
+            ("delegate_role_task", 2, false, true),
+            ("delegate_role_task", 1, true, true),
+        ] {
+            let mut current = owner.clone();
+            current["revision"] = json!(revision);
+            current["cancelled"] = json!(cancelled);
+            handler.upsert_local_task(RuntimeTaskLink {
+                local_task_id: identity.task_id.clone(),
+                runtime_handle: json!({
+                    "origin":{"type":"stand_in_identity","standInId":"@primary","userId":7,"deviceId":"mac"},
+                    "executionRequest":{"user_id":7,"runtime_command_id":"owner-turn","standInOwnerRequest":owner},
+                    "standInOwnerRequest":if after_admission { &owner } else { &current },
+                }),
+                ..Default::default()
+            });
+            let queue = handler.turn_queue_operation.lock().await;
+            let mutation = handler.stand_in_task_operation(
+                identity.clone(),
+                operation,
+                json!({"requestId":format!("{operation}-{revision}-{after_admission}"),"roleId":"review","title":"Work","message":"Start work"}),
+            );
+            tokio::pin!(mutation);
+            if after_admission {
+                assert!(futures_util::poll!(mutation.as_mut()).is_pending());
+                assert_eq!(handler.local_task_links(true).len(), 1);
+                if cancelled {
+                    handler
+                        .cancel_stand_in_owner_request(&identity.task_id, &owner)
+                        .unwrap();
+                } else {
+                    handler.record_stand_in_owner_admission(&identity.task_id, &current);
+                }
+            }
+            drop(queue);
+            let error = mutation.await.unwrap_err();
+            assert_eq!(error.code, "permission_denied");
+            assert_eq!(handler.local_task_links(true).len(), 1);
+        }
+    }
 
     #[tokio::test]
     async fn coordinator_mutations_wait_for_settings_and_recheck_revoked_batches() {

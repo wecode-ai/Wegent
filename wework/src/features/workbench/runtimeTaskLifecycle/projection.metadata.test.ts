@@ -83,6 +83,28 @@ describe('persistent metadata and native lifecycle ownership', () => {
     store.syncRuntimeTask(address, previous)
     assertRecovered(store.getTask(address)?.task)
   })
+  test('updates task permissions without replacing the native execution projection', () => {
+    const store = new RuntimeTaskLifecycleStore('permission-metadata')
+    const initial: RuntimeTaskSummary = {
+      ...previous,
+      runtimeHandle: {
+        origin: { type: 'stand_in_task', userId: 7 },
+        taskPermissions: { permissionMode: 'workspace-write' },
+      },
+    }
+    store.syncRuntimeTask(address, initial)
+    store.syncRuntimeTask(address, {
+      ...initial,
+      snapshotRevision: '101',
+      runtimeHandle: { ...initial.runtimeHandle, taskPermissions: { permissionMode: 'read-only' } },
+    })
+    store.syncRuntimeTask(address, initial)
+    expect(store.getTask(address)?.task).toMatchObject({
+      executionState: previous.executionState,
+      snapshotRevision: '101',
+      runtimeHandle: { taskPermissions: { permissionMode: 'read-only' } },
+    })
+  })
   test('duplicate project and chat projections share metadata without changing the lifecycle winner', () => {
     const project: RuntimeWorkListResponse = {
       projects: [

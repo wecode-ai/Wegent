@@ -1496,7 +1496,7 @@ fn mcp_tool_call_elicitation_can_be_auto_approved() {
 
 #[test]
 fn mcp_tool_call_request_user_input_can_be_auto_approved() {
-    let message = json!({
+    let mut message = json!({
         "id": 75,
         "method": "item/tool/requestUserInput",
         "params": {
@@ -1521,7 +1521,7 @@ fn mcp_tool_call_request_user_input_can_be_auto_approved() {
     });
 
     assert!(is_mcp_tool_call_approval_request(&message));
-    assert!(!codex_notification_requires_user_input(&message));
+    assert!(!prepare_runtime_notification(&mut message, true, false));
     assert_eq!(
         mcp_tool_call_request_user_input_response(message_params(&message)),
         Some(json!({
@@ -4727,7 +4727,6 @@ fn stand_in_mcp_confirmation_waits_for_one_time_input() {
             {"label":"Allow"},{"label":"Allow for this session"},{"label":"Cancel"}
         ]}]
     }});
-    assert!(!codex_notification_requires_user_input(&message));
     restrict_stand_in_approval(&mut message);
     assert!(codex_notification_requires_user_input(&message));
     assert_eq!(

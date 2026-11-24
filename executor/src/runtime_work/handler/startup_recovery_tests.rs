@@ -125,12 +125,13 @@ async fn failed_issue_start_retries_in_place_after_restart_without_replaying_the
 
 #[tokio::test]
 async fn failed_start_recovers_native_sessions_without_replaying_unconfirmed_commands() {
-    for (state, native) in [
-        (CommandState::Dispatching, false),
-        (CommandState::Started, false),
-        (CommandState::RecoveryRequired, false),
-        (CommandState::Failed, false),
-        (CommandState::Failed, true),
+    for (state, native, activity) in [
+        (CommandState::Dispatching, false, false),
+        (CommandState::Started, false, false),
+        (CommandState::RecoveryRequired, false, false),
+        (CommandState::Failed, false, false),
+        (CommandState::Failed, true, false),
+        (CommandState::Failed, true, true),
     ] {
         let (_root, handler, payload) = fixture();
         let mut request = execution_request(&payload).unwrap();
@@ -161,7 +162,9 @@ async fn failed_start_recovers_native_sessions_without_replaying_unconfirmed_com
             .lock()
             .unwrap()
             .insert(command.key(), command);
-        let result = handler.dispatch_stand_in_conversation(payload, false).await;
+        let result = handler
+            .dispatch_stand_in_conversation(payload, activity)
+            .await;
         if state == CommandState::Failed {
             assert_eq!(result.unwrap()["accepted"], true);
             assert_eq!(
@@ -178,6 +181,14 @@ async fn failed_start_recovers_native_sessions_without_replaying_unconfirmed_com
                 scheduler.queued_turns[0].resume_thread_id.as_deref(),
                 native.then_some("native-thread")
             );
+            if native {
+                let send = scheduler.queued_turns[0].send_payload.as_ref().unwrap();
+                assert_eq!(
+                    send[crate::runtime_work::handler::control::connection_events::OWNER_INPUT],
+                    !activity,
+                    "Session recovery must preserve whether the new input came from the owner",
+                );
+            }
             continue;
         }
         assert_eq!(result.unwrap_err().code, "command_recovery_required");

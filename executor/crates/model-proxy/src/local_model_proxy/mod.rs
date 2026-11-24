@@ -16,6 +16,7 @@ mod harness_protocol;
 mod history;
 mod image_budget;
 mod long_context;
+mod official_http;
 mod openai_reasoning;
 mod passthrough_stream;
 mod progressive_tools;
@@ -50,6 +51,7 @@ use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
 use fork::{codex_forked_from_thread_id, prepare_fork_request};
+pub use official_http::{official_http_route, OFFICIAL_HTTP_ROUTE};
 pub use request_policy::CodexRequestMode;
 
 pub const API_KEY: &str = "wework-local-router";
