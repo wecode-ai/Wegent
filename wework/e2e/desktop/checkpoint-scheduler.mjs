@@ -16,20 +16,33 @@ export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
 
 export const LINUX_CORE_HISTORY_CHECKPOINT = 'running-conversation-history'
 
+const LINUX_CORE_EXCLUSIVE_CHECKPOINTS = new Set([
+  LINUX_CORE_HISTORY_CHECKPOINT,
+  // Concurrent desktop sessions inflate these CPU samples on four-vCPU runners.
+  'idle-executor-requests',
+  'executor-stream-recovery',
+])
+
 export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
   return (
     RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint) ||
-    (linuxCore && checkpoint === LINUX_CORE_HISTORY_CHECKPOINT)
+    (linuxCore && LINUX_CORE_EXCLUSIVE_CHECKPOINTS.has(checkpoint))
   )
 }
 
-// Database and Backend startup in these fixtures can delay the 200ms Python
-// descriptor request used by Python setup and plugin development. Keep these
-// fixtures separate from both checkpoints on Linux Core.
+// Backend startup and concurrent Electron sessions can delay the 200ms Python
+// descriptor request. Keep the workloads observed during descriptor timeouts
+// off the same runner as Python startup.
 const PYTHON_RUNTIME_STARTUP_PEERS = [
   'collaboration-shared-core',
   'collaboration-templates',
   'collaboration-template-app-device-routing',
+  'claude-runtime',
+  'conversation-state',
+  'stand-in-sessions',
+  'stand-in-cli',
+  'quota-recovery',
+  'permission-modes',
 ]
 
 export function linuxCoreCheckpointResources(checkpoint) {

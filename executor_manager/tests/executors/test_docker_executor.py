@@ -488,6 +488,12 @@ class TestDockerExecutor:
                 "prepare_callback_token",
                 return_value="callback-token",
             ),
+            patch(
+                "executor_manager.services.sandbox.repository.get_sandbox_repository",
+                return_value=MagicMock(
+                    load_executor_callback_token=lambda _: "callback-token"
+                ),
+            ),
             patch.object(
                 executor,
                 "_prepare_docker_command",
@@ -509,7 +515,9 @@ class TestDockerExecutor:
             executor._create_new_container(sample_task, task_info, status)
 
             mock_wait_ready.assert_called_once_with("new-executor")
-            mock_dispatch.assert_called_once_with(sample_task, "new-executor", 8080)
+            expected_task = sample_task.copy()
+            assert expected_task.pop("executor_callback_token") == "callback-token"
+            mock_dispatch.assert_called_once_with(expected_task, "new-executor", 8080)
 
     def test_create_new_container_prepares_callback_token_before_creation(
         self, executor, sample_task

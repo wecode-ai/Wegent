@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from 'react'
+import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
@@ -19,6 +11,12 @@ import {
 } from '../pluginOwnerLocalPackage'
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
 import { isLocalMarketplaceItem, localMarketplaceDedupeKey } from '../marketplaceCatalogMerge'
+
+function localSourceIdentity(item: PluginMarketplaceItem): string | undefined {
+  if (isLocalMarketplaceItem(item)) return localMarketplaceDedupeKey(item)
+  if (item.visibility === 'personal' && item.accessRole === 'owner' && item.localPersonalSource)
+    return `personal:${item.localPersonalSource.pluginName.trim().toLowerCase()}`
+}
 
 export function findMarketplaceItemForPluginReference(
   items: PluginMarketplaceItem[],
@@ -73,7 +71,8 @@ export function usePluginDetailSelection({
   setSelectedPluginId: Dispatch<SetStateAction<string | number | null>>
   setSelectedMarketplacePluginId: Dispatch<SetStateAction<string | number | null>>
 }) {
-  const dismissedPluginReferenceKeyRef = useRef<string | null>(null)
+  const [dismissedReference, setDismissedReference] = useState<string | null>(null)
+  const [referenceSelection, setReferenceSelection] = useState<string | null>(null)
   const selectionKey = JSON.stringify([scopeKey, selectedMarketplacePluginId])
   const [localSelection, setLocalSelection] = useState<{
     key: string
@@ -93,50 +92,39 @@ export function usePluginDetailSelection({
       item => item.id === selectedMarketplacePluginId
     )
     if (direct) return direct
-    // Disk and native listings represent the same local resource with different
-    // row IDs. Reuse the catalog's scoped identity, never a cloud name match.
+    // Background publication can replace the same author source's disk-only row.
     const matches = localIdentity
-      ? pluginMarketplaceState.items.filter(
-          item => isLocalMarketplaceItem(item) && localMarketplaceDedupeKey(item) === localIdentity
-        )
+      ? pluginMarketplaceState.items.filter(item => localSourceIdentity(item) === localIdentity)
       : []
     return matches.length === 1 ? matches[0] : null
   }, [localIdentity, pluginMarketplaceState.items, selectedMarketplacePluginId])
-  const selectedLocalIdentity =
-    selectedMarketplacePlugin && isLocalMarketplaceItem(selectedMarketplacePlugin)
-      ? localMarketplaceDedupeKey(selectedMarketplacePlugin)
-      : undefined
+  const selectedLocalIdentity = selectedMarketplacePlugin
+    ? localSourceIdentity(selectedMarketplacePlugin)
+    : undefined
   if (localSelection.key !== selectionKey || localSelection.identity !== selectedLocalIdentity) {
     setLocalSelection({ key: selectionKey, identity: selectedLocalIdentity })
   }
 
-  useEffect(() => {
-    const referenceKey = pluginReferenceKey(pluginReference)
-    if (!referenceKey) {
-      dismissedPluginReferenceKeyRef.current = null
-      return
-    }
-    if (dismissedPluginReferenceKeyRef.current === referenceKey) return
-
-    const requestedPlugin = findMarketplaceItemForPluginReference(
-      pluginMarketplaceState.items,
-      pluginReference
-    )
-    if (!requestedPlugin) return
-
-    setSelectedPluginId(null)
-    setSelectedMarketplacePluginId(current =>
-      current === requestedPlugin.id ? current : requestedPlugin.id
-    )
-  }, [
+  const referenceKey = pluginReferenceKey(pluginReference)
+  const requestedPlugin = findMarketplaceItemForPluginReference(
     pluginMarketplaceState.items,
-    pluginReference,
-    setSelectedMarketplacePluginId,
-    setSelectedPluginId,
-  ])
+    pluginReference
+  )
+  const requestedSelection = JSON.stringify([scopeKey, referenceKey, requestedPlugin?.id ?? null])
+  if (referenceSelection !== requestedSelection) {
+    setReferenceSelection(requestedSelection)
+    if (!referenceKey) {
+      if (dismissedReference !== null) setDismissedReference(null)
+    } else if (dismissedReference !== referenceKey && requestedPlugin) {
+      // These setters belong to the same component that owns this hook.
+      if (selectedPluginId !== null) setSelectedPluginId(null)
+      if (selectedMarketplacePluginId !== requestedPlugin.id)
+        setSelectedMarketplacePluginId(requestedPlugin.id)
+    }
+  }
 
   const dismissPluginReferenceDetail = useCallback(() => {
-    dismissedPluginReferenceKeyRef.current = pluginReferenceKey(pluginReference)
+    setDismissedReference(pluginReferenceKey(pluginReference))
     setSelectedPluginId(null)
     setSelectedMarketplacePluginId(null)
   }, [pluginReference, setSelectedMarketplacePluginId, setSelectedPluginId])

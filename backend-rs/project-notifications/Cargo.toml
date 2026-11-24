@@ -1,0 +1,28 @@
+[package]
+name = "wegent-project-notifications"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Transactional project notifications and private IM delivery"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+regex = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha1 = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+tracing = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-project-coordination = { workspace = true }
+wegent-socket-events = { workspace = true }
+
+[dev-dependencies]
+brz-http-server = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

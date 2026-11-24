@@ -2,9 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fs, os::unix::fs::PermissionsExt};
+use std::{fs, os::unix::fs::symlink};
 
 use super::*;
+
+fn write_script_fixture(binary: &std::path::Path, script: String) {
+    // A parallel fork may retain the script's writer until exec. Execute a stable
+    // launcher inode and let the shell read scenario data without executing it.
+    fs::write(binary.with_extension("sh"), script).unwrap();
+    let launcher = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/codex-script-fixture.sh");
+    symlink(launcher, binary).unwrap();
+}
 
 #[tokio::test]
 async fn native_search_hydrates_complete_match_turn_and_pages_neighbor_context() {
@@ -56,7 +65,7 @@ done
         "[needle](https://hidden.example/needle) ![needle](image.png) `needle` {}end",
         "padding ".repeat(30_000)
     );
-    fs::write(
+    write_script_fixture(
         &binary,
         crate::test_env::with_codex_bundled_catalog(script)
             .replace("__LOG__", &log.to_string_lossy())
@@ -64,9 +73,12 @@ done
                 "__MATCH_TEXT__",
                 &serde_json::to_string(&match_text).unwrap(),
             ),
-    )
-    .unwrap();
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    );
+    // Retain a writer as a concurrent fork can do on Linux; startup must succeed.
+    let _fixture_writer = fs::OpenOptions::new()
+        .write(true)
+        .open(binary.with_extension("sh"))
+        .unwrap();
     let request = serde_json::from_value(json!({
         "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
         "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
@@ -381,13 +393,11 @@ while IFS= read -r line; do
   printf '{"id":%s,"result":%s}\n' "$id" "$result"
 done
 "#;
-    fs::write(
+    write_script_fixture(
         &binary,
         crate::test_env::with_codex_bundled_catalog(script)
             .replace("__DIRECTORY__", &directory.path().to_string_lossy()),
-    )
-    .unwrap();
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let request = serde_json::from_value(json!({
         "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
         "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
@@ -693,13 +703,11 @@ while IFS= read -r line; do
   printf '{"id":%s,"result":%s}\n' "$id" "$result"
 done
 "#;
-    fs::write(
+    write_script_fixture(
         &binary,
         crate::test_env::with_codex_bundled_catalog(script)
             .replace("__DIRECTORY__", &directory.path().to_string_lossy()),
-    )
-    .unwrap();
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let request = serde_json::from_value(json!({
         "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
         "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
@@ -805,6 +813,9 @@ async fn legacy_dispatch_searches_rollout_without_native_history_requests() {
         json!({"type":"event_msg", "payload":{"type":"user_message", "message":"visible question", "client_id":"user-client"}}),
         json!({"type":"event_msg", "payload":{"type":"agent_message", "message":"visible needle answer"}}),
         json!({"type":"event_msg", "payload":{"type":"task_complete", "turn_id":"turn-legacy"}}),
+        json!({"type":"event_msg", "payload":{"type":"task_started", "turn_id":"turn-later"}}),
+        json!({"type":"event_msg", "payload":{"type":"user_message", "message":"later question"}}),
+        json!({"type":"event_msg", "payload":{"type":"task_complete", "turn_id":"turn-later"}}),
     ];
     fs::write(
         &rollout,
@@ -831,14 +842,12 @@ while IFS= read -r line; do
   printf '{"id":%s,"result":%s}\n' "$id" "$result"
 done
 "#;
-    fs::write(
+    write_script_fixture(
         &binary,
         crate::test_env::with_codex_bundled_catalog(script)
             .replace("__LOG__", &log.to_string_lossy())
             .replace("__METADATA__", &metadata.to_string()),
-    )
-    .unwrap();
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let request = serde_json::from_value(json!({
         "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
         "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
@@ -879,6 +888,28 @@ done
     assert!(items
         .iter()
         .any(|item| item["id"] == "item-2" && item["text"] == "visible needle answer"));
+    let start = first_history_cursor().unwrap();
+    let first_page = super::super::codex_transcript_page::load_codex_transcript(
+        &client,
+        super::super::codex_transcript_page::CodexTranscriptRequest {
+            thread_id: "thread-legacy",
+            cursor: Some(&start),
+            limit: 1,
+            direction: super::super::codex_transcript_page::CodexTranscriptDirection::Ascending,
+            full_content: false,
+            bounded_items: true,
+            prefer_rollout_history: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first_page.thread["turns"].as_array().unwrap().len(), 1);
+    assert_eq!(first_page.thread["turns"][0]["id"], "turn-legacy");
+    assert!(first_page.thread["turns"][0]["items"][0]
+        .to_string()
+        .contains("visible question"));
+    assert!(first_page.before_cursor.is_none());
+    assert!(first_page.after_cursor.is_some());
     let requests = calls(&log);
     let methods: Vec<_> = requests
         .iter()
@@ -886,7 +917,13 @@ done
         .collect();
     assert_eq!(
         methods,
-        ["initialize", "initialized", "thread/read", "thread/read"]
+        [
+            "initialize",
+            "initialized",
+            "thread/read",
+            "thread/read",
+            "thread/read"
+        ]
     );
     for request in requests
         .iter()

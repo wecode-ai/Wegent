@@ -1,7 +1,13 @@
 import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
 import { AgentEnvironmentFields, AgentModelFields } from './AgentRoutingFields'
 import { useAgentRuntimeSettings } from './useAgentRuntimeSettings'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { createAgentResourceSaveOperation } from './agentResourceSaveOperation'
 import {
   AgentCapabilitiesSelector,
   AgentCapabilityModeSelector,
@@ -30,6 +36,9 @@ import { parseAgentMcpServers } from './agentFormModel'
 import { useCurrentAgentDevice } from './useCurrentAgentDevice'
 
 type AgentResourceApi = ReturnType<typeof createAgentResourceApi>
+const EMPTY_SKILLS: UnifiedSkill[] = []
+const EMPTY_PLUGIN_REFS: AgentResourceDetail['plugins'] = []
+const EMPTY_SKILL_IDS: number[] = []
 
 interface WeworkAgentResourceFormProps {
   projectId?: string
@@ -52,7 +61,18 @@ function boundSkillIds(detail: AgentResourceDetail, catalog: UnifiedSkill[]): nu
     .filter(skillId => skillId > 0)
 }
 
-export function WeworkAgentResourceForm({
+export function WeworkAgentResourceForm(props: WeworkAgentResourceFormProps) {
+  const [owner, setOwner] = useState({ api: props.api, revision: 0 })
+  if (owner.api !== props.api) setOwner({ api: props.api, revision: owner.revision + 1 })
+  return (
+    <AgentResourceFormContent
+      key={JSON.stringify([owner.revision, props.projectId, props.editingTeamId, props.namespace])}
+      {...props}
+    />
+  )
+}
+
+function AgentResourceFormContent({
   api,
   projectId,
   deviceApi,
@@ -80,106 +100,91 @@ export function WeworkAgentResourceForm({
     useState<UnifiedAgentCapabilityMode>('follow_device')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [mcpConfig, setMcpConfig] = useState('{}')
-  const [skills, setSkills] = useState<UnifiedSkill[]>([])
-  const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([])
-  const [plugins, setPlugins] = useState<AgentResourceDetail['plugins']>([])
+  const [skillSelection, setSkillSelection] = useState<number[] | null>(null)
+  const selectedSkillIds = skillSelection ?? EMPTY_SKILL_IDS
+  const setSelectedSkillIds = (update: (current: number[]) => number[]) =>
+    setSkillSelection(current => update(current ?? []))
   const [selectedPluginIds, setSelectedPluginIds] = useState<string[]>([])
-  const [detail, setDetail] = useState<AgentResourceDetail | null>(null)
-  const [loadingDetail, setLoadingDetail] = useState(editing)
-  const [loadingSkills, setLoadingSkills] = useState(true)
-  const [loadingPlugins, setLoadingPlugins] = useState(Boolean(pluginApi))
-  const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
-  const [skillLoadError, setSkillLoadError] = useState<string | null>(null)
-  const [pluginLoadError, setPluginLoadError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
   const [capabilitiesActive, setCapabilitiesActive] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const skillsPrefilled = useRef(false)
   const deviceState = useCurrentAgentDevice(deviceApi, pluginApi, capabilitiesActive)
-
-  useEffect(() => {
-    if (!capabilitiesActive) return
-    let active = true
-
-    void api
-      .listSkills()
-      .then(loadedSkills => {
-        if (active) setSkills(loadedSkills)
-      })
-      .catch(cause => {
-        if (!active) return
-        setSkillLoadError(
-          cause instanceof Error
-            ? cause.message
-            : t('workbench.agent_creator_skills_load_failed', '加载 Skill 失败')
-        )
-      })
-      .finally(() => {
-        if (active) setLoadingSkills(false)
-      })
-
-    if (pluginApi) {
-      void pluginApi
-        .listPlugins('')
-        .then(loadedPlugins => {
-          if (active) setPlugins(loadedPlugins)
-        })
-        .catch(cause => {
-          if (!active) return
-          setPluginLoadError(
-            cause instanceof Error
-              ? cause.message
-              : t('workbench.agent_creator_plugins_load_failed', '加载插件失败')
+  const skillsResource = useMemo(
+    () => createAsyncResource('agent-skills', () => api.listSkills()),
+    [api]
+  )
+  const pluginsResource = useMemo(
+    () =>
+      pluginApi ? createAsyncResource('agent-plugins', () => pluginApi.listPlugins('')) : null,
+    [pluginApi]
+  )
+  const detailResource = useMemo(
+    () =>
+      editingTeamId != null
+        ? createAsyncResource(JSON.stringify(['agent', editingTeamId]), () =>
+            api.getAgent(editingTeamId)
           )
-        })
-        .finally(() => {
-          if (active) setLoadingPlugins(false)
-        })
-    }
-
-    return () => {
-      active = false
-    }
-  }, [api, capabilitiesActive, pluginApi, t])
-
-  useEffect(() => {
-    if (editingTeamId == null) return
-    let active = true
-    void api
-      .getAgent(editingTeamId)
-      .then(loaded => {
-        if (!active) return
-        setDetail(loaded)
-        setName(loaded.name)
-        setDisplayName(loaded.displayName)
-        if (loaded.runtime) setRuntime(loaded.runtime)
-        setSystemPrompt(loaded.systemPrompt)
-        setMcpConfig(JSON.stringify(loaded.mcpServers ?? {}, null, 2))
-        setCapabilityMode(loaded.capabilityMode)
-        loadRouting(loaded.executionPolicy, loaded.modelPolicy)
-        setSelectedPluginIds(loaded.plugins.map(plugin => plugin.id))
-      })
-      .catch(cause => {
-        if (!active) return
-        setDetailLoadError(
-          cause instanceof Error
-            ? cause.message
-            : t('workbench.agent_editor_load_failed', '加载智能体配置失败')
-        )
-      })
-      .finally(() => {
-        if (active) setLoadingDetail(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api, editingTeamId, t, loadRouting])
-
-  useEffect(() => {
-    if (!detail || skillsPrefilled.current || loadingSkills) return
-    skillsPrefilled.current = true
-    setSelectedSkillIds(boundSkillIds(detail, skills))
-  }, [detail, loadingSkills, skills])
+        : null,
+    [api, editingTeamId]
+  )
+  const skillSnapshot = useSyncExternalStore(
+    capabilitiesActive ? skillsResource.subscribe : subscribeIdleResource,
+    skillsResource.getSnapshot,
+    skillsResource.getSnapshot
+  )
+  const pluginSnapshot = useSyncExternalStore(
+    capabilitiesActive && pluginsResource ? pluginsResource.subscribe : subscribeIdleResource,
+    pluginsResource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const detailSnapshot = useSyncExternalStore(
+    detailResource?.subscribe ?? subscribeIdleResource,
+    detailResource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const skills = skillSnapshot.data ?? EMPTY_SKILLS
+  const plugins = pluginSnapshot.data ?? EMPTY_PLUGIN_REFS
+  const detail = detailSnapshot.data ?? null
+  const loadingDetail = Boolean(editing && !detailSnapshot.settled)
+  const loadingSkills = !skillSnapshot.settled
+  const loadingPlugins = Boolean(pluginsResource && !pluginSnapshot.settled)
+  const detailLoadError =
+    detailSnapshot.status === 'error'
+      ? detailSnapshot.error instanceof Error
+        ? detailSnapshot.error.message
+        : t('workbench.agent_editor_load_failed', '加载智能体配置失败')
+      : null
+  const skillLoadError =
+    skillSnapshot.status === 'error'
+      ? skillSnapshot.error instanceof Error
+        ? skillSnapshot.error.message
+        : t('workbench.agent_creator_skills_load_failed', '加载 Skill 失败')
+      : null
+  const pluginLoadError =
+    pluginSnapshot.status === 'error'
+      ? pluginSnapshot.error instanceof Error
+        ? pluginSnapshot.error.message
+        : t('workbench.agent_creator_plugins_load_failed', '加载插件失败')
+      : null
+  const [initializedDetail, setInitializedDetail] = useState<AgentResourceDetail | null>(null)
+  if (detail && initializedDetail !== detail) {
+    setInitializedDetail(detail)
+    setName(detail.name)
+    setDisplayName(detail.displayName)
+    if (detail.runtime) setRuntime(detail.runtime)
+    setSystemPrompt(detail.systemPrompt)
+    setMcpConfig(JSON.stringify(detail.mcpServers ?? {}, null, 2))
+    setCapabilityMode(detail.capabilityMode)
+    loadRouting(detail.executionPolicy, detail.modelPolicy)
+    setSelectedPluginIds(detail.plugins.map(plugin => plugin.id))
+  }
+  if (detail && skillSelection === null && skillSnapshot.status === 'ready')
+    setSkillSelection(boundSkillIds(detail, skills))
+  const [saveOperation] = useState(createAgentResourceSaveOperation)
+  const { saving, error } = useSyncExternalStore(
+    saveOperation.subscribe,
+    saveOperation.getSnapshot,
+    saveOperation.getSnapshot
+  )
+  const setError = saveOperation.setError
 
   const availableSkills = useMemo(() => skills.filter(skill => skill.visible !== false), [skills])
   const selectedSkillSet = useMemo(() => new Set(selectedSkillIds), [selectedSkillIds])
@@ -259,17 +264,19 @@ export function WeworkAgentResourceForm({
       mcpServers,
     }
 
-    setSaving(true)
-    setError(null)
+    const token = saveOperation.begin()
+    if (!token) return
     try {
       const saved = detail
         ? await api.updateAgent({ teamId: detail.teamId, botId: detail.botId }, spec)
         : await api.createAgent(spec)
+      if (!saveOperation.owns(token)) return
       await onSaved({
         name: saved.displayName || saved.name,
         teamId: saved.id,
       })
     } catch (cause) {
+      if (!saveOperation.owns(token)) return
       setError(
         cause instanceof Error
           ? cause.message
@@ -278,7 +285,7 @@ export function WeworkAgentResourceForm({
             : t('workbench.agent_creator_create_failed', '创建智能体失败')
       )
     } finally {
-      setSaving(false)
+      saveOperation.finish(token)
     }
   }
 

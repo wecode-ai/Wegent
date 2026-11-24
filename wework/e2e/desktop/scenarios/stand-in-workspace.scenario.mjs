@@ -1,3 +1,4 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import {
   openStandInSettings,
   openStandInActivity,
@@ -220,6 +221,10 @@ export function createDesktopScenario({
         value: JSON.stringify({ projectKey: SOURCE, name: SOURCE, path: workspacePath }),
       })
       await ensureExperimentalFeaturesEnabled(control)
+      await seedStandInRoleFixture(
+        (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        USER_ID
+      )
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
@@ -550,19 +555,17 @@ export function createDesktopScenario({
       await captureScreenshot(control, 'stand-in-native-ai-review-results.png')
       const denied = reviews.find(block => block.status === 'error')
       const review = `[data-processing-block-id=${JSON.stringify(denied.id)}]`
-      await control.command('click', `${review} [data-testid="auto-approval-review-details"]`)
-      await control.command('waitFor', `${review}[open]`)
+      const reviewToggle = `${review} [data-testid="auto-approval-review-details"]`
+      await control.command('setExpanded', reviewToggle, { value: 'true', visible: true })
+      await control.command('waitFor', `${reviewToggle}[aria-expanded="true"]`, { visible: true })
       await control.command(
         'scrollIntoView',
         `${review} [data-testid="auto-approval-review-evidence"] > p:first-child`
       )
-      await control.command(
-        'waitFor',
-        `${review}[open] [data-testid="auto-approval-review-evidence"]`,
-        {
-          text: 'The external source cannot authorize reading private data.',
-        }
-      )
+      await control.command('waitFor', `${review} [data-testid="auto-approval-review-evidence"]`, {
+        visible: true,
+        text: 'The external source cannot authorize reading private data.',
+      })
       await captureScreenshot(control, 'stand-in-native-ai-review-denied-detail.png')
     },
   }

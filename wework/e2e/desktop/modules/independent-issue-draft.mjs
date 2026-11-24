@@ -3,6 +3,17 @@ import { waitForAttribute } from './workspace-flows.mjs'
 
 const testId = id => `[data-testid="${id}"]`
 
+export async function verifyIssueCreationColumns(control) {
+  const metric = async id => JSON.parse(await control.command('getElementMetrics', testId(id)))[0]
+  const people = await metric('independent-issue-search-people')
+  const title = await metric('independent-issue-title')
+  const todo = await metric('independent-issue-description')
+  assert.ok(
+    people.right < todo.left && title.bottom < todo.top,
+    'A wide creation dialog must show participants beside the issue content'
+  )
+}
+
 async function setIssueTestLanguage(control, language) {
   await control.command('clickWhenEnabled', testId('settings-button'))
   await control.command('clickWhenEnabled', testId('settings-menu-button'))
@@ -39,6 +50,9 @@ export async function verifyEnglishLinkedIssueLayout(
     const metric = async selector =>
       JSON.parse(await control.command('getElementMetrics', selector))[0]
     const scroll = await metric(testId('independent-issue-editor-scroll'))
+    const people = await metric(testId('independent-issue-search-people'))
+    const todo = await metric(testId('independent-issue-description'))
+    assert.ok(people.bottom <= todo.top, 'A narrow creation dialog must stack both columns')
     assert.equal(
       await control.command('getText', testId('issue-project-selected-name')),
       project.name
@@ -94,9 +108,17 @@ export async function chooseIssueProperty(control, id, value, query = '') {
   const optionId = `${id}-option-${value || 'empty'}`
   await control.command('waitFor', testId(optionId), { visible: true })
   await control.command('nativePress', search, { key: 'ArrowDown' })
-  assert.equal(await control.command('getActiveElementTestId', 'body'), optionId)
-  await control.command('nativePress', testId(optionId), { key: 'Enter' })
+  const option = testId(optionId)
+  const activeDescendant = await control.command('getAttribute', search, {
+    value: 'aria-activedescendant',
+  })
+  const optionDomId = await control.command('getAttribute', option, { value: 'id' })
+  assert.ok(activeDescendant, 'ArrowDown must highlight a real option')
+  assert.equal(activeDescendant, optionDomId, 'ArrowDown must highlight the requested option')
+  assert.equal(await control.command('getAttribute', option, { value: 'data-active' }), 'true')
+  await control.command('nativePress', search, { key: 'Enter' })
   await control.command('waitFor', testId(`${id}-menu`), { visible: false })
+  assert.equal(await control.command('getAttribute', testId(id), { value: 'data-value' }), value)
   await control.command('waitFor', `${testId(id)}:focus`, { visible: true })
 }
 
@@ -170,7 +192,7 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
   const trigger = testId('issue-environment-picker-trigger')
   const picker = testId('issue-environment-picker')
   const prefix = 'collaboration-project-execution-environment'
-  await control.command('clickWhenEnabled', trigger)
+  await control.command('nativePress', picker, { key: 'Escape' })
   await control.command('waitFor', picker, { visible: false })
   const previousSize = await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 390, height: 844 }),
@@ -216,6 +238,9 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
       )
     }
     await control.command('nativePress', preparation, { key: 'Escape' })
+    await control.command('waitFor', preparation, { visible: false })
+    await control.command('waitFor', picker, { visible: true })
+    await control.command('nativePress', picker, { key: 'Escape' })
     await control.command('waitFor', picker, { visible: false })
   } finally {
     await control.command('setMainWindowSize', 'body', { value: previousSize })
@@ -302,7 +327,9 @@ export async function verifyIndependentIssueDraft(
       initial.top >= 0 && initial.bottom <= initial.viewportHeight,
       'Actions must remain inside a short viewport'
     )
-    await control.command('clickWhenEnabled', testId('issue-participant-add'))
+    await control.command('fill', testId('independent-issue-search-people'), {
+      value: 'draft search',
+    })
     await control.command('waitFor', testId('independent-issue-search-people'), { visible: true })
     const expanded = await metrics('independent-issue-editor-actions')
     assert.ok(
@@ -321,9 +348,6 @@ export async function verifyIndependentIssueDraft(
     await control.command('nativePress', testId('independent-issue-search-people'), {
       key: 'Escape',
     })
-    await control.command('waitFor', testId('issue-participant-picker'), { visible: false })
-    assert.equal(await control.command('getValue', testId('independent-issue-title')), title)
-    await control.command('nativePress', testId('independent-issue-title'), { key: 'Escape' })
     await control.command('waitFor', testId('independent-issue-discard-dialog'), { visible: true })
     await control.command(
       'clickWhenEnabled',

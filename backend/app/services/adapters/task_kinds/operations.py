@@ -1156,29 +1156,6 @@ class TaskOperationsMixin:
         db.commit()
         return None
 
-    @staticmethod
-    def _is_cancellation_stuck(task_dict: Dict[str, Any]) -> bool:
-        """Return True when a task has sat in CANCELLING beyond the timeout.
-
-        The CANCELLING timestamp lives in status.updatedAt, which
-        _mark_task_and_board_cancelling refreshes when persisting the intent.
-        """
-        updated_at = task_dict.get("updated_at")
-        if isinstance(updated_at, str):
-            try:
-                updated_at = datetime.fromisoformat(updated_at)
-            except ValueError:
-                return False
-        if not isinstance(updated_at, datetime):
-            return False
-        if updated_at.tzinfo is not None:
-            idle_seconds = (
-                datetime.now(updated_at.tzinfo) - updated_at
-            ).total_seconds()
-        else:
-            idle_seconds = (datetime.now() - updated_at).total_seconds()
-        return idle_seconds > settings.CANCELLING_STUCK_TIMEOUT_SECONDS
-
     async def cancel_task(
         self,
         db: Session,
@@ -1190,10 +1167,21 @@ class TaskOperationsMixin:
         """
         Cancel a running task or close session for completed device tasks.
         """
-        # Verify user owns this task
+        # Apply the shared task access policy before selecting a cancellation route.
         task_dict = self.get_task_detail(db=db, task_id=task_id, user_id=user_id)
         if not task_dict:
             raise HTTPException(status_code=404, detail="Task not found")
+
+        device_id = (task_dict.get("device_id") or "").strip()
+        if device_id:
+            from .device_cancel import cancel_device_task
+
+            return await cancel_device_task(
+                db,
+                task_id=task_id,
+                device_id=device_id,
+                background_task_runner=background_task_runner,
+            )
 
         current_status = task_dict.get("status", "")
         final_states = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"]
@@ -1209,7 +1197,9 @@ class TaskOperationsMixin:
             )
 
         if current_status == "CANCELLING":
-            if self._is_cancellation_stuck(task_dict):
+            from app.services.chat.operations.cancel import is_cancellation_stuck
+
+            if is_cancellation_stuck(task_dict.get("updated_at")):
                 logger.warning(
                     f"Task {task_id} stuck in CANCELLING over "
                     f"{settings.CANCELLING_STUCK_TIMEOUT_SECONDS}s, finalizing locally"
@@ -1233,11 +1223,7 @@ class TaskOperationsMixin:
                 "status": "CANCELLING",
             }
 
-        # Check if this is a Chat Shell task
-        is_chat_shell = self._is_chat_shell_task(db, task_id)
-        logger.info(f"Task {task_id} is_chat_shell={is_chat_shell}")
-
-        if is_chat_shell:
+        if self._is_chat_shell_task(db, task_id):
             return await self._cancel_chat_shell_task(
                 db, task_id, user_id, background_task_runner
             )

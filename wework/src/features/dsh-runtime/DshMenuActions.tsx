@@ -1,5 +1,6 @@
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 
 import { DshIcon } from './DshIcon'
 import { executeDshCommand } from './dshExtensions'
@@ -30,7 +31,8 @@ export function DshMenuActions({
     <div className={cn('contents', className)}>
       {actions.map(action => {
         const button = (
-          <button
+          <ControlButton
+            variant="unstyled"
             key={action.id}
             type="button"
             data-testid={`wework-menu-action-${action.id}`}
@@ -52,7 +54,7 @@ export function DshMenuActions({
           >
             <DshIcon name={action.icon} className="h-4 w-4" />
             {showLabels ? <span>{action.title}</span> : null}
-          </button>
+          </ControlButton>
         )
         if (showLabels) return button
         return (

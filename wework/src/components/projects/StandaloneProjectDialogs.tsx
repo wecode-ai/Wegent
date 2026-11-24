@@ -1,36 +1,47 @@
-import { ChevronLeft, FolderOpen, FolderPlus, GitBranch, Globe2, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
-import { useTranslation } from '@/hooks/useTranslation'
+import { AddDevicePanel } from '@/components/devices/AddDevicePanel'
+import { deviceOnboardingScope } from '@/components/devices/useDeviceOnboarding'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
-import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
-import { cn } from '@/lib/utils'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
-  WEWORK_MIN_EXECUTOR_VERSION,
   canUseForProjectCreation,
   canUseForRemoteProjectCreation,
   isCloudDevice,
   isRemoteDevice,
+  WEWORK_MIN_EXECUTOR_VERSION,
 } from '@/lib/device-capabilities'
+import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
+import { cn } from '@/lib/utils'
 import type { CloneGitRepositoryInput, DeviceInfo } from '@/types/api'
-import { AddDevicePanel } from '@/components/devices/AddDevicePanel'
-import { deviceOnboardingScope } from '@/components/devices/useDeviceOnboarding'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { DeviceFolderPicker } from './DeviceFolderPicker'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronLeft, FolderOpen, FolderPlus, GitBranch, Globe2, X } from 'lucide-react'
+import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import { basename } from './device-folder-path'
+import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { LocalProjectCreateDialog } from './LocalProjectCreateDialog'
 import { StandaloneGitProjectForm } from './StandaloneGitProjectForm'
-import { useStandaloneProjectDeviceSelection } from './useStandaloneProjectDeviceSelection'
 import {
-  isLocalDevice,
-  isRemoteProjectDevice,
   getRemoteDeviceLabel,
   getRemoteDeviceOptionLabel,
   getStandaloneDeviceOptions,
   getUsableStandaloneDevices,
+  isLocalDevice,
+  isRemoteProjectDevice,
 } from './standaloneProjectDevices'
+import { useStandaloneProjectDeviceSelection } from './useStandaloneProjectDeviceSelection'
 
 export { StandaloneBlankProjectDialog } from './StandaloneBlankProjectDialog'
 
@@ -115,14 +126,11 @@ function StandaloneFolderProjectDialogContent({
       pendingDevice.device,
     ]
   }, [devices, pendingDevice])
-  const [nativePickerError, setNativePickerError] = useState<string | null>(null)
-  const [nativePickerFallback, setNativePickerFallback] = useState(false)
   const [selectedLocalRoots, setSelectedLocalRoots] = useState<string[]>([])
   const [selectedLocalDeviceId, setSelectedLocalDeviceId] = useState('')
   const [remoteProjectSource, setRemoteProjectSource] = useState<RemoteProjectSource | null>(null)
   const [gitSubmitting, setGitSubmitting] = useState(false)
-  const nativePickerStartedRef = useRef(false)
-  const remoteDeviceSelectRef = useRef<HTMLSelectElement>(null)
+  const remoteDeviceSelectRef = useRef<HTMLButtonElement>(null)
   const remoteDeviceOptions = useMemo(
     () =>
       mode === 'remote' && !fixedDeviceId
@@ -169,12 +177,9 @@ function StandaloneFolderProjectDialogContent({
     (mode === 'existing' && activeDevice !== null && isRemoteProjectDevice(activeDevice))
   const closeDialog = useCallback(() => {
     if (onboardingBusy) return
-    nativePickerStartedRef.current = false
     setPendingDevice(null)
     setAddingProjectDevice(false)
     setOnboardingPending(false)
-    setNativePickerError(null)
-    setNativePickerFallback(false)
     setSelectedLocalRoots([])
     setSelectedLocalDeviceId('')
     setActiveDeviceId(null)
@@ -182,8 +187,6 @@ function StandaloneFolderProjectDialogContent({
     setGitSubmitting(false)
     onClose()
   }, [onClose, onboardingBusy, setActiveDeviceId])
-
-  useEscapeKey(closeDialog, open && !gitSubmitting)
 
   const title = chooseProjectSource
     ? t('workbench.add_project_to_device_title', '添加代码项目')
@@ -223,59 +226,39 @@ function StandaloneFolderProjectDialogContent({
     activeDevice !== null &&
     isLocalDevice(activeDevice) &&
     preferNativeLocalPicker &&
-    selectedLocalRoots.length === 0 &&
-    !nativePickerFallback
+    selectedLocalRoots.length === 0
   const nativePickerDeviceId = activeDevice?.device_id ?? null
 
-  useEffect(() => {
-    if (!open) {
-      nativePickerStartedRef.current = false
-      return undefined
-    }
-    if (!shouldUseNativeLocalPicker || !nativePickerDeviceId) return undefined
-    if (nativePickerStartedRef.current) return undefined
-    const openPickerTimer = window.setTimeout(() => {
-      nativePickerStartedRef.current = true
-      void (async () => {
-        try {
-          setNativePickerError(null)
-          const selectedPaths = await openNativeProjectDirectoryPickers()
-          const selectedPath = selectedPaths[0]
-          if (!selectedPath) {
-            closeDialog()
-            return
-          }
-          setSelectedLocalDeviceId(nativePickerDeviceId)
-          setSelectedLocalRoots(selectedPaths)
-        } catch (error) {
-          console.error('[Wework project] native picker failed', error)
-          setNativePickerError(
-            error instanceof Error
-              ? error.message
-              : t('workbench.project_directory_select_failed', '项目打开失败')
-          )
-        }
-      })()
-    }, 0)
-    return () => window.clearTimeout(openPickerTimer)
-  }, [
-    closeDialog,
-    nativePickerDeviceId,
-    onOpenStandaloneWorkspace,
-    open,
-    shouldUseNativeLocalPicker,
-    t,
-  ])
+  const [nativePicker] = useState(createNativeProjectPickerSession)
+  const subscribeNativePicker = useCallback(
+    (listener: () => void) =>
+      shouldUseNativeLocalPicker && nativePickerDeviceId
+        ? nativePicker.subscribe(listener, nativePickerDeviceId, closeDialog)
+        : () => {},
+    [closeDialog, nativePicker, nativePickerDeviceId, shouldUseNativeLocalPicker]
+  )
+  const nativeSelection = useSyncExternalStore(subscribeNativePicker, nativePicker.getSnapshot)
+  const projectRoots = nativeSelection.data?.roots.length
+    ? nativeSelection.data.roots
+    : selectedLocalRoots
+  const projectDeviceId = nativeSelection.data?.roots.length
+    ? nativeSelection.data.deviceId
+    : selectedLocalDeviceId
+  const nativePickerError =
+    nativeSelection.status === 'error'
+      ? nativeSelection.error instanceof Error
+        ? nativeSelection.error.message
+        : t('workbench.project_directory_select_failed', '项目打开失败')
+      : null
 
   if (!open) return null
-  if (selectedLocalRoots.length > 0) {
-    const selectedDevice =
-      devices.find(device => device.device_id === selectedLocalDeviceId) ?? null
+  if (projectRoots.length > 0) {
+    const selectedDevice = devices.find(device => device.device_id === projectDeviceId) ?? null
     return (
       <LocalProjectCreateDialog
         open
         device={selectedDevice}
-        initialRoots={selectedLocalRoots}
+        initialRoots={projectRoots}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
@@ -290,11 +273,16 @@ function StandaloneFolderProjectDialogContent({
     if (!nativePickerError) return null
     return createPortal(
       <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
-        <div
-          role="dialog"
-          aria-modal="true"
-          data-testid="standalone-folder-native-error-dialog"
-          className="w-full max-w-[420px] rounded-2xl border border-border bg-surface p-5 text-text-primary shadow-2xl"
+        <DialogSurface
+          onClose={() => {
+            if (open && !gitSubmitting) closeDialog()
+          }}
+          render={
+            <div
+              data-testid="standalone-folder-native-error-dialog"
+              className="w-full max-w-[420px] rounded-2xl border border-border bg-surface p-5 text-text-primary shadow-2xl"
+            />
+          }
         >
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -305,7 +293,8 @@ function StandaloneFolderProjectDialogContent({
                 {nativePickerError}
               </p>
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="close-standalone-folder-native-error-dialog"
               onClick={closeDialog}
@@ -313,19 +302,21 @@ function StandaloneFolderProjectDialogContent({
               aria-label={t('workbench.close_dialog', '关闭')}
             >
               <X className="h-5 w-5" />
-            </button>
+            </ControlButton>
           </div>
           <div className="mt-5 flex justify-end">
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="cancel-standalone-folder-native-error-button"
               onClick={closeDialog}
               className="h-10 rounded-xl border border-border px-5 text-sm font-medium text-text-primary hover:bg-muted"
             >
               {t('workbench.cancel', '取消')}
-            </button>
+            </ControlButton>
           </div>
-        </div>
+        </DialogSurface>
       </div>,
       document.body
     )
@@ -341,18 +332,23 @@ function StandaloneFolderProjectDialogContent({
         layer === 'system-popover' ? 'z-system-popover' : 'z-modal'
       )}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        data-testid="standalone-folder-project-dialog"
-        className={[
-          'max-h-[92vh] w-full overflow-y-auto border border-border bg-popover shadow-2xl text-text-primary',
-          showDeviceOnboarding
-            ? 'max-w-[800px] rounded-[20px] p-5'
-            : usesRemoteFolderPicker
-              ? 'max-w-[520px] rounded-[24px] p-5'
-              : 'max-w-[760px] rounded-2xl p-6',
-        ].join(' ')}
+      <DialogSurface
+        onClose={() => {
+          if (open && !gitSubmitting) closeDialog()
+        }}
+        render={
+          <div
+            data-testid="standalone-folder-project-dialog"
+            className={[
+              'max-h-[92vh] w-full overflow-y-auto border border-border bg-popover shadow-2xl text-text-primary',
+              showDeviceOnboarding
+                ? 'max-w-[800px] rounded-[20px] p-5'
+                : usesRemoteFolderPicker
+                  ? 'max-w-[520px] rounded-[24px] p-5'
+                  : 'max-w-[760px] rounded-2xl p-6',
+            ].join(' ')}
+          />
+        }
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -367,7 +363,8 @@ function StandaloneFolderProjectDialogContent({
               {description}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="close-standalone-folder-project-dialog"
             disabled={gitSubmitting || onboardingBusy}
@@ -379,7 +376,7 @@ function StandaloneFolderProjectDialogContent({
             aria-label={t('workbench.close_dialog', '关闭')}
           >
             <X className="h-5 w-5" />
-          </button>
+          </ControlButton>
         </div>
         {usesRemoteFolderPicker &&
           remoteDeviceOptions.length > 0 &&
@@ -389,7 +386,8 @@ function StandaloneFolderProjectDialogContent({
             <div className="mt-5 block">
               <span className="flex items-center justify-between gap-3 text-sm font-medium text-text-primary">
                 <label htmlFor={deviceSelectId}>{t('workbench.remote_host', '远程主机')}</label>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="remote-project-add-device"
                   disabled={gitSubmitting}
@@ -397,71 +395,84 @@ function StandaloneFolderProjectDialogContent({
                   className="h-8 rounded-md px-2 text-sm text-text-secondary hover:bg-muted"
                 >
                   {t('workbench.add_device_dialog_title')}
-                </button>
+                </ControlButton>
               </span>
               <span className="mt-2 flex h-10 items-center gap-2.5 rounded-[10px] border border-border bg-background px-3">
                 <Globe2 className="h-4 w-4 text-primary" />
-                <select
-                  id={deviceSelectId}
-                  ref={remoteDeviceSelectRef}
+                <SelectRoot
                   disabled={gitSubmitting}
-                  data-testid="standalone-remote-device-select"
-                  value={activeDevice?.device_id ?? ''}
-                  onChange={event => setActiveDeviceId(event.target.value)}
-                  className="wework-native-select min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none"
+                  value={normalizeSelectValue(activeDevice?.device_id ?? '')}
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null) return setActiveDeviceId(selectedValue)
+                  }}
                 >
-                  {!activeDevice && (
-                    <option value="" disabled>
-                      {t('workbench.no_remote_project_device', '暂无可用远程或云设备')}
-                    </option>
-                  )}
-                  {cloudDeviceOptions.length > 0 && (
-                    <optgroup label={t('workbench.remote_host_cloud_group', '云设备')}>
-                      {cloudDeviceOptions.map(device => (
-                        <option
-                          key={device.device_id}
-                          value={device.device_id}
-                          disabled={!canUseForRemoteProjectCreation(device)}
-                          data-testid={`standalone-remote-device-option-${device.device_id}`}
-                        >
-                          {getRemoteDeviceOptionLabel(
-                            device,
-                            t('workbench.remote_host_cloud_group', '云设备'),
-                            t('workbench.project_device_offline', '（离线）'),
-                            t(
-                              'workbench.cloud_host_version_required',
-                              `需要 v${WEWORK_MIN_EXECUTOR_VERSION} 或以上`,
-                              { version: WEWORK_MIN_EXECUTOR_VERSION }
-                            )
-                          )}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {remoteDockerDeviceOptions.length > 0 && (
-                    <optgroup label={t('workbench.remote_host_docker_group', '远程 Docker 设备')}>
-                      {remoteDockerDeviceOptions.map(device => (
-                        <option
-                          key={device.device_id}
-                          value={device.device_id}
-                          disabled={!canUseForRemoteProjectCreation(device)}
-                          data-testid={`standalone-remote-device-option-${device.device_id}`}
-                        >
-                          {getRemoteDeviceOptionLabel(
-                            device,
-                            t('workbench.remote_host_docker_group', '远程 Docker 设备'),
-                            t('workbench.project_device_offline', '（离线）'),
-                            t(
-                              'workbench.remote_host_upgrade_required',
-                              `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
-                              { version: WEWORK_MIN_EXECUTOR_VERSION }
-                            )
-                          )}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
+                  <SelectTrigger
+                    appearance="plain"
+                    id={deviceSelectId}
+                    ref={remoteDeviceSelectRef}
+                    data-testid="standalone-remote-device-select"
+                    className="wework-native-select min-w-0 flex-1"
+                  />
+                  <SelectContent>
+                    {!activeDevice && (
+                      <SelectItem value="" disabled>
+                        {t('workbench.no_remote_project_device', '暂无可用远程或云设备')}
+                      </SelectItem>
+                    )}
+                    {cloudDeviceOptions.length > 0 && (
+                      <SelectGroup>
+                        <SelectGroupLabel>
+                          {t('workbench.remote_host_cloud_group', '云设备')}
+                        </SelectGroupLabel>
+                        {cloudDeviceOptions.map(device => (
+                          <SelectItem
+                            key={device.device_id}
+                            value={String(device.device_id)}
+                            disabled={!canUseForRemoteProjectCreation(device)}
+                            data-testid={`standalone-remote-device-option-${device.device_id}`}
+                          >
+                            {getRemoteDeviceOptionLabel(
+                              device,
+                              t('workbench.remote_host_cloud_group', '云设备'),
+                              t('workbench.project_device_offline', '（离线）'),
+                              t(
+                                'workbench.cloud_host_version_required',
+                                `需要 v${WEWORK_MIN_EXECUTOR_VERSION} 或以上`,
+                                { version: WEWORK_MIN_EXECUTOR_VERSION }
+                              )
+                            )}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+                    {remoteDockerDeviceOptions.length > 0 && (
+                      <SelectGroup>
+                        <SelectGroupLabel>
+                          {t('workbench.remote_host_docker_group', '远程 Docker 设备')}
+                        </SelectGroupLabel>
+                        {remoteDockerDeviceOptions.map(device => (
+                          <SelectItem
+                            key={device.device_id}
+                            value={String(device.device_id)}
+                            disabled={!canUseForRemoteProjectCreation(device)}
+                            data-testid={`standalone-remote-device-option-${device.device_id}`}
+                          >
+                            {getRemoteDeviceOptionLabel(
+                              device,
+                              t('workbench.remote_host_docker_group', '远程 Docker 设备'),
+                              t('workbench.project_device_offline', '（离线）'),
+                              t(
+                                'workbench.remote_host_upgrade_required',
+                                `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+                                { version: WEWORK_MIN_EXECUTOR_VERSION }
+                              )
+                            )}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+                  </SelectContent>
+                </SelectRoot>
               </span>
               {remoteDeviceOptions.some(device => !canUseForRemoteProjectCreation(device)) && (
                 <span
@@ -478,7 +489,8 @@ function StandaloneFolderProjectDialogContent({
           )}
         {remoteProjectSource === 'git' && !addingRemoteDevice && (
           <div className="mt-5" hidden={showDeviceOnboarding}>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="remote-project-source-back"
               disabled={gitSubmitting}
@@ -487,7 +499,7 @@ function StandaloneFolderProjectDialogContent({
             >
               <ChevronLeft className="h-4 w-4" />
               {t('workbench.remote_project_source_change', '更改项目来源')}
-            </button>
+            </ControlButton>
             <StandaloneGitProjectForm
               device={activeDevice}
               onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
@@ -511,7 +523,8 @@ function StandaloneFolderProjectDialogContent({
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-medium">{t('workbench.add_device_dialog_title')}</h3>
                 {activeDevice && !addingRemoteDevice && (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="remote-project-cancel-add-device"
                     disabled={onboardingBusy}
@@ -522,7 +535,7 @@ function StandaloneFolderProjectDialogContent({
                     className="h-8 rounded-md px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-50"
                   >
                     {t('workbench.back_to_project')}
-                  </button>
+                  </ControlButton>
                 )}
               </div>
               <AddDevicePanel
@@ -595,7 +608,9 @@ function StandaloneFolderProjectDialogContent({
             ).map(option => {
               const Icon = option.icon
               return (
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   key={option.source}
                   type="button"
                   data-testid={`remote-project-source-${option.source}`}
@@ -616,14 +631,15 @@ function StandaloneFolderProjectDialogContent({
                       {option.description}
                     </span>
                   </span>
-                </button>
+                </ControlButton>
               )
             })}
           </div>
         ) : remoteProjectSource === 'git' ? null : activeDevice ? (
           <div className="mt-5">
             {(mode === 'remote' || chooseProjectSource) && remoteIntent === 'project' && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="remote-project-source-back"
                 onClick={() => setRemoteProjectSource(null)}
@@ -631,7 +647,7 @@ function StandaloneFolderProjectDialogContent({
               >
                 <ChevronLeft className="h-4 w-4" />
                 {t('workbench.remote_project_source_change', '更改项目来源')}
-              </button>
+              </ControlButton>
             )}
             {usesRemoteFolderPicker && (
               <h3 className="mb-2 text-sm font-medium text-text-primary">
@@ -678,8 +694,59 @@ function StandaloneFolderProjectDialogContent({
             )}
           </div>
         ) : null}
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )
+}
+
+/** One dialog owns one native request; observer leases can transfer its result and cancellation. */
+function createNativeProjectPickerSession() {
+  type Observer = { notify(): void; deviceId: string; onCancel(): void }
+  const observers = new Set<Observer>()
+  let stop: (() => void) | undefined
+  let request: Promise<{ deviceId: string; roots: string[] }> | undefined
+  const currentObserver = () => [...observers].at(-1)
+  const selection = createAsyncResource(
+    'standalone-project-directory',
+    async signal => {
+      // Resolve ownership at dispatch, after same-commit observer transfers have finished.
+      await Promise.resolve()
+      signal.throwIfAborted()
+      const owner = currentObserver()
+      if (!owner) throw new DOMException('Project picker is detached', 'AbortError')
+      // Native dialogs cannot be aborted: retain their request across subscription changes.
+      request ??= openNativeProjectDirectoryPickers().then(roots => ({
+        deviceId: owner.deviceId,
+        roots,
+      }))
+      return request
+    },
+    {
+      success: result => {
+        if (!result.roots.length) currentObserver()?.onCancel()
+      },
+      failure: error => {
+        if (observers.size) console.error('[Wework project] native picker failed', error)
+      },
+    }
+  )
+  return {
+    getSnapshot: selection.getSnapshot,
+    subscribe(notify: () => void, deviceId: string, onCancel: () => void) {
+      const observer = { notify, deviceId, onCancel }
+      observers.add(observer)
+      stop ??= selection.subscribe(() => {
+        for (const active of observers) active.notify()
+      })
+      return () => {
+        observers.delete(observer)
+        queueMicrotask(() => {
+          if (observers.size) return
+          stop?.()
+          stop = undefined
+        })
+      }
+    },
+  }
 }

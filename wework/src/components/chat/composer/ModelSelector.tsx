@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useCallback } from 'react'
 import { ModelSelector as SharedModelSelector } from '@wegent/collaboration/controls/ModelSelector'
 import type { ModelSelectorProps } from '@wegent/collaboration/controls/model-selector-types'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
-import { useEmbeddedBrowserOcclusion } from '@/hooks/useEmbeddedBrowserOcclusion'
+import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { navigateTo } from '@/lib/navigation'
 import { TOGGLE_MODEL_SELECTOR_COMMAND } from '@/lib/keybindings'
@@ -23,8 +23,9 @@ export function ModelSelector(props: ModelSelectorProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
   const shortcut = useConfiguredKeybinding(TOGGLE_MODEL_SELECTOR_COMMAND)
-  const [flyoutOpen, setFlyoutOpen] = useState(false)
-  useEmbeddedBrowserOcclusion('model-selector-flyout', flyoutOpen)
+  const reportFlyout = useCallback((open: boolean) => {
+    setEmbeddedBrowserOcclusion('model-selector-flyout', open)
+  }, [])
   return (
     <SharedModelSelector
       {...props}
@@ -33,7 +34,7 @@ export function ModelSelector(props: ModelSelectorProps) {
       shortcut={shortcut}
       onOpenModelSettings={() => navigateTo('/settings/personal/models')}
       onOpenCloudConnections={() => navigateTo('/settings/connections')}
-      onFlyoutOpenChange={setFlyoutOpen}
+      onFlyoutOpenChange={reportFlyout}
       getViewportRightBoundary={getDesktopViewportRightBoundary}
     />
   )

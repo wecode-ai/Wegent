@@ -340,6 +340,25 @@ export function createDingTalkReplyStory(options) {
         model.continuous = true
         model.phase = 3
         await publish(3)
+        const { automaticWork, automaticTask } = await storyUntil(
+          async () => {
+            const latestWorks = await rpc('runtime.stand_in.work.list', { userId: STORY_USER })
+            const automaticWork = latestWorks.items.find(
+              item =>
+                item.roleId === ROLE && item.latestMessage?.id === REPLY_STORY_VALUES[3].messageId
+            )
+            const automaticTask = automaticWork?.taskId
+              ? await rpc('runtime.tasks.get', { taskId: automaticWork.taskId })
+              : null
+            const sentCurrentReply =
+              automaticTask?.task?.status === 'done' &&
+              (await replies()).some(item => item.messageId === REPLY_STORY_VALUES[3].messageId)
+            return { automaticWork, automaticTask, sentCurrentReply }
+          },
+          value => value.sentCurrentReply,
+          options.modelResponseTimeoutMs,
+          'A confirmed continuous grant must complete the new source work without another user decision'
+        )
         await assertStoryPrimaryOutcome(
           control,
           rpc,
@@ -347,12 +366,7 @@ export function createDingTalkReplyStory(options) {
           options.modelResponseTimeoutMs
         )
         const sent = await replies()
-        const latestWorks = await rpc('runtime.stand_in.work.list', { userId: STORY_USER })
-        const automaticWork = latestWorks.items.find(
-          item => item.roleId === ROLE && item.latestMessage?.id === REPLY_STORY_VALUES[3].messageId
-        )
         assert.ok(automaticWork, 'The new mention must have its own actual source work')
-        const automaticTask = await rpc('runtime.tasks.get', { taskId: automaticWork.taskId })
         assert.equal(
           automaticTask.task.status,
           'done',

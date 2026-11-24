@@ -1,60 +1,51 @@
+import { Button as ControlButton } from '../markdown/Button'
+import { ChevronRight, File, FileText, Loader2, ScanText, X } from 'lucide-react'
+import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import {
-  ChevronRight,
-  File,
-  FileText,
-  Loader2,
-  ScanText,
-  X,
-} from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
-import {
-  canRestorePastedText,
-  isPastedTextFile,
-} from "../composer/pastedTextAttachment";
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { canRestorePastedText, isPastedTextFile } from '../composer/pastedTextAttachment'
 import {
   AttachmentImageView,
   type AttachmentImageServices,
   type ImageAttachment,
-} from "./AttachmentImageView";
+} from './AttachmentImageView'
 import {
   getAttachmentTextPreview,
   isImageAttachment,
   type ComposerAttachmentMetadata,
-} from "./attachmentPresentation";
+} from './attachmentPresentation'
 
-export interface ComposerAttachment
-  extends ComposerAttachmentMetadata, ImageAttachment {
-  id: string | number;
-  text_content?: string | null;
-  ui_group_role?: string;
-  ui_kind?: string;
-  text_length?: number | null;
+export interface ComposerAttachment extends ComposerAttachmentMetadata, ImageAttachment {
+  id: string | number
+  text_content?: string | null
+  ui_group_role?: string
+  ui_kind?: string
+  text_length?: number | null
 }
 export interface ComposerAttachmentBadgesProps<T extends ComposerAttachment> {
-  attachments: T[];
-  uploadingFiles: ReadonlyMap<
-    string,
-    { file: File; progress?: number; previewUrl?: string }
-  >;
-  errors: ReadonlyMap<string, string>;
-  onRemoveAttachment(id: T["id"]): void;
-  onDismissAttachmentError?(filename: string): void;
-  onOpenAttachment?(attachment: T): void;
-  onShowTextAttachment?(attachment: T): void;
-  imageServices: AttachmentImageServices<T>;
+  attachments: T[]
+  uploadingFiles: ReadonlyMap<string, { file: File; progress?: number; previewUrl?: string }>
+  errors: ReadonlyMap<string, string>
+  onRemoveAttachment(id: T['id']): void
+  onDismissAttachmentError?(filename: string): void
+  onOpenAttachment?(attachment: T): void
+  onShowTextAttachment?(attachment: T): void
+  imageServices: AttachmentImageServices<T>
   labels: {
-    removeAttachment: string;
-    showText: string;
-    appshot: string;
-    pastedText: string;
-    addingText: string;
-    dismissError?: string;
-  };
-  leading?: ReactNode;
+    removeAttachment: string
+    showText: string
+    appshot: string
+    pastedText: string
+    addingText: string
+    dismissError?: string
+  }
+  leading?: ReactNode
 }
 
-const attachmentTileClassName =
-  "group/attachment relative h-[122px] w-40 shrink-0";
+const attachmentTileClassName = 'group/attachment relative h-[122px] w-40 shrink-0'
 
 function AttachmentTileBorder() {
   return (
@@ -62,26 +53,23 @@ function AttachmentTileBorder() {
       aria-hidden="true"
       className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-border"
     />
-  );
+  )
 }
 
-function PendingImageAttachment({
-  file,
-  previewUrl,
-}: {
-  file: File;
-  previewUrl?: string;
-}) {
-  const [loaded, setLoaded] = useState<{ file: File; url: string } | null>(
-    null,
-  );
-  useEffect(() => {
-    if (previewUrl) return;
-    const url = URL.createObjectURL(file);
-    setLoaded({ file, url });
-    return () => URL.revokeObjectURL(url);
-  }, [file, previewUrl]);
-  const src = previewUrl ?? (loaded?.file === file ? loaded.url : undefined);
+function PendingImageAttachment({ file, previewUrl }: { file: File; previewUrl?: string }) {
+  const resource = useMemo(
+    () =>
+      createAsyncResource(file.name, async () => URL.createObjectURL(file), {
+        release: url => URL.revokeObjectURL(url),
+      }),
+    [file]
+  )
+  const query = useSyncExternalStore(
+    previewUrl ? subscribeIdleResource : resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const src = previewUrl ?? query.data
   return (
     <div
       data-testid="pending-image-attachment"
@@ -99,7 +87,7 @@ function PendingImageAttachment({
       )}
       <AttachmentTileBorder />
     </div>
-  );
+  )
 }
 
 function RemoveAttachmentButton<Id extends string | number>({
@@ -108,24 +96,25 @@ function RemoveAttachmentButton<Id extends string | number>({
   label,
   tile = false,
 }: {
-  attachmentId: Id;
-  onRemoveAttachment: (attachmentId: Id) => void;
-  label: string;
-  tile?: boolean;
+  attachmentId: Id
+  onRemoveAttachment: (attachmentId: Id) => void
+  label: string
+  tile?: boolean
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="remove-attachment-button"
       onClick={() => onRemoveAttachment(attachmentId)}
-      className={`absolute flex h-11 w-11 items-center justify-center rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2 md:h-6 md:w-6 ${tile ? "-right-1.5 -top-1.5 [@media(hover:hover)]:opacity-0 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100 focus-visible:opacity-100" : "right-1 top-1"}`}
+      className={`absolute flex h-11 w-11 items-center justify-center rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2 md:h-6 md:w-6 ${tile ? '-right-1.5 -top-1.5 [@media(hover:hover)]:opacity-0 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100 focus-visible:opacity-100' : 'right-1 top-1'}`}
       aria-label={label}
     >
       <X
-        className={`h-4 w-4 rounded-full bg-text-primary p-0.5 text-background ${tile ? "ring-2 ring-background" : ""}`}
+        className={`h-4 w-4 rounded-full bg-text-primary p-0.5 text-background ${tile ? 'ring-2 ring-background' : ''}`}
       />
-    </button>
-  );
+    </ControlButton>
+  )
 }
 
 function DocumentAttachmentCard({
@@ -135,17 +124,15 @@ function DocumentAttachmentCard({
   children,
   onOpen,
 }: {
-  filename: string;
-  uploading?: boolean;
-  progress?: number;
-  children?: ReactNode;
-  onOpen?: () => void;
+  filename: string
+  uploading?: boolean
+  progress?: number
+  children?: ReactNode
+  onOpen?: () => void
 }) {
   return (
     <div
-      data-testid={
-        uploading ? "uploading-attachment-badge" : "attachment-badge"
-      }
+      data-testid={uploading ? 'uploading-attachment-badge' : 'attachment-badge'}
       aria-busy={uploading || undefined}
       className={attachmentTileClassName}
     >
@@ -157,19 +144,14 @@ function DocumentAttachmentCard({
           {uploading ? (
             <>
               <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
-              {progress !== undefined && (
-                <span className="text-xs">{progress}%</span>
-              )}
+              {progress !== undefined && <span className="text-xs">{progress}%</span>}
             </>
           ) : (
             <File className="h-6 w-6" aria-hidden="true" strokeWidth={1.5} />
           )}
         </span>
         <span className="flex h-8 min-w-0 shrink-0 items-center gap-1 bg-background px-2 text-xs leading-4">
-          <FileText
-            className="h-4 w-4 shrink-0 text-focus"
-            aria-hidden="true"
-          />
+          <FileText className="h-4 w-4 shrink-0 text-focus" aria-hidden="true" />
           <span className="truncate" title={filename}>
             {filename}
           </span>
@@ -177,20 +159,21 @@ function DocumentAttachmentCard({
       </div>
       <AttachmentTileBorder />
       {onOpen && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="attachment-document-preview-button"
           aria-label={filename}
-          onClick={(event) => {
-            event.currentTarget.focus({ preventScroll: true });
-            onOpen();
+          onClick={event => {
+            event.currentTarget.focus({ preventScroll: true })
+            onOpen()
           }}
           className="absolute inset-0 cursor-pointer rounded-2xl hover:bg-text-primary/5 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-primary"
         />
       )}
       {children}
     </div>
-  );
+  )
 }
 
 function TextAttachmentCard({
@@ -201,16 +184,16 @@ function TextAttachmentCard({
   labels,
   children,
 }: {
-  preview: string;
-  pending?: boolean;
-  onOpen?: () => void;
-  onShowText?: () => void;
-  labels: ComposerAttachmentBadgesProps<ComposerAttachment>["labels"];
-  children?: ReactNode;
+  preview: string
+  pending?: boolean
+  onOpen?: () => void
+  onShowText?: () => void
+  labels: ComposerAttachmentBadgesProps<ComposerAttachment>['labels']
+  children?: ReactNode
 }) {
   return (
     <div
-      data-testid={pending ? "uploading-attachment-badge" : "attachment-badge"}
+      data-testid={pending ? 'uploading-attachment-badge' : 'attachment-badge'}
       aria-busy={pending || undefined}
       className="relative inline-flex w-fit max-w-64 shrink-0 items-center gap-2.5 rounded-lg border border-border bg-background p-3 pr-14 text-left md:pr-8"
     >
@@ -232,7 +215,8 @@ function TextAttachmentCard({
           {pending ? (
             labels.addingText
           ) : onShowText ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="show-text-attachment-button"
               className="relative z-10 inline-flex min-h-11 min-w-11 max-w-full items-center gap-1 underline underline-offset-2 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary md:min-h-0 md:min-w-0"
@@ -240,14 +224,15 @@ function TextAttachmentCard({
             >
               <span className="truncate">{labels.showText}</span>
               <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-            </button>
+            </ControlButton>
           ) : (
             labels.pastedText
           )}
         </span>
       </span>
       {onOpen && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="attachment-text-open-button"
           aria-label={preview || labels.pastedText}
@@ -257,31 +242,31 @@ function TextAttachmentCard({
       )}
       {children}
     </div>
-  );
+  )
 }
 
 function PendingTextAttachment({
   file,
   labels,
 }: {
-  file: File;
-  labels: ComposerAttachmentBadgesProps<ComposerAttachment>["labels"];
+  file: File
+  labels: ComposerAttachmentBadgesProps<ComposerAttachment>['labels']
 }) {
-  const [preview, setPreview] = useState("");
-  useEffect(() => {
-    let active = true;
-    void file
-      .slice(0, 512)
-      .text()
-      .then((text) => {
-        if (active) setPreview(text.trim().split(/\r?\n/, 1)[0]);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [file]);
-  return <TextAttachmentCard preview={preview} pending labels={labels} />;
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        file.name,
+        async () => (await file.slice(0, 512).text()).trim().split(/\r?\n/, 1)[0]
+      ),
+    [file]
+  )
+  const query = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const preview = query.data ?? ''
+  return <TextAttachmentCard preview={preview} pending labels={labels} />
 }
 
 export function ComposerAttachmentBadges<T extends ComposerAttachment>({
@@ -297,15 +282,10 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
   onDismissAttachmentError,
 }: ComposerAttachmentBadgesProps<T>) {
   const visibleAttachments = attachments.filter(
-    (attachment) => attachment.ui_group_role !== "companion",
-  );
-  if (
-    attachments.length === 0 &&
-    uploadingFiles.size === 0 &&
-    errors.size === 0 &&
-    !leading
-  ) {
-    return null;
+    attachment => attachment.ui_group_role !== 'companion'
+  )
+  if (attachments.length === 0 && uploadingFiles.size === 0 && errors.size === 0 && !leading) {
+    return null
   }
 
   return (
@@ -315,8 +295,8 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
     >
       {leading}
       {visibleAttachments
-        .filter((attachment) => attachment.ui_kind !== "pasted-text")
-        .map((attachment) =>
+        .filter(attachment => attachment.ui_kind !== 'pasted-text')
+        .map(attachment =>
           isImageAttachment(attachment) ? (
             <div
               key={attachment.id}
@@ -326,6 +306,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
               <AttachmentImageView
                 services={imageServices}
                 attachment={attachment}
+                fromComposer
                 buttonTestId="attachment-image-preview-button"
                 imageTestId="attachment-image-preview"
                 loadingTestId="attachment-image-preview-loading"
@@ -335,7 +316,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
                 buttonClassName="block h-full w-full cursor-zoom-in rounded-2xl p-0 text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-primary"
               />
               <AttachmentTileBorder />
-              {attachment.ui_kind === "appshot" && (
+              {attachment.ui_kind === 'appshot' && (
                 <span
                   data-testid="attachment-appshot-label"
                   className="pointer-events-none absolute bottom-1 left-1 rounded-md bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white"
@@ -354,11 +335,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
             <DocumentAttachmentCard
               key={attachment.id}
               filename={attachment.filename}
-              onOpen={
-                onOpenAttachment
-                  ? () => onOpenAttachment(attachment)
-                  : undefined
-              }
+              onOpen={onOpenAttachment ? () => onOpenAttachment(attachment) : undefined}
             >
               <RemoveAttachmentButton
                 label={labels.removeAttachment}
@@ -367,15 +344,13 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
                 tile
               />
             </DocumentAttachmentCard>
-          ),
+          )
         )}
       {Array.from(uploadingFiles.entries())
         .filter(([, upload]) => !isPastedTextFile(upload.file))
         .map(([fileId, upload]) =>
-          upload.file.type.toLowerCase().startsWith("image/") ||
-          /\.(apng|avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(
-            upload.file.name,
-          ) ? (
+          upload.file.type.toLowerCase().startsWith('image/') ||
+          /\.(apng|avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(upload.file.name) ? (
             <PendingImageAttachment
               key={fileId}
               file={upload.file}
@@ -388,26 +363,20 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
               uploading
               progress={upload.progress}
             />
-          ),
+          )
         )}
       {visibleAttachments
-        .filter((attachment) => attachment.ui_kind === "pasted-text")
-        .map((attachment) => (
+        .filter(attachment => attachment.ui_kind === 'pasted-text')
+        .map(attachment => (
           <TextAttachmentCard
             key={attachment.id}
-            preview={
-              getAttachmentTextPreview(attachment) ?? attachment.filename
-            }
+            preview={getAttachmentTextPreview(attachment) ?? attachment.filename}
             labels={labels}
-            onOpen={
-              onOpenAttachment ? () => onOpenAttachment(attachment) : undefined
-            }
+            onOpen={onOpenAttachment ? () => onOpenAttachment(attachment) : undefined}
             onShowText={
               attachment.text_content &&
               onShowTextAttachment &&
-              canRestorePastedText(
-                attachment.text_length ?? attachment.text_content.length,
-              )
+              canRestorePastedText(attachment.text_length ?? attachment.text_content.length)
                 ? () => onShowTextAttachment(attachment)
                 : undefined
             }
@@ -422,11 +391,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
       {Array.from(uploadingFiles.entries())
         .filter(([, upload]) => isPastedTextFile(upload.file))
         .map(([fileId, upload]) => (
-          <PendingTextAttachment
-            key={fileId}
-            file={upload.file}
-            labels={labels}
-          />
+          <PendingTextAttachment key={fileId} file={upload.file} labels={labels} />
         ))}
 
       {Array.from(errors.entries()).map(([fileId, error]) => (
@@ -440,7 +405,9 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
           <span className="min-w-0 truncate">{fileId}</span>
           <span className="min-w-0 truncate">{error}</span>
           {onDismissAttachmentError && (
-            <button
+            <ControlButton
+              variant="destructive"
+              size="sm"
               type="button"
               data-testid="dismiss-attachment-error-button"
               aria-label={labels.dismissError}
@@ -449,10 +416,10 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
               onClick={() => onDismissAttachmentError(fileId)}
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
+            </ControlButton>
           )}
         </span>
       ))}
     </div>
-  );
+  )
 }

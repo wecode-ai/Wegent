@@ -176,8 +176,39 @@ export function createLocalDevicePluginApi(
       )
       return localPlugin(await api.updateInstalledPlugin(id, request, scope.requestId), scope)
     },
-    uninstallInstalledPlugin(id) {
-      return api.uninstallInstalledPlugin(id)
+    async uninstallInstalledPlugin(id, deviceId) {
+      if (!deviceId?.trim()) return api.uninstallInstalledPlugin(id)
+      const release = await acquirePluginDeviceSync(deviceId, undefined, 'reconcile')
+      try {
+        const scope = await deviceScope(deviceId)
+        await api.uninstallInstalledPluginWithDeviceHandoff(id, scope.requestId)
+        // Account deletion is not proof that this Runtime has removed its materialization.
+        const receipt = await api.syncInstalledPluginsToDevice(scope.requestId, true)
+        if (
+          ![scope.deviceId, scope.requestId].includes(receipt.deviceId) ||
+          receipt.sync.device_id !== receipt.deviceId ||
+          receipt.reconciled !== true ||
+          receipt.pendingCount !== 0 ||
+          !receipt.sync.success ||
+          receipt.sync.failed > 0 ||
+          receipt.sync.errors.length > 0 ||
+          receipt.sync.results.some(
+            result =>
+              result.device_id !== receipt.deviceId || !result.success || result.errors.length > 0
+          )
+        )
+          throw new Error(i18n.t('workbench.plugins_local_sync_unconfirmed'))
+        if (
+          receipt.sync.plugins.some(
+            plugin => String(plugin.id) === String(id) && plugin.status !== 'removed'
+          )
+        )
+          throw Object.assign(new Error(i18n.t('workbench.plugins_local_sync_superseded')), {
+            code: 'INTENT_SUPERSEDED',
+          })
+      } finally {
+        release()
+      }
     },
     async syncInstalledPluginToDevice(id, deviceId) {
       const scope = await deviceScope(deviceId)

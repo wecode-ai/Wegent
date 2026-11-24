@@ -4,6 +4,7 @@ import { normalize } from 'node:path'
 
 import { verifyLocalExecutorUsesCloudSocketUrl } from '../modules/cloud-environment.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { modelRequestTexts } from '../modules/model-tool-output.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForScenarioProgress } from '../modules/scenario-progress.mjs'
 import { createWorkbenchControlCollaboration } from '../modules/workbench-control-collaboration.mjs'
@@ -607,9 +608,24 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         } else if (serialized.includes(CREATED)) {
           events = [assistantMessage('WEWORK_CONTROL_CREATED_READY'), responseCompleted(id)]
         } else if (serialized.includes(FOLLOW_UP)) {
+          const changeRequestContext = modelRequestTexts(body, 'developer')
+            .split('<wework.connection-events.change-requests>')
+            .at(-1)
+            .split('</wework.connection-events.change-requests>')[0]
+          assert.ok(changeRequestContext.includes(JSON.stringify([PR])))
+          assert.ok(changeRequestContext.includes('subscribe_connection_events'))
+          assert.ok(changeRequestContext.includes('exact head SHA'))
+          assert.match(changeRequestContext, /single merge wait for CI results and conflicts/)
+          assert.match(changeRequestContext, /git_wait:merge/)
           followUpRequests += 1
           events = [assistantMessage('WEWORK_CONTROL_ORIGINAL_RESUMED'), responseCompleted(id)]
         } else if (serialized.includes(SOURCE)) {
+          assert.ok(
+            !modelRequestTexts(body, 'developer').includes(
+              '<wework.connection-events.change-requests>'
+            ),
+            'An unbound PR URL in a user message must not create a binding hint'
+          )
           events = [assistantMessage('WEWORK_CONTROL_SOURCE_READY'), responseCompleted(id)]
         } else {
           throw new Error('Unexpected model request during control checkpoint')
@@ -741,6 +757,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('clickWhenEnabled', `${WORKBENCH} [data-testid="send-message-button"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'WEWORK_CONTROL_CLOUD_UI_RESUMED',
+        timeoutMs: modelResponseTimeoutMs,
       })
       assert.equal(cloudUiFollowUpRequests, 1)
       const localResumed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
@@ -765,6 +782,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('clickWhenEnabled', `${WORKBENCH} [data-testid="send-message-button"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'WEWORK_CONTROL_REMOTE_UI_RESUMED',
+        timeoutMs: modelResponseTimeoutMs,
       })
       if (failure) throw failure
       const resumed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))

@@ -14,6 +14,8 @@ Cloud login retains its original system-browser authorization flow. Connector au
 
 ## State Ownership
 
+When the desktop configures the Executor cloud connection, it supplies the account ID verified at sign-in together with the connection credentials. Local stand-in ownership checks use that connection state. Disconnecting or switching accounts clears or replaces the identity with the connection.
+
 Cloud connection state is owned by the frontend `cloud-connection` layer and is stored separately from the global `auth_token` used by the web login flow. It persists:
 
 - The Backend root URL entered by the user.

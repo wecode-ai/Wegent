@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 import { createCollaborationTranslator } from "../i18n";
 import { ModelSelector } from "./ModelSelector";
+import { ReasoningSlider } from "./ReasoningSlider";
 import { getControlsForModel, normalizeModelOptions } from "./model-ui";
 import { selectedModelExecutionFields } from "./runtimeModelSelection";
 
@@ -202,6 +203,30 @@ describe("Catalog reasoning and independent recommended presets", () => {
       );
     },
   );
+
+  it("centers the thumb when the slider has a single stop", () => {
+    const control = getControlsForModel(model()).find(
+      ({ id }) => id === "reasoning",
+    )!;
+    act(() =>
+      root.render(
+        <ReasoningSlider
+          translate={createCollaborationTranslator("en")}
+          control={{
+            ...control,
+            options: control.options.filter(({ value }) => value === "high"),
+          }}
+          selectedModelOptions={{ reasoning: "high" }}
+          onSelectOption={vi.fn()}
+        />,
+      ),
+    );
+    const track = element("model-control-reasoning-track") as HTMLInputElement;
+    const thumb = element("model-control-reasoning-thumb");
+    expect(track.disabled).toBe(true);
+    expect(track.getAttribute("aria-valuetext")).toBe("High");
+    expect(thumb.style.getPropertyValue("--slider-thumb-position")).toBe("50%");
+  });
 
   it("shows every enabled fixed-model effort, including max", () => {
     renderSelector(model(), "en", {

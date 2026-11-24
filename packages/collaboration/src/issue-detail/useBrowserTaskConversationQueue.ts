@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
 import type { RuntimeTaskSummary } from '@wegent/chat-core/runtime-task-api-types'
 import type { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
@@ -7,7 +7,7 @@ import type { CollaborationTranslate } from '../i18n'
 import { useBrowserConversationQueue } from './browserTaskDraftContext'
 import { runtimeContinuationRequest } from '../execution/runtimeContinuationRequest'
 import { createRuntimeUserMessage } from '../execution/runtimeUserMessage'
-import { createAppliedRuntimeGuidanceMessage } from '../execution/runtimeGuidanceMessages'
+import { createRuntimeConversationQueueObservation } from '../execution/runtimeConversationQueueObservation'
 import {
   runtimeQueuedMessageRequest,
   isRuntimeQueueBusyError,
@@ -48,8 +48,6 @@ export function useBrowserTaskConversationQueue({
   translate: CollaborationTranslate
 }) {
   const queue = useBrowserConversationQueue(`${address.deviceId}:${address.taskId}`)
-  const messages = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot)
-  const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot)
   const port = useMemo<RuntimeConversationQueuePort<string>>(
     () => ({
       lifecycle: () => lifecycle(session),
@@ -99,43 +97,19 @@ export function useBrowserTaskConversationQueue({
     }),
     [runtime, address, task, session, projectId, t]
   )
-  useEffect(
+  const observation = useMemo(
     () =>
-      session.subscribeGuidance(payload => {
-        const message = queue.applyGuidance(payload)
-        if (message)
-          session.applyGuidance(
-            createAppliedRuntimeGuidanceMessage(message, payload),
-            payload.subtaskId
-          )
+      createRuntimeConversationQueueObservation(queue, session, port, {
+        available: Boolean(task),
+        busy: running || sending,
       }),
-    [session, queue]
+    [queue, session, port, task, running, sending]
   )
-  useEffect(() => {
-    queue.reconcileGuidance(
-      new Set(
-        state.messages
-          .filter(message => message.role === 'user' && message.runtimeGuidance)
-          .map(message => message.id)
-      )
-    )
-  }, [queue, state.messages])
-  useEffect(() => {
-    if (task && !state.loading && !state.error) void queue.pump(port, running || sending)
-  }, [
-    queue,
-    port,
-    task,
-    running,
-    sending,
-    messages,
-    state.loading,
-    state.error,
-    state.lifecycleRevision,
-    state.running,
-    state.runStatus,
-    state.turns,
-  ])
+  const messages = useSyncExternalStore(
+    observation.subscribe,
+    observation.getSnapshot,
+    observation.getSnapshot
+  )
   return {
     queue,
     messages,

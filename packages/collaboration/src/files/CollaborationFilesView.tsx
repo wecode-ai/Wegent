@@ -1,16 +1,12 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useDialogRequests } from '../controls/useDialogRequests'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   collaborationFileBrowserBreadcrumbs,
   collaborationFileBrowserEntries,
   type CollaborationFileBrowserLocation,
-} from "./browser";
+} from './browser'
 import {
   ChevronRightIcon,
   DownloadIcon,
@@ -22,12 +18,10 @@ import {
   TrashIcon,
   UploadIcon,
   XIcon,
-} from "./icons";
-import {
-  collaborationFilePreviewKind,
-  isLikelyCollaborationTextContent,
-} from "./preview";
-import { loadCollaborationFiles } from "./load";
+} from './icons'
+import { collaborationFilePreviewKind, isLikelyCollaborationTextContent } from './preview'
+import { createCollaborationFilesResources } from './load'
+import { formatCollaborationFileSize } from './format'
 import type {
   CollaborationBinaryPreviewFile,
   CollaborationDeliveryFile,
@@ -36,40 +30,54 @@ import type {
   CollaborationProjectFile,
   CollaborationTaskAttachment,
   CollaborationTextPreviewFile,
-} from "./types";
+} from './types'
+
+const EMPTY_FILES: never[] = []
 
 interface FilePreviewTarget {
-  key: string;
-  title: string;
-  filename: string;
-  contentType: string | null;
-  sizeBytes: number;
-  load: () => Promise<Blob>;
+  key: string
+  title: string
+  filename: string
+  contentType: string | null
+  sizeBytes: number
+  load: () => Promise<Blob>
 }
 
-const fallbackTranslate: CollaborationFilesTranslate = (
-  _key,
-  fallback,
-  options,
-) => {
-  let value = fallback ?? _key;
+const fallbackTranslate: CollaborationFilesTranslate = (_key, fallback, options) => {
+  let value = fallback ?? _key
   for (const [name, replacement] of Object.entries(options ?? {})) {
-    value = value.split(`{{${name}}}`).join(String(replacement));
+    value = value.split(`{{${name}}}`).join(String(replacement))
   }
-  return value;
-};
+  return value
+}
 
 function downloadName(path: string): string {
-  return path.split(/[\\/]/).pop() || "download";
+  return path.split(/[\\/]/).pop() || 'download'
 }
 
-export function formatCollaborationFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+export function CollaborationFilesView(props: CollaborationFilesViewProps) {
+  const [scope, setScope] = useState({
+    api: props.api,
+    projectId: props.project.id,
+    projectStore: props.project.project_store,
+    key: 0,
+  })
+  if (
+    scope.api !== props.api ||
+    scope.projectId !== props.project.id ||
+    scope.projectStore !== props.project.project_store
+  ) {
+    setScope({
+      api: props.api,
+      projectId: props.project.id,
+      projectStore: props.project.project_store,
+      key: scope.key + 1,
+    })
+  }
+  return <CollaborationFilesContent key={scope.key} {...props} />
 }
 
-export function CollaborationFilesView({
+function CollaborationFilesContent({
   api,
   project,
   PreviewComponent,
@@ -78,88 +86,80 @@ export function CollaborationFilesView({
   t = fallbackTranslate,
   renderTooltip,
 }: CollaborationFilesViewProps) {
-  const [files, setFiles] = useState<CollaborationProjectFile[]>([]);
-  const [deliveryFiles, setDeliveryFiles] = useState<
-    CollaborationDeliveryFile[]
-  >([]);
-  const [taskAttachments, setTaskAttachments] = useState<
-    CollaborationTaskAttachment[]
-  >([]);
-  const [folderName, setFolderName] = useState("");
-  const [creatingFolder, setCreatingFolder] = useState(false);
-  const [uploadingCount, setUploadingCount] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [editingFileId, setEditingFileId] = useState<string | null>(null);
-  const [editingPath, setEditingPath] = useState("");
-  const [previewTarget, setPreviewTarget] = useState<FilePreviewTarget | null>(
-    null,
-  );
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewText, setPreviewText] =
-    useState<CollaborationTextPreviewFile | null>(null);
-  const [previewBinary, setPreviewBinary] =
-    useState<CollaborationBinaryPreviewFile | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(
-    null,
-  );
-  const projectLocationKey = String(project.id);
-  const [locationState, setLocationState] = useState<{
-    projectKey: string;
-    location: CollaborationFileBrowserLocation;
-  }>({ projectKey: projectLocationKey, location: { scope: "root" } });
-  const location = useMemo<CollaborationFileBrowserLocation>(
-    () =>
-      locationState.projectKey === projectLocationKey
-        ? locationState.location
-        : { scope: "root" },
-    [locationState, projectLocationKey],
-  );
-  const navigateTo = useCallback(
-    (nextLocation: CollaborationFileBrowserLocation) =>
-      setLocationState({
-        projectKey: projectLocationKey,
-        location: nextLocation,
-      }),
-    [projectLocationKey],
-  );
-  const inputRef = useRef<HTMLInputElement>(null);
-  const previewRequestSequence = useRef(0);
-  const showsTaskAttachments = Boolean(api.listTaskAttachments);
+  const resources = useMemo(
+    () => createCollaborationFilesResources(api, project.id),
+    [api, project.id]
+  )
+  const fileSnapshot = useSyncExternalStore(
+    resources.files.subscribe,
+    resources.files.getSnapshot,
+    resources.files.getSnapshot
+  )
+  const deliverySnapshot = useSyncExternalStore(
+    resources.deliveryFiles.subscribe,
+    resources.deliveryFiles.getSnapshot,
+    resources.deliveryFiles.getSnapshot
+  )
+  const attachmentSnapshot = useSyncExternalStore(
+    resources.taskAttachments.subscribe,
+    resources.taskAttachments.getSnapshot,
+    resources.taskAttachments.getSnapshot
+  )
+  const files = fileSnapshot.data ?? EMPTY_FILES
+  const deliveryFiles = deliverySnapshot.data ?? EMPTY_FILES
+  const taskAttachments = attachmentSnapshot.data ?? EMPTY_FILES
+  const [folderName, setFolderName] = useState('')
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [uploadingCount, setUploadingCount] = useState(0)
+  const [operationError, setError] = useState<string | null>(null)
+  const loadFailure =
+    fileSnapshot.status === 'error'
+      ? fileSnapshot
+      : deliverySnapshot.status === 'error'
+        ? deliverySnapshot
+        : null
+  const error =
+    operationError ??
+    (loadFailure
+      ? loadFailure.error instanceof Error
+        ? loadFailure.error.message
+        : t('todo.files_load_failed', '加载文件失败')
+      : null)
+  const [editingFileId, setEditingFileId] = useState<string | null>(null)
+  const [editingPath, setEditingPath] = useState('')
+  const [previewTarget, setPreviewTarget] = useState<FilePreviewTarget | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewText, setPreviewText] = useState<CollaborationTextPreviewFile | null>(null)
+  const [previewBinary, setPreviewBinary] = useState<CollaborationBinaryPreviewFile | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null)
+  const [location, navigateTo] = useState<CollaborationFileBrowserLocation>({
+    scope: 'root',
+  })
+  const inputRef = useRef<HTMLInputElement>(null)
+  const previewRequestSequence = useRef(0)
+  const showsTaskAttachments = Boolean(api.listTaskAttachments)
 
   const refresh = useCallback(() => {
-    setError(null);
-    void loadCollaborationFiles(api, project.id, {
-      onFiles: setFiles,
-      onDeliveryFiles: setDeliveryFiles,
-      onTaskAttachments: setTaskAttachments,
-      onCoreError: (cause) =>
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : t("todo.files_load_failed", "加载文件失败"),
-        ),
-    });
-  }, [api, project.id, t]);
-
-  useEffect(refresh, [refresh]);
+    setError(null)
+    void resources.refresh()
+  }, [resources])
 
   const entries = useMemo(
     () => collaborationFileBrowserEntries(location, files, deliveryFiles, t),
-    [deliveryFiles, files, location, t],
-  );
+    [deliveryFiles, files, location, t]
+  )
   const breadcrumbs = useMemo(
     () => collaborationFileBrowserBreadcrumbs(location, deliveryFiles, t),
-    [deliveryFiles, location, t],
-  );
-  const sharedPath = location.scope === "shared" ? location.path : [];
-  const canManageSharedFiles =
-    location.scope === "root" || location.scope === "shared";
+    [deliveryFiles, location, t]
+  )
+  const sharedPath = location.scope === 'shared' ? location.path : []
+  const canManageSharedFiles = location.scope === 'root' || location.scope === 'shared'
 
   const withTooltip = (
     label: string,
     child: ReactNode,
-    align: "start" | "center" | "end" = "center",
+    align: 'start' | 'center' | 'end' = 'center'
   ) =>
     renderTooltip ? (
       renderTooltip(label, child, align)
@@ -167,34 +167,30 @@ export function CollaborationFilesView({
       <span title={label} className="inline-flex">
         {child}
       </span>
-    );
+    )
 
   async function loadPreview(target: FilePreviewTarget) {
-    const requestId = previewRequestSequence.current + 1;
-    previewRequestSequence.current = requestId;
-    setPreviewLoading(true);
-    setPreviewError(null);
-    setPreviewText(null);
-    setPreviewBinary(null);
+    const requestId = previewRequestSequence.current + 1
+    previewRequestSequence.current = requestId
+    setPreviewLoading(true)
+    setPreviewError(null)
+    setPreviewText(null)
+    setPreviewBinary(null)
     try {
-      const blob = await target.load();
-      if (previewRequestSequence.current !== requestId) return;
-      const contentType =
-        target.contentType || blob.type || "application/octet-stream";
-      const previewKind = collaborationFilePreviewKind(
-        target.filename,
-        contentType,
-      );
+      const blob = await target.load()
+      if (previewRequestSequence.current !== requestId) return
+      const contentType = target.contentType || blob.type || 'application/octet-stream'
+      const previewKind = collaborationFilePreviewKind(target.filename, contentType)
       const readAsText =
-        previewKind === "text" ||
-        (previewKind === "unknown" &&
+        previewKind === 'text' ||
+        (previewKind === 'unknown' &&
           isLikelyCollaborationTextContent(
-            new Uint8Array(await blob.slice(0, 64 * 1024).arrayBuffer()),
-          ));
-      if (previewRequestSequence.current !== requestId) return;
+            new Uint8Array(await blob.slice(0, 64 * 1024).arrayBuffer())
+          ))
+      if (previewRequestSequence.current !== requestId) return
       if (readAsText) {
-        const content = await blob.text();
-        if (previewRequestSequence.current !== requestId) return;
+        const content = await blob.text()
+        if (previewRequestSequence.current !== requestId) return
         setPreviewText({
           path: target.filename,
           name: target.filename,
@@ -203,109 +199,96 @@ export function CollaborationFilesView({
           revision: `${target.key}:${requestId}`,
           truncated: false,
           size: target.sizeBytes || blob.size,
-        });
-        return;
+        })
+        return
       }
       setPreviewBinary({
         path: target.filename,
         name: target.filename,
         size: target.sizeBytes || blob.size,
         file: new File([blob], target.filename, { type: contentType }),
-      });
+      })
     } catch (cause) {
-      if (previewRequestSequence.current !== requestId) return;
+      if (previewRequestSequence.current !== requestId) return
       setPreviewError(
-        cause instanceof Error
-          ? cause.message
-          : t("todo.file_preview_failed", "预览失败"),
-      );
+        cause instanceof Error ? cause.message : t('todo.file_preview_failed', '预览失败')
+      )
     } finally {
-      if (previewRequestSequence.current === requestId)
-        setPreviewLoading(false);
+      if (previewRequestSequence.current === requestId) setPreviewLoading(false)
     }
   }
 
   async function uploadFiles(selected: File[]) {
-    if (selected.length === 0) return;
-    setUploadingCount(selected.length);
-    setError(null);
+    if (selected.length === 0) return
+    setUploadingCount(selected.length)
+    setError(null)
     try {
-      const parentPath = sharedPath.join("/");
+      const parentPath = sharedPath.join('/')
       await Promise.all(
-        selected.map((file) =>
-          api.uploadFile(
-            project.id,
-            file,
-            parentPath ? `${parentPath}/${file.name}` : file.name,
-          ),
-        ),
-      );
-      refresh();
-      telemetry?.completed("upload");
+        selected.map(file =>
+          api.uploadFile(project.id, file, parentPath ? `${parentPath}/${file.name}` : file.name)
+        )
+      )
+      refresh()
+      telemetry?.completed('upload')
     } catch (cause) {
       setError(
-        cause instanceof Error
-          ? cause.message
-          : t("todo.file_upload_failed", "上传失败，请重试"),
-      );
-      telemetry?.failed();
+        cause instanceof Error ? cause.message : t('todo.file_upload_failed', '上传失败，请重试')
+      )
+      telemetry?.failed()
     } finally {
-      setUploadingCount(0);
-      if (inputRef.current) inputRef.current.value = "";
+      setUploadingCount(0)
+      if (inputRef.current) inputRef.current.value = ''
     }
   }
 
   async function createFolder() {
-    const relativePath = folderName.trim().replace(/^\/+|\/+$/g, "");
-    if (!relativePath || !canManageSharedFiles) return;
-    const path = [...sharedPath, relativePath].filter(Boolean).join("/");
-    setError(null);
+    const relativePath = folderName.trim().replace(/^\/+|\/+$/g, '')
+    if (!relativePath || !canManageSharedFiles) return
+    const path = [...sharedPath, relativePath].filter(Boolean).join('/')
+    setError(null)
     try {
-      await api.createFolder(project.id, path);
-      setFolderName("");
-      setCreatingFolder(false);
-      refresh();
-      telemetry?.completed("create");
+      await api.createFolder(project.id, path)
+      setFolderName('')
+      setCreatingFolder(false)
+      refresh()
+      telemetry?.completed('create')
     } catch (cause) {
       setError(
-        cause instanceof Error
-          ? cause.message
-          : t("todo.folder_create_failed", "创建文件夹失败"),
-      );
-      telemetry?.failed();
+        cause instanceof Error ? cause.message : t('todo.folder_create_failed', '创建文件夹失败')
+      )
+      telemetry?.failed()
     }
   }
 
   async function downloadFile(
     id: string,
     filename: string,
-    loadFile: () => Promise<Blob>,
+    loadFile: () => Promise<Blob>
   ): Promise<void> {
-    setDownloadingFileId(id);
-    setError(null);
+    setDownloadingFileId(id)
+    setError(null)
     try {
-      await saveDownload(await loadFile(), filename);
-      telemetry?.completed("download");
+      await saveDownload(await loadFile(), filename)
+      telemetry?.completed('download')
     } catch (cause) {
       setError(
-        cause instanceof Error
-          ? cause.message
-          : t("todo.file_download_failed", "下载文件失败"),
-      );
-      telemetry?.failed();
-      throw cause;
+        cause instanceof Error ? cause.message : t('todo.file_download_failed', '下载文件失败')
+      )
+      telemetry?.failed()
+      throw cause
     } finally {
-      setDownloadingFileId(null);
+      setDownloadingFileId(null)
     }
   }
 
   function showPreview(target: FilePreviewTarget) {
-    setPreviewTarget(target);
-    void loadPreview(target);
+    setPreviewTarget(target)
+    void loadPreview(target)
   }
 
   function previewCloudFile(entry: CollaborationProjectFile) {
-    if (entry.kind !== "file") return;
+    if (entry.kind !== 'file') return
     showPreview({
       key: `cloud-file:${entry.id}`,
       title: entry.path,
@@ -313,8 +296,8 @@ export function CollaborationFilesView({
       contentType: entry.content_type,
       sizeBytes: entry.size_bytes,
       load: () => api.previewFile(entry.id),
-    });
-    telemetry?.completed("preview");
+    })
+    telemetry?.completed('preview')
   }
 
   function previewDeliveryFile(entry: CollaborationDeliveryFile) {
@@ -325,12 +308,12 @@ export function CollaborationFilesView({
       contentType: entry.content_type,
       sizeBytes: entry.size_bytes,
       load: () => api.previewDeliveryFile(entry.asset_id),
-    });
-    telemetry?.completed("preview");
+    })
+    telemetry?.completed('preview')
   }
 
   function previewTaskAttachment(entry: CollaborationTaskAttachment) {
-    if (!api.previewTaskAttachment) return;
+    if (!api.previewTaskAttachment) return
     showPreview({
       key: `task-attachment:${entry.id}`,
       title: entry.display_name,
@@ -342,93 +325,86 @@ export function CollaborationFilesView({
           projectId: String(project.id),
           issueId: entry.loop_item_id,
         }),
-    });
+    })
   }
 
   async function openTaskAttachment(entry: CollaborationTaskAttachment) {
-    if (!api.openTaskAttachment) return;
-    setError(null);
+    if (!api.openTaskAttachment) return
+    setError(null)
     try {
       await api.openTaskAttachment(entry.id, entry.display_name, {
         projectId: String(project.id),
         issueId: entry.loop_item_id,
-      });
-      telemetry?.completed("open");
+      })
+      telemetry?.completed('open')
     } catch (cause) {
       setError(
         cause instanceof Error
           ? cause.message
-          : t("todo.open_task_attachment_failed", "打开任务附件失败"),
-      );
-      telemetry?.failed();
+          : t('todo.open_task_attachment_failed', '打开任务附件失败')
+      )
+      telemetry?.failed()
     }
   }
 
+  const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
+    (key, fallback) => t(key, fallback)
+  )
+
   async function deleteFile(entry: CollaborationProjectFile) {
     if (
-      !window.confirm(
-        t("todo.delete_file_confirm", "删除“{{path}}”？此操作无法撤销。", {
+      !(await requestConfirmation(
+        t('todo.delete_file_confirm', '删除“{{path}}”？此操作无法撤销。', {
           path: entry.path,
-        }),
-      )
+        })
+      ))
     )
-      return;
-    setError(null);
+      return
+    setError(null)
     try {
-      await api.deleteFile(entry.id, entry.kind === "folder");
-      setFiles((current) =>
-        current.filter(
-          (file) =>
-            file.id !== entry.id && !file.path.startsWith(`${entry.path}/`),
-        ),
-      );
-      telemetry?.completed("delete");
+      await api.deleteFile(entry.id, entry.kind === 'folder')
+      resources.files.update(current =>
+        (current ?? []).filter(
+          file => file.id !== entry.id && !file.path.startsWith(`${entry.path}/`)
+        )
+      )
+      telemetry?.completed('delete')
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : t("todo.file_delete_failed", "删除失败"),
-      );
-      telemetry?.failed();
+      setError(cause instanceof Error ? cause.message : t('todo.file_delete_failed', '删除失败'))
+      telemetry?.failed()
     }
   }
 
   async function moveFile(entry: CollaborationProjectFile) {
-    const path = editingPath.trim();
+    const path = editingPath.trim()
     if (!path || path === entry.path) {
-      setEditingFileId(null);
-      return;
+      setEditingFileId(null)
+      return
     }
-    setError(null);
+    setError(null)
     try {
-      await api.moveFile(entry.id, path, entry.version);
-      setEditingFileId(null);
-      refresh();
-      telemetry?.completed("move");
+      await api.moveFile(entry.id, path, entry.version)
+      setEditingFileId(null)
+      refresh()
+      telemetry?.completed('move')
     } catch (cause) {
       setError(
-        cause instanceof Error
-          ? cause.message
-          : t("todo.file_move_failed", "重命名或移动失败"),
-      );
-      telemetry?.failed();
+        cause instanceof Error ? cause.message : t('todo.file_move_failed', '重命名或移动失败')
+      )
+      telemetry?.failed()
     }
   }
 
   return (
     <div data-testid="cloud-files-view" className="flex min-h-0 flex-1">
+      {requestDialogs}
       <div className="min-w-0 flex-1 overflow-y-auto px-8 py-7">
         <div className="mx-auto max-w-[1040px]">
           <div className="flex items-start gap-4">
             <div className="min-w-0 flex-1">
-              <h2 className="text-heading-md font-semibold">
-                {t("todo.files_title", "文件")}
-              </h2>
+              <h2 className="text-heading-md font-semibold">{t('todo.files_title', '文件')}</h2>
               <p className="mt-1 text-sm text-text-muted">
-                {t(
-                  "todo.files_description",
-                  "浏览共享文件，以及按 Issue 和任务整理的交付快照。",
-                )}
+                {t('todo.files_description', '浏览共享文件，以及按 Issue 和任务整理的交付快照。')}
               </p>
             </div>
             <input
@@ -436,22 +412,22 @@ export function CollaborationFilesView({
               type="file"
               multiple
               className="hidden"
-              onChange={(event) =>
-                void uploadFiles([...(event.target.files ?? [])])
-              }
+              onChange={event => void uploadFiles([...(event.target.files ?? [])])}
             />
             {canManageSharedFiles ? (
               <div className="flex shrink-0 items-center gap-2">
-                <button
+                <ControlButton
+                  variant="outline"
                   type="button"
                   data-testid="cloud-folder-add"
                   onClick={() => setCreatingFolder(true)}
                   className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-hover"
                 >
                   <FolderPlusIcon className="h-3.5 w-3.5" />
-                  {t("todo.new_folder", "新建文件夹")}
-                </button>
-                <button
+                  {t('todo.new_folder', '新建文件夹')}
+                </ControlButton>
+                <ControlButton
+                  variant="primary"
                   type="button"
                   data-testid="cloud-files-upload"
                   onClick={() => inputRef.current?.click()}
@@ -459,43 +435,43 @@ export function CollaborationFilesView({
                 >
                   <UploadIcon className="h-3.5 w-3.5" />
                   {uploadingCount > 0
-                    ? t("todo.uploading_file_count", "正在上传 {{count}} 项…", {
+                    ? t('todo.uploading_file_count', '正在上传 {{count}} 项…', {
                         count: uploadingCount,
                       })
-                    : t("todo.upload_files", "上传文件")}
-                </button>
+                    : t('todo.upload_files', '上传文件')}
+                </ControlButton>
               </div>
             ) : null}
           </div>
 
           {creatingFolder && canManageSharedFiles ? (
             <div className="mt-4 flex items-center gap-2">
-              <input
+              <ControlInput
                 autoFocus
                 data-testid="cloud-folder-name"
                 value={folderName}
-                onChange={(event) => setFolderName(event.target.value)}
-                onKeyDown={(event) =>
-                  event.key === "Enter" && void createFolder()
-                }
-                placeholder={t("todo.folder_name_placeholder", "文件夹名称")}
+                onChange={event => setFolderName(event.target.value)}
+                onKeyDown={event => event.key === 'Enter' && void createFolder()}
+                placeholder={t('todo.folder_name_placeholder', '文件夹名称')}
                 className="h-8 min-w-0 flex-1 rounded-md border border-border px-3 text-sm outline-none keyboard:focus:border-focus"
               />
-              <button
+              <ControlButton
+                variant="primary"
                 type="button"
                 data-testid="cloud-folder-create-confirm"
                 onClick={() => void createFolder()}
                 className="h-8 rounded-md bg-text-primary px-3 text-sm text-background"
               >
-                {t("common.create", "创建")}
-              </button>
-              <button
+                {t('common.create', '创建')}
+              </ControlButton>
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 onClick={() => setCreatingFolder(false)}
                 className="h-8 rounded-md px-3 text-sm hover:bg-hover"
               >
-                {t("common.cancel", "取消")}
-              </button>
+                {t('common.cancel', '取消')}
+              </ControlButton>
             </div>
           ) : null}
 
@@ -508,104 +484,99 @@ export function CollaborationFilesView({
           <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
             <nav
               data-testid="cloud-file-breadcrumbs"
-              aria-label={t("todo.file_path", "文件路径")}
+              aria-label={t('todo.file_path', '文件路径')}
               className="flex h-11 items-center gap-0.5 border-b border-border px-3"
             >
               {breadcrumbs.map((breadcrumb, index) => (
-                <span
-                  key={breadcrumb.key}
-                  className="flex min-w-0 items-center"
-                >
+                <span key={breadcrumb.key} className="flex min-w-0 items-center">
                   {index > 0 ? (
                     <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
                   ) : null}
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     onClick={() => {
-                      setCreatingFolder(false);
-                      navigateTo(breadcrumb.location);
+                      setCreatingFolder(false)
+                      navigateTo(breadcrumb.location)
                     }}
                     className="max-w-48 truncate rounded-md px-2 py-1 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
                   >
                     {breadcrumb.name}
-                  </button>
+                  </ControlButton>
                 </span>
               ))}
             </nav>
 
             <div className="grid h-9 grid-cols-[minmax(0,1fr)_150px_90px_132px] items-center bg-muted/30 px-4 text-xs text-text-muted">
-              <span>{t("todo.file_name", "名称")}</span>
-              <span>{t("todo.file_updated_at", "更新时间")}</span>
-              <span>{t("todo.file_size", "大小")}</span>
+              <span>{t('todo.file_name', '名称')}</span>
+              <span>{t('todo.file_updated_at', '更新时间')}</span>
+              <span>{t('todo.file_size', '大小')}</span>
               <span />
             </div>
 
             {entries.length === 0 ? (
               <div className="flex h-48 flex-col items-center justify-center gap-2 text-sm text-text-muted">
                 <FolderIcon className="h-6 w-6" />
-                <span>{t("todo.folder_empty", "此文件夹为空")}</span>
+                <span>{t('todo.folder_empty', '此文件夹为空')}</span>
               </div>
             ) : (
-              entries.map((entry) => {
+              entries.map(entry => {
                 const sharedEntry =
-                  entry.kind === "shared-file"
+                  entry.kind === 'shared-file'
                     ? entry.file
-                    : entry.kind === "folder"
+                    : entry.kind === 'folder'
                       ? entry.sharedFolder
-                      : undefined;
-                const deliveryEntry =
-                  entry.kind === "delivery-file" ? entry.file : undefined;
+                      : undefined
+                const deliveryEntry = entry.kind === 'delivery-file' ? entry.file : undefined
                 const updatedAt =
-                  entry.kind === "folder"
+                  entry.kind === 'folder'
                     ? entry.updatedAt
-                    : entry.kind === "shared-file"
+                    : entry.kind === 'shared-file'
                       ? entry.file.updated_at
-                      : entry.file.delivered_at;
+                      : entry.file.delivered_at
                 const size =
-                  entry.kind === "shared-file"
+                  entry.kind === 'shared-file'
                     ? formatCollaborationFileSize(entry.file.size_bytes)
-                    : entry.kind === "delivery-file"
+                    : entry.kind === 'delivery-file'
                       ? formatCollaborationFileSize(entry.file.size_bytes)
-                      : "—";
+                      : '—'
 
                 return (
                   <div
                     key={entry.key}
                     data-testid={
-                      entry.kind === "delivery-file"
+                      entry.kind === 'delivery-file'
                         ? `delivery-file-${entry.file.asset_id}`
                         : `cloud-file-browser-entry-${entry.key}`
                     }
                     className="group grid min-h-12 grid-cols-[minmax(0,1fr)_150px_90px_132px] items-center border-t border-border px-4 text-xs transition-colors hover:bg-muted/50"
                   >
                     <div className="flex min-w-0 items-center gap-2.5">
-                      {entry.kind === "folder" ? (
+                      {entry.kind === 'folder' ? (
                         <FolderIcon className="h-4 w-4 shrink-0 text-text-muted" />
                       ) : (
                         <FileIcon className="h-4 w-4 shrink-0 text-text-muted" />
                       )}
                       {sharedEntry && editingFileId === sharedEntry.id ? (
-                        <input
+                        <ControlInput
                           autoFocus
                           data-testid={`cloud-file-path-${sharedEntry.id}`}
                           value={editingPath}
-                          onChange={(event) =>
-                            setEditingPath(event.target.value)
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter")
-                              void moveFile(sharedEntry);
-                            if (event.key === "Escape") setEditingFileId(null);
+                          onChange={event => setEditingPath(event.target.value)}
+                          onKeyDown={event => {
+                            if (event.key === 'Enter') void moveFile(sharedEntry)
+                            if (event.key === 'Escape') setEditingFileId(null)
                           }}
                           className="h-7 min-w-0 flex-1 rounded border border-focus bg-background px-2 outline-none"
                         />
-                      ) : entry.kind === "folder" ? (
-                        <button
+                      ) : entry.kind === 'folder' ? (
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           aria-label={entry.name}
                           onClick={() => {
-                            setCreatingFolder(false);
-                            navigateTo(entry.location);
+                            setCreatingFolder(false)
+                            navigateTo(entry.location)
                           }}
                           className="flex min-w-0 flex-col items-start text-left"
                         >
@@ -615,87 +586,77 @@ export function CollaborationFilesView({
                           <span className="max-w-full truncate text-xs text-text-muted">
                             {entry.description}
                           </span>
-                        </button>
+                        </ControlButton>
                       ) : (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid={
-                            entry.kind === "shared-file"
+                            entry.kind === 'shared-file'
                               ? `cloud-file-preview-${entry.file.id}`
                               : `delivery-file-preview-${entry.file.asset_id}`
                           }
                           onClick={() =>
-                            entry.kind === "shared-file"
+                            entry.kind === 'shared-file'
                               ? previewCloudFile(entry.file)
                               : previewDeliveryFile(entry.file)
                           }
                           className="min-w-0 truncate text-left text-sm font-medium text-text-primary hover:underline"
                         >
                           {entry.name}
-                        </button>
+                        </ControlButton>
                       )}
                     </div>
-                    <span className="text-text-muted">
-                      {updatedAt?.slice(0, 10) ?? "—"}
-                    </span>
+                    <span className="text-text-muted">{updatedAt?.slice(0, 10) ?? '—'}</span>
                     <span className="text-text-muted">{size}</span>
                     <span className="flex justify-end gap-1">
                       {sharedEntry
                         ? withTooltip(
-                            t(
-                              "todo.rename_or_move_file",
-                              "重命名或移动 {{path}}",
-                              {
-                                path: sharedEntry.path,
-                              },
-                            ),
-                            <button
+                            t('todo.rename_or_move_file', '重命名或移动 {{path}}', {
+                              path: sharedEntry.path,
+                            }),
+                            <ControlButton
+                              variant="unstyled"
                               type="button"
                               data-testid={`cloud-file-rename-${sharedEntry.id}`}
                               onClick={() => {
-                                setEditingFileId(sharedEntry.id);
-                                setEditingPath(sharedEntry.path);
+                                setEditingFileId(sharedEntry.id)
+                                setEditingPath(sharedEntry.path)
                               }}
                               className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted"
-                              aria-label={t(
-                                "todo.rename_or_move_file",
-                                "重命名或移动 {{path}}",
-                                {
-                                  path: sharedEntry.path,
-                                },
-                              )}
+                              aria-label={t('todo.rename_or_move_file', '重命名或移动 {{path}}', {
+                                path: sharedEntry.path,
+                              })}
                             >
                               <PencilIcon className="h-3.5 w-3.5" />
-                            </button>,
+                            </ControlButton>
                           )
                         : null}
-                      {sharedEntry?.kind === "file" ? (
+                      {sharedEntry?.kind === 'file' ? (
                         <>
                           {withTooltip(
-                            t("todo.preview_file_path", "预览 {{path}}", {
+                            t('todo.preview_file_path', '预览 {{path}}', {
                               path: sharedEntry.path,
                             }),
-                            <button
+                            <ControlButton
+                              variant="unstyled"
                               type="button"
                               data-testid={`cloud-file-open-${sharedEntry.id}`}
                               onClick={() => previewCloudFile(sharedEntry)}
                               className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
-                              aria-label={t(
-                                "todo.preview_file_path",
-                                "预览 {{path}}",
-                                {
-                                  path: sharedEntry.path,
-                                },
-                              )}
+                              aria-label={t('todo.preview_file_path', '预览 {{path}}', {
+                                path: sharedEntry.path,
+                              })}
                             >
                               <EyeIcon className="h-3.5 w-3.5" />
-                            </button>,
+                            </ControlButton>
                           )}
                           {withTooltip(
-                            t("todo.download_file_path", "下载 {{path}}", {
+                            t('todo.download_file_path', '下载 {{path}}', {
                               path: sharedEntry.path,
                             }),
-                            <button
+                            <ControlButton
+                              variant="unstyled"
                               type="button"
                               data-testid={`cloud-file-download-${sharedEntry.id}`}
                               disabled={downloadingFileId === sharedEntry.id}
@@ -703,143 +664,119 @@ export function CollaborationFilesView({
                                 void downloadFile(
                                   sharedEntry.id,
                                   downloadName(sharedEntry.path),
-                                  () => api.downloadFile(sharedEntry.id),
+                                  () => api.downloadFile(sharedEntry.id)
                                 ).catch(() => undefined)
                               }
                               className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted disabled:opacity-50"
-                              aria-label={t(
-                                "todo.download_file_path",
-                                "下载 {{path}}",
-                                {
-                                  path: sharedEntry.path,
-                                },
-                              )}
+                              aria-label={t('todo.download_file_path', '下载 {{path}}', {
+                                path: sharedEntry.path,
+                              })}
                             >
                               <DownloadIcon className="h-3.5 w-3.5" />
-                            </button>,
+                            </ControlButton>
                           )}
                         </>
                       ) : null}
                       {deliveryEntry ? (
                         <>
                           {withTooltip(
-                            t(
-                              "todo.preview_delivery_file",
-                              "预览交付文件 {{path}}",
-                              {
-                                path: deliveryEntry.relative_path,
-                              },
-                            ),
-                            <button
+                            t('todo.preview_delivery_file', '预览交付文件 {{path}}', {
+                              path: deliveryEntry.relative_path,
+                            }),
+                            <ControlButton
+                              variant="unstyled"
                               type="button"
                               data-testid={`delivery-file-open-${deliveryEntry.asset_id}`}
                               onClick={() => previewDeliveryFile(deliveryEntry)}
                               className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
-                              aria-label={t(
-                                "todo.preview_delivery_file",
-                                "预览交付文件 {{path}}",
-                                {
-                                  path: deliveryEntry.relative_path,
-                                },
-                              )}
+                              aria-label={t('todo.preview_delivery_file', '预览交付文件 {{path}}', {
+                                path: deliveryEntry.relative_path,
+                              })}
                             >
                               <EyeIcon className="h-3.5 w-3.5" />
-                            </button>,
+                            </ControlButton>
                           )}
                           {withTooltip(
-                            t(
-                              "todo.download_delivery_file",
-                              "下载交付文件 {{path}}",
-                              {
-                                path: deliveryEntry.relative_path,
-                              },
-                            ),
-                            <button
+                            t('todo.download_delivery_file', '下载交付文件 {{path}}', {
+                              path: deliveryEntry.relative_path,
+                            }),
+                            <ControlButton
+                              variant="unstyled"
                               type="button"
                               data-testid={`delivery-file-download-${deliveryEntry.asset_id}`}
-                              disabled={
-                                downloadingFileId === deliveryEntry.asset_id
-                              }
+                              disabled={downloadingFileId === deliveryEntry.asset_id}
                               onClick={() =>
                                 void downloadFile(
                                   deliveryEntry.asset_id,
                                   deliveryEntry.display_name,
-                                  () =>
-                                    api.downloadDeliveryFile(
-                                      deliveryEntry.asset_id,
-                                    ),
+                                  () => api.downloadDeliveryFile(deliveryEntry.asset_id)
                                 ).catch(() => undefined)
                               }
                               className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted disabled:opacity-50"
                               aria-label={t(
-                                "todo.download_delivery_file",
-                                "下载交付文件 {{path}}",
-                                { path: deliveryEntry.relative_path },
+                                'todo.download_delivery_file',
+                                '下载交付文件 {{path}}',
+                                { path: deliveryEntry.relative_path }
                               )}
                             >
                               <DownloadIcon className="h-3.5 w-3.5" />
-                            </button>,
-                            "end",
+                            </ControlButton>,
+                            'end'
                           )}
                         </>
                       ) : null}
                       {sharedEntry
                         ? withTooltip(
-                            t("todo.delete_file_path", "删除 {{path}}", {
+                            t('todo.delete_file_path', '删除 {{path}}', {
                               path: sharedEntry.path,
                             }),
-                            <button
+                            <ControlButton
+                              variant="unstyled"
                               type="button"
                               data-testid={`cloud-file-delete-${sharedEntry.id}`}
                               onClick={() => void deleteFile(sharedEntry)}
                               className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-destructive"
-                              aria-label={t(
-                                "todo.delete_file_path",
-                                "删除 {{path}}",
-                                {
-                                  path: sharedEntry.path,
-                                },
-                              )}
+                              aria-label={t('todo.delete_file_path', '删除 {{path}}', {
+                                path: sharedEntry.path,
+                              })}
                             >
                               <TrashIcon className="h-3.5 w-3.5" />
-                            </button>,
-                            "end",
+                            </ControlButton>,
+                            'end'
                           )
                         : null}
                     </span>
                   </div>
-                );
+                )
               })
             )}
           </div>
 
-          {location.scope === "root" && showsTaskAttachments ? (
+          {location.scope === 'root' && showsTaskAttachments ? (
             <section className="mt-6">
               <div className="flex items-baseline gap-2.5">
                 <h3 className="text-base font-semibold text-text-primary">
-                  {t("todo.task_attachments", "任务附件")}
+                  {t('todo.task_attachments', '任务附件')}
                 </h3>
                 <span className="text-xs text-text-muted">
-                  {t("todo.task_attachments_description", "")}
+                  {t('todo.task_attachments_description', '')}
                 </span>
               </div>
               <div className="mt-3 overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
                 <div className="grid h-10 grid-cols-[240px_minmax(0,1fr)_120px_120px_80px_80px] items-center bg-muted/30 px-4 text-xs text-text-muted">
-                  <span>{t("todo.task_attachment_task", "任务")}</span>
-                  <span>{t("todo.task_attachment_name", "名称")}</span>
-                  <span>{t("todo.task_attachment_type", "类型")}</span>
-                  <span>
-                    {t("todo.task_attachment_uploaded_at", "上传时间")}
-                  </span>
-                  <span>{t("todo.task_attachment_size", "大小")}</span>
+                  <span>{t('todo.task_attachment_task', '任务')}</span>
+                  <span>{t('todo.task_attachment_name', '名称')}</span>
+                  <span>{t('todo.task_attachment_type', '类型')}</span>
+                  <span>{t('todo.task_attachment_uploaded_at', '上传时间')}</span>
+                  <span>{t('todo.task_attachment_size', '大小')}</span>
                   <span />
                 </div>
                 {taskAttachments.length === 0 ? (
                   <div className="flex h-24 items-center justify-center text-sm text-text-muted">
-                    {t("todo.task_attachments_empty", "暂无任务附件")}
+                    {t('todo.task_attachments_empty', '暂无任务附件')}
                   </div>
                 ) : (
-                  taskAttachments.map((entry) => (
+                  taskAttachments.map(entry => (
                     <div
                       key={entry.id}
                       data-testid={`task-attachment-${entry.id}`}
@@ -849,64 +786,53 @@ export function CollaborationFilesView({
                         <span className="shrink-0 font-mono text-text-muted">
                           {entry.loop_item_id}
                         </span>
-                        <span className="truncate text-text-primary">
-                          {entry.loop_item_title}
-                        </span>
+                        <span className="truncate text-text-primary">{entry.loop_item_title}</span>
                       </span>
                       <span className="flex min-w-0 items-center gap-2 text-text-primary">
                         <FileIcon className="h-4 w-4 shrink-0 text-text-muted" />
                         <span className="truncate">{entry.display_name}</span>
                       </span>
                       <span className="truncate text-text-muted">
-                        {entry.content_type ||
-                          t("todo.task_attachment_file", "文件")}
+                        {entry.content_type || t('todo.task_attachment_file', '文件')}
                       </span>
-                      <span className="text-text-muted">
-                        {entry.created_at.slice(0, 10)}
-                      </span>
+                      <span className="text-text-muted">{entry.created_at.slice(0, 10)}</span>
                       <span className="text-text-muted">
                         {formatCollaborationFileSize(entry.size_bytes)}
                       </span>
                       <span className="flex justify-end gap-1">
                         {withTooltip(
-                          t("todo.preview_task_attachment", "预览 {{name}}", {
+                          t('todo.preview_task_attachment', '预览 {{name}}', {
                             name: entry.display_name,
                           }),
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             data-testid={`task-attachment-preview-${entry.id}`}
                             onClick={() => previewTaskAttachment(entry)}
                             className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
-                            aria-label={t(
-                              "todo.preview_task_attachment",
-                              "预览 {{name}}",
-                              {
-                                name: entry.display_name,
-                              },
-                            )}
+                            aria-label={t('todo.preview_task_attachment', '预览 {{name}}', {
+                              name: entry.display_name,
+                            })}
                           >
                             <EyeIcon className="h-3.5 w-3.5" />
-                          </button>,
+                          </ControlButton>
                         )}
                         {withTooltip(
-                          t("todo.open_task_attachment", "打开 {{name}}", {
+                          t('todo.open_task_attachment', '打开 {{name}}', {
                             name: entry.display_name,
                           }),
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             data-testid={`task-attachment-open-${entry.id}`}
                             onClick={() => void openTaskAttachment(entry)}
                             className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
-                            aria-label={t(
-                              "todo.open_task_attachment",
-                              "打开 {{name}}",
-                              {
-                                name: entry.display_name,
-                              },
-                            )}
+                            aria-label={t('todo.open_task_attachment', '打开 {{name}}', {
+                              name: entry.display_name,
+                            })}
                           >
                             <DownloadIcon className="h-3.5 w-3.5" />
-                          </button>,
+                          </ControlButton>
                         )}
                       </span>
                     </div>
@@ -930,18 +856,19 @@ export function CollaborationFilesView({
             >
               {previewTarget.title}
             </span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="cloud-file-preview-close"
               onClick={() => {
-                previewRequestSequence.current += 1;
-                setPreviewTarget(null);
+                previewRequestSequence.current += 1
+                setPreviewTarget(null)
               }}
               className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
-              aria-label={t("todo.close_preview", "关闭预览")}
+              aria-label={t('todo.close_preview', '关闭预览')}
             >
               <XIcon className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </header>
           <div className="min-h-0 flex-1 overflow-hidden">
             <PreviewComponent
@@ -955,5 +882,5 @@ export function CollaborationFilesView({
         </aside>
       ) : null}
     </div>
-  );
+  )
 }

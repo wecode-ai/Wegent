@@ -1,5 +1,12 @@
-import type { DeviceInfo } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { DeviceInfo } from '@/types/api'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
 
 export function StandInDeviceSelect({
   value,
@@ -30,28 +37,37 @@ export function StandInDeviceSelect({
     )
   }
   return (
-    <select
-      data-testid={testId}
-      aria-label={ariaLabel ?? t('standIn.device')}
-      value={value}
+    <SelectRoot
+      value={normalizeSelectValue(value)}
       disabled={disabled}
-      onChange={event => onChange(event.target.value)}
-      className="min-h-11 max-w-full bg-transparent px-2 md:min-h-8"
+      onValueChange={selectedValue => {
+        if (selectedValue !== null) return onChange(selectedValue)
+      }}
     >
-      <option value={currentDeviceId}>{t('standIn.current_device')}</option>
-      {devices
-        .filter(
-          device => device.device_id !== currentDeviceId && device.app_device_id !== currentDeviceId
-        )
-        .map(device => (
-          <option
-            key={device.device_id}
-            value={device.device_id}
-            disabled={device.status === 'offline'}
-          >
-            {device.name}
-          </option>
-        ))}
-    </select>
+      <SelectTrigger
+        density="compact"
+        appearance="plain"
+        data-testid={testId}
+        aria-label={ariaLabel ?? t('standIn.device')}
+        className="max-w-full"
+      />
+      <SelectContent>
+        <SelectItem value={String(currentDeviceId)}>{t('standIn.current_device')}</SelectItem>
+        {devices
+          .filter(
+            device =>
+              device.device_id !== currentDeviceId && device.app_device_id !== currentDeviceId
+          )
+          .map(device => (
+            <SelectItem
+              key={device.device_id}
+              value={String(device.device_id)}
+              disabled={device.status === 'offline'}
+            >
+              {device.name}
+            </SelectItem>
+          ))}
+      </SelectContent>
+    </SelectRoot>
   )
 }

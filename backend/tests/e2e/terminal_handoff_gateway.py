@@ -853,27 +853,50 @@ class TerminalHandoffGateway(unittest.TestCase):
     @contextmanager
     def _reject_terminal_write(self, task_id: int, subtask_id: int) -> Iterator[None]:
         name = f"{self.marker.replace('-', '_')}_terminal"
-        with SessionLocal() as db:
-            db.execute(
-                text(
-                    f"""
+        with SessionLocal() as lock:
+            self.assertEqual(
+                lock.scalar(text("SELECT GET_LOCK(:name, 0)"), {"name": name}), 1
+            )
+            try:
+                with SessionLocal() as db:
+                    db.execute(
+                        text(
+                            f"""
                 CREATE TRIGGER {name} BEFORE UPDATE ON subtasks
                 FOR EACH ROW BEGIN
                     IF NEW.task_id = {task_id:d} AND NEW.id = {subtask_id:d}
-                       AND NEW.status IN ('COMPLETED','FAILED','CANCELLED') THEN
+                       AND NEW.status IN ('COMPLETED','FAILED','CANCELLED')
+                       AND IS_USED_LOCK('{name}') IS NOT NULL THEN
                         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'E2E terminal write rejected';
                     END IF;
                 END
             """
+                        )
+                    )
+                    db.commit()
+                self.addCleanup(self._drop_terminal_write_trigger, name)
+                yield
+            finally:
+                # Disable the fault without waiting for table metadata locks.
+                # Remove the trigger after the recovery assertions finish.
+                self.assertEqual(
+                    lock.scalar(text("SELECT RELEASE_LOCK(:name)"), {"name": name}), 1
                 )
-            )
+
+    def _drop_terminal_write_trigger(self, name: str) -> None:
+        with SessionLocal() as db:
+            previous_timeout = db.scalar(text("SELECT @@SESSION.lock_wait_timeout"))
+            try:
+                db.execute(text("SET SESSION lock_wait_timeout = 5"))
+                db.execute(text(f"DROP TRIGGER IF EXISTS {name}"))
+            finally:
+                # Restore the setting before commit or rollback returns the
+                # connection to the pool, including after a metadata timeout.
+                db.execute(
+                    text("SET SESSION lock_wait_timeout = :timeout"),
+                    {"timeout": previous_timeout},
+                )
             db.commit()
-        try:
-            yield
-        finally:
-            with SessionLocal() as db:
-                db.execute(text(f"DROP TRIGGER {name}"))
-                db.commit()
 
     def test_cancel_endpoint_settles_active_sse_with_partial_content(self) -> None:
         self._cancel_active_stream(terminal_arrives_first=False)

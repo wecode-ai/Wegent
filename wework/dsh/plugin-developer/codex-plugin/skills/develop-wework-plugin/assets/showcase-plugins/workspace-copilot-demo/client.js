@@ -2,9 +2,9 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-workspace-copilot-demo',
   factory: require => {
     const React = require('react')
-    const { createElement, useEffect, useRef, useState } = React
+    const { createElement, useMemo, useState, useSyncExternalStore } = React
     const PROVIDER_ID = 'workspace-copilot'
-    let activePath = ''
+    let activeView = null
 
     function localized(zhCN, en) {
       return (
@@ -55,74 +55,106 @@ window.__ModuleLoader__.load({
       ].join('\n')
     }
 
-    function WorkspaceCopilotAction({ disabled, workspaceTarget }) {
-      const [open, setOpen] = useState(false)
-      const [report, setReport] = useState(null)
-      const [loading, setLoading] = useState(false)
-      const [error, setError] = useState('')
-      const workspacePath = workspaceTarget?.path ?? ''
-      const currentPath = useRef(workspacePath)
-      const requestSequence = useRef(0)
-      if (currentPath.current !== workspacePath) {
-        currentPath.current = workspacePath
-        requestSequence.current += 1
+    function createWorkspaceCopilotState(path) {
+      let snapshot = { report: null, loading: false, error: '' }
+      let sequence = 0
+      let generation = 0
+      const listeners = new Set()
+      const publish = patch => {
+        snapshot = { ...snapshot, ...patch }
+        listeners.forEach(listener => listener())
       }
-      activePath = workspacePath
-
-      useEffect(() => {
-        setReport(null)
-        setError('')
-        setLoading(false)
-      }, [workspacePath])
-
+      const capture = () => {
+        const owner = generation
+        return () => listeners.size > 0 && generation === owner && activeView === source
+      }
       const analyze = async () => {
-        if (!workspacePath || loading) return null
-        const requestPath = workspacePath
-        const requestId = ++requestSequence.current
-        const isCurrent = () =>
-          currentPath.current === requestPath && requestSequence.current === requestId
-        setLoading(true)
-        setError('')
+        if (!path || snapshot.loading) return null
+        const owner = generation
+        const request = ++sequence
+        const current = () => owner === generation && request === sequence && listeners.size > 0
+        publish({ loading: true, error: '' })
         try {
           const result = await WorkspaceCopilotAction.wework.chat.prepareContext(PROVIDER_ID, {
-            workspacePath: requestPath,
+            workspacePath: path,
           })
-          if (!isCurrent()) return null
-          setReport(result.metadata.report)
+          if (!current()) return null
+          publish({ report: result.metadata.report })
           return result.metadata.report
         } catch (reason) {
-          if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
+          if (current())
+            publish({ error: reason instanceof Error ? reason.message : String(reason) })
           return null
         } finally {
-          if (isCurrent()) setLoading(false)
+          if (current()) publish({ loading: false })
         }
       }
+      const source = {
+        path,
+        capture,
+        getSnapshot: () => snapshot,
+        subscribe(listener, open) {
+          listeners.add(listener)
+          activeView = source
+          if (open && path && !snapshot.report && !snapshot.loading) void analyze()
+          return () => {
+            listeners.delete(listener)
+            if (listeners.size) return
+            if (activeView === source) activeView = null
+            queueMicrotask(() => {
+              if (listeners.size) return
+              generation++
+              sequence++
+              snapshot = { ...snapshot, loading: false }
+            })
+          }
+        },
+        analyze,
+        async insert(intent) {
+          if (!path || snapshot.loading) return false
+          const currentOwner = capture()
+          if (!currentOwner()) return false
+          const owner = generation
+          const request = ++sequence
+          const currentRequest = () =>
+            owner === generation && request === sequence && listeners.size > 0
+          publish({ loading: true, error: '' })
+          try {
+            const result = await WorkspaceCopilotAction.wework.chat.prepareContext(PROVIDER_ID, {
+              workspacePath: path,
+              prompt: intent,
+            })
+            if (!currentOwner() || request !== sequence) return false
+            WorkspaceCopilotAction.wework.composer.insertText(result.text)
+            WorkspaceCopilotAction.wework.composer.focus()
+            return true
+          } catch (reason) {
+            if (currentRequest())
+              publish({ error: reason instanceof Error ? reason.message : String(reason) })
+            return false
+          } finally {
+            if (currentRequest()) publish({ loading: false })
+          }
+        },
+      }
+      return source
+    }
 
-      useEffect(() => {
-        if (open && workspacePath && !report && !loading) void analyze()
-      }, [open, workspacePath])
-
+    function WorkspaceCopilotAction({ disabled, workspaceTarget }) {
+      const [open, setOpen] = useState(false)
+      const workspacePath = workspaceTarget?.path ?? ''
+      const source = useMemo(() => createWorkspaceCopilotState(workspacePath), [workspacePath])
+      const subscribe = useMemo(() => listener => source.subscribe(listener, open), [source, open])
+      const { report, loading, error } = useSyncExternalStore(
+        subscribe,
+        source.getSnapshot,
+        source.getSnapshot
+      )
+      const analyze = source.analyze
       const insert = async intent => {
-        if (!workspacePath || loading) return
-        const requestPath = workspacePath
-        const requestId = ++requestSequence.current
-        const isCurrent = () =>
-          currentPath.current === requestPath && requestSequence.current === requestId
-        setLoading(true)
-        setError('')
-        try {
-          const result = await WorkspaceCopilotAction.wework.chat.prepareContext(PROVIDER_ID, {
-            workspacePath: requestPath,
-            prompt: intent,
-          })
-          if (!isCurrent()) return
-          WorkspaceCopilotAction.wework.composer.insertText(result.text)
-          WorkspaceCopilotAction.wework.composer.focus()
-          setOpen(false)
-        } catch (reason) {
-          if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
-        } finally {
-          if (isCurrent()) setLoading(false)
+        const current = source.capture()
+        if (await source.insert(intent)) {
+          if (current()) setOpen(false)
         }
       }
 
@@ -288,9 +320,16 @@ window.__ModuleLoader__.load({
             icon: 'sparkles',
           },
           async (_args, invocation) => {
+            const view = activeView
+            if (!view)
+              throw new Error(
+                localized('当前没有本地代码工作区', 'No local code workspace is currently selected')
+              )
+            const current = view.capture()
             const result = await ctx.wework.chat.prepareContext(PROVIDER_ID, {
-              workspacePath: activePath,
+              workspacePath: view.path,
             })
+            if (!current()) return ''
             const composer = invocation.composer ?? ctx.wework.composer
             composer.insertText(result.text)
             composer.focus()

@@ -10,6 +10,7 @@ import type { RuntimePaneTranscript } from '@/types/workbench'
 import { RuntimeMessageReceipts } from './RuntimeMessageReceipts'
 import { readStoredTaskKeys, serializeTaskKeys } from './taskKeyStorage'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   emptyRuntimeTaskSummary,
@@ -99,6 +100,11 @@ export class RuntimeTaskLifecycleStore {
   }
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
+
+  isNewlyUnread(key: string): boolean {
+    const state = this.unreadStateByTask.get(key)
+    return state?.unread === true && state.revision > 0
+  }
 
   getCurrentTask(): RuntimeTaskLifecycleSnapshot | null {
     if (!this.currentTaskKey) return null
@@ -596,6 +602,11 @@ export class RuntimeTaskLifecycleStore {
         executorSnapshotRunning: previous.task.running,
       })
     }
+    if (next.derived.isRunning) this.previousRunningTaskKeys.add(key)
+    else this.previousRunningTaskKeys.delete(key)
+    if (isStandInMemoryReviewTask(next.task ?? next.address)) {
+      return this.clearMemoryReviewUnread(key, machine) || changed
+    }
     // A task is read only while its pane is open and the window is focused.
     // Background completion of the open task still needs an unread reminder.
     const currentTaskVisible = next.key === this.currentTaskKey && this.windowFocused
@@ -614,8 +625,6 @@ export class RuntimeTaskLifecycleStore {
       changed = machine.dispatch({ type: 'marked_unread' }) || changed
       this.deferredGoalUnreadTaskKeys.delete(key)
     }
-    if (next.derived.isRunning) this.previousRunningTaskKeys.add(key)
-    else this.previousRunningTaskKeys.delete(key)
     if (next.derived.isRunning || currentTaskVisible) {
       this.deferredGoalUnreadTaskKeys.delete(key)
       changed = machine.dispatch({ type: 'marked_read' }) || changed
@@ -753,6 +762,10 @@ export class RuntimeTaskLifecycleStore {
 
   private restoreMachineUnread(key: string, machine: RuntimeTaskMachine): void {
     const snapshot = machine.getSnapshot()
+    if (isStandInMemoryReviewTask(snapshot.task ?? snapshot.address)) {
+      this.clearMemoryReviewUnread(key, machine)
+      return
+    }
     const currentTaskVisible = key === this.currentTaskKey && this.windowFocused
     if (snapshot.execution.known && !snapshot.derived.isRunning) {
       const wasRunning = this.previousRunningTaskKeys.delete(key)
@@ -775,6 +788,12 @@ export class RuntimeTaskLifecycleStore {
       const unread = this.unreadStateByTask.get(key)
       if (unread) machine.dispatch({ type: unread.unread ? 'marked_unread' : 'marked_read' })
     }
+  }
+
+  private clearMemoryReviewUnread(key: string, machine: RuntimeTaskMachine): boolean {
+    this.deferredGoalUnreadTaskKeys.delete(key)
+    if (this.unreadStateByTask.get(key)?.unread) this.recordUnreadState(key, false)
+    return machine.dispatch({ type: 'marked_read' })
   }
 
   private recordUnreadState(key: string, unread: boolean): void {

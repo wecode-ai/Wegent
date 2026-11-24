@@ -1,21 +1,26 @@
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { FileText, Folder, GitBranch, MessageSquare, Paperclip, Plus, X } from 'lucide-react'
-import type { WorkbenchMessage } from '@/types/workbench'
-import type { Attachment, RuntimeTaskAddress } from '@/types/api'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import type { PaneTranscript } from '@/components/layout/workbenchPaneConversationPresentation'
+import { readSelectedDeliveryFiles, type SelectedDeliveryFile } from '@/desktop/droppedFiles'
 import type { LocalWorkItem } from '@/features/todo/todoModel'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { readSelectedDeliveryFiles, type SelectedDeliveryFile } from '@/desktop/droppedFiles'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { track } from '@/telemetry/client'
+import type { Attachment, RuntimeTaskAddress } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { FileText, Folder, GitBranch, MessageSquare, Paperclip, Plus, X } from 'lucide-react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 
 interface DeliveryDialogProps {
   item: Omit<LocalWorkItem, 'projectId'>
   runtimeTask: RuntimeTaskAddress
   runtimeTaskTitle?: string | null
-  messages: WorkbenchMessage[]
+  transcript: PaneTranscript
   deliveryApi: NonNullable<WorkbenchServices['deliveryApi']>
   onCancel: () => void
   onDelivered: () => void
@@ -53,11 +58,16 @@ export function DeliveryDialog({
   item,
   runtimeTask,
   runtimeTaskTitle,
-  messages,
+  transcript,
   deliveryApi,
   onCancel,
   onDelivered,
 }: DeliveryDialogProps) {
+  const { messages } = useSyncExternalStore(
+    transcript.subscribe,
+    transcript.getSnapshot,
+    transcript.getSnapshot
+  )
   const { t } = useTranslation('common')
   const [title, setTitle] = useState(item.title)
   const [markdown, setMarkdown] = useState('')
@@ -68,9 +78,7 @@ export function DeliveryDialog({
   const [submitting, setSubmitting] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const activeDialogRef = useDialogKeyboard<HTMLDivElement>(() => {
-    if (!submitting) onCancel()
-  })
+  const activeDialogRef = useRef<HTMLDivElement>(null)
   const selectedCount = chatScope === 'conversation' ? messages.length : selectedMessages.length
   const chatMessages = useMemo(
     () =>
@@ -193,13 +201,18 @@ export function DeliveryDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-system flex items-center justify-center bg-black/30 p-6">
-      <div
-        ref={activeDialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="delivery-dialog-title"
-        data-testid="delivery-dialog"
-        className="flex h-[min(720px,calc(100vh-48px))] w-[min(880px,calc(100vw-48px))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+      <DialogSurface
+        onClose={() => {
+          if (!submitting) onCancel()
+        }}
+        render={
+          <div
+            ref={activeDialogRef}
+            aria-labelledby="delivery-dialog-title"
+            data-testid="delivery-dialog"
+            className="flex h-[min(720px,calc(100vh-48px))] w-[min(880px,calc(100vw-48px))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+          />
+        }
       >
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-5">
           <GitBranch className="h-4 w-4 text-text-secondary" />
@@ -209,7 +222,8 @@ export function DeliveryDialog({
             </h2>
             <p className="truncate text-xs text-text-muted">{item.title}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="delivery-dialog-close"
             onClick={onCancel}
@@ -217,25 +231,25 @@ export function DeliveryDialog({
             aria-label={t('common.close', '关闭')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col px-5 py-4">
           <label className="mb-3 flex flex-col gap-1 text-sm">
             {t('delivery.title_label')}
-            <input
+            <ControlInput
+              density="compact"
               data-testid="delivery-title"
               value={title}
               maxLength={255}
               onChange={event => setTitle(event.target.value)}
               disabled={submitting}
-              className="h-8 rounded-md border border-border bg-background px-2"
             />
           </label>
           <label htmlFor="delivery-notes" className="mb-1 text-sm">
             {t('delivery.notes_label')}
           </label>
-          <textarea
+          <ControlTextarea
             id="delivery-notes"
             data-testid="delivery-markdown"
             value={markdown}
@@ -249,7 +263,8 @@ export function DeliveryDialog({
             <div className="flex flex-wrap items-center gap-2">
               <MessageSquare className="h-4 w-4 text-text-muted" />
               {(['conversation', 'selected', 'none'] as const).map(scope => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={scope}
                   type="button"
                   data-testid={`delivery-chat-${scope}`}
@@ -265,7 +280,7 @@ export function DeliveryDialog({
                     : scope === 'selected'
                       ? t('delivery.selected_chat', '选择消息')
                       : t('delivery.no_chat', '不含聊天')}
-                </button>
+                </ControlButton>
               ))}
               {chatScope !== 'none' && (
                 <span className="text-xs text-text-muted">
@@ -273,7 +288,8 @@ export function DeliveryDialog({
                 </span>
               )}
               <span className="mx-1 h-4 w-px bg-border" />
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="delivery-select-files"
                 onClick={() => void choosePaths(false)}
@@ -281,8 +297,9 @@ export function DeliveryDialog({
               >
                 <FileText className="h-3.5 w-3.5" />
                 {t('delivery.select_files', '文件')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="delivery-select-folder"
                 onClick={() => void choosePaths(true)}
@@ -290,7 +307,7 @@ export function DeliveryDialog({
               >
                 <Folder className="h-3.5 w-3.5" />
                 {t('delivery.select_folder', '文件夹')}
-              </button>
+              </ControlButton>
               {files.length > 0 && (
                 <span className="text-xs text-text-muted">
                   {t('delivery.file_count', '{{count}} 个文件', { count: files.length })}
@@ -308,10 +325,9 @@ export function DeliveryDialog({
                     key={`${message.id ?? index}`}
                     className="flex min-h-8 cursor-pointer items-center gap-2 rounded px-2 text-xs hover:bg-hover"
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={selectedMessages.includes(index)}
-                      onChange={() =>
+                      onCheckedChange={() =>
                         setSelectedMessages(current =>
                           current.includes(index)
                             ? current.filter(value => value !== index)
@@ -334,7 +350,8 @@ export function DeliveryDialog({
                     className="flex h-7 max-w-56 items-center gap-1 rounded-md bg-muted px-2 text-xs text-text-secondary"
                   >
                     <span className="truncate">{entry.relativePath}</span>
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       onClick={() =>
                         setFiles(current =>
@@ -344,7 +361,7 @@ export function DeliveryDialog({
                       aria-label={t('delivery.remove_file', '移除文件')}
                     >
                       <X className="h-3 w-3" />
-                    </button>
+                    </ControlButton>
                   </span>
                 ))}
               </div>
@@ -381,11 +398,10 @@ export function DeliveryDialog({
                               })
                         }
                       >
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={checked}
                           disabled={!local}
-                          onChange={() =>
+                          onCheckedChange={() =>
                             setSelectedAttachmentKeys(current =>
                               current.includes(option.key)
                                 ? current.filter(value => value !== option.key)
@@ -413,14 +429,17 @@ export function DeliveryDialog({
           {!error && (
             <p className="min-w-0 flex-1 text-xs text-text-muted">{t('delivery.immutable_hint')}</p>
           )}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={onCancel}
             className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-hover"
           >
             {t('common.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="delivery-confirm"
             disabled={submitting || !hasChatSelection || !title.trim()}
@@ -439,9 +458,9 @@ export function DeliveryDialog({
                 {t('delivery.confirm', '确认交付')}
               </>
             )}
-          </button>
+          </ControlButton>
         </footer>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import { Readable } from 'node:stream'
 import { apply, hostDisconnectHandler } from './index.js'
@@ -26,6 +27,7 @@ test('authenticates the registered host routes before any capability dispatch', 
     },
     webServer: {
       port: 3000,
+      registerUpgrade: () => () => {},
       register: route => {
         routes.set(route.path, route.handler)
         return () => {}
@@ -48,14 +50,17 @@ test('authenticates the registered host routes before any capability dispatch', 
       req.headers = { host, origin: `http://${host}`, cookie }
       let status
       let body
-      await handler(req, {
-        writeHead: value => {
-          status = value
-        },
-        end(value) {
-          body = value
-        },
-      })
+      await handler(
+        req,
+        responseFixture(
+          value => {
+            status = value
+          },
+          value => {
+            body = value
+          }
+        )
+      )
       assert.equal(status, expected, `${path} / ${host}`)
       if (status === 200 && !path.endsWith('/invoke')) {
         assert.deepEqual(JSON.parse(body).capabilities, ['app.getVersion'])
@@ -95,6 +100,7 @@ test('denies secret reads, writes and deletes over HTTP even for authenticated s
     connection: { requestRejection: () => undefined },
     webServer: {
       port: 3000,
+      registerUpgrade: () => () => {},
       register: route => {
         routes.set(route.path, route.handler)
         return () => {}
@@ -121,19 +127,37 @@ test('denies secret reads, writes and deletes over HTTP even for authenticated s
     }
     let status
     let response
-    await routes.get('/wework/electron-host/v1/invoke')(req, {
-      writeHead: value => {
-        status = value
-      },
-      end: value => {
-        response = JSON.parse(value)
-      },
-    })
+    await routes.get('/wework/electron-host/v1/invoke')(
+      req,
+      responseFixture(
+        value => {
+          status = value
+        },
+        value => {
+          response = JSON.parse(value)
+        }
+      )
+    )
     assert.equal(status, 403)
     assert.equal(response.error.code, 'capability_denied')
   }
   assert.equal(invocations, 0)
 })
+
+function responseFixture(writeHead, readBody) {
+  return Object.assign(new EventEmitter(), {
+    writeHead(status) {
+      this.statusCode = status
+      this.headersSent = true
+      writeHead(status)
+    },
+    end(body) {
+      this.writableEnded = true
+      readBody(body)
+      this.emit('finish')
+    },
+  })
+}
 
 test('requires the launcher exit service', () => {
   assert.throws(

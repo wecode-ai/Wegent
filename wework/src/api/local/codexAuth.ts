@@ -1,4 +1,5 @@
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
+import { invalidateOpenAiRemoteCatalogAccount } from '@/features/plugins/pluginMarketplaceCache'
 
 interface CodexChatgptLoginResponse {
   type: 'chatgpt'
@@ -79,9 +80,11 @@ export async function switchLocalCodexAccount(
   const normalizedAccountId = accountId.trim()
   if (!normalizedAccountId) throw new Error('Codex account ID is required')
   await ensureLocalExecutorStarted()
-  return parseLocalCodexAccounts(
+  const accounts = parseLocalCodexAccounts(
     await request('runtime.codex.accounts.switch', { accountId: normalizedAccountId })
   )
+  invalidateOpenAiRemoteCatalogAccount()
+  return accounts
 }
 
 export async function cancelLocalCodexLogin(

@@ -325,6 +325,10 @@
         "title": "Model error: The model is temporarily unavailable",
         "description": "The model service is unavailable. Try again later or switch models."
       },
+      "model_unavailable": {
+        "title": "Model unavailable",
+        "description": "The selected model is currently unavailable. Try again later or switch models."
+      },
       "llm_unsupported": {
         "title": "Current model does not support this request",
         "description": "This input or attachment type is not supported by the model. Switch to a compatible model."

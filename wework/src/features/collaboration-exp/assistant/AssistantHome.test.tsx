@@ -1,3 +1,4 @@
+import { createScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useState, type ComponentProps } from 'react'
@@ -91,7 +92,7 @@ const conversation: ExperiencePrivateConversation = {
 }
 
 function setupWorkbench() {
-  const inputByScope: Record<string, string> = {}
+  const draftStore = createScopedDraftStore()
   const api = {
     conversation: vi.fn().mockResolvedValue({ deviceId: 'device-1', taskId: 'new-private-task' }),
     personalSave: vi.fn().mockResolvedValue(settings),
@@ -99,10 +100,8 @@ function setupWorkbench() {
   }
   const createIssue = vi.fn()
   const projectChat = {
-    inputByScope,
-    setInputForScope: vi.fn((key: string, value: string) => {
-      inputByScope[key] = value
-    }),
+    draftStore,
+    setInputForScope: vi.fn(draftStore.write),
     models: [],
     selectedModel: null,
     selectedModelOptions: {},
@@ -726,7 +725,9 @@ describe('AssistantHome', () => {
     expect(screen.getByTestId('collaboration-exp-assistant-input')).toHaveValue(
       'Unsent ordinary question'
     )
-    expect(Object.values(projectChat.inputByScope)).toContain('Unsent ordinary question')
+    expect(Object.values(projectChat.draftStore.exportInputs())).toContain(
+      'Unsent ordinary question'
+    )
     expect(api.conversation).not.toHaveBeenCalled()
     expect(createIssue).not.toHaveBeenCalled()
   })
@@ -835,7 +836,7 @@ describe('AssistantHome', () => {
     view.rerender(<AssistantComposer {...props} />)
     fireEvent.click(screen.getByTestId('collaboration-exp-assistant-send'))
     await waitFor(() => expect(screen.getByRole('alert')).not.toBeEmptyDOMElement())
-    expect(Object.values(projectChat.inputByScope)).toContain('Keep this draft')
+    expect(Object.values(projectChat.draftStore.exportInputs())).toContain('Keep this draft')
     expect(props.onCreated).not.toHaveBeenCalled()
   })
 
@@ -866,7 +867,7 @@ describe('AssistantHome', () => {
       })
       await act(async () => accept({ deviceId: 'device-1', taskId: 'accepted-old-question' }))
       expect(screen.getByTestId('collaboration-exp-assistant-input')).toHaveValue(nextDraft)
-      expect(Object.values(projectChat.inputByScope)).toContain(nextDraft)
+      expect(Object.values(projectChat.draftStore.exportInputs())).toContain(nextDraft)
       expect(props.onCreated).not.toHaveBeenCalled()
       second.unmount()
       setupWorkbench()
@@ -896,7 +897,9 @@ describe('AssistantHome', () => {
     )
     await act(async () => accept({ deviceId: 'device-1', taskId: 'accepted-old-question' }))
     expect(screen.getByTestId('collaboration-exp-assistant-input')).toHaveValue('')
-    expect(Object.values(projectChat.inputByScope)).not.toContain('Accepted original question')
+    expect(Object.values(projectChat.draftStore.exportInputs())).not.toContain(
+      'Accepted original question'
+    )
     second.unmount()
     setupWorkbench()
     render(<AssistantComposer {...props} />)
@@ -942,7 +945,7 @@ describe('AssistantHome', () => {
     ).not.toBeInTheDocument()
     expect(screen.getByText('assistant.defaultProtected')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('collaboration-exp-assistant-delete-reviewer'))
-    expect(screen.getByRole('dialog')).toHaveTextContent('assistant.deleteRoleDescription')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('assistant.deleteRoleDescription')
     expect(onDelete).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('collaboration-exp-assistant-delete-confirm'))
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith(role))
@@ -1052,7 +1055,7 @@ describe('AssistantHome', () => {
     fireEvent.click(screen.getByTestId('collaboration-exp-assistant-delete-confirm'))
     await waitFor(() => expect(rosterSave).toHaveBeenCalledOnce())
     expect(api.personalSave).not.toHaveBeenCalled()
-    expect(screen.getByRole('dialog')).toHaveTextContent('assistant.deleteRoleDescription')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('assistant.deleteRoleDescription')
   })
 
   it('registers the role filter tags that dispatch uses for scoped Issue intake', async () => {

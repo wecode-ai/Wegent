@@ -1,25 +1,17 @@
-import {
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-  type Ref,
-} from 'react'
-import { Menu } from 'lucide-react'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
+import { useDialogRequests } from '@/components/common/useDialogRequests'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
+import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
+import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
+import { useAuth } from '@/features/auth/useAuth'
 import { AutomationDetailWorkspace } from '@/features/automations/AutomationDetailWorkspace'
 import {
-  automationModelFields,
   automationDraftFromAutomation,
+  automationModelFields,
   automationWorkspaceTarget,
   buildAutomationProjectOptions,
   emptyAutomationDraft,
@@ -27,15 +19,15 @@ import {
   scheduleFromAutomationDraft,
   type AutomationDraft,
 } from '@/features/automations/automationDraft'
-import { useAuth } from '@/features/auth/useAuth'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
+import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { canUseForProjectCreation, isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
-import { isElectronRuntime } from '@/lib/runtime-environment'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import { track } from '@/telemetry/client'
 import type { RuntimeSendRequest, RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
@@ -45,10 +37,25 @@ import type {
   AutomationRun,
   AutomationSource,
 } from '@/types/automation'
-import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
+import { getIdleResourceSnapshot, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Menu } from 'lucide-react'
+import {
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from 'react'
+import { createAutomationPageSource } from './automationPageSource'
 
-import { AutomationListPane, AutomationEmptyState, type StatusFilter } from './AutomationListPane'
+import { AutomationEmptyState, AutomationListPane, type StatusFilter } from './AutomationListPane'
 import { useAutomationRunNavigation } from './useAutomationRunNavigation'
+
+const EMPTY_AUTOMATIONS: Automation[] = []
+const EMPTY_AUTOMATION_RUNS: AutomationRun[] = []
 
 export interface AutomationNavigationHandle {
   requestLeave(action: () => void): void
@@ -76,6 +83,10 @@ export function AutomationsPage({
   standInOwner?: { userId: number; roleId: string }
 } = {}) {
   const { t, i18n } = useTranslation('common')
+  const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
+    (key, fallback) => t(key, fallback)
+  )
+
   const { logout } = useAuth()
   const isMobile = useIsMobile()
   const isDesktop = isElectronRuntime()
@@ -115,42 +126,118 @@ export function AutomationsPage({
     cloneGitRepository,
     refreshWorkLists,
   } = useWorkbench()
-  const [automations, setAutomations] = useState<Automation[]>([])
-  const [runs, setRuns] = useState<AutomationRun[]>([])
-  const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(null)
-  const [editing, setEditing] = useState<Automation | null>(null)
-  const [draft, setDraft] = useState<AutomationDraft | null>(null)
-  const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [dirty, setDirty] = useState(false)
-  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
-  const requestLeave = (action: () => void) => {
-    if (saving) return
-    if (dirty) setPendingNavigation(() => action)
-    else action()
+  const ownerUserId = standInOwner?.userId
+  const ownerRoleId = standInOwner?.roleId
+  const automationApi = services.automationApi
+  const ownerKey = JSON.stringify([
+    state.user?.id,
+    ownerUserId,
+    ownerRoleId,
+    standInDeviceId,
+    initialAutomationId,
+  ])
+  const [owner, setOwner] = useState(() => ({
+    api: automationApi,
+    key: ownerKey,
+    source: createAutomationPageSource({
+      api: automationApi,
+      userId: ownerUserId,
+      roleId: ownerRoleId,
+      initialAutomationId,
+    }),
+  }))
+  if (owner.api !== automationApi || owner.key !== ownerKey) {
+    setOwner({
+      api: automationApi,
+      key: ownerKey,
+      source: createAutomationPageSource({
+        api: automationApi,
+        userId: ownerUserId,
+        roleId: ownerRoleId,
+        initialAutomationId,
+      }),
+    })
   }
-  useImperativeHandle(ref, () => ({ requestLeave }))
-  useEffect(() => {
-    onDirtyChange?.(dirty)
-  }, [dirty, onDirtyChange])
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
-  const [runningId, setRunningId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [draftError, setDraftError] = useState<string | null>(null)
+  const source = owner.source
+  const subscribeDraft = useCallback(
+    (notify: () => void) => source.subscribe(notify, onDirtyChange),
+    [source, onDirtyChange]
+  )
+  const {
+    selectedAutomationId,
+    editing,
+    draft,
+    saving,
+    dirty,
+    pendingNavigation,
+    runningId,
+    error: operationError,
+    draftError,
+    dismissedReadErrors,
+  } = useSyncExternalStore(subscribeDraft, source.getSnapshot, source.getSnapshot)
+  const {
+    setSelectedAutomationId,
+    setEditing,
+    setDraft,
+    setSaving,
+    setDirty,
+    setPendingNavigation,
+    setRunningId,
+    setError,
+    setDraftError,
+    requestLeave,
+    loadAutomations,
+    loadRuns,
+  } = source
+  useImperativeHandle(ref, () => ({ requestLeave }), [requestLeave])
+  const subscribeCatalog = useCallback(
+    (notify: () => void) => source.subscribeCatalog(notify, state.runtimeWork),
+    [source, state.runtimeWork]
+  )
+  const catalog = useSyncExternalStore(
+    subscribeCatalog,
+    source.catalog.getSnapshot,
+    source.catalog.getSnapshot
+  )
+  const automations = catalog.data ?? EMPTY_AUTOMATIONS
+  const loading =
+    (catalog.status === 'idle' || catalog.status === 'loading') && catalog.data === undefined
+  const runRead = source.runsFor(selectedAutomationId)
+  const subscribeRuns = useCallback(
+    (notify: () => void) =>
+      runRead ? runRead.subscribe(notify, refreshWorkLists) : subscribeIdleResource(),
+    [runRead, refreshWorkLists]
+  )
+  const runSnapshot = useSyncExternalStore(
+    subscribeRuns,
+    runRead?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const runs = runSnapshot.data ?? EMPTY_AUTOMATION_RUNS
+  const listError = !automationApi
+    ? t('todo.automations_unavailable', '当前运行环境不支持自动化')
+    : catalog.status === 'error' && !dismissedReadErrors.includes(catalog.error)
+      ? catalog.error instanceof Error
+        ? catalog.error.message
+        : t('todo.automations_load_failed', '自动化加载失败')
+      : null
+  const runsError =
+    runSnapshot.status === 'error' && !dismissedReadErrors.includes(runSnapshot.error)
+      ? runSnapshot.error instanceof Error
+        ? runSnapshot.error.message
+        : t('todo.automation_runs_load_failed', '运行记录加载失败')
+      : null
+  const error = operationError ?? listError ?? runsError
+  const [query, setQuery] = useState('')
+  const [rowFocusRequest, setRowFocusRequest] = useState<{ id: string }>()
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const initialSelectionResolvedRef = useRef(false)
-  const runListSignatureRef = useRef('')
-  const refreshWorkListsRef = useRef(refreshWorkLists)
   const locale = i18n.language
-  const automationApi = services.automationApi
-
-  useEffect(() => {
-    refreshWorkListsRef.current = refreshWorkLists
-  }, [refreshWorkLists])
+  useDOMEvent('window', WORKBENCH_AUTOMATIONS_CHANGED_EVENT, () => {
+    void loadAutomations()
+  })
 
   const localDevices = useMemo(
     () => state.devices.filter(device => !isCloudDevice(device) && !isRemoteDevice(device)),
@@ -160,97 +247,6 @@ export function AutomationsPage({
     () => state.devices.filter(device => isCloudDevice(device) || isRemoteDevice(device)),
     [state.devices]
   )
-  const ownerUserId = standInOwner?.userId
-  const ownerRoleId = standInOwner?.roleId
-  const loadAutomations = useCallback(async () => {
-    if (!automationApi) {
-      setError(t('todo.automations_unavailable', '当前运行环境不支持自动化'))
-      setLoading(false)
-      return
-    }
-    try {
-      const response = await automationApi.listAutomations()
-      const items = response.items.filter(item => {
-        const calendar = Boolean(item.taskRequest?.standInCalendar)
-        if (ownerUserId === undefined) return !calendar
-        if (!calendar) return false
-        const owner = item.taskRequest?.standInOwner
-        if (owner) return owner.userId === ownerUserId && owner.roleId === ownerRoleId
-        return false
-      })
-      setAutomations(items)
-      const shouldSelectInitialAutomation = !initialSelectionResolvedRef.current
-      initialSelectionResolvedRef.current = true
-      const initial = initialAutomationId
-        ? items.find(item => item.id === initialAutomationId)
-        : ownerUserId === undefined
-          ? items[0]
-          : undefined
-      if (shouldSelectInitialAutomation && initial) {
-        setSelectedAutomationId(initial.id)
-        setEditing(initial)
-        setDraft(automationDraftFromAutomation(initial, state.runtimeWork))
-        setDirty(false)
-      }
-      setError(null)
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : t('todo.automations_load_failed', '自动化加载失败')
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [automationApi, state.runtimeWork, t, ownerUserId, ownerRoleId, initialAutomationId])
-
-  const loadRuns = useCallback(
-    async (automationId: string) => {
-      if (!automationApi) return
-      try {
-        const response = await automationApi.listAutomationRuns(automationId)
-        const signature = response.items
-          .map(run => `${run.id}:${run.status}:${run.updatedAt}`)
-          .join('|')
-        if (signature !== runListSignatureRef.current) {
-          runListSignatureRef.current = signature
-          setRuns(response.items)
-          await refreshWorkListsRef.current()
-        }
-      } catch (loadError) {
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : t('todo.automation_runs_load_failed', '运行记录加载失败')
-        )
-      }
-    },
-    [automationApi, t]
-  )
-
-  useEffect(() => {
-    const initialLoad = window.setTimeout(() => void loadAutomations(), 0)
-    const timer = window.setInterval(() => void loadAutomations(), 30_000)
-    const handleAutomationsChanged = () => void loadAutomations()
-    window.addEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, handleAutomationsChanged)
-    return () => {
-      window.clearTimeout(initialLoad)
-      window.clearInterval(timer)
-      window.removeEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, handleAutomationsChanged)
-    }
-  }, [loadAutomations])
-
-  useEffect(() => {
-    if (!selectedAutomationId) return
-    runListSignatureRef.current = ''
-    const load = window.setTimeout(() => void loadRuns(selectedAutomationId), 0)
-    const timer = window.setInterval(() => void loadRuns(selectedAutomationId), 2_000)
-    return () => {
-      window.clearTimeout(load)
-      window.clearInterval(timer)
-    }
-  }, [loadRuns, selectedAutomationId])
-
   const filteredAutomations = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return automations.filter(automation => {
@@ -297,6 +293,7 @@ export function AutomationsPage({
 
   const openCreate = (template?: Partial<AutomationDraft>) =>
     requestLeave(() => {
+      setRowFocusRequest(undefined)
       const device = standInDeviceId
         ? state.devices.find(item => item.device_id === standInDeviceId)
         : localDevices.find(canUseForProjectCreation)
@@ -309,7 +306,7 @@ export function AutomationsPage({
         projectChat.selectedModelOptions
       )
       if (template) Object.assign(nextDraft, template)
-      initialSelectionResolvedRef.current = true
+      source.resolveInitialSelection()
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(nextDraft)
@@ -325,12 +322,14 @@ export function AutomationsPage({
       selectAutomation(existing)
       return
     }
+    const isCurrent = source.capture(true)
     try {
       const { reviewTemplate } = await services.standInApi.onboarding(
         standInOwner.userId,
         standInDeviceId,
         locale
       )
+      if (!isCurrent()) return
       const template = automationDraftFromAutomation({ ...reviewTemplate, source: 'local' })
       openCreate({
         name: template.name,
@@ -343,13 +342,15 @@ export function AutomationsPage({
         calendarTemplate: template.calendarTemplate,
       })
     } catch (cause) {
+      if (!isCurrent()) return
       setError(getStandInErrorMessage(cause))
     }
   }
 
   const selectAutomation = (automation: Automation) =>
     requestLeave(() => {
-      initialSelectionResolvedRef.current = true
+      setRowFocusRequest(undefined)
+      source.resolveInitialSelection()
       setSelectedAutomationId(automation.id)
       setEditing(automation)
       setDraft(automationDraftFromAutomation(automation, state.runtimeWork))
@@ -488,6 +489,8 @@ export function AutomationsPage({
       setDraftError(t('todo.automation_name_prompt_required', '请填写名称和任务说明'))
       return
     }
+    const isCurrent = source.capture()
+    if (!isCurrent()) return
     setDraftError(null)
     setSaving(true)
     try {
@@ -495,21 +498,24 @@ export function AutomationsPage({
       const response = editing
         ? await automationApi.updateAutomation(editing.id, mutation)
         : await automationApi.createAutomation(mutation)
+      if (!isCurrent()) return
       setSelectedAutomationId(response.automation.id)
       setEditing(response.automation)
       setDraft(automationDraftFromAutomation(response.automation))
       setDirty(false)
       await loadAutomations()
+      if (!isCurrent()) return
       if (detailOnly) {
         onClose?.()
       } else if (standInOwner) {
+        if (editing) setRowFocusRequest({ id: response.automation.id })
         setSelectedAutomationId(null)
         setEditing(null)
         setDraft(null)
-        setRuns([])
       }
       track('automation_action_completed', { action: editing ? 'update' : 'create' })
     } catch (saveError) {
+      if (!isCurrent()) return
       track('operation_failed', { operation: 'automation_save' })
       setDraftError(
         saveError instanceof Error
@@ -523,14 +529,18 @@ export function AutomationsPage({
 
   const toggleAutomation = async (automation: Automation) => {
     if (!automationApi) return
+    const isCurrent = source.capture(true)
+    if (!isCurrent()) return
     try {
       const response = await automationApi.toggleAutomation(automation.id, !automation.enabled)
+      if (!isCurrent()) return
       setEditing(response.automation)
       await loadAutomations()
       track('automation_action_completed', {
         action: response.automation.enabled ? 'enable' : 'disable',
       })
     } catch (toggleError) {
+      if (!isCurrent()) return
       track('operation_failed', { operation: 'automation_toggle' })
       setError(toggleError instanceof Error ? toggleError.message : String(toggleError))
     }
@@ -538,13 +548,18 @@ export function AutomationsPage({
 
   const runNow = async (automation: Automation) => {
     if (!automationApi) return
+    const isCurrent = source.capture(true)
+    if (!isCurrent()) return
     setRunningId(automation.id)
     try {
       await automationApi.runAutomationNow(automation.id)
-      await Promise.all([loadAutomations(), loadRuns(automation.id), refreshWorkLists()])
+      if (!isCurrent()) return
+      await Promise.all([loadAutomations(), loadRuns(automation.id, refreshWorkLists)])
+      if (!isCurrent()) return
       setSelectedAutomationId(automation.id)
       track('automation_action_completed', { action: 'run' })
     } catch (runError) {
+      if (!isCurrent()) return
       track('operation_failed', { operation: 'automation_run' })
       setError(runError instanceof Error ? runError.message : String(runError))
     } finally {
@@ -554,17 +569,24 @@ export function AutomationsPage({
 
   const deleteAutomation = async (automation: Automation) => {
     if (!automationApi) return
-    if (!window.confirm(t('todo.automation_delete_confirm', '删除这个自动化？'))) return
+    if (!(await requestConfirmation(t('todo.automation_delete_confirm', '删除这个自动化？'))))
+      return
+    const isCurrent = source.capture(true)
+    if (!isCurrent()) return
     try {
       await automationApi.deleteAutomation(automation.id)
-      if (detailOnly) onClose?.()
+      if (!isCurrent()) return
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)
       setDirty(false)
+      const finishCurrent = source.capture(true)
       await loadAutomations()
+      if (!finishCurrent()) return
+      if (detailOnly) onClose?.()
       track('automation_action_completed', { action: 'delete' })
     } catch (deleteError) {
+      if (!isCurrent()) return
       track('operation_failed', { operation: 'automation_delete' })
       setError(deleteError instanceof Error ? deleteError.message : String(deleteError))
     }
@@ -576,15 +598,18 @@ export function AutomationsPage({
         onClose?.()
         return
       }
-      initialSelectionResolvedRef.current = true
+      if (standInOwner && editing) setRowFocusRequest({ id: editing.id })
+      source.resolveInitialSelection()
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)
       setDirty(false)
     })
   const handleOpenRuntimeTask = async (address: RuntimeTaskAddress) => {
+    const isCurrent = source.capture()
+    if (!isCurrent()) return
     await openRuntimeTask(address)
-    navigateTo(buildRuntimeTaskRoute(address))
+    if (isCurrent()) navigateTo(buildRuntimeTaskRoute(address))
   }
   const openRun = useAutomationRunNavigation({
     openRuntimeTask,
@@ -607,237 +632,254 @@ export function AutomationsPage({
 
   if (settingsOpen) {
     if (isMobile) {
-      return <MobileSettingsPage onBack={() => setSettingsOpen(false)} />
+      return (
+        <>
+          {' '}
+          {requestDialogs} <MobileSettingsPage onBack={() => setSettingsOpen(false)} />{' '}
+        </>
+      )
     }
-    return <ConnectionsSettingsPage onBack={() => setSettingsOpen(false)} />
+    return (
+      <>
+        {' '}
+        {requestDialogs} <ConnectionsSettingsPage onBack={() => setSettingsOpen(false)} />{' '}
+      </>
+    )
   }
 
-  const hasWorkspace = automations.length > 0 || Boolean(draft)
+  const hasWorkspace = automations.length > 0 || Boolean(draft) || catalog.status === 'error'
 
   return (
-    <div
-      className={`relative flex min-h-0 overflow-hidden bg-background text-text-primary ${standInOwner && !draft ? 'shrink-0' : 'h-full flex-1'}`}
-    >
-      <ConfirmDialog
-        open={pendingNavigation !== null}
-        onClose={() => setPendingNavigation(null)}
-        title={t('standIn.personal.discard_help')}
-        description={t('standIn.personal.discard_description')}
-        confirmLabel={t('standIn.personal.discard')}
-        cancelLabel={t('standIn.personal.keep_editing')}
-        confirmTestId="automation-discard"
-        cancelTestId="automation-keep-editing"
-        onConfirm={() => {
-          const action = pendingNavigation
-          setPendingNavigation(null)
-          setDraftError(null)
-          setDirty(false)
-          setDraft(editing ? automationDraftFromAutomation(editing, state.runtimeWork) : null)
-          if (!editing) setSelectedAutomationId(null)
-          action?.()
-        }}
-      />
-      {embedded ? null : !isMobile ? (
-        <DesktopSidebar
-          user={state.user}
-          projects={state.projects}
-          devices={state.devices}
-          runtimeWork={state.runtimeWork}
-          currentRuntimeTask={state.currentRuntimeTask}
-          cloudWorkStatus={cloudWorkStatus}
-          standaloneDeviceId={state.standaloneDeviceId}
-          standaloneWorkspacePath={state.standaloneWorkspacePath}
-          preferredDeviceId={
-            state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-          }
-          activeItem="automation"
-          collapsed={sidebarCollapsed}
-          onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-          onNewChat={handleNewChat}
-          onOpenStandIn={() => requestLeave(() => navigateTo('/stand-in'))}
-          onStartStandaloneChat={handleStandaloneChat}
-          onOpenSearch={() => setSearchOpen(true)}
-          onSelectProject={handleSelectProject}
-          onStartNewProjectChat={projectId => {
-            navigateTo('/')
-            startNewProjectChat(projectId)
+    <>
+      {' '}
+      {requestDialogs}{' '}
+      <div
+        className={`relative flex min-h-0 overflow-hidden bg-background text-text-primary ${standInOwner && !draft ? 'shrink-0' : 'h-full flex-1'}`}
+      >
+        <ConfirmDialog
+          open={pendingNavigation !== null}
+          onClose={() => setPendingNavigation(null)}
+          title={t('standIn.personal.discard_help')}
+          description={t('standIn.personal.discard_description')}
+          confirmLabel={t('standIn.personal.discard')}
+          cancelLabel={t('standIn.personal.keep_editing')}
+          confirmTestId="automation-discard"
+          cancelTestId="automation-keep-editing"
+          onConfirm={() => {
+            const action = pendingNavigation
+            setPendingNavigation(null)
+            setDraftError(null)
+            setDirty(false)
+            setDraft(editing ? automationDraftFromAutomation(editing, state.runtimeWork) : null)
+            if (!editing) setSelectedAutomationId(null)
+            action?.()
           }}
-          onOpenRuntimeTask={handleOpenRuntimeTask}
-          onRenameRuntimeTask={renameRuntimeTask}
-          onArchiveRuntimeTask={archiveRuntimeTask}
-          onArchiveProjectConversations={archiveProjectConversations}
-          onArchiveProjectsConversations={archiveProjectsConversations}
-          onArchiveChatConversations={archiveChatConversations}
-          onOpenStandaloneWorkspace={openStandaloneWorkspace}
-          onSelectStandaloneDevice={selectStandaloneDevice}
-          onRefreshDevices={refreshDevices}
-          onUpdateProjectName={updateProjectName}
-          onRemoveProject={removeProject}
-          onSetRuntimeTaskPinned={setRuntimeTaskPinned}
-          onGetDeviceHomeDirectory={getDeviceHomeDirectory}
-          onListDeviceDirectories={listDeviceDirectories}
-          onCreateDeviceDirectory={createDeviceDirectory}
-          onCloneGitRepository={cloneGitRepository}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onLogout={logout}
         />
-      ) : (
-        <>
-          <button
-            type="button"
-            data-testid="automations-mobile-menu"
-            onClick={() => setDrawerOpen(true)}
-            className="absolute left-4 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 min-w-11 items-center justify-center rounded-lg bg-surface"
-            aria-label={t('workbench.open_menu', '打开菜单')}
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-          <MobileDrawer
-            open={drawerOpen}
+        {embedded ? null : !isMobile ? (
+          <DesktopSidebar
             user={state.user}
-            devices={state.devices}
             projects={state.projects}
+            devices={state.devices}
             runtimeWork={state.runtimeWork}
-            currentProjectId={state.currentProject?.id}
             currentRuntimeTask={state.currentRuntimeTask}
+            cloudWorkStatus={cloudWorkStatus}
+            standaloneDeviceId={state.standaloneDeviceId}
+            standaloneWorkspacePath={state.standaloneWorkspacePath}
+            preferredDeviceId={
+              state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+            }
             activeItem="automation"
-            onClose={() => setDrawerOpen(false)}
+            collapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onNewChat={handleNewChat}
+            onOpenStandIn={() => requestLeave(() => navigateTo('/stand-in'))}
             onStartStandaloneChat={handleStandaloneChat}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSearch={() => setSearchOpen(true)}
             onSelectProject={handleSelectProject}
+            onStartNewProjectChat={projectId => {
+              navigateTo('/')
+              startNewProjectChat(projectId)
+            }}
             onOpenRuntimeTask={handleOpenRuntimeTask}
-            onCreateProject={createProject}
-            onCreateGitWorkspaceProject={createGitWorkspaceProject}
-            onPrepareDeviceWorkspace={prepareDeviceWorkspace}
-            onDeleteDeviceWorkspace={deleteDeviceWorkspace}
-            onListGitRepositories={listGitRepositories}
-            onListGitBranches={listGitBranches}
+            onRenameRuntimeTask={renameRuntimeTask}
+            onArchiveRuntimeTask={archiveRuntimeTask}
+            onArchiveProjectConversations={archiveProjectConversations}
+            onArchiveProjectsConversations={archiveProjectsConversations}
+            onArchiveChatConversations={archiveChatConversations}
+            onOpenStandaloneWorkspace={openStandaloneWorkspace}
+            onSelectStandaloneDevice={selectStandaloneDevice}
+            onRefreshDevices={refreshDevices}
             onUpdateProjectName={updateProjectName}
             onRemoveProject={removeProject}
+            onSetRuntimeTaskPinned={setRuntimeTaskPinned}
             onGetDeviceHomeDirectory={getDeviceHomeDirectory}
-            onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
             onListDeviceDirectories={listDeviceDirectories}
             onCreateDeviceDirectory={createDeviceDirectory}
+            onCloneGitRepository={cloneGitRepository}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onLogout={logout}
           />
-        </>
-      )}
-
-      <main className="relative flex min-w-0 flex-1 overflow-hidden">
-        {!embedded && !isMobile && isDesktop && (
-          <DesktopCollapsedSidebarToggle
-            collapsed={sidebarCollapsed}
-            onToggle={() => setSidebarCollapsed(false)}
-          />
-        )}
-        {detailOnly && !draft ? (
-          <div
-            data-testid="automation-detail-status"
-            className="p-4 text-sm text-text-secondary"
-            role={loading ? 'status' : 'alert'}
-          >
-            {loading ? t('standIn.loading') : error || t('todo.automation_not_found')}
-            {!loading && (
-              <button
-                type="button"
-                data-testid="automation-detail-retry"
-                onClick={() => void loadAutomations()}
-                className="ml-2 min-h-8 underline"
-              >
-                {t('standIn.reload')}
-              </button>
-            )}
-          </div>
-        ) : hasWorkspace ? (
-          <>
-            {!detailOnly && (!standInOwner || !draft) && (
-              <AutomationListPane
-                calendar={Boolean(standInOwner)}
-                automations={filteredAutomations}
-                allAutomations={automations}
-                query={query}
-                statusFilter={statusFilter}
-                selectedAutomationId={selectedAutomationId}
-                locale={locale}
-                loading={loading}
-                error={error}
-                detailOpen={Boolean(draft)}
-                mobileDetailOpen={isMobile && Boolean(draft)}
-                onQueryChange={setQuery}
-                onFilterChange={setStatusFilter}
-                onSelect={selectAutomation}
-                onCreate={openCreate}
-                onReviewTemplate={
-                  standInOwner?.roleId === '@primary' &&
-                  services.standInApi &&
-                  !loading &&
-                  !error &&
-                  !automations.some(
-                    item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
-                  )
-                    ? () => void openReviewTemplate()
-                    : undefined
-                }
-                onClearError={() => setError(null)}
-              />
-            )}
-            {draft ? (
-              <AutomationDetailWorkspace
-                dialogMode={detailOnly}
-                compact={Boolean(standInOwner)}
-                validationError={draftError || (detailOnly ? error : null)}
-                draft={draft}
-                calendarMode={Boolean(standInOwner)}
-                inheritStandIn={Boolean(standInOwner || editing?.taskRequest?.standInOwner)}
-                automation={editing}
-                runs={runs}
-                onOpenRun={openRun}
-                locale={locale}
-                devices={state.devices}
-                projects={state.runtimeWork?.projects ?? []}
-                models={projectChat.models}
-                currentRuntimeTask={state.currentRuntimeTask}
-                runtimeWork={state.runtimeWork}
-                localDeviceIds={localDevices.flatMap(getWorkbenchDeviceIds)}
-                cloudAvailable={cloudDevices.length > 0}
-                saving={saving}
-                dirty={dirty}
-                running={Boolean(editing && runningId === editing.id)}
-                onChange={updateDraft}
-                onModelChange={changeModel}
-                onSourceChange={changeSource}
-                onClose={closeDetail}
-                onSave={() => void saveAutomation()}
-                onRun={() => editing && void runNow(editing)}
-                onToggle={() => editing && void toggleAutomation(editing)}
-                onDelete={() => editing && void deleteAutomation(editing)}
-              />
-            ) : null}
-          </>
         ) : (
-          <AutomationEmptyState
-            calendar={Boolean(standInOwner)}
-            loading={loading}
-            error={error}
-            query={query}
-            onQueryChange={setQuery}
-            onCreate={openCreate}
-            onReviewTemplate={
-              standInOwner?.roleId === '@primary' && services.standInApi && !loading && !error
-                ? () => void openReviewTemplate()
-                : undefined
-            }
-            onClearError={() => setError(null)}
-          />
+          <>
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="automations-mobile-menu"
+              onClick={() => setDrawerOpen(true)}
+              className="absolute left-4 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 min-w-11 items-center justify-center rounded-lg bg-surface"
+              aria-label={t('workbench.open_menu', '打开菜单')}
+            >
+              <Menu className="h-5 w-5" />
+            </ControlButton>
+            <MobileDrawer
+              open={drawerOpen}
+              user={state.user}
+              devices={state.devices}
+              projects={state.projects}
+              runtimeWork={state.runtimeWork}
+              currentProjectId={state.currentProject?.id}
+              currentRuntimeTask={state.currentRuntimeTask}
+              activeItem="automation"
+              onClose={() => setDrawerOpen(false)}
+              onNewChat={handleNewChat}
+              onStartStandaloneChat={handleStandaloneChat}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onSelectProject={handleSelectProject}
+              onOpenRuntimeTask={handleOpenRuntimeTask}
+              onCreateProject={createProject}
+              onCreateGitWorkspaceProject={createGitWorkspaceProject}
+              onPrepareDeviceWorkspace={prepareDeviceWorkspace}
+              onDeleteDeviceWorkspace={deleteDeviceWorkspace}
+              onListGitRepositories={listGitRepositories}
+              onListGitBranches={listGitBranches}
+              onUpdateProjectName={updateProjectName}
+              onRemoveProject={removeProject}
+              onGetDeviceHomeDirectory={getDeviceHomeDirectory}
+              onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
+              onListDeviceDirectories={listDeviceDirectories}
+              onCreateDeviceDirectory={createDeviceDirectory}
+            />
+          </>
         )}
-      </main>
 
-      <WorkbenchSearchDialog
-        open={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        onSearchRuntimeWork={searchRuntimeWork}
-        onOpenRuntimeTask={handleOpenRuntimeTask}
-      />
-    </div>
+        <main className="relative flex min-w-0 flex-1 overflow-hidden">
+          {!embedded && !isMobile && isDesktop && (
+            <DesktopCollapsedSidebarToggle
+              collapsed={sidebarCollapsed}
+              onToggle={() => setSidebarCollapsed(false)}
+            />
+          )}
+          {detailOnly && !draft ? (
+            <div
+              data-testid="automation-detail-status"
+              className="p-4 text-sm text-text-secondary"
+              role={loading ? 'status' : 'alert'}
+            >
+              {loading ? t('standIn.loading') : error || t('todo.automation_not_found')}
+              {!loading && (
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  data-testid="automation-detail-retry"
+                  onClick={() => void loadAutomations()}
+                  className="ml-2 min-h-8 underline"
+                >
+                  {t('standIn.reload')}
+                </ControlButton>
+              )}
+            </div>
+          ) : hasWorkspace ? (
+            <>
+              {!detailOnly && (!standInOwner || !draft) && (
+                <AutomationListPane
+                  calendar={Boolean(standInOwner)}
+                  automations={filteredAutomations}
+                  allAutomations={automations}
+                  query={query}
+                  statusFilter={statusFilter}
+                  selectedAutomationId={selectedAutomationId}
+                  rowFocusRequest={rowFocusRequest}
+                  locale={locale}
+                  loading={loading}
+                  error={error}
+                  detailOpen={Boolean(draft)}
+                  mobileDetailOpen={isMobile && Boolean(draft)}
+                  onQueryChange={setQuery}
+                  onFilterChange={setStatusFilter}
+                  onSelect={selectAutomation}
+                  onCreate={openCreate}
+                  onReviewTemplate={
+                    standInOwner?.roleId === '@primary' &&
+                    services.standInApi &&
+                    !loading &&
+                    !error &&
+                    !automations.some(
+                      item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
+                    )
+                      ? () => void openReviewTemplate()
+                      : undefined
+                  }
+                  onClearError={() => setError(null)}
+                />
+              )}
+              {draft ? (
+                <AutomationDetailWorkspace
+                  dialogMode={detailOnly}
+                  compact={Boolean(standInOwner)}
+                  validationError={draftError || (detailOnly ? error : null)}
+                  draft={draft}
+                  calendarMode={Boolean(standInOwner)}
+                  inheritStandIn={Boolean(standInOwner || editing?.taskRequest?.standInOwner)}
+                  automation={editing}
+                  runs={runs}
+                  onOpenRun={openRun}
+                  locale={locale}
+                  devices={state.devices}
+                  projects={state.runtimeWork?.projects ?? []}
+                  models={projectChat.models}
+                  currentRuntimeTask={state.currentRuntimeTask}
+                  runtimeWork={state.runtimeWork}
+                  localDeviceIds={localDevices.flatMap(getWorkbenchDeviceIds)}
+                  cloudAvailable={cloudDevices.length > 0}
+                  saving={saving}
+                  dirty={dirty}
+                  running={Boolean(editing && runningId === editing.id)}
+                  onChange={updateDraft}
+                  onModelChange={changeModel}
+                  onSourceChange={changeSource}
+                  onClose={closeDetail}
+                  onSave={() => void saveAutomation()}
+                  onRun={() => editing && void runNow(editing)}
+                  onToggle={() => editing && void toggleAutomation(editing)}
+                  onDelete={() => editing && void deleteAutomation(editing)}
+                />
+              ) : null}
+            </>
+          ) : (
+            <AutomationEmptyState
+              calendar={Boolean(standInOwner)}
+              loading={loading}
+              error={error}
+              query={query}
+              onQueryChange={setQuery}
+              onCreate={openCreate}
+              onReviewTemplate={
+                standInOwner?.roleId === '@primary' && services.standInApi && !loading && !error
+                  ? () => void openReviewTemplate()
+                  : undefined
+              }
+              onClearError={() => setError(null)}
+            />
+          )}
+        </main>
+
+        <WorkbenchSearchDialog
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          onSearchRuntimeWork={searchRuntimeWork}
+          onOpenRuntimeTask={handleOpenRuntimeTask}
+        />
+      </div>{' '}
+    </>
   )
 }

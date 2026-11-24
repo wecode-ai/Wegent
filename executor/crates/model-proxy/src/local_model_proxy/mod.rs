@@ -24,6 +24,7 @@ mod request_policy;
 pub mod retry_notifications;
 mod sse;
 mod vision;
+mod websocket;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -115,7 +116,9 @@ pub fn token_route<S>() -> MethodRouter<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    post(handle_token_route).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+    post(handle_token_route)
+        .get(websocket::handle_upgrade)
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
 }
 
 pub fn harness_messages_route<S>() -> MethodRouter<S>

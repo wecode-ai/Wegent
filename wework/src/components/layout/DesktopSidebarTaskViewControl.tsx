@@ -1,8 +1,9 @@
-import { ChevronDown, Columns3, ListTodo, RotateCw } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown, Columns3, ListTodo, RotateCw } from 'lucide-react'
 
 export type DesktopSidebarTaskViewAction = 'priority' | 'board' | 'collapse-read'
 
@@ -65,7 +66,8 @@ export function DesktopSidebarTaskViewControl({
         align="end"
         testId="runtime-priority-filter-tooltip"
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="runtime-priority-filter-button"
           onClick={onRun}
@@ -88,7 +90,7 @@ export function DesktopSidebarTaskViewControl({
               className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
             />
           )}
-        </button>
+        </ControlButton>
       </TitlebarTooltip>
       <ActionMenu
         ariaLabel={t('workbench.task_view_menu', '任务视图')}
@@ -132,7 +134,8 @@ export function DesktopSidebarTaskViewControl({
               ]
             : []),
         ]}
-        triggerClassName="flex h-7 w-4 shrink-0 items-center justify-center rounded-r-lg text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-focus [&_svg]:h-2.5 [&_svg]:w-2.5 wework:keyboard:focus-visible:ring-blue-500"
+        density="dense"
+        triggerClassName="flex shrink-0 items-center justify-center rounded-r-lg text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-focus [&_svg]:h-2.5 [&_svg]:w-2.5 wework:keyboard:focus-visible:ring-blue-500"
       />
     </span>
   )

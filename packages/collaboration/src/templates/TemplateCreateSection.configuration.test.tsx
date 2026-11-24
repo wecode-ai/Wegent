@@ -1,8 +1,10 @@
+import { sdkSelectValue } from '../test/selectControl'
 // @vitest-environment jsdom
-import { act, useState } from 'react'
+import { act, useState, useSyncExternalStore } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TemplateCreateSection } from './TemplateCreateSection'
+import { createTemplatePageNavigation, templateConfigurationDetail } from './templatePageNavigation'
 import { CollaborationTemplateContext } from './context'
 import { CollaborationTemplateStore } from './store'
 import { builtinCollaborationTemplates } from './builtins'
@@ -41,10 +43,6 @@ function Harness({
   initial?: boolean
   onSelect?(document: CollaborationTemplate | null): void
 }) {
-  const [navigation, setNavigation] = useState<{ title: string; onBack: (() => void) | null }>({
-    title: 'Create project',
-    onBack: null,
-  })
   const [store] = useState(
     () =>
       new CollaborationTemplateStore({
@@ -53,10 +51,17 @@ function Harness({
         persistence: { read: async () => [], write: async () => {} },
       })
   )
+  const [templateNavigation] = useState(() => createTemplatePageNavigation(store))
+  const templateState = useSyncExternalStore(
+    templateNavigation.subscribe,
+    templateNavigation.getSnapshot,
+    templateNavigation.getSnapshot
+  )
+  const navigation = templateConfigurationDetail(templateNavigation, 'en', templateState)
   return (
     <CollaborationTemplateContext value={store}>
-      <h2 data-testid="host-title">{navigation.title}</h2>
-      <div hidden={Boolean(navigation.onBack)}>
+      <h2 data-testid="host-title">{navigation?.title ?? 'Create project'}</h2>
+      <div hidden={Boolean(navigation)}>
         <TemplateCreateSection
           setup={{
             location: 'local',
@@ -70,7 +75,7 @@ function Harness({
           initialTemplate={initial ? builtinCollaborationTemplates()[0].document : undefined}
           configurationHost={{
             target,
-            navigate: (title, onBack) => setNavigation({ title, onBack }),
+            navigation: templateNavigation,
           }}
           onSelect={onSelect}
           onChange={vi.fn()}
@@ -139,29 +144,20 @@ it('shows template details inline and returns to the catalog without another dia
 it('keeps an incomplete configuration editable after returning to the project', async () => {
   await act(async () => root.render(<Harness initial />))
   await click('project-create-configure-template')
-  const disclosure = target.querySelector<HTMLDetailsElement>('details')!
-  expect(disclosure.open).toBe(false)
+  const disclosure = target.querySelector<HTMLElement>('[data-testid^="template-customize-"]')!
+  expect(disclosure.getAttribute('aria-expanded')).toBe('false')
   await act(async () => {
-    disclosure.open = true
-    disclosure.dispatchEvent(new Event('toggle'))
+    disclosure.click()
   })
-  const select = target.querySelector<HTMLSelectElement>(
-    '[data-testid="template-role-main-role-0"]'
-  )!
-  const original = select.value
-  await act(async () => {
-    select.value = ''
-    select.dispatchEvent(new Event('change', { bubbles: true }))
-  })
+  const select = target.querySelector<HTMLElement>('[data-testid="template-role-main-role-0"]')!
+  const original = await sdkSelectValue(select)
+  await sdkSelectValue(select, '')
   expect(button('project-create-template-configuration-apply').disabled).toBe(true)
   await click('collaboration-project-create-configuration-back')
   expect(container.textContent).toContain('Some roles need members.')
   await click('project-create-configure-template')
-  expect(select.value).toBe('')
-  await act(async () => {
-    select.value = original
-    select.dispatchEvent(new Event('change', { bubbles: true }))
-  })
+  expect(await sdkSelectValue(select)).toBe('')
+  await sdkSelectValue(select, original)
   expect(button('project-create-template-configuration-apply').disabled).toBe(false)
   await click('project-create-template-configuration-apply')
   expect(document.activeElement).toBe(button('project-create-configure-template'))

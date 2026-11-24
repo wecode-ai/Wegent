@@ -1,5 +1,6 @@
+import { useScopedDraft } from '@/features/workbench/scopedDraftStore'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { Activity, useEffect, useState } from 'react'
+import { Activity, useCallback, useState } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { useWorkspaceTabDraftInput } from '@/features/workbench/useWorkspaceTabDraftInput'
@@ -7,7 +8,11 @@ import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
 import { labels } from './workspaceTabsTestLabels'
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
-import { publishWorkspaceTabTransferState, stageWorkspaceTabTransfer } from './workspaceTabTransfer'
+import {
+  consumeWorkspaceTabTransfer,
+  publishWorkspaceTabTransferState,
+  stageWorkspaceTabTransfer,
+} from './workspaceTabTransfer'
 
 const preferences = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn() }))
 vi.mock('@/desktop/appPreferences', async importOriginal => ({
@@ -32,23 +37,29 @@ function stage(id: string, values: Record<string, string>) {
 }
 
 function DraftOwner({ id }: { id: string }) {
-  const draft = useWorkspaceTabDraftInput(id)
+  const { draftStore } = useWorkspaceTabDraftInput(id)
+  const draft = useScopedDraft(draftStore, 'blank:0')
   const [count, setCount] = useState(0)
-  useEffect(() => {
-    mounted(id)
-  }, [id])
+  const observeMount = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element) mounted(id)
+    },
+    [id]
+  )
   return (
-    <div>
+    <div ref={observeMount}>
       <input
         data-testid={`draft-${id}`}
-        value={draft.inputs['blank:0'] ?? ''}
-        onChange={event => draft.setInput('blank:0', event.target.value)}
+        value={draft.value}
+        onChange={event => draftStore.write('blank:0', event.target.value)}
       />
-      <output data-testid={`revision-${id}`}>{draft.getRevision('blank:0')}</output>
+      <output data-testid={`revision-${id}`}>{draft.revision}</output>
       <button data-testid={`count-${id}`} onClick={() => setCount(count + 1)}>
         {count}
       </button>
-      <output data-testid={`scopes-${id}`}>{Object.keys(draft.inputs).sort().join(',')}</output>
+      <output data-testid={`scopes-${id}`}>
+        {Object.keys(draftStore.exportInputs()).sort().join(',')}
+      </output>
     </div>
   )
 }
@@ -166,4 +177,19 @@ test('receives the draft after revealing a previously hidden owner', async () =>
 
   expect(screen.getByTestId('draft-handoff')).toBe(input)
   expect(input).toHaveValue('returned from another window')
+})
+
+test('stages the current draft when popping out an inactive tab', async () => {
+  mount(true, true)
+  fireEvent.change(screen.getByTestId('draft-handoff'), {
+    target: { value: 'Draft in inactive tab' },
+  })
+  fireEvent.click(screen.getByTestId('select-other'))
+  await waitFor(() => expect(screen.getByTestId('draft-handoff')).not.toBeVisible())
+
+  stageWorkspaceTabTransfer(target.id)
+
+  expect(consumeWorkspaceTabTransfer(target.id)?.draftInputByScope).toEqual({
+    'blank:0': 'Draft in inactive tab',
+  })
 })

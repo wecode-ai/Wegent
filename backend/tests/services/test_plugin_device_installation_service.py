@@ -570,20 +570,32 @@ async def test_all_device_materialization_waits_in_its_own_worker_session(monkey
     assert sessions[0].threads[0] != loop_thread
 
 
-def test_first_device_materialization_holds_the_installation_lease(
+def test_first_device_materialization_holds_only_its_installation_lease(
     test_db, test_user, plugin_write_backend, monkeypatch
 ):
     installed, _ = _device_install(test_db, test_user.id)
+    other = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="independent-plugin",
+        json=installed.json,
+        is_active=True,
+    )
+    test_db.add(other)
     test_db.query(PluginDeviceInstallation).delete(synchronize_session=False)
     test_db.commit()
+    installation_keys = {
+        f"wegent:plugin-write:{test_user.id}:{item.name}" for item in (installed, other)
+    }
     service = PluginDeviceInstallationService()
     original = service._ensure_desired_install_pending
 
     def materialize(*args, **kwargs):
-        assert (
-            f"wegent:plugin-write:{test_user.id}:{installed.name}"
-            in plugin_write_backend.values
-        )
+        current = kwargs["installed"]
+        assert installation_keys.intersection(plugin_write_backend.values) == {
+            f"wegent:plugin-write:{test_user.id}:{current.name}"
+        }
         return original(*args, **kwargs)
 
     monkeypatch.setattr(service, "_ensure_desired_install_pending", materialize)
@@ -591,9 +603,9 @@ def test_first_device_materialization_holds_the_installation_lease(
         service.ensure_pending_for_device(
             test_db, user_id=test_user.id, device_id="first-device"
         )
-        == 1
+        == 2
     )
-    assert test_db.query(PluginDeviceInstallation).count() == 1
+    assert test_db.query(PluginDeviceInstallation).count() == 2
 
 
 def test_local_ack_skips_installations_activated_after_scope_acquisition(

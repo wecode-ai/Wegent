@@ -85,6 +85,7 @@ done
                     backend_url: "https://backend.example.com".into(),
                     socket_url: "wss://backend.example.com".into(),
                     auth_token: "current-user-token".into(),
+                    authenticated_user_id: None,
                     runtime_auth_token: "current-runtime-token".into(),
                 }))));
             let link = RuntimeTaskLink::new_pending(
@@ -105,13 +106,13 @@ done
             assert_eq!(config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"], "current-runtime-token");
             assert_eq!(resume["params"]["excludeTurns"], true);
             // Native resume can start an active Goal before a regular turn restores MCP.
-            assert_eq!(config["mcp_servers.wework_browser.enabled"], true);
-            assert!(config["mcp_servers.wework_browser.url"].as_str().unwrap().ends_with("/mcp"));
-            assert_eq!(config["mcp_servers.wework_browser.http_headers.X-Wework-Browser-Label"],
+            assert_eq!(config["mcp_servers"]["wework_browser"]["enabled"], true);
+            assert!(config["mcp_servers"]["wework_browser"]["url"].as_str().unwrap().ends_with("/mcp"));
+            assert_eq!(config["mcp_servers"]["wework_browser"]["http_headers"]["X-Wework-Browser-Label"],
                 "workspace-browser-restored-task");
-            assert_eq!(config["mcp_servers.wework_browser.env_http_headers.Authorization"],
+            assert_eq!(config["mcp_servers"]["wework_browser"]["env_http_headers"]["Authorization"],
                 "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION");
-            assert!(config["mcp_servers.wework_space.url"].is_string());
+            assert!(config["mcp_servers"]["wework_space"]["url"].is_string());
             assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
             for field in ["model", "modelProvider", "developerInstructions", "effort"] {
                 assert!(resume["params"].get(field).is_none(), "History must preserve {field}");

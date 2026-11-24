@@ -1,38 +1,38 @@
+import type { Attachment } from '@wegent/chat-core/runtime'
+import { hasSelectedTextDragData } from '@wegent/chat-core/selected-text-drag'
+import { Eye } from 'lucide-react'
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
   type DragEvent,
   type ReactNode,
 } from 'react'
-import { Eye } from 'lucide-react'
-import type { Attachment } from '@wegent/chat-core/runtime'
-import { hasSelectedTextDragData } from '@wegent/chat-core/selected-text-drag'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
+import { ComposerErrorBanner } from './ComposerErrorBanner'
 import type { ComposerTextInputProps } from './ComposerTextInput'
+import {
+  DOCUMENT_EDITOR_CLASS,
+  PROJECT_CHAT_EDITOR_CLASS,
+  PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
+  PROJECT_CHAT_TOOLBAR_CLASS,
+  ProjectChatComposerSurface,
+} from './ProjectChatComposerSurface'
+import { recordComposerDiagnostic } from './composerDiagnostics'
 import type {
+  ComposerFollowUpBehavior,
   ComposerInputHandle,
   ComposerSubmitOptions,
-  ComposerFollowUpBehavior,
 } from './composerInputTypes'
 import { primaryComposerSubmitOptions } from './composerInputTypes'
-import { recordComposerDiagnostic } from './composerDiagnostics'
 import {
   browserComposerTransferServices,
   workspacePathReferenceText,
   type ComposerTransferServices,
 } from './useComposerTransfers'
-import {
-  ProjectChatComposerSurface,
-  PROJECT_CHAT_EDITOR_CLASS,
-  PROJECT_CHAT_TOOLBAR_CLASS,
-  PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
-  DOCUMENT_EDITOR_CLASS,
-} from './ProjectChatComposerSurface'
-import { ComposerErrorBanner } from './ComposerErrorBanner'
 
 export interface ProjectComposerBodyProps {
   presentation?: 'chat' | 'document' | 'configuration'
@@ -148,9 +148,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       insertReference: reference => editorRef.current?.insertReference(reference),
       setValue: (nextValue, cursor) => editorRef.current?.setValue(nextValue, cursor),
     }))
-    useEffect(() => {
+    const [renderedValue, setRenderedValue] = useState(value)
+    if (renderedValue !== value) {
+      setRenderedValue(value)
       setHasText(Boolean(value.trim()))
-    }, [value])
+    }
     const handleChange = useCallback(
       (nextValue: string) => {
         setHasText(Boolean(nextValue.trim()))
@@ -274,7 +276,8 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
             </div>
           )}
           {supervisorPending && onConfigureSupervisor && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="pending-supervisor-indicator"
               disabled={disabled}
@@ -284,7 +287,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
               <Eye className="h-3.5 w-3.5 text-text-muted" />
               <span>{t('workbench.supervisor_pending')}</span>
               <span className="text-text-muted">· {t('workbench.supervisor_pending_edit')}</span>
-            </button>
+            </ControlButton>
           )}
           {inputLeadingContext && (
             <div

@@ -62,6 +62,7 @@ export async function verifyLocalCloudStandInReceipt(
       result =>
         result.items.find(
           row =>
+            row.id === assignment.id &&
             row.dispatch_receipt?.reasonCode === 'awaiting_publication' &&
             typeof row.dispatch_receipt.publicMessageId === 'string' &&
             row.dispatch_receipt.publicMessageId.length > 0

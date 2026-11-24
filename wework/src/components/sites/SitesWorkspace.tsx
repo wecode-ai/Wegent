@@ -1,26 +1,28 @@
-import { SiteAnalyticsDialog } from './SiteAnalyticsDialog'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { KeyboardEvent, ReactNode } from 'react'
-import { AlertCircle, Boxes, Loader2, Plus, RefreshCw } from 'lucide-react'
 import { ApiError } from '@/api/http'
-import { isSitesUnavailableError } from '@/api/sites'
-import type { Site, SiteAppType, SiteListItem, SitesApi } from '@/api/sites'
+import type { Site, SiteAppType, SitesApi } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { replaceTo } from '@/lib/navigation'
 import { track } from '@/telemetry/client'
+import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Boxes, Loader2, Plus, RefreshCw } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createApplicationCollection } from './applicationCollection'
+import { ApplicationContextToolbar } from './ApplicationContextToolbar'
 import {
   DEFAULT_APPLICATION_TYPE,
-  type ApplicationCreateStrategy,
   getApplicationTypeDefinition,
+  type ApplicationCreateStrategy,
 } from './applicationTypeDefinitions'
-import { ApplicationContextToolbar } from './ApplicationContextToolbar'
 import { DeleteSiteDialog } from './DeleteSiteDialog'
 import { EditSiteDialog } from './EditSiteDialog'
 import { EnvironmentVariablesDialog } from './EnvironmentVariablesDialog'
-import { SiteCollaboratorsDialog } from './SiteCollaboratorsDialog'
 import { SiteAccessDialog } from './SiteAccessDialog'
+import { SiteAnalyticsDialog } from './SiteAnalyticsDialog'
+import { SiteCollaboratorsDialog } from './SiteCollaboratorsDialog'
 import { useApplicationTypeDefinitions } from './useApplicationTypeDefinitions'
 
 interface SitesWorkspaceProps {
@@ -41,15 +43,6 @@ interface SitesWorkspaceProps {
 }
 
 type ApplicationWorkspaceType = SiteAppType | 'smart_app'
-
-interface ApplicationCollectionOptions {
-  api: SitesApi
-  appType: SiteAppType
-  enabled: boolean
-  query: string
-  pageSize: number
-  loadFailedMessage: string
-}
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
@@ -73,103 +66,6 @@ function getAppType(search: string, smartAppsEnabled: boolean): ApplicationWorks
   return getApplicationTypeDefinition(requestedType ?? '')?.appType ?? DEFAULT_APPLICATION_TYPE
 }
 
-function useApplicationCollection({
-  api,
-  appType,
-  enabled,
-  query,
-  pageSize,
-  loadFailedMessage,
-}: ApplicationCollectionOptions) {
-  const [items, setItems] = useState<SiteListItem[]>([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [unavailable, setUnavailable] = useState(false)
-  const requestId = useRef(0)
-
-  const loadFirstPage = useCallback(async () => {
-    const currentRequest = ++requestId.current
-    setLoading(true)
-    setLoadError(null)
-    try {
-      const response = await api.listSites({
-        appType,
-        q: query,
-        offset: 0,
-        limit: pageSize,
-      })
-      if (currentRequest !== requestId.current) return
-      setItems(response.items.filter(item => item.app_type === appType))
-      setTotal(response.total)
-      setUnavailable(false)
-    } catch (error) {
-      if (currentRequest !== requestId.current) return
-      setItems([])
-      setTotal(0)
-      if (isSitesUnavailableError(error)) {
-        setUnavailable(true)
-        setLoadError(null)
-      } else {
-        setUnavailable(false)
-        setLoadError(errorMessage(error, loadFailedMessage))
-      }
-    } finally {
-      if (currentRequest === requestId.current) setLoading(false)
-    }
-  }, [api, appType, loadFailedMessage, pageSize, query])
-
-  useEffect(() => {
-    if (!enabled) {
-      requestId.current += 1
-      const timeout = window.setTimeout(() => setLoading(false), 0)
-      return () => window.clearTimeout(timeout)
-    }
-    const timeout = window.setTimeout(() => void loadFirstPage(), 0)
-    return () => window.clearTimeout(timeout)
-  }, [enabled, loadFirstPage])
-
-  const loadMore = async () => {
-    setLoadingMore(true)
-    setLoadError(null)
-    try {
-      const response = await api.listSites({
-        appType,
-        q: query,
-        offset: items.length,
-        limit: pageSize,
-      })
-      setItems(current => [...current, ...response.items.filter(item => item.app_type === appType)])
-      setTotal(response.total)
-    } catch (error) {
-      if (isSitesUnavailableError(error)) {
-        setUnavailable(true)
-        setItems([])
-        setTotal(0)
-        setLoadError(null)
-      } else {
-        setLoadError(errorMessage(error, loadFailedMessage))
-      }
-    } finally {
-      setLoadingMore(false)
-    }
-  }
-
-  return {
-    items,
-    setItems,
-    total,
-    setTotal,
-    loading,
-    loadingMore,
-    loadError,
-    unavailable,
-    loadFirstPage,
-    loadMore,
-  }
-}
-
 function SitesCreateError({
   message,
   openPluginsLabel,
@@ -190,14 +86,16 @@ function SitesCreateError({
         <span className="truncate">{message}</span>
       </span>
       {onOpenPlugins && (
-        <button
+        <ControlButton
+          variant="outline"
+          size="sm"
           type="button"
           data-testid="sites-open-plugins-button"
           onClick={onOpenPlugins}
           className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
         >
           {openPluginsLabel}
-        </button>
+        </ControlButton>
       )}
     </div>
   )
@@ -235,9 +133,12 @@ export function SitesWorkspace({
 }: SitesWorkspaceProps) {
   const { t } = useTranslation('sites')
   const applicationTypes = useApplicationTypeDefinitions(api)
-  const activeAppType = getAppType(search, smartAppsEnabled)
-  const [query, setQuery] = useState('')
-  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const requestedAppType = getAppType(search, smartAppsEnabled)
+  const activeAppType =
+    requestedAppType === 'smart_app'
+      ? requestedAppType
+      : (applicationTypes.find(item => item.definition.appType === requestedAppType)?.definition
+          .appType ?? applicationTypes[0].definition.appType)
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set())
   const [pendingDeleteSite, setPendingDeleteSite] = useState<Site | null>(null)
   const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null)
@@ -250,11 +151,6 @@ export function SitesWorkspace({
   const [pendingAnalyticsSite, setPendingAnalyticsSite] = useState<Site | null>(null)
   const [pendingAccessSite, setPendingAccessSite] = useState<Site | null>(null)
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 180)
-    return () => window.clearTimeout(timeout)
-  }, [query])
-
   const smartAppsActive = smartAppsEnabled && activeAppType === 'smart_app'
   const pageTitle = t('title', '应用')
   const pageDescription = t('subtitle', '创建、管理并发布你的应用')
@@ -265,68 +161,52 @@ export function SitesWorkspace({
   const activeDefinition = activeApplicationType.definition
   const ActiveApplicationIcon = activeDefinition.icon
   const loadFailedMessage = t(activeDefinition.loadFailed.key, activeDefinition.loadFailed.fallback)
-  const collection = useApplicationCollection({
-    api,
-    appType: activeSiteAppType,
-    enabled: !smartAppsActive,
-    query: debouncedQuery,
-    pageSize,
-    loadFailedMessage,
-  })
-  const items = collection.items.filter(activeDefinition.isItem)
-
-  useEffect(() => {
-    const params = new URLSearchParams(search)
-    if (params.get('view') !== 'environment-variables') return
-    const projectId = params.get('project_id')
-    if (!projectId || collection.loading) return
-    const site = items.find(
-      item =>
-        item.app_type === 'web' && (item.project_id === projectId || item.siteid === projectId)
-    )
-    if (site?.app_type !== 'web') return
-    setPendingEnvironmentSite(site)
-    params.delete('view')
-    params.delete('project_id')
-    replaceTo(`/sites?${params.toString()}`)
-  }, [collection.loading, items, search])
-
-  const selectAppType = useCallback((appType: ApplicationWorkspaceType) => {
-    setQuery('')
-    setDebouncedQuery('')
-    const params = new URLSearchParams(window.location.search)
-    params.set('app_type', appType)
-    params.delete('view')
-    params.delete('action')
-    replaceTo(`/sites?${params.toString()}`)
-  }, [])
-
-  useEffect(() => {
-    if (activeAppType !== 'smart_app' && activeDefinition.appType !== activeAppType) {
-      selectAppType(activeDefinition.appType)
-    }
-  }, [activeAppType, activeDefinition.appType, selectAppType])
-
-  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    const appTypes: ApplicationWorkspaceType[] = [
-      ...(smartAppsEnabled ? (['smart_app'] as const) : []),
-      ...applicationTypes.map(item => item.definition.appType),
-    ]
-    const currentIndex = appTypes.indexOf(activeAppType)
-    let nextIndex: number | null = null
-    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % appTypes.length
-    if (event.key === 'ArrowLeft')
-      nextIndex = (currentIndex - 1 + appTypes.length) % appTypes.length
-    if (event.key === 'Home') nextIndex = 0
-    if (event.key === 'End') nextIndex = appTypes.length - 1
-    if (nextIndex === null) return
-    event.preventDefault()
-    const nextType = appTypes[nextIndex]
-    selectAppType(nextType)
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLButtonElement>(`[data-app-type="${nextType}"]`)?.focus()
-    })
+  const resource = useMemo(
+    () => createApplicationCollection(api, activeSiteAppType, pageSize, !smartAppsActive),
+    [api, activeSiteAppType, pageSize, smartAppsActive]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const collection = {
+    ...snapshot,
+    ...resource,
+    loadError: snapshot.failure ? errorMessage(snapshot.failure.cause, loadFailedMessage) : null,
   }
+  const items = collection.items.filter(activeDefinition.isItem)
+  const routeParams = new URLSearchParams(search)
+  const environmentProjectId =
+    routeParams.get('view') === 'environment-variables' ? routeParams.get('project_id') : null
+  const routeEnvironmentSite = items.find(
+    item =>
+      Boolean(environmentProjectId) &&
+      item.app_type === 'web' &&
+      (item.project_id === environmentProjectId || item.siteid === environmentProjectId)
+  )
+  const environmentSite =
+    pendingEnvironmentSite ??
+    (routeEnvironmentSite?.app_type === 'web' ? routeEnvironmentSite : null)
+  const closeEnvironment = () => {
+    setPendingEnvironmentSite(null)
+    if (!environmentProjectId) return
+    routeParams.delete('view')
+    routeParams.delete('project_id')
+    replaceTo(`/sites?${routeParams.toString()}`)
+  }
+
+  const selectAppType = useCallback(
+    (appType: ApplicationWorkspaceType) => {
+      if (appType === activeAppType) resource.resetSearch()
+      const params = new URLSearchParams(window.location.search)
+      params.set('app_type', appType)
+      params.delete('view')
+      params.delete('action')
+      replaceTo(`/sites?${params.toString()}`)
+    },
+    [activeAppType, resource]
+  )
 
   const publish = async (site: Site) => {
     if (deletingSiteId === site.siteid) return
@@ -379,10 +259,7 @@ export function SitesWorkspace({
     setDeleteError(null)
     try {
       await api.deleteSite(pendingDeleteSite.siteid)
-      collection.setItems(current =>
-        current.filter(item => item.siteid !== pendingDeleteSite.siteid)
-      )
-      collection.setTotal(current => Math.max(0, current - 1))
+      collection.removeSite(pendingDeleteSite.siteid)
       setPendingDeleteSite(null)
       track('feature_action_completed', { action: 'delete', domain: 'site' })
     } catch (error) {
@@ -466,7 +343,8 @@ export function SitesWorkspace({
               className="flex shrink-0 items-center gap-2 md:pt-1"
             >
               {!collection.unavailable ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="sites-refresh-button"
                   aria-label={t(activeDefinition.refresh.key, activeDefinition.refresh.fallback)}
@@ -478,9 +356,10 @@ export function SitesWorkspace({
                     className={collection.loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
                     aria-hidden="true"
                   />
-                </button>
+                </ControlButton>
               ) : null}
               <ActionMenu
+                density="default"
                 ariaLabel={t('create_application', '创建应用')}
                 testId="sites-create-button"
                 items={createItems}
@@ -489,7 +368,7 @@ export function SitesWorkspace({
                 disabled={Boolean(creatingType)}
                 placement="bottom-end"
                 triggerClassName={[
-                  'flex h-11 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 disabled:cursor-wait disabled:opacity-60 md:h-9',
+                  'flex items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 disabled:cursor-wait',
                   creatingType ? '[&>svg:first-child]:animate-spin' : '',
                 ].join(' ')}
               />
@@ -497,66 +376,67 @@ export function SitesWorkspace({
           ) : null}
         </section>
 
-        <div
-          className="mt-5 flex min-h-11 items-end gap-6 border-b border-border md:min-h-0"
-          role="tablist"
-          aria-label={t('application_types', '应用类型')}
+        <TabsRoot
+          value={smartAppsActive ? 'smart_app' : activeAppType}
+          onValueChange={next => {
+            if (next) selectAppType(next)
+          }}
+          render={<div className="contents" />}
         >
-          {smartAppsEnabled ? (
-            <button
-              type="button"
-              role="tab"
-              data-app-type="smart_app"
-              data-testid="applications-tab-smart-app"
-              id="applications-tab-smart-app"
-              aria-selected={smartAppsActive}
-              aria-controls="applications-tab-panel"
-              tabIndex={smartAppsActive ? 0 : -1}
-              onClick={() => selectAppType('smart_app')}
-              onKeyDown={handleTabKeyDown}
-              className={[
-                'relative flex h-11 items-center gap-1.5 px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
-                smartAppsActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
-              ].join(' ')}
-            >
-              <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('smart_apps_tab', '智能工作台')}
-              <ExperimentalBadge testId="applications-smart-app-experimental-badge" />
-              {smartAppsActive ? (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
-              ) : null}
-            </button>
-          ) : null}
-          {applicationTypes.map(({ definition }) => {
-            const appType = definition.appType
-            const selected = activeAppType === appType
-            const label = t(definition.tab.key, definition.tab.fallback)
-            return (
-              <button
-                key={appType}
+          <TabsList
+            className="mt-5 flex min-h-11 items-end gap-6 border-b border-border md:min-h-0"
+            aria-label={t('application_types', '应用类型')}
+          >
+            {smartAppsEnabled ? (
+              <TabsTab
+                value={'smart_app'}
                 type="button"
-                role="tab"
-                data-app-type={appType}
-                data-testid={`applications-tab-${appType.replaceAll('_', '-')}`}
-                id={`applications-tab-${appType}`}
-                aria-selected={selected}
+                data-app-type="smart_app"
+                data-testid="applications-tab-smart-app"
+                id="applications-tab-smart-app"
                 aria-controls="applications-tab-panel"
-                tabIndex={selected ? 0 : -1}
-                onClick={() => selectAppType(appType)}
-                onKeyDown={handleTabKeyDown}
                 className={[
-                  'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
-                  selected ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
+                  'relative flex h-11 items-center gap-1.5 px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
+                  smartAppsActive
+                    ? 'text-text-primary'
+                    : 'text-text-muted hover:text-text-secondary',
                 ].join(' ')}
               >
-                {label}
-                {selected ? (
+                <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('smart_apps_tab', '智能工作台')}
+                <ExperimentalBadge testId="applications-smart-app-experimental-badge" />
+                {smartAppsActive ? (
                   <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
                 ) : null}
-              </button>
-            )
-          })}
-        </div>
+              </TabsTab>
+            ) : null}
+            {applicationTypes.map(({ definition }) => {
+              const appType = definition.appType
+              const selected = activeAppType === appType
+              const label = t(definition.tab.key, definition.tab.fallback)
+              return (
+                <TabsTab
+                  value={appType}
+                  key={appType}
+                  type="button"
+                  data-app-type={appType}
+                  data-testid={`applications-tab-${appType.replaceAll('_', '-')}`}
+                  id={`applications-tab-${appType}`}
+                  aria-controls="applications-tab-panel"
+                  className={[
+                    'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
+                    selected ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
+                  ].join(' ')}
+                >
+                  {label}
+                  {selected ? (
+                    <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+                  ) : null}
+                </TabsTab>
+              )
+            })}
+          </TabsList>
+        </TabsRoot>
 
         {smartAppsActive ? (
           <div
@@ -575,8 +455,8 @@ export function SitesWorkspace({
               searchLabel={t(activeDefinition.search.key, activeDefinition.search.fallback)}
               searchPlaceholder={t(activeDefinition.search.key, activeDefinition.search.fallback)}
               searchTestId="sites-search-input"
-              value={query}
-              onValueChange={setQuery}
+              value={collection.searchInput}
+              onValueChange={collection.changeSearch}
             />
 
             {createError && (
@@ -635,14 +515,16 @@ export function SitesWorkspace({
                   <p className="text-sm text-text-secondary" role="alert">
                     {collection.loadError}
                   </p>
-                  <button
+                  <ControlButton
+                    variant="outline"
+                    size="sm"
                     type="button"
                     data-testid="sites-retry-button"
                     onClick={() => void collection.loadFirstPage()}
                     className="h-11 rounded-lg border border-border px-3 text-sm hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8"
                   >
                     {t('retry', '重试')}
-                  </button>
+                  </ControlButton>
                 </div>
               ) : items.length === 0 ? (
                 <div className="flex min-h-56 flex-col items-center justify-center text-center">
@@ -687,7 +569,9 @@ export function SitesWorkspace({
               )}
               {items.length < collection.total && (
                 <div className="flex justify-center pt-5">
-                  <button
+                  <ControlButton
+                    variant="outline"
+                    size="sm"
                     type="button"
                     data-testid="sites-load-more-button"
                     disabled={collection.loadingMore}
@@ -698,7 +582,7 @@ export function SitesWorkspace({
                       <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                     )}
                     {t('load_more', '加载更多')}
-                  </button>
+                  </ControlButton>
                 </div>
               )}
             </div>
@@ -739,12 +623,8 @@ export function SitesWorkspace({
           onConfirm={input => void editSite(input)}
         />
       )}
-      {pendingEnvironmentSite && (
-        <EnvironmentVariablesDialog
-          api={api}
-          site={pendingEnvironmentSite}
-          onClose={() => setPendingEnvironmentSite(null)}
-        />
+      {environmentSite && (
+        <EnvironmentVariablesDialog api={api} site={environmentSite} onClose={closeEnvironment} />
       )}
       {pendingCollaboratorsSite && (
         <SiteCollaboratorsDialog

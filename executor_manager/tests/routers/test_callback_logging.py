@@ -282,6 +282,9 @@ async def test_callback_proxy_sends_internal_service_token(mocker) -> None:
     requests = []
     event = {"event_type": "error", "task_id": 42, "subtask_id": 7}
     mocker.patch.dict("os.environ", {"INTERNAL_SERVICE_TOKEN": "proxy-token"})
+    mocker.patch(
+        "executor_manager.services.task_heartbeat_manager.get_running_task_tracker"
+    )
     mocker.patch.object(
         routers,
         "traced_async_client",

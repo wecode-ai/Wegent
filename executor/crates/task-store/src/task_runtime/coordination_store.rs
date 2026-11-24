@@ -127,26 +127,34 @@ impl LocalTaskStore {
             }
         }
         let claimed = claimed_event_ids(&connection, user)?;
-        if event_ids.iter().any(|id| claimed.contains(*id)) {
-            return Err(TaskRuntimeError::Invalid(
-                "Routing events have already been claimed".into(),
-            ));
-        }
+        let mut current = HashSet::new();
         for id in &event_ids {
-            let event = get_item_from(&connection, id, EVENT)?
-                .ok_or(TaskRuntimeError::TaskNotFound)?
-                .metadata;
-            if event["userId"] != user
-                || event["status"] != "pending"
-                || snapshot["eventVersions"][*id] != Self::coordination_event_version(&event)
-            {
+            let version = snapshot["eventVersions"][*id].as_str().ok_or_else(|| {
+                TaskRuntimeError::Invalid("Routing event is outside the snapshot".into())
+            })?;
+            let Some(event) = get_item_from(&connection, id, EVENT)?.map(|row| row.metadata) else {
+                continue;
+            };
+            if event["userId"] != user {
                 return Err(TaskRuntimeError::Invalid(
-                    "Routing event changed or is outside the snapshot".into(),
+                    "Routing event belongs to another owner".into(),
                 ));
             }
+            if event["status"] == "pending"
+                && !claimed.contains(*id)
+                && version == Self::coordination_event_version(&event)
+            {
+                current.insert(*id);
+            }
+        }
+        if current.is_empty() && !event_ids.is_empty() {
+            return Err(TaskRuntimeError::Invalid(
+                "Routing events are no longer current".into(),
+            ));
         }
 
         let mut ids = Vec::new();
+        let mut committed = next_state.clone();
         for intent in intents {
             let kind = intent["kind"]
                 .as_str()
@@ -158,18 +166,31 @@ impl LocalTaskStore {
             {
                 return Err(TaskRuntimeError::Invalid("Invalid routing intent".into()));
             }
+            let mut arguments = intent["arguments"].clone();
+            let accepted = arguments["eventIds"].as_array_mut().unwrap();
+            accepted.retain(|id| current.contains(id.as_str().unwrap()));
+            if kind == "assess" {
+                if accepted.is_empty() {
+                    committed["batchId"] = state["batchId"].clone();
+                    committed["snapshot"] = state["snapshot"].clone();
+                } else if let Some(events) = committed["snapshot"]["events"].as_array_mut() {
+                    events.retain(|event| accepted.contains(&event["id"]));
+                }
+            }
+            if accepted.is_empty() {
+                continue;
+            }
             let id = stand_in_record_key(
                 "stand-in-action",
-                &json!([user, snapshot_id, kind, intent["arguments"]]),
+                &json!([user, snapshot_id, kind, arguments]),
             );
             write(
                 &connection,
                 ACTION,
-                &json!({"id":id,"userId":user,"batchId":snapshot_id,"kind":kind,"arguments":intent["arguments"],"status":"pending","createdAt":now()}),
+                &json!({"id":id,"userId":user,"batchId":snapshot_id,"kind":kind,"arguments":arguments,"status":"pending","createdAt":now()}),
             )?;
             ids.push(id);
         }
-        let mut committed = next_state.clone();
         committed["id"] = json!(format!("stand-in-processing:{user}"));
         committed["userId"] = json!(user);
         committed["routerSnapshot"] = Value::Null;
@@ -364,6 +385,44 @@ mod tests {
     }
 
     #[test]
+    fn a_changed_event_does_not_discard_the_current_members_of_its_plan() {
+        let (_root, store, mut state, mut changed) = fixture();
+        let current = store
+            .enqueue_stand_in_event(7, json!("two"), json!({"kind":"connection"}))
+            .unwrap();
+        state["routerSnapshot"]["eventVersions"][current["id"].as_str().unwrap()] =
+            json!(LocalTaskStore::coordination_event_version(&current));
+        store.save_stand_in_processing_state(7, &state).unwrap();
+        changed["notBefore"] = json!("2099-01-01T00:00:00Z");
+        store.save_stand_in_event(7, &changed).unwrap();
+
+        let intent =
+            json!({"kind":"assess","arguments":{"eventIds":[changed["id"],current["id"]]}});
+        let mut next_state = state.clone();
+        next_state["snapshot"] = json!({"events":[changed,current]});
+        store
+            .commit_stand_in_route(
+                7,
+                "device",
+                "snapshot",
+                "digest",
+                (&state, &next_state),
+                &[intent],
+            )
+            .unwrap();
+        let actions = store.stand_in_actions(7).unwrap();
+        assert_eq!(actions[0]["arguments"]["eventIds"], json!([current["id"]]));
+        let committed = store.stand_in_processing_state(7).unwrap();
+        assert_eq!(committed["snapshot"]["events"], json!([current]));
+        assert_eq!(
+            store
+                .stand_in_event(7, changed["id"].as_str().unwrap())
+                .unwrap(),
+            changed
+        );
+    }
+
+    #[test]
     fn concurrent_wake_and_ai_history_are_never_overwritten_by_a_stale_plan() {
         for field in ["wakeVersion", "history", "batchId"] {
             let (_root, store, state, event) = fixture();
@@ -407,7 +466,9 @@ mod tests {
             )
             .is_err());
         let mut settings = store.personal_stand_in(7, "device").unwrap();
-        settings["roles"][0]["prompt"] = json!("changed responsibilities");
+        let mut role = crate::task_runtime::personal_stand_in::empty_role("default", "device");
+        role["prompt"] = json!("changed responsibilities");
+        settings["roles"] = json!([role]);
         store.save_personal_stand_in(7, "device", settings).unwrap();
         assert!(store
             .commit_stand_in_route(7, "device", "snapshot", "digest", (&state, &state), &[])

@@ -44,7 +44,13 @@ impl RuntimeWorkRpcHandler {
             if source_input {
                 handler
                     .validate_event_input_session(&task, operation.as_deref(), &link)
-                    .map_err(|error| error.message)?;
+                    .map_err(|error| {
+                        if error.code == "subscription_cancelled" {
+                            CODEX_APP_SERVER_TURN_CANCELLED.to_owned()
+                        } else {
+                            error.message
+                        }
+                    })?;
             }
             if link
                 .interaction_status
@@ -225,6 +231,34 @@ impl RuntimeWorkRpcHandler {
             !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, id)
         }) {
             return Ok(false);
+        }
+        if self
+            .automatic_input_admission(&turn.local_task_id, &turn.request)
+            .is_some_and(
+                |admit| matches!(admit(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED),
+            )
+        {
+            if execution.is_some() {
+                return Err(AppIpcError::new(
+                    "subscription_cancelled",
+                    CODEX_APP_SERVER_TURN_CANCELLED,
+                ));
+            }
+            self.preparing_turns
+                .lock()
+                .expect("preparation map poisoned")
+                .remove(&turn.local_task_id);
+            self.store.update_task(&turn.local_task_id, |link| {
+                if crate::runtime_work::lifecycle::native_execution_state(link)
+                    .is_some_and(|state| state.awaits_admission())
+                {
+                    crate::runtime_work::lifecycle::settle_native_execution(link, "cancelled");
+                }
+            });
+            drop(operation);
+            self.finish_prepared_command(&turn, command_journal::CommandState::Cancelled)
+                .await;
+            return Ok(true);
         }
         let (previous, ready, queued) = {
             let mut scheduler = self.turn_scheduler.lock().expect("turn scheduler poisoned");
@@ -693,6 +727,7 @@ mod tests {
                 .create_project(serde_json::from_value(json!({"name":"Authority"})).unwrap())
                 .unwrap();
             let mut settings = store.personal_stand_in(7, "device-1").unwrap();
+            settings["roles"] = json!([crate::test_env::stand_in_role("device-1")]);
             settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
             settings["roles"][0]["enabled"] = json!(true);
             settings["roles"][0]["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[{"id":project.id,"store":"local"}],"excludedProjects":[],"tags":[],"policy":{"automatic":true,"askBeforeAct":true}});

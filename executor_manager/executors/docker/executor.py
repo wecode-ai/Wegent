@@ -25,6 +25,7 @@ from executor_manager.clients.executor_binding import (
     ObsoleteExecutorDispatch,
     bind_executor_for_dispatch,
     prepare_callback_token,
+    require_callback_token,
 )
 from executor_manager.config.config import EXECUTOR_ENV, PORT_RANGE_MAX, PORT_RANGE_MIN
 from executor_manager.executors.base import Executor
@@ -202,6 +203,7 @@ class DockerExecutor(Executor):
                     execution_status["executor_name"] = executor_name
                     self._create_new_container(task_dict, task_info, execution_status)
                 elif prepare_only:
+                    require_callback_token(int(task_id))
                     self.wait_instance_ready(executor_name)
                 else:
                     self._execute_in_existing_container(task_dict, execution_status)

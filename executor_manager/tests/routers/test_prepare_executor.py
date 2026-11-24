@@ -165,15 +165,7 @@ class TestPrepareSkipGitCloneStrictBool:
             assert response.json()["detail"] == "Kubernetes API error: webhook refused"
 
 
-def test_prepare_executor_issues_callback_credential(client, mocker):
-    repository = mocker.Mock(
-        load_executor_callback_token=Mock(return_value=None),
-        save_executor_binding=Mock(return_value=True),
-    )
-    mocker.patch(
-        "executor_manager.services.sandbox.repository.get_sandbox_repository",
-        return_value=repository,
-    )
+def test_prepare_executor_keeps_runtime_credentials_out_of_response(client):
     with patch(
         "executor_manager.routers.routers.task_processor.process_tasks",
         return_value={
@@ -197,44 +189,6 @@ def test_prepare_executor_issues_callback_credential(client, mocker):
     assert "callback_token" not in payload
     task = process_tasks.call_args.args[0][0]
     assert task["prepare_only"] is True
-    assert task["metadata"]["executor_callback_token"]
-    repository.save_executor_binding.assert_called_once_with(
-        task_id=42,
-        executor_name="executor-42",
-        callback_token=task["metadata"]["executor_callback_token"],
-    )
-
-
-def test_prepare_executor_reuses_prepared_callback_credential(client, mocker):
-    repository = mocker.Mock(
-        load_executor_callback_token=Mock(return_value="existing-token"),
-        save_executor_binding=Mock(),
-    )
-    mocker.patch(
-        "executor_manager.services.sandbox.repository.get_sandbox_repository",
-        return_value=repository,
-    )
-    with patch(
-        "executor_manager.routers.routers.task_processor.process_tasks",
-        return_value={
-            42: {
-                "status": "success",
-                "executor_name": "executor-42",
-                "executor_namespace": "default",
-            }
-        },
-    ) as process_tasks:
-        response = client.post(
-            "/executor-manager/executors/prepare",
-            json={"task_id": 42, "subtask_id": 43, "executor_name": "executor-42"},
-            headers={"Authorization": "Bearer service-token"},
-        )
-
-    assert response.status_code == 200
-    assert "callback_token" not in response.json()
-    task = process_tasks.call_args.args[0][0]
-    assert task["metadata"]["executor_callback_token"] == "existing-token"
-    repository.save_executor_binding.assert_not_called()
 
 
 def test_prepare_executor_rejects_missing_internal_service_token(

@@ -37,12 +37,17 @@ done
         .unwrap()
         .block_on(async {
             let (events, _) = broadcast::channel(1);
-            let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+            let mut handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
                 "proxy-startup",
                 binary.to_str().unwrap(),
                 events,
                 None,
                 None,
+            );
+            // Concurrent tests can start clients using the process-wide default Home.
+            handler.codex_app_server = crate::agents::CodexAppServerClient::isolated_for_test(
+                binary.to_str().unwrap(),
+                home.path().join("native-account"),
             );
             let premature = handler.read_codex_rate_limits().await;
             let native_started = home.path().join("native-started").exists();

@@ -119,6 +119,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         await finishStandInOnboarding(control)
         for (const model of models) {
           await openStandInSettings(control)
+          await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
           await control.command('waitFor', PANEL)
           const key = JSON.stringify(['codex', 'cloud', 'public', 'default', 0, model.name])
           const optionId = `model-option-${key}`

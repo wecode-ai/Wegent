@@ -1,4 +1,17 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  createTranscriptSearchResource,
+  createMatchHydrationResource,
+  type MatchHydration,
+  type ConversationSearchScope,
+} from './conversationSearchResources'
+import {
+  createConversationSearchInput,
+  type ConversationSearchRequest as SearchRequest,
+} from './conversationSearchInput'
+import { getIdleResourceSnapshot, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import type {
   ConversationSearchTarget,
   ScrollableMessageAreaProps,
@@ -23,14 +36,8 @@ import {
   resolveConversationMatch,
 } from './conversationSearch'
 
-type SearchRequest = { query: string }
 type SearchResult = ReturnType<typeof mergeConversationMatches>
 type SearchSnapshot = { request: SearchRequest; result: SearchResult }
-type RemoteSearch = {
-  request: SearchRequest
-  status: 'pending' | 'done' | 'failed'
-  result?: RuntimeTranscriptSearchResponse
-}
 type Selection = { index: number }
 type SearchTarget = NonNullable<ReturnType<typeof resolveConversationMatch>> & {
   query: string
@@ -41,6 +48,11 @@ type Hydration = {
   selection: Selection
   key: string
   status: 'pending' | 'done' | 'failed' | 'unresolved'
+}
+type HydrationRequest = Omit<Hydration, 'status'> & {
+  conversationKey: ConversationSearchScope
+  match: RuntimeTranscriptSearchMatch
+  load?: MatchHydration
 }
 type LocationFailure = { request: SearchRequest; selection: Selection; key: string }
 
@@ -100,6 +112,7 @@ export function useConversationFind(
     | 'onLoadMoreBefore'
     | 'onLoadTranscriptGap'
   > & {
+    onReleaseSearchPage?: () => void
     transcriptError?: string | null
     searchMessages?: WorkbenchMessage[]
     onSearchTranscript?: (
@@ -115,14 +128,28 @@ export function useConversationFind(
 ) {
   const [conversationKey, setConversationKey] = useState(props.conversationKey)
   const [open, setOpen] = useState(false)
-  const [searchRequest, setSearchRequest] = useState<SearchRequest>({ query: '' })
-  const [completedRequest, setCompletedRequest] = useState(searchRequest)
+  const input = useMemo(
+    () => createConversationSearchInput(props.conversationKey),
+    [props.conversationKey]
+  )
+  const releaseSearchPage = props.onReleaseSearchPage
+  const subscribeInput = useCallback(
+    (listener: () => void) =>
+      open && active
+        ? input.subscribeActive(listener, releaseSearchPage)
+        : input.subscribe(listener, releaseSearchPage),
+    [input, open, active, releaseSearchPage]
+  )
+  const { request: searchRequest, completed: completedRequest } = useSyncExternalStore(
+    subscribeInput,
+    input.getSnapshot,
+    input.getSnapshot
+  )
   const [publishedSnapshot, setPublishedSnapshot] = useState<SearchSnapshot>({
     request: searchRequest,
     result: EMPTY_RESULT,
   })
-  const [remoteSearch, setRemoteSearch] = useState<RemoteSearch | null>(null)
-  const [hydration, setHydration] = useState<Hydration | null>(null)
+  const [hydrationRequest, setHydrationRequest] = useState<HydrationRequest | null>(null)
   const [locationFailure, setLocationFailure] = useState<LocationFailure | null>(null)
   const [focusRequest, setFocusRequest] = useState(0)
   const [selected, setSelected] = useState<Selection>({ index: 0 })
@@ -130,22 +157,18 @@ export function useConversationFind(
     selection: Selection
     target: SearchTarget | null
   }>({ selection: selected, target: null })
-  const [searchRetry, setSearchRetry] = useState(0)
-  const [hydrationRetry, setHydrationRetry] = useState(0)
-  const previousFocus = useRef<HTMLElement | null>(null)
+  const [focusOwner, setFocusOwner] = useState(() => ({
+    conversationKey: props.conversationKey,
+    element: null as HTMLElement | null,
+  }))
   const { query } = searchRequest
-  useLayoutEffect(() => {
-    previousFocus.current = null
-  }, [conversationKey])
   if (conversationKey !== props.conversationKey) {
-    const request = { query: '' }
+    const request = searchRequest
     setConversationKey(props.conversationKey)
+    setFocusOwner({ conversationKey: props.conversationKey, element: null })
     setOpen(false)
-    setSearchRequest(request)
-    setCompletedRequest(request)
     setPublishedSnapshot({ request, result: EMPTY_RESULT })
-    setRemoteSearch(null)
-    setHydration(null)
+    setHydrationRequest(null)
     setLocationFailure(null)
     setFocusRequest(0)
     setSelected({ index: 0 })
@@ -181,46 +204,22 @@ export function useConversationFind(
       )
     })
   }, [indexReady, onSearchTranscript, props.messages, props.searchMessages])
-  useEffect(() => {
-    if (!open || !active || !queryPending) return
-    const startedAt = performance.now()
-    const timer = window.setTimeout(() => {
-      recordConversationDiagnostic('search-debounce', {
-        queryLength: searchRequest.query.length,
-        elapsedMs: performance.now() - startedAt,
-      })
-      setCompletedRequest(searchRequest)
-    }, 150)
-    return () => window.clearTimeout(timer)
-  }, [active, open, queryPending, searchRequest])
-
-  useEffect(() => {
-    if (!enabled || queryPending || !onSearchTranscript) return
-    const controller = new AbortController()
-    Promise.resolve()
-      .then(() => {
-        if (controller.signal.aborted) return
-        setRemoteSearch({ request: completedRequest, status: 'pending' })
-        return onSearchTranscript(completedRequest.query, controller.signal)
-      })
-      .then(result => {
-        if (!controller.signal.aborted && result)
-          setRemoteSearch({ request: completedRequest, status: 'done', result })
-      })
-      .catch(() => {
-        if (!controller.signal.aborted)
-          setRemoteSearch({ request: completedRequest, status: 'failed' })
-      })
-    return () => controller.abort()
-  }, [enabled, queryPending, completedRequest, onSearchTranscript, searchRetry, conversationKey])
+  const transcriptSource = useMemo(
+    () =>
+      createTranscriptSearchResource(conversationKey, completedRequest.query, onSearchTranscript),
+    [conversationKey, completedRequest, onSearchTranscript]
+  )
+  const remoteSearch = useSyncExternalStore(
+    enabled && !queryPending
+      ? (transcriptSource?.subscribe ?? subscribeIdleResource)
+      : subscribeIdleResource,
+    transcriptSource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
 
   const candidateResult = useMemo(() => {
     if (!indexReady || queryPending) return null
-    if (
-      onSearchTranscript &&
-      (remoteSearch?.request !== completedRequest || remoteSearch.status !== 'done')
-    )
-      return null
+    if (onSearchTranscript && remoteSearch.status !== 'ready') return null
     return measureSearch(
       'search-match',
       { queryLength: completedRequest.query.length, messageCount: searchIndex.length },
@@ -229,7 +228,7 @@ export function useConversationFind(
           findConversationMatches(searchIndex, completedRequest.query),
           searchIndex,
           completedRequest.query,
-          onSearchTranscript ? remoteSearch?.result : undefined
+          onSearchTranscript ? remoteSearch.data : undefined
         )
     )
   }, [indexReady, queryPending, onSearchTranscript, remoteSearch, completedRequest, searchIndex])
@@ -258,64 +257,74 @@ export function useConversationFind(
         : null,
     [match, props.messages, props.searchMessages, publishedSnapshot.request]
   )
-  const matchesRef = useRef({ match, resolvedMatch })
-  useLayoutEffect(() => {
-    matchesRef.current = { match, resolvedMatch }
-  }, [match, resolvedMatch])
-  const currentHydration =
-    hydration?.selection === selected &&
-    hydration.request === completedRequest &&
-    hydration.request === publishedSnapshot.request &&
-    hydration.key === matchKey
-      ? hydration
-      : null
-  useEffect(() => {
-    const { match, resolvedMatch } = matchesRef.current
-    if (
-      !enabled ||
-      queryPending ||
-      publishedSnapshot.request !== completedRequest ||
-      !match?.cursor ||
-      resolvedMatch
-    )
-      return
-    const controller = new AbortController()
-    const state = { request: publishedSnapshot.request, selection: selected, key: matchKey }
-    Promise.resolve()
-      .then(() => {
-        if (controller.signal.aborted) return
-        if (!onEnsureSearchMatch) throw new Error('Transcript match loading is unavailable')
-        setHydration({ ...state, status: 'pending' })
-        return onEnsureSearchMatch(match as RuntimeTranscriptSearchMatch, controller.signal)
-      })
-      .then(() => {
-        if (!controller.signal.aborted) setHydration({ ...state, status: 'done' })
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setHydration({ ...state, status: 'failed' })
-      })
-    return () => controller.abort()
-  }, [
-    enabled,
-    queryPending,
-    matchKey,
-    selected,
-    publishedSnapshot.request,
-    completedRequest,
-    onEnsureSearchMatch,
-    hydrationRetry,
-    conversationKey,
-  ])
-  // A successful load may dispatch React state before the projected message commits.
-  useEffect(() => {
-    if (currentHydration?.status !== 'done' || resolvedMatch || !enabled || queryPending) return
-    const timer = window.setTimeout(() => {
-      setHydration(state =>
-        state === currentHydration ? { ...state, status: 'unresolved' } : state
-      )
-    }, 1500)
-    return () => window.clearTimeout(timer)
-  }, [currentHydration, resolvedMatch, enabled, queryPending])
+  const hydrationEnabled =
+    enabled && !queryPending && publishedSnapshot.request === completedRequest
+  const sameHydrationScope =
+    hydrationRequest?.request === completedRequest &&
+    hydrationRequest.request === publishedSnapshot.request &&
+    hydrationRequest.selection === selected &&
+    hydrationRequest.key === matchKey &&
+    hydrationRequest.load === onEnsureSearchMatch &&
+    hydrationRequest.conversationKey === conversationKey
+  if (hydrationEnabled && match?.cursor && !resolvedMatch && !sameHydrationScope) {
+    setHydrationRequest({
+      request: publishedSnapshot.request,
+      selection: selected,
+      key: matchKey,
+      conversationKey,
+      match: match as RuntimeTranscriptSearchMatch,
+      load: onEnsureSearchMatch,
+    })
+  } else if (hydrationRequest && (!hydrationEnabled || !sameHydrationScope)) {
+    setHydrationRequest(null)
+  }
+  const hydrationSource = useMemo(
+    () =>
+      hydrationRequest
+        ? createMatchHydrationResource(
+            hydrationRequest.conversationKey,
+            hydrationRequest.match,
+            hydrationRequest.load
+          )
+        : undefined,
+    [hydrationRequest]
+  )
+  const hydrationQuery = useSyncExternalStore(
+    hydrationEnabled && sameHydrationScope
+      ? (hydrationSource?.subscribe ?? subscribeIdleResource)
+      : subscribeIdleResource,
+    hydrationSource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const projectionExpired = useDeadlineExpired(
+    hydrationEnabled &&
+      sameHydrationScope &&
+      !resolvedMatch &&
+      hydrationQuery.status === 'ready' &&
+      hydrationQuery.data
+      ? hydrationQuery.data.completedAt + 1500
+      : undefined
+  )
+  const hydrationStatus: Hydration['status'] =
+    hydrationQuery.status === 'error'
+      ? 'failed'
+      : hydrationQuery.status === 'ready'
+        ? projectionExpired
+          ? 'unresolved'
+          : 'done'
+        : 'pending'
+  const currentHydration = useMemo<Hydration | null>(
+    () =>
+      hydrationEnabled && sameHydrationScope && hydrationRequest
+        ? {
+            request: hydrationRequest.request,
+            selection: hydrationRequest.selection,
+            key: hydrationRequest.key,
+            status: hydrationStatus,
+          }
+        : null,
+    [hydrationEnabled, sameHydrationScope, hydrationRequest, hydrationStatus]
+  )
 
   const matchCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -387,24 +396,26 @@ export function useConversationFind(
       matchKey,
     ]
   )
-  const changeQuery = useCallback((value: string) => {
-    const request = { query: value }
-    setSearchRequest(request)
-    if (!value.trim()) {
-      setCompletedRequest(request)
-      setPublishedSnapshot({ request, result: EMPTY_RESULT })
-      setSelected({ index: 0 })
-    }
-  }, [])
+  const changeQuery = useCallback(
+    (value: string) => {
+      const request = input.change(value)
+      if (!value.trim()) {
+        setPublishedSnapshot({ request, result: EMPTY_RESULT })
+        setSelected({ index: 0 })
+      }
+    },
+    [input]
+  )
   const close = useCallback(() => {
     setOpen(false)
-    const request = { query: '' }
-    setSearchRequest(request)
-    setCompletedRequest(request)
+    const request = input.change('')
     setPublishedSnapshot({ request, result: EMPTY_RESULT })
     setSelected({ index: 0 })
-    if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true })
-  }, [])
+    const element = focusOwner.element
+    setFocusOwner({ conversationKey, element: null })
+    if (focusOwner.conversationKey === conversationKey && element?.isConnected)
+      element.focus({ preventScroll: true })
+  }, [conversationKey, focusOwner, input])
   const step = useCallback(
     (direction: 1 | -1) => {
       if (matches.length)
@@ -415,22 +426,22 @@ export function useConversationFind(
   const submit = useCallback(
     (direction: 1 | -1) => {
       if (publishedSnapshot.request.query.trim() !== query.trim()) {
-        setCompletedRequest(searchRequest)
+        input.commit()
         setSelected({ index: 0 })
         return
       }
       step(direction)
     },
-    [query, searchRequest, publishedSnapshot.request, step]
+    [query, input, publishedSnapshot.request, step]
   )
-  useEffect(() => {
-    if (!active) return
-    const handleKey = (event: KeyboardEvent) => {
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.defaultPrevented || isImeComposingEvent(event)) return
       const target = event.target instanceof HTMLElement ? event.target : null
       if (
         target?.closest(
-          '.cm-editor, .xterm, [data-editor-search-surface], [data-pierre-editor-surface], [role="dialog"], [data-testid="workspace-browser-find-bar"]'
+          '.cm-editor, .xterm, [data-editor-search-surface], [data-pierre-editor-surface], dialog[open], [role="dialog"], [data-testid="workspace-browser-find-bar"]'
         )
       )
         return
@@ -439,7 +450,11 @@ export function useConversationFind(
       if (primary && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
         event.preventDefault()
         event.stopPropagation()
-        if (!open) previousFocus.current = document.activeElement as HTMLElement | null
+        if (!open)
+          setFocusOwner({
+            conversationKey,
+            element: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+          })
         const selection = window.getSelection()?.toString().trim()
         if (selection && !/[\r\n]/.test(selection)) changeQuery(selection)
         setOpen(true)
@@ -449,13 +464,11 @@ export function useConversationFind(
         event.stopPropagation()
         close()
       }
-    }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [active, changeQuery, close, open])
+    },
+    { enabled: active }
+  )
 
-  const searchFailed =
-    !queryPending && remoteSearch?.request === completedRequest && remoteSearch.status === 'failed'
+  const searchFailed = !queryPending && remoteSearch.status === 'error'
   const failure =
     !enabled || queryPending
       ? null
@@ -471,8 +484,7 @@ export function useConversationFind(
             : null
   const historyFailed = failure === 'load'
   const remotePending = Boolean(
-    onSearchTranscript &&
-    (remoteSearch?.request !== completedRequest || remoteSearch.status === 'pending')
+    onSearchTranscript && (remoteSearch.status === 'idle' || remoteSearch.status === 'loading')
   )
   const historyLoading = Boolean(
     enabled &&
@@ -483,27 +495,6 @@ export function useConversationFind(
       currentHydration?.status === 'pending')
   )
   const isLoading = enabled && (queryPending || historyLoading || Boolean(props.loading))
-  useEffect(() => {
-    if (!open || !active) return
-    recordConversationDiagnostic('search-status', {
-      queryPending,
-      historyLoading,
-      historyFailed,
-      requestFailed: failure === 'request',
-      locationFailed: failure === 'locate',
-      loading: Boolean(props.loading),
-      messageCount: props.messages.length,
-    })
-  }, [
-    active,
-    open,
-    queryPending,
-    historyLoading,
-    historyFailed,
-    failure,
-    props.loading,
-    props.messages.length,
-  ])
   return {
     open: open && active,
     query,
@@ -523,14 +514,12 @@ export function useConversationFind(
     failure,
     retry: () => {
       if (searchFailed) {
-        setRemoteSearch({ request: completedRequest, status: 'pending' })
-        setSearchRetry(value => value + 1)
+        if (transcriptSource?.getSnapshot().status === 'error') void transcriptSource.reload()
       } else if (currentHydration?.status === 'failed') {
-        setHydration({ ...currentHydration, status: 'pending' })
-        setHydrationRetry(value => value + 1)
+        if (hydrationSource?.getSnapshot().status === 'error') void hydrationSource.reload()
       } else if (failure === 'locate') {
         // Rebuild the result and its anchor; reloading the same stale hit cannot repair it.
-        setSearchRequest({ query })
+        input.change(query)
         setSelected({ index: 0 })
         setLocationFailure(null)
       }

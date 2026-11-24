@@ -1,35 +1,33 @@
-import { useContext, useEffect, useMemo, useRef, useState } from 'react'
-import type { CollaborationProject } from '@wegent/collaboration'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
-import {
-  getStandInErrorMessage,
-  reportStandInError,
-  requiresStandInUpgrade,
-} from '@/lib/stand-in-error-message'
-import { Button } from '@/components/ui/button'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { createLocalWorkspaceApi } from './localWorkspaceApi'
-import { createWeworkPlatformApi } from './weworkPlatformApi'
-import { StandInOverviewPage } from './StandInOverviewPage'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { LOCAL_USER } from '@/api/local/localSession'
-import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { isStandInBindingOwner } from '@/api/standIn'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { Button } from '@/components/ui/button'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import { availableStandInDevices } from './standInDevices'
-import { useStandInInstance } from './useStandInInstance'
-import { StandInMigration } from './StandInMigration'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   navigateTo,
   WORKSPACE_NAVIGATION_EVENT,
   type WorkspaceNavigationDetail,
 } from '@/lib/navigation'
-import { useStandInRoleDirectory } from './useStandInRoleDirectory'
-import { StandInHomeWorkspace } from './StandInHomeWorkspace'
+import { getStandInErrorMessage, requiresStandInUpgrade } from '@/lib/stand-in-error-message'
+import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createLocalWorkspaceApi } from './localWorkspaceApi'
+import { createPersonalStandInWorkspaceSource } from './personalStandInWorkspaceSource'
+import { availableStandInDevices } from './standInDevices'
 import { StandInHomeSetup, StandInHomeSetupPrompt } from './StandInHomeSetup'
+import { StandInHomeWorkspace } from './StandInHomeWorkspace'
+import { StandInMigration } from './StandInMigration'
+import { StandInOverviewPage } from './StandInOverviewPage'
+import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInInstance } from './useStandInInstance'
+import { useStandInRoleDirectory } from './useStandInRoleDirectory'
 import type { PersonalHomeCollaborationWork } from './WeworkPersonalHome'
+import { createWeworkPlatformApi } from './weworkPlatformApi'
 
 type PersonalStandInWorkspaceProps = {
   services: WorkbenchServices
@@ -73,24 +71,28 @@ function AccountStandInWorkspace({
   const cloud = useContext(CloudConnectionContext)
   const [reentry, setReentry] = useState(0)
   const refreshKey = (entryRequestKey ?? 0) + reentry
-  useEffect(() => {
-    if (embedded || !active || contentRoute !== '/stand-in') return
-    const onNavigate = (event: Event) => {
-      if ((event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute === contentRoute)
-        setReentry(current => current + 1)
-    }
-    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
-    return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
-  }, [active, contentRoute, embedded])
+  useDOMEvent<CustomEvent<WorkspaceNavigationDetail>>(
+    'window',
+    WORKSPACE_NAVIGATION_EVENT,
+    event => {
+      if (event.detail?.contentRoute === contentRoute) setReentry(current => current + 1)
+    },
+    { enabled: !embedded && active && contentRoute === '/stand-in' }
+  )
+  const [workspaceSource] = useState(() =>
+    createPersonalStandInWorkspaceSource(contentRoute, entryRequestKey)
+  )
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
   const [initialBindingDevice] = useState(() => query.get('deviceId') ?? undefined)
+  const userId = Number(user.id)
+  const backendUrl = cloud?.apiBaseUrl ?? ''
   const instance = useStandInInstance(
     services,
-    Number(user.id),
+    userId,
     devices,
     !!cloud?.isConnected,
     active,
-    cloud?.apiBaseUrl ?? '',
+    backendUrl,
     initialBindingDevice,
     refreshKey
   )
@@ -99,60 +101,13 @@ function AccountStandInWorkspace({
   const ownerId = target?.userId ?? Number(user.id)
   const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
-  const [roleLocation, setRoleLocation] = useState<
-    { deviceId: string; roleId?: string; settings?: boolean } | undefined
-  >(() =>
-    query.get('profileId') && query.get('profileId') !== '@primary' && query.get('deviceId')
-      ? {
-          deviceId: query.get('deviceId')!,
-          roleId: query.get('profileId')!,
-          settings: true,
-        }
-      : undefined
-  )
-  const bindingScope = target
-    ? JSON.stringify([target.userId, target.deviceId, target.backendUrl ?? ''])
-    : undefined
-  const [locationBinding, setLocationBinding] = useState(bindingScope)
-  if (locationBinding !== bindingScope) {
-    setLocationBinding(bindingScope)
-    if (locationBinding && bindingScope) setRoleLocation(undefined)
-  }
-  const selectedDevice =
-    roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
+  const bindingScope = target ? JSON.stringify([target.userId, target.deviceId]) : undefined
   const ownerAvailable =
     notificationOwnerMatches &&
-    (binding?.status === 'stopped' ||
-      ownerId === LOCAL_USER.id ||
-      (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? '')))
+    (binding?.status === 'stopped' || !target || isStandInBindingOwner(target.userId, userId))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
-  const directory = useStandInRoleDirectory(
-    services.standInApi,
-    ownerId,
-    deviceId,
-    !embedded && active && ownerAvailable && binding?.status === 'active',
-    localDeviceId,
-    refreshKey,
-    cloud?.isConnected ? availableStandInDevices(devices).map(device => device.device_id) : []
-  )
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
-  const [error, setError] = useState<{ message: string; cause?: unknown } | null>(null)
-  const [attempt, setAttempt] = useState(0)
-  const [projects, setProjects] = useState<CollaborationProject[]>([])
   const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
-  const previousEntry = useRef(JSON.stringify([contentRoute, entryRequestKey]))
-  useEffect(() => {
-    const entry = JSON.stringify([contentRoute, entryRequestKey])
-    if (previousEntry.current === entry || !deviceId) return
-    previousEntry.current = entry
-    const params = new URLSearchParams(contentRoute.split('?')[1] ?? '')
-    const roleId = params.get('profileId') ?? undefined
-    const next = roleId && roleId !== '@primary' ? (params.get('deviceId') ?? deviceId) : deviceId
-    const change = () =>
-      setRoleLocation({ deviceId: next, roleId, settings: !!params.get('settingsRequest') })
-    if (overview.current) overview.current.requestLeave(change)
-    else change()
-  }, [contentRoute, entryRequestKey, deviceId])
   const api = useMemo(
     () =>
       createWeworkPlatformApi(
@@ -168,36 +123,71 @@ function AccountStandInWorkspace({
       ),
     [services, ownerId, user.user_name, user.email, i18n.language]
   )
-  useEffect(() => {
-    if (embedded || !active || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
-    void invokeDesktopHost<void>('renderer.startupReady').catch(cause => {
-      console.error('[Wework] Failed to reveal the personal stand-in workspace', cause)
-    })
-  }, [active, embedded])
-  useEffect(() => {
-    if (embedded || !api || !active || !target || !ownerAvailable || binding?.status !== 'active')
-      return
-    let current = true
-    void api.projects.list().then(
-      rows => {
-        if (current) {
-          setProjects(rows)
-          setError(null)
-        }
-      },
-      cause => {
-        if (current) {
-          reportStandInError('load_projects', cause)
-          setError({ message: getStandInErrorMessage(cause, 'load_projects_failed'), cause })
-        }
-      }
-    )
-    return () => {
-      current = false
-    }
-  }, [api, active, target, ownerAvailable, binding?.status, attempt, embedded])
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      workspaceSource.subscribe(
+        {
+          api,
+          bindingScope,
+          target,
+          bindingStatus: binding?.status,
+          ownerAvailable,
+          active,
+          embedded,
+          contentRoute,
+          entryRequestKey,
+          requestLeave: action =>
+            overview.current ? overview.current.requestLeave(action) : action(),
+        },
+        listener
+      ),
+    [
+      workspaceSource,
+      api,
+      bindingScope,
+      target,
+      binding?.status,
+      ownerAvailable,
+      active,
+      embedded,
+      contentRoute,
+      entryRequestKey,
+    ]
+  )
+  const view = useSyncExternalStore(
+    subscribe,
+    workspaceSource.getSnapshot,
+    workspaceSource.getSnapshot
+  )
+  const roleLocation =
+    !view.selectionScope || !bindingScope || view.selectionScope === bindingScope
+      ? view.roleLocation
+      : undefined
+  const selectedDevice =
+    roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
+  const sameProjectOwner = view.projectsApi === api && view.projectsScope === bindingScope
+  const projects = sameProjectOwner ? view.projects : []
+  const error =
+    sameProjectOwner && view.error
+      ? view.error.kind === 'projects'
+        ? {
+            message: getStandInErrorMessage(view.error.cause, 'load_projects_failed'),
+            cause: view.error.cause,
+          }
+        : { message: t('standIn.instance.stop_before_rebind'), cause: undefined }
+      : null
+  const directory = useStandInRoleDirectory(
+    services.standInApi,
+    ownerId,
+    deviceId,
+    !embedded && active && ownerAvailable && binding?.status === 'active',
+    localDeviceId,
+    refreshKey,
+    cloud?.isConnected ? availableStandInDevices(devices).map(device => device.device_id) : []
+  )
   const actions = (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="stand-in-instance-stop"
       disabled={busy || !ownerAvailable}
@@ -211,7 +201,7 @@ function AccountStandInWorkspace({
       }}
     >
       {t(binding?.status === 'stopping' ? 'standIn.instance.retry_stop' : 'standIn.instance.stop')}
-    </button>
+    </ControlButton>
   )
   const failure = instance.error || error?.message
   const upgradeRequired = requiresStandInUpgrade(
@@ -236,17 +226,19 @@ function AccountStandInWorkspace({
               {t('standIn.view_devices')}
             </Button>
           )}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="stand-in-project-catalog-retry"
+            aria-busy={view.loadingProjects}
             className="min-h-11 px-2 underline md:min-h-8"
             onClick={() => {
               instance.reload()
-              setAttempt(value => value + 1)
+              workspaceSource.reloadProjects()
             }}
           >
             {t('standIn.reload')}
-          </button>
+          </ControlButton>
         </div>
       )}
       {!binding ? (
@@ -256,7 +248,7 @@ function AccountStandInWorkspace({
           </p>
         )
       ) : !ownerAvailable ? (
-        <p role="alert" className="p-5 text-sm">
+        <p role="alert" className="p-5 text-sm" data-testid="stand-in-instance-owner-unavailable">
           {t('standIn.instance.owner_unavailable')}
         </p>
       ) : binding.status === 'stopped' && embedded ? (
@@ -285,7 +277,9 @@ function AccountStandInWorkspace({
                   }))
                 : []),
             ].map(value => (
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 key={`${value.userId}:${value.deviceId}`}
                 type="button"
                 data-testid={`stand-in-instance-bind-${value.userId}-${value.deviceId}`}
@@ -294,13 +288,13 @@ function AccountStandInWorkspace({
                 onClick={() =>
                   void instance.bind({
                     userId: value.userId,
+                    backendUrl: value.userId === LOCAL_USER.id ? '' : backendUrl,
                     deviceId: value.deviceId,
-                    backendUrl: value.userId === LOCAL_USER.id ? '' : (cloud?.apiBaseUrl ?? ''),
                   })
                 }
               >
                 {value.name}
-              </button>
+              </ControlButton>
             ))}
           </div>
           {cloud?.isConnected && target && instance.stoppedProfile && (
@@ -311,7 +305,7 @@ function AccountStandInWorkspace({
               busy={busy}
               onMigrate={async (deviceId, roleId) => {
                 const role = await instance.migrate(
-                  { userId: Number(user.id), deviceId, backendUrl: cloud.apiBaseUrl ?? '' },
+                  { userId, backendUrl, deviceId },
                   roleId,
                   t('standIn.title')
                 )
@@ -383,13 +377,7 @@ function AccountStandInWorkspace({
                 : undefined
             }
             initialWorkView={query.get('view') === 'scheduled' ? 'scheduled' : 'work'}
-            onSelectLocation={(next, roleId, settings) => {
-              if ((!roleId || roleId === '@primary') && next !== deviceId) {
-                setError({ message: t('standIn.instance.stop_before_rebind') })
-                return
-              }
-              setRoleLocation({ deviceId: next, roleId, settings })
-            }}
+            onSelectLocation={workspaceSource.selectLocation}
             api={api}
             projects={projects}
             services={services}

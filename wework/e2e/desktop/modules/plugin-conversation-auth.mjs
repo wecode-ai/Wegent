@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  ACTIVE_COMPOSER_SELECTOR,
-  ACTIVE_WORKBENCH_SELECTOR,
-  selectE2EModel,
-} from './shared.mjs'
+import { ACTIVE_COMPOSER_SELECTOR, ACTIVE_WORKBENCH_SELECTOR, selectE2EModel } from './shared.mjs'
 import { testId } from './plugin-regression-fixture.mjs'
 import { assistantMessage, latestModelInputText } from './response-protocol.mjs'
 
@@ -27,6 +23,7 @@ export function createConversationAuthModelFixture({ slug, qrPrompt, ghResumePro
         release = resolve
       })
       const state = {
+        name,
         prompt: `${qrPrompt} ${name}`,
         connectorSlug,
         requests: 0,
@@ -52,13 +49,31 @@ export function createConversationAuthModelFixture({ slug, qrPrompt, ghResumePro
       const state = [...cases.values()]
         .reverse()
         .find(item => (continuation ? requestText : latest).includes(item.prompt))
-      if (!state) return null
+      if (!state) {
+        if (requestText.includes(qrPrompt)) {
+          console.info('[plugin-conversation-auth] unmatched authorization inference', {
+            matchedInRequest: [...cases.entries()]
+              .filter(([, item]) => requestText.includes(item.prompt))
+              .map(([name]) => name),
+            lastInputRole: body.input?.at?.(-1)?.role,
+            lastInputType: body.input?.at?.(-1)?.type,
+          })
+        }
+        return null
+      }
       if (continuation) {
         state.continuations.push(continuation)
         return [assistantMessage(`${state.prompt} completed`)]
       }
       state.requests += 1
       await state.responseReady
+      if (state.name === 'authorization-code-discussion') {
+        return [
+          assistantMessage(
+            'Authorization code discussion completed. The parser reads `connector_auth_required`, `pluginKey`: `hint.pluginKey` and `connectorSlug`: `conversation-qr`.'
+          ),
+        ]
+      }
       return [
         assistantMessage(
           `connector_auth_required\npluginKey=${slug}\nconnectorSlug=${state.connectorSlug}`
@@ -112,9 +127,9 @@ export async function verifyConversationQrAuthorization({
         action: 'logout',
       }),
     })
+  const readTestIds = async () => JSON.parse(await control.command('snapshot', 'body')).testIds
   const assertNoCard = async message => {
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-    assert.ok(!snapshot.testIds.includes('connector-auth-card'), message)
+    assert.ok(!(await readTestIds()).includes('connector-auth-card'), message)
   }
   const assertNoContinuation = () => {
     for (const state of authModel.cases.values()) {
@@ -150,7 +165,10 @@ export async function verifyConversationQrAuthorization({
       () => state.requests,
       count => count === 1,
       10_000,
-      'The first plugin message waited for authorization before reaching the model'
+      () =>
+        `The first plugin message did not reach its model fixture exactly once: ${JSON.stringify(
+          [...authModel.cases.entries()].map(([caseName, item]) => [caseName, item.requests])
+        )}`
     )
     assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
     await assertNoCard('Plugin message was checked before the model returned an auth error')
@@ -232,6 +250,19 @@ export async function verifyConversationQrAuthorization({
     await control.command('click', testId('connector-auth-cancel'))
     await sendOrdinary()
 
+    const discussion = await beginOnUse('authorization-code-discussion')
+    discussion.release()
+    await control.command('waitFor', 'body', {
+      text: 'Authorization code discussion completed.',
+      stableMs: 1000,
+    })
+    await assertNoCard('Discussing the authorization parser opened a login card')
+    assert.ok(
+      !(await readTestIds()).includes('chat-input-error'),
+      'Discussing the authorization parser displayed an error notice'
+    )
+    assertNoContinuation()
+
     await writeFile(healthFailure, 'fail')
     const failedHealth = await beginOnUse('health-failure')
     failedHealth.release()
@@ -241,6 +272,15 @@ export async function verifyConversationQrAuthorization({
     assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
     await assertNoCard('Health errors were treated as logout')
     assertNoContinuation()
+    await control.command('waitFor', testId('chat-input-error'), { text: slug })
+    await control.command('clickWhenEnabled', testId('dismiss-chat-input-error'))
+    await waitForValue(
+      readTestIds,
+      ids => !ids.includes('chat-input-error'),
+      10_000,
+      () => 'The plugin health error notice remained visible after dismissal'
+    )
+    assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
     await rm(healthFailure)
     await sendOrdinary()
     await captureScreenshot(control, 'plugin-auth-failure-navigation-recovery.png', 'body')

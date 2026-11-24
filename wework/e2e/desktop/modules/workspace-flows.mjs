@@ -166,9 +166,11 @@ export async function waitForTestIdByText(
 }
 
 export async function selectWhenOptionAvailable(control, selector, value, timeoutMs) {
-  await control.command('waitFor', `${selector} option[value=${JSON.stringify(value)}]`, {
-    timeoutMs,
-  })
+  if ((await control.command('getAttribute', selector, { value: 'role' })) !== 'combobox') {
+    await control.command('waitFor', `${selector} option[value=${JSON.stringify(value)}]`, {
+      timeoutMs,
+    })
+  }
   await control.command('select', selector, { value })
 }
 
@@ -195,7 +197,7 @@ export async function selectAgentEnvironment(
     assert.equal(
       await control.command(
         'getAttribute',
-        `[data-testid="${testId}-menu"] [role="listbox"] > div:nth-child(2) > [role="option"]`,
+        `[data-testid="${testId}-menu"] [role="listbox"] > :nth-child(2 of [role="option"])`,
         { value: 'data-testid' }
       ),
       `${testId}-option-policy:user_select`,
@@ -241,8 +243,17 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
   const environmentId = optionId.slice(`${prefix}-environment-option-`.length)
   assert.ok(environmentId, 'The isolated execution environment must be available')
   await control.command('clickWhenEnabled', firstDevice, { timeoutMs })
-  await control.command('waitFor', `${model} option[value='${identity}']`, { timeoutMs })
-  await selectWhenOptionAvailable(control, model, identity, timeoutMs)
+  const modelMenu = `[data-testid="${prefix}-model-menu"]`
+  const nativeOption = `${modelMenu} [role="option"][data-value='${identity}']`
+  const revealNativeOption = async () => {
+    await control.command('waitFor', nativeOption, { timeoutMs })
+    await control.command('scrollIntoView', nativeOption, { visible: true })
+    await control.command('waitFor', nativeOption, { timeoutMs, visible: true })
+  }
+  await control.command('setExpanded', model, { value: 'true', timeoutMs, visible: true })
+  await revealNativeOption()
+  await control.command('select', model, { value: identity, timeoutMs })
+  await control.command('waitFor', `${model}[data-value='${identity}']`, { timeoutMs })
   await selectAgentEnvironment(
     control,
     `${prefix}-environment`,
@@ -250,25 +261,23 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
     timeoutMs,
     true
   )
+  await control.command('setExpanded', model, { value: 'true', timeoutMs, visible: true })
+  await control.command('waitFor', modelMenu, { timeoutMs, visible: true })
   assert.equal(
-    Number(
-      await control.command(
-        'getElementCount',
-        `${model} option[value='${identity}']:not(:disabled)`
-      )
-    ),
+    Number(await control.command('getElementCount', `${nativeOption}:not([aria-disabled="true"])`)),
     0,
     'Automatic environment routing must not expose native models'
   )
+  await control.command('press', model, { key: 'Escape' })
+  await control.command('waitFor', `${model}[aria-expanded="false"]`, { timeoutMs })
   await selectAgentEnvironment(control, `${prefix}-environment`, environmentId, timeoutMs)
-  await control.command('waitFor', `${model} option[value='${identity}']`, { timeoutMs })
+  await control.command('setExpanded', model, { value: 'true', timeoutMs, visible: true })
+  await revealNativeOption()
   await control.command('select', model, { value: 'user_select' })
-  await control.command('waitFor', `${model} option[value="user_select"]:checked`, { timeoutMs })
+  await control.command('waitFor', `${model}[data-value="user_select"]`, { timeoutMs })
   assert.equal(
-    Number(
-      await control.command('getElementCount', `${model} option[value="user_select"]:checked`)
-    ),
-    1,
+    await control.command('getValue', model),
+    'user_select',
     'The model selector must support choosing a model at run time'
   )
   await control.command('select', model, { value: identity })
@@ -306,17 +315,26 @@ export async function selectCloudAgentModel(
     timeoutMs,
   })
   const selector = '[data-testid="wework-agent-model"]'
-  const modelOptions = `${selector} option:not([value=""]):not([value="user_select"]):not(:disabled)`
-  await control.command('waitFor', `${modelOptions}:checked`, { timeoutMs })
-  assert.equal(
-    await control.command('getAttribute', `${modelOptions}:checked`, { value: 'value' }),
-    await control.command('getAttribute', modelOptions, { value: 'value' }),
-    'The first listed cloud model must be selected before opening runtime settings'
+  await control.command(
+    'waitFor',
+    `${selector}[data-value]:not([data-value=""]):not([data-value="user_select"])`,
+    { timeoutMs }
   )
+  const defaultModel = await control.command('getValue', selector)
   await control.command('waitFor', '[data-testid="wework-agent-resource-create"]:not(:disabled)', {
     timeoutMs,
   })
   await setAgentRuntimeExpanded(control, dialog, true, timeoutMs)
+  await control.command('clickWhenEnabled', selector)
+  const modelOptions =
+    '[data-testid="wework-agent-model-menu"] [role="option"]:not([data-value=""]):not([data-value="user_select"]):not([aria-disabled="true"])'
+  await control.command('waitFor', modelOptions, { timeoutMs })
+  assert.equal(
+    defaultModel,
+    await control.command('getAttribute', modelOptions, { value: 'data-value' }),
+    'The first listed cloud model must be selected before opening runtime settings'
+  )
+  await control.command('nativePress', selector, { key: 'Escape' })
   await selectAgentEnvironment(
     control,
     'wework-agent-environment',
@@ -586,18 +604,19 @@ export async function completeLocalCollaborationFolderImport(control, projectNam
 
 async function waitForFolderPathReady(control, expectedPath) {
   const startedAt = Date.now()
+  let inputValue = ''
+  let directoryText = ''
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const inputValue = await control.command('getValue', '[data-testid="device-folder-path-input"]')
-    const directoryText = await control.command(
-      'getText',
-      '[data-testid="device-folder-directory-list"]'
-    )
+    inputValue = await control.command('getValue', '[data-testid="device-folder-path-input"]')
+    directoryText = await control.command('getText', '[data-testid="device-folder-directory-list"]')
     if (inputValue === expectedPath && !/Loading directories|正在加载目录/.test(directoryText)) {
       return
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`The device folder picker did not finish loading ${expectedPath}`)
+  throw new Error(
+    `The device folder picker did not finish loading ${expectedPath}: ${JSON.stringify({ inputValue, directoryText })}`
+  )
 }
 
 async function waitForFolderPickerInitialized(control) {
@@ -700,13 +719,14 @@ async function waitForWorkbenchDebugState(
   control,
   predicate,
   message,
-  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
+  snapshotType = 'state-only'
 ) {
   const startedAt = Date.now()
   let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(
-      await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+      await control.command('getWorkbenchDebugSnapshot', 'body', { value: snapshotType })
     )
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
@@ -1336,6 +1356,10 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     { text: comment, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
+  await control.command('waitFor', activeTaskConversationSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoView', activeTaskConversationSelector, { visible: true })
   await control.command('waitFor', activeTaskConversationSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

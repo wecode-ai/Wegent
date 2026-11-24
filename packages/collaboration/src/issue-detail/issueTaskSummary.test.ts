@@ -1,5 +1,5 @@
 import type { ProjectChatMessage } from "@wegent/chat-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { issueTaskSummaryForMessage } from "./issueTaskSummary";
 
 const message = (
@@ -19,6 +19,66 @@ const message = (
 });
 
 describe("issueTaskSummaryForMessage", () => {
+  it("opens a recorded project execution without an owner-only task binding", () => {
+    const address = { deviceId: "shared-executor", taskId: "member-task" };
+    const open = vi.fn();
+    const activity = {
+      ...message({
+        activity_type: "member_execution",
+        workflow_task_title: "Review the plan",
+      }),
+      runtimeAddress: address,
+    };
+    const summary = issueTaskSummaryForMessage(
+      activity,
+      [],
+      "Issue",
+      undefined,
+      open,
+    );
+
+    summary?.onOpen?.();
+
+    expect(open).toHaveBeenCalledExactlyOnceWith({
+      ...address,
+      projectSession: {
+        projectId: activity.projectId,
+        issueId: activity.taskId,
+      },
+    });
+    expect(
+      issueTaskSummaryForMessage(
+        { ...activity, metadata: { workflow_task_title: "Personal task" } },
+        [],
+        "Issue",
+        undefined,
+        open,
+      )?.onOpen,
+    ).toBeUndefined();
+  });
+
+  it("opens a manager execution from the Issue without a task title or binding", () => {
+    const open = vi.fn();
+    const runtimeAddress = {
+      deviceId: "shared-executor",
+      taskId: "manager-task",
+    };
+    const summary = issueTaskSummaryForMessage(
+      { ...message({ activity_type: "manager_execution" }), runtimeAddress },
+      [],
+      "Issue title",
+      undefined,
+      open,
+    );
+
+    expect(summary?.title).toBe("Issue title");
+    summary?.onOpen?.();
+    expect(open).toHaveBeenCalledExactlyOnceWith({
+      ...runtimeAddress,
+      projectSession: { projectId: "project", issueId: "issue" },
+    });
+  });
+
   it("uses the persisted workflow task title before a runtime binding is visible", () => {
     expect(
       issueTaskSummaryForMessage(

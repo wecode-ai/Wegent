@@ -1,0 +1,732 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! Focused tests for the background dispatch supervisor and its real
+//! chat-shell consumer (`sse_sync::collect`).
+#![cfg(test)]
+
+use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
+
+use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tracing::instrument::WithSubscriber;
+
+use super::*;
+use crate::executor_manager::ExecutorManager;
+use crate::internal_callback::completion::Tables;
+use crate::responses::create::dispatch::ExecutionRequest;
+
+use crate::responses::test_mysql::{RecordingMysql, SUBTASK_ID, TASK_ID, TASK_OWNER_ID};
+use crate::responses::test_redis::RecordingRedis;
+
+fn tables() -> Tables {
+    Tables {
+        tasks: "tasks_0424",
+        subtasks: "subtasks_0424",
+    }
+}
+
+/// Captures warning/error messages so a failed consumer is provably observable.
+#[derive(Clone, Default)]
+struct LogCapture {
+    messages: Arc<Mutex<Vec<String>>>,
+}
+
+impl LogCapture {
+    async fn capture<F: Future>(&self, future: F) -> F::Output {
+        // With one registered dispatcher, another test can cache a callsite's
+        // interest using its unscoped default. Keep a second dispatcher alive
+        // so registration consults both dispatchers.
+        let _inactive = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        future.with_subscriber(self.clone()).await
+    }
+
+    fn messages(&self) -> Vec<String> {
+        self.messages.lock().unwrap().clone()
+    }
+}
+
+struct CaptureVisit<'a>(&'a mut String);
+
+impl tracing::field::Visit for CaptureVisit<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0.push_str(&format!("{value:?}"));
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.0.push_str(value);
+        }
+    }
+
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        if matches!(field.name(), "task_id" | "subtask_id") {
+            self.0.push_str(&format!(" {}={value}", field.name()));
+        }
+    }
+}
+
+impl tracing::Subscriber for LogCapture {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        if *event.metadata().level() <= tracing::Level::WARN {
+            let mut message = String::new();
+            event.record(&mut CaptureVisit(&mut message));
+            self.messages.lock().unwrap().push(message);
+        }
+    }
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// One local chat-shell HTTP server. It answers `200 text/event-stream` with
+/// the supplied frames; `gated` frames are only written after `release`.
+struct TestServer {
+    url: String,
+    started: tokio::sync::oneshot::Receiver<()>,
+    release: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+async fn spawn_server(
+    status: u16,
+    before_gate: Vec<&'static str>,
+    after_gate: Vec<&'static str>,
+) -> TestServer {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (started_sender, started) = tokio::sync::oneshot::channel();
+    let (release, release_receiver) = if after_gate.is_empty() {
+        (None, None)
+    } else {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        (Some(sender), Some(receiver))
+    };
+    tokio::spawn(async move {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        if !read_http_request(&mut stream).await {
+            return;
+        }
+        if status != 200 {
+            let _ = stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 {status} Test\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await;
+            let _ = started_sender.send(());
+            return;
+        }
+        let _ = stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
+            )
+            .await;
+        for frame in before_gate {
+            let _ = stream
+                .write_all(format!("data: {frame}\n\n").as_bytes())
+                .await;
+        }
+        let _ = stream.flush().await;
+        let _ = started_sender.send(());
+        if let Some(receiver) = release_receiver {
+            let _ = receiver.await;
+        }
+        for frame in after_gate {
+            let _ = stream
+                .write_all(format!("data: {frame}\n\n").as_bytes())
+                .await;
+        }
+        let _ = stream.flush().await;
+    });
+    TestServer {
+        url: format!("http://{addr}"),
+        started,
+        release,
+    }
+}
+
+async fn read_http_request(stream: &mut TcpStream) -> bool {
+    let mut buffer = Vec::new();
+    loop {
+        let mut chunk = [0_u8; 1024];
+        match stream.read(&mut chunk).await {
+            Ok(0) | Err(_) => return false,
+            Ok(read) => buffer.extend_from_slice(&chunk[..read]),
+        }
+        let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
+            continue;
+        };
+        let headers = String::from_utf8_lossy(&buffer[..headers_end]).to_ascii_lowercase();
+        let length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let body_end = headers_end + 4 + length;
+        while buffer.len() < body_end {
+            let mut chunk = [0_u8; 1024];
+            match stream.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(read) => buffer.extend_from_slice(&chunk[..read]),
+            }
+        }
+        return true;
+    }
+}
+
+const CREATED: &str = r#"{"type":"response.created","shell_type":"chat"}"#;
+const DELTA: &str = r#"{"type":"response.output_text.delta","delta":"hello","offset":0}"#;
+const COMPLETED: &str = r#"{"type":"response.completed","response":{}}"#;
+
+fn execution_request() -> ExecutionRequest {
+    ExecutionRequest {
+        task_id: TASK_ID,
+        subtask_id: SUBTASK_ID,
+        message_id: Some(2),
+        prompt: json!("hello"),
+        model_config: json!({"model_id": "test-model"}),
+        ..ExecutionRequest::default()
+    }
+}
+
+/// `dispatcher.py:730-747`: the executor acknowledgement's START keeps the
+/// identity of the Task this handler created, so the job can publish
+/// `task:created` after `chat:start` like the chat-shell forward-only START.
+/// A dispatch that created no Task keeps the frame optional.
+#[test]
+fn the_executor_start_carries_the_created_task_identity() {
+    let request = execution_request();
+    let created = crate::internal_callback::emitter::CreatedTask {
+        user_id: 6501,
+        team_id: 110_467,
+        team_name: "wegent-chat".into(),
+        title: "标题".into(),
+        is_group_chat: false,
+        project_id: 2571,
+    };
+    let start = start_event(RecordingRedis::default(), &request, Some(created));
+    assert_eq!(start.task_id, TASK_ID);
+    assert_eq!(start.subtask_id, SUBTASK_ID);
+    assert_eq!(start.message_id, Some(2));
+    let created = start.created_task.expect("the created task identity");
+    assert_eq!(created.user_id, 6501);
+    assert_eq!(created.team_id, 110_467);
+    assert_eq!(created.team_name, "wegent-chat");
+    assert_eq!(created.project_id, 2571);
+
+    let start = start_event(RecordingRedis::default(), &request, None);
+    assert!(
+        start.created_task.is_none(),
+        "a dispatch without a created Task emits no task:created frame"
+    );
+}
+
+fn consumer(
+    mysql: RecordingMysql,
+    redis: RecordingRedis,
+) -> ConsumerState<RecordingMysql, RecordingRedis> {
+    ConsumerState {
+        mysql,
+        redis: Some(redis),
+        tables: tables(),
+        executor_manager: ExecutorManager::new("http://127.0.0.1:1").expect("client"),
+        app: Weak::new(),
+    }
+}
+
+fn chat_job(
+    target_url: &str,
+    mysql: RecordingMysql,
+    redis: RecordingRedis,
+) -> ChatShellJob<RecordingMysql, RecordingRedis> {
+    ChatShellJob {
+        task_id: TASK_ID,
+        subtask_id: SUBTASK_ID,
+        consumer: consumer(mysql, redis),
+        target_url: target_url.to_string(),
+        request: execution_request(),
+        request_id: "req-test".to_string(),
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+    }
+}
+
+async fn wait_for_cancel_cleanup(redis: &RecordingRedis) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if redis.count("DEL-MANY chat:cancel:") >= 1 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the atomic chat:cancel cleanup arrives within the bound");
+}
+
+/// The background dispatch stores streamed content and commits its terminal state.
+#[tokio::test]
+async fn background_job_runs_the_real_consumer_lifecycle() {
+    let server = spawn_server(200, vec![CREATED, DELTA, COMPLETED], vec![]).await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("COMPLETED")
+        .await;
+    let dispatch = spawn::<RecordingMysql, RecordingRedis>();
+    assert!(dispatch.submit(DispatchJob::ChatShell(Box::new(chat_job(
+        &server.url,
+        mysql.clone(),
+        redis.clone()
+    )))));
+
+    wait_for_cancel_cleanup(&redis).await;
+
+    let cancel_key = format!("chat:cancel:{SUBTASK_ID}");
+    let intent_key = format!("chat:cancel-intent:{SUBTASK_ID}");
+    let calls = redis.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| **call == format!("EVAL {cancel_key} {intent_key}"))
+            .count(),
+        1,
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| **call == format!("DEL-MANY {cancel_key} {intent_key}"))
+            .count(),
+        1,
+        "{calls:?}"
+    );
+    assert!(
+        redis.count(&format!("GET {cancel_key}")) >= 1,
+        "the consumer polls the cancel key while the stream runs: {:?}",
+        redis.calls()
+    );
+    assert!(
+        redis
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("APPEND chat:streaming:block_content:")),
+        "stream content is persisted: {:?}",
+        redis.calls()
+    );
+    assert_terminal_commit(&mysql);
+}
+
+/// Admission returns before the consumer finishes: the supervisor must not
+/// block the request path on a live stream.
+#[tokio::test]
+async fn acceptance_returns_before_the_consumer_finishes() {
+    let server = spawn_server(200, vec![CREATED, DELTA], vec![COMPLETED]).await;
+    let redis = RecordingRedis::default();
+    let dispatch = spawn::<RecordingMysql, RecordingRedis>();
+    assert!(dispatch.submit(DispatchJob::ChatShell(Box::new(chat_job(
+        &server.url,
+        RecordingMysql::default(),
+        redis.clone()
+    )))));
+
+    // The server saw the request and the consumer is blocked on the gate.
+    let _ = server.started.await;
+    assert_eq!(
+        redis.count("EVAL chat:cancel:"),
+        1,
+        "only intent-guarded registration is issued while the stream is open: {:?}",
+        redis.calls()
+    );
+
+    assert_eq!(
+        redis.count("DEL-MANY chat:cancel:"),
+        0,
+        "{:?}",
+        redis.calls()
+    );
+    server.release.expect("gated server").send(()).unwrap();
+    wait_for_cancel_cleanup(&redis).await;
+}
+
+/// A chat-shell 500 is surfaced (and logged with the job identity), never
+/// reported as completion.
+#[tokio::test]
+async fn chat_shell_500_is_observable() {
+    let server = spawn_server(500, vec![], vec![]).await;
+    let job = chat_job(
+        &server.url,
+        RecordingMysql::default(),
+        RecordingRedis::default(),
+    );
+    let capture = LogCapture::default();
+    let result = capture.capture(run_chat_shell(job, None)).await;
+
+    let error = result.expect_err("a 500 is not a completion");
+    assert!(error.contains("HTTP status code: 500"), "{error}");
+    let messages = capture.messages();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("chat-shell background consumer failed")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains(&TASK_ID.to_string())),
+        "the failure log carries the task identity: {messages:?}"
+    );
+}
+
+/// A stream that ends without a terminal frame is surfaced (and logged), never
+/// reported as completion.
+#[tokio::test]
+async fn mid_stream_error_is_observable() {
+    let server = spawn_server(200, vec![CREATED, DELTA], vec![]).await;
+    let job = chat_job(
+        &server.url,
+        RecordingMysql::default(),
+        RecordingRedis::default(),
+    );
+    let capture = LogCapture::default();
+    let result = capture.capture(run_chat_shell(job, None)).await;
+
+    let error = result.expect_err("a stream without a terminal frame is not a completion");
+    assert!(error.contains("without terminal event"), "{error}");
+    let messages = capture.messages();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("chat-shell background consumer failed")),
+        "{messages:?}"
+    );
+}
+
+#[tokio::test]
+async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() {
+    let server = spawn_server(503, vec![], vec![]).await;
+    let refused = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let refused_url = format!("http://{}", refused.local_addr().unwrap());
+    drop(refused);
+    let http = HttpClient::builder().build().unwrap();
+    for url in [server.url, refused_url] {
+        let mysql = RecordingMysql::default().with_terminal_rows("FAILED").await;
+        let redis = RecordingRedis::default();
+        run(
+            &http,
+            DispatchJob::Executor {
+                url,
+                body: ExecutorDispatchBody::Prepared(Ok(
+                    crate::executor_binding::DispatchRequest {
+                        body: json!({}),
+                        binding_token: "test-binding".into(),
+                    },
+                )),
+                start: Some(start_event(redis.clone(), &execution_request(), None)),
+                consumer: Box::new(consumer(mysql.clone(), redis.clone())),
+                task_id: TASK_ID,
+                subtask_id: SUBTASK_ID,
+                user_id: TASK_OWNER_ID,
+                message_id: Some(2),
+            },
+        )
+        .await;
+        assert_terminal_commit(&mysql);
+        assert_eq!(
+            redis.count(&format!("DEL chat:task_streaming:{TASK_ID}")),
+            1,
+            "missing task streaming cleanup in {:?}",
+            redis.calls()
+        );
+        let frames: Vec<Value> = redis
+            .calls()
+            .iter()
+            .filter_map(|call| {
+                let payload = call.splitn(3, ' ').nth(2)?;
+                serde_json::from_str(payload).ok()
+            })
+            .collect();
+        let error = frames
+            .iter()
+            .find(|frame| frame["event"] == "chat:error")
+            .unwrap_or_else(|| panic!("missing chat:error in {:?}", redis.calls()));
+        assert_eq!(error["data"][0]["subtask_id"], SUBTASK_ID);
+        assert_eq!(error["data"][0]["type"], "EXECUTOR_DISPATCH_FAILED");
+        let status = frames
+            .iter()
+            .find(|frame| frame["event"] == "task:status")
+            .unwrap_or_else(|| panic!("missing task:status in {:?}", redis.calls()));
+        assert_eq!(status["room"], format!("user:{TASK_OWNER_ID}"));
+        assert_eq!(status["data"][0]["status"], "FAILED");
+        let callback = frames
+            .iter()
+            .find(|frame| frame["type"] == "error" && frame["subtask_id"] == SUBTASK_ID)
+            .expect("the Responses stream also receives the terminal error");
+        assert_eq!(callback["error_code"], "EXECUTOR_DISPATCH_FAILED");
+        assert!(!frames.iter().any(|frame| frame["event"] == "chat:start"));
+    }
+}
+
+fn assert_terminal_commit(mysql: &RecordingMysql) {
+    let statements = mysql.statements();
+    let subtask = statements
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE subtasks_0424 "));
+    let task = statements
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE tasks_0424 "));
+    let commit = statements.iter().position(|sql| sql == "COMMIT");
+    assert!(
+        matches!((subtask, task, commit), (Some(subtask), Some(task), Some(commit)) if subtask < task && task < commit),
+        "both terminal writes must precede COMMIT: {statements:?}"
+    );
+}
+
+#[tokio::test]
+async fn executor_failure_reaches_mysql_without_redis() {
+    let mysql = RecordingMysql::default().with_terminal_rows("FAILED").await;
+    let mut consumer = consumer(mysql.clone(), RecordingRedis::default());
+    consumer.redis = None;
+    finalize_executor_failure(
+        &consumer,
+        TASK_ID,
+        SUBTASK_ID,
+        TASK_OWNER_ID,
+        Some(2),
+        ("Executor preparation failed", "container_error"),
+    )
+    .await;
+    assert_terminal_commit(&mysql);
+}
+
+#[tokio::test]
+async fn executor_failure_does_not_write_or_publish_after_cancellation() {
+    for status in ["CANCELLING", "CANCELLED"] {
+        let mysql = RecordingMysql::default()
+            .with_task_status("FAILED", status)
+            .await;
+        let redis = RecordingRedis::default();
+        finalize_executor_failure(
+            &consumer(mysql.clone(), redis.clone()),
+            TASK_ID,
+            SUBTASK_ID,
+            TASK_OWNER_ID,
+            Some(2),
+            ("Executor preparation failed", "container_error"),
+        )
+        .await;
+        assert!(
+            mysql
+                .statements()
+                .iter()
+                .any(|sql| sql.ends_with("FOR UPDATE"))
+        );
+        assert!(
+            !mysql
+                .statements()
+                .iter()
+                .any(|sql| sql.starts_with("UPDATE"))
+        );
+        assert_eq!(redis.count("PUBLISH "), 0);
+    }
+}
+
+#[tokio::test]
+async fn pipeline_duplicate_observes_acceptance_without_a_second_consumer_or_cleanup() {
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::default();
+    let mut server = spawn_server(200, vec![CREATED], vec![COMPLETED]).await;
+    let job = chat_job(&server.url, mysql.clone(), redis.clone());
+    let (sender, receiver) = oneshot::channel();
+    let owner = tokio::spawn(run_chat_shell(job, Some(sender)));
+    tokio::time::timeout(Duration::from_secs(5), receiver)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    server.started.await.unwrap();
+    assert!(!owner.is_finished(), "the real owner is still streaming");
+    let cleanup_before = redis.count("DEL");
+    let registrations_before = redis.count("EVAL chat:cancel:");
+    let sql_before = mysql.statements().len();
+    let (sender, receiver) = oneshot::channel();
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        run_chat_shell(
+            chat_job(&server.url, mysql.clone(), redis.clone()),
+            Some(sender),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(receiver.await.unwrap(), Ok(()));
+    assert_eq!(
+        redis.count("DEL"),
+        cleanup_before,
+        "observer does not clear owner's stream"
+    );
+    assert_eq!(redis.count("EVAL chat:cancel:"), registrations_before);
+    assert_eq!(
+        mysql.statements().len(),
+        sql_before,
+        "observer does not touch terminal state"
+    );
+    assert_eq!(redis.count("LEASE-ACCEPT"), 1);
+    assert_eq!(redis.count("LEASE-RENEW"), 0);
+    assert_eq!(redis.count("LEASE-RELEASE"), 0);
+    redis
+        .fail_receipt
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (sender, receiver) = oneshot::channel();
+    assert!(
+        run_chat_shell(
+            chat_job(&server.url, mysql.clone(), redis.clone()),
+            Some(sender)
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        receiver.await.unwrap().is_err(),
+        "an unreadable receipt is not success"
+    );
+    assert_eq!(redis.count("DEL"), cleanup_before);
+    redis
+        .fail_receipt
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    server.release.take().unwrap().send(()).unwrap();
+    // This focused fixture deliberately retains no AppState. The owner must
+    // report the terminal recovery failure and still release its own lease.
+    assert_eq!(
+        owner.await.unwrap().unwrap_err(),
+        "Chat Shell dispatch lost application state"
+    );
+    assert_eq!(redis.count("LEASE-RELEASE"), 1);
+}
+
+#[tokio::test]
+async fn pipeline_unknown_and_invalid_first_events_do_not_create_an_acceptance_receipt() {
+    for event in [
+        r#"{"type":"unknown.event"}"#,
+        r#"{"type":"response.output_item.added","item":{"type":"function_call","call_id":"","name":"x"}}"#,
+    ] {
+        let redis = RecordingRedis::default();
+        let server = spawn_server(200, vec![event], vec![]).await;
+        let (sender, receiver) = oneshot::channel();
+        assert!(
+            run_chat_shell(
+                chat_job(&server.url, RecordingMysql::default(), redis.clone()),
+                Some(sender)
+            )
+            .await
+            .is_err()
+        );
+        assert!(receiver.await.unwrap().is_err());
+        assert_eq!(
+            redis.count("LEASE-ACCEPT"),
+            0,
+            "only a parsed event proves acceptance"
+        );
+    }
+}
+
+#[tokio::test]
+async fn pipeline_receipt_redis_failure_is_not_acknowledged_as_success() {
+    let redis = RecordingRedis::default();
+    redis
+        .fail_receipt
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let server = spawn_server(200, vec![CREATED], vec![]).await;
+    let (sender, receiver) = oneshot::channel();
+    assert!(
+        run_chat_shell(
+            chat_job(&server.url, RecordingMysql::default(), redis),
+            Some(sender)
+        )
+        .await
+        .is_err()
+    );
+    assert!(receiver.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn executor_transport_error_retains_its_connection_cause_without_binding_credentials() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    let error = send_executor(
+        &HttpClient::builder().build().unwrap(),
+        &url,
+        &crate::executor_binding::DispatchRequest {
+            body: json!({}),
+            binding_token: "private-binding-token".into(),
+        },
+    )
+    .await
+    .expect_err("the listener is closed");
+    assert!(error.contains("source:"), "{error}");
+    assert!(error.contains("ConnectionRefused"), "{error}");
+    assert!(!error.contains("private-binding-token"));
+}
+
+#[tokio::test]
+async fn executor_dispatch_does_not_reuse_a_closing_keepalive_socket() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut first, _) = listener.accept().await.unwrap();
+        assert!(read_http_request(&mut first).await);
+        first
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        // Expire the first socket as soon as another request tries to reuse it.
+        let expired = tokio::spawn(async move {
+            let mut byte = [0];
+            first.read(&mut byte).await.unwrap_or(0)
+        });
+        let (mut second, _) = listener.accept().await.unwrap();
+        assert!(read_http_request(&mut second).await);
+        second
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            expired.await.unwrap(),
+            0,
+            "the expired socket received a second submission"
+        );
+    });
+    let http = executor_dispatch_http_client().unwrap();
+    let submission = crate::executor_binding::DispatchRequest {
+        body: json!({}),
+        binding_token: "test-binding".into(),
+    };
+    send_executor(&http, &url, &submission).await.unwrap();
+    send_executor(&http, &url, &submission).await.unwrap();
+    server.await.unwrap();
+}

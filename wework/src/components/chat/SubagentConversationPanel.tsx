@@ -1,8 +1,9 @@
-import { ArrowLeft, Bot, ChevronRight } from 'lucide-react'
-import { useMemo } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowLeft, Bot, ChevronRight } from 'lucide-react'
+import { useMemo } from 'react'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { SubagentAvatar } from './blocks/SubagentBlockItem'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
@@ -48,7 +49,8 @@ export function SubagentEnvironmentSummary({ blocks, onOpen }: SubagentEnvironme
   return (
     <section data-testid="environment-subagents-section">
       <h3 className="mb-1 text-sm font-medium text-text-primary">{t('subagent.agent')}</h3>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="open-subagents-panel-button"
         className="flex h-9 w-full items-center gap-2 rounded-md text-left text-sm text-text-secondary hover:bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2"
@@ -60,7 +62,7 @@ export function SubagentEnvironmentSummary({ blocks, onOpen }: SubagentEnvironme
         </span>
         <span className="min-w-0 flex-1 truncate">{summary}</span>
         <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-      </button>
+      </ControlButton>
     </section>
   )
 }
@@ -140,7 +142,8 @@ export function SubagentConversationPanel({
       data-subagent-block-id={block.id}
     >
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2"
           aria-label={t('subagent.back_to_list')}
@@ -148,7 +151,7 @@ export function SubagentConversationPanel({
           data-testid="subagent-conversation-back"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        </button>
+        </ControlButton>
         <SubagentAvatar block={block} label={name} className="h-6 w-6" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{name}</span>
       </header>
@@ -308,7 +311,8 @@ function SubagentOverviewItem({
   const distinctPreview = preview === name ? null : preview
 
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       className="flex min-h-10 w-full cursor-pointer items-start gap-3 rounded-lg px-2 py-2 text-left hover:bg-muted focus-visible:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2"
       onClick={() => onSelect(block)}
@@ -329,6 +333,6 @@ function SubagentOverviewItem({
           </span>
         ) : null}
       </span>
-    </button>
+    </ControlButton>
   )
 }

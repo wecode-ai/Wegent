@@ -1,7 +1,9 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useFocusRequest } from '../dom-events'
 import { createPortal } from 'react-dom'
 import { ProjectCreateConfigurationView } from '../project-create/ProjectCreateConfigurationView'
 import type { CollaborationLocale } from '../i18n'
@@ -15,6 +17,11 @@ import { templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
 import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { TemplateBindings } from './TemplateBindings'
+import {
+  createTemplatePageNavigation,
+  templatePageDetail,
+  type TemplatePageNavigation,
+} from './templatePageNavigation'
 
 export function TemplateCreateSection({
   setup,
@@ -31,7 +38,7 @@ export function TemplateCreateSection({
   disabled?: boolean
   configurationHost?: {
     target: HTMLElement | null
-    navigate(title: string, onBack: (() => void) | null): void
+    navigation: TemplatePageNavigation
   }
   onSelect(document: CollaborationTemplate | null): void
   onChange(
@@ -44,37 +51,33 @@ export function TemplateCreateSection({
   const m = templateMessages[locale]
   const [document, setDocument] = useState(initialTemplate ?? null)
   const [selectionVersion, setSelectionVersion] = useState(0)
-  const [view, setView] = useState<'catalog' | 'bindings' | null>(null)
-  const [detail, setDetail] = useState<{ title: string; onBack(): void } | null>(null)
+  const navigation = useMemo(
+    () => configurationHost?.navigation ?? createTemplatePageNavigation(store),
+    [configurationHost?.navigation, store]
+  )
+  const navigationState = useSyncExternalStore(
+    navigation.subscribe,
+    navigation.getSnapshot,
+    navigation.getSnapshot
+  )
+  const { view } = navigationState
+  const detail = templatePageDetail(navigation, locale, navigationState)
   const [catalogFooterTarget, setCatalogFooterTarget] = useState<HTMLElement | null>(null)
   const [complete, setComplete] = useState(true)
   const section = useRef<HTMLElement>(null)
-  const restoreFocus = useRef(false)
   const [configuredRoleCount, setConfiguredRoleCount] = useState<number | null>(null)
-  const leave = () => {
-    restoreFocus.current = true
-    setView(null)
-    configurationHost?.navigate('', null)
-  }
-  useEffect(() => {
-    if (view || !restoreFocus.current) return
-    restoreFocus.current = false
-    const trigger =
-      section.current?.querySelector<HTMLButtonElement>(
-        '[data-testid="project-create-configure-template"]'
-      ) ??
-      section.current?.querySelector<HTMLButtonElement>(
-        '[data-testid="project-create-choose-template"]'
-      )
-    trigger?.focus()
-  }, [view])
+  const leave = navigation.leave
+  useFocusRequest(section, navigationState.sectionFocusRequest, {
+    enabled: !view && navigationState.sectionFocusRequest > 0,
+    selector: document
+      ? '[data-testid="project-create-configure-template"]'
+      : '[data-testid="project-create-choose-template"]',
+  })
   const showBindings = () => {
-    setView('bindings')
-    configurationHost?.navigate(m.bindingsTitle, leave)
+    navigation.showBindings()
   }
   const showCatalog = () => {
-    setView('catalog')
-    configurationHost?.navigate(m.title, leave)
+    navigation.showCatalog()
   }
   if (!store) return null
   const members = [
@@ -122,19 +125,14 @@ export function TemplateCreateSection({
       locale={locale}
       embedded={Boolean(configurationHost)}
       footerTarget={catalogFooterTarget}
-      onDetailChange={next => {
-        setDetail(next)
-        if (view === 'catalog') {
-          configurationHost?.navigate(next?.title ?? m.title, next?.onBack ?? leave)
-        }
-      }}
+      navigation={configurationHost ? navigation : undefined}
       onUse={record => {
         setSelectionVersion(current => current + 1)
         setDocument(record.document)
         onChange(null, true)
         onSelect(record.document)
         if (configurationHost) showBindings()
-        else setView(null)
+        else navigation.leave()
       }}
     />
   )
@@ -147,7 +145,7 @@ export function TemplateCreateSection({
       <div className="collaboration-template-page-heading">
         <h3>{document ? `${m.selected} · ${document.spec.displayName}` : m.title}</h3>
         <div className="collaboration-template-actions">
-          <button
+          <ControlButton variant="unstyled"
             type="button"
             className="collaboration-template-choice"
             data-testid="project-create-choose-template"
@@ -155,9 +153,9 @@ export function TemplateCreateSection({
             onClick={showCatalog}
           >
             {m.discover}
-          </button>
+          </ControlButton>
           {document && (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               className="collaboration-template-choice"
               data-testid="project-create-configure-template"
@@ -165,10 +163,10 @@ export function TemplateCreateSection({
               onClick={showBindings}
             >
               {m.configureSelection}
-            </button>
+            </ControlButton>
           )}
           {document && (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               className="collaboration-template-choice"
               data-testid="project-create-clear-template"
@@ -181,7 +179,7 @@ export function TemplateCreateSection({
               }}
             >
               {m.clearSelection}
-            </button>
+            </ControlButton>
           )}
         </div>
       </div>
@@ -214,7 +212,7 @@ export function TemplateCreateSection({
                   backLabel={m.returnToProject}
                   testId="project-create-template-configuration"
                   footer={
-                    <button
+                    <ControlButton variant="unstyled"
                       type="button"
                       className="collaboration-primary-button"
                       data-testid="project-create-template-configuration-apply"
@@ -222,7 +220,7 @@ export function TemplateCreateSection({
                       onClick={leave}
                     >
                       {m.confirmConfiguration}
-                    </button>
+                    </ControlButton>
                   }
                 >
                   {bindings}

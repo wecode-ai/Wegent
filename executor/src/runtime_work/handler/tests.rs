@@ -1304,6 +1304,7 @@ fn keeps_payload_backend_credentials_over_the_snapshot() {
             backend_url: "https://backend.example.com".to_owned(),
             socket_url: String::new(),
             auth_token: "wg-token".to_owned(),
+            authenticated_user_id: None,
             runtime_auth_token: String::new(),
         })));
     let handler =
@@ -2520,7 +2521,8 @@ fn unlinked_failed_codex_turn_persists_assistant_error_in_runtime_handle() {
         ..ExecutionRequest::default()
     };
 
-    handler.persist_failed_assistant_message("task-1", &request, "Codex failure");
+    let error_message = "Agent Skills directory contains unmanaged entries";
+    handler.persist_failed_assistant_message("task-1", &request, error_message);
 
     let task = handler
         .local_task_link("task-1")
@@ -2529,9 +2531,19 @@ fn unlinked_failed_codex_turn_persists_assistant_error_in_runtime_handle() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "assistant");
     assert_eq!(messages[0]["status"], "failed");
-    assert_eq!(messages[0]["error"], "Codex failure");
+    assert_eq!(messages[0]["error"], error_message);
     assert_eq!(messages[0]["errorType"], "response.failed");
+    assert_eq!(messages[0]["errorCode"], "skills_unmanaged_entries");
+    assert_eq!(messages[0]["errorInfo"]["code"], "skills_unmanaged_entries");
+    assert_eq!(messages[0]["errorInfo"]["stage"], "prepare");
     assert_eq!(messages[0]["subtaskId"], "turn-1");
+    let restored = RuntimeWorkStore::new(index_path.clone())
+        .get_task("task-1")
+        .unwrap();
+    assert_eq!(
+        restored.runtime_handle["startupFailure"]["errorInfo"],
+        messages[0]["errorInfo"],
+    );
 
     let _ = fs::remove_file(index_path);
 }
@@ -2678,7 +2690,7 @@ fn syncing_an_active_goal_does_not_start_an_idle_task() {
     link.running = false;
     handler.upsert_local_task(link);
 
-    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()), None);
 
     let task = handler
         .local_task_link("task-1")
@@ -2753,7 +2765,7 @@ fn syncing_changed_goal_status_updates_task_activity_time() {
     link.updated_at = 1_780_000_000_000;
     handler.upsert_local_task(link);
 
-    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()), None);
 
     let task = handler
         .local_task_link("task-1")
@@ -2920,6 +2932,15 @@ fn failed_responses_emit_runtime_turn_duration() {
         .expect("failed response should be emitted");
     assert_eq!(event["event"], "response.failed");
     assert_eq!(event["payload"]["data"]["type"], "server_overloaded");
+    assert_eq!(
+        event["payload"]["data"]["error"]["code"],
+        "server_overloaded"
+    );
+    assert_eq!(event["payload"]["data"]["error_info"]["category"], "model");
+    assert_eq!(
+        event["payload"]["data"]["error_info"]["retry_policy"],
+        "after_backoff",
+    );
     assert_eq!(event["payload"]["subtaskId"], "turn-failed-duration");
     assert_eq!(event["payload"]["data"]["startedAt"], 1_780_000_000_000_i64);
     assert_eq!(event["payload"]["data"]["durationMs"], 2_500);
@@ -5672,6 +5693,7 @@ fn local_project_execution_never_inherits_backend_credentials() {
             backend_url: "https://backend.example.com".into(),
             socket_url: String::new(),
             auth_token: "cloud-token".into(),
+            authenticated_user_id: None,
             runtime_auth_token: "runtime-token".into(),
         }))),
     );

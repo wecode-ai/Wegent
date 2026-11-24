@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 from executor_manager.clients.executor_binding import (
     BINDING_SCHEME,
     BINDING_TOKEN,
-    prepare_callback_token,
+    CALLBACK_TOKEN,
 )
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
@@ -1320,14 +1320,6 @@ async def prepare_executor(request: ExecutionRequest, http_request: Request):
     try:
         task_dict = request.to_dict()
         task_dict["prepare_only"] = True
-        callback_token = prepare_callback_token(
-            request.task_id, request.executor_name or ""
-        )
-        task_dict["metadata"] = {
-            **(task_dict.get("metadata") or {}),
-            "executor_callback_token": callback_token,
-        }
-
         result_map = await asyncio.to_thread(task_processor.process_tasks, [task_dict])
         result = result_map.get(request.task_id) or next(
             iter(result_map.values()),
@@ -1550,7 +1542,9 @@ async def openai_responses(http_request: Request):
     # Extract task identification from metadata
     metadata = request_data.get("metadata", {})
     # Only the backend-to-manager authorization header carries this grant.
-    metadata.pop(BINDING_TOKEN, None)
+    for key in (BINDING_TOKEN, CALLBACK_TOKEN, "callback_url"):
+        metadata.pop(key, None)
+        request_data.pop(key, None)
     scheme, _, credential = http_request.headers.get("Authorization", "").partition(" ")
     if scheme == BINDING_SCHEME and credential:
         metadata[BINDING_TOKEN] = credential

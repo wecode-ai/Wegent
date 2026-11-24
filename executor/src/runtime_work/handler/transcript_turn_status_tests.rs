@@ -67,6 +67,7 @@ fn native_terminal_repair_requires_exact_completion_and_never_overrides_new_requ
         "missing-time",
         "queued",
         "newer-turn",
+        "newer-preparation-failure",
     ] {
         let mut link = original.clone();
         let mut evidence = thread.clone();
@@ -80,6 +81,13 @@ fn native_terminal_repair_requires_exact_completion_and_never_overrides_new_requ
                 .unwrap()
                 .push(json!({"id":"new-turn","status":"inProgress"})),
             "queued" => crate::runtime_work::lifecycle::queue_native_execution(&mut link, 1, false),
+            "newer-preparation-failure" => {
+                link.status = "failed".into();
+                link.runtime_handle["startupFailure"] = json!({
+                    "subtaskId":"prepare","createdAt":1_800_000_000_001_i64,
+                    "failedAt":1_800_000_000_002_i64
+                });
+            }
             _ => unreachable!(),
         }
         handler.upsert_local_task(link);

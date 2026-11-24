@@ -115,7 +115,7 @@ export function GenerationStrategySelect({
           data-testid={testId}
           aria-label={t('codeWiki.strategy.label')}
         >
-          <SelectValue>{triggerLabel}</SelectValue>
+          <SelectValue placeholder={triggerLabel}>{triggerLabel}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {emptyOption && hasRunnableDefault && (

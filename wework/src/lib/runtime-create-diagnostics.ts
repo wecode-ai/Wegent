@@ -16,7 +16,7 @@ function serializeDiagnostic(entry: Record<string, unknown>): string {
 export function logRuntimeTaskCreateStage(
   stage: string,
   details: Record<string, unknown>,
-  level: 'info' | 'debug' = 'info'
+  level: 'info' | 'debug' | 'warn' = 'info'
 ): void {
   const entry = {
     timestamp: new Date().toISOString(),

@@ -23,9 +23,7 @@ export interface CollaborationProjectViewOption<
   testId: string
 }
 
-export type ProjectViewMetadataMap = Partial<
-  Record<CollaborationProjectView, ProjectViewMetadata>
->
+export type ProjectViewMetadataMap = Partial<Record<CollaborationProjectView, ProjectViewMetadata>>
 
 /** Opt-in metadata for hosts; omitting it preserves the existing navigation. */
 export const groupedProjectViewMetadata = {
@@ -64,11 +62,11 @@ export interface ProjectViewNavigationGroup<
 }
 
 export function hasGroupedProjectViews(
-  options: readonly CollaborationProjectViewOption[],
+  options: readonly CollaborationProjectViewOption[]
 ): boolean {
   return (
     options.length > 0 &&
-    options.every((option) => {
+    options.every(option => {
       const expected = groupedProjectViewMetadata[option.id]
       return (
         expected &&
@@ -79,21 +77,17 @@ export function hasGroupedProjectViews(
   )
 }
 
-export function buildProjectViewNavigation<
-  View extends CollaborationProjectView,
->(
-  options: readonly CollaborationProjectViewOption<View>[],
+export function buildProjectViewNavigation<View extends CollaborationProjectView>(
+  options: readonly CollaborationProjectViewOption<View>[]
 ): ProjectViewNavigationGroup<View>[] {
   if (!hasGroupedProjectViews(options)) return []
-  const sorted = [...options].sort(
-    (a, b) => viewOrder.indexOf(a.id) - viewOrder.indexOf(b.id),
-  )
-  return (['work', 'plan', 'admin'] as const).flatMap((id) => {
-    const members = sorted.filter((option) => option.group === id)
-    const segments = members.filter((option) => option.parent === 'timeline')
+  const sorted = [...options].sort((a, b) => viewOrder.indexOf(a.id) - viewOrder.indexOf(b.id))
+  return (['work', 'plan', 'admin'] as const).flatMap(id => {
+    const members = sorted.filter(option => option.group === id)
+    const segments = members.filter(option => option.parent === 'timeline')
     const entries: ProjectViewEntry<View>[] = members
-      .filter((option) => !option.parent)
-      .map((option) => ({ id: option.id, option }))
+      .filter(option => !option.parent)
+      .map(option => ({ id: option.id, option }))
     if (segments[0]) {
       entries.unshift({
         id: 'timeline',
@@ -105,21 +99,17 @@ export function buildProjectViewNavigation<
   })
 }
 
-export function resolveGroupedProjectView<
-  View extends CollaborationProjectView,
->(
+export function resolveGroupedProjectView<View extends CollaborationProjectView>(
   options: readonly CollaborationProjectViewOption<View>[],
-  value: CollaborationProjectView,
+  value: CollaborationProjectView
 ): View | undefined {
-  const exact = options.find((option) => option.id === value)
+  const exact = options.find(option => option.id === value)
   if (exact) return exact.id
   const groups = buildProjectViewNavigation(options)
-  const group = groups.find(
-    (candidate) => candidate.id === groupedProjectViewMetadata[value]?.group,
-  )
+  const group = groups.find(candidate => candidate.id === groupedProjectViewMetadata[value]?.group)
   return (
     group?.entries[0]?.option.id ??
-    groups.find((candidate) => candidate.id === 'work')?.entries[0]?.option.id
+    groups.find(candidate => candidate.id === 'work')?.entries[0]?.option.id
   )
 }
 
@@ -128,11 +118,54 @@ export interface ProjectViewSelection {
   timelineView?: CollaborationProjectView
 }
 
-/** Create once per authenticated host session; never persist this map. */
-export function createProjectViewSelectionMemory() {
-  return new Map<string, ProjectViewSelection>()
+class SelectionMemory extends Map<string, ProjectViewSelection> {
+  private readonly listeners = new Map<string, Set<() => void>>()
+
+  private publish(key: string) {
+    this.listeners.get(key)?.forEach(listener => listener())
+  }
+
+  override set(key: string, selection: ProjectViewSelection): this {
+    super.set(key, selection)
+    this.publish(key)
+    return this
+  }
+
+  override delete(key: string): boolean {
+    const deleted = super.delete(key)
+    if (deleted) this.publish(key)
+    return deleted
+  }
+
+  override clear(): void {
+    const keys = [...this.keys()]
+    super.clear()
+    keys.forEach(key => this.publish(key))
+  }
+
+  subscribe(key: string, listener: () => void, current?: ProjectViewSelection) {
+    const subscribers = this.listeners.get(key) ?? new Set<() => void>()
+    subscribers.add(listener)
+    this.listeners.set(key, subscribers)
+    if (current) {
+      const previous = this.get(key)
+      const next = {
+        planView: current.planView,
+        timelineView: current.timelineView ?? previous?.timelineView,
+      }
+      if (previous?.planView !== next.planView || previous?.timelineView !== next.timelineView)
+        this.set(key, next)
+    }
+    return () => {
+      subscribers.delete(listener)
+      if (!subscribers.size) this.listeners.delete(key)
+    }
+  }
 }
 
-export type ProjectViewSelectionMemory = ReturnType<
-  typeof createProjectViewSelectionMemory
->
+/** Create once per authenticated host session; never persist this map. */
+export function createProjectViewSelectionMemory() {
+  return new SelectionMemory()
+}
+
+export type ProjectViewSelectionMemory = ReturnType<typeof createProjectViewSelectionMemory>

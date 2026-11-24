@@ -921,6 +921,7 @@ fn connection_snapshot_from_config(config: &LocalBackendConfig) -> Option<Connec
         socket_url: config.socket_url.trim().trim_end_matches('/').to_owned(),
         auth_token: auth_token.to_owned(),
         runtime_auth_token: config.runtime_auth_token.clone(),
+        authenticated_user_id: None,
     })
 }
 

@@ -86,6 +86,52 @@ fn explicit_activity_presentation_continuation_persists_and_binds_preview() {
 }
 
 #[test]
+fn queued_connection_event_prompt_is_not_reported_as_guidance_before_route_rebind() {
+    let (mut handler, root) = isolated_runtime_work_handler("queued-event-opening-item");
+    let (event_tx, mut event_rx) = broadcast::channel(32);
+    handler.event_tx = Some(event_tx);
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".into(),
+        "/work".into(),
+        "Chat".into(),
+    ));
+    let mut previous = ExecutionRequest::default();
+    previous
+        .extra
+        .insert("client_user_message_id".into(), json!("previous-message"));
+    handler.register_thread_event_route("thread-1", "task-1".into(), previous, false);
+    start_test_execution(&handler, "task-1");
+    let mut submitted = ExecutionRequest::default();
+    submitted
+        .extra
+        .insert("client_user_message_id".into(), json!("event-operation"));
+    handler
+        .active_local_executions
+        .lock()
+        .unwrap()
+        .get_mut("task-1")
+        .unwrap()
+        .request = Some(submitted);
+
+    for id in ["event-operation", "actual-guidance"] {
+        handler.route_codex_notification(json!({
+            "method": "item/completed",
+            "params": {"threadId": "thread-1", "turnId": "event-turn",
+                "item": {"type": "userMessage", "id": id, "clientId": id,
+                    "content": [{"type": "text", "text": "Input"}]}}
+        }));
+    }
+    let mut guidance_ids = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        if event["event"] == "response.guidance.applied" {
+            guidance_ids.push(event["payload"]["data"]["clientGuidanceId"].clone());
+        }
+    }
+    assert_eq!(guidance_ids, [json!("actual-guidance")]);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn assistant_phase_resets_at_the_root_turn_boundary_only() {
     let (event_tx, mut event_rx) = broadcast::channel(16);
     let mut mapper = CodexNotificationEventMapper::default();
@@ -279,7 +325,7 @@ async fn recovered_goal_failure_before_active_turn_has_no_old_user_identity() {
         execution_id,
         &request,
         None,
-        Err("startup failed".into()),
+        Err("Agent Skills directory contains unmanaged entries".into()),
     );
     let mut terminal = None;
     while let Ok(event) = event_rx.try_recv() {
@@ -288,6 +334,16 @@ async fn recovered_goal_failure_before_active_turn_has_no_old_user_identity() {
         }
     }
     let event = terminal.expect("startup failure should emit its terminal event");
+    assert_eq!(
+        event["payload"]["data"]["error"]["code"],
+        "skills_unmanaged_entries",
+    );
+    assert_eq!(event["payload"]["data"]["error_info"]["stage"], "prepare");
+    let stored = handler.local_task_link("task-1").unwrap();
+    assert_eq!(
+        stored.runtime_handle["startupFailure"]["errorInfo"],
+        event["payload"]["data"]["error_info"],
+    );
     assert!(event["payload"].get("clientUserMessageId").is_none());
     assert!(event["payload"]
         .get("runtimeGeneratedUserMessage")

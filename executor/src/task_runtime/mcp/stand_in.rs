@@ -1,6 +1,9 @@
 //! A context-bound surface for inspecting identities and proposing reviewed changes.
 use super::*;
 use crate::task_runtime::LocalTaskStore;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
+use wegent_local_task_store::store::{AcceptedReply, DeliveryRole};
 
 #[path = "stand_in_processing.rs"]
 mod processing;
@@ -16,6 +19,155 @@ mod action_record_tests;
 fn batch_fingerprint(batch: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(batch.as_bytes()))
+}
+
+/// The request prepared for this turn, together with memory pages returned on its MCP handle.
+#[derive(Debug, Clone)]
+pub(super) struct DeliveryContext {
+    ghost: Option<String>,
+    pub(super) role_device: String,
+    injected: String,
+    memory: Arc<Mutex<DeliveryMemory>>,
+}
+
+#[derive(Debug, Default)]
+struct DeliveryMemory {
+    native_turn: Option<String>,
+    active: bool,
+    unbound_read: bool,
+    reads: BTreeSet<String>,
+}
+
+impl DeliveryContext {
+    fn from_request(request: &ExecutionRequest) -> Option<Self> {
+        let context = request.extra.get("standInDeliveryContext")?;
+        let ghost = context["ghostVersion"].as_str().map(str::to_owned);
+        let role_device = context["roleDeviceId"].as_str()?.to_owned();
+        let memory = request.extra.get("additionalContext")?["wework.stand-in.memories"]["value"]
+            .as_str()?;
+        Some(Self {
+            ghost,
+            role_device,
+            injected: batch_fingerprint(memory),
+            memory: Default::default(),
+        })
+    }
+
+    fn remember_page(&self, page: &Value) {
+        if page["items"].as_array().map_or(true, Vec::is_empty) && page["itemChunk"].is_null() {
+            return;
+        }
+        if let Ok(mut memory) = self.memory.lock() {
+            if memory.active {
+                memory.reads.insert(batch_fingerprint(
+                    &json!([page["items"], page["itemChunk"]]).to_string(),
+                ));
+            } else if memory.native_turn.is_none() {
+                memory.unbound_read = true;
+            }
+        }
+    }
+
+    pub(super) fn versions(&self) -> Option<(&str, String)> {
+        self.versions_for(None)
+    }
+
+    fn versions_for(&self, native_turn: Option<&str>) -> Option<(&str, String)> {
+        let memory = self.memory.lock().ok()?;
+        let bound_turn = memory.native_turn.as_deref()?;
+        if memory.unbound_read || !native_turn.map_or(memory.active, |id| id == bound_turn) {
+            return None;
+        }
+        let memory = if memory.reads.is_empty() {
+            self.injected.clone()
+        } else {
+            batch_fingerprint(&json!([self.injected, memory.reads]).to_string())
+        };
+        Some((self.ghost.as_deref()?, memory))
+    }
+}
+
+// A native completion and the MCP server it used need the very same memory-read set.
+// The opaque registration lives only for the executing worker; a restored request
+// cannot borrow a previous turn's witness.
+fn deliveries() -> &'static std::sync::Mutex<BTreeMap<String, DeliveryContext>> {
+    static REGISTRY: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, DeliveryContext>>> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(Default::default)
+}
+
+pub(crate) struct StandInTurnWitness(String);
+
+impl Drop for StandInTurnWitness {
+    fn drop(&mut self) {
+        if let Ok(mut live) = deliveries().lock() {
+            if let Some(delivery) = live.remove(&self.0) {
+                if let Ok(mut memory) = delivery.memory.lock() {
+                    memory.active = false;
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn begin_stand_in_turn_witness(
+    request: &mut ExecutionRequest,
+) -> Option<StandInTurnWitness> {
+    if !matches!(
+        request.extra.get("origin")?["type"].as_str(),
+        Some("stand_in_identity" | "issue_dispatch" | "connection_work" | "dingtalk_work")
+    ) {
+        return None;
+    }
+    let context = DeliveryContext::from_request(request)?;
+    let key = uuid::Uuid::new_v4().to_string();
+    deliveries().lock().ok()?.insert(key.clone(), context);
+    request
+        .extra
+        .insert("standInTurnWitness".into(), json!(key));
+    Some(StandInTurnWitness(key))
+}
+
+fn active_delivery(request: &ExecutionRequest) -> Option<DeliveryContext> {
+    let key = request.extra.get("standInTurnWitness")?.as_str()?;
+    deliveries().lock().ok()?.get(key).cloned()
+}
+
+/// Only a native turn that accepted the host's prepared additional context can
+/// attest to the injected versions. Goal continuations use the same MCP handle.
+pub(crate) fn bind_stand_in_turn_context(request: &ExecutionRequest, turn_id: &str) {
+    let Some(delivery) = active_delivery(request) else {
+        return;
+    };
+    if let Ok(mut memory) = delivery.memory.lock() {
+        if memory.native_turn.is_none() {
+            memory.native_turn = Some(turn_id.to_owned());
+            memory.active = true;
+        }
+    };
+}
+
+pub(crate) fn observe_stand_in_turn_boundary(
+    request: &ExecutionRequest,
+    active_turn: Option<&str>,
+) {
+    let Some(delivery) = active_delivery(request) else {
+        return;
+    };
+    if let Ok(mut memory) = delivery.memory.lock() {
+        if active_turn.is_none() || active_turn != memory.native_turn.as_deref() {
+            memory.active = false;
+        }
+    };
+}
+
+pub(crate) fn stand_in_turn_versions(
+    request: &ExecutionRequest,
+    native_turn: &str,
+) -> Option<(String, String)> {
+    let delivery = active_delivery(request)?;
+    let (ghost, memory) = delivery.versions_for(Some(native_turn))?;
+    Some((ghost.to_owned(), memory))
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +251,17 @@ pub(crate) fn stand_in_mcp_client_config(
     context.surface = WeworkMcpSurface::StandIn;
     context.current_device_id = Some(identity.device.clone());
     context.principal_id = Some(identity.user.to_string());
+    context.stand_in_delivery =
+        active_delivery(request).or_else(|| DeliveryContext::from_request(request));
     context.stand_in = Some(identity);
+    let origin = &request.extra["origin"];
+    context.stand_in_role_delegation = (origin["type"] == "stand_in_identity"
+        && origin["conversationScope"].is_null()
+        && !request
+            .extra
+            .get("source")
+            .is_some_and(|source| source["source"] == "im"))
+        || (origin["type"] == "stand_in_task" && origin["roleDelegation"].is_object());
     let registered = super::super::mcp_http::register_space_mcp_context(context)?;
     if let Some(signature) = batch_signature {
         crate::logging::write_executor_log_line(&crate::logging::format_executor_log(
@@ -208,6 +370,10 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         .is_some_and(|identity| identity.readonly_worker)
     {
         let mut tools = super::stand_in_tasks::read_tools();
+        if context.stand_in_role_delegation {
+            tools.extend(super::stand_in_tasks::role_delegation_tools());
+            return tools;
+        }
         tools.push(json!({"name":"list_connection_providers","description":"List only host-captured delegated source references and their provider read schemas. This cannot discover ungranted resources or change subscriptions.","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true,"openWorldHint":false}}));
         let mut read = connections::read_tool(false);
         read["annotations"] = json!({"readOnlyHint":true,"openWorldHint":true});
@@ -300,6 +466,9 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
             tools.push(read);
         }
     }
+    if context.stand_in_role_delegation {
+        tools.extend(super::stand_in_tasks::role_delegation_tools());
+    }
     tools
 }
 
@@ -318,6 +487,7 @@ pub(super) async fn call(
             .into_iter()
             .chain(super::stand_in_tasks::schedule_tools())
             .chain(super::stand_in_tasks::memory_review_tools())
+            .chain(super::stand_in_tasks::role_delegation_tools())
             .any(|tool| tool["name"] == name)
     {
         return match super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
@@ -353,7 +523,16 @@ pub(super) async fn call(
     }
     let result = match name {
         "configure_git_webhook"|"git_webhook_plan"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,
-        "search_memories" | "remember" | "forget_memory" | "list_memory_forgetting_rules" => memory_call(store, identity, name, arguments),
+        "search_memories" | "remember" | "forget_memory" | "list_memory_forgetting_rules" => {
+            let role_device = context.stand_in_delivery.as_ref().map(|turn| turn.role_device.as_str());
+            let result = memory_call(role_device, store, identity, name, arguments);
+            if name == "search_memories" {
+                if let (Some(delivery), Ok(page)) = (&context.stand_in_delivery, &result) {
+                    delivery.remember_page(page);
+                }
+            }
+            result
+        },
         "connect_source" => connections::connect_source(arguments).await,
         "read_source" => connections::read_source(runtime, identity, arguments).await,
         "get_profile" => store
@@ -362,8 +541,8 @@ pub(super) async fn call(
         "propose_profile" => super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await,
         "list_work" => store.list_stand_in_work(identity.user,identity.role.as_deref()).map(|items| json!({"items":items,"runtime":crate::runtime_work::dingtalk::runtime_work_summaries(identity.user,identity.role.as_deref())})).map_err(|e|e.to_string()),
         "read_work" => read_connected_work(runtime, identity, &arguments).await,
-        "reply" | "send_email" => reply_to_work(runtime,identity,&arguments, name == "send_email").await,
-        "git_read" | "git_write" => super::git_connections::call(runtime, identity, arguments, name=="git_write").await,
+        "reply" | "send_email" => reply_to_work(runtime,identity,&arguments, name == "send_email", context.stand_in_delivery.as_ref()).await,
+        "git_read" | "git_write" => super::git_connections::call(runtime, identity, arguments, name=="git_write",context.stand_in_delivery.as_ref()).await,
         "prepare_git_workspace"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,
         "list_connection_providers" => connections::list_providers(identity).await,
         "search_connections" => crate::runtime_work::connection_host::call("listResources", arguments["providerId"].as_str(), arguments.clone())
@@ -445,6 +624,7 @@ fn read_connected_work_store(
 }
 
 fn memory_call(
+    read_device: Option<&str>,
     store: &LocalTaskStore,
     identity: &StandInMcpIdentity,
     name: &str,
@@ -466,15 +646,11 @@ fn memory_call(
         None
     };
     if matches!(name, "search_memories" | "list_memory_forgetting_rules") {
+        let device = read_device.unwrap_or(&identity.device);
         let memories = if name == "list_memory_forgetting_rules" {
-            store.recall_stand_in_memory_rules(
-                identity.user,
-                &identity.device,
-                role,
-                source.as_ref(),
-            )
+            store.recall_stand_in_memory_rules(identity.user, device, role, source.as_ref())
         } else {
-            store.recall_stand_in_memories(identity.user, &identity.device, role, source.as_ref())
+            store.recall_stand_in_memories(identity.user, device, role, source.as_ref())
         }
         .map_err(|error| error.to_string())?;
         return LocalTaskStore::page_stand_in_memories(
@@ -551,6 +727,7 @@ async fn reply_to_work(
     identity: &StandInMcpIdentity,
     arguments: &Value,
     email: bool,
+    delivery: Option<&DeliveryContext>,
 ) -> Result<Value, String> {
     let store = runtime.stand_in_store();
     let work = identity.work.as_deref().ok_or("No work is bound")?;
@@ -570,7 +747,7 @@ async fn reply_to_work(
             .ok_or("messageId is required")?,
     )?;
     let settings = store
-        .personal_stand_in(identity.user, &identity.device)
+        .configured_personal_stand_in(identity.user, &identity.device)
         .map_err(|e| e.to_string())?;
     let identities = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
     let role = identities
@@ -585,7 +762,9 @@ async fn reply_to_work(
     {
         return Err("Automatic reply authorization was revoked; reply was not sent".into());
     }
-    if email {
+    let text = arguments["text"].as_str().unwrap_or_default();
+    let versions = delivery.and_then(DeliveryContext::versions);
+    let result = if email {
         if crate::task_runtime::personal_stand_in::source_provider(source)
             != crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
             || (source["policy"]["askBeforeAct"] == true && !identity.ask_before_act)
@@ -605,31 +784,76 @@ async fn reply_to_work(
             "continuous_reply"
         });
         input["action"] = json!("send_email");
-        return crate::runtime_work::connection_host::call(
+        crate::runtime_work::connection_host::call(
             "executeAction",
             Some(crate::task_runtime::personal_stand_in::EMAIL_PROVIDER),
             input,
         )
         .await
-        .map_err(|e| format!("{}: {}", e.code, e.message));
-    }
-    if crate::task_runtime::personal_stand_in::source_provider(source)
-        != crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+        .map_err(|e| format!("{}: {}", e.code, e.message))?
+    } else {
+        if crate::task_runtime::personal_stand_in::source_provider(source)
+            != crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+        {
+            return Err("This connection does not support the DingTalk reply operation".into());
+        }
+        if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
+            return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
+        }
+        crate::runtime_work::dingtalk::reply(
+            source,
+            message,
+            work,
+            text,
+            &arguments["mentionOpenDingTalkIds"],
+        )
+        .await
+        .map_err(|e| format!("{}: {}", e.code, e.message))?
+    };
+    let (accepted, native_id, request) = if email {
+        (
+            result["status"] == "sent"
+                && result["duplicate"] != true
+                && arguments["reply"] != false,
+            result["messageId"].as_str(),
+            result["inReplyTo"]
+                .as_str()
+                .or(message["id"].as_str())
+                .unwrap_or_default(),
+        )
+    } else {
+        (
+            result["success"] == true,
+            result["result"]["openMessageId"].as_str(),
+            message["id"].as_str().unwrap_or_default(),
+        )
+    };
+    if accepted
+        && role["selfLearningEnabled"] == true
+        && store
+            .record_training_reply(
+                DeliveryRole {
+                    user: identity.user,
+                    device: &identity.device,
+                    role_device: delivery
+                        .map_or(&identity.device, |snapshot| &snapshot.role_device),
+                    role: role["id"].as_str().unwrap_or_default(),
+                },
+                &message["source"],
+                AcceptedReply {
+                    request,
+                    text,
+                    native_id,
+                    versions: versions
+                        .as_ref()
+                        .map(|(ghost, memory)| (*ghost, memory.as_str())),
+                },
+            )
+            .is_err()
     {
-        return Err("This connection does not support the DingTalk reply operation".into());
+        crate::logging::log_executor_event("Stand-in reply training receipt unavailable", &[]);
     }
-    if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
-        return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
-    }
-    crate::runtime_work::dingtalk::reply(
-        source,
-        message,
-        work,
-        arguments["text"].as_str().unwrap_or_default(),
-        &arguments["mentionOpenDingTalkIds"],
-    )
-    .await
-    .map_err(|e| format!("{}: {}", e.code, e.message))
+    Ok(result)
 }
 
 #[cfg(test)]

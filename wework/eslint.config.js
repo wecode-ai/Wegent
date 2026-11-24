@@ -1,3 +1,4 @@
+import { effectBoundaryRule } from './scripts/check-effect-boundary.mjs'
 import js from '@eslint/js'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
@@ -9,6 +10,7 @@ export default defineConfig([
   globalIgnores([
     'coverage',
     'dist',
+    'storybook-static',
     '**/target',
     'dsh/app-wework/web',
     'dummy-non-existing-folder',
@@ -29,6 +31,8 @@ export default defineConfig([
   },
   {
     files: ['**/*.{ts,tsx}'],
+    plugins: { architecture: { rules: { 'no-product-use-effect': effectBoundaryRule } } },
+    rules: { 'architecture/no-product-use-effect': 'error' },
     extends: [
       js.configs.recommended,
       tseslint.configs.recommended,

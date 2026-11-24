@@ -11,6 +11,63 @@ fn waiting(record: &Value, task: &str) -> bool {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(in crate::runtime_work::handler) fn resume_goal_after_owner_input(
+        &self,
+        task: &str,
+        thread: &str,
+    ) {
+        if self
+            .store
+            .read_task(task, |link| link.goal_status.as_deref() == Some("blocked"))
+            != Some(true)
+        {
+            return;
+        }
+        let handler = self.clone();
+        let task = task.to_owned();
+        let thread = thread.to_owned();
+        tokio::spawn(async move {
+            if let Err(error) = handler.resume_blocked_goal_for_owner(&task, &thread).await {
+                log_executor_event(
+                    "manual event Goal resume failed",
+                    &[("task_id", task), ("code", error.code)],
+                );
+            }
+        });
+    }
+
+    async fn resume_blocked_goal_for_owner(
+        &self,
+        task: &str,
+        thread: &str,
+    ) -> Result<(), AppIpcError> {
+        let records = self.connection_goal_records(task)?;
+        if records.is_empty() {
+            return Ok(());
+        }
+        let goal = self.read_event_goal(task).await?;
+        if goal["status"] != "blocked" || goal["threadId"] != thread {
+            return Ok(());
+        }
+        let identity = goal_identity(&goal);
+        if !records.values().any(|record| {
+            record["session"]["engine"] == "Codex"
+                && record["session"]["id"] == thread
+                && record["waiting_goal"] == identity
+        }) {
+            return Ok(());
+        }
+        let result = self
+            .set_task_goal(json!({
+                "taskId": task, "status": "active", "eventGoalExpected": goal,
+            }))
+            .await?;
+        if result["accepted"] != true {
+            return Err(invalid("Cannot resume the Goal after owner input"));
+        }
+        Ok(())
+    }
+
     fn connection_goal_records(
         &self,
         task: &str,
@@ -90,7 +147,7 @@ impl RuntimeWorkRpcHandler {
                     || (current["status"] == "active"
                         && matches!(
                             record["status"].as_str(),
-                            Some("preparing" | "resuming_goal")
+                            Some("preparing" | "pending" | "resuming_goal")
                         )));
             let same_session = match session::validate(&record, &link) {
                 Ok(()) => true,
@@ -98,21 +155,10 @@ impl RuntimeWorkRpcHandler {
                 Err(error) => return Err(error),
             };
             if !allowed || !same_session {
-                record["status"] = json!("cancelled");
-                self.save_event_subscription(&id, &record)?;
-            }
-        }
-        Ok(())
-    }
-
-    pub(in crate::runtime_work::handler) fn cancel_connection_waits_for_goal_identity(
-        &self,
-        task: &str,
-        goal: &Value,
-    ) -> Result<(), AppIpcError> {
-        for (id, mut record) in self.connection_goal_records(task)? {
-            if record["waiting_goal"] != goal_identity(goal) {
-                record["status"] = json!("cancelled");
+                record["status"] = json!(closed_goal_wait_status(
+                    &record,
+                    same_goal && same_session && current["status"] == "complete",
+                ));
                 self.save_event_subscription(&id, &record)?;
             }
         }

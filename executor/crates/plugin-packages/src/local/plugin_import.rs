@@ -212,11 +212,19 @@ pub struct ReadPluginCloudLinksRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum AccountInstallLinkMode {
+    KeepRelease,
+    UpdateRelease,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LinkPluginReleaseRequest {
     pub marketplace_path: String,
     pub local_plugin_name: String,
     pub cloud_plugin_id: i64,
     pub cloud_release_id: Option<i64>,
+    pub account_install: Option<AccountInstallLinkMode>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -476,6 +484,21 @@ pub fn link_plugin_release(request: LinkPluginReleaseRequest) -> Result<(), Stri
         return Err("Local plugin manifest is unavailable".to_owned());
     }
     let mut links = read_plugin_cloud_links_strict(&marketplace_root)?;
+    if let Some(mode) = request.account_install {
+        let matching = links
+            .iter()
+            .filter(|link| link.local_plugin_name == plugin_name);
+        let mut existing = false;
+        for link in matching {
+            if link.cloud_plugin_id != request.cloud_plugin_id {
+                return Err("PLUGIN_PERSONAL_SOURCE_LINK_CONFLICT".to_owned());
+            }
+            existing = true;
+        }
+        if existing && matches!(mode, AccountInstallLinkMode::KeepRelease) {
+            return Ok(());
+        }
+    }
     links.retain(|link| link.local_plugin_name != plugin_name);
     links.push(LocalPluginCloudLink {
         local_plugin_name: plugin_name.to_owned(),

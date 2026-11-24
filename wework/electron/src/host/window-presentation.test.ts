@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import {
   createSingleFlight,
   presentWindow,
+  presentWorkbenchWindow,
   registerApplicationActivation,
   type PresentableWindow,
 } from './window-presentation.js'
@@ -12,39 +13,39 @@ describe('application activation', () => {
     const application = Object.assign(new EventEmitter(), { hide: vi.fn() })
     const actions = {
       keepInBackground: () => keepInBackground,
-      openMainWindow: vi.fn(async () => undefined),
+      openWorkbenchWindow: vi.fn(async () => undefined),
       reportError: vi.fn(),
     }
     registerApplicationActivation(application, actions)
     return { application, actions }
   }
 
-  test('does not open the main window when focusing an auxiliary window activates the app', () => {
+  test('does not reactivate the workbench when focusing an auxiliary window activates the app', () => {
     const { application, actions } = setup()
     application.emit('did-become-active')
-    expect(actions.openMainWindow).not.toHaveBeenCalled()
+    expect(actions.openWorkbenchWindow).not.toHaveBeenCalled()
     expect(application.hide).not.toHaveBeenCalled()
   })
 
-  test('still opens the main window for an explicit Dock activation', () => {
+  test('still reactivates the workbench for an explicit Dock activation', () => {
     const { application, actions } = setup()
     application.emit('activate')
     application.emit('did-become-active')
-    expect(actions.openMainWindow).toHaveBeenCalledOnce()
+    expect(actions.openWorkbenchWindow).toHaveBeenCalledOnce()
   })
 
   test('preserves background verification until foreground activation is allowed', () => {
     const { application, actions } = setup(true)
     application.emit('activate')
     application.emit('did-become-active')
-    expect(actions.openMainWindow).not.toHaveBeenCalled()
+    expect(actions.openWorkbenchWindow).not.toHaveBeenCalled()
     expect(application.hide).toHaveBeenCalledOnce()
   })
 
-  test('reports a main-window activation failure', async () => {
+  test('reports a workbench activation failure', async () => {
     const { application, actions } = setup()
     const error = new Error('Window unavailable')
-    actions.openMainWindow.mockRejectedValueOnce(error)
+    actions.openWorkbenchWindow.mockRejectedValueOnce(error)
     application.emit('activate')
     await Promise.resolve()
     expect(actions.reportError).toHaveBeenCalledWith(error)
@@ -99,6 +100,26 @@ describe('presentWindow', () => {
     expect(target.show).toHaveBeenCalledOnce()
     expect(target.focus).toHaveBeenCalledOnce()
     expect(webContents.focus).not.toHaveBeenCalled()
+  })
+})
+
+describe('presentWorkbenchWindow', () => {
+  test('returns to the last focused detached window, including when minimized', () => {
+    const main = createWindow().target
+    const detached = createWindow({ minimized: true }).target
+
+    expect(presentWorkbenchWindow(detached, main)).toBe(detached)
+    expect(detached.restore).toHaveBeenCalledOnce()
+    expect(detached.focus).toHaveBeenCalledOnce()
+    expect(main.show).not.toHaveBeenCalled()
+  })
+
+  test('returns to the main window when the last focused detached window closed', () => {
+    const main = createWindow().target
+    const detached = createWindow({ destroyed: true }).target
+
+    expect(presentWorkbenchWindow(detached, main)).toBe(main)
+    expect(main.focus).toHaveBeenCalledOnce()
   })
 })
 

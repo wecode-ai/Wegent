@@ -4,11 +4,13 @@
 """Expose a resumed manager before it makes a decision or asks for input."""
 
 import hashlib
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_is_unset
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.project_chat import LoopItemExecutionManagerStatus
 from app.services.collaboration_human_assignments import (
@@ -18,6 +20,11 @@ from app.services.collaboration_manager_decisions import _require_manager_dispat
 from app.services.collaboration_round_assignment import assign_round_owner
 from app.services.device.identity import same_owned_device
 from app.services.loop_item_events import publish_loop_item_changed
+from app.services.loop_item_executions.profile import WeworkExecutionProfileError
+from app.services.loop_item_executions.service import (
+    WeworkRuntimeConfigurationError,
+    loop_item_execution_service,
+)
 from app.services.project_chat.runtime_binding import (
     bind_collaboration_manager_activity,
     collaboration_manager_task_id,
@@ -31,7 +38,7 @@ def project_collaboration_manager_activity(
     project_id: int,
     user_id: int,
     values: LoopItemExecutionManagerStatus,
-) -> tuple[ProjectChatMessage, bool]:
+) -> tuple[ProjectChatMessage, bool, dict[str, Any] | None]:
     """Bind the exact next manager session and return ownership once per round."""
     item = (
         db.query(LoopItem)
@@ -80,19 +87,30 @@ def project_collaboration_manager_activity(
     ):
         raise HTTPException(403, "Manager Runtime is not owned by the caller")
     previous_task = collaboration_manager_task_id(db, dispatch, previous)
-    expected_task = resumed_manager_task_id(previous_task, values.round_id)
+    legacy_task = resumed_manager_task_id(previous_task, values.round_id)
     assignments = previous.metadata_json.get("dispatch_assignments") or []
-    if values.runtime_task_id != expected_task or not _round_finished(
-        db, project_id, item.id, assignments
-    ):
+    if values.runtime_task_id not in {
+        previous_task,
+        legacy_task,
+    } or not _round_finished(db, project_id, item.id, assignments):
         raise HTTPException(409, "Manager resume does not match a finished round")
     identity = f"manager-resume:{values.dispatch_id}:{values.round_id}"
     message_id = hashlib.sha256(identity.encode()).hexdigest()
     existing = next((row for row in rounds if row.message_id == message_id), None)
+    profiles = None
+    if values.refresh_runtime_profiles:
+        if any(
+            row.id > previous.id
+            and (row.metadata_json or {}).get("activity_type") == "manager_assignment"
+            and row.metadata_json.get("dispatch_id") == values.dispatch_id
+            for row in rounds
+        ):
+            raise HTTPException(409, "Collaboration round has been superseded")
+        profiles = _refresh_runtime_profiles(db, dispatch)
     if existing is not None:
-        return existing, False
+        return existing, False, profiles
     activity = _new_manager_activity(
-        project_id, item.id, manager, values, message_id, expected_task
+        project_id, item.id, manager, values, message_id, values.runtime_task_id
     )
     db.add(activity)
     db.flush()
@@ -110,13 +128,47 @@ def project_collaboration_manager_activity(
             }
         ],
         user_id=dispatch.assigner_user_id,
+        manager=manager,
     )
     db.commit()
     publish_loop_item_changed(
         db, item=item, reason="collaboration_manager_resume", actor_user_id=user_id
     )
     db.refresh(activity)
-    return activity, True
+    return activity, True, profiles
+
+
+def _refresh_runtime_profiles(
+    db: Session, dispatch: LoopItemExecution
+) -> dict[str, Any]:
+    """Recompile the original dispatch's model credentials for the next turn."""
+    from app.services.collaboration_revocation import execution_authorized
+
+    if (
+        dispatch.status not in {"claimed", "running"}
+        or not dispatch.execution_device_id
+        or not dispatch.runtime_device_id
+    ):
+        raise HTTPException(409, "Collaboration dispatch is not running")
+    if not execution_authorized(db, dispatch):
+        raise HTTPException(403, "Collaboration execution authority is revoked")
+    try:
+        payload = loop_item_execution_service.build_executor_runtime_payload(
+            db,
+            execution=dispatch,
+            execution_target_id=dispatch.execution_device_id,
+            executor_device_id=dispatch.runtime_device_id,
+        )
+    except (WeworkRuntimeConfigurationError, WeworkExecutionProfileError) as exc:
+        raise HTTPException(
+            503, "Collaboration Runtime profiles are unavailable"
+        ) from exc
+    manager = payload["managerRuntimeRequest"]
+    return {
+        "manager_model_config": manager["executionRequest"].get("model_config") or {},
+        "manager_model_selection": manager.get("modelSelection"),
+        "member_runtime_profiles": payload["memberRuntimeProfiles"],
+    }
 
 
 def _round_finished(

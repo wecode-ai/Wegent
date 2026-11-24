@@ -31,8 +31,15 @@ import {
   type PersonalMarketplaceListResult,
 } from './codexPersonalInventory'
 import { createSharedCodexAppCatalog } from './codexAppCatalog'
-import { createSharedRemotePluginCatalog } from './codexRemoteCatalog'
+import {
+  isOpenAiOfficialRemoteMarketplaceItem,
+  openAiRemoteCatalog,
+  RemotePluginCatalogIdentityChanged,
+  type RemotePluginCatalogSnapshot,
+} from './codexRemoteCatalog'
 import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
+import { raceWithTimeout } from '@/lib/promise-timeout'
+import { readStoredCloudConnection } from '@/features/cloud-connection/cloudConnectionStorage'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
 import { createPluginDetailCache, type PluginDetailReadOptions } from './codexPluginDetails'
 import {
@@ -59,6 +66,7 @@ import {
   ensureBundledPluginMarketplaceRegistered,
   ensureBundledPluginInstalled,
   initializeBundledPluginMarketplace,
+  ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
   getKnownLocalExecutorDeviceId,
@@ -222,7 +230,13 @@ export interface LocalPluginImportCompletion {
   pluginName: string
   displayName: string
   version: string
+  marketplacePath: string
 }
+
+export type LocalPluginInstallSource = Pick<
+  LocalPluginImportCompletion,
+  'pluginName' | 'marketplacePath'
+>
 
 interface LocalPluginInstallCommitResult {
   pluginKey: string
@@ -268,7 +282,7 @@ export interface LocalCodexPluginApi {
   migrateNativeCodexHome(remoteAppsEnabled?: boolean): Promise<LocalCodexHomeMigrationStatus>
   readCodexLocalConfig(): Promise<LocalCodexLocalConfig>
   updateCodexLocalConfig(patch: LocalCodexLocalConfigPatch): Promise<LocalCodexLocalConfig>
-  packageCreatedPlugin(plugin: InstalledPlugin): Promise<File>
+  packageCreatedPlugin(plugin: InstalledPlugin, requireCurrent?: () => void): Promise<File>
   ensureCreatedPluginInWeworkPersonal(plugin: InstalledPlugin): Promise<{
     pluginName: string
     marketplacePath: string
@@ -278,7 +292,8 @@ export interface LocalCodexPluginApi {
   linkPersonalPluginRelease(
     plugin: InstalledPlugin,
     cloudPluginId: number,
-    cloudReleaseId: number | null
+    cloudReleaseId: number | null,
+    scope?: { isCurrent: () => boolean; accountInstall: 'keepRelease' | 'updateRelease' }
   ): Promise<void>
   importMarketplaceCopy(descriptor: PluginCopyResponse): Promise<InstalledPlugin>
   previewPluginImport(archivePath: string): Promise<LocalPluginImportPreview>
@@ -302,10 +317,13 @@ export interface LocalCodexPluginApi {
     pluginName: string,
     options?: PluginDetailReadOptions
   ): Promise<InstalledPlugin>
-  readRemoteCatalog(options?: {
-    forceRefetch?: boolean
-    accountScope?: string
-  }): Promise<PluginMarketplaceListResponse & { deviceId: string }>
+  readRemoteCatalog(options: {
+    forceRefetch: boolean
+    cacheOnly?: boolean
+    accountScope: string
+    canStart?: () => boolean
+    onCached: (snapshot: RemotePluginCatalogSnapshot | undefined, deviceId: string) => void
+  }): Promise<{ snapshot?: RemotePluginCatalogSnapshot; deviceId: string }>
   listInstalledPlugins(options?: {
     refresh?: boolean
     /** Read current membership and reject partial inventory instead of assuming absence. */
@@ -337,11 +355,15 @@ export interface LocalCodexPluginApi {
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
-  installAvailablePlugin(item: PluginMarketplaceItem): Promise<InstalledPlugin>
+  installAvailablePlugin(
+    item: PluginMarketplaceItem,
+    onLocalCommit?: (source: LocalPluginInstallSource) => void
+  ): Promise<InstalledPlugin>
   /** Reinstall an independently published source after the caller verifies the current owner. */
   installPersonalPluginSource(
     item: PluginMarketplaceItem,
-    isCurrent: () => boolean
+    isCurrent: () => boolean,
+    onLocalCommit?: (source: LocalPluginInstallSource) => void
   ): Promise<InstalledPlugin>
   updateInstalledPlugin(
     id: string | number,
@@ -417,9 +439,6 @@ const installedCatalog = createVersionedInstalledCatalog<{
 }>(installedCatalogRevision)
 const authStatusRequests = createRequestCache(() => installedReadRevision)
 const diskInventoryRequests = createRequestCache(() => installedReadRevision)
-const remoteCatalog = createSharedRemotePluginCatalog<
-  PluginMarketplaceListResponse & { deviceId: string }
->()
 let inflightWegentStoreList: Promise<InstalledPlugin[]> | null = null
 let didHydrateReadStateSession = false
 let warmupReadStatePromise: Promise<LocalCodexPluginsState> | null = null
@@ -692,11 +711,6 @@ function toDurableReadState(state: CachedPluginsState): CachedPluginsState {
     installedPartial: undefined,
     installedReadGeneration: undefined,
   }
-}
-
-function isOpenAiOfficialRemoteMarketplaceItem(item: PluginMarketplaceItem): boolean {
-  const marketplaceId = item.manifest?.marketplaceId
-  return typeof marketplaceId === 'string' && isOpenAiOfficialRemoteMarketplaceId(marketplaceId)
 }
 
 function installedPluginCacheIdentity(plugin: InstalledPlugin): string {
@@ -1523,6 +1537,16 @@ async function readPersonalMarketplacePluginsFromDisk(
     names: listed.plugins.map(plugin => plugin.name),
   })
   return listed
+}
+
+function installedPersonalPackageSource(plugin: InstalledPlugin) {
+  const marketplacePath = plugin.spec.sourcePayload?.marketplacePath
+  if (typeof marketplacePath !== 'string' || !isLocalMarketplacePath(marketplacePath))
+    throw new Error('Local plugin source path is unavailable')
+  return {
+    marketplacePath: normalizeMarketplaceSource(marketplacePath),
+    pluginName: plugin.spec.source.pluginKey,
+  }
 }
 
 function requireCurrentPluginSourceScope(isCurrent: () => boolean) {
@@ -2884,6 +2908,106 @@ async function loadInstalledPluginsOnly(
   }
 }
 
+async function readRemoteCatalogScope() {
+  const status = await ensureLocalExecutorAvailable({ refresh: true })
+  const deviceId = status.deviceId?.trim()
+  if (!deviceId) throw new Error('Plugin catalog device is unavailable')
+  const auth = await getLocalCodexAuthStatus({ startCodex: false })
+  if (auth.error || (auth.exists && !auth.catalogScope))
+    throw new Error('Could not verify plugin catalog authentication')
+  return { deviceId, runtimeInstanceId: status.runtimeInstanceId, authScope: auth.catalogScope }
+}
+
+async function fetchRemoteCatalogItems(
+  cachedItems: PluginMarketplaceItem[],
+  forceRefetch: boolean
+): Promise<PluginMarketplaceItem[]> {
+  // Codex has no remote-only kind or pagination. The Executor returns list summaries.
+  const response = await codexAppServerRequest<{
+    marketplaces: CodexPluginMarketplaceEntry[]
+    featuredPluginIds?: string[]
+    marketplaceLoadErrors?: Array<{ marketplacePath: string; message: string }>
+  }>('plugin/list', { cwds: null, forceRefetch })
+  if (!Array.isArray(response?.marketplaces)) throw new Error('Invalid remote plugin catalog')
+  const official = response.marketplaces.filter(marketplace =>
+    isOpenAiOfficialRemoteMarketplaceId(marketplace.name)
+  )
+  const officialPaths = new Set(
+    [
+      ...official.map(marketplace => marketplace.path),
+      ...cachedItems.map(item => item.manifest.marketplacePath),
+    ].flatMap(path => (typeof path === 'string' && path ? [normalizeMarketplaceSource(path)] : []))
+  )
+  const failedOfficialMarketplace = response.marketplaceLoadErrors?.some(error =>
+    officialPaths.has(normalizeMarketplaceSource(error.marketplacePath))
+  )
+  if (official.length === 0 || failedOfficialMarketplace)
+    throw new Error('Incomplete remote plugin catalog')
+  const featuredIds = featuredPluginIdSet(response.featuredPluginIds)
+  return official.flatMap(marketplace =>
+    marketplace.plugins.map(plugin => ({
+      ...toMarketplaceItem(marketplace, plugin, null, featuredIds),
+      installed: false,
+      installedPluginId: null,
+      enabled: false,
+    }))
+  )
+}
+
+function readStoredRemoteCatalogCloudScope(): string | null {
+  const connection = readStoredCloudConnection()
+  return connection ? JSON.stringify([connection.apiBaseUrl, connection.user.id]) : null
+}
+
+const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async options => {
+  if (!isDesktopRuntime()) return { deviceId: '' }
+  const accountEpoch = getPluginMarketplaceAccountEpoch()
+  const cloudScope = readStoredRemoteCatalogCloudScope()
+  const requestAccountIsCurrent = () =>
+    getPluginMarketplaceAccountEpoch() === accountEpoch &&
+    readStoredRemoteCatalogCloudScope() === cloudScope
+  const identity = await raceWithTimeout(
+    readRemoteCatalogScope(),
+    30_000,
+    () => new Error('Remote plugin catalog identity check timed out')
+  )
+  const { deviceId, authScope, runtimeInstanceId } = identity
+  // Runtime instance identity fences pending work, while the durable entry follows
+  // the device and account across a restart.
+  const scope = await sha256Hex(
+    new Blob([JSON.stringify([deviceId, authScope, options.accountScope])])
+  )
+  if (!requestAccountIsCurrent() || options.canStart?.() === false)
+    throw new Error('Plugin catalog scope changed')
+  const snapshot = await openAiRemoteCatalog.read({
+    scope,
+    requestIdentity: JSON.stringify([scope, runtimeInstanceId, accountEpoch]),
+    force: options.forceRefetch,
+    isAccountCurrent: requestAccountIsCurrent,
+    canStart: options.canStart,
+    cacheOnly: options.cacheOnly === true,
+    onCached: snapshot => options.onCached(snapshot, deviceId),
+    load: async cached => {
+      // An automatic cache miss can reuse Codex's directory. An expired snapshot
+      // or explicit refresh should fetch the latest official catalog.
+      const items = await fetchRemoteCatalogItems(
+        cached?.items ?? [],
+        options.forceRefetch || cached !== undefined
+      )
+      const current = await readRemoteCatalogScope()
+      if (
+        current.deviceId !== deviceId ||
+        current.runtimeInstanceId !== runtimeInstanceId ||
+        current.authScope !== authScope ||
+        !requestAccountIsCurrent()
+      )
+        throw new RemotePluginCatalogIdentityChanged()
+      return items
+    },
+  })
+  return { snapshot, deviceId }
+}
+
 export function createLocalCodexPluginApi(): LocalCodexPluginApi {
   const defaultCodexLocalConfig: LocalCodexLocalConfig = {
     codexHome: '',
@@ -2998,16 +3122,19 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         })
       }
     },
-    async packageCreatedPlugin(plugin) {
+    async packageCreatedPlugin(plugin, requireCurrent) {
       if (!isElectronRuntime()) {
         throw new Error('Packaging a local plugin requires the Wework desktop app')
       }
-      const ensured = await this.ensureCreatedPluginInWeworkPersonal(plugin)
+      requireCurrent?.()
+      const source = requireCurrent
+        ? installedPersonalPackageSource(plugin)
+        : await this.ensureCreatedPluginInWeworkPersonal(plugin)
       let artifact: LocalPluginPackageArtifact | null = null
       try {
         const response = await requestLocalExecutor<LocalPluginPackageArtifact>(
           'executor.plugins.personal.package',
-          { marketplacePath: ensured.marketplacePath, pluginName: ensured.pluginName }
+          { marketplacePath: source.marketplacePath, pluginName: source.pluginName }
         )
         artifact = response
         const packaged = validateLocalPluginPackageArtifact(response)
@@ -3083,15 +3210,19 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
       clearLocalCodexPluginsReadStateCache()
     },
-    async linkPersonalPluginRelease(plugin, cloudPluginId, cloudReleaseId) {
+    async linkPersonalPluginRelease(plugin, cloudPluginId, cloudReleaseId, scope) {
       if (!isElectronRuntime()) return
-      const ensured = await this.ensureCreatedPluginInWeworkPersonal(plugin)
+      if (scope) requireCurrentPluginSourceScope(scope.isCurrent)
+      const ensured = scope
+        ? installedPersonalPackageSource(plugin)
+        : await this.ensureCreatedPluginInWeworkPersonal(plugin)
       try {
         await requestLocalExecutor('executor.plugins.links.link', {
           marketplacePath: ensured.marketplacePath,
           localPluginName: ensured.pluginName,
           cloudPluginId,
           cloudReleaseId,
+          ...(scope && { accountInstall: scope.accountInstall }),
         })
       } catch (error) {
         throw new Error(getErrorMessage(error, 'Failed to link local plugin release'), {
@@ -3206,6 +3337,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
             pluginName: imported.pluginName,
             displayName: imported.displayName,
             version: imported.version,
+            marketplacePath,
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -3262,53 +3394,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         }
       )
     },
-    async readRemoteCatalog(options = {}) {
-      if (!isDesktopRuntime()) return { items: [], deviceId: '' }
-      const status = await ensureLocalExecutorStarted()
-      const auth = await readInstalledAuthStatus({
-        deviceId: status.deviceId ?? '',
-        runtimeInstanceId: status.runtimeInstanceId,
-      })
-      const accountEpoch = getPluginMarketplaceAccountEpoch()
-      const scope = JSON.stringify([
-        status.deviceId,
-        status.runtimeInstanceId,
-        auth.sha256,
-        options.accountScope,
-        accountEpoch,
-      ])
-      return remoteCatalog.read(scope, options.forceRefetch === true, async () => {
-        // Codex has no remote-only kind or pagination. The Executor returns list summaries.
-        const response = await codexAppServerRequest<{
-          marketplaces: CodexPluginMarketplaceEntry[]
-          featuredPluginIds?: string[]
-        }>('plugin/list', { cwds: null, forceRefetch: options.forceRefetch === true })
-        if (!Array.isArray(response?.marketplaces)) throw new Error('Invalid remote plugin catalog')
-        const current = await ensureLocalExecutorStarted()
-        const currentAuth = await readInstalledAuthStatus({
-          deviceId: current.deviceId ?? '',
-          runtimeInstanceId: current.runtimeInstanceId,
-        })
-        if (
-          current.deviceId !== status.deviceId ||
-          current.runtimeInstanceId !== status.runtimeInstanceId ||
-          currentAuth.sha256 !== auth.sha256 ||
-          getPluginMarketplaceAccountEpoch() !== accountEpoch
-        )
-          throw new Error('Plugin catalog scope changed')
-        const featuredIds = featuredPluginIdSet(response.featuredPluginIds)
-        return {
-          deviceId: status.deviceId?.trim() ?? '',
-          items: response.marketplaces
-            .filter(marketplace => isOpenAiOfficialRemoteMarketplaceId(marketplace.name))
-            .flatMap(marketplace =>
-              marketplace.plugins.map(plugin =>
-                toMarketplaceItem(marketplace, plugin, null, featuredIds)
-              )
-            ),
-        }
-      })
-    },
+    readRemoteCatalog,
     async readMarketplacePluginDetail(marketplace, pluginName, options) {
       if (!isDesktopRuntime()) {
         throw new Error('Reading local plugin detail requires the Wework desktop app')
@@ -3498,7 +3584,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       clearLocalCodexPluginsReadStateCache()
       return readState({ marketplaceId: response.marketplaceName, refresh: true })
     },
-    async installPersonalPluginSource(item, isCurrent) {
+    async installPersonalPluginSource(item, isCurrent, onLocalCommit) {
       const source = await resolvePersonalPluginSource(item, isCurrent)
       requireCurrentPluginSourceScope(isCurrent)
       const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
@@ -3508,9 +3594,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           pluginName: source.pluginName,
         }
       )
-      requireCurrentPluginSourceScope(isCurrent)
       if (!commit.localCommitted)
         throw new Error('Personal plugin source installation did not commit')
+      onLocalCommit?.(source)
+      requireCurrentPluginSourceScope(isCurrent)
       resumeBundledPluginUpdates(source.pluginName)
       clearLocalCodexPluginsReadStateCache()
       const state = await loadInstalledPluginsOnly({ requireComplete: true })
@@ -3531,7 +3618,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       requireCurrentPluginSourceScope(isCurrent)
       return detail
     },
-    async installAvailablePlugin(item) {
+    async installAvailablePlugin(item, onLocalCommit) {
       // Install the selected shared-catalog entry. A scoped readState cache may
       // omit remote rows even though remote discovery already painted this item.
       const pluginId = item.id
@@ -3548,6 +3635,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           itemMarketplaceId,
       }
       const localMarketplace = isLocalMarketplacePath(marketplace.path)
+      const marketplacePath =
+        localMarketplace && isPersonalMarketplaceId(marketplace.id)
+          ? codexMarketplaceManifestSource(marketplace.path)
+          : marketplace.path
       const installNames = localMarketplace
         ? [pluginInstallName(item, true)]
         : await resolveRemoteInstallPluginNames(marketplace, item)
@@ -3558,7 +3649,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         const pluginName = installNames[index]
         try {
           installResult = await codexAppServerRequest('plugin/install', {
-            marketplacePath: localMarketplace ? marketplace.path : null,
+            marketplacePath: localMarketplace ? marketplacePath : null,
             remoteMarketplaceName: localMarketplace ? null : marketplace.id,
             pluginName,
           })
@@ -3575,6 +3666,11 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         }
       }
       if (installError) throw installError
+      if (localMarketplace && isPersonalMarketplaceId(marketplace.id))
+        onLocalCommit?.({
+          pluginName: acceptedPluginName,
+          marketplacePath: normalizeMarketplaceSource(marketplace.path),
+        })
       if (marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID) {
         resumeBundledPluginUpdates(acceptedPluginName)
       }

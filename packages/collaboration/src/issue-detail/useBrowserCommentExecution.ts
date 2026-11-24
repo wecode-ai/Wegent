@@ -1,10 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { DeviceInfo } from '@wegent/chat-core/execution-project'
-import type {
-  RuntimeDeviceWorkspace,
-  RuntimeWorkListResponse,
-} from '@wegent/chat-core/runtime-task-api-types'
-import type { UnifiedModel } from '@wegent/chat-core/models'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { getIdleResourceSnapshot, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { createBrowserCommentExecutionResources } from './browserCommentExecutionResources'
+import type { RuntimeDeviceWorkspace } from '@wegent/chat-core/runtime-task-api-types'
 import { getPreferredStandaloneDeviceId } from '@wegent/chat-core/device-selection'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@wegent/chat-core/runtime-project'
 import { isSelectableProjectWorkspace } from '@wegent/chat-core/project-workspace-selection'
@@ -13,37 +10,25 @@ import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
 
 /** Resolve the selected code workspace independently of the Issue's storage and assignee. */
 export function useBrowserCommentExecution(runtime: SharedWorkspaceRuntimeApi) {
-  const [revision, setRevision] = useState(0)
-  const [catalog, setCatalog] = useState<{
-    revision: number
-    devices: DeviceInfo[]
-    work: RuntimeWorkListResponse
-  } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [selection, setSelection] = useState<{
-    projectId: number
-    workspace?: RuntimeDeviceWorkspace
-  } | null>(null)
-  const [models, setModels] = useState<{ deviceId: string; items: UnifiedModel[] } | null>(null)
-  const [modelError, setModelError] = useState<{ deviceId: string; message: string } | null>(null)
-  useEffect(() => {
-    const controller = new AbortController()
-    void Promise.all([
-      runtime.listDevices(),
-      runtime.work.listRuntimeWork({ signal: controller.signal }),
-    ])
-      .then(([devices, work]) => {
-        if (!controller.signal.aborted) {
-          setCatalog({ devices, work, revision })
-          setError(null)
-        }
-      })
-      .catch(cause => {
-        if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : String(cause))
-      })
-    return () => controller.abort()
-  }, [runtime, revision])
+  const owner = useMemo(() => createBrowserCommentExecutionResources(runtime), [runtime])
+  const catalogSnapshot = useSyncExternalStore(
+    owner.catalog.subscribe,
+    owner.catalog.getSnapshot,
+    owner.catalog.getSnapshot
+  )
+  const catalog = catalogSnapshot.data
+  const catalogError =
+    catalogSnapshot.status === 'error'
+      ? catalogSnapshot.error instanceof Error
+        ? catalogSnapshot.error.message
+        : String(catalogSnapshot.error)
+      : null
+  const [choice, setChoice] = useState<{
+    owner: typeof owner
+    selection: { projectId: number; workspace?: RuntimeDeviceWorkspace } | null
+  }>({ owner, selection: null })
+  if (choice.owner !== owner) setChoice({ owner, selection: null })
+  const selection = choice.owner === owner ? choice.selection : null
   // APP devices are visible in the account catalog, but the backend does not
   // allow remote control of their runtime from a browser.
   const work = useMemo(() => {
@@ -104,28 +89,31 @@ export function useBrowserCommentExecution(runtime: SharedWorkspaceRuntimeApi) {
         : {}),
     }
   }, [deviceId, workspace, projectWork])
-  useEffect(() => {
-    let active = true
-    if (deviceId)
-      void runtime
-        .listModels(deviceId)
-        .then(items => {
-          if (active) {
-            setModels({ deviceId, items })
-            setModelError(null)
-          }
-        })
-        .catch(cause => {
-          if (active)
-            setModelError({
-              deviceId,
-              message: cause instanceof Error ? cause.message : String(cause),
-            })
-        })
-    return () => {
-      active = false
-    }
-  }, [runtime, deviceId, revision])
+  const modelsResource = useMemo(
+    () => (deviceId ? owner.modelsFor(deviceId) : null),
+    [owner, deviceId]
+  )
+  const modelsSnapshot = useSyncExternalStore(
+    modelsResource?.subscribe ?? subscribeIdleResource,
+    modelsResource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const modelError =
+    modelsSnapshot.status === 'error'
+      ? modelsSnapshot.error instanceof Error
+        ? modelsSnapshot.error.message
+        : String(modelsSnapshot.error)
+      : null
+  const selectProject = useCallback(
+    (projectId: number | null, workspace?: RuntimeDeviceWorkspace) => {
+      setChoice(current =>
+        current.owner === owner
+          ? { owner, selection: projectId == null ? null : { projectId, workspace } }
+          : current
+      )
+    },
+    [owner]
+  )
   return {
     devices: catalog?.devices ?? [],
     work,
@@ -135,14 +123,13 @@ export function useBrowserCommentExecution(runtime: SharedWorkspaceRuntimeApi) {
     workspace,
     target,
     standaloneTarget,
-    error: error ?? (modelError?.deviceId === deviceId ? modelError.message : null),
-    catalogError: error,
-    loading: !catalog && !error,
-    catalogCurrent: catalog?.revision === revision,
-    models: models?.deviceId === deviceId ? models.items : [],
-    modelsReady: models?.deviceId === deviceId,
-    retry: useCallback(() => setRevision(value => value + 1), []),
-    selectProject: (projectId: number | null, workspace?: RuntimeDeviceWorkspace) =>
-      setSelection(projectId == null ? null : { projectId, workspace }),
+    error: catalogError ?? modelError,
+    catalogError,
+    loading: !catalog && !catalogError,
+    catalogCurrent: catalogSnapshot.status === 'ready',
+    models: modelsSnapshot.data ?? [],
+    modelsReady: modelsSnapshot.status === 'ready',
+    retry: owner.retry,
+    selectProject,
   }
 }

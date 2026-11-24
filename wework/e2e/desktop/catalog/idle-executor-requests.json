@@ -5,13 +5,17 @@
   "paths": [
     "wework/src/e2e/idle-executor-requests*",
     "wework/e2e/desktop/modules/idle-executor-requests*",
+    "wework/e2e/desktop/modules/idle-executor-pending-inventory*",
     "wework/e2e/desktop/modules/runtime-work-refresh-burst*",
+    "wework/e2e/desktop/modules/stand-in-device-discovery-burst*",
+    "wework/src/api/hybrid/hybridServices.ts",
     "executor/src/runtime_work/handler/inventory_read_tests.rs",
     "executor/src/runtime_work/handler/queries.rs",
     "wework/src/desktop/localExecutor*",
     "wework/src/telemetry/StandInTelemetryAgent*",
+    "wework/src/telemetry/standInTelemetrySession.ts",
     "wework/src/features/workbench/useWorkbenchDataRefresh*",
-    "wework/src/features/workbench/workbenchDataRefreshHelpers*",
+    "wework/src/features/workbench/workbenchDataRefresh*",
     "wework/src/features/workbench/WorkbenchProvider.tsx"
   ],
   "ci": {

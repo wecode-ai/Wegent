@@ -3034,6 +3034,7 @@ dependencies = [
 name = "wegent-executor-test-support"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "zip",
 ]
 
@@ -3120,6 +3121,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "toml_edit",
  "tower",
  "url",

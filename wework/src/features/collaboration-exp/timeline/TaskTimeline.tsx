@@ -1,28 +1,35 @@
-import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Circle, FileText, Lock, Sparkles } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { RuntimeTaskAddress } from '@/types/api'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import type { AssistantParticipation, SharedWorkspaceApi } from '@wegent/collaboration'
 import {
   IssueActivityMarkdown,
   issueNeedsUser,
   pendingIssueHumanRequests,
 } from '@wegent/collaboration'
-import type { CollaborationAttachment, SharedWorkspaceApi } from '@wegent/collaboration'
-import type { AssistantParticipation } from '@wegent/collaboration'
-import { Button } from '@/components/ui/button'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import { useFocusRequest, useScrollRequest } from '@wegent/collaboration/dom-events'
 import { useMarkdownServices } from '@wegent/collaboration/markdown'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { RuntimeTaskAddress } from '@/types/api'
+import { ArrowRight, Circle, FileText, Lock, Sparkles } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ExperienceIssueData } from '../data/useExperienceIssue'
 import type { ExperienceTimelineData } from '../data/useExperienceTimeline'
+import { isPublishedTimelineConclusion } from '../model/messageLayer'
+import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import type {
   ExperienceAttachmentReference,
   ExperiencePrivateConversation,
   ExperienceTimelineNode,
 } from '../model/types'
+import { createAssistantParticipationSource } from './assistantParticipationSource'
+import './TimelineExperience.css'
 import { TimelineFilters, type TimelineFilter } from './TimelineFilters'
 import { TimelineNode } from './TimelineNode'
-import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
-import { isPublishedTimelineConclusion } from '../model/messageLayer'
-import './TimelineExperience.css'
 
 export interface TimelineAttachmentSelection {
   id: string
@@ -58,97 +65,72 @@ export function TaskTimeline(props: Props) {
   const focusRequest = props.focusRequest
   const filterRequest = JSON.stringify([selectedNodeId, focusRequest])
   const hasSelectedNode = timeline.nodes.some(node => node.id === selectedNodeId)
-  useEffect(() => {
-    if (!selectedNodeId || !hasSelectedNode) return
-    const node = Array.from(
-      contentRef.current?.querySelectorAll<HTMLElement>('[data-testid]') ?? []
-    ).find(
-      element => element.dataset.testid === `collaboration-exp-timeline-node-${selectedNodeId}`
-    )
-    node?.scrollIntoView?.({ block: 'nearest' })
-    if (focusRequest) node?.focus({ preventScroll: true })
-  }, [selectedNodeId, hasSelectedNode, focusRequest])
+  const selectedNodeSelector = '.experience-timeline-node[data-linked="true"]'
+  useScrollRequest(contentRef, selectedNodeSelector, filterRequest, {
+    enabled: Boolean(selectedNodeId && hasSelectedNode),
+    block: 'nearest',
+  })
+  useFocusRequest(contentRef, filterRequest, {
+    enabled: Boolean(selectedNodeId && hasSelectedNode && focusRequest),
+    preventScroll: true,
+    selector: selectedNodeSelector,
+  })
   const [filterState, setFilter] = useState({
     request: filterRequest,
     value: 'all' as TimelineFilter,
   })
   const filter = props.filter ?? (filterState.request === filterRequest ? filterState.value : 'all')
-  const [attachmentState, setAttachmentState] = useState<{
-    items: CollaborationAttachment[]
-    error: string | null
-  }>({ items: [], error: null })
-  const participationScopeKey = JSON.stringify([
+  const attachmentScope = JSON.stringify([
     props.data.project.project_store,
     props.data.project.id,
     issue.id,
-    props.data.participationViewer,
   ])
-  const participationRequestKey = JSON.stringify([participationScopeKey, props.revision])
-  const [participationRetry, setParticipationRetry] = useState(0)
-  const participationReadRequest = useRef(0)
-  const [participationState, setParticipationState] = useState<{
-    key: string
-    items: AssistantParticipation[]
-    error: string | null
-  }>({ key: participationScopeKey, items: [], error: null })
-  useEffect(() => {
-    if (!props.active) return
-    let cancelled = false
-    void props.api.attachments.list(issue.id).then(
-      items => {
-        if (!cancelled) setAttachmentState({ items, error: null })
-      },
-      cause => {
-        if (!cancelled) setAttachmentState(previous => ({ ...previous, error: String(cause) }))
-      }
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [props.api, issue.id, props.active, props.revision])
-  useEffect(() => {
-    const list = props.api.issues?.listAssistantParticipations
-    if (!props.active || !list) return
-    let cancelled = false
-    void list(issue.id).then(
-      items => {
-        if (!cancelled) setParticipationState({ key: participationScopeKey, items, error: null })
-      },
-      cause => {
-        if (!cancelled)
-          setParticipationState(current => ({
-            key: participationScopeKey,
-            items: current.key === participationScopeKey ? current.items : [],
-            error: cause instanceof Error ? cause.message : String(cause),
-          }))
-      }
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [
-    issue.id,
-    participationRequestKey,
-    participationRetry,
-    participationScopeKey,
-    props.active,
-    props.api,
-  ])
-  useEffect(
-    () => () => {
-      participationReadRequest.current += 1
-    },
-    [issue.id, props.active]
+  const attachmentSource = useMemo(
+    () =>
+      createAsyncResource(attachmentScope, () => props.api.attachments.list(issue.id), {
+        refreshOnSubscribe: true,
+      }),
+    [attachmentScope, props.api, issue.id]
   )
-  const participations =
-    participationState.key === participationScopeKey ? participationState : null
+  const subscribeAttachments = useCallback(
+    (notify: () => void) =>
+      props.active ? attachmentSource.subscribe(notify, props.revision) : subscribeIdleResource(),
+    [attachmentSource, props.active, props.revision]
+  )
+  const attachments = useSyncExternalStore(
+    subscribeAttachments,
+    attachmentSource.getSnapshot,
+    attachmentSource.getSnapshot
+  )
+  const attachmentState = {
+    items: attachments.data ?? [],
+    error: attachments.error === undefined ? null : String(attachments.error),
+  }
+  const participationScopeKey = JSON.stringify([attachmentScope, props.data.participationViewer])
+  const participationSource = useMemo(
+    () => createAssistantParticipationSource(props.api, issue.id, participationScopeKey),
+    [props.api, issue.id, participationScopeKey]
+  )
+  const subscribeParticipations = useCallback(
+    (notify: () => void) =>
+      props.active && props.api.issues.listAssistantParticipations
+        ? participationSource.subscribe(notify, props.revision)
+        : subscribeIdleResource(),
+    [participationSource, props.active, props.api, props.revision]
+  )
+  const participationQuery = useSyncExternalStore(
+    subscribeParticipations,
+    participationSource.getSnapshot
+  )
+  const participations = {
+    items: participationQuery.data ?? [],
+    error: participationQuery.error === undefined ? null : String(participationQuery.error),
+  }
   const openParticipation = async (participation: AssistantParticipation) => {
-    const read = props.api.issues?.readAssistantParticipation
-    if (participation.historyState !== 'unverified' || !read) return
-    const request = ++participationReadRequest.current
     try {
-      const workroom = await read(issue.id, participation.id)
-      if (request !== participationReadRequest.current) return
+      const receipt = await participationSource.read(participation)
+      if (!receipt?.isCurrent()) return
+      const { workroom } = receipt
       if (workroom.runtimeAddress) props.onExecution(workroom.runtimeAddress)
       else if (workroom.backendTask) await openExternalUrl(workroom.backendTask.executionUrl)
     } catch {
@@ -220,18 +202,22 @@ export function TaskTimeline(props: Props) {
       <div ref={contentRef} className="experience-matter-scroll">
         <div className="experience-matter-document">
           {filter === 'all' && issue.description ? (
-            <details
+            <CollapsibleRoot
               className="experience-matter-background"
               data-testid="collaboration-exp-background"
             >
-              <summary>{t('timeline.background')}</summary>
-              <IssueActivityMarkdown
-                content={issue.description}
-                onOpenAttachment={(id, name) =>
-                  props.onAttachment({ id, name, sourceNodeId: null })
-                }
-              />
-            </details>
+              <CollapsibleTrigger data-testid="task-timeline-toggle">
+                {t('timeline.background')}
+              </CollapsibleTrigger>
+              <CollapsiblePanel>
+                <IssueActivityMarkdown
+                  content={issue.description}
+                  onOpenAttachment={(id, name) =>
+                    props.onAttachment({ id, name, sourceNodeId: null })
+                  }
+                />
+              </CollapsiblePanel>
+            </CollapsibleRoot>
           ) : null}
           <TimelineFilters
             value={filter}
@@ -306,7 +292,7 @@ export function TaskTimeline(props: Props) {
                   <Button
                     variant="ghost"
                     data-testid="collaboration-exp-assistant-participations-retry"
-                    onClick={() => setParticipationRetry(current => current + 1)}
+                    onClick={() => void participationSource.reload()}
                   >
                     {t('retry')}
                   </Button>

@@ -13,6 +13,10 @@ import {
   verifyBrowserHistoryResume,
 } from './browser-history-resume-regression.mjs'
 import {
+  handleBrowserDownloadHttp,
+  verifyBrowserDownloadPolicy,
+} from './browser-download-policy-regression.mjs'
+import {
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
@@ -256,16 +260,7 @@ async function withTimeout(promise, timeoutMs, message) {
   ]).finally(() => clearTimeout(timer))
 }
 
-async function assertNoticeCenteredInBrowserPanel(control) {
-  const [noticeMetrics] = JSON.parse(
-    await control.command('getElementMetrics', TRANSIENT_NOTICE_SELECTOR)
-  )
-  const [panelMetrics] = JSON.parse(
-    await control.command(
-      'getElementMetrics',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
-    )
-  )
+function assertNoticeCenteredInBrowserPanel(noticeMetrics, panelMetrics) {
   const noticeCenter = noticeMetrics.left + noticeMetrics.width / 2
   const panelCenter = panelMetrics.left + panelMetrics.width / 2
 
@@ -283,6 +278,21 @@ async function assertNoticeCenteredInBrowserPanel(control) {
       panelMetrics,
     })}`
   )
+}
+
+async function clearBrowserData(control, clickSelector, timeoutMs) {
+  const [notice] = JSON.parse(
+    await control.command('getElementMetrics', TRANSIENT_NOTICE_SELECTOR, {
+      text: BROWSER_CLEAR_STARTED_TEXT,
+      timeoutMs,
+      value: JSON.stringify({ clickSelector }),
+    })
+  )
+  await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
+    text: BROWSER_CLEAR_COMPLETED_TEXT,
+    timeoutMs: 35_000,
+  })
+  return notice
 }
 
 async function waitForControlValue(control, selector, expected, timeoutMs, message) {
@@ -320,6 +330,27 @@ async function verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs) 
     timeoutMs,
   })
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+}
+
+async function verifyWaitTimeoutWithoutApproval(bridgeCall, control, timeoutMs) {
+  const result = await bridgeCall({
+    action: 'waitFor',
+    options: { condition: { textVisible: 'WEWORK_APPROVAL_ABSENT_TEXT' } },
+    timeoutMs: 100,
+  })
+  assert.equal(result.ok, false, JSON.stringify(result))
+  assert.equal(result.error?.code, 'wait_timeout', JSON.stringify(result))
+  await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, {
+    text: 'AI 等待页面就绪超时',
+    timeoutMs,
+  })
+  for (const selector of [BROWSER_AGENT_APPROVE_SELECTOR, BROWSER_AGENT_REJECT_SELECTOR]) {
+    await control.command('waitFor', selector, { visible: false, timeoutMs })
+  }
+
+  const inspected = await bridgeCall({ action: 'inspect' })
+  assert.ok(inspected.inspectText.includes('Code editor'))
+  await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, { visible: false, timeoutMs })
 }
 
 async function beginEditorApproval(invoke, control, text, timeoutMs, previousId = '') {
@@ -647,15 +678,28 @@ function parseToolJson(text) {
   return JSON.parse(text)
 }
 
-export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  executorHome,
+  resultDir,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  workspacePath,
+}) {
   let cacheResourceRequests = 0
+  const downloadsPath = join(resultDir, 'e2e-downloads')
 
   return {
+    appEnvironment: {
+      WEWORK_E2E_DOWNLOADS_DIR: downloadsPath,
+      WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
+      WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS: '5000',
+    },
     setExecutorBinary(path) {
       desktopScenarioExecutorBinary = path
     },
     async handleHttp(request, response, url) {
       if (await handleBrowserHistoryModelRequest(request, response, url)) return true
+      if (await handleBrowserDownloadHttp(request, response, url)) return true
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })
         response.end()
@@ -796,7 +840,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FRESH_CHAT_COMPLETION_TEXT,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       const backgroundTaskId = await waitForDifferentRuntimeTaskId(control, taskId, uiTimeoutMs)
       const backgroundBrowserLabel = await readBrowserPanelLabel(
@@ -1279,15 +1323,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         enabled: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', BROWSER_CLEAR_COOKIES_SELECTOR)
-      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_STARTED_TEXT,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_COMPLETED_TEXT,
-        timeoutMs: 35_000,
-      })
+      await clearBrowserData(control, BROWSER_CLEAR_COOKIES_SELECTOR, uiTimeoutMs)
       await bridgeCall({ action: 'open', url: cookieVerificationUrl, timeoutMs: 8_000 })
       await bridgeCall({
         action: 'waitFor',
@@ -1324,16 +1360,18 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         enabled: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', BROWSER_CLEAR_CACHE_SELECTOR)
-      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_STARTED_TEXT,
-        timeoutMs: uiTimeoutMs,
-      })
-      await assertNoticeCenteredInBrowserPanel(control)
-      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_COMPLETED_TEXT,
-        timeoutMs: 35_000,
-      })
+      const [panelMetrics] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
+        )
+      )
+      const noticeMetrics = await clearBrowserData(
+        control,
+        BROWSER_CLEAR_CACHE_SELECTOR,
+        uiTimeoutMs
+      )
+      assertNoticeCenteredInBrowserPanel(noticeMetrics, panelMetrics)
       await bridgeCall({ action: 'close', timeoutMs: 8_000 })
       await waitForElementCount(
         control,
@@ -1681,6 +1719,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
               })
             )
         )
+        await verifyWaitTimeoutWithoutApproval(bridgeCall, control, uiTimeoutMs)
         await verifyBrowserFullControl(
           control,
           bridgeCall,
@@ -1862,6 +1901,14 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: LOCAL_TOAST_TEXT,
         timeoutMs: uiTimeoutMs,
+      })
+
+      await verifyBrowserDownloadPolicy({
+        bridgeCall,
+        control,
+        downloadsPath,
+        resultDir,
+        uiTimeoutMs,
       })
 
       await writeFile(

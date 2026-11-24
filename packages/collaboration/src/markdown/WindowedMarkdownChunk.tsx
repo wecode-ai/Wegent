@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useContext, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { isOversizedAtomicMarkdownChunk } from './assistantMarkdownWindowing'
 import {
@@ -75,8 +67,11 @@ export function WindowedMarkdownChunk({
       eager: effectiveEager,
     }
   }, [content, shouldRender, effectiveEager])
+  const diagnosticsEnabled = isConversationDiagnosticsEnabled()
   const reservedHeight =
-    retainedLayout?.content === content
+    shouldRender && !diagnosticsEnabled
+      ? undefined
+      : retainedLayout?.content === content
       ? retainedLayout.height
       : estimateMarkdownChunkHeight(content, scope?.rootFontSize)
 
@@ -112,18 +107,32 @@ export function WindowedMarkdownChunk({
     },
     [scope]
   )
-  const attachChunk = useCallback(
-    (chunk: HTMLDivElement | null) => {
-      chunkRef.current = chunk
-      if (!chunk || shouldRender) return
-      // Parent virtual rows measure in the same commit, before this chunk's
-      // retained-layout state update can render. Restore its width-matched height now.
+  const attachChunk = useCallback((chunk: HTMLDivElement | null) => {
+    chunkRef.current = chunk
+    if (!chunk) return
+    return () => {
+      chunkRef.current = null
+      if (!isConversationDiagnosticsEnabled()) return
+      recordConversationDiagnostic('markdown-unmounted', {
+        ...diagnosticDetailsRef.current,
+        elapsedMs: diagnosticLayoutRef.current
+          ? performance.now() - diagnosticLayoutRef.current.measuredAtMs
+          : 0,
+      })
+    }
+  }, [])
+  const attachPlaceholder = useCallback(
+    (placeholder: HTMLDivElement | null) => {
+      const chunk = placeholder?.parentElement
+      if (!placeholder || !chunk) return
+      // Capture native range loss before restoring the width-matched placeholder height.
+      // Parent rows measure in this commit; growing the placeholder first would hide that clamp.
+      scope?.captureNativeScrollRange()
       const height = retainPlaceholderLayout(chunk.getBoundingClientRect(), content)
       chunk.style.minHeight = `${height}px`
-      const placeholder = chunk.querySelector<HTMLElement>('[data-markdown-window-placeholder]')
-      if (placeholder) placeholder.style.maxHeight = `${height}px`
+      placeholder.style.maxHeight = `${height}px`
     },
-    [content, retainPlaceholderLayout, shouldRender]
+    [content, retainPlaceholderLayout, scope]
   )
   const viewportRender = useCallback((viewport: DOMRect): (() => void) | undefined => {
     const chunk = chunkRef.current
@@ -137,9 +146,14 @@ export function WindowedMarkdownChunk({
   useLayoutEffect(() => {
     const chunk = chunkRef.current
     if (!chunk) return
-    const rect = chunk.getBoundingClientRect()
     const wasEager = previousEagerRef.current
     previousEagerRef.current = effectiveEager
+    if (effectiveEager && !diagnosticsEnabled) {
+      // The row owner measures visible content. An eager chunk has no placeholder to size.
+      scope?.onChunkLayout(chunk)
+      return
+    }
+    const rect = chunk.getBoundingClientRect()
     if (shouldRender) {
       saveRenderedLayout(rect)
       scope?.onChunkLayout(chunk)
@@ -154,7 +168,7 @@ export function WindowedMarkdownChunk({
       if (viewportHasSize(viewport) && isNearViewport(rect, viewport)) setNearViewport(true)
     }
 
-    if (!isConversationDiagnosticsEnabled()) return
+    if (!diagnosticsEnabled) return
     const previous = diagnosticLayoutRef.current
     const now = performance.now()
     diagnosticDetailsRef.current = {
@@ -165,7 +179,7 @@ export function WindowedMarkdownChunk({
       eager: effectiveEager,
       nearViewport,
       rendered: shouldRender,
-      reservedHeight,
+      reservedHeight: reservedHeight ?? 0,
       retainedHeight: retainedLayout?.content === content ? retainedLayout.height : 0,
       height: rect.height,
       previousHeight: previous?.height ?? rect.height,
@@ -178,6 +192,7 @@ export function WindowedMarkdownChunk({
   }, [
     chunkIndex,
     content,
+    diagnosticsEnabled,
     effectiveEager,
     saveRenderedLayout,
     retainPlaceholderLayout,
@@ -272,19 +287,6 @@ export function WindowedMarkdownChunk({
     return () => observer.disconnect()
   }, [saveRenderedLayout, retainPlaceholderLayout, scope, viewportRender])
 
-  useEffect(
-    () => () => {
-      if (!isConversationDiagnosticsEnabled()) return
-      recordConversationDiagnostic('markdown-unmounted', {
-        ...diagnosticDetailsRef.current,
-        elapsedMs: diagnosticLayoutRef.current
-          ? performance.now() - diagnosticLayoutRef.current.measuredAtMs
-          : 0,
-      })
-    },
-    []
-  )
-
   return (
     <div
       ref={attachChunk}
@@ -297,6 +299,7 @@ export function WindowedMarkdownChunk({
         children
       ) : (
         <div
+          ref={attachPlaceholder}
           data-markdown-window-placeholder
           className="overflow-hidden whitespace-pre-wrap leading-6"
           style={{ maxHeight: reservedHeight }}

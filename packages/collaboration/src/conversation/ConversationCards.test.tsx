@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from "react";
+import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
+import { WindowedMarkdownChunk } from "../markdown/WindowedMarkdownChunk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TurnFileChangesSummary } from "@wegent/chat-core/runtime";
 import { createCollaborationTranslator } from "../i18n";
@@ -10,6 +12,9 @@ import { FileChangesCard } from "./FileChangesCard";
 import { RequestUserInputCard } from "./RequestUserInputCard";
 import { CodexReferenceList } from "./CodexTurnArtifacts";
 import { getAssistantReferences } from "./codexReferences";
+import { createMessageTextSelectionState } from "./messageTextSelectionState";
+import { selectedShareExcerpts } from "../platform/selectedShareExcerpts";
+import { TaskIssueShareExcerpts } from "../platform/TaskIssueShareExcerpts";
 import { SelectionActionsPopover } from "./SelectionActionsPopover";
 import { AssistantErrorCard } from "./AssistantErrorCard";
 import { GitAccountConfigurationProvider } from "../controls/GitAccountConfiguration";
@@ -321,12 +326,166 @@ describe("shared conversation cards without Electron", () => {
     }
   });
 
+  it("captures the selected occurrence and its source message instead of matching the first occurrence", () => {
+    container.innerHTML = '<article data-message-id="source"><div data-message-selectable-text>repeat then repeat</div></article>';
+    const body = container.querySelector('[data-message-selectable-text]')!;
+    const range = document.createRange();
+    range.setStart(body.firstChild!, 12);
+    range.setEnd(body.firstChild!, 18);
+    range.getBoundingClientRect = () => new DOMRect(100, 100, 40, 20);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const state = createMessageTextSelectionState("conversation", false, true);
+    const detach = state.attach(container);
+    try {
+      state.update();
+      expect(state.getSnapshot().textSelection).toMatchObject({
+        text: "repeat", messageId: "source", content: "repeat then repeat", start: 12,
+      });
+    } finally {
+      selection.removeAllRanges();
+      detach();
+    }
+  });
+
+  it("extracts code selection without code toolbar text or embedded theme CSS", () => {
+    container.innerHTML = '<article data-message-id="code-source"><div data-message-selectable-text><p>The path is:</p><div data-testid="markdown-code-block"><div><span data-testid="markdown-code-block-language">plaintext</span><button>Copy code</button></div><style data-pierre-code-theme>.pierre-code-block { color: red }</style><pre><code><span>/Users</span><span>/axb/work</span></code></pre></div></div></article>';
+    const code = container.querySelector('code')!;
+    const range = document.createRange();
+    range.setStart(code.lastChild!.firstChild!, 0);
+    range.setEnd(code.lastChild!.firstChild!, 9);
+    range.getBoundingClientRect = () => new DOMRect(100, 100, 40, 20);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const state = createMessageTextSelectionState("conversation", false, true);
+    const detach = state.attach(container);
+    try {
+      state.update();
+      const captured = state.getSnapshot().textSelection!;
+      expect(captured.content).toBe("The path is:\n/Users/axb/work");
+      expect(captured.text).toBe("/axb/work");
+      expect(captured.content.slice(captured.start, captured.start + captured.text.length)).toBe("/axb/work");
+      expect(captured.content).not.toMatch(/pierre|plaintext|Copy code|color/);
+    } finally {
+      selection.removeAllRanges();
+      detach();
+    }
+  });
+
+  it("keeps selections before newly loaded successors using native transcript positions", () => {
+    const excerpt = (id: string, position: number) => ({ id, role: "assistant" as const, content: id, order: [position, 0] as [number, number] });
+    const source = excerpt("source", 2);
+    const selection = { excerpt: source, start: 0, end: 3, followingMessageIds: ["last"] };
+    expect(selectedShareExcerpts([excerpt("first", 1), excerpt("later-loaded", 3), excerpt("last", 4)], selection).map(value => value.id)).toEqual(["first", "source", "later-loaded", "last"]);
+    expect(selectedShareExcerpts([excerpt("first", 1), source, excerpt("last", 4)], selection).map(value => value.id)).toEqual(["first", "source", "last"]);
+  });
+
+  it("captures all prose segments of one message and retains hard breaks", () => {
+    container.innerHTML = '<article data-message-id="segments"><div data-message-selectable-text><p>alpha<br>beta</p></div><button>Tool details</button><div data-message-selectable-text><p>gamma beta</p></div></article>';
+    const body = container.querySelectorAll('[data-message-selectable-text]')[1];
+    const range = document.createRange();
+    range.setStart(body.firstChild!.firstChild!, 6);
+    range.setEnd(body.firstChild!.firstChild!, 10);
+    range.getBoundingClientRect = () => new DOMRect(100, 100, 40, 20);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const state = createMessageTextSelectionState("conversation", false, true);
+    const detach = state.attach(container);
+    try {
+      state.update();
+      expect(state.getSnapshot().textSelection).toMatchObject({ text: "beta", content: "alpha\nbeta\n\ngamma beta", start: 18 });
+      range.setStart(container.querySelector('[data-message-selectable-text]')!.firstChild!.firstChild!, 0);
+      state.update();
+      expect(state.getSnapshot().textSelection?.text).toBe("alpha\nbeta\n\ngamma beta");
+    } finally {
+      selection.removeAllRanges();
+      detach();
+    }
+  });
+
+  it("retains offscreen Markdown placeholder prose around the selected chunk", () => {
+    vi.stubGlobal("IntersectionObserver", class {});
+    try {
+      container.innerHTML = renderToStaticMarkup(
+        <article data-message-id="windowed"><div data-message-selectable-text>
+          <WindowedMarkdownChunk chunkIndex={0} content="Before selection" eager={false}><p>Before selection</p></WindowedMarkdownChunk>
+          <p data-selected>Selected prose</p>
+          <WindowedMarkdownChunk chunkIndex={2} content="After selection" eager={false}><p>After selection</p></WindowedMarkdownChunk>
+        </div></article>
+      );
+      expect(container.querySelectorAll('[data-markdown-window-placeholder]')).toHaveLength(2);
+      const range = document.createRange();
+      range.selectNodeContents(container.querySelector('[data-selected]')!);
+      range.getBoundingClientRect = () => new DOMRect(100, 100, 40, 20);
+      document.getSelection()!.addRange(range);
+      const state = createMessageTextSelectionState("conversation", false, true);
+      const detach = state.attach(container);
+      state.update();
+      const capture = state.getSnapshot().textSelection!;
+      expect(capture.content).toContain("Before selection");
+      expect(capture.content).toContain("After selection");
+      expect(capture.content.slice(capture.start, capture.start + capture.text.length)).toBe("Selected prose");
+      detach();
+    } finally {
+      document.getSelection()!.removeAllRanges();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows the full selected message, highlights the exact occurrence and retains other messages", () => {
+    const source = { id: "source", role: "assistant" as const, content: "repeat then repeat" };
+    const other = { id: "other", role: "user" as const, content: "Another message" };
+    const last = { id: "last", role: "assistant" as const, content: "Last message" };
+    function SharePreview() {
+      const [selected, setSelected] = useState([source.id]);
+      const [whole, setWhole] = useState(false);
+      return <TaskIssueShareExcerpts
+        excerpts={[other, last]}
+        firstAvailable
+        selection={{ excerpt: source, start: 12, end: 18, followingMessageIds: [last.id] }}
+        selected={selected}
+        onSelect={setSelected}
+        shareWholeMessage={whole}
+        onShareWholeMessage={setWhole}
+      />;
+    }
+    render(<SharePreview />);
+    const highlight = element("task-issue-share-highlight");
+    expect(highlight.textContent).toBe("repeat");
+    expect(highlight.previousSibling?.textContent).toBe("repeat then ");
+    expect(highlight.parentElement?.textContent).toBe(source.content);
+    const rows = Array.from(document.querySelectorAll('[data-testid="task-issue-share-excerpt"]'));
+    expect(rows).toHaveLength(3);
+    expect(rows.map(row => row.textContent)).toEqual([expect.stringContaining(other.content), expect.stringContaining(source.content), expect.stringContaining(last.content)]);
+    expect(rows[1].getAttribute("aria-pressed")).toBe("mixed");
+    expect(element("task-issue-share-excerpt-partial")).toBeTruthy();
+    act(() => (rows[1] as HTMLElement).click());
+    expect(rows[1].getAttribute("aria-pressed")).toBe("true");
+    act(() => (rows[1] as HTMLElement).click());
+    expect(rows[1].getAttribute("aria-pressed")).toBe("false");
+    act(() => (rows[1] as HTMLElement).click());
+    expect(rows[1].getAttribute("aria-pressed")).toBe("mixed");
+    act(() => (rows[0] as HTMLElement).click());
+    expect(rows[0].getAttribute("aria-pressed")).toBe("true");
+    act(() => element("task-issue-share-whole-message").click());
+    expect(element("task-issue-share-whole-message").getAttribute("aria-pressed")).toBe("true");
+    expect(element("task-issue-share-whole-message").getAttribute("aria-label")).toBe("Share selected text only");
+    expect(element("task-issue-share-highlight").textContent).toBe(source.content);
+    act(() => element("task-issue-share-whole-message").click());
+    expect(element("task-issue-share-whole-message").getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("keeps selection actions themed, localized and bound to real callbacks", () => {
     const add = vi.fn();
+    const share = vi.fn();
     render(
       <SelectionActionsPopover
         position={{ left: 50, top: 80 }}
         onAddToConversation={add}
+        onShareAsIssue={share}
       />,
     );
     const popup = element("message-selection-actions");
@@ -338,6 +497,9 @@ describe("shared conversation cards without Electron", () => {
     ).toBeNull();
     act(() => element("add-selection-to-conversation-button").click());
     expect(add).toHaveBeenCalledOnce();
+    act(() => element("share-selection-as-issue-button").click());
+    expect(share).toHaveBeenCalledOnce();
+    expect(popup.textContent).toContain("Share with others");
     expect(popup.textContent).toContain("Add to conversation");
   });
 });

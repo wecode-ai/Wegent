@@ -4,12 +4,30 @@
 
 """Tests for OpenAI request conversion defaults."""
 
+import pytest
+
 from shared.models.execution import (
     GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
     ExecutionRequest,
 )
 from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 from shared.models.openai_converter import OpenAIRequestConverter
+
+
+@pytest.mark.parametrize(
+    "context",
+    [{}, {"backend_url": None}, {"backend_url": ""}, {"backend_url": " \t\n"}],
+)
+def test_missing_backend_context_is_accepted_in_both_wire_formats(
+    context: dict[str, str | None],
+) -> None:
+    direct = ExecutionRequest.from_dict(context)
+    openai = OpenAIRequestConverter.to_execution_request(
+        {"model": "test", "input": "hello", "metadata": context}
+    )
+    assert direct.backend_api_url == ""
+    assert openai.backend_api_url == ""
+    assert direct.backend_url == openai.backend_url
 
 
 def test_resource_owner_and_namespace_survive_both_wire_formats():
@@ -53,6 +71,26 @@ def test_legacy_session_bindings_round_trip_without_seeding_inherited_sessions()
         ExecutionRequest.from_dict(request.to_dict()).legacy_session_bindings
         == bindings
     )
+
+
+def test_legacy_session_fallback_round_trip_is_distinct_from_new_session():
+    for fallback in (False, True):
+        request = ExecutionRequest(new_session=True, legacy_session_fallback=fallback)
+
+        wire = OpenAIRequestConverter.from_execution_request(request)
+        restored = OpenAIRequestConverter.to_execution_request(wire)
+
+        assert wire["metadata"]["legacy_session_fallback"] is fallback
+        assert restored.new_session is True
+        assert restored.legacy_session_fallback is fallback
+        assert (
+            ExecutionRequest.from_dict(request.to_dict()).legacy_session_fallback
+            is fallback
+        )
+    assert ExecutionRequest().legacy_session_fallback is False
+    assert not OpenAIRequestConverter.to_execution_request(
+        {"model": "test", "input": "hello", "metadata": {}}
+    ).legacy_session_fallback
 
 
 def test_legacy_session_bindings_default_is_empty_and_not_shared():

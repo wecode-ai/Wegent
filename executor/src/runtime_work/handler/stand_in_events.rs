@@ -29,6 +29,11 @@ impl RuntimeWorkRpcHandler {
         if payload["commentId"].is_string() {
             return self.process_stand_in_issue_mention(payload).await;
         }
+        if let Some(issue_id) = payload["personalIssueId"].as_str() {
+            return self
+                .process_personal_issue_assignment(&payload, issue_id)
+                .await;
+        }
         let (Some(project), Some(issue_id), Some(assignment)) = (
             payload["projectId"].as_str(),
             payload["itemId"].as_str(),
@@ -164,6 +169,7 @@ mod tests {
         handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url,
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         })));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();

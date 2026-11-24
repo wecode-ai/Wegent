@@ -5,6 +5,7 @@
 import { expect } from '@playwright/test'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
 import {
+  chooseCollaborationOption,
   dragCollaborationIssue,
   dragCollaborationIssueToColumn,
   webApi,
@@ -174,7 +175,11 @@ projectTest(
     await page.goto(`${path}?view=table`)
     await page.getByTestId(`collaboration-issue-table-select-${issueId}`).check()
     await page.getByTestId(`collaboration-issue-table-select-${rejected.id}`).check()
-    await page.getByTestId('collaboration-issue-table-batch-status').selectOption('in_progress')
+    await chooseCollaborationOption(
+      page,
+      page.getByTestId('collaboration-issue-table-batch-status'),
+      { value: 'in_progress' }
+    )
     await page.getByTestId('collaboration-issue-table-batch-apply').click()
     const error = page.getByTestId('collaboration-issue-table-batch-error')
     await expect(error).toContainText('Rejected bulk Issue')
@@ -194,7 +199,11 @@ projectTest(
     expect((await webApi<{ status: string }>(page, `/api/v1/loop-items/${issueId}`)).status).toBe(
       'in_progress'
     )
-    await page.getByTestId('collaboration-issue-table-batch-status').selectOption('pending')
+    await chooseCollaborationOption(
+      page,
+      page.getByTestId('collaboration-issue-table-batch-status'),
+      { value: 'pending' }
+    )
     const rejectedRetry = page.waitForResponse(
       response =>
         response.url().endsWith(`/api/v1/loop-items/${rejected.id}`) &&
@@ -208,7 +217,11 @@ projectTest(
       rejected.version
     )
 
-    await page.getByTestId('collaboration-issue-table-batch-status').selectOption('completed')
+    await chooseCollaborationOption(
+      page,
+      page.getByTestId('collaboration-issue-table-batch-status'),
+      { value: 'completed' }
+    )
     const successfulRetry = page.waitForResponse(
       response =>
         response.url().endsWith(`/api/v1/loop-items/${rejected.id}`) &&

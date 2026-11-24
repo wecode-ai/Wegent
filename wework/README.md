@@ -151,3 +151,7 @@ its source.
 - [Priority Task Filtering](../docs/en/wegent/user-guide/coding/priority-activity-filter.md)
 - [Wework Performance Diagnostics](../docs/en/developer-guide/wework-performance-diagnostics.md)
 - [Wework E2E Automation](../docs/en/developer-guide/wework-e2e-automation.md)
+
+## Component catalog
+
+See the [Chinese component guide](../docs/zh/wework/component-library.md) or [English guide](../docs/en/wework/component-library.md). Run `pnpm --filter wework storybook` for interactive examples.

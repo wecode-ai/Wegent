@@ -1,11 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Check, Loader2, Save, Terminal } from 'lucide-react'
 import {
   getLocalCodexInstructions,
   saveLocalCodexInstructions,
 } from '@/api/local/codexInstructions'
-import { useTranslation } from '@/hooks/useTranslation'
-import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
 import {
   clampContextCompactionThreshold,
   CONTEXT_COMPACTION_THRESHOLD_MAX,
@@ -13,153 +9,126 @@ import {
   defaultAppPreferences,
   getAppPreferences,
   updateAppPreferences,
-  type AppPreferences,
+  type AppPreferencesPatch,
 } from '@/desktop/appPreferences'
+import { useTranslation } from '@/hooks/useTranslation'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Loader2, Save, Terminal } from 'lucide-react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { CodexPersonalitySettings } from './CodexPersonalitySettings'
+import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
 
 export function ContextSettingsPage() {
   const { t } = useTranslation('common')
-  const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
-  const [loading, setLoading] = useState(true)
+  const [preferencesResource] = useState(() =>
+    createAsyncResource('settings/context-preferences', () => getAppPreferences())
+  )
+  const [instructionsResource] = useState(() =>
+    createAsyncResource('settings/context-instructions', () => getLocalCodexInstructions())
+  )
+  const preferencesSnapshot = useSyncExternalStore(
+    preferencesResource.subscribe,
+    preferencesResource.getSnapshot
+  )
+  const instructionsSnapshot = useSyncExternalStore(
+    instructionsResource.subscribe,
+    instructionsResource.getSnapshot
+  )
+  const preferences = preferencesSnapshot.data ?? defaultAppPreferences
+  const loading = !preferencesSnapshot.settled
+  const instructionsLoading = !instructionsSnapshot.settled
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [instructions, setInstructions] = useState('')
-  const [savedInstructions, setSavedInstructions] = useState('')
-  const [instructionsLoading, setInstructionsLoading] = useState(true)
+  const preferencesPending = useRef(false)
+  const instructionsPending = useRef(false)
+  const [saveError, setError] = useState<string | null>(null)
+  const error =
+    saveError ??
+    (preferencesSnapshot.status === 'error' ? t('workbench.context_settings_load_failed') : null)
+  const [instructionsDraft, setInstructions] = useState<string | null>(null)
+  const savedInstructions = instructionsSnapshot.data?.instructions ?? ''
+  const instructions = instructionsDraft ?? savedInstructions
   const [instructionsSaving, setInstructionsSaving] = useState(false)
   const [instructionsSaved, setInstructionsSaved] = useState(false)
-  const [instructionsError, setInstructionsError] = useState<string | null>(null)
-  const [supervisorPrinciples, setSupervisorPrinciples] = useState('')
-  const [savedSupervisorPrinciples, setSavedSupervisorPrinciples] = useState('')
-  const [compactionThresholdDraft, setCompactionThresholdDraft] = useState(
-    String(defaultAppPreferences.contextCompactionThreshold)
-  )
-
+  const [instructionsSaveError, setInstructionsError] = useState<string | null>(null)
+  const instructionsError =
+    instructionsSaveError ??
+    (instructionsSnapshot.status === 'error'
+      ? t('workbench.context_settings_wework_instructions_load_failed')
+      : null)
+  const [supervisorDraft, setSupervisorPrinciples] = useState<string | null>(null)
+  const savedSupervisorPrinciples = preferences.supervisorPrinciples
+  const supervisorPrinciples = supervisorDraft ?? savedSupervisorPrinciples
+  const [thresholdDraft, setCompactionThresholdDraft] = useState<string | null>(null)
+  const compactionThresholdDraft = thresholdDraft ?? String(preferences.contextCompactionThreshold)
   const instructionsDirty = instructions !== savedInstructions
 
-  useEffect(() => {
-    let cancelled = false
-
-    const load = async () => {
-      try {
-        const nextPreferences = await getAppPreferences()
-        if (!cancelled) {
-          setPreferences(nextPreferences)
-          setSupervisorPrinciples(nextPreferences.supervisorPrinciples)
-          setSavedSupervisorPrinciples(nextPreferences.supervisorPrinciples)
-          setCompactionThresholdDraft(String(nextPreferences.contextCompactionThreshold))
-          setError(null)
-        }
-      } catch (fetchError) {
-        console.error('[Wework] Failed to load context settings', fetchError)
-        if (!cancelled) {
-          setError(t('workbench.context_settings_load_failed'))
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false)
-        }
-      }
-
-      try {
-        const nextInstructions = await getLocalCodexInstructions()
-        if (!cancelled) {
-          setInstructions(nextInstructions.instructions)
-          setSavedInstructions(nextInstructions.instructions)
-          setInstructionsError(null)
-        }
-      } catch (fetchError) {
-        console.error('[Wework] Failed to load Wework custom instructions', fetchError)
-        if (!cancelled) {
-          setInstructionsError(t('workbench.context_settings_wework_instructions_load_failed'))
-        }
-      } finally {
-        if (!cancelled) {
-          setInstructionsLoading(false)
-        }
-      }
-    }
-
-    void load()
-
-    return () => {
-      cancelled = true
-    }
-  }, [t])
-
-  const handleTerminalContextChange = async (enabled: boolean) => {
-    setPreferences(current => ({ ...current, terminalContextInjectionEnabled: enabled }))
+  const savePreferences = async (patch: AppPreferencesPatch, optimistic = false) => {
+    if (preferencesPending.current) return
+    preferencesPending.current = true
     setSaving(true)
     setError(null)
+    const previous = preferencesResource.getSnapshot().data
+    if (optimistic && previous) preferencesResource.update(() => ({ ...previous, ...patch }))
     try {
-      const nextPreferences = await updateAppPreferences({
-        terminalContextInjectionEnabled: enabled,
-      })
-      setPreferences(nextPreferences)
+      const receipt = await updateAppPreferences(patch)
+      preferencesResource.update(() => receipt)
+      return receipt
     } catch (saveError) {
+      if (optimistic && previous) preferencesResource.update(() => previous)
       console.error('[Wework] Failed to update context settings', saveError)
-      setPreferences(current => ({
-        ...current,
-        terminalContextInjectionEnabled: !enabled,
-      }))
       setError(t('workbench.context_settings_save_failed'))
     } finally {
+      preferencesPending.current = false
       setSaving(false)
     }
   }
 
+  const handleTerminalContextChange = async (enabled: boolean) => {
+    await savePreferences({ terminalContextInjectionEnabled: enabled }, true)
+  }
+
   const handleSaveInstructions = async () => {
+    if (instructionsPending.current) return
+    instructionsPending.current = true
     setInstructionsSaving(true)
     setInstructionsSaved(false)
     setInstructionsError(null)
+    const submitted = instructions
     try {
-      const response = await saveLocalCodexInstructions(instructions)
-      setInstructions(response.instructions)
-      setSavedInstructions(response.instructions)
+      const receipt = await saveLocalCodexInstructions(submitted)
+      instructionsResource.update(() => receipt)
+      setInstructions(current => (current === submitted ? null : current))
       setInstructionsSaved(true)
     } catch (saveError) {
       console.error('[Wework] Failed to save Wework custom instructions', saveError)
       setInstructionsError(t('workbench.context_settings_wework_instructions_save_failed'))
     } finally {
+      instructionsPending.current = false
       setInstructionsSaving(false)
     }
   }
 
   const handleSaveSupervisorPrinciples = async () => {
-    setSaving(true)
-    setError(null)
-    try {
-      const nextPreferences = await updateAppPreferences({ supervisorPrinciples })
-      setPreferences(nextPreferences)
-      setSupervisorPrinciples(nextPreferences.supervisorPrinciples)
-      setSavedSupervisorPrinciples(nextPreferences.supervisorPrinciples)
-    } catch (saveError) {
-      console.error('[Wework] Failed to save supervisor principles', saveError)
-      setError(t('workbench.context_settings_save_failed'))
-    } finally {
-      setSaving(false)
-    }
+    const submitted = supervisorPrinciples
+    const receipt = await savePreferences({ supervisorPrinciples: submitted })
+    if (receipt) setSupervisorPrinciples(current => (current === submitted ? null : current))
   }
 
   const commitCompactionThreshold = async () => {
+    if (preferencesPending.current) return
     const raw = compactionThresholdDraft.trim()
     const parsed = raw === '' ? NaN : Number(raw)
     const nextValue = Number.isFinite(parsed)
       ? clampContextCompactionThreshold(parsed)
       : preferences.contextCompactionThreshold
-    setCompactionThresholdDraft(String(nextValue))
+    const submitted = String(nextValue)
+    setCompactionThresholdDraft(submitted)
     if (nextValue === preferences.contextCompactionThreshold) return
-    setSaving(true)
-    setError(null)
-    try {
-      const nextPreferences = await updateAppPreferences({ contextCompactionThreshold: nextValue })
-      setPreferences(nextPreferences)
-    } catch (saveError) {
-      console.error('[Wework] Failed to update context settings', saveError)
-      setError(t('workbench.context_settings_save_failed'))
-    } finally {
-      setSaving(false)
-    }
+    const receipt = await savePreferences({ contextCompactionThreshold: nextValue })
+    if (receipt) setCompactionThresholdDraft(current => (current === submitted ? null : current))
   }
 
   return (
@@ -202,9 +171,9 @@ export function ContextSettingsPage() {
           data-testid="context-compaction-threshold-row"
           label={t('workbench.context_settings_compaction_threshold')}
           description={t('workbench.context_settings_compaction_threshold_description')}
-          control={
+          children={
             <div className="flex items-center gap-2">
-              <input
+              <ControlInput
                 type="number"
                 min={CONTEXT_COMPACTION_THRESHOLD_MIN}
                 max={CONTEXT_COMPACTION_THRESHOLD_MAX}
@@ -216,7 +185,7 @@ export function ContextSettingsPage() {
                   if (event.key === 'Enter') event.currentTarget.blur()
                 }}
                 disabled={loading || saving}
-                className="w-20 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] keyboard:focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                className="w-20 text-base [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               />
               <span className="text-sm text-text-secondary">%</span>
             </div>
@@ -237,19 +206,21 @@ export function ContextSettingsPage() {
                 {t('workbench.context_settings_supervisor_description')}
               </p>
             </div>
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="context-supervisor-principles-save-button"
               disabled={saving || supervisorPrinciples === savedSupervisorPrinciples}
               onClick={() => void handleSaveSupervisorPrinciples()}
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="shrink-0"
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               <span>{t('workbench.context_settings_supervisor_save')}</span>
-            </button>
+            </ControlButton>
           </div>
           <div className="px-4 py-4">
-            <textarea
+            <ControlTextarea
               data-testid="context-supervisor-principles-textarea"
               value={supervisorPrinciples}
               onChange={event => setSupervisorPrinciples(event.target.value)}
@@ -273,12 +244,14 @@ export function ContextSettingsPage() {
               {t('workbench.context_settings_wework_instructions_description')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="context-wework-instructions-save-button"
             disabled={instructionsLoading || instructionsSaving || !instructionsDirty}
             onClick={() => void handleSaveInstructions()}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="shrink-0"
           >
             {instructionsSaving ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -294,7 +267,7 @@ export function ContextSettingsPage() {
                   ? t('workbench.context_settings_wework_instructions_saved')
                   : t('workbench.context_settings_wework_instructions_save')}
             </span>
-          </button>
+          </ControlButton>
         </div>
         <div className="px-4 py-4">
           {instructionsLoading ? (
@@ -303,7 +276,7 @@ export function ContextSettingsPage() {
               {t('common.loading', '加载中...')}
             </div>
           ) : (
-            <textarea
+            <ControlTextarea
               data-testid="context-wework-instructions-textarea"
               value={instructions}
               onChange={event => {

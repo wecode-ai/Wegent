@@ -1,8 +1,9 @@
-import { Check } from 'lucide-react'
 import type { ModelOptions } from '@wegent/chat-core/models'
+import { Check } from 'lucide-react'
 import type { CollaborationTranslate } from '../i18n'
-import type { ModelControlConfig } from './model-ui'
+import { Button as ControlButton } from '../markdown/Button'
 import { selectedControlOption } from './model-selector-utils'
+import type { ModelControlConfig } from './model-ui'
 
 export function ModelSelectorMobileControl({
   control,
@@ -27,7 +28,8 @@ export function ModelSelectorMobileControl({
           .map(option => {
             const selected = selectedControlOption(control, options)?.value === option.value
             return (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={option.value}
                 type="button"
                 data-testid={`model-control-${control.id}-${option.value}`}
@@ -41,7 +43,7 @@ export function ModelSelectorMobileControl({
               >
                 <span>{option.labelKey ? t(option.labelKey, option.label) : option.label}</span>
                 {selected && <Check className="h-4 w-4" />}
-              </button>
+              </ControlButton>
             )
           })}
       </div>

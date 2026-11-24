@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
-import type { IssueDetailSearchableSelectOption } from './IssueDetailControls'
-import { issueCommentSubmission, type IssueMentionOption } from './issueCommentMentions'
+import type { SearchableSelectOption } from '../controls/SearchableSelect'
 import type { CommentIssueActions } from './issueCommentActions'
+import { issueCommentSubmission, type IssueMentionOption } from './issueCommentMentions'
 
 export interface CommentChildInput {
   body: string
@@ -13,16 +13,13 @@ export interface CommentSubmissionOptions {
   commentOnly?: boolean
 }
 export interface CommentAssignment {
-  options: IssueDetailSearchableSelectOption[]
+  options: SearchableSelectOption[]
   canAssignCurrent?: boolean
   assign(target: string): Promise<void | boolean>
   createChild?(input: CommentChildInput): Promise<import('../types').CollaborationIssue | false>
 }
 
-function firstAssignableMention(
-  mentions: IssueMentionOption[],
-  options: IssueDetailSearchableSelectOption[]
-) {
+function firstAssignableMention(mentions: IssueMentionOption[], options: SearchableSelectOption[]) {
   return (
     mentions
       .map(mention => (mention.type === 'user' ? mention.id : `agent:${mention.id}`))

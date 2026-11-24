@@ -72,6 +72,7 @@ export interface CollaborationPlatformHostAdapter {
   templateNavigation?: boolean;
   issueHomeDraft?: {
     value: string;
+    subscribe?(listener: () => void): () => void;
     getRevision(): number;
     projectId: string | null;
     onSelectProject(projectId: string): void;
@@ -105,6 +106,14 @@ export interface CollaborationPlatformHostAdapter {
     onClose(): void;
   }): ReactNode;
   renderProjectSidebarBadge?(project: CollaborationProject): ReactNode;
+  projectPins?: {
+    keys: readonly string[];
+    setPinned(key: string, pinned: boolean): Promise<void>;
+    heading: string;
+    pinLabel: string;
+    unpinLabel: string;
+    saveError: string;
+  };
   convertLocalProjectToCloud?(project: CollaborationProject): void;
   openProjectConversation?(project: CollaborationProject): void;
   currentUser?: {

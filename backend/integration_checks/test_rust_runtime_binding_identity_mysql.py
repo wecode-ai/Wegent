@@ -11,7 +11,8 @@ from integration_checks.test_collaboration_permission_mysql import (  # noqa: F4
 )
 
 SQL = (
-    Path(__file__).parents[2] / "backend-rs/src/loop_tasks/cloud_context_binding.sql"
+    Path(__file__).parents[2]
+    / "backend-rs/project-coordination/src/loop_tasks/cloud_context_binding.sql"
 ).read_text()
 
 

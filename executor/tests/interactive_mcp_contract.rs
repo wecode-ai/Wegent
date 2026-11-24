@@ -7,10 +7,9 @@ use wegent_executor::agents::interactive_mcp::{
     build_deferred_mcp_proxy_request, build_interactive_form_answer_payload,
     build_interactive_form_answer_query, build_interactive_form_resume_plan,
     build_pre_tool_use_defer_response, build_retry_tool_result_query,
-    deferred_proxy_exception_failure, deferred_proxy_response_decision,
-    is_deferred_user_input_result, normalize_mcp_tool_result, parse_mcp_tool_name,
-    ClaudeFollowUpQuery, DeferredMcpProxyResult, DeferredMcpResponseAction, DeferredToolUse,
-    TaskTerminalStatus,
+    deferred_proxy_response_decision, deferred_proxy_unavailable, is_deferred_user_input_result,
+    normalize_mcp_tool_result, parse_mcp_tool_name, ClaudeFollowUpQuery, DeferredMcpProxyResult,
+    DeferredMcpResponseAction, DeferredToolUse, TaskTerminalStatus,
 };
 
 fn deferred_tool_use(input: Value) -> DeferredToolUse {
@@ -310,6 +309,23 @@ fn response_decision_retries_invalid_form_without_leaking_input() {
 }
 
 #[test]
+fn structured_tool_errors_skip_the_service_without_requesting_new_input() {
+    let mut result = invalid_form_proxy_result("tool-error");
+    result.is_error = true;
+    result.output_text = "private-response-body".to_owned();
+    let decision = deferred_proxy_response_decision(&result, "tool_deferred", json!({}), 0, 2);
+    assert_eq!(
+        decision.action,
+        DeferredMcpResponseAction::ContinueWithoutServer
+    );
+    let query = decision.retry_query.unwrap().to_string();
+    assert!(query.contains("mcp_unavailable"));
+    assert!(!query.contains("Call interactive_form_question again"));
+    assert!(!query.contains("private-response-body"));
+    assert!(decision.done.is_none());
+}
+
+#[test]
 fn response_decision_reports_simple_error_after_deferred_retries() {
     let decision = deferred_proxy_response_decision(
         &invalid_form_proxy_result("tool-4"),
@@ -319,31 +335,40 @@ fn response_decision_reports_simple_error_after_deferred_retries() {
         2,
     );
 
-    assert_eq!(decision.action, DeferredMcpResponseAction::Fail);
-    assert_eq!(decision.status, TaskTerminalStatus::Failed);
+    assert_eq!(
+        decision.action,
+        DeferredMcpResponseAction::ContinueWithoutServer
+    );
+    assert_eq!(decision.status, TaskTerminalStatus::DeferredMcpRetry);
     assert_eq!(
         decision.user_error.as_deref(),
-        Some("模型给出的表单格式不对")
+        Some("连接器暂时不可用，已跳过相关能力，其他工作可以继续。")
     );
-    assert!(decision.retry_query.is_none());
+    assert_eq!(
+        decision.retry_query.as_ref().unwrap()["message"]["content"][0]["is_error"],
+        true
+    );
 }
 
 #[test]
 fn response_decision_hides_proxy_exception_details() {
-    let failure = deferred_proxy_exception_failure(
+    let failure = deferred_proxy_unavailable(
         &deferred_tool_use(json!({"questions": [{"id": "q1", "question": "Question?"}]})),
         "Deferred MCP proxy failed internally",
     );
 
-    assert_eq!(failure.status, TaskTerminalStatus::Failed);
-    assert_eq!(failure.user_error.as_deref(), Some("交互式表单生成失败"));
+    assert_eq!(failure.status, TaskTerminalStatus::DeferredMcpRetry);
+    assert_eq!(
+        failure.user_error.as_deref(),
+        Some("连接器暂时不可用，已跳过相关能力，其他工作可以继续。")
+    );
     assert_eq!(
         failure.tool_done.as_ref().unwrap().output.as_deref(),
-        Some("交互式表单生成失败")
+        Some("连接器暂时不可用，已跳过相关能力，其他工作可以继续。")
     );
     assert_eq!(
         failure.tool_done.as_ref().unwrap().error.as_deref(),
-        Some("交互式表单生成失败")
+        Some("连接器暂时不可用，已跳过相关能力，其他工作可以继续。")
     );
     assert_eq!(
         failure.internal_error.as_deref(),

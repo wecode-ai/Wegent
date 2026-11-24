@@ -1,0 +1,27 @@
+[package]
+name = "wegent-device-lifecycle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Device registration, presence, and Socket.IO lifecycle"
+
+[dependencies]
+async-trait.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+brz-socket-io.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { workspace = true, features = ["sync", "time"] }
+tracing.workspace = true
+wegent-device-identity.workspace = true
+wegent-devices.workspace = true
+wegent-python-compat.workspace = true
+wegent-socket-events.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+futures-util = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

@@ -1,0 +1,5 @@
+.git
+target
+**/.live-architecture
+**/.env
+**/.env.*

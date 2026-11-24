@@ -5,6 +5,14 @@ use crate::runtime_work::automations::{Automation, ConversationMode};
 use crate::task_runtime::mcp::StandInMcpIdentity;
 use crate::task_runtime::personal_stand_in::stand_in_identities;
 
+fn schedule_asks_before_act(automation: &Automation, role: &Value) -> bool {
+    use crate::runtime_work::automations::{MEMORY_REVIEW_TEMPLATE, WEEKLY_REVIEW_TEMPLATE};
+    matches!(
+        automation.task_request["standInCalendar"]["template"].as_str(),
+        Some(MEMORY_REVIEW_TEMPLATE | WEEKLY_REVIEW_TEMPLATE)
+    ) || role["calendar"]["policy"]["askBeforeAct"] != false
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn validate_stand_in_schedule_start(
         &self,
@@ -90,15 +98,22 @@ impl RuntimeWorkRpcHandler {
         let memory_review = role_id == "@primary"
             && current.task_request["standInCalendar"]["template"]
                 == crate::runtime_work::automations::MEMORY_REVIEW_TEMPLATE;
-        let enabled = if role_id == "@primary" {
-            settings["primary"]["enabled"] != false || memory_review
+        let identities = stand_in_identities(&settings);
+        let role = if role_id == "@primary"
+            && (settings["primary"]["enabled"] != false || memory_review)
+        {
+            Some(&settings["primary"])
         } else {
-            stand_in_identities(&settings)
+            identities
                 .iter()
-                .any(|role| role["id"] == role_id && role["enabled"] == true)
+                .find(|role| role["id"] == role_id && role["enabled"] == true)
         };
-        if !enabled {
-            return Err("The scheduled work identity is paused or no longer exists".into());
+        let role = role.ok_or("The scheduled work identity is paused or no longer exists")?;
+        if schedule["askBeforeAct"]
+            .as_bool()
+            .is_some_and(|ask| ask != schedule_asks_before_act(&current, role))
+        {
+            return Err("The scheduled approval policy changed before starting".into());
         }
         if schedule["continuation"] == true {
             let link = self
@@ -295,7 +310,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         automation: &Automation,
         payload: Value,
-    ) -> Result<Value, AppIpcError> {
+    ) -> Result<(Value, bool), AppIpcError> {
         let owner = &automation.task_request["standInOwner"];
         let user = owner["userId"]
             .as_i64()
@@ -325,21 +340,23 @@ impl RuntimeWorkRpcHandler {
                     "The scheduled work identity is paused or no longer exists",
                 )
             })?;
-        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":true});
+        let review = role_id == "@primary"
+            && automation.task_request["standInCalendar"]["template"]
+                == crate::runtime_work::automations::WEEKLY_REVIEW_TEMPLATE;
+        let ask_before_act = schedule_asks_before_act(automation, &config);
         if matches!(
             automation.conversation_mode,
             ConversationMode::ContinueThread
         ) {
-            return self
+            let prepared = self
                 .prepare_scheduled_continuation(payload, user, role_id)
-                .await;
+                .await?;
+            return Ok((prepared, ask_before_act));
         }
+        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":ask_before_act});
         let mut payload = payload;
         payload["title"] = json!(automation.name);
-        payload["origin"] = json!({"type":"stand_in_schedule","initiatedBy":"stand_in","userId":user,"standInId":role_id,"automationId":automation.id,"deviceId":self.device_id,"askBeforeAct":true});
-        let review = role_id == "@primary"
-            && automation.task_request["standInCalendar"]["template"]
-                == crate::runtime_work::automations::WEEKLY_REVIEW_TEMPLATE;
+        payload["origin"] = json!({"type":"stand_in_schedule","initiatedBy":"stand_in","userId":user,"standInId":role_id,"automationId":automation.id,"deviceId":self.device_id,"askBeforeAct":ask_before_act});
         if review {
             payload["origin"]["weeklyReview"] = json!(true);
         }
@@ -352,6 +369,12 @@ impl RuntimeWorkRpcHandler {
         } else {
             self.prepare_stand_in_execution(payload, &config).await?
         };
+        if prepared["runtime"].as_str().is_some_and(is_claude_runtime) {
+            return Err(AppIpcError::new(
+                "confirmation_runtime_unsupported",
+                "Choose Codex for scheduled operation review controls",
+            ));
+        }
         if review || memory_review {
             let invalid = || AppIpcError::new("bad_request", "Invalid review execution context");
             let request = prepared["executionRequest"]
@@ -372,7 +395,7 @@ impl RuntimeWorkRpcHandler {
             "{system}\n\n{}",
             config["preferences"].as_str().unwrap_or_default()
         ));
-        Ok(prepared)
+        Ok((prepared, ask_before_act))
     }
 
     /// Continue only owned, available Codex work without answering pending native interactions.
@@ -429,8 +452,6 @@ impl RuntimeWorkRpcHandler {
         self.validate_primary_task_followup(user, &link).await?;
         let mut request = link.runtime_handle["executionRequest"].clone();
         request["prompt"] = payload["message"].clone();
-        request["standInDelegation"] =
-            json!({"sourceTaskId":"stand-in-schedule","userId":user,"askBeforeAct":true});
         payload["executionRequest"] = request;
         payload["queueIfBusy"] = json!(false);
         Ok(payload)
@@ -746,7 +767,7 @@ mod tests {
         );
         assert_eq!(saved["automation"]["conversationMode"], "independent");
         let entry: Automation = serde_json::from_value(saved["automation"].clone()).unwrap();
-        let prepared = handler
+        let (prepared, _) = handler
             .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
             .await
             .unwrap();
@@ -823,6 +844,61 @@ mod tests {
         handler.automation_store =
             crate::runtime_work::automations::AutomationStore::new(root.join("automations.json"));
         handler
+    }
+
+    #[tokio::test]
+    async fn calendar_triggers_use_the_current_saved_policy_in_both_conversation_modes() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
+        let entry: Automation = serde_json::from_value(json!({
+            "id":"calendar","version":0,"name":"Calendar","prompt":"Read updates",
+            "taskPayload":{"runtime":"codex"},
+            "schedule":{"type":"cron","expression":"0 9 * * *"},
+            "taskRequest":{"standInOwner":{"userId":7,"roleId":"@primary"},"standInCalendar":{}}
+        }))
+        .unwrap();
+        let mut legacy = entry.clone();
+        legacy.id = "legacy-continuation".into();
+        legacy
+            .task_request
+            .as_object_mut()
+            .unwrap()
+            .remove("standInCalendar");
+        legacy.conversation_mode = ConversationMode::ContinueThread;
+        legacy.continuation_payload = Some(json!({"taskId":"work"}));
+        let entries = [
+            handler.automation_store.create(entry).unwrap(),
+            handler.automation_store.create(legacy).unwrap(),
+        ];
+        let mut link = RuntimeTaskLink::new_pending("work".into(), "".into(), "Work".into());
+        link.status = "completed".into();
+        link.runtime_handle = json!({"executionRequest":{"user_id":7}});
+        handler.store.upsert_task(link);
+
+        for saved_policy in [None, Some(false), Some(true)] {
+            if let Some(ask) = saved_policy {
+                settings["primary"]["calendar"] =
+                    json!({"policy":{"automatic":true,"askBeforeAct":ask}});
+            }
+            settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+            for entry in &entries {
+                let (payload, ask_before_act) = handler
+                    .prepare_stand_in_schedule(
+                        entry,
+                        json!({"taskId":"work","message":entry.prompt}),
+                    )
+                    .await
+                    .unwrap();
+                let expected = saved_policy.unwrap_or(true);
+                assert_eq!(ask_before_act, expected);
+                if matches!(entry.conversation_mode, ConversationMode::Independent) {
+                    assert_eq!(payload["origin"]["askBeforeAct"], expected);
+                }
+            }
+        }
     }
 
     #[tokio::test]

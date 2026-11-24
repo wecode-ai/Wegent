@@ -104,9 +104,11 @@ test('both navigation indexes cover registered settings/sidebar entries and curr
   ]) {
     const docs = join(root, '..', 'docs', language, 'wework')
     const document = await readFile(join(docs, page), 'utf8')
-    const translations = JSON.parse(
-      await readFile(join(root, 'src/i18n/locales', locale, 'common.json'))
+    const common = JSON.parse(await readFile(join(root, 'src/i18n/locales', locale, 'common.json')))
+    const shared = JSON.parse(
+      await readFile(join(root, '../packages/collaboration/src/platform', `personalIssues.${locale}.json`))
     )
+    const translations = { ...common, ...shared, todo: { ...common.todo, ...shared.todo } }
     validateIndex(document, entries, translations, language)
     assert.ok((await readFile(join(docs, 'README.md'), 'utf8')).includes(`](./${page})`))
     for (const [, link, anchor] of document.matchAll(/\]\((\.\/[^)#]+)(?:#([^)]*))?\)/g)) {

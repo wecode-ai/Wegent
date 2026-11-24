@@ -1,21 +1,20 @@
-import { ArrowUpRight, FileDiff } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import type {
   TurnFileChangeItem,
   TurnFileChangesSummary,
-} from "@wegent/chat-core/runtime";
-import { useConversationTranslation } from "./ConversationTranslation";
-import { useCollaborationPortalTheme } from "../theme/CollaborationTheme";
-import { parseUnifiedDiff } from "./parseUnifiedDiff";
-const DIFF_PREVIEW_CLOSE_DELAY_MS = 140;
-const DIFF_PREVIEW_DELAY_MS = 500;
-const DIFF_PREVIEW_ESTIMATED_HEIGHT = 424;
-const DIFF_PREVIEW_MAX_LINES = 240;
-const DIFF_PREVIEW_MAX_WIDTH = 640;
-const DIFF_PREVIEW_HORIZONTAL_OFFSET = 12;
-const DIFF_PREVIEW_VIEWPORT_GUTTER = 32;
-const DIFF_PREVIEW_VERTICAL_GAP = 8;
+} from '@wegent/chat-core/runtime'
+import { ArrowUpRight, FileDiff } from 'lucide-react'
+import {
+  HoverCard,
+  HoverCardTrigger,
+  HoverCardContent,
+} from '../controls/HoverCard'
+import { controlPopup } from '../controls/recipes'
+import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
+import { useConversationTranslation } from './ConversationTranslation'
+import { parseUnifiedDiff } from './parseUnifiedDiff'
+const DIFF_PREVIEW_CLOSE_DELAY_MS = 140
+const DIFF_PREVIEW_DELAY_MS = 500
+const DIFF_PREVIEW_MAX_LINES = 240
 
 export function FileChangeRow({
   file,
@@ -24,100 +23,79 @@ export function FileChangeRow({
   diffPreviewDisabled = false,
   onPreview,
 }: {
-  file: TurnFileChangeItem;
-  summary: TurnFileChangesSummary;
-  disabled: boolean;
-  diffPreviewDisabled?: boolean;
-  onPreview: () => void;
+  file: TurnFileChangeItem
+  summary: TurnFileChangesSummary
+  disabled: boolean
+  diffPreviewDisabled?: boolean
+  onPreview: () => void
 }) {
-  const { t } = useConversationTranslation();
+  const { t } = useConversationTranslation()
   const displayPath =
-    file.change_type === "renamed" && file.old_path
+    file.change_type === 'renamed' && file.old_path
       ? `${file.old_path} → ${file.path}`
-      : file.path;
-  const diffPreview = buildFileDiffPreview(file, summary);
-  const {
-    close: closeDiffPreview,
-    closeFromPreview: closeDiffPreviewFromPreview,
-    keepOpen: keepDiffPreviewOpen,
-    openAfterDelay: openDiffPreviewAfterDelay,
-    placement: diffPreviewPlacement,
-    position: diffPreviewPosition,
-    previewOpen: diffPreviewOpen,
-    triggerRef: diffPreviewTriggerRef,
-  } = useDelayedDiffPreview(diffPreview);
+      : file.path
+  const diffPreview = buildFileDiffPreview(file, summary)
 
   return (
-    <div
-      data-testid="file-change-row"
-      className="group/file-change-row flex min-w-0 items-center px-4 py-2.5 transition-colors hover:bg-muted"
+    <HoverCard
+      delay={DIFF_PREVIEW_DELAY_MS}
+      closeDelay={DIFF_PREVIEW_CLOSE_DELAY_MS}
+      disabled={diffPreviewDisabled || !diffPreview}
     >
       <div
-        ref={diffPreviewTriggerRef}
-        data-testid="file-change-trigger"
-        className="group/file-change-trigger relative min-w-0 flex-1"
-        onPointerEnter={
-          diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay
-        }
-        onPointerLeave={closeDiffPreview}
-        onFocus={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
-        onBlur={closeDiffPreview}
+        data-testid="file-change-row"
+        className="group/file-change-row flex min-w-0 items-center px-4 py-2.5 transition-colors hover:bg-muted"
       >
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={onPreview}
-          className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 text-left disabled:cursor-not-allowed disabled:opacity-60"
-          aria-label={t("file_changes.preview_file_label", {
-            path: displayPath,
-          })}
+        <div
+          data-testid="file-change-trigger"
+          className="group/file-change-trigger relative min-w-0 flex-1"
         >
-          <span
-            data-testid="file-change-title-label"
-            className="min-w-0 truncate text-sm font-medium leading-5 text-text-primary"
+          <HoverCardTrigger
+            render={<button type="button" disabled={disabled} />}
+            onClick={onPreview}
+            className="min-h-11 outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 md:min-h-8 grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 text-left disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={t('file_changes.preview_file_label', {
+              path: displayPath,
+            })}
           >
-            {displayPath}
-          </span>
-          {file.binary ? (
-            <span className="shrink-0 text-xs leading-5 text-text-secondary">
-              {t("file_changes.binary_file")}
+            <span
+              data-testid="file-change-title-label"
+              className="min-w-0 truncate text-sm font-medium leading-5 text-text-primary"
+            >
+              {displayPath}
             </span>
-          ) : (
-            <span className="relative h-5 min-w-[5.5rem] text-xs font-medium leading-5">
-              <span
-                data-testid="file-change-stats-label"
-                className="flex justify-end gap-2 group-hover/file-change-trigger:hidden group-focus-within/file-change-trigger:hidden"
-              >
-                <span className="text-[rgb(var(--color-diff-added,22_163_74))] wework:text-green-600">
-                  +{file.additions}
+            {file.binary ? (
+              <span className="shrink-0 text-xs leading-5 text-text-secondary">
+                {t('file_changes.binary_file')}
+              </span>
+            ) : (
+              <span className="relative h-5 min-w-[5.5rem] text-xs font-medium leading-5">
+                <span
+                  data-testid="file-change-stats-label"
+                  className="flex justify-end gap-2 group-hover/file-change-trigger:hidden group-focus-within/file-change-trigger:hidden"
+                >
+                  <span className="text-[rgb(var(--color-diff-added,22_163_74))] wework:text-green-600">
+                    +{file.additions}
+                  </span>
+                  <span className="text-[rgb(var(--color-diff-removed,239_68_68))] wework:text-red-500">
+                    -{file.deletions}
+                  </span>
                 </span>
-                <span className="text-[rgb(var(--color-diff-removed,239_68_68))] wework:text-red-500">
-                  -{file.deletions}
+                <span
+                  data-testid="file-change-view-label"
+                  className="hidden justify-end gap-1 truncate text-text-secondary group-hover/file-change-trigger:flex group-focus-within/file-change-trigger:flex"
+                >
+                  {t('file_changes.view_changes')}
+                  <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.8} />
                 </span>
               </span>
-              <span
-                data-testid="file-change-view-label"
-                className="hidden justify-end gap-1 truncate text-text-secondary group-hover/file-change-trigger:flex group-focus-within/file-change-trigger:flex"
-              >
-                {t("file_changes.view_changes")}
-                <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.8} />
-              </span>
-            </span>
-          )}
-        </button>
-        {diffPreviewOpen && diffPreview ? (
-          <FileChangeDiffPreview
-            preview={diffPreview}
-            placement={diffPreviewPlacement}
-            position={diffPreviewPosition}
-            onPointerEnter={keepDiffPreviewOpen}
-            onPointerDown={keepDiffPreviewOpen}
-            onPointerLeave={closeDiffPreviewFromPreview}
-          />
-        ) : null}
+            )}
+          </HoverCardTrigger>
+          {diffPreview && <FileChangeDiffPreview preview={diffPreview} />}
+        </div>
       </div>
-    </div>
-  );
+    </HoverCard>
+  )
 }
 
 export function FileChangeSummaryTrigger({
@@ -127,149 +105,122 @@ export function FileChangeSummaryTrigger({
   diffPreviewDisabled = false,
   onPreview,
 }: {
-  file: TurnFileChangeItem;
-  summary: TurnFileChangesSummary;
-  disabled: boolean;
-  diffPreviewDisabled?: boolean;
-  onPreview: () => void;
+  file: TurnFileChangeItem
+  summary: TurnFileChangesSummary
+  disabled: boolean
+  diffPreviewDisabled?: boolean
+  onPreview: () => void
 }) {
-  const { t } = useConversationTranslation();
+  const { t } = useConversationTranslation()
   const displayPath =
-    file.change_type === "renamed" && file.old_path
+    file.change_type === 'renamed' && file.old_path
       ? `${file.old_path} → ${file.path}`
-      : file.path;
-  const filename = basename(file.path);
-  const diffPreview = buildFileDiffPreview(file, summary);
-  const {
-    close: closeDiffPreview,
-    closeFromPreview: closeDiffPreviewFromPreview,
-    keepOpen: keepDiffPreviewOpen,
-    openAfterDelay: openDiffPreviewAfterDelay,
-    placement: diffPreviewPlacement,
-    position: diffPreviewPosition,
-    previewOpen: diffPreviewOpen,
-    triggerRef: diffPreviewTriggerRef,
-  } = useDelayedDiffPreview(diffPreview);
+      : file.path
+  const filename = basename(file.path)
+  const diffPreview = buildFileDiffPreview(file, summary)
 
   return (
-    <div
-      ref={diffPreviewTriggerRef}
-      data-testid="file-change-trigger"
-      className="group/file-change-trigger relative min-w-0 flex-1 self-stretch"
-      onPointerEnter={
-        diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay
-      }
-      onPointerLeave={closeDiffPreview}
-      onFocus={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
-      onBlur={closeDiffPreview}
+    <HoverCard
+      delay={DIFF_PREVIEW_DELAY_MS}
+      closeDelay={DIFF_PREVIEW_CLOSE_DELAY_MS}
+      disabled={diffPreviewDisabled || !diffPreview}
     >
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onPreview}
-        className="flex h-full w-full min-w-0 items-center gap-3 rounded-lg text-left disabled:cursor-not-allowed disabled:opacity-60"
-        aria-label={t("file_changes.preview_file_label", { path: displayPath })}
+      <div
+        data-testid="file-change-trigger"
+        className="group/file-change-trigger relative min-w-0 flex-1 self-stretch"
       >
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-base text-text-secondary">
-          <FileDiff className="h-5 w-5" strokeWidth={1.8} />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span
-            data-testid="file-changes-summary-title"
-            className="block truncate text-sm font-semibold leading-5 text-text-primary"
-          >
-            {t(fileChangeLabelKey(file.change_type), { filename })}
+        <HoverCardTrigger
+          render={<button type="button" disabled={disabled} />}
+          onClick={onPreview}
+          className="min-h-11 outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 md:min-h-8 flex h-full w-full min-w-0 items-center gap-3 rounded-lg text-left disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label={t('file_changes.preview_file_label', {
+            path: displayPath,
+          })}
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-base text-text-secondary">
+            <FileDiff className="h-5 w-5" strokeWidth={1.8} />
           </span>
-          {file.binary ? (
-            <span className="block truncate text-xs leading-5 text-text-secondary">
-              {t("file_changes.binary_file")}
+          <span className="min-w-0 flex-1">
+            <span
+              data-testid="file-changes-summary-title"
+              className="block truncate text-sm font-semibold leading-5 text-text-primary"
+            >
+              {t(fileChangeLabelKey(file.change_type), { filename })}
             </span>
-          ) : (
-            <span className="relative block h-5 text-xs font-medium leading-5">
-              <span
-                data-testid="file-change-stats-label"
-                className="flex items-center gap-2 group-hover/file-change-trigger:hidden group-focus-within/file-change-trigger:hidden"
-              >
-                <span className="text-[rgb(var(--color-diff-added,22_163_74))] wework:text-green-600">
-                  +{summary.additions}
+            {file.binary ? (
+              <span className="block truncate text-xs leading-5 text-text-secondary">
+                {t('file_changes.binary_file')}
+              </span>
+            ) : (
+              <span className="relative block h-5 text-xs font-medium leading-5">
+                <span
+                  data-testid="file-change-stats-label"
+                  className="flex items-center gap-2 group-hover/file-change-trigger:hidden group-focus-within/file-change-trigger:hidden"
+                >
+                  <span className="text-[rgb(var(--color-diff-added,22_163_74))] wework:text-green-600">
+                    +{summary.additions}
+                  </span>
+                  <span className="text-[rgb(var(--color-diff-removed,239_68_68))] wework:text-red-500">
+                    -{summary.deletions}
+                  </span>
                 </span>
-                <span className="text-[rgb(var(--color-diff-removed,239_68_68))] wework:text-red-500">
-                  -{summary.deletions}
+                <span
+                  data-testid="file-change-view-label"
+                  className="hidden items-center gap-1 truncate text-text-secondary group-hover/file-change-trigger:flex group-focus-within/file-change-trigger:flex"
+                >
+                  {t('file_changes.view_changes')}
+                  <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.8} />
                 </span>
               </span>
-              <span
-                data-testid="file-change-view-label"
-                className="hidden items-center gap-1 truncate text-text-secondary group-hover/file-change-trigger:flex group-focus-within/file-change-trigger:flex"
-              >
-                {t("file_changes.view_changes")}
-                <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.8} />
-              </span>
-            </span>
-          )}
-        </span>
-      </button>
-      {diffPreviewOpen && diffPreview ? (
-        <FileChangeDiffPreview
-          preview={diffPreview}
-          placement={diffPreviewPlacement}
-          position={diffPreviewPosition}
-          onPointerEnter={keepDiffPreviewOpen}
-          onPointerDown={keepDiffPreviewOpen}
-          onPointerLeave={closeDiffPreviewFromPreview}
-        />
-      ) : null}
-    </div>
-  );
+            )}
+          </span>
+        </HoverCardTrigger>
+        {diffPreview && <FileChangeDiffPreview preview={diffPreview} />}
+      </div>
+    </HoverCard>
+  )
 }
 
-function fileChangeLabelKey(changeType: TurnFileChangeItem["change_type"]) {
+function fileChangeLabelKey(changeType: TurnFileChangeItem['change_type']) {
   switch (changeType) {
-    case "created":
-      return "file_changes.created_file";
-    case "deleted":
-      return "file_changes.deleted_file";
-    case "renamed":
-      return "file_changes.renamed_file";
-    case "modified":
+    case 'created':
+      return 'file_changes.created_file'
+    case 'deleted':
+      return 'file_changes.deleted_file'
+    case 'renamed':
+      return 'file_changes.renamed_file'
+    case 'modified':
     default:
-      return "file_changes.edited_file";
+      return 'file_changes.edited_file'
   }
 }
 
 function basename(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+  return path.split(/[\\/]/).filter(Boolean).pop() || path
 }
 
 interface DiffPreview {
-  path: string;
-  displayPath: string;
-  additions: number;
-  deletions: number;
-  lines: DiffPreviewLine[];
-  truncated: boolean;
-}
-
-type DiffPreviewPlacement = "above" | "below";
-
-interface DiffPreviewPosition {
-  left: number;
-  top: number;
-  width: number;
+  path: string
+  displayPath: string
+  additions: number
+  deletions: number
+  lines: DiffPreviewLine[]
+  truncated: boolean
 }
 
 interface DiffPreviewLine {
-  key: string;
-  type: "addition" | "deletion" | "context" | "separator";
-  lineNumber?: number;
-  content: string;
+  key: string
+  type: 'addition' | 'deletion' | 'context' | 'separator'
+  lineNumber?: number
+  content: string
 }
 
 export function FileChangesStats({
   additions,
   deletions,
 }: {
-  additions: number;
-  deletions: number;
+  additions: number
+  deletions: number
 }) {
   return (
     <span className="flex items-center gap-2 text-xs font-medium leading-5">
@@ -280,153 +231,25 @@ export function FileChangesStats({
         -{deletions}
       </span>
     </span>
-  );
+  )
 }
 
-function useDelayedDiffPreview(preview: DiffPreview | null) {
-  const triggerRef = useRef<HTMLDivElement | null>(null);
-  const closeTimerRef = useRef<number | null>(null);
-  const openTimerRef = useRef<number | null>(null);
-  const previewPointerInsideRef = useRef(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [placement, setPlacement] = useState<DiffPreviewPlacement>("above");
-  const [position, setPosition] = useState<DiffPreviewPosition>();
-
-  useEffect(
-    () => () => {
-      if (closeTimerRef.current !== null) {
-        window.clearTimeout(closeTimerRef.current);
-      }
-      if (openTimerRef.current !== null) {
-        window.clearTimeout(openTimerRef.current);
-      }
-    },
-    [],
-  );
-
-  const clearCloseTimer = () => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  };
-
-  const clearOpenTimer = () => {
-    if (openTimerRef.current !== null) {
-      window.clearTimeout(openTimerRef.current);
-      openTimerRef.current = null;
-    }
-  };
-
-  const openAfterDelay = () => {
-    if (!preview) return;
-    clearCloseTimer();
-    clearOpenTimer();
-    openTimerRef.current = window.setTimeout(() => {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) {
-        const spaceAbove = rect.top;
-        const spaceBelow = window.innerHeight - rect.bottom;
-        const nextPlacement =
-          spaceAbove < DIFF_PREVIEW_ESTIMATED_HEIGHT && spaceBelow > spaceAbove
-            ? "below"
-            : "above";
-        const width = Math.min(
-          DIFF_PREVIEW_MAX_WIDTH,
-          Math.max(280, window.innerWidth - DIFF_PREVIEW_VIEWPORT_GUTTER * 2),
-        );
-        const maxLeft =
-          window.innerWidth - width - DIFF_PREVIEW_VIEWPORT_GUTTER;
-        const left = Math.min(
-          Math.max(
-            rect.left - DIFF_PREVIEW_HORIZONTAL_OFFSET,
-            DIFF_PREVIEW_VIEWPORT_GUTTER,
-          ),
-          maxLeft,
-        );
-        const top =
-          nextPlacement === "above"
-            ? Math.max(
-                DIFF_PREVIEW_VIEWPORT_GUTTER,
-                rect.top - DIFF_PREVIEW_VERTICAL_GAP,
-              )
-            : rect.bottom + DIFF_PREVIEW_VERTICAL_GAP;
-
-        setPlacement(nextPlacement);
-        setPosition({ left, top, width });
-      }
-      setPreviewOpen(true);
-      openTimerRef.current = null;
-    }, DIFF_PREVIEW_DELAY_MS);
-  };
-
-  const keepOpen = () => {
-    previewPointerInsideRef.current = true;
-    clearCloseTimer();
-  };
-
-  const close = () => {
-    clearOpenTimer();
-    if (previewPointerInsideRef.current) {
-      clearCloseTimer();
-      return;
-    }
-    clearCloseTimer();
-    closeTimerRef.current = window.setTimeout(() => {
-      setPreviewOpen(false);
-      closeTimerRef.current = null;
-    }, DIFF_PREVIEW_CLOSE_DELAY_MS);
-  };
-
-  const closeFromPreview = () => {
-    previewPointerInsideRef.current = false;
-    close();
-  };
-
-  return {
-    close,
-    closeFromPreview,
-    keepOpen,
-    openAfterDelay,
-    placement,
-    position,
-    previewOpen,
-    triggerRef,
-  };
-}
-
-function FileChangeDiffPreview({
-  onPointerDown,
-  onPointerEnter,
-  onPointerLeave,
-  preview,
-  placement,
-  position,
-}: {
-  onPointerDown: () => void;
-  onPointerEnter: () => void;
-  onPointerLeave: () => void;
-  preview: DiffPreview;
-  placement: DiffPreviewPlacement;
-  position?: DiffPreviewPosition;
-}) {
-  const portalTheme = useCollaborationPortalTheme();
-  const content = (
-    <div
+function FileChangeDiffPreview({ preview }: { preview: DiffPreview }) {
+  const portalTheme = useCollaborationPortalTheme()
+  return (
+    <HoverCardContent
       {...portalTheme}
       data-testid="file-change-diff-preview"
-      data-placement={placement}
-      style={{
-        ...portalTheme.style,
-        left: position?.left,
-        top: position?.top,
-        width: position?.width,
-        transform: placement === "above" ? "translateY(-100%)" : undefined,
-      }}
-      className={`pointer-events-auto fixed z-[9999] max-w-[calc(100vw-4rem)] select-text overflow-hidden rounded-xl border border-border bg-popover text-left text-text-primary shadow-2xl ${portalTheme.className}`}
-      onPointerDown={onPointerDown}
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
+      side="top"
+      align="start"
+      sideOffset={8}
+      collisionPadding={16}
+      className={
+        portalTheme.className +
+        ' ' +
+        controlPopup +
+        ' w-[min(640px,calc(100vw-2rem))] select-text overflow-hidden p-0 text-left'
+      }
     >
       <div className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm font-semibold">
         <span className="min-w-0 flex-1 truncate" title={preview.displayPath}>
@@ -441,33 +264,33 @@ function FileChangeDiffPreview({
       </div>
       <div className="max-h-[min(24rem,calc(100vh-9rem))] overflow-auto py-1 font-mono text-xs leading-5">
         {preview.lines.map((line) =>
-          line.type === "separator" ? (
+          line.type === 'separator' ? (
             <div key={line.key} className="my-1 h-px bg-border" />
           ) : (
             <div
               key={line.key}
               className={[
-                "grid min-w-full grid-cols-[3.5rem_max-content] overflow-visible",
-                line.type === "addition"
-                  ? "border-l-4 border-[rgb(var(--color-diff-added,74_222_128))] bg-[rgb(var(--color-diff-added,34_197_94)/0.1)] wework:border-green-400 wework:bg-green-500/10"
-                  : line.type === "deletion"
-                    ? "border-l-4 border-[rgb(var(--color-diff-removed,248_113_113))] bg-[rgb(var(--color-diff-removed,239_68_68)/0.1)] wework:border-red-400 wework:bg-red-500/10"
-                    : "border-l-4 border-transparent",
-              ].join(" ")}
+                'grid min-w-full grid-cols-[3.5rem_max-content] overflow-visible',
+                line.type === 'addition'
+                  ? 'border-l-4 border-[rgb(var(--color-diff-added,74_222_128))] bg-[rgb(var(--color-diff-added,34_197_94)/0.1)] wework:border-green-400 wework:bg-green-500/10'
+                  : line.type === 'deletion'
+                    ? 'border-l-4 border-[rgb(var(--color-diff-removed,248_113_113))] bg-[rgb(var(--color-diff-removed,239_68_68)/0.1)] wework:border-red-400 wework:bg-red-500/10'
+                    : 'border-l-4 border-transparent',
+              ].join(' ')}
             >
               <span
                 className={[
-                  "select-none px-3 text-right",
-                  line.type === "addition"
-                    ? "text-[rgb(var(--color-diff-added,74_222_128))] wework:text-green-400"
-                    : line.type === "deletion"
-                      ? "text-[rgb(var(--color-diff-removed,248_113_113))] wework:text-red-400"
-                      : "text-text-muted",
-                ].join(" ")}
+                  'select-none px-3 text-right',
+                  line.type === 'addition'
+                    ? 'text-[rgb(var(--color-diff-added,74_222_128))] wework:text-green-400'
+                    : line.type === 'deletion'
+                      ? 'text-[rgb(var(--color-diff-removed,248_113_113))] wework:text-red-400'
+                      : 'text-text-muted',
+                ].join(' ')}
               >
-                {line.lineNumber ?? ""}
+                {line.lineNumber ?? ''}
               </span>
-              <span className="pr-4 whitespace-pre">{line.content || " "}</span>
+              <span className="pr-4 whitespace-pre">{line.content || ' '}</span>
             </div>
           ),
         )}
@@ -475,23 +298,21 @@ function FileChangeDiffPreview({
           <div className="px-4 py-1 text-xs text-text-muted">...</div>
         ) : null}
       </div>
-    </div>
-  );
-
-  return createPortal(content, document.body);
+    </HoverCardContent>
+  )
 }
 
 function buildFileDiffPreview(
   file: TurnFileChangeItem,
   summary: TurnFileChangesSummary,
 ): DiffPreview | null {
-  if (file.binary || !summary.diff?.trim()) return null;
+  if (file.binary || !summary.diff?.trim()) return null
 
-  const sectionLines = fileDiffLines(file, summary);
-  if (!sectionLines.length) return null;
+  const sectionLines = fileDiffLines(file, summary)
+  if (!sectionLines.length) return null
 
-  const lines = parseDiffPreviewLines(sectionLines);
-  if (!lines.length) return null;
+  const lines = parseDiffPreviewLines(sectionLines)
+  if (!lines.length) return null
 
   return {
     path: file.path,
@@ -500,126 +321,126 @@ function buildFileDiffPreview(
     deletions: file.deletions,
     lines: lines.slice(0, DIFF_PREVIEW_MAX_LINES),
     truncated: lines.length > DIFF_PREVIEW_MAX_LINES,
-  };
+  }
 }
 
 function absoluteFilePath(workspacePath: string, filePath: string): string {
-  if (isAbsolutePath(filePath)) return filePath;
-  const normalizedWorkspacePath = workspacePath.replace(/[\\/]+$/, "");
-  if (!normalizedWorkspacePath) return filePath;
-  return `${normalizedWorkspacePath}/${filePath.replace(/^[\\/]+/, "")}`;
+  if (isAbsolutePath(filePath)) return filePath
+  const normalizedWorkspacePath = workspacePath.replace(/[\\/]+$/, '')
+  if (!normalizedWorkspacePath) return filePath
+  return `${normalizedWorkspacePath}/${filePath.replace(/^[\\/]+/, '')}`
 }
 
 function isAbsolutePath(path: string): boolean {
-  return /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(path);
+  return /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(path)
 }
 
 function fileDiffLines(
   file: TurnFileChangeItem,
   summary: TurnFileChangesSummary,
 ): string[] {
-  const diff = summary.diff?.trimEnd();
-  if (!diff) return [];
+  const diff = summary.diff?.trimEnd()
+  if (!diff) return []
 
-  const sections = parseUnifiedDiff(diff);
+  const sections = parseUnifiedDiff(diff)
   if (sections.length === 0) {
-    return summary.files.length === 1 ? diff.split("\n") : [];
+    return summary.files.length === 1 ? diff.split('\n') : []
   }
 
   const section = sections.find(
     (item) =>
       pathsMatch(item.path, file.path) ||
       (file.old_path ? pathsMatch(item.oldPath, file.old_path) : false),
-  );
-  return section?.lines ?? [];
+  )
+  return section?.lines ?? []
 }
 
 function pathsMatch(
   left: string | undefined,
   right: string | undefined,
 ): boolean {
-  if (!left || !right) return false;
+  if (!left || !right) return false
   return (
     left === right || left.endsWith(`/${right}`) || right.endsWith(`/${left}`)
-  );
+  )
 }
 
 function parseDiffPreviewLines(lines: string[]): DiffPreviewLine[] {
-  const previewLines: DiffPreviewLine[] = [];
-  let oldLine: number | undefined;
-  let newLine: number | undefined;
-  let seenHunk = false;
+  const previewLines: DiffPreviewLine[] = []
+  let oldLine: number | undefined
+  let newLine: number | undefined
+  let seenHunk = false
 
   lines.forEach((rawLine, index) => {
     if (
-      rawLine.startsWith("diff --git") ||
-      rawLine.startsWith("---") ||
-      rawLine.startsWith("+++")
+      rawLine.startsWith('diff --git') ||
+      rawLine.startsWith('---') ||
+      rawLine.startsWith('+++')
     ) {
-      return;
+      return
     }
     if (
-      rawLine.startsWith("index ") ||
-      rawLine.startsWith("new file mode ") ||
-      rawLine.startsWith("deleted file mode ") ||
-      rawLine.startsWith("similarity index ") ||
-      rawLine.startsWith("rename from ") ||
-      rawLine.startsWith("rename to ") ||
-      rawLine.startsWith("\\ No newline")
+      rawLine.startsWith('index ') ||
+      rawLine.startsWith('new file mode ') ||
+      rawLine.startsWith('deleted file mode ') ||
+      rawLine.startsWith('similarity index ') ||
+      rawLine.startsWith('rename from ') ||
+      rawLine.startsWith('rename to ') ||
+      rawLine.startsWith('\\ No newline')
     ) {
-      return;
+      return
     }
 
-    const hunk = rawLine.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    const hunk = rawLine.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
     if (hunk) {
       if (seenHunk && previewLines.length > 0) {
         previewLines.push({
           key: `separator-${index}`,
-          type: "separator",
-          content: "",
-        });
+          type: 'separator',
+          content: '',
+        })
       }
-      oldLine = Number(hunk[1]);
-      newLine = Number(hunk[2]);
-      seenHunk = true;
-      return;
+      oldLine = Number(hunk[1])
+      newLine = Number(hunk[2])
+      seenHunk = true
+      return
     }
 
-    if (!seenHunk && !rawLine.startsWith("+") && !rawLine.startsWith("-")) {
-      return;
+    if (!seenHunk && !rawLine.startsWith('+') && !rawLine.startsWith('-')) {
+      return
     }
 
-    const prefix = rawLine[0];
-    if (prefix === "+") {
+    const prefix = rawLine[0]
+    if (prefix === '+') {
       previewLines.push({
         key: `addition-${index}`,
-        type: "addition",
+        type: 'addition',
         lineNumber: newLine,
         content: rawLine.slice(1),
-      });
-      if (newLine !== undefined) newLine += 1;
-      return;
+      })
+      if (newLine !== undefined) newLine += 1
+      return
     }
-    if (prefix === "-") {
+    if (prefix === '-') {
       previewLines.push({
         key: `deletion-${index}`,
-        type: "deletion",
+        type: 'deletion',
         lineNumber: oldLine,
         content: rawLine.slice(1),
-      });
-      if (oldLine !== undefined) oldLine += 1;
-      return;
+      })
+      if (oldLine !== undefined) oldLine += 1
+      return
     }
 
     previewLines.push({
       key: `context-${index}`,
-      type: "context",
+      type: 'context',
       lineNumber: newLine ?? oldLine,
-      content: prefix === " " ? rawLine.slice(1) : rawLine,
-    });
-    if (oldLine !== undefined) oldLine += 1;
-    if (newLine !== undefined) newLine += 1;
-  });
+      content: prefix === ' ' ? rawLine.slice(1) : rawLine,
+    })
+    if (oldLine !== undefined) oldLine += 1
+    if (newLine !== undefined) newLine += 1
+  })
 
-  return previewLines;
+  return previewLines
 }

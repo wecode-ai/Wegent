@@ -153,7 +153,7 @@ class AttachmentS3Upload(unittest.TestCase):
             WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:1",
             EXECUTOR_MANAGER_URL="http://127.0.0.1:1",
             BREEZE_LOG_DIR=str(REPORT / "rust-logs"),
-            RUST_LOG="info,wegent_backend_rs::attachments::upload::s3=debug",
+            RUST_LOG="info,wegent_attachments::attachments::upload::s3=debug",
         )
         log = (REPORT / "backend.log").open("wb")
         cls.addClassCleanup(log.close)

@@ -171,6 +171,8 @@ class ExecutionRequest:
     history_limit: Optional[int] = None
     stateless: bool = False
     new_session: bool = False
+    # Explicit Backend-selected fallback; local send adapters reset new_session.
+    legacy_session_fallback: bool = False
     ephemeral: bool = False
     fork_runtime: Optional[dict] = None
     inherited_sessions: list[dict] = field(default_factory=list)
@@ -191,7 +193,7 @@ class ExecutionRequest:
     # === Authentication ===
     auth_token: str = ""
     skill_identity_token: str = ""
-    backend_url: str = ""
+    backend_url: Optional[str] = ""
 
     # === Attachments ===
     attachments: list = field(default_factory=list)
@@ -267,7 +269,7 @@ class ExecutionRequest:
     @property
     def backend_api_url(self) -> str:
         """Backend API base for MCP templates, with exactly one API prefix."""
-        base = self.backend_url.strip().rstrip("/")
+        base = (self.backend_url or "").strip().rstrip("/")
         root = base.removesuffix("/api")
         return f"{root}/api" if root else ""
 

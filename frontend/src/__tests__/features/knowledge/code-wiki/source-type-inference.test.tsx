@@ -12,8 +12,14 @@
  * it. That answer is used before any public default.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
-import { CodeWikiSourceFields } from '@/features/knowledge/code-wiki/CodeWikiSourceFields'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { useState } from 'react'
+import { codeWikiApi } from '@/apis/code-wiki'
+import {
+  CodeWikiSourceFields,
+  useCodeWikiRepository,
+  type CodeWikiSourceDraft,
+} from '@/features/knowledge/code-wiki/CodeWikiSourceFields'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -36,18 +42,24 @@ jest.mock('@/features/common/UserContext', () => ({
   useUser: () => mockUser(),
 }))
 
-const EMPTY = {
-  source_type: 'github' as const,
-  source_url: '',
+const EMPTY: CodeWikiSourceDraft = {
+  mode: 'select',
+  repo: null,
+  urlInput: '',
+  urlSourceType: 'github',
   language: 'zh',
-  generation_strategy: '',
-  show_generation_task: false,
-  resolution: null,
+  probe: null,
+}
+
+function SourceForm({ initial = EMPTY }: { initial?: CodeWikiSourceDraft }) {
+  const [draft, setDraft] = useState(initial)
+  const repository = useCodeWikiRepository(draft)
+  return <CodeWikiSourceFields value={draft} repository={repository} onChange={setDraft} />
 }
 
 function renderWith(gitInfo: Array<{ git_domain: string; type: string }>) {
   mockUser.mockReturnValue({ user: { git_info: gitInfo } })
-  render(<CodeWikiSourceFields value={EMPTY} onChange={jest.fn()} />)
+  render(<SourceForm />)
   fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
   fireEvent.change(screen.getByTestId('code-wiki-source-url'), {
     target: { value: 'https://git.intra.example.com/team/app' },
@@ -69,21 +81,113 @@ describe('code wiki source type inference', () => {
   })
 })
 
+it('explains unsupported repository providers without probing them', () => {
+  mockUser.mockReturnValue({ user: { git_info: [] } })
+  jest.mocked(codeWikiApi.resolve).mockClear()
+  render(
+    <SourceForm
+      initial={{
+        ...EMPTY,
+        repo: {
+          git_repo_id: 1,
+          name: 'repo',
+          git_repo: 'team/repo',
+          git_url: 'https://gitee.com/team/repo',
+          git_domain: 'gitee.com',
+          private: false,
+          type: 'gitee',
+        },
+      }}
+    />
+  )
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'codeWiki.create.unsupportedRepositoryProvider'
+  )
+  expect(codeWikiApi.resolve).not.toHaveBeenCalled()
+})
+
+it('keeps retry available after a failed repository check and clears the error on recovery', async () => {
+  mockUser.mockReturnValue({ user: { git_info: [] } })
+  jest.mocked(codeWikiApi.resolve).mockClear()
+  const url = 'https://github.com/team/repo'
+  jest
+    .mocked(codeWikiApi.resolve)
+    .mockRejectedValueOnce(new Error('Network unavailable'))
+    .mockResolvedValueOnce({
+      exists: true,
+      visibility: 'public',
+      default_branch: 'main',
+      name: 'repo',
+      description: '',
+      access: 'public',
+      existing_wikis: [],
+    })
+  jest.useFakeTimers()
+  try {
+    render(
+      <SourceForm
+        initial={{
+          ...EMPTY,
+          mode: 'url',
+          urlInput: url,
+          probe: {
+            url,
+            type: 'github',
+            result: {
+              exists: false,
+              visibility: '',
+              default_branch: '',
+              name: '',
+              description: '',
+              access: 'none',
+              existing_wikis: [],
+            },
+          },
+        }}
+      />
+    )
+    expect(codeWikiApi.resolve).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('code-wiki-source-retry'))
+    await act(async () => {
+      jest.advanceTimersByTime(600)
+    })
+    expect(codeWikiApi.resolve).toHaveBeenCalledWith('github', url)
+    expect(screen.getByRole('alert')).toHaveTextContent('codeWiki.create.repositoryProbeFailed')
+    fireEvent.click(screen.getByTestId('code-wiki-source-retry'))
+    await act(async () => {
+      jest.advanceTimersByTime(600)
+    })
+    expect(codeWikiApi.resolve).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('code-wiki-source-retry')).not.toBeInTheDocument()
+  } finally {
+    jest.useRealTimers()
+  }
+})
+
 it('opens an existing wiki by ID without assuming its namespace', () => {
   mockUser.mockReturnValue({ user: { git_info: [] } })
+  const url = 'https://github.com/team/repo'
   render(
-    <CodeWikiSourceFields
-      onChange={jest.fn()}
-      value={{
+    <SourceForm
+      initial={{
         ...EMPTY,
-        resolution: {
-          exists: true,
-          visibility: 'public',
-          default_branch: 'main',
-          name: 'repo',
-          description: '',
-          access: 'public',
-          existing_wikis: [{ id: 42, name: 'Shared wiki', owner_name: 'Owner', accessible: true }],
+        mode: 'url',
+        urlInput: url,
+        probe: {
+          url,
+          type: 'github',
+          result: {
+            exists: true,
+            visibility: 'public',
+            default_branch: 'main',
+            name: 'repo',
+            description: '',
+            access: 'public',
+            existing_wikis: [
+              { id: 42, name: 'Shared wiki', owner_name: 'Owner', accessible: true },
+            ],
+          },
         },
       }}
     />

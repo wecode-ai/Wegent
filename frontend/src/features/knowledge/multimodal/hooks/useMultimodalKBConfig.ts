@@ -10,7 +10,7 @@
  * free of multimodal state management.
  */
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SummaryModelRef } from '@/types/knowledge'
 
@@ -83,14 +83,14 @@ export function useMultimodalKBConfig() {
     }
   }
 
-  /** Reset all multimodal state to defaults (for dialog close/reset). */
-  function reset(): void {
+  /** Reset all multimodal state to defaults. */
+  const reset = useCallback(() => {
     setMultimodalAnalysisEnabled(false)
     setMultimodalAnalysisModelRef(null)
     setMultimodalAnalysisModelError('')
     setMultimodalVideoPrompt(null)
     setMultimodalImagePrompt(null)
-  }
+  }, [])
 
   /** Props bundle to spread onto <KnowledgeBaseForm> for the multimodal config
    *  section. Avoids enumerating 9 props by hand in each dialog. */

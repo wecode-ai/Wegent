@@ -1,7 +1,8 @@
-import { formatNotificationTime } from './notificationTime'
-import type { ReactNode } from 'react'
-import { AtSign, Bell, Bot, ClipboardCheck, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AtSign, Bell, Bot, ClipboardCheck, type LucideIcon } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { formatNotificationTime } from './notificationTime'
 
 const KIND_ICONS: Record<string, LucideIcon> = {
   mention: AtSign,
@@ -74,7 +75,8 @@ export function NotificationFeedRow({
         )}
       </span>
       <div className="min-w-0 flex-1">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={testId}
           data-unread={unread ? 'true' : undefined}
@@ -128,7 +130,7 @@ export function NotificationFeedRow({
               {replyPreview}
             </span>
           )}
-        </button>
+        </ControlButton>
         {processing && (
           <div className="pointer-events-none relative z-10 mt-2 [&_:is(button,input,textarea,select,a,label,[role=button],[role=checkbox],[role=radio])]:pointer-events-auto">
             {processing}

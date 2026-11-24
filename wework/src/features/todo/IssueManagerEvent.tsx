@@ -1,13 +1,15 @@
-import {
-  createCollaborationTranslator,
-  formatIssueTimestamp,
-  managerActivityPresentation,
-  executionDisplayStatus,
-} from '@wegent/collaboration'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem } from '@/api/deliveries'
-import { LoaderCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  createCollaborationTranslator,
+  executionDisplayStatus,
+  formatIssueTimestamp,
+  issueActivityTimestamp,
+  managerActivityPresentation,
+} from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { LoaderCircle } from 'lucide-react'
 import { resolveMessageRunStatus } from './taskActivityMessageUtils'
 
 export function IssueManagerEvent({
@@ -31,6 +33,7 @@ export function IssueManagerEvent({
     message.metadata,
     executionDisplayStatus(status) ?? 'unknown'
   )
+  const timestamp = issueActivityTimestamp(message)
   return (
     <div
       data-testid={`cloud-task-manager-event-${message.messageId}`}
@@ -45,24 +48,29 @@ export function IssueManagerEvent({
         <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-text-muted" />
       )}
       <div className="min-w-0 flex-1">
-        <div className="flex items-start gap-2 text-sm">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
           <div className="min-w-0 flex-1">
             <span className="font-medium">{message.sender.name}</span> {presentation.label}
           </div>
+          <time dateTime={timestamp} className="shrink-0 whitespace-nowrap text-xs text-text-muted">
+            {formatIssueTimestamp(timestamp)}
+          </time>
           {onOpenExecution || onCancel ? (
             <div className="flex shrink-0 items-center gap-3">
               {onOpenExecution ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`cloud-task-manager-execution-${message.messageId}`}
                   className="text-xs text-text-muted hover:text-text-primary"
                   onClick={onOpenExecution}
                 >
                   {t('activity.task_activity_view_execution')}
-                </button>
+                </ControlButton>
               ) : null}
               {onCancel ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`cloud-task-manager-cancel-${message.messageId}`}
                   disabled={cancelling}
@@ -72,14 +80,11 @@ export function IssueManagerEvent({
                   {cancelling
                     ? t('activity.task_activity_stopping_workflow')
                     : t('activity.task_activity_stop_workflow')}
-                </button>
+                </ControlButton>
               ) : null}
             </div>
           ) : null}
         </div>
-        <time dateTime={message.createdAt} className="text-xs text-text-muted">
-          {formatIssueTimestamp(message.createdAt)}
-        </time>
       </div>
     </div>
   )

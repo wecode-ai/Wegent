@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+include = ["../../backend-rs/config/routes.toml"]
+
+# The chat retry E2E scrapes the Rust process through the hybrid listener.
+[[routes]]
+methods = ["GET"]
+path = "/metrics"

@@ -14,7 +14,8 @@ use crate::task_runtime::{
 mod manager;
 #[cfg(test)]
 use manager::{
-    fresh_cloud_manager_payload, fresh_cloud_manager_task_id, fresh_cloud_manager_task_started,
+    apply_fresh_cloud_manager_profiles, fresh_cloud_manager_payload, fresh_cloud_manager_task_id,
+    fresh_cloud_manager_task_started,
 };
 
 const CLOUD_COLLABORATION_ROUND_KEY: &str = "cloudCollaborationRound";
@@ -116,12 +117,19 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    fn clear_cloud_collaboration_round(&self, manager_runtime_task_id: &str) {
-        self.store.update_task(manager_runtime_task_id, |link| {
-            if let Some(handle) = link.runtime_handle.as_object_mut() {
-                handle.remove(CLOUD_COLLABORATION_ROUND_KEY);
-            }
-        });
+    fn clear_cloud_collaboration_round(&self, command: &CloudCollaborationRoundCommand) {
+        self.store
+            .update_task(&command.manager_runtime_task_id, |link| {
+                let Some(handle) = link.runtime_handle.as_object_mut() else {
+                    return;
+                };
+                if handle
+                    .get(CLOUD_COLLABORATION_ROUND_KEY)
+                    .is_some_and(|round| round["round_id"] == command.round_id)
+                {
+                    handle.remove(CLOUD_COLLABORATION_ROUND_KEY);
+                }
+            });
     }
 
     async fn monitor_cloud_collaboration_round(&self, command: CloudCollaborationRoundCommand) {
@@ -498,13 +506,14 @@ impl RuntimeWorkRpcHandler {
             }),
         )
         .await
+        .map(|_| ())
     }
 
     async fn report_cloud_collaboration_activity(
         &self,
         command: &CloudCollaborationRoundCommand,
         payload: &Value,
-    ) -> Result<(), CollaborationReportError> {
+    ) -> Result<reqwest::Response, CollaborationReportError> {
         let connection = self
             .backend_connection_snapshot()
             .map_err(|value| value.message)?
@@ -525,7 +534,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(|value| value.to_string())?;
         let response_status = response.status();
         if response_status.is_success() {
-            return Ok(());
+            return Ok(response);
         }
         let body = response.text().await.unwrap_or_default();
         Err(CollaborationReportError {

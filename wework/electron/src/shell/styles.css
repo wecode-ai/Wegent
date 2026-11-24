@@ -74,19 +74,10 @@ body {
   white-space: pre-wrap;
 }
 
-button {
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid rgb(23 23 23 / 12%);
-  border-radius: 8px;
+.runtime-action {
+  border-color: rgb(23 23 23 / 12%);
   background: #171717;
   color: #fafafa;
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: default;
-  opacity: 0.5;
 }
 
 :root[data-theme='dark'] #runtime-status {
@@ -99,7 +90,7 @@ button:disabled {
   color: rgb(255 255 255 / 70%);
 }
 
-:root[data-theme='dark'] button {
+:root[data-theme='dark'] .runtime-action {
   border-color: rgb(255 255 255 / 12%);
   background: #f3f3f3;
   color: #0d0d0d;

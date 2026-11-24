@@ -1,0 +1,531 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! Focused tests for `_recover_executor_if_needed`'s read and its predicates.
+use std::time::Duration;
+
+use brz_mysql::{MysqlResult, MysqlRouteKey, MysqlRouteOutput, MysqlRouting};
+use serde_json::{Value, json};
+
+use super::{
+    has_fork_workspace_archive, has_inherited_claude_session, payload_reports_missing,
+    probes_executor_binding, read_subtask_with_contexts, recover_executor_if_needed,
+    requires_claude_session, shell_supports_recovery,
+};
+use crate::responses::create::dispatch::ExecutionRequest;
+use crate::sql_test_support::mysql_pool_server;
+use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
+use crate::task_store::TableTemplates;
+use crate::task_store_statements::{subtask_by_id_statement, subtask_column_index};
+use wegent_chat_history::chat_repository::contexts_by_subtask_ids_statement;
+
+/// Deployment shard policy for the test: the recorded `{{subtasks}}` template
+/// renders the physical table the recording shows.
+struct RecordedShard;
+
+impl MysqlRouting for RecordedShard {
+    fn resolve<'a>(
+        &'a self,
+        template: &'a str,
+        _key: &'a dyn MysqlRouteKey,
+    ) -> MysqlResult<impl MysqlRouteOutput + 'a> {
+        Ok(match template {
+            "subtasks" => "subtasks_0711".to_string(),
+            "tasks" => "tasks_0711".to_string(),
+            other => other.to_string(),
+        })
+    }
+}
+
+fn templates() -> TableTemplates {
+    TableTemplates {
+        tasks: "{{tasks}}",
+        subtasks: "{{subtasks}}",
+    }
+}
+
+fn normalize(sql: &str) -> String {
+    sql.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `_recover_executor_if_needed` only re-reads the subtask for the coding
+/// shells; every other shell returns before the read.
+#[test]
+fn only_coding_shells_enter_the_recovery_read() {
+    for shell in ["ClaudeCode", "Agno", "CodeX", "Codex"] {
+        assert!(shell_supports_recovery(shell), "{shell}");
+    }
+    for shell in ["Chat", "Dify", ""] {
+        assert!(!shell_supports_recovery(shell), "{shell}");
+    }
+}
+
+#[tokio::test]
+async fn explicit_device_placement_skips_managed_executor_recovery() {
+    let fixture = MysqlRows::start_results(|sql| panic!("unexpected recovery query: {sql}")).await;
+    let app = crate::app_test_support::app(fixture.mysql.clone());
+    let mut request = ExecutionRequest {
+        bot: json!([{"shell_type": "Codex"}]),
+        executor_name: Some("stale-managed-executor".into()),
+        executor_namespace: Some("stale-namespace".into()),
+        ..ExecutionRequest::default()
+    };
+
+    let recovered = recover_executor_if_needed(&app, &mut request, Some("device-route"), false)
+        .await
+        .unwrap();
+
+    assert!(!recovered);
+    assert_eq!(
+        request.executor_name.as_deref(),
+        Some("stale-managed-executor")
+    );
+    assert!(fixture.queries().is_empty());
+}
+
+/// `_has_fork_workspace_archive` needs a non-blank `storageKey`.
+#[test]
+fn a_fork_workspace_archive_requires_a_non_blank_storage_key() {
+    assert!(has_fork_workspace_archive(Some(
+        &json!({"workspaceArchive": {"storageKey": "archive/one"}})
+    )));
+    assert!(!has_fork_workspace_archive(Some(
+        &json!({"workspaceArchive": {"storageKey": "   "}})
+    )));
+    assert!(!has_fork_workspace_archive(Some(
+        &json!({"workspaceArchive": {}})
+    )));
+    assert!(!has_fork_workspace_archive(Some(&json!({}))));
+    assert!(!has_fork_workspace_archive(None));
+}
+
+/// `_mark_missing_executor_deleted` (`dispatcher.py:341-343`): a blank or
+/// `device-*` binding is never soft-probed.
+#[test]
+fn the_executor_probe_skips_blank_and_device_bindings() {
+    assert!(probes_executor_binding(
+        "wegent-task-haoxuan3-7c2a3a222e00cad"
+    ));
+    assert!(probes_executor_binding("  wegent-task-one  "));
+    assert!(!probes_executor_binding(""));
+    assert!(!probes_executor_binding("   "));
+    assert!(!probes_executor_binding("device-abc"));
+    assert!(!probes_executor_binding(" device-abc "));
+}
+
+/// `remote_workspace_service.executor_alive`: only a terminal phase or the
+/// "No pod found" error reports the executor as missing. The recorded create
+/// case answered `200 status=success phase=Running`, which is alive.
+#[test]
+fn only_terminal_or_missing_pods_report_the_executor_as_gone() {
+    assert!(!payload_reports_missing(
+        &json!({"status": "success", "phase": "Running"})
+    ));
+    assert!(!payload_reports_missing(&json!({"status": "SUCCESS"})));
+    assert!(!payload_reports_missing(
+        &json!({"status": "success", "phase": "Succeeded"})
+    ));
+    assert!(!payload_reports_missing(&json!({"phase": "Pending"})));
+    assert!(!payload_reports_missing(
+        &json!({"error_msg": "temporarily unavailable"})
+    ));
+    assert!(!payload_reports_missing(&json!({})));
+    assert!(payload_reports_missing(
+        &json!({"status": "error", "phase": "Succeeded"})
+    ));
+    assert!(payload_reports_missing(
+        &json!({"status": "error", "phase": "Failed"})
+    ));
+    assert!(payload_reports_missing(
+        &json!({"status": "error", "error_msg": "No pod found for executor x/y"})
+    ));
+}
+
+#[test]
+fn claude_continuation_requires_a_safe_session_for_the_current_bot() {
+    let mut request = ExecutionRequest {
+        bot: json!([{"id": 9, "shell_type": "ClaudeCode"}]),
+        inherited_sessions: vec![
+            json!({"agent": "ClaudeCode", "sessionId": "session-1", "botId": 8}),
+        ],
+        ..ExecutionRequest::default()
+    };
+    assert!(requires_claude_session(&request));
+    assert!(!has_inherited_claude_session(&request));
+    request.inherited_sessions[0]["botId"] = json!("9");
+    assert!(has_inherited_claude_session(&request));
+    request.inherited_sessions[0]["sessionId"] = json!("../invalid");
+    assert!(!has_inherited_claude_session(&request));
+    request.new_session = true;
+    assert!(!requires_claude_session(&request));
+}
+
+async fn recovery_fixture(task_json: Value) -> MysqlRows {
+    MysqlRows::start_results(move |sql| {
+        let status = task_json["status"]["status"].as_str().unwrap_or("PENDING");
+        if sql.starts_with("UPDATE ") {
+            return (vec![], vec![]);
+        }
+        if sql.contains("FROM subtask_contexts") {
+            return (vec![("id", SqlValue::I64(0))], vec![]);
+        }
+        if sql.starts_with("SELECT id FROM subtasks ") {
+            let row = vec![("id", SqlValue::I64(101))];
+            return (row.clone(), vec![row]);
+        }
+        let row: Row = if sql.contains("executor_deleted_at") {
+            let mut row = vec![("unused", SqlValue::Null); 23];
+            for (column, value) in [
+                ("task_id", SqlValue::I64(100)),
+                ("role", SqlValue::Text("ASSISTANT".into())),
+                ("status", SqlValue::Text(status.into())),
+                ("executor_name", SqlValue::Text("old-executor".into())),
+                ("executor_namespace", SqlValue::Text("old-namespace".into())),
+                ("executor_deleted_at", SqlValue::I8(0)),
+            ] {
+                row[subtask_column_index(column).unwrap()] = (column, value);
+            }
+            row
+        } else {
+            assert!(sql.contains("FROM tasks"), "{sql}");
+            let mut row = vec![("unused", SqlValue::Null); 12];
+            for (column, value) in [
+                ("id", SqlValue::I64(100)),
+                ("user_id", SqlValue::I32(7)),
+                ("kind", SqlValue::Text("Task".into())),
+                ("json", SqlValue::Text(task_json.to_string())),
+                ("is_active", SqlValue::I64(1)),
+            ] {
+                row[crate::task_store::task_column_index(column).unwrap()] = (column, value);
+            }
+            row
+        };
+        (row.clone(), vec![row])
+    })
+    .await
+}
+
+#[tokio::test]
+async fn missing_executor_prepares_a_replacement_before_building_the_dispatch_payload() {
+    let (result, _, queries) = run_executor_recovery(false, false).await;
+    result.unwrap();
+    let writes: Vec<&str> = queries
+        .iter()
+        .filter(|sql| sql.starts_with("UPDATE ") && sql.contains("executor_deleted_at"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(writes.len(), 2);
+    assert!(writes[0].contains("executor_deleted_at = true"));
+    assert!(writes[1].contains("executor_deleted_at = false"));
+    let lock = queries
+        .iter()
+        .position(|sql| sql.contains("FROM tasks") && sql.ends_with("FOR UPDATE"))
+        .expect("dispatch locks the parent task");
+    let subtask = queries
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE subtasks SET status="))
+        .expect("dispatch transitions the subtask to RUNNING");
+    let parent = queries
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE tasks SET json="))
+        .expect("dispatch transitions the parent to RUNNING");
+    assert!(lock < subtask && subtask < parent);
+}
+
+#[tokio::test]
+async fn pipeline_executor_reaches_manager_when_replica_is_missing_the_stage() {
+    let (result, _, writer_queries) = run_executor_recovery(false, true).await;
+    result.unwrap();
+    assert!(
+        writer_queries
+            .iter()
+            .any(|sql| sql.contains("FROM subtasks") && sql.ends_with("FOR UPDATE"))
+    );
+    assert!(
+        !writer_queries
+            .iter()
+            .any(|sql| sql.contains("FROM subtask_contexts"))
+    );
+}
+
+#[tokio::test]
+async fn a_failed_prepare_keeps_the_deleted_binding_and_reports_the_manager_error() {
+    let (result, request, queries) = run_executor_recovery(true, false).await;
+    assert_eq!(result.unwrap_err().to_string(), "Pod preparation timed out");
+    assert_eq!(request.executor_name.as_deref(), Some("old-executor"));
+    assert!(
+        queries
+            .iter()
+            .any(|sql| sql.contains("executor_deleted_at = true"))
+    );
+    assert!(
+        !queries
+            .iter()
+            .any(|sql| sql.contains("executor_deleted_at = false"))
+    );
+}
+
+async fn run_executor_recovery(
+    prepare_fails: bool,
+    pipeline: bool,
+) -> (anyhow::Result<()>, ExecutionRequest, Vec<String>) {
+    use std::sync::Arc;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+
+    let status = if pipeline { "RUNNING" } else { "PENDING" };
+    let fixture = recovery_fixture(json!({"status":{"status":status}})).await;
+    let replica = MysqlRows::start_results(|sql| {
+        if sql.contains("FROM tasks") || sql.contains("FROM `tasks`") {
+            let task = vec![
+                ("id", SqlValue::I64(100)),
+                ("user_id", SqlValue::I32(7)),
+                ("json", SqlValue::Text("{}".into())),
+            ];
+            return (task.clone(), vec![task]);
+        }
+        assert!(
+            sql.contains("FROM subtasks") || sql.contains("FROM `subtasks`"),
+            "{sql}"
+        );
+        (vec![("id", SqlValue::I64(0))], vec![])
+    })
+    .await;
+    let mysql = if pipeline {
+        brz_mysql::MysqlService::connect_lazy_read_write_with_options(
+            &fixture.url,
+            &replica.url,
+            Default::default(),
+        )
+        .unwrap()
+    } else {
+        fixture.mysql.clone()
+    };
+    let mut app = crate::app_test_support::app(mysql);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    Arc::get_mut(&mut app).unwrap().executor_manager =
+        crate::executor_manager::ExecutorManager::new(&url).unwrap();
+    app.completion_app.set(Arc::downgrade(&app)).unwrap();
+    let manager = tokio::spawn(async move {
+        let mut paths = vec![
+            "/executor-manager/executor/address",
+            "/executor-manager/executors/prepare",
+        ];
+        if !prepare_fails {
+            paths.push("/executor-manager/v1/responses");
+        }
+        for path in paths {
+            let (connection, _) = listener.accept().await.unwrap();
+            let mut connection = BufReader::new(connection);
+            let mut request_line = String::new();
+            connection.read_line(&mut request_line).await.unwrap();
+            let mut length = 0;
+            let mut has_binding_credential = false;
+            let mut has_service_credential = false;
+            loop {
+                let mut header = String::new();
+                assert!(connection.read_line(&mut header).await.unwrap() > 0);
+                if header == "\r\n" {
+                    break;
+                }
+                if let Some(value) = header.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap();
+                }
+                let lowercase_header = header.to_ascii_lowercase();
+                has_binding_credential |=
+                    lowercase_header.starts_with("authorization: wegentexecutorbinding ");
+                has_service_credential |= lowercase_header.starts_with("authorization: bearer ");
+            }
+            let (status, body) = if path.ends_with("/address") {
+                assert!(request_line.starts_with(&format!("GET {path}?")));
+                assert!(request_line.contains("executor_name=old-executor"));
+                (
+                    "200 OK",
+                    json!({"status": "error", "error_msg": "No pod found for executor old-executor"}),
+                )
+            } else {
+                assert!(request_line.starts_with(&format!("POST {path} ")));
+                let mut body = vec![0; length];
+                connection.read_exact(&mut body).await.unwrap();
+                let body: Value = serde_json::from_slice(&body).unwrap();
+                if path.ends_with("/responses") {
+                    assert!(has_binding_credential);
+                    assert_eq!(
+                        body["metadata"]["backend_url"],
+                        "https://backend.example/api"
+                    );
+                    assert_eq!(body["metadata"]["executor_name"], "replacement");
+                    assert_eq!(body["metadata"]["executor_namespace"], "replacement-ns");
+                    ("200 OK", json!({"id": "resp_100", "status": "queued"}))
+                } else {
+                    assert!(has_service_credential);
+                    assert_eq!(body["task_id"], 100);
+                    assert_eq!(body["subtask_id"], 101);
+                    assert!(body["executor_name"].is_null());
+                    assert!(body["executor_namespace"].is_null());
+                    assert_eq!(body["skip_git_clone"], false);
+                    if prepare_fails {
+                        (
+                            "500 Internal Server Error",
+                            json!({"detail": "Pod preparation timed out"}),
+                        )
+                    } else {
+                        // The regular HTTP client's read timeout is 400 ms.
+                        tokio::time::sleep(Duration::from_millis(450)).await;
+                        (
+                            "200 OK",
+                            json!({"status": "success", "executor_name": "replacement", "executor_namespace": "replacement-ns"}),
+                        )
+                    }
+                }
+            };
+            let body = body.to_string();
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len(),
+            );
+            connection
+                .get_mut()
+                .write_all(response.as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let mut request = ExecutionRequest {
+        task_id: 100,
+        subtask_id: 101,
+        user_id: 7,
+        backend_url: "https://backend.example/api".into(),
+        bot: json!([{"shell_type": "Codex"}]),
+        executor_name: Some("old-executor".into()),
+        executor_namespace: Some("old-namespace".into()),
+        ..ExecutionRequest::default()
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let result = if pipeline {
+            assert!(
+                read_subtask_with_contexts(
+                    &app.mysql,
+                    app.task_store.table_templates(),
+                    request.subtask_id
+                )
+                .await
+                .unwrap()
+                .is_none()
+            );
+            use crate::responses::dispatch::{ConsumerState, DispatchJob, ExecutorDispatchBody};
+            let (accepted, dispatched) = tokio::sync::oneshot::channel();
+            let job = DispatchJob::Executor {
+                consumer: Box::new(ConsumerState::from_app(&app)),
+                task_id: request.task_id,
+                subtask_id: request.subtask_id,
+                user_id: request.user_id,
+                message_id: request.message_id,
+                url: format!("{url}/executor-manager/v1/responses"),
+                body: ExecutorDispatchBody::Recover(Box::new(request.clone())),
+                start: None,
+            };
+            app.responses_dispatch
+                .reserve()
+                .unwrap()
+                .send(DispatchJob::Pipeline(Box::new(job), accepted));
+            dispatched.await.unwrap().unwrap();
+            assert_eq!(
+                replica
+                    .queries()
+                    .iter()
+                    .filter(|sql| sql.contains("subtasks"))
+                    .count(),
+                1,
+                "only the explicit replica read may query the subtask"
+            );
+            Ok(())
+        } else if prepare_fails {
+            recover_executor_if_needed(&app, &mut request, None, false)
+                .await
+                .map(|_| ())
+        } else {
+            crate::responses::create::seam::enqueue_executor_dispatch(
+                &app,
+                &format!("{url}/executor-manager"),
+                &request,
+                None,
+            );
+            Ok(())
+        };
+        manager.await.unwrap();
+        (result, request, fixture.queries())
+    })
+    .await
+    .expect("recovery fixture did not finish")
+}
+
+/// The recovery read is `subtask_store.get_by_id`'s ORM projection: every
+/// mapped column labeled `{table}_{column}`, `WHERE {table}.id = ? LIMIT 1`,
+/// rendered against the subtask's shard. It is the same pair the RUNNING
+/// transition issues later, which is why the recorded create flow has two
+/// identical reads.
+#[test]
+fn the_recovery_read_matches_the_recorded_subtask_pair() {
+    let read = normalize(&subtask_by_id_statement(templates().subtasks));
+    assert!(
+        read.contains(
+            "{{subtasks}}.id AS {{subtasks}}_id, {{subtasks}}.user_id AS {{subtasks}}_user_id"
+        ),
+        "{read}"
+    );
+    assert!(read.contains("WHERE {{subtasks}}.id = ? LIMIT 1"), "{read}");
+
+    let contexts = normalize(&contexts_by_subtask_ids_statement(1));
+    assert!(
+        contexts.contains("FROM subtask_contexts WHERE subtask_contexts.subtask_id IN (?)"),
+        "{contexts}"
+    );
+    assert!(
+        contexts.ends_with("ORDER BY subtask_contexts.id ASC"),
+        "{contexts}"
+    );
+}
+
+/// The first statement the recovery read prepares targets the routed shard
+/// table, before the contexts load and before the RUNNING transition.
+#[tokio::test]
+async fn the_recovery_read_is_prepared_against_the_shard_first() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mysql = crate::connect_mysql(&format!(
+            "mysql://test:test@{}/test?ssl-mode=disabled",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap()
+        .with_route(RecordedShard);
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(mysql_pool_server::capture_queries_until(listener, stopped));
+
+        // The fake server answers prepared statements with a SQL error, so the
+        // read stops at the first statement.
+        let _ = read_subtask_with_contexts(&mysql, templates(), 801_406_538_674_542).await;
+
+        stop.send(()).unwrap();
+        let queries = server.await.unwrap();
+        mysql.close().await;
+
+        let read = queries.first().expect("the recovery read is issued");
+        assert!(
+            read.contains("FROM `subtasks_0711`"),
+            "the read targets the routed shard table: {read}"
+        );
+        assert!(
+            read.contains("`subtasks_0711`.id AS `subtasks_0711_id`"),
+            "the read keeps the ORM's labeled projection: {read}"
+        );
+        assert!(
+            read.contains("WHERE `subtasks_0711`.id = ?") && read.trim_end().ends_with("LIMIT 1"),
+            "the read keeps the by-id predicate and LIMIT 1: {read}"
+        );
+    })
+    .await
+    .expect("the recovery read should be prepared within the test timeout");
+}

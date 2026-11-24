@@ -1,9 +1,12 @@
+import { Button as ControlButton } from '../markdown/Button'
+import { useWindowEvent } from '../dom-events'
+import { createTurnNavigationGeometrySource } from './turnNavigationGeometrySource'
 import {
   requestSafeAnimationFrame,
   cancelSafeAnimationFrame,
   type SafeAnimationFrameHandle,
 } from '../markdown/safeAnimationFrame'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
@@ -25,22 +28,14 @@ import {
   getMessageAnchorTargetTop,
   getScrollMetrics,
   logTurnNavigation,
-  getMessageAnchorById,
-  getTurnVisibilityBounds,
-  equalStringArrays,
 } from './turnNavigationUtils'
 import type {
   MessageTurnNavigationProps,
   MessageTurnMarker,
   PendingScrollTarget,
-  MeasuredScrollGeometry,
+  UserTurn,
 } from './turnNavigationTypes'
-import {
-  getContentPositionForViewportY,
-  getScrollViewportBounds,
-  isConversationScrollInput,
-  scrollToContentPosition,
-} from './conversationViewportScroll'
+import { isConversationScrollInput, scrollToContentPosition } from './conversationViewportScroll'
 import { getClampedPreviewTopPx } from './turnNavigationGeometry'
 
 interface PreviewClampMeasurement {
@@ -50,11 +45,17 @@ interface PreviewClampMeasurement {
   regionBottomPx: number
 }
 
-export function MessageTurnNavigation({
+export function MessageTurnNavigation(props: MessageTurnNavigationProps) {
+  const userTurns = buildUserTurnsForNavigation(props.messages, props.turnNavigation)
+  if (userTurns.length < 2 && !props.messageTarget) return null
+  return <ConversationTurnNavigation {...props} userTurns={userTurns} />
+}
+
+function ConversationTurnNavigation({
   messageTarget,
   translate: t,
   messages,
-  turnNavigation,
+  userTurns,
   scrollRef,
   interactionRef,
   contentRef,
@@ -63,35 +64,23 @@ export function MessageTurnNavigation({
   onNavigationScrollTargetChange,
   portalTarget,
   bottomInsetPx = 0,
-}: MessageTurnNavigationProps) {
+}: MessageTurnNavigationProps & { userTurns: UserTurn[] }) {
   const portalTheme = useCollaborationPortalTheme()
   const insetPx = Math.max(0, Math.round(bottomInsetPx))
-  const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
   const locatedRequest = useRef<string | null>(null)
   const locatingRequest = useRef<string | null>(null)
-  const [activeMarkerIds, setActiveMarkerIds] = useState<string[]>([])
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
   const [loadingMarkerId, setLoadingMarkerId] = useState<string | null>(null)
   const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
   const [previewClamp, setPreviewClamp] = useState<PreviewClampMeasurement | null>(null)
-  const markersRef = useRef<MessageTurnMarker[]>([])
   const navRef = useRef<HTMLElement | null>(null)
   const previewNodesRef = useRef<Map<string, HTMLDivElement>>(new Map())
-  const timerRef = useRef<number | null>(null)
   const navigationCleanupRef = useRef<(() => void) | null>(null)
   const openingTargetCleanupRef = useRef<(() => void) | null>(null)
   const messagesRef = useRef(messages)
-  const turnNavigationRef = useRef(turnNavigation)
-  const measuredScrollGeometryRef = useRef<MeasuredScrollGeometry | null>(null)
-  const loadOwnerRef = useRef<object | null>(null)
-  useEffect(
-    () => () => {
-      loadOwnerRef.current = null
-    },
-    []
-  )
-
+  const userTurnsRef = useRef(userTurns)
+  const [geometry] = useState(createTurnNavigationGeometrySource)
   const clearNavigationPosition = useCallback(() => {
     navigationCleanupRef.current?.()
     navigationCleanupRef.current = null
@@ -101,7 +90,7 @@ export function MessageTurnNavigation({
     openingTargetCleanupRef.current?.()
     if (locatingRequest.current) locatedRequest.current = locatingRequest.current
     locatingRequest.current = null
-    loadOwnerRef.current = null
+    geometry.setLoadOwner(null)
     const scroller = scrollRef.current
     if (navigationCleanupRef.current && scroller)
       scrollToContentPosition(scroller, scroller.scrollTop, 'auto')
@@ -112,37 +101,57 @@ export function MessageTurnNavigation({
     onNavigationLoadStateChange?.(false)
   }, [
     clearNavigationPosition,
+    geometry,
     onNavigationLoadStateChange,
     onNavigationScrollTargetChange,
     scrollRef,
   ])
 
-  useEffect(() => {
-    const cancelForInput = (event: Event) => {
-      if (
-        (!loadOwnerRef.current &&
-          !navigationCleanupRef.current &&
-          !openingTargetCleanupRef.current) ||
-        !isConversationScrollInput(event)
-      )
-        return
-      cancelNavigation()
-    }
-    const targets = [scrollRef.current, interactionRef?.current].filter(
-      (target): target is HTMLElement => target !== null && target !== undefined
+  // Refresh committed ports; the source retains observers while native nodes match.
+  const subscribeGeometry = (listener: () => void) =>
+    geometry.subscribe(listener, {
+      scroll: scrollRef,
+      content: contentRef,
+      messages: messagesRef,
+      turns: userTurnsRef,
+      onLoadOwnerInvalidated(owner) {
+        if (geometry.getLoadOwner() === owner) cancelNavigation()
+      },
+    })
+  const { markers, activeMarkerIds } = useSyncExternalStore(
+    subscribeGeometry,
+    geometry.getSnapshot,
+    geometry.getSnapshot
+  )
+
+  const cancelForInput = (event: Event) => {
+    const path = event.composedPath()
+    const target = event.target
+    const inScope = [scrollRef.current, interactionRef?.current].some(
+      node => node && (path.includes(node) || (target instanceof Node && node.contains(target)))
     )
-    for (const target of targets)
-      for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
-        target.addEventListener(type, cancelForInput, {
-          capture: true,
-          passive: true,
-        })
-    return () => {
-      for (const target of targets)
-        for (const type of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
-          target.removeEventListener(type, cancelForInput, true)
-    }
-  }, [cancelNavigation, interactionRef, scrollRef])
+    if (
+      !inScope ||
+      (!geometry.getLoadOwner() &&
+        !navigationCleanupRef.current &&
+        !openingTargetCleanupRef.current) ||
+      !isConversationScrollInput(event)
+    )
+      return
+    cancelNavigation()
+  }
+  useWindowEvent('wheel', cancelForInput, { capture: true, passive: true })
+  useWindowEvent('pointerdown', cancelForInput, { capture: true, passive: true })
+  useWindowEvent('touchstart', cancelForInput, { capture: true, passive: true })
+  useWindowEvent('keydown', cancelForInput, { capture: true, passive: true })
+  useWindowEvent(
+    'scroll',
+    event => {
+      if (event.target === scrollRef.current) geometry.handleScroll()
+    },
+    { capture: true, passive: true }
+  )
+  useWindowEvent('resize', () => geometry.viewportChanged('window-resize'))
 
   const scrollToMessageId = useCallback(
     (
@@ -161,7 +170,7 @@ export function MessageTurnNavigation({
         })
         return
       }
-      loadOwnerRef.current = null
+      geometry.setLoadOwner(null)
       onNavigationScrollTargetChange?.(messageId)
       logTurnNavigation('scroll-start', {
         messageId,
@@ -234,7 +243,7 @@ export function MessageTurnNavigation({
       navigationCleanupRef.current = cleanup
       frame = requestSafeAnimationFrame(check)
     },
-    [clearNavigationPosition, contentRef, onNavigationScrollTargetChange]
+    [clearNavigationPosition, contentRef, geometry, onNavigationScrollTargetChange]
   )
 
   const targetMessageId = messageTarget?.messageId
@@ -248,7 +257,7 @@ export function MessageTurnNavigation({
     clearNavigationPosition()
     locatingRequest.current = key
     const owner = {}
-    loadOwnerRef.current = owner
+    geometry.setLoadOwner(owner, scrollRef.current, contentRef.current)
     let cancelled = false
     const cleanup = () => observer.disconnect()
     let ownedCleanup: (() => void) | null = cleanup
@@ -290,7 +299,7 @@ export function MessageTurnNavigation({
     return () => {
       cleanupOpeningTarget()
       if (ownedCleanup && navigationCleanupRef.current === ownedCleanup) {
-        loadOwnerRef.current = null
+        geometry.setLoadOwner(null)
         locatingRequest.current = null
         clearNavigationPosition()
         onNavigationScrollTargetChange?.(null)
@@ -301,24 +310,21 @@ export function MessageTurnNavigation({
     targetRequestKey,
     clearNavigationPosition,
     contentRef,
+    geometry,
     onNavigationScrollTargetChange,
     scrollRef,
     scrollToMessageId,
   ])
 
-  const nextUserTurns = buildUserTurnsForNavigation(messages, turnNavigation)
-  const userTurnsSignature = getUserTurnsSignature(nextUserTurns)
+  const userTurnsSignature = getUserTurnsSignature(userTurns)
 
   useLayoutEffect(() => {
     messagesRef.current = messages
-    turnNavigationRef.current = turnNavigation
-  }, [messages, turnNavigation, userTurnsSignature])
+    userTurnsRef.current = userTurns
+  }, [messages, userTurns])
 
   useLayoutEffect(() => {
-    if (!hoveredMarkerId) {
-      setPreviewClamp(null)
-      return
-    }
+    if (!hoveredMarkerId) return
     const nav = navRef.current
     const preview = previewNodesRef.current.get(hoveredMarkerId)
     const parent = portalTarget ?? nav?.parentElement ?? null
@@ -363,99 +369,8 @@ export function MessageTurnNavigation({
     }
   }, [hoveredMarkerId, insetPx, portalTarget, scrollRef, userTurnsSignature])
 
-  const updateActiveMarkers = useCallback(
-    (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
-      void reason
-      const scroller = scrollRef.current
-      if (!scroller || nextMarkers.length === 0) {
-        setActiveMarkerIds([])
-        return
-      }
-
-      const viewport = getScrollViewportBounds(scroller)
-      const nextActiveMarkerIds = nextMarkers
-        .filter(
-          marker =>
-            marker.visibleTop !== null &&
-            marker.visibleBottom !== null &&
-            marker.visibleBottom > viewport.startPx &&
-            marker.visibleTop < viewport.endPx
-        )
-        .map(marker => marker.id)
-      setActiveMarkerIds(current =>
-        equalStringArrays(current, nextActiveMarkerIds) ? current : nextActiveMarkerIds
-      )
-    },
-    [scrollRef]
-  )
-
-  const calculateMarkers = useCallback(
-    (reason: string) => {
-      const scroller = scrollRef.current
-      const content = contentRef.current
-      const userTurns = buildUserTurnsForNavigation(messagesRef.current, turnNavigationRef.current)
-      if (!scroller || !content || userTurns.length < 2) {
-        markersRef.current = []
-        measuredScrollGeometryRef.current = null
-        setMarkers([])
-        setActiveMarkerIds([])
-        return
-      }
-
-      const anchorByMessageId = getMessageAnchorById(content)
-      const visibilityByTurnId = getTurnVisibilityBounds(
-        userTurns,
-        messagesRef.current,
-        anchorByMessageId,
-        scroller
-      )
-      const nextMarkers = userTurns.map(turn => {
-        const anchor = anchorByMessageId.get(turn.id)
-        const visibleBounds = visibilityByTurnId.get(turn.id)
-        if (!anchor) {
-          return {
-            ...turn,
-            loaded: false,
-            targetTop: null,
-            visibleTop: visibleBounds?.top ?? null,
-            visibleBottom: visibleBounds?.bottom ?? null,
-          }
-        }
-
-        const anchorRect = anchor.getBoundingClientRect()
-        const targetTop = getContentPositionForViewportY(scroller, anchorRect.top)
-        return {
-          ...turn,
-          loaded: true,
-          targetTop,
-          visibleTop: visibleBounds?.top ?? targetTop,
-          visibleBottom:
-            visibleBounds?.bottom ?? getContentPositionForViewportY(scroller, anchorRect.bottom),
-        }
-      })
-
-      markersRef.current = nextMarkers
-      measuredScrollGeometryRef.current = {
-        scrollHeight: scroller.scrollHeight,
-        clientHeight: scroller.clientHeight,
-      }
-      setMarkers(nextMarkers)
-      updateActiveMarkers(nextMarkers, reason)
-    },
-    [contentRef, scrollRef, updateActiveMarkers]
-  )
-
-  const scheduleCalculateMarkers = useCallback(
-    (reason: string) => {
-      if (timerRef.current !== null) return
-
-      timerRef.current = window.setTimeout(() => {
-        timerRef.current = null
-        calculateMarkers(reason)
-      }, 0)
-    },
-    [calculateMarkers]
-  )
+  const calculateMarkers = geometry.calculate
+  const scheduleCalculateMarkers = geometry.schedule
 
   useLayoutEffect(() => {
     const scroller = scrollRef.current
@@ -491,64 +406,14 @@ export function MessageTurnNavigation({
     scrollToMessageId,
   ])
 
-  useEffect(() => {
-    const scroller = scrollRef.current
-    const content = contentRef.current
-    if (!scroller || !content) return
-
-    // Mounted anchors are recalculated by observers; raw scroll events reuse
-    // their measured bounds to update which conversation turns intersect the viewport.
-    const handleScroll = () => {
-      const measuredGeometry = measuredScrollGeometryRef.current
-      if (
-        measuredGeometry &&
-        (scroller.scrollHeight !== measuredGeometry.scrollHeight ||
-          scroller.clientHeight !== measuredGeometry.clientHeight)
-      ) {
-        scheduleCalculateMarkers('scroll-layout-changed')
-        return
-      }
-      updateActiveMarkers(markersRef.current, 'scroll')
-    }
-    const handleResize = () => scheduleCalculateMarkers('window-resize')
-    scroller.addEventListener('scroll', handleScroll, { passive: true })
-    window.addEventListener('resize', handleResize)
-
-    const mutationObserver = new MutationObserver(() => scheduleCalculateMarkers('mutation'))
-    mutationObserver.observe(content, {
-      attributes: true,
-      attributeFilter: ['style'],
-      childList: true,
-      subtree: true,
-    })
-
-    const resizeObserver =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(() => scheduleCalculateMarkers('resize-observer'))
-    resizeObserver?.observe(content)
-    resizeObserver?.observe(scroller)
-
-    return () => {
-      scroller.removeEventListener('scroll', handleScroll)
-      window.removeEventListener('resize', handleResize)
-      mutationObserver.disconnect()
-      resizeObserver?.disconnect()
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current)
-        timerRef.current = null
-      }
-    }
-  }, [contentRef, scheduleCalculateMarkers, scrollRef, updateActiveMarkers])
-
   const handleMarkerClick = useCallback(
     async (marker: MessageTurnMarker) => {
       cancelNavigation()
       const owner = {}
-      loadOwnerRef.current = owner
+      geometry.setLoadOwner(owner, scrollRef.current, contentRef.current)
       const scroller = scrollRef.current
       if (!scroller) {
-        loadOwnerRef.current = null
+        geometry.setLoadOwner(null)
         return
       }
       const activeMarkerId = activeMarkerIds[0] ?? null
@@ -565,7 +430,11 @@ export function MessageTurnNavigation({
         ...getScrollMetrics(scroller, currentAnchor),
       })
       if (currentAnchor) {
-        const gapMarker = findUnloadedMarkerBetween(markersRef.current, activeMarkerId, marker.id)
+        const gapMarker = findUnloadedMarkerBetween(
+          geometry.getSnapshot().markers,
+          activeMarkerId,
+          marker.id
+        )
         if (gapMarker && onLoadTurnNavigationItem) {
           setLoadingMarkerId(gapMarker.id)
           onNavigationLoadStateChange?.(true)
@@ -578,13 +447,13 @@ export function MessageTurnNavigation({
               error,
             })
           } finally {
-            if (loadOwnerRef.current === owner) {
+            if (geometry.isLoadOwnerCurrent(owner)) {
               setLoadingMarkerId(current => (current === gapMarker.id ? null : current))
               onNavigationLoadStateChange?.(false)
             }
           }
         }
-        if (loadOwnerRef.current === owner) scrollToMessageId(scroller, marker.id, 'smooth')
+        if (geometry.isLoadOwnerCurrent(owner)) scrollToMessageId(scroller, marker.id, 'smooth')
         return
       }
 
@@ -608,7 +477,7 @@ export function MessageTurnNavigation({
       }
 
       if (!marker.cursor || !onLoadTurnNavigationItem) {
-        loadOwnerRef.current = null
+        geometry.setLoadOwner(null)
         return
       }
       setPendingScrollTarget({
@@ -622,8 +491,8 @@ export function MessageTurnNavigation({
       try {
         await onLoadTurnNavigationItem(marker)
       } catch (error) {
-        if (loadOwnerRef.current !== owner) return
-        loadOwnerRef.current = null
+        if (!geometry.isLoadOwnerCurrent(owner)) return
+        geometry.setLoadOwner(null)
         setPendingScrollTarget(current => (current?.navigationId === marker.id ? null : current))
         setLoadingMarkerId(current => (current === marker.id ? null : current))
         onNavigationLoadStateChange?.(false)
@@ -637,6 +506,7 @@ export function MessageTurnNavigation({
       activeMarkerIds,
       cancelNavigation,
       contentRef,
+      geometry,
       messages,
       onLoadTurnNavigationItem,
       onNavigationLoadStateChange,
@@ -710,7 +580,7 @@ export function MessageTurnNavigation({
                 onMouseEnter={() => setHoveredMarkerId(marker.id)}
                 onMouseLeave={() => setHoveredMarkerId(null)}
               >
-                <button
+                <ControlButton variant="unstyled"
                   type="button"
                   aria-label={t('conversation.message_navigation.jump_to_message', undefined, {
                     index: marker.turnIndex + 1,
@@ -737,7 +607,7 @@ export function MessageTurnNavigation({
                       width: `${getMarkerWidthPx(hoverDistance, isLoading)}px`,
                     }}
                   />
-                </button>
+                </ControlButton>
               </div>
             )
           })}

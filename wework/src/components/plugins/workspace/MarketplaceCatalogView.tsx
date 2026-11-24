@@ -1,27 +1,26 @@
-import { memo, useMemo, type ReactNode, type RefObject } from 'react'
-import { Boxes, RefreshCw } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
-import {
-  MarketplaceSearchInput,
-  type MarketplaceSearchInputHandle,
-} from '../MarketplaceSearchInput'
-import {
-  previewMarketplaceSectionItems,
-  type MarketplaceCategorySection,
-} from '../marketplaceCategorySections'
+import { SegmentedControl } from '@wegent/collaboration/controls/SegmentedControl'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Boxes, RefreshCw } from 'lucide-react'
+import type { ReactNode, Ref, RefObject } from 'react'
+import { memo, useMemo } from 'react'
+import type { MarketplaceCategorySection } from '../marketplaceCategorySections'
+import { previewMarketplaceSectionItems } from '../marketplaceCategorySections'
+import type { MarketplaceSearchInputHandle } from '../MarketplaceSearchInput'
+import { MarketplaceSearchInput } from '../MarketplaceSearchInput'
 import type { PluginDistribution } from '../pluginDistribution'
+import { MarketplaceCardGrid } from './MarketplaceCardGrid'
+import type { MarketplaceOption } from './marketplaceWorkspaceHelpers'
 import {
   MARKETPLACE_SECTION_PREVIEW_COUNT,
   marketplaceSectionRevealLabel,
-  type MarketplaceOption,
 } from './marketplaceWorkspaceHelpers'
 import { PluginMarketplaceLoadingSkeleton } from './PluginMarketplaceLoadingSkeleton'
-import type { PluginMarketplaceRowAction, PluginMarketplaceRowLabels } from './PluginMarketplaceRow'
 import { PluginMarketplaceRevealButton } from './PluginMarketplaceRevealButton'
-import { MarketplaceCardGrid } from './MarketplaceCardGrid'
-import { Button } from '@/components/ui/button'
-import type { remoteCatalogErrorKind } from '@/features/plugins/remotePluginError'
+import type { OpenAiPluginCatalogError } from '@/features/plugins/useOpenAiPluginCatalog'
+import type { PluginMarketplaceRowAction, PluginMarketplaceRowLabels } from './PluginMarketplaceRow'
 
 export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   hasMarketplace,
@@ -71,7 +70,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   localMarketplaceTabs: MarketplaceOption[]
   query: string
   searchInputRef: RefObject<MarketplaceSearchInputHandle | null>
-  scrollRef: RefObject<HTMLDivElement | null>
+  scrollRef: Ref<HTMLDivElement>
   installedStrip: ReactNode
   showInstalledStrip: boolean
   pluginMarketplaceState: {
@@ -83,7 +82,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isMarketplaceRefreshing: boolean
   isMarketplaceSearchUpdating: boolean
   isOpenAiOfficialViewLoading: boolean
-  openAiCatalogError?: ReturnType<typeof remoteCatalogErrorKind> | null
+  openAiCatalogError?: OpenAiPluginCatalogError | null
   isOpenAiCatalogRefreshing?: boolean
   normalizedQuery: string
   visibleMarketplaceItems: PluginMarketplaceItem[]
@@ -129,45 +128,44 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
       {hasMarketplace && (
         <div className="plugin-market-body">
           <div
-            className="plugin-market-toolbar flex flex-col gap-3 md:flex-row md:items-center md:gap-3"
+            className="plugin-market-toolbar flex flex-col gap-3"
             data-testid="plugins-market-toolbar"
           >
-            <div
-              className="flex min-w-0 flex-1 gap-[7px] overflow-x-auto"
-              role="tablist"
-              aria-label={t('workbench.plugins_distribution_filter', '插件类型')}
-            >
-              {distributionTabs.map(([distribution, label]) => (
-                <button
-                  key={distribution}
-                  type="button"
-                  role="tab"
-                  aria-selected={
-                    !marketplaceSourceFilterKey && selectedDistributionTab === distribution
+            <div className="min-w-0 flex-1 overflow-x-auto">
+              <SegmentedControl
+                label={t('workbench.plugins_distribution_filter', '插件类型')}
+                value={
+                  marketplaceSourceFilterKey
+                    ? JSON.stringify(['marketplace', marketplaceSourceFilterKey])
+                    : JSON.stringify(['distribution', selectedDistributionTab])
+                }
+                options={[
+                  ...distributionTabs.map(([distribution, label]) => ({
+                    value: JSON.stringify(['distribution', distribution]),
+                    label,
+                    testId: 'plugins-distribution-tab-' + distribution,
+                  })),
+                  ...localMarketplaceTabs.map(marketplace => ({
+                    value: JSON.stringify(['marketplace', marketplace.key]),
+                    label: marketplace.name,
+                    testId: 'plugins-marketplace-tab-' + marketplace.id,
+                  })),
+                ]}
+                onChange={value => {
+                  const distribution = distributionTabs.find(
+                    ([key]) => JSON.stringify(['distribution', key]) === value
+                  )
+                  if (distribution) {
+                    onSelectDistributionTab(distribution[0])
+                    return
                   }
-                  data-testid={`plugins-distribution-tab-${distribution}`}
-                  className="plugin-market-filter"
-                  onClick={() => onSelectDistributionTab(distribution)}
-                >
-                  {label}
-                </button>
-              ))}
-              {localMarketplaceTabs.map(marketplace => (
-                <button
-                  key={marketplace.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={marketplace.key === marketplaceSourceFilterKey}
-                  data-testid={`plugins-marketplace-tab-${marketplace.id}`}
-                  className={[
-                    'plugin-market-filter',
-                    marketplace.key === marketplaceSourceFilterKey ? 'bg-surface' : '',
-                  ].join(' ')}
-                  onClick={() => onSelectLocalMarketplaceTab(marketplace)}
-                >
-                  {marketplace.name}
-                </button>
-              ))}
+                  const marketplace = localMarketplaceTabs.find(
+                    item => JSON.stringify(['marketplace', item.key]) === value
+                  )
+                  if (marketplace) onSelectLocalMarketplaceTab(marketplace)
+                }}
+                className="w-max min-w-full"
+              />
             </div>
             <div
               className="sr-only"
@@ -186,7 +184,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                   </span>
                 ))}
             </div>
-            <div className="flex w-full shrink-0 items-center gap-2 md:w-auto">
+            <div className="plugin-market-toolbar-search flex w-full shrink-0 items-center gap-2">
               <MarketplaceSearchInput
                 ref={searchInputRef}
                 initialValue={query}
@@ -308,7 +306,9 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                   )}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <button
+                  <ControlButton
+                    variant="primary"
+                    size="sm"
                     type="button"
                     data-testid="plugins-openai-official-empty-refresh"
                     className="h-8 rounded-[10px] bg-text-primary px-3 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
@@ -316,15 +316,17 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                     onClick={onRefresh}
                   >
                     {t('workbench.plugins_openai_official_empty_refresh', '刷新并重试')}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="outline"
+                    size="sm"
                     type="button"
                     data-testid="plugins-clear-marketplace-filters"
                     className="h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
                     onClick={onClearFilters}
                   >
                     {t('workbench.plugins_view_all', '查看全部')}
-                  </button>
+                  </ControlButton>
                 </div>
               </div>
             ) : (
@@ -355,14 +357,16 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                     '可以清除搜索和分类后重新浏览。'
                   )}
                 </p>
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="plugins-clear-marketplace-filters"
                   className="mt-1 h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
                   onClick={onClearFilters}
                 >
                   {t('workbench.plugins_view_all', '查看全部')}
-                </button>
+                </ControlButton>
               </div>
             )
           ) : (

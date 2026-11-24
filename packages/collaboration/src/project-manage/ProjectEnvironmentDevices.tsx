@@ -1,12 +1,16 @@
+import { ActionMenu } from '../controls/ActionMenu'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CollaborationTranslate } from '../i18n'
 import {
   executionEnvironmentStatuses,
   executionEnvironmentStatusLabel,
 } from '../execution-environment/status'
+import type { CollaborationTranslate } from '../i18n'
 import type {
   CollaborationExecutionEnvironment,
   CollaborationExecutionEnvironmentDeviceState,
@@ -93,25 +97,30 @@ export function ProjectEnvironmentDevices({
           {assignedItems.length > 1 ? (
             <label className="flex items-center gap-2 text-xs text-text-secondary">
               {translate('todo.execution_environment_status_filter', '状态')}
-              <select
-                className="h-8 rounded-lg border border-border bg-background px-2 text-sm text-text-primary"
-                data-testid={`${testIdPrefix}-status-filter`}
-                value={statusFilter}
-                onChange={event => onStatusFilterChange(event.target.value as typeof statusFilter)}
+              <SelectRoot
+                value={normalizeSelectValue(statusFilter)}
+                onValueChange={selectedValue => {
+                  if (selectedValue !== null)
+                    return onStatusFilterChange(selectedValue as typeof statusFilter)
+                }}
               >
-                <option value="all">
-                  {translate('todo.execution_environment_all_statuses', '全部')}
-                </option>
-                {executionEnvironmentStatuses.map(status => (
-                  <option key={status} value={status}>
-                    {executionEnvironmentStatusLabel(status, translate)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger density="compact" data-testid={`${testIdPrefix}-status-filter`} />
+                <SelectContent>
+                  <SelectItem value="all">
+                    {translate('todo.execution_environment_all_statuses', '全部')}
+                  </SelectItem>
+                  {executionEnvironmentStatuses.map(status => (
+                    <SelectItem key={status} value={String(status)}>
+                      {executionEnvironmentStatusLabel(status, translate)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </SelectRoot>
             </label>
           ) : null}
           {canManage ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className={
                 assignedItems.length === 0
@@ -125,7 +134,7 @@ export function ProjectEnvironmentDevices({
               {pickerOpen
                 ? translate('common.cancel', '取消')
                 : `＋ ${translate('todo.add_execution_device', '添加设备')}`}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
       </div>
@@ -138,7 +147,8 @@ export function ProjectEnvironmentDevices({
             role="alert"
           >
             <span>{error}</span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="collaboration-link-button"
               data-testid={`${testIdPrefix}-retry`}
@@ -146,7 +156,7 @@ export function ProjectEnvironmentDevices({
               disabled={loading}
             >
               {translate('common.retry', '重试')}
-            </button>
+            </ControlButton>
           </div>
         ) : null}
         {loading ? (
@@ -173,14 +183,15 @@ export function ProjectEnvironmentDevices({
             candidates.length === 0 &&
             canManage &&
             onManageDevices ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 className="collaboration-secondary-button mt-3"
                 data-testid={`${testIdPrefix}-manage-devices`}
                 type="button"
                 onClick={onManageDevices}
               >
                 {translate('todo.manage_execution_devices', '添加或启动设备')}
-              </button>
+              </ControlButton>
             ) : null}
           </div>
         ) : visibleAssignedItems.length === 0 ? (
@@ -242,34 +253,28 @@ export function ProjectEnvironmentDevices({
                     </span>
                   ) : null}
                   {canManage && environment.status === 'online' ? (
-                    <details
-                      className="collaboration-environment-device-actions relative"
-                      data-testid={`${testIdPrefix}-actions-${environment.device_id}`}
-                    >
-                      <summary
-                        className="collaboration-link-button flex cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden"
-                        data-testid={`${testIdPrefix}-actions-toggle-${environment.device_id}`}
-                      >
-                        {translate('common.more', '更多')}
-                      </summary>
-                      <div className="absolute right-0 z-10 mt-1 whitespace-nowrap rounded-lg border border-border bg-background p-2 shadow-sm">
-                        <button
-                          type="button"
-                          className="collaboration-link-button px-2"
-                          data-testid={`${testIdPrefix}-initialize-${environment.device_id}`}
-                          disabled={saving || configurationDirty}
-                          onClick={() => void createEnvironmentOnDevice(environment)}
-                        >
-                          {translate(
-                            'todo.execution_environment_prepare_ahead',
-                            '提前准备项目目录'
-                          )}
-                        </button>
-                      </div>
-                    </details>
+                    <span data-testid={testIdPrefix + '-actions-' + environment.device_id}>
+                      <ActionMenu
+                        ariaLabel={translate('common.more', '更多')}
+                        testId={testIdPrefix + '-actions-toggle-' + environment.device_id}
+                        triggerLabel={translate('common.more', '更多')}
+                        items={[
+                          {
+                            label: translate(
+                              'todo.execution_environment_prepare_ahead',
+                              '提前准备项目目录'
+                            ),
+                            testId: testIdPrefix + '-initialize-' + environment.device_id,
+                            disabled: saving || configurationDirty,
+                            onSelect: () => createEnvironmentOnDevice(environment),
+                          },
+                        ]}
+                      />
+                    </span>
                   ) : null}
                   {canManage ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8 md:min-w-8"
                       data-testid={`${testIdPrefix}-remove-${environment.device_id}`}
@@ -277,7 +282,7 @@ export function ProjectEnvironmentDevices({
                       onClick={() => void removeEnvironment(environment)}
                     >
                       {translate('common.remove', '移除')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                 </div>
               )
@@ -316,14 +321,15 @@ export function ProjectEnvironmentDevices({
                   role="alert"
                 >
                   <span>{pickerError}</span>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-link-button"
                     data-testid={`${testIdPrefix}-picker-retry`}
                     onClick={onRetryPicker}
                   >
                     {translate('common.retry', '重试')}
-                  </button>
+                  </ControlButton>
                 </div>
               ) : null}
               {pickerLoading && candidates.length === 0 ? (
@@ -340,14 +346,15 @@ export function ProjectEnvironmentDevices({
                     )}
                   </p>
                   {canManage && onManageDevices ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       className="collaboration-secondary-button mt-3"
                       data-testid={`${testIdPrefix}-manage-devices-picker`}
                       type="button"
                       onClick={onManageDevices}
                     >
                       {translate('todo.manage_execution_devices', '添加或启动设备')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                 </div>
               ) : (
@@ -389,7 +396,8 @@ export function ProjectEnvironmentDevices({
                             </span>
                           ) : null}
                         </span>
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           className="collaboration-link-button"
                           data-testid={`${testIdPrefix}-candidate-${environment.device_id}`}
@@ -410,7 +418,7 @@ export function ProjectEnvironmentDevices({
                             : needsSharing
                               ? translate('todo.execution_environment_share_and_add', '共享并添加')
                               : `＋ ${translate('common.add', '添加')}`}
-                        </button>
+                        </ControlButton>
                       </div>
                     )
                   })}

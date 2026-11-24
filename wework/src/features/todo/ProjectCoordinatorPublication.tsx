@@ -1,73 +1,99 @@
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
-import {
-  canCommentCollaborationIssue,
-  type CollaborationIssue,
-  type CollaborationProject,
-  type SharedWorkspaceApi,
-} from '@wegent/collaboration'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DialogForm } from '@/components/common/DialogForm'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useStandInPanelNavigation } from './useStandInPanelNavigation'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import type {
+  CollaborationIssue,
+  CollaborationProject,
+  SharedWorkspaceApi,
+} from '@wegent/collaboration'
+import { canCommentCollaborationIssue } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { Ref } from 'react'
+import { useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 
 /** Publication writes only the explicitly entered text to an existing shared record. */
-export function ProjectCoordinatorPublication({
-  api,
-  project,
-  onClose,
-  onPublished,
-  ref,
-}: {
+interface ProjectCoordinatorPublicationProps {
   api: SharedWorkspaceApi
   project: CollaborationProject
   onClose(): void
   onPublished(): void
   ref?: Ref<StandInSettingsHandle>
-}) {
+}
+
+export function ProjectCoordinatorPublication(props: ProjectCoordinatorPublicationProps) {
+  const { api, project } = props
+  const scope = JSON.stringify([project.id, project.project_store, project.current_user_id])
+  const [owner, setOwner] = useState({ api, scope, revision: 0 })
+  if (owner.api !== api || owner.scope !== scope) {
+    setOwner({ api, scope, revision: owner.revision + 1 })
+  }
+  return <ProjectCoordinatorPublicationContent key={owner.revision} {...props} />
+}
+
+function ProjectCoordinatorPublicationContent({
+  api,
+  project,
+  onClose,
+  onPublished,
+  ref,
+}: ProjectCoordinatorPublicationProps) {
   const { t } = useTranslation('common')
-  const [issues, setIssues] = useState<CollaborationIssue[] | null>(null)
   const [selected, setSelected] = useState('')
   const [content, setContent] = useState('')
   const [published, setPublished] = useState<CollaborationIssue | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [retry, setRetry] = useState(0)
   const [discard, setDiscard] = useState(false)
   const sending = useRef(false)
   const navigation = useStandInPanelNavigation(!!content.trim(), busy, () => setDiscard(true))
   const close = () => navigation.requestLeave(onClose)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
+  const dialogRef = useRef<HTMLDivElement>(null)
   useImperativeHandle(ref, () => ({ requestClose: close, requestLeave: navigation.requestLeave }))
 
-  useEffect(() => {
-    let active = true
-    void api.issues
-      .list(project.id)
-      .then(rows => {
-        if (!active) return
-        setIssues(
-          rows.filter(
-            issue =>
-              String(issue.cloud_project_id) === String(project.id) &&
-              !issue.archived_at &&
-              canCommentCollaborationIssue(project, issue)
-          )
+  const createCandidates = (
+    currentProject: CollaborationProject,
+    initialData?: CollaborationIssue[]
+  ) =>
+    createAsyncResource(
+      JSON.stringify([
+        'project-coordinator-publication',
+        currentProject.project_store,
+        currentProject.id,
+        currentProject.current_user_id,
+      ]),
+      async () => {
+        const rows = await api.issues.list(currentProject.id)
+        return rows.filter(
+          issue =>
+            String(issue.cloud_project_id) === String(currentProject.id) &&
+            !issue.archived_at &&
+            canCommentCollaborationIssue(currentProject, issue)
         )
-        setError(null)
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, project, retry])
+      },
+      { initialData }
+    )
+  const [query, setQuery] = useState(() => ({ project, resource: createCandidates(project) }))
+  if (query.project !== project)
+    setQuery({ project, resource: createCandidates(project, query.resource.getSnapshot().data) })
+  const resource = query.resource
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const issues = snapshot.data ?? null
+  const visibleError =
+    error ?? (snapshot.status === 'error' ? getStandInErrorMessage(snapshot.error) : null)
 
   const publish = async () => {
-    if (sending.current || !selected || !content.trim()) return
+    if (sending.current || !dialogRef.current?.isConnected || !selected || !content.trim()) return
     sending.current = true
     setBusy(true)
     setError(null)
@@ -76,7 +102,9 @@ export function ProjectCoordinatorPublication({
         api.projects.get(project.id),
         api.issues.get(selected),
       ])
+      if (!resource.hasSubscribers()) return
       if (
+        String(issue.id) !== String(selected) ||
         String(currentProject.id) !== String(project.id) ||
         String(issue.cloud_project_id) !== String(project.id) ||
         issue.archived_at ||
@@ -84,6 +112,7 @@ export function ProjectCoordinatorPublication({
       )
         throw new Error('permission_denied')
       await api.comments.create(issue.id, content.trim())
+      if (!resource.hasSubscribers()) return
       setPublished(issue)
       setContent('')
       onPublished()
@@ -96,10 +125,16 @@ export function ProjectCoordinatorPublication({
   }
 
   return (
-    <div
-      ref={dialogRef}
-      className="min-h-0 flex-1 overflow-y-auto p-5"
-      data-testid="project-coordinator-publication"
+    <DialogSurface
+      onClose={close}
+      active={!discard}
+      render={
+        <div
+          ref={dialogRef}
+          className="min-h-0 flex-1 overflow-y-auto p-5"
+          data-testid="project-coordinator-publication"
+        />
+      }
     >
       <h3 className="heading-sm">{t('standIn.project_coordinator.publish')}</h3>
       <p className="mt-2 text-sm text-text-muted">
@@ -110,14 +145,15 @@ export function ProjectCoordinatorPublication({
           <p role="status" className="mt-5 text-sm" data-testid="project-coordinator-published">
             {t('standIn.project_coordinator.published', { issue: published.title })}
           </p>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="project-coordinator-publication-close"
             onClick={close}
             className="mt-4 min-h-11 md:min-h-8 rounded-md px-3 text-sm hover:bg-muted"
           >
             {t('standIn.project_coordinator.back_to_chat')}
-          </button>
+          </ControlButton>
         </>
       ) : (
         <DialogForm
@@ -127,7 +163,7 @@ export function ProjectCoordinatorPublication({
             void publish()
           }}
         >
-          {issues === null && !error && <p role="status">{t('standIn.loading')}</p>}
+          {issues === null && !visibleError && <p role="status">{t('standIn.loading')}</p>}
           {issues?.length === 0 && (
             <p className="text-sm text-text-muted">
               {t('standIn.project_coordinator.no_publish_target')}
@@ -135,24 +171,22 @@ export function ProjectCoordinatorPublication({
           )}
           <label className="flex flex-col gap-2 text-sm">
             {t('standIn.project_coordinator.publish_target')}
-            <select
+            <SelectField
+              testId="project-coordinator-publication-target"
+              menuTestId="project-coordinator-publication-target-options"
+              accessibleLabel={t('standIn.project_coordinator.publish_target')}
               value={selected}
+              onChange={setSelected}
               disabled={busy || !issues?.length}
-              onChange={event => setSelected(event.target.value)}
-              data-testid="project-coordinator-publication-target"
-              className="min-h-11 md:min-h-9 rounded-md border border-border bg-background px-3"
-            >
-              <option value="">{t('standIn.project_coordinator.choose_issue')}</option>
-              {issues?.map(issue => (
-                <option key={issue.id} value={issue.id}>
-                  {issue.title}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: t('standIn.project_coordinator.choose_issue') },
+                ...(issues ?? []).map(issue => ({ value: String(issue.id), label: issue.title })),
+              ]}
+            />
           </label>
           <label className="flex flex-col gap-2 text-sm">
             {t('standIn.project_coordinator.publish_content')}
-            <textarea
+            <ControlTextarea
               value={content}
               disabled={busy}
               onChange={event => setContent(event.target.value)}
@@ -161,23 +195,28 @@ export function ProjectCoordinatorPublication({
               className="w-full resize-y rounded-md border border-border bg-background p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
-          {error && (
+          {visibleError && (
             <p role="alert" className="text-sm text-error">
-              {error}
+              {visibleError}
             </p>
           )}
-          {issues === null && error && (
-            <button
+          {issues === null && visibleError && (
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="project-coordinator-publication-reload"
-              onClick={() => setRetry(value => value + 1)}
+              onClick={() => {
+                setError(null)
+                void resource.reload()
+              }}
               className="min-h-11 md:min-h-8 self-start text-sm underline"
             >
               {t('standIn.reload')}
-            </button>
+            </ControlButton>
           )}
           <div className="flex justify-end gap-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="project-coordinator-publication-cancel"
               disabled={busy}
@@ -185,8 +224,10 @@ export function ProjectCoordinatorPublication({
               className="min-h-11 md:min-h-8 rounded-md px-3 text-sm hover:bg-muted"
             >
               {t('standIn.cancel')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="submit"
               data-testid="project-coordinator-publication-submit"
               disabled={busy || !selected || !content.trim()}
@@ -197,7 +238,7 @@ export function ProjectCoordinatorPublication({
                   ? 'standIn.project_coordinator.publishing'
                   : 'standIn.project_coordinator.publish'
               )}
-            </button>
+            </ControlButton>
           </div>
         </DialogForm>
       )}
@@ -219,6 +260,6 @@ export function ProjectCoordinatorPublication({
           navigation.confirmLeave(onClose)
         }}
       />
-    </div>
+    </DialogSurface>
   )
 }

@@ -34,10 +34,14 @@ import {
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
-import { ComposerErrorBanner } from '@wegent/collaboration/composer'
-import { ProjectComposerBody } from '@wegent/collaboration/composer'
+import {
+  ComposerErrorBanner,
+  PROJECT_CHAT_WORK_BAR_CLASS,
+  ProjectComposerBody,
+} from '@wegent/collaboration/composer'
 import { desktopComposerTransferServices } from './desktopComposerServices'
 import { useComposerModelSelector } from './useComposerModelSelector'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
 interface ProjectChatComposerProps {
   composerScopeKey?: string
@@ -112,6 +116,7 @@ interface ProjectChatComposerProps {
   showModelSelector?: boolean
   showExecutionTools?: boolean
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
   collapseWhenIdle?: boolean
@@ -203,6 +208,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       showExecutionTools = true,
       showModelSelector,
       isStreaming = false,
+      showPauseButton,
       onPause,
       showWorkspaceMenu,
       collapseWhenIdle = false,
@@ -276,6 +282,26 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       }
     }
 
+    const previousAdmission = useRef('')
+    if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+      const admission = {
+        composerScopeKey,
+        disabled,
+        submitDisabled,
+        isModelSelectionReady,
+        hasText: Boolean(value.trim()),
+        attachmentCount: attachments.length,
+        uploadingCount: uploadingFiles.size,
+        requireText,
+        allowEmptySubmit,
+      }
+      const key = JSON.stringify(admission)
+      if (previousAdmission.current !== key) {
+        previousAdmission.current = key
+        logRuntimeTaskCreateStage('composer-admission', admission)
+      }
+    }
+
     return (
       <>
         <ComposerErrorBanner error={phraseError} />
@@ -345,8 +371,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 middleContext={projectWorkBarMiddleContext}
                 trailingContext={projectWorkBarTrailingContext}
                 endContext={projectWorkBarEndContext}
-                className="-mb-2 min-h-10 rounded-t-[20px] bg-muted/45 px-3 pb-2"
-                buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
+                className={PROJECT_CHAT_WORK_BAR_CLASS}
               />
             ))
           }
@@ -443,6 +468,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               goalDraftActive={goalDraftActive}
               onCancelGoalDraft={onCancelGoalDraft}
               isStreaming={isStreaming}
+              showPauseButton={showPauseButton}
               onPause={onPause}
               showWorkspaceMenu={showWorkspaceMenu}
               projectWorkMenuContext={

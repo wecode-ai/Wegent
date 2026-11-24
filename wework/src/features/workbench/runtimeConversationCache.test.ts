@@ -129,22 +129,23 @@ describe('runtimeConversationCache', () => {
   })
 
   test('reuses the projection while the canonical turns are unchanged', () => {
-    const projected = applyRuntimeConversationAction(address, {
+    applyRuntimeConversationAction(address, {
       type: 'assistant_started',
       taskId: address.taskId,
       subtaskId: 'turn-1',
     })
 
-    expect(getRuntimeConversationMessages(address)).toBe(projected)
+    const projected = getRuntimeConversationMessages(address)
     expect(getRuntimeConversationMessages(address)).toBe(projected)
 
-    const updated = applyRuntimeConversationAction(address, {
+    applyRuntimeConversationAction(address, {
       type: 'assistant_chunk',
       subtaskId: 'turn-1',
       itemId: 'assistant-1',
       content: 'next',
     })
 
+    const updated = getRuntimeConversationMessages(address)
     expect(updated).not.toBe(projected)
     expect(getRuntimeConversationMessages(address)).toBe(updated)
   })

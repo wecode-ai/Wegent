@@ -1,3 +1,6 @@
+import { Button as ControlButton } from '../markdown/Button'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { useMediaQuery } from '../media-query'
 import { PluginTrialTemplateStrip } from '../composer/PluginTrialTemplateStrip'
 import { ComposerPluginIcon } from '../composer/ComposerPluginIcon'
 import {
@@ -25,9 +28,8 @@ import type { RuntimePaneQueuedMessage } from '@wegent/chat-core/conversation-qu
 import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
 import { persistAttachmentReferences } from '../composer/attachmentFiles'
 import { useBrowserTaskConversationQueue } from './useBrowserTaskConversationQueue'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
-import type { UnifiedModel } from '@wegent/chat-core/models'
 import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
 import type { RuntimeTaskSummary } from '@wegent/chat-core/runtime-task-api-types'
 import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
@@ -103,9 +105,22 @@ export function BrowserTaskComposer({
     sending: busy,
     translate: t,
   })
-  const [catalog, setCatalog] = useState<UnifiedModel[] | null>(null)
-  const [catalogError, setCatalogError] = useState<string | null>(null)
-  const [catalogRevision, setCatalogRevision] = useState(0)
+  const models = useMemo(
+    () => createAsyncResource(String(address.deviceId), () => runtime.listModels(address.deviceId)),
+    [runtime, address.deviceId]
+  )
+  const modelSnapshot = useSyncExternalStore(
+    models.subscribe,
+    models.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const catalog = modelSnapshot.data ?? null
+  const catalogError =
+    modelSnapshot.status === 'error' || modelSnapshot.error !== undefined
+      ? String(
+          modelSnapshot.error instanceof Error ? modelSnapshot.error.message : modelSnapshot.error
+        )
+      : null
   const composerRef = useRef<ComposerInputHandle>(null)
   const conversation = useSyncExternalStore(
     session.subscribe,
@@ -136,31 +151,8 @@ export function BrowserTaskComposer({
       }),
     [appearanceMode]
   )
-  const [isMobile, setMobile] = useState(false)
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 767px)')
-    const change = () => setMobile(media.matches)
-    change()
-    media.addEventListener('change', change)
-    return () => media.removeEventListener('change', change)
-  }, [])
-  useEffect(() => {
-    let active = true
-    void runtime
-      .listModels(address.deviceId)
-      .then(models => {
-        if (active) {
-          setCatalog(models)
-          setCatalogError(null)
-        }
-      })
-      .catch(cause => {
-        if (active) setCatalogError(String(cause instanceof Error ? cause.message : cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [runtime, address.deviceId, catalogRevision])
+  const isMobile = useMediaQuery('(max-width: 767px)')
+
   const persistedSelection =
     task?.modelSelection ?? modelSelectionFromRuntimeHandle(task?.runtimeHandle)
   const activeModel = findModelForSelection(catalog ?? [], persistedSelection)
@@ -266,14 +258,14 @@ export function BrowserTaskComposer({
         error={error || catalogError}
         action={
           catalogError ? (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               data-testid="task-conversation-models-retry"
-              onClick={() => setCatalogRevision(value => value + 1)}
+              onClick={() => void models.reload()}
               className="ml-2 underline"
             >
               {t('activity.retry')}
-            </button>
+            </ControlButton>
           ) : undefined
         }
       />
@@ -469,6 +461,9 @@ export function BrowserTaskComposer({
             onSelectModel={model => setSelection({ model, options })}
             onSelectModelAndOptions={(model, options) => setSelection({ model, options })}
             onSelectModelOption={selectOption}
+            onSelectPermissionOptions={patch =>
+              setSelection({ model: selectedModel, options: { ...options, ...patch } })
+            }
             onFileSelect={files => void attachments.handleFileSelect(files)}
             planModeActive={options.collaborationMode === 'plan'}
             onSetPlanMode={() => selectOption('collaborationMode', 'plan')}

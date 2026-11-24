@@ -4,7 +4,7 @@
 
 import { expect } from '@playwright/test'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
-import { webApi } from '../../utils/collaboration-test-support'
+import { chooseCollaborationOption, webApi } from '../../utils/collaboration-test-support'
 import { sleep } from '../../utils/helpers'
 
 interface StatusRule extends Resource {
@@ -54,7 +54,9 @@ projectTest(
     await page.getByTestId('automatic-processing-prompt').fill(prompt)
     await page.getByTestId('automatic-processing-trigger-status_changed').locator('..').click()
     await expect(page.getByTestId('automatic-processing-trigger-status_changed')).toBeChecked()
-    await page.getByTestId('automatic-processing-status').selectOption('in_review')
+    await chooseCollaborationOption(page, page.getByTestId('automatic-processing-status'), {
+      value: 'in_review',
+    })
     await page.getByTestId('automatic-processing-target-kind-human').click()
     await expect(page.getByTestId('automatic-processing-target-kind-human')).toHaveAttribute(
       'aria-pressed',
@@ -88,14 +90,20 @@ projectTest(
     await page.reload()
     await page.getByTestId('collaboration-project-settings-automatic-processing').click()
     await page.getByTestId(`automatic-processing-edit-${rule.id}`).click()
-    await expect(page.getByTestId('automatic-processing-status')).toHaveValue('in_review')
+    await expect(
+      page.getByTestId('automatic-processing-status').locator('[data-value]')
+    ).toHaveAttribute('data-value', 'in_review')
     await expect(page.getByTestId('automatic-processing-prompt')).toHaveCount(0)
     await page.getByTestId('automatic-processing-trigger-schedule').locator('..').click()
     await expect(page.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
     await page.getByTestId('automatic-processing-prompt').fill(updatedPrompt)
     await page.getByTestId('automatic-processing-trigger-status_changed').locator('..').click()
-    await expect(page.getByTestId('automatic-processing-status')).toHaveValue('in_review')
-    await page.getByTestId('automatic-processing-status').selectOption('completed')
+    await expect(
+      page.getByTestId('automatic-processing-status').locator('[data-value]')
+    ).toHaveAttribute('data-value', 'in_review')
+    await chooseCollaborationOption(page, page.getByTestId('automatic-processing-status'), {
+      value: 'completed',
+    })
     await expect(page.getByTestId('automatic-processing-prompt')).toHaveCount(0)
     const updated = page.waitForResponse(
       response =>
@@ -111,12 +119,16 @@ projectTest(
     await page.reload()
     await page.getByTestId('collaboration-project-settings-automatic-processing').click()
     await page.getByTestId(`automatic-processing-edit-${rule.id}`).click()
-    await expect(page.getByTestId('automatic-processing-status')).toHaveValue('completed')
+    await expect(
+      page.getByTestId('automatic-processing-status').locator('[data-value]')
+    ).toHaveAttribute('data-value', 'completed')
     await expect(page.getByTestId('automatic-processing-prompt')).toHaveCount(0)
     await page.getByTestId('automatic-processing-trigger-schedule').locator('..').click()
     await expect(page.getByTestId('automatic-processing-prompt')).toHaveValue(updatedPrompt)
     await page.getByTestId('automatic-processing-trigger-status_changed').locator('..').click()
-    await expect(page.getByTestId('automatic-processing-status')).toHaveValue('completed')
+    await expect(
+      page.getByTestId('automatic-processing-status').locator('[data-value]')
+    ).toHaveAttribute('data-value', 'completed')
     await page.getByTestId('automatic-processing-cancel').click()
 
     const runsPath = `${rulesPath}/${rule.id}/runs`

@@ -247,10 +247,36 @@ mod tests {
     }
 
     #[test]
+    fn binding_reads_preserve_legacy_metadata_without_migrating() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let target = json!({
+            "userId":7,"deviceId":"mac",
+            "backendUrl":"https://original.example/api","username":"previous-name"
+        });
+        let binding = store.stand_in_binding("bind", 0, target).unwrap();
+        assert_eq!(
+            store.stand_in_binding("get", 0, Value::Null).unwrap(),
+            binding
+        );
+        assert!(store
+            .stand_in_binding("unsupported", 1, Value::Null)
+            .is_err());
+        let reopened = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        assert_eq!(
+            reopened.stand_in_binding("get", 0, Value::Null).unwrap(),
+            binding
+        );
+    }
+
+    #[test]
     fn whole_profile_stop_preserves_configuration_and_blocks_early_restart() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
         settings["roles"][0]["enabled"] = json!(true);
         let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
         let stopped = store
@@ -278,6 +304,11 @@ mod tests {
     fn stopped_targets_only_append_disabled_portable_imports_and_never_restore_their_enablement() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         store
             .transition_personal_stand_in(7, "mac", "stop")
             .unwrap();

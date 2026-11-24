@@ -133,6 +133,31 @@ fn upgrades_v7_with_existing_payload_without_overwriting_it() {
 }
 
 #[test]
+fn reopening_v11_restores_missing_runtime_query_indexes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    drop(LocalTaskStore::open(&path).unwrap());
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "DROP INDEX ix_loop_items_bound_runtime_task;
+             DROP INDEX ix_loop_items_unfinished_arrangement_user;",
+        )
+        .unwrap();
+
+    drop(LocalTaskStore::open(&path).unwrap());
+    let restored: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name IN
+             ('ix_loop_items_bound_runtime_task', 'ix_loop_items_unfinished_arrangement_user')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(restored, 2);
+}
+
+#[test]
 fn lists_legacy_execution_when_joined_task_title_is_null() {
     let (directory, project_id, task_id, _, execution_id) = version_seven_store(false);
     let path = directory.path().join("tasks.sqlite");

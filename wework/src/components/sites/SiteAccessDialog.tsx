@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, Loader2, X } from 'lucide-react'
 import type { Site, SiteAccessAudience, SitesApi } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createRequestId } from '@/lib/request-id'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Radio, RadioGroup } from '@wegent/collaboration/controls/RadioGroup'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Loader2, X } from 'lucide-react'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { useSiteDialogScope } from './useSiteDialogScope'
 
 interface SiteAccessDialogProps {
   api: SitesApi
@@ -28,84 +34,58 @@ function parseSubjects(value: string): string[] | null {
   return [...subjects].sort()
 }
 
-export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) {
+export function SiteAccessDialog(props: SiteAccessDialogProps) {
+  const scope = useSiteDialogScope(props.api, props.site.siteid)
+  return <SiteAccessDialogContent key={scope.key} {...props} restoreFocus={scope.restoreFocus} />
+}
+
+function SiteAccessDialogContent({
+  api,
+  site,
+  onClose,
+  restoreFocus,
+}: SiteAccessDialogProps & { restoreFocus: () => HTMLElement | null }) {
   const { t } = useTranslation('sites')
-  const closeRef = useRef<HTMLButtonElement>(null)
-  const [audience, setAudience] = useState<SiteAccessAudience>('all')
-  const [subjectsText, setSubjectsText] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [loadFailed, setLoadFailed] = useState(false)
+  const [resource] = useState(() =>
+    createAsyncResource(site.siteid, () => api.getSiteAccess(site.siteid))
+  )
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const [draft, setDraft] = useState<{ audience: SiteAccessAudience; subjectsText: string } | null>(
+    null
+  )
+  const audience = draft?.audience ?? snapshot.data?.audience ?? 'all'
+  const subjectsText = draft?.subjectsText ?? snapshot.data?.subjects.join(', ') ?? ''
+  const loading = snapshot.status === 'idle' || snapshot.status === 'loading'
+  const loadFailed = snapshot.status === 'error'
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [actionError, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-
-  const load = useCallback(async () => {
-    try {
-      const policy = await api.getSiteAccess(site.siteid)
-      setAudience(policy.audience)
-      setSubjectsText(policy.subjects.join(', '))
-    } catch (reason) {
-      setLoadFailed(true)
-      setError(
-        reason instanceof Error ? reason.message : t('access_load_failed', '访问权限加载失败')
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [api, site.siteid, t])
-
+  const operation = useRef(false)
+  const close = () => {
+    if (!operation.current) onClose()
+  }
+  const error =
+    actionError ??
+    (loadFailed
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message || t('access_load_failed', '访问权限加载失败')
+        : t('access_load_failed', '访问权限加载失败')
+      : null)
   const retryLoad = () => {
-    setLoading(true)
-    setLoadFailed(false)
     setError(null)
     setSaved(false)
-    void load()
+    void resource.reload()
   }
 
-  useEffect(() => {
-    let active = true
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    closeRef.current?.focus()
-    void api
-      .getSiteAccess(site.siteid)
-      .then(policy => {
-        if (!active) return
-        setAudience(policy.audience)
-        setSubjectsText(policy.subjects.join(', '))
-      })
-      .catch(reason => {
-        if (!active) return
-        setLoadFailed(true)
-        setError(
-          reason instanceof Error ? reason.message : t('access_load_failed', '访问权限加载失败')
-        )
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-      previouslyFocused?.focus()
-    }
-  }, [api, site.siteid, t])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !saving) onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose, saving])
-
   const save = async () => {
-    if (saving || loading || loadFailed) return
+    if (operation.current || loading || loadFailed) return
     const subjects = audience === 'custom' ? parseSubjects(subjectsText) : []
     if (audience === 'custom' && !subjects) {
       setSaved(false)
       setError(t('access_subjects_invalid', '请输入不重复的用户名，多个用户名使用逗号或换行分隔'))
       return
     }
+    operation.current = true
     setSaving(true)
     setSaved(false)
     setError(null)
@@ -115,14 +95,15 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
         { audience, subjects: subjects ?? [] },
         createRequestId('site-access')
       )
-      setAudience(policy.audience)
-      setSubjectsText(policy.subjects.join(', '))
+      resource.update(() => policy)
+      setDraft(null)
       setSaved(true)
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : t('access_save_failed', '访问权限保存失败')
       )
     } finally {
+      operation.current = false
       setSaving(false)
     }
   }
@@ -156,12 +137,17 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
 
   return (
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 px-4">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="site-access-title"
-        data-testid="site-access-dialog"
-        className="w-full max-w-lg rounded-[20px] border border-border bg-popover p-5 shadow-lg"
+      <DialogSurface
+        onClose={close}
+        initialFocus={'[data-testid="site-access-close"]'}
+        finalFocus={restoreFocus}
+        render={
+          <section
+            aria-labelledby="site-access-title"
+            data-testid="site-access-dialog"
+            className="w-full max-w-lg rounded-[20px] border border-border bg-popover p-5 shadow-lg"
+          />
+        }
       >
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -170,17 +156,17 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
             </h2>
             <p className="mt-1 truncate text-sm text-text-secondary">{site.name}</p>
           </div>
-          <button
-            ref={closeRef}
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="site-access-close"
             aria-label={t('close', '关闭')}
             disabled={saving}
-            onClick={onClose}
+            onClick={close}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50"
           >
             <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </ControlButton>
         </header>
 
         {loading ? (
@@ -193,25 +179,31 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
           </div>
         ) : loadFailed ? null : (
           <>
-            <fieldset className="mt-5 space-y-2" disabled={saving}>
+            <RadioGroup
+              value={audience}
+              name="site-access-audience"
+              aria-label={t('access_scope', '访问范围')}
+              onValueChange={next => {
+                const option = options.find(option => option.value === next)
+                if (option) {
+                  setDraft({ audience: option.value, subjectsText })
+                  setSaved(false)
+                  setError(null)
+                }
+              }}
+              render={<fieldset />}
+              className="mt-5 space-y-2"
+              disabled={saving}
+            >
               <legend className="sr-only">{t('access_scope', '访问范围')}</legend>
               {options.map(option => (
                 <label
                   key={option.value}
                   className="flex min-h-14 cursor-pointer items-start gap-3 rounded-xl border border-border/50 px-3 py-2.5 transition-colors hover:bg-surface"
                 >
-                  <input
-                    type="radio"
-                    name="site-access-audience"
+                  <Radio
                     value={option.value}
-                    checked={audience === option.value}
                     data-testid={`site-access-audience-${option.value}`}
-                    className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-                    onChange={() => {
-                      setAudience(option.value)
-                      setSaved(false)
-                      setError(null)
-                    }}
                   />
                   <span className="min-w-0">
                     <strong className="block text-sm font-medium text-text-primary">
@@ -223,14 +215,14 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
                   </span>
                 </label>
               ))}
-            </fieldset>
+            </RadioGroup>
 
             {audience === 'custom' ? (
               <label className="mt-4 block">
                 <span className="text-sm font-medium text-text-primary">
                   {t('access_custom_subjects', '指定成员用户名')}
                 </span>
-                <textarea
+                <ControlTextarea
                   value={subjectsText}
                   data-testid="site-access-subjects"
                   disabled={saving}
@@ -239,7 +231,7 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
                   placeholder={t('access_custom_subjects_placeholder', '例如 alice, bob')}
                   className="mt-2 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:opacity-60"
                   onChange={event => {
-                    setSubjectsText(event.target.value)
+                    setDraft({ audience, subjectsText: event.target.value })
                     setSaved(false)
                     setError(null)
                   }}
@@ -270,36 +262,40 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
 
         <footer className="mt-5 flex justify-end gap-2">
           {loadFailed ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="site-access-retry"
               onClick={retryLoad}
               className="h-10 rounded-lg px-4 text-sm text-text-primary hover:bg-surface"
             >
               {t('retry', '重试')}
-            </button>
+            </ControlButton>
           ) : null}
-          <button
+          <ControlButton
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="site-access-cancel"
             disabled={saving}
-            onClick={onClose}
+            onClick={close}
             className="h-10 rounded-lg px-4 text-sm text-text-primary hover:bg-surface disabled:opacity-50"
           >
             {t('cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="site-access-save"
             disabled={loading || saving || loadFailed}
             onClick={() => void save()}
-            className="flex h-10 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
             {saving ? t('access_saving', '保存中…') : t('save', '保存')}
-          </button>
+          </ControlButton>
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

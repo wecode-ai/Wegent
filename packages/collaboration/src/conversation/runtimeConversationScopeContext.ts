@@ -1,6 +1,8 @@
 import { createContext, useContext } from 'react'
-import type { RuntimeConversationClient } from '@wegent/chat-core'
+import type { ProjectChatMessage, RuntimeConversationClient } from '@wegent/chat-core'
 import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
+import { resolveObservedActivityTurn } from './activityExecutionObservation'
+import type { RuntimeConversationSnapshot } from '@wegent/chat-core/runtime-conversation-session'
 import { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
 type Session = ReturnType<typeof createRuntimeConversationSession>
 
@@ -8,12 +10,41 @@ export function createScope(runtime: RuntimeConversationClient) {
   const sessions = new Map<string, Session>()
   const active = new Set<Session>()
   const activityTurnIds = new Map<string, string>()
-  return {
+  const observers = new Set<object>()
+  const scope = {
     runtime,
     getActivityTurnId: (key: string) => activityTurnIds.get(key),
-    identifyActivityTurn: (key: string, turnId: string) => activityTurnIds.set(key, turnId),
-    get(address: RuntimeTaskAddress) {
-      const key = JSON.stringify([address.deviceId, address.taskId, address.projectSession ?? null])
+    observeActivity(key: string, message: ProjectChatMessage, singleExecution: boolean) {
+      if (!message.runtimeAddress) return undefined
+      const session = scope.get(message.runtimeAddress)
+      const remember = (snapshot: RuntimeConversationSnapshot) => {
+        const turn = resolveObservedActivityTurn(
+          message,
+          snapshot,
+          activityTurnIds.get(key),
+          singleExecution
+        )
+        if (turn?.id) activityTurnIds.set(key, turn.id)
+      }
+      return {
+        getSnapshot: session.getSnapshot,
+        subscribe(listener: () => void) {
+          const stop = scope.observeSession(session, () => {
+            remember(session.getSnapshot())
+            listener()
+          })
+          remember(session.getSnapshot())
+          return stop
+        },
+      }
+    },
+    get(address: RuntimeTaskAddress): Session {
+      const key = JSON.stringify([
+        address.deviceId,
+        address.taskId,
+        address.projectSession?.projectId ?? null,
+        address.projectSession?.issueId ?? null,
+      ])
       let session = sessions.get(key)
       if (!session) {
         session = createRuntimeConversationSession(runtime, address)
@@ -21,21 +52,31 @@ export function createScope(runtime: RuntimeConversationClient) {
       }
       return session
     },
-    activate(session: Session) {
-      if (active.has(session)) {
-        void session.reload()
-        return
+    observeSession(session: Session, listener: () => void, open = false) {
+      const token = {}
+      const firstObserver = !observers.size
+      const previouslyActive = active.has(session)
+      const stop = session.subscribe(listener)
+      observers.add(token)
+      if (firstObserver) active.forEach(visited => visited.start())
+      if (open) {
+        active.add(session)
+        if (previouslyActive && !firstObserver) void session.reload()
+        else session.start()
       }
-      active.add(session)
-      session.start()
-    },
-    start() {
-      active.forEach(session => session.start())
-    },
-    stop() {
-      active.forEach(session => session.stop())
+      return () => {
+        stop()
+        observers.delete(token)
+        if (observers.size) return
+        // A commit may replace the last reader or replay subscriptions in StrictMode.
+        // Dispose after that subscription transaction, without reconnecting live sessions.
+        queueMicrotask(() => {
+          if (!observers.size) active.forEach(visited => visited.stop())
+        })
+      }
     },
   }
+  return scope
 }
 
 export const RuntimeConversationScopeContext = createContext<ReturnType<typeof createScope> | null>(

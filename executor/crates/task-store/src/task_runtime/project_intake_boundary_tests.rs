@@ -129,3 +129,27 @@ fn project_intake_both_save_paths_persist_the_same_project_boundary() {
         old_boundary
     );
 }
+
+#[test]
+fn independent_issue_intake_keeps_its_own_enable_boundary() {
+    let previous = role();
+    let mut enabled = previous.clone();
+    enabled["collaboration"]["includeIndependentIssues"] = json!(true);
+    stamp_project_enabled(&mut enabled, &previous);
+    assert_eq!(boundary(&enabled, "existing", "local"), OLD);
+    assert!(enabled["independentIssuesEnabledAfter"].is_string());
+    assert_ne!(enabled["independentIssuesEnabledAfter"], OLD);
+
+    enabled["independentIssuesEnabledAfter"] = json!(OLD);
+    let mut renamed = enabled.clone();
+    renamed["name"] = json!("Triage");
+    stamp_project_enabled(&mut renamed, &enabled);
+    assert_eq!(renamed["independentIssuesEnabledAfter"], OLD);
+
+    let mut paused = enabled.clone();
+    paused["collaboration"]["includeIndependentIssues"] = json!(false);
+    stamp_project_enabled(&mut paused, &enabled);
+    assert!(paused["independentIssuesEnabledAfter"].is_null());
+    stamp_project_enabled(&mut renamed, &paused);
+    assert_ne!(renamed["independentIssuesEnabledAfter"], OLD);
+}

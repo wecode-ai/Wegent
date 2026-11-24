@@ -1,0 +1,31 @@
+[package]
+name = "wegent-knowledge-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Knowledge MCP tools and external document access"
+
+[dependencies]
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-mysql.workspace = true
+brz-redis.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+jsonwebtoken.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+tracing.workspace = true
+wegent-access.workspace = true
+wegent-attachments.workspace = true
+wegent-backend-config.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-knowledge.workspace = true
+wegent-knowledge-access.workspace = true
+wegent-mcp-transport.workspace = true
+wegent-storage.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -55,7 +55,7 @@ fn cloud_collection_rpc_relays_only_a_source_credential_to_the_known_host() {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
-        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"private-session-token".into(),..Default::default()});
+        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"private-session-token".into(),authenticated_user_id:Some(7),..Default::default()});
         handler.configure_connection_host(json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)})).unwrap();
         let result = handler.handle_runtime_rpc(json!({"method":"runtime.connections.observations.collect","payload":{"expectedOwnerId":7,"collectorToken":"source-lease-token","backendUrl":"https://untrusted.example","taskId":"arbitrary-task","executionRequest":{"prompt":"Never run"}}})).await.unwrap();
         assert_eq!(result["accepted"], true);
@@ -235,6 +235,7 @@ fn cancellation_while_native_waits_for_the_send_gate_prevents_continuation() {
             *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
                 backend_url: format!("http://{address}"),
                 auth_token: "synthetic-runtime-session".into(),
+                authenticated_user_id: Some(7),
                 ..Default::default()
             });
             seed(&handler, "task");
@@ -359,6 +360,7 @@ fn backend_cancellation_removes_the_wait_before_ack_and_recovers_a_lost_ack() {
             *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
                 backend_url: format!("http://{address}"),
                 auth_token: "synthetic-runtime-session".into(),
+                authenticated_user_id: Some(7),
                 ..Default::default()
             });
             let health = json!({"subscriptionId":signal["subscriptionId"]});
@@ -453,7 +455,7 @@ fn remote_model_subscription_recovers_lost_registration_without_reinitializing_o
         let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
         let model_service = handler.clone();
         let handler = handler.with_connection_observation_device_type("remote");
-        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-runtime-session".into(),..Default::default()});
+        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-runtime-session".into(),authenticated_user_id:Some(7),..Default::default()});
         handler.configure_connection_host(json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)})).unwrap();
         seed(&handler, "task");
         let args = json!({"subscription_key":"wait","source":{"providerId":"documents","profile":"account","kind":"document","id":"doc","name":"Document"},"match":{"/eventType":"document.updated"},"continuation":"Continue editing"});
@@ -537,7 +539,7 @@ fn goal_pause_recovers_cloud_cancellation_after_a_lost_attach_response_and_resta
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let connection = ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-runtime-session".into(),..Default::default()};
+        let connection = ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-runtime-session".into(),authenticated_user_id:Some(7),..Default::default()};
         let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
         *handler.backend_connection.lock().unwrap() = Some(connection.clone());
         seed(&handler, "task");
@@ -545,7 +547,7 @@ fn goal_pause_recovers_cloud_cancellation_after_a_lost_attach_response_and_resta
         handler.save_event_subscription(&id, &record).unwrap();
         assert!(handler.register_cloud_connection_subscription(&id, &mut record).await.is_err());
         assert_eq!(*remote_status.lock().unwrap(), "armed");
-        handler.cancel_connection_goal_waits("task", Some("paused"));
+        handler.cancel_connection_goal_waits("task", Some("paused"), None);
         let read = || event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(read()["status"], "cancelled");
         assert_eq!(read()["cloud_cancel_pending"], true);

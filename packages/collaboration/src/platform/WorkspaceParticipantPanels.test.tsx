@@ -1,3 +1,4 @@
+import { sdkSelectValue } from '../test/selectControl'
 // @vitest-environment jsdom
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -151,10 +152,7 @@ it('preserves the visible roster when ownership refresh fails and recovers local
   const select = container.querySelector<HTMLSelectElement>(
     '[data-testid="collaboration-workspace-transfer-user"]'
   )!
-  await act(async () => {
-    select.value = '1'
-    select.dispatchEvent(new Event('change', { bubbles: true }))
-  })
+  await sdkSelectValue(select, '1')
   await click('collaboration-workspace-transfer-submit')
   expect(transferOwnership).toHaveBeenCalledExactlyOnceWith(1, 1)
   expect(container.textContent).toContain('Alice')

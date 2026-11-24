@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import zipfile
+from datetime import datetime, timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -15,7 +16,8 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.models.plugin_marketplace import Plugin, PluginRelease
+from app.models.kind import Kind
+from app.models.plugin_marketplace import Plugin, PluginRelease, PluginSubmission
 from app.models.user import User
 from app.schemas.installed_plugin import (
     PluginAccessTarget,
@@ -401,3 +403,412 @@ def test_personal_release_accepts_normalized_manifest_identity_and_preserves_acc
         service.get_plugin_access(test_db, plugin_id=plugin.id, user_id=test_user.id)
         == original_access
     )
+
+
+@pytest.mark.parametrize("sharing_completed", [False, True])
+def test_private_first_install_does_not_publish_over_concurrent_sharing(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    sharing_completed: bool,
+) -> None:
+    service = PluginMarketplaceService(release_notifier=Mock(return_value=0))
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages)
+    recipient = User(
+        user_name="concurrent-share-recipient",
+        password_hash=test_user.password_hash,
+        email="concurrent-share-recipient@example.com",
+        is_active=True,
+    )
+    test_db.add(recipient)
+    test_db.commit()
+    owner_id, recipient_id = test_user.id, recipient.id
+
+    private_package = _plugin_zip(version="1.1.0")
+    private = service.init_submission(
+        test_db,
+        user_id=owner_id,
+        request=PluginSubmissionInitRequest.model_validate(
+            _submission_payload(
+                "1.1.0", package=private_package, privateFirstInstall=True
+            )
+        ),
+    )
+    assert private.privateFirstInstall is True
+
+    shared_package = _plugin_zip()
+    shared = service.init_submission(
+        test_db,
+        user_id=owner_id,
+        request=PluginSubmissionInitRequest.model_validate(
+            _submission_payload(
+                package=shared_package,
+                targets=[
+                    PluginAccessTarget(entityType="user", entityId=str(recipient_id))
+                ],
+                allowCopy=True,
+            )
+        ),
+    )
+    assert shared.pluginId == private.pluginId
+    if sharing_completed:
+        _complete_submission(service, test_db, owner_id, shared, shared_package)
+
+    _upload_submission(
+        service,
+        test_db,
+        user_id=owner_id,
+        submission_id=private.submissionId,
+        package=private_package,
+    )
+    with pytest.raises(HTTPException) as rejected:
+        service.complete_submission(
+            test_db, user_id=owner_id, submission_id=private.submissionId
+        )
+    assert rejected.value.status_code == 409
+    assert rejected.value.detail["code"] == "PRIVATE_FIRST_INSTALL_CONFLICT"
+
+    if not sharing_completed:
+        _complete_submission(service, test_db, owner_id, shared, shared_package)
+
+    assert private_package not in stored_packages.values()
+    [listing] = service.list_plugins(test_db, user_id=recipient_id).items
+    assert listing.latestReleaseId == shared.releaseId
+    releases = service.list_releases(
+        test_db, plugin_id=shared.pluginId, user_id=recipient_id
+    )
+    assert [release.id for release in releases.items] == [shared.releaseId]
+    installed = service.install(
+        test_db, user_id=recipient_id, plugin_id=shared.pluginId
+    )
+    assert installed.spec.releaseId == shared.releaseId
+    assert service.get_plugin_access(
+        test_db, plugin_id=shared.pluginId, user_id=owner_id
+    ).allowCopy
+
+
+def test_private_first_install_approves_for_owner_and_rejects_another_first_upload(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = PluginMarketplaceService(release_notifier=Mock(return_value=0))
+    _mock_package_storage(monkeypatch, {})
+    package = _plugin_zip()
+    submission = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest.model_validate(
+            _submission_payload(package=package, privateFirstInstall=True)
+        ),
+    )
+    assert submission.privateFirstInstall is True
+    _complete_submission(service, test_db, test_user.id, submission, package)
+    access = service.get_plugin_access(
+        test_db, user_id=test_user.id, plugin_id=submission.pluginId
+    )
+    assert access.scope == "private"
+    assert access.targets == []
+    installed = service.install(
+        test_db,
+        user_id=test_user.id,
+        plugin_id=submission.pluginId,
+        release_id=submission.releaseId,
+    )
+    assert installed.spec.releaseId == submission.releaseId
+
+    with pytest.raises(HTTPException) as rejected:
+        service.init_submission(
+            test_db,
+            user_id=test_user.id,
+            request=PluginSubmissionInitRequest.model_validate(
+                _submission_payload("1.1.0", privateFirstInstall=True)
+            ),
+        )
+    assert rejected.value.status_code == 409
+    assert rejected.value.detail["code"] == "PRIVATE_FIRST_INSTALL_CONFLICT"
+
+
+@pytest.mark.parametrize("older_local_package", [False, True])
+def test_private_reinstall_restores_only_the_owners_verified_installation(
+    test_db: Session,
+    test_user: User,
+    shared_personal_release: tuple[
+        PluginMarketplaceService, PluginSubmissionInitResponse, list[User]
+    ],
+    older_local_package: bool,
+) -> None:
+    from app.services.plugin_installation_operations import uninstall_account_plugin
+
+    service, original, recipients = shared_personal_release
+    owner_id = test_user.id
+    owner_installation = service.install(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    recipient_installation = service.install(
+        test_db, user_id=recipients[0].id, plugin_id=original.pluginId
+    )
+    latest = original
+    if older_local_package:
+        package = _plugin_zip(version="2.0.0")
+        latest = service.init_submission(
+            test_db,
+            user_id=owner_id,
+            request=PluginSubmissionInitRequest.model_validate(
+                _submission_payload("2.0.0", package=package)
+            ),
+        )
+        _complete_submission(service, test_db, owner_id, latest, package)
+    original_releases = {
+        release.id: (release.sha256, release.storage_key, release.published_at)
+        for release in test_db.query(PluginRelease)
+        .filter_by(plugin_id=original.pluginId)
+        .all()
+    }
+    impact = service.get_personal_plugin_delete_impact(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    service.delete_owned_personal_plugin(
+        test_db,
+        user_id=owner_id,
+        plugin_id=original.pluginId,
+        impact_revision=impact.impactRevision,
+        revoke_and_delete=True,
+    )
+
+    with pytest.raises(HTTPException) as hint:
+        service.init_submission(
+            test_db,
+            user_id=owner_id,
+            request=PluginSubmissionInitRequest.model_validate(
+                _submission_payload(privateFirstInstall=True, restoreDeleted=True)
+            ),
+        )
+    assert hint.value.status_code == 409
+    assert isinstance(hint.value.detail, dict), hint.value.detail
+    assert hint.value.detail["code"] == "PRIVATE_PLUGIN_REINSTALL_REQUIRED"
+    assert hint.value.detail["pluginId"] == original.pluginId
+    assert hint.value.detail["releaseId"] == latest.releaseId
+    assert test_db.get(Plugin, original.pluginId).status == "deleted"
+
+    with pytest.raises(HTTPException) as denied:
+        service.install(
+            test_db,
+            user_id=recipients[0].id,
+            plugin_id=original.pluginId,
+            restore_deleted=True,
+        )
+    assert denied.value.status_code == 404
+    test_db.rollback()
+    installed = service.install(
+        test_db,
+        user_id=owner_id,
+        plugin_id=original.pluginId,
+        restore_deleted=True,
+    )
+    assert (
+        installed.metadata["labels"]["id"]
+        == owner_installation.metadata["labels"]["id"]
+    )
+    assert installed.spec.releaseId == latest.releaseId
+    repeated = service.install(
+        test_db, user_id=owner_id, plugin_id=original.pluginId, restore_deleted=True
+    )
+    assert repeated.metadata["labels"]["id"] == installed.metadata["labels"]["id"]
+    assert repeated.spec.releaseId == latest.releaseId
+    assert {
+        release.id: (release.sha256, release.storage_key, release.published_at)
+        for release in test_db.query(PluginRelease)
+        .filter_by(plugin_id=original.pluginId)
+        .all()
+    } == original_releases
+    access = service.get_plugin_access(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    assert access.targets == []
+    assert not access.allowCopy
+    assert service.list_plugins(test_db, user_id=recipients[0].id).items == []
+    assert not test_db.get(
+        Kind, int(recipient_installation.metadata["labels"]["id"])
+    ).is_active
+    installed_id = int(installed.metadata["labels"]["id"])
+    uninstall_account_plugin(test_db, user_id=owner_id, installed_id=installed_id)
+    reinstalled = service.install(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    assert reinstalled.spec.releaseId == latest.releaseId
+    assert int(reinstalled.metadata["labels"]["id"]) == installed_id
+
+
+@pytest.mark.parametrize(
+    ("status", "visibility"), [("unpublished", "personal"), ("deleted", "workspace")]
+)
+def test_private_reinstall_does_not_bypass_delisting_or_restore_enterprise_plugins(
+    test_db: Session,
+    test_user: User,
+    shared_personal_release: tuple[
+        PluginMarketplaceService, PluginSubmissionInitResponse, list[User]
+    ],
+    status: str,
+    visibility: str,
+) -> None:
+    service, original, _ = shared_personal_release
+    plugin = test_db.get(Plugin, original.pluginId)
+    plugin.status, plugin.visibility = status, visibility
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as denied:
+        service.install(
+            test_db,
+            user_id=test_user.id,
+            plugin_id=original.pluginId,
+            restore_deleted=True,
+        )
+    assert denied.value.status_code == 404
+    test_db.rollback()
+    assert test_db.get(Plugin, original.pluginId).status == status
+
+
+def test_private_first_install_recreates_deleted_personal_plugin_without_restoring_shares(
+    test_db: Session,
+    test_user: User,
+    shared_personal_release: tuple[
+        PluginMarketplaceService, PluginSubmissionInitResponse, list[User]
+    ],
+) -> None:
+    service, original, recipients = shared_personal_release
+    owner_id, recipient_id = test_user.id, recipients[0].id
+    owner_installation = service.install(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    recipient_installation = service.install(
+        test_db, user_id=recipient_id, plugin_id=original.pluginId
+    )
+    impact = service.get_personal_plugin_delete_impact(
+        test_db, user_id=owner_id, plugin_id=original.pluginId
+    )
+    service.delete_owned_personal_plugin(
+        test_db,
+        user_id=owner_id,
+        plugin_id=original.pluginId,
+        impact_revision=impact.impactRevision,
+        revoke_and_delete=True,
+    )
+
+    with pytest.raises(HTTPException) as repeated_version:
+        service.init_submission(
+            test_db,
+            user_id=owner_id,
+            request=PluginSubmissionInitRequest.model_validate(
+                _submission_payload(privateFirstInstall=True)
+            ),
+        )
+    assert repeated_version.value.detail == "Plugin version already exists"
+
+    # A different, lower version exposes accidental promotion of the old release.
+    version = "0.9.0"
+    package = _plugin_zip(version=version)
+    recreated = service.init_submission(
+        test_db,
+        user_id=owner_id,
+        request=PluginSubmissionInitRequest.model_validate(
+            _submission_payload(version, package=package, privateFirstInstall=True)
+        ),
+    )
+    assert service.list_plugins(test_db, user_id=owner_id).items == []
+    _complete_submission(service, test_db, owner_id, recreated, package)
+    assert recreated.pluginId == original.pluginId
+    [listing] = service.list_plugins(test_db, user_id=owner_id).items
+    assert listing.latestReleaseId == recreated.releaseId
+
+    with pytest.raises(HTTPException) as stale_install:
+        service.install(
+            test_db,
+            user_id=owner_id,
+            plugin_id=recreated.pluginId,
+            release_id=original.releaseId,
+        )
+    assert stale_install.value.status_code == 400
+    installed = service.install(
+        test_db,
+        user_id=owner_id,
+        plugin_id=recreated.pluginId,
+        release_id=recreated.releaseId,
+    )
+    assert (
+        installed.metadata["labels"]["id"]
+        == owner_installation.metadata["labels"]["id"]
+    )
+    assert installed.spec.releaseId == recreated.releaseId
+
+    access = service.get_plugin_access(
+        test_db, user_id=owner_id, plugin_id=recreated.pluginId
+    )
+    assert access.scope == "private"
+    assert access.targets == []
+    assert not access.allowCopy
+    assert service.list_plugins(test_db, user_id=recipient_id).items == []
+    assert not test_db.get(
+        Kind, int(recipient_installation.metadata["labels"]["id"])
+    ).is_active
+    with pytest.raises(HTTPException) as recipient_install:
+        service.install(test_db, user_id=recipient_id, plugin_id=recreated.pluginId)
+    assert recipient_install.value.status_code == 404
+
+
+def test_private_first_install_can_reclaim_an_expired_share(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = PluginMarketplaceService(release_notifier=Mock(return_value=0))
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages)
+    recipient = User(
+        user_name="expired-share-recipient",
+        password_hash=test_user.password_hash,
+        email="expired-share-recipient@example.com",
+        is_active=True,
+    )
+    test_db.add(recipient)
+    test_db.commit()
+    shared_package = _plugin_zip()
+    shared = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest.model_validate(
+            _submission_payload(
+                package=shared_package,
+                targets=[
+                    PluginAccessTarget(entityType="user", entityId=str(recipient.id))
+                ],
+            )
+        ),
+    )
+    _upload_submission(
+        service,
+        test_db,
+        user_id=test_user.id,
+        submission_id=shared.submissionId,
+        package=shared_package,
+    )
+    test_db.get(PluginSubmission, shared.submissionId).submitted_at = (
+        datetime.now() - timedelta(days=1)
+    )
+    test_db.commit()
+
+    private_package = _plugin_zip(version="1.1.0")
+    private = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest.model_validate(
+            _submission_payload(
+                "1.1.0", package=private_package, privateFirstInstall=True
+            )
+        ),
+    )
+    _complete_submission(service, test_db, test_user.id, private, private_package)
+    assert shared_package not in stored_packages.values()
+    assert service.list_plugins(test_db, user_id=recipient.id).items == []
+    with pytest.raises(HTTPException) as expired:
+        service.complete_submission(
+            test_db, user_id=test_user.id, submission_id=shared.submissionId
+        )
+    assert expired.value.status_code == 404

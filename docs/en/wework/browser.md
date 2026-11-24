@@ -36,6 +36,8 @@ AI uses structured `inspect` results to understand the page. `screenshot` still 
 
 The right panel shows the Agent browser-control state while AI operates the page. You can pause AI control and resume it after review. Confirm the target and impact before account, publishing, payment, deletion, or other high-risk actions.
 
+When a browser action needs your confirmation, **Continue** and **Cancel** appear below the address bar. **Continue** runs that action, and **Cancel** ends the request. If approval expires, return to the conversation and ask AI to try again. If AI times out waiting for the page, ask it to inspect the page again.
+
 ### Individual browsing-history operations
 
 <!-- ui-source: src/components/settings/BrowserHistoryPage.tsx -->
@@ -50,6 +52,8 @@ Open **browser toolbar … → History**, or **Settings → Integrations → Bro
 | Browse by date          | Collapse/expand a date group and select a record to open it                                                        |
 | Remove multiple records | Select record checkboxes and remove the selection; does not clear webpage cookies or conversation history          |
 | More records            | Continue loading history. Retry an initial failure on the page, or a pagination failure at its pagination controls |
+
+Late search or pagination responses do not replace current results. Failed refreshes retain displayed records; retry a failed page from its pagination controls. Successful removal or browser-data clearing refreshes the current search.
 
 ## Browser controls
 

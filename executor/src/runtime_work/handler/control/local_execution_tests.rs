@@ -180,7 +180,7 @@ fn run_native_control(cloud_bound: bool) {
             assert_eq!(calls[unloaded_at]["params"]["threadId"], "thread-target");
             assert_eq!(resumed["params"]["threadId"], "thread-target");
             assert_eq!(
-                resumed["params"]["config"]["mcp_servers.wework_control.enabled"],
+                resumed["params"]["config"]["mcp_servers"]["wework_control"]["enabled"],
                 true
             );
             let instructions = resumed["params"]["developerInstructions"].as_str().unwrap();
@@ -224,7 +224,7 @@ fn run_native_control(cloud_bound: bool) {
                 .find(|call| call["method"] == "thread/start")
                 .unwrap();
             assert_eq!(
-                started["params"]["config"]["mcp_servers.wework_control.enabled"],
+                started["params"]["config"]["mcp_servers"]["wework_control"]["enabled"],
                 true
             );
             let runs = handler

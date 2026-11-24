@@ -320,10 +320,6 @@ impl RuntimeTaskLink {
             execution_state: local_link
                 .as_ref()
                 .and_then(|link| link.execution_state.clone()),
-            runtime_handle: local_link
-                .as_ref()
-                .map(|link| link.runtime_handle.clone())
-                .unwrap_or_else(|| json!({})),
             parent: local_link.as_ref().and_then(|link| link.parent.clone()),
             ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
             runtime_project_key: local_link
@@ -348,6 +344,9 @@ impl RuntimeTaskLink {
             preserve_execution_path: false,
             pinned: false,
             pinned_order: None,
+            runtime_handle: local_link
+                .map(|link| link.runtime_handle)
+                .unwrap_or_else(|| json!({})),
         }
     }
 

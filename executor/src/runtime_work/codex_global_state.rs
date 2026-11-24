@@ -242,7 +242,7 @@ impl CodexGlobalProjectIndex {
                     .max()
                     .map(|root_len| (project, root_len))
             })
-            .max_by_key(|(_, root_len)| *root_len)
+            .max_by_key(|(project, root_len)| (project.remote_host_id.is_none(), *root_len))
             .map(|(project, _)| project)
     }
 
@@ -267,12 +267,6 @@ impl CodexGlobalProjectIndex {
             }
         }
         self.project_for_path(workspace_path)
-    }
-
-    pub fn is_pinned_thread(&self, thread_id: &str) -> bool {
-        self.pinned_thread_ids
-            .iter()
-            .any(|value| value == thread_id)
     }
 
     pub fn pinned_thread_order(&self, thread_id: &str) -> Option<usize> {
@@ -1196,13 +1190,11 @@ fn index_from_payload(payload: &Map<String, Value>) -> CodexGlobalProjectIndex {
     remaining_projects.sort_by(|left, right| left.key.cmp(&right.key));
     projects.extend(remaining_projects);
 
-    let mut projects_by_key = HashMap::new();
-    for (index, project) in projects.iter().enumerate() {
-        projects_by_key.insert(project.key.clone(), index);
-        for root in &project.roots {
-            projects_by_key.insert(root.clone(), index);
-        }
-    }
+    let projects_by_key = projects
+        .iter()
+        .enumerate()
+        .map(|(index, project)| (project.key.clone(), index))
+        .collect();
 
     let thread_project_assignments = payload
         .get(THREAD_PROJECT_ASSIGNMENTS_KEY)
@@ -1941,6 +1933,31 @@ mod tests {
 
     fn payload(value: Value) -> Map<String, Value> {
         value.as_object().cloned().expect("object payload")
+    }
+
+    #[test]
+    fn local_tasks_keep_their_project_when_a_remote_project_shares_the_root() {
+        let root = normalize_workspace_path("/repo/app");
+        let remote_key = "wegent-remote:other-device:remote-project";
+        let index = index_from_payload(&payload(json!({
+            "electron-saved-workspace-roots": [root],
+            "project-order": [root, remote_key],
+            "thread-workspace-root-hints": {"hinted-thread": root},
+            "remote-projects": [{
+                "id": remote_key,
+                "hostId": "other-device",
+                "remotePath": root
+            }]
+        })));
+
+        assert_eq!(index.project_for_key(&root).unwrap().key, root);
+        for thread_id in [Some("hinted-thread"), None] {
+            assert_eq!(
+                index.project_for_thread(thread_id, &root).unwrap().key,
+                root
+            );
+        }
+        assert_eq!(index.project_for_key(remote_key).unwrap().key, remote_key);
     }
 
     #[test]

@@ -4,17 +4,16 @@ import {
   recordConversationDiagnostic,
 } from './conversationDiagnostics'
 
+export const SCROLLBAR_DRAG_POSITION_EVENT = 'ui-sdk:scrollbar-drag-position'
+
 // Numeric sources keep exported diagnostics free of application strings and identify each owner.
 // 1: virtualizer; 3: shared bottom-distance writer;
-// 4: shared content-position writer; 5: controller bottom follow;
-// 10: workbench scrollbar pointer; 11: workbench scrollbar keyboard.
+// 4: shared content-position writer; 5: controller bottom follow.
 export const CONVERSATION_SCROLL_WRITE_SOURCE = {
   virtualizerOffset: 1,
   distanceFromBottom: 3,
   contentPosition: 4,
   controllerBottom: 5,
-  scrollbarPointer: 10,
-  scrollbarKeyboard: 11,
 } as const
 
 type ScrollWriteSource =
@@ -40,16 +39,17 @@ export function recordConversationScrollWrite<T>(
   details?: () => Record<string, number | boolean | null>
 ): T {
   const diagnosticsEnabled = isConversationDiagnosticsEnabled()
-  const previousScrollTop = element.scrollTop
+  const fromVirtualizer = writeSource === CONVERSATION_SCROLL_WRITE_SOURCE.virtualizerOffset
+  if (!diagnosticsEnabled && fromVirtualizer) return write()
+  const previousScrollTop = diagnosticsEnabled ? element.scrollTop : 0
   try {
     return write()
   } finally {
-    const scrollTop = element.scrollTop
+    const observer = fromVirtualizer ? undefined : offsetObservers.get(element)
+    const scrollTop = observer || diagnosticsEnabled ? element.scrollTop : 0
     // Native scroll events arrive after ResizeObserver. Publish instant external
     // writes first so a virtualizer cannot compensate from its previous offset.
-    if (writeSource !== CONVERSATION_SCROLL_WRITE_SOURCE.virtualizerOffset) {
-      offsetObservers.get(element)?.(scrollTop)
-    }
+    observer?.(scrollTop)
     if (diagnosticsEnabled) {
       const clientHeight = element.clientHeight
       recordConversationDiagnostic('scroll-write', {

@@ -1,13 +1,17 @@
-import { useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Download, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import {
   IssueActivityMarkdown,
   createCollaborationTranslator,
   useAttachmentPreview,
 } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { createBodyFlagRef } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Download, X } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+
+const markFilePreviewOpen = createBodyFlagRef('data-wework-file-preview-open')
 
 export function CloudFilePreviewDialog({
   filename,
@@ -38,11 +42,7 @@ export function CloudFilePreviewDialog({
   const kind = preview?.kind
   const text = preview?.text ?? ''
   const objectUrl = preview?.url
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    onClose,
-    true,
-    '[data-testid="cloud-file-preview-close"]'
-  )
+  const dialogRef = useRef<HTMLElement>(null)
 
   async function download() {
     const source = loadFile
@@ -61,17 +61,23 @@ export function CloudFilePreviewDialog({
 
   return createPortal(
     <div
+      ref={markFilePreviewOpen}
+      data-wework-file-preview
       className="fixed inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm"
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        tabIndex={-1}
-        aria-label={filename}
-        data-testid="cloud-file-preview-dialog"
-        className="flex h-[calc(100vh-72px)] w-[min(960px,calc(100vw-48px))] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl"
+      <DialogSurface
+        onClose={onClose}
+        initialFocus={'[data-testid="cloud-file-preview-close"]'}
+        render={
+          <section
+            ref={dialogRef}
+            tabIndex={-1}
+            aria-label={filename}
+            data-testid="cloud-file-preview-dialog"
+            className="flex h-[calc(100vh-72px)] w-[min(960px,calc(100vw-48px))] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl"
+          />
+        }
       >
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
           <div className="min-w-0 flex-1">
@@ -82,7 +88,9 @@ export function CloudFilePreviewDialog({
               </span>
             ) : null}
           </div>
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="cloud-file-preview-download"
             disabled={downloading}
@@ -91,8 +99,9 @@ export function CloudFilePreviewDialog({
           >
             <Download className="h-3.5 w-3.5" />
             {downloading ? t('todo.file_downloading', '下载中…') : t('todo.download_file', '下载')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="cloud-file-preview-close"
             onClick={onClose}
@@ -100,7 +109,7 @@ export function CloudFilePreviewDialog({
             aria-label={t('common.close', '关闭')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
         {downloadError ? (
           <p
@@ -119,14 +128,15 @@ export function CloudFilePreviewDialog({
           ) : failed ? (
             <div className="flex h-full items-center justify-center px-6 text-sm text-destructive">
               {errorMessage ?? t('todo.file_preview_failed', '预览失败')}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="cloud-file-preview-retry"
                 className="ml-2 min-h-11 min-w-11 underline md:min-h-0 md:min-w-0"
                 onClick={retry}
               >
                 {translate('attachment.retry')}
-              </button>
+              </ControlButton>
             </div>
           ) : kind === 'markdown' ? (
             <article data-testid="cloud-file-preview-markdown" className="min-h-full p-5">
@@ -163,7 +173,9 @@ export function CloudFilePreviewDialog({
               className="flex h-full flex-col items-center justify-center gap-3 px-6 text-sm text-text-secondary"
             >
               <span>{t('todo.file_preview_unsupported', '此文件格式暂不支持预览')}</span>
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid="cloud-file-preview-unsupported-download"
                 disabled={downloading}
@@ -171,11 +183,11 @@ export function CloudFilePreviewDialog({
                 className="h-11 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50 md:h-8"
               >
                 {t('todo.download_file', '下载')}
-              </button>
+              </ControlButton>
             </div>
           )}
         </div>
-      </section>
+      </DialogSurface>
     </div>,
     document.body
   )

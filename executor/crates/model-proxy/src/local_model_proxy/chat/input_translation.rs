@@ -16,6 +16,9 @@ pub(super) fn append_input(
     let mut last_assistant_index = None;
 
     for item in items {
+        if is_unlinked_server_tool_search(item) {
+            continue;
+        }
         let item_type = item.get("type").and_then(Value::as_str);
         if !is_tool_output_item(item_type)
             && flush_tool_image_content_to_chat(messages, &mut pending_tool_image_content)
@@ -132,6 +135,55 @@ pub(super) fn append_input(
         &mut pending_reasoning,
     );
     Ok(())
+}
+
+// Native Codex can inject external context as a function output with no call ID.
+// Model adapters preserve that context as user content.
+pub(in crate::local_model_proxy) fn detached_context_message(
+    item: &Value,
+    native_responses: bool,
+) -> Option<Value> {
+    if item["type"] != "function_call_output"
+        || item["call_id"]
+            .as_str()
+            .is_some_and(|id| !id.trim().is_empty())
+    {
+        return None;
+    }
+    let output = &item["output"];
+    if native_responses {
+        return Some(json!({
+            "type": "message",
+            "role": "user",
+            "content": detached_responses_content(output)
+        }));
+    }
+    let mut output = split_tool_output(output);
+    if !output.text.is_empty() {
+        output
+            .images
+            .insert(0, json!({"type":"input_text","text":output.text}));
+    }
+    Some(json!({"type":"message","role":"user","content":output.images}))
+}
+
+fn detached_responses_content(output: &Value) -> Vec<Value> {
+    let mut content = vec![json!({
+        "type": "input_text",
+        "text": "[tool_result without a matching tool_call]"
+    })];
+    if let Some(parts) = output.as_array().or_else(|| output["content"].as_array()) {
+        content.extend(parts.iter().map(|part| match part["type"].as_str() {
+            Some("input_text" | "input_image" | "input_file") => part.clone(),
+            _ => json!({"type": "input_text", "text": text_value(part)}),
+        }));
+    } else {
+        let text = text_value(output);
+        if !text.is_empty() {
+            content.push(json!({"type": "input_text", "text": text}));
+        }
+    }
+    content
 }
 
 pub(super) fn append_chat_tool_output(

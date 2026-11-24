@@ -1,0 +1,28 @@
+[package]
+name = "wegent-execution-knowledge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Knowledge selection, access, and context bindings for agent execution"
+
+[dependencies]
+async-trait.workspace = true
+brz-http-server.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing.workspace = true
+wegent-access.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-execution-preparation.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-knowledge.workspace = true
+wegent-python-compat.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+wegent-backend-test-support.workspace = true

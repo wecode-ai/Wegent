@@ -77,10 +77,16 @@ describe('DSH preload', () => {
       )
       expect(Boolean(entry)).toBe(enabled)
       if (entry) {
-        entry[1].requestRuntime({ url: 'http://127.0.0.1:3000/wework/executor/v1' })
-        expect(invoke).toHaveBeenCalledWith('e2e:runtime-request', {
-          url: 'http://127.0.0.1:3000/wework/executor/v1',
-        })
+        const command = {
+          command: {
+            id: 'runtime-command',
+            action: 'fetchLocalRuntime',
+            value: JSON.stringify({ url: 'http://127.0.0.1:3000/wework/executor/v1' }),
+          },
+          clientId: 'main-client',
+        }
+        entry[1].requestRuntime(command)
+        expect(invoke).toHaveBeenCalledWith('e2e:runtime-request', command)
       }
     }
   )

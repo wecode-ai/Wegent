@@ -505,10 +505,14 @@ export function createDesktopScenario({
       await control.command('activateSystemNotification', 'body', { value: remoteAlert.url })
       await control.command(
         'waitFor',
-        `${PENDING_PAGE} [data-testid="interaction-question-heading"]`,
+        `${PENDING_PAGE} section:has([data-testid="interaction-question-heading"]) p`,
         {
           text: REMOTE_SYSTEM_QUESTION,
         }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        `${PENDING_PAGE} [data-testid="interaction-show-context"]`
       )
       const input = `${PENDING_PAGE} [data-testid^="request-user-input-custom-"]:not(:disabled)`
       await control.command('waitFor', input, { timeoutMs: uiTimeoutMs * 4 })

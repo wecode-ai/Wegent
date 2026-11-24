@@ -53,7 +53,13 @@ export function useWorkspaceFileTree(
       () => {
         const pending = search
           ? api
-              .searchWorkspaceEntries(target.deviceId, target.path, search, `mobile-files-${id}`)
+              .searchWorkspaceEntries(
+                target.deviceId,
+                target.path,
+                search,
+                `mobile-files-${id}`,
+                target.taskId
+              )
               .then(result =>
                 result.files.map(file => ({
                   name: file.fileName,
@@ -62,7 +68,9 @@ export function useWorkspaceFileTree(
                   size: 0,
                 }))
               )
-          : api.listWorkspaceDirectory(target.deviceId, target.path).then(result => result.entries)
+          : api
+              .listWorkspaceDirectory(target.deviceId, target.path, target.path, target.taskId)
+              .then(result => result.entries)
         void pending
           .then(
             entries => {
@@ -90,7 +98,7 @@ export function useWorkspaceFileTree(
     pendingChildren.current.add(path)
     setChildren(current => ({ ...current, [path]: { entries: [], loading: true } }))
     void api
-      .listWorkspaceDirectory(target.deviceId, path)
+      .listWorkspaceDirectory(target.deviceId, path, target.path, target.taskId)
       .then(
         result => {
           if (id === generation.current)

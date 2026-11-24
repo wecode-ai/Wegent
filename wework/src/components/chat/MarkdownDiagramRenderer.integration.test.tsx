@@ -1,3 +1,6 @@
+import engineeringRenderers from '@file-viewer/preset-engineering'
+import textRenderers from '@file-viewer/preset-lite'
+import FileViewer from '@file-viewer/react'
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterAll, beforeAll, expect, test, vi } from 'vitest'
 import mermaid from 'mermaid'
@@ -5,15 +8,39 @@ import { MarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownD
 import { browserMarkdownServices, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 
 const originalGetBBox = SVGElement.prototype.getBBox
+const originalAppendChild = Node.prototype.appendChild
+const measuredDocuments = new Set<Document>()
+
+function stubGetBBox(view: (Window & typeof globalThis) | null) {
+  if (!view?.SVGElement) return
+  Object.defineProperty(view.SVGElement.prototype, 'getBBox', {
+    configurable: true,
+    value(this: SVGElement) {
+      measuredDocuments.add(this.ownerDocument)
+      return new DOMRect(0, 0, 100, 20)
+    },
+  })
+}
+
+function stubContainedIframeWindows(node: Node) {
+  if (!(node instanceof Element)) return
+  if (node instanceof HTMLIFrameElement) stubGetBBox(node.contentDocument?.defaultView ?? null)
+  node
+    .querySelectorAll('iframe')
+    .forEach(iframe => stubGetBBox(iframe.contentDocument?.defaultView ?? null))
+}
 
 beforeAll(() => {
-  Object.defineProperty(SVGElement.prototype, 'getBBox', {
-    configurable: true,
-    value: () => new DOMRect(0, 0, 100, 20),
-  })
+  stubGetBBox(window)
+  Node.prototype.appendChild = function <T extends Node>(this: Node, node: T): T {
+    const appended = originalAppendChild.call(this, node) as T
+    stubContainedIframeWindows(node)
+    return appended
+  }
 })
 
 afterAll(() => {
+  Node.prototype.appendChild = originalAppendChild
   if (originalGetBBox) {
     Object.defineProperty(SVGElement.prototype, 'getBBox', {
       configurable: true,
@@ -23,6 +50,12 @@ afterAll(() => {
     delete (SVGElement.prototype as Partial<SVGElement>).getBBox
   }
 })
+
+function sandboxedMermaidResult(svg: string): string {
+  const html = `<body style="margin:0">${svg}</body>`
+  const encoded = btoa(unescape(encodeURIComponent(html)))
+  return `<iframe src="data:text/html;charset=UTF-8;base64,${encoded}"></iframe>`
+}
 
 function artifactSvg(image: Element) {
   const source = decodeURIComponent(image.getAttribute('src')!.split(',').slice(1).join(','))
@@ -108,7 +141,6 @@ test('renders Mermaid HTML labels containing line breaks', async () => {
       label => label.getElementsByTagNameNS('http://www.w3.org/1999/xhtml', 'br').length > 0
     )
   ).toBe(true)
-  expect(svg).toHaveAttribute('data-mermaid-layout-isolated', 'true')
   const arrows = Array.from(svg.querySelectorAll('[marker-end]'))
   expect(arrows.length).toBeGreaterThan(0)
   for (const arrow of arrows) {
@@ -119,10 +151,167 @@ test('renders Mermaid HTML labels containing line breaks', async () => {
   expect(document.querySelector('[data-file-viewer-mermaid-isolate]')).toBeNull()
 }, 15_000)
 
+test('renders a real Mermaid sequence diagram without leaving its sandbox host mounted', async () => {
+  measuredDocuments.clear()
+  const { container } = render(
+    <MarkdownDiagramPreview
+      code={
+        'sequenceDiagram\n  participant User\n  participant Wework\n  User->>Wework: 加载历史\n  Wework-->>User: render messages'
+      }
+      language="mermaid"
+    />
+  )
+
+  const [image] = await readyImages(container)
+  const svg = artifactSvg(image)
+  expect(svg).toHaveTextContent('加载历史')
+  expect(measuredDocuments.size).toBe(1)
+  expect(measuredDocuments.has(document)).toBe(false)
+  expect(document.querySelector('iframe')).toBeNull()
+}, 15_000)
+
+test.each([
+  ['gitGraph', 'gitGraph\n  commit id: "Initial commit"\n  branch feature\n  commit', 'feature'],
+  ['eventmodeling', 'eventmodeling\n  tf 01 evt Start', 'Start'],
+])(
+  'renders %s with measurements in the diagram document',
+  async (_kind, code, label) => {
+    measuredDocuments.clear()
+    const { container } = render(<MarkdownDiagramPreview code={code} language="mermaid" />)
+
+    const [image] = await readyImages(container)
+    expect(artifactSvg(image)).toHaveTextContent(label)
+    expect(measuredDocuments.size).toBe(1)
+    expect(measuredDocuments.has(document)).toBe(false)
+    expect(document.querySelector('iframe')).toBeNull()
+  },
+  15_000
+)
+
+test('keeps the active Mermaid render config while other requests enter the queue', async () => {
+  const conversationContainer = document.body.appendChild(document.createElement('div'))
+  const fileContainer = document.body.appendChild(document.createElement('div'))
+  try {
+    const conversation = mermaid.render(
+      'queued-conversation',
+      'gitGraph\n  commit id: "Conversation"',
+      conversationContainer,
+      { securityLevel: 'sandbox', suppressErrorRendering: true }
+    )
+    const invalid = mermaid.render('queued-invalid', 'invalid Mermaid source', fileContainer, {
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+    })
+    const file = mermaid.render('queued-file', 'flowchart LR\nFile --> Finished', fileContainer, {
+      securityLevel: 'strict',
+    })
+
+    const [conversationResult, invalidResult, fileResult] = await Promise.allSettled([
+      conversation,
+      invalid,
+      file,
+    ])
+    expect(conversationResult).toMatchObject({
+      status: 'fulfilled',
+      value: { svg: expect.stringContaining('<iframe') },
+    })
+    expect(invalidResult.status).toBe('rejected')
+    expect(fileResult).toMatchObject({
+      status: 'fulfilled',
+      value: { svg: expect.stringMatching(/^<svg.*File/s) },
+    })
+    expect(conversationContainer).toBeEmptyDOMElement()
+    expect(fileContainer).toBeEmptyDOMElement()
+  } finally {
+    conversationContainer.remove()
+    fileContainer.remove()
+  }
+}, 15_000)
+
+test('renders a file preview after a conversation diagram renders during its paint wait', async () => {
+  const scheduleFrame = window.requestAnimationFrame.bind(window)
+  const file = new File(['flowchart LR\nFilePreview --> Finished'], 'preview.mmd')
+  const options = { preset: [engineeringRenderers], theme: 'light' as const }
+  let resumeFile: FrameRequestCallback | undefined
+  const frames = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+    if (!resumeFile && document.querySelector('[data-file-viewer-mermaid-isolate]')) {
+      resumeFile = callback
+      return 0
+    }
+    return scheduleFrame(callback)
+  })
+
+  try {
+    const viewer = render(
+      <FileViewer file={file} filename={file.name} type="mermaid" options={options} />
+    )
+    await waitFor(() => expect(resumeFile).toBeDefined())
+
+    const conversation = render(
+      <MarkdownDiagramPreview code={'flowchart LR\nConversation --> Finished'} language="mermaid" />
+    )
+    const [image] = await readyImages(conversation.container)
+    expect(artifactSvg(image)).toHaveTextContent('Conversation')
+
+    frames.mockRestore()
+    scheduleFrame(resumeFile!)
+    await waitFor(() => {
+      expect(viewer.container.querySelector('svg[data-diagram-cache-hit]')).toHaveTextContent(
+        'FilePreview'
+      )
+    })
+  } finally {
+    frames.mockRestore()
+  }
+}, 15_000)
+
+test('renders an embedded Markdown diagram behind a sandboxed Mermaid request', async () => {
+  const renderDiagram = mermaid.render
+  const conversationContainer = document.body.appendChild(document.createElement('div'))
+  const file = new File(
+    ['```mermaid\nflowchart LR\nMarkdownPreview --> Finished\n```'],
+    'preview.md'
+  )
+  let conversation: ReturnType<typeof renderDiagram> | undefined
+  const requests = vi
+    .spyOn(mermaid, 'render')
+    .mockImplementation((id, source, container, config) => {
+      if (id.startsWith('file-viewer-markdown-mermaid-')) {
+        conversation = renderDiagram(
+          'markdown-preview-conversation',
+          'gitGraph\n  commit id: "Conversation"',
+          conversationContainer,
+          { securityLevel: 'sandbox' }
+        )
+      }
+      return renderDiagram(id, source, container, config)
+    })
+
+  try {
+    const view = render(
+      <FileViewer
+        file={file}
+        filename={file.name}
+        type="markdown"
+        options={{ preset: [textRenderers], theme: 'light' }}
+      />
+    )
+    await waitFor(() => {
+      expect(view.container.querySelector('.markdown-mermaid-svg')).toHaveTextContent(
+        'MarkdownPreview'
+      )
+    })
+    expect((await conversation)?.svg).toContain('<iframe')
+  } finally {
+    conversationContainer.remove()
+    requests.mockRestore()
+  }
+}, 15_000)
+
 test('reuses one sanitized image artifact across copies, remounts and full screen with separate theme keys', async () => {
   const renderMermaid = vi.spyOn(mermaid, 'render').mockImplementation(async id => ({
     diagramType: 'flowchart',
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${id}" viewBox="0 0 100 100" aria-labelledby="label">
+    svg: sandboxedMermaidResult(`<svg xmlns="http://www.w3.org/2000/svg" id="${id}" viewBox="0 0 100 100" aria-labelledby="label">
       <style>#${id} #fff {fill:#fff;marker-end:url(#arrow)} #${id} #node\\:one {opacity:1}</style>
       <title id="label">Cached diagram</title>
       <defs><marker id="arrow"><path d="M0 0L10 5" /></marker></defs>
@@ -130,7 +319,7 @@ test('reuses one sanitized image artifact across copies, remounts and full scree
       <path id="fff" marker-end="url(#arrow)" d="M0 0L20 20" />
       <use href="#node:one" />
       <script>window.unsafeDiagram = true</script>
-    </svg>`,
+    </svg>`),
   }))
   const source = 'graph LR\nCACHE_RESULT --> CACHE_TARGET'
   const preview = (theme: 'light' | 'dark', copies: number) => (
@@ -228,7 +417,9 @@ test('recovers from compilation and image loading failures while preserving the 
     .mockRejectedValueOnce(new Error('Invalid diagram'))
     .mockResolvedValue({
       diagramType: 'flowchart',
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><text>Recovered</text></svg>',
+      svg: sandboxedMermaidResult(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><text>Recovered</text></svg>'
+      ),
     })
   const view = render(
     <MarkdownDiagramPreview code={'graph LR\nRECOVER --> RESULT'} language="mermaid" />

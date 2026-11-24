@@ -207,10 +207,10 @@ async function loadProviderConfiguration(sequence: number): Promise<void> {
 export function initializeProviderModelConfiguration(): Promise<void> {
   if (!isElectronRuntime()) return Promise.resolve()
   initialized ??= (async () => {
-    await reloadProviderConfiguration()
     subscribeDesktopHostEvents(event => {
       if (event.type === 'model-configuration.changed') void reloadProviderConfiguration()
     })
+    await reloadProviderConfiguration()
   })()
   return initialized
 }

@@ -35,7 +35,7 @@ ruby -ryaml -e '
   ]
   digests = runtime_steps.map { |s| s.fetch("env").fetch(s["env"].key?("SOURCE_DIGEST") ? "SOURCE_DIGEST" : "BACKEND_RS_SOURCE_DIGEST") }
   raise "Backend Rust OCI producer and consumers must hash the same inputs" unless digests.uniq.length == 1
-  raise "Backend Rust OCI digest must include its example binaries" unless digests.first.include?("backend-rs/examples/**")
+  raise "Backend Rust OCI digest must include its example binaries" unless digests.first.include?("backend-rs/be-server/examples/**")
   recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
   raise "Backend Rust OCI digest must include the image recipe" unless digests.first.include?(recipe)
   resolver = ".github/scripts/resolve-backend-rs-e2e-runtime.sh"
@@ -69,7 +69,7 @@ ruby -ryaml -e '
   [consumer_workflow, warmup].each do |config|
     consumer_digests = config.fetch("jobs").values.flat_map { |job| job.fetch("steps", []) }
       .map { |s| s["env"]&.fetch("BACKEND_RS_SOURCE_DIGEST", nil) }.compact
-      .select { |digest| digest.include?("backend-rs/src/**" + 39.chr) }
+      .select { |digest| digest.include?("backend-rs/*/src/**" + 39.chr) }
     raise "Missing shared Backend runtime digest" if consumer_digests.empty?
     raise "Backend runtime image producer and consumer digests differ" unless consumer_digests.all? { |digest| digest == digests.first }
   end
