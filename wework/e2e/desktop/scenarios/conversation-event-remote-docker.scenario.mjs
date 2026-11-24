@@ -190,6 +190,11 @@ export function createDesktopScenario(options) {
       'clickWhenEnabled',
       `${status} [data-testid="cancel-connection-event-subscription"]`
     )
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="connection-event-cancel-feedback"]`,
+      { text: '已取消' }
+    )
     await control.command('waitFor', status, { visible: false })
     const cancelled = await waitForValue(
       snapshot,
