@@ -8,7 +8,7 @@ import { useMemo, useState, useSyncExternalStore } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useRuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import { useTranslation } from '@/hooks/useTranslation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
@@ -88,27 +88,17 @@ export function useDesktopPaneContext({
     listDeviceDirectories,
     createDeviceDirectory,
     startNewChat,
-  } = useWorkbenchPaneContext()
-  const {
     services,
     openRuntimeTask,
     workspaceTabId,
     loadRuntimeTranscriptForPane,
     sendRuntimePaneMessage,
-  } = useWorkbench()
+  } = useWorkbenchPaneContext()
   const deviceApi = services?.deviceApi
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
-  const paneModelChat = useMemo<ProjectChatControls>(() => {
-    if (!currentRuntimeTask) return projectChat
-    const selection = projectChat.resolveRuntimeTaskModelSelection(currentRuntimeTask)
-    return {
-      ...projectChat,
-      ...runtimeTaskModelControlOverrides(projectChat, currentRuntimeTask, selection),
-    }
-  }, [currentRuntimeTask, projectChat])
   const currentRuntimeProjectWork = state.runtimeWork?.projects.find(
     projectWork => currentProject && runtimeProjectUiId(projectWork.project) === currentProject.id
   )
@@ -145,6 +135,17 @@ export function useDesktopPaneContext({
     runtimeWork,
     currentRuntimeTask
   )
+  const paneModelChat = useMemo<ProjectChatControls>(() => {
+    if (!currentRuntimeTask) return projectChat
+    const selection = projectChat.resolveRuntimeTaskModelSelection(
+      currentRuntimeTask,
+      runtimeTaskSummary
+    )
+    return {
+      ...projectChat,
+      ...runtimeTaskModelControlOverrides(projectChat, currentRuntimeTask, selection),
+    }
+  }, [currentRuntimeTask, projectChat, runtimeTaskSummary])
   const currentProjectSpaceRuntimeTask = currentRuntimeTask
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
   const runtimeTaskDescription =

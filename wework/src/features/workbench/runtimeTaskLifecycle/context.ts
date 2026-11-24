@@ -69,10 +69,14 @@ export function useRuntimeTaskSummaryResolver(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   explicitStore?: RuntimeTaskLifecycleStore
 ) {
-  const resolve = useRuntimeTaskLifecycleResolver(explicitStore)
+  const contextualStore = useContext(RuntimeTaskLifecycleContext)
+  const store = explicitStore ?? contextualStore
+  if (!store) throw new Error('RuntimeTaskLifecycleProvider is required')
   return useCallback(
     (address: RuntimeTaskAddress | null | undefined) =>
-      findRuntimeTask(runtimeWork, address) ?? resolve(address)?.task ?? null,
-    [runtimeWork, resolve]
+      findRuntimeTask(runtimeWork, address) ??
+      store.selectTask(store.getSnapshot(), address)?.task ??
+      null,
+    [runtimeWork, store]
   )
 }

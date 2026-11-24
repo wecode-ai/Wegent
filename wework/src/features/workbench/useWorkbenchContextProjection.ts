@@ -5,7 +5,6 @@ import type { WorkbenchSessionOperations } from './workbenchSessionOperations'
 export function useWorkbenchContextValue(
   paneValue: WorkbenchPaneContextValue,
   {
-    workspaceTabId,
     state,
     cloudWorkStatus,
     runtimeTaskReminders,
@@ -13,33 +12,19 @@ export function useWorkbenchContextValue(
     updateUserPreferences,
   }: Pick<
     WorkbenchContextValue,
-    | 'workspaceTabId'
-    | 'state'
-    | 'cloudWorkStatus'
-    | 'runtimeTaskReminders'
-    | 'projectChat'
-    | 'updateUserPreferences'
+    'state' | 'cloudWorkStatus' | 'runtimeTaskReminders' | 'projectChat' | 'updateUserPreferences'
   >
 ): WorkbenchContextValue {
   return useMemo(
     () => ({
       ...paneValue,
-      workspaceTabId,
       state,
       cloudWorkStatus,
       runtimeTaskReminders,
       projectChat,
       updateUserPreferences,
     }),
-    [
-      paneValue,
-      workspaceTabId,
-      state,
-      cloudWorkStatus,
-      runtimeTaskReminders,
-      projectChat,
-      updateUserPreferences,
-    ]
+    [paneValue, state, cloudWorkStatus, runtimeTaskReminders, projectChat, updateUserPreferences]
   )
 }
 
@@ -274,6 +259,7 @@ export function useWorkbenchPaneValue(input: WorkbenchPaneContextValue): Workben
   return useMemo(
     () => ({
       services: input.services,
+      workspaceTabId: input.workspaceTabId,
       state: input.state,
       isStartupReady: input.isStartupReady,
       workspaceFileApi: input.workspaceFileApi,
@@ -361,6 +347,7 @@ export function useWorkbenchPaneValue(input: WorkbenchPaneContextValue): Workben
     }),
     [
       input.services,
+      input.workspaceTabId,
       input.state,
       input.isStartupReady,
       input.workspaceFileApi,
