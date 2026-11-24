@@ -9,7 +9,10 @@ declare global {
 
 export function dshUiModuleUrl(module: string): string {
   const appBase = new URL(import.meta.env.BASE_URL, window.location.origin)
-  return new URL(module, appBase).href
+  const url = new URL(module, appBase)
+  // Older builds marked stable plugin URLs immutable, including across app upgrades.
+  url.searchParams.set('wework-build', __WEWORK_COMMIT_SHA__)
+  return url.href
 }
 
 export function importDshUiModule<T>(module: string): Promise<T> {
