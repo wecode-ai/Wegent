@@ -40,16 +40,28 @@ describe('runtimeConversationTurns', () => {
     const completedAt = Date.parse('2026-09-16T10:00:10Z')
     const durationMs = 7900
     const startedAt = completedAt - durationMs
-    const turns = reduceRuntimeConversationTurns(
-      [{ id: 'resumed', status: 'streaming', startedAt: completedAt, items: [] }],
-      { type: 'assistant_done', subtaskId: 'resumed', startedAt, completedAt, durationMs }
-    )
-    expect(turns[0]).toMatchObject({
+    const streaming: RuntimeConversationTurn[] = [
+      { id: 'resumed', status: 'streaming', startedAt: completedAt, items: [] },
+    ]
+    const completion = {
+      type: 'assistant_done' as const,
+      subtaskId: 'resumed',
+      startedAt,
+      completedAt,
+      durationMs,
+    }
+    const turns = reduceRuntimeConversationTurns(streaming, completion)
+    const expectedTiming = {
       startedAt,
       completedAt: new Date(completedAt).toISOString(),
       durationMs,
-    })
-    const cached = [{ ...turns[0], startedAt: completedAt, durationMs: 1 }]
+    }
+    expect(turns[0]).toMatchObject(expectedTiming)
+
+    const cached: RuntimeConversationTurn[] = [
+      { ...streaming[0], status: 'done', completedAt, durationMs: 1 },
+    ]
+    expect(reduceRuntimeConversationTurns(cached, completion)[0]).toMatchObject(expectedTiming)
     expect(mergeRuntimeConversationTurns(cached, turns)[0]).toMatchObject({
       startedAt,
       durationMs,

@@ -171,7 +171,6 @@ async fn runtime_transcript_normalizes_codex_rich_turn_items() {
     assert_eq!(assistant["role"], "assistant");
     assert_eq!(assistant["content"], "Done");
     assert_eq!(assistant["subtaskId"], "turn-rich");
-    assert_eq!(transcript["turns"][0]["durationMs"], 7000);
     assert_eq!(assistant["blocks"].as_array().unwrap().len(), 5);
     assert_eq!(assistant["blocks"][0]["type"], "thinking");
     assert_eq!(assistant["blocks"][1]["type"], "text");

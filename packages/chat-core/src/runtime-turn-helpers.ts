@@ -73,21 +73,21 @@ export function completeRuntimeTurnTiming(
     "startedAt" | "completedAt" | "durationMs"
   >,
 ): Pick<RuntimeConversationTurn, "startedAt" | "completedAt" | "durationMs"> {
+  const previousEnd = ["done", "failed", "cancelled"].includes(turn.status)
+    ? turn.completedAt
+    : undefined;
   if (
-    ["done", "failed", "cancelled"].includes(turn.status) &&
-    turn.completedAt !== null &&
-    turn.completedAt !== undefined
+    previousEnd != null &&
+    (source.durationMs ?? 0) <= (turn.durationMs ?? 0)
   ) {
     return {
       startedAt: turn.startedAt ?? source.startedAt,
-      completedAt: turn.completedAt,
+      completedAt: previousEnd,
       durationMs: turn.durationMs ?? source.durationMs,
     };
   }
-  const recordedEnd =
-    typeof source.completedAt === "number"
-      ? source.completedAt
-      : Date.parse(source.completedAt ?? "");
+  const end = source.completedAt ?? previousEnd;
+  const recordedEnd = typeof end === "number" ? end : Date.parse(end ?? "");
   const completedAt = Number.isFinite(recordedEnd) ? recordedEnd : Date.now();
   const startedAt = turn.startedAt ?? source.startedAt;
   const elapsed =

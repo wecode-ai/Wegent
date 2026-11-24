@@ -532,6 +532,12 @@ mod tests {
             assert_eq!(earlier[0]["timelineCompleted"], true);
             assert_eq!(earlier[0]["completedAt"], 124);
             assert_eq!(earlier[0]["durationMs"], 1000);
+            let projection = super::super::transcript::project_transcript(
+                &json!({"id":"thread","timeline":true,"turns":earlier}),
+                "test-device",
+                false,
+            );
+            assert_eq!(projection.turns[0]["durationMs"], 1000);
         }
     }
 
