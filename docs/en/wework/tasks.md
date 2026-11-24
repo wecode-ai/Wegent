@@ -273,6 +273,7 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 | Interrupt and send      | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
+If a command's exit result arrives after the response stops, its tool entry still updates to show the outcome and any output received.
 
 While a subagent is running, the composer keeps the Send button visible. Enter a draft to send a follow-up message.
 
