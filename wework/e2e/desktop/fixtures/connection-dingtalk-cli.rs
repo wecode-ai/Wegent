@@ -8,6 +8,30 @@ use std::{
 
 const EXPIRED: &str = "expired";
 const EXPIRE_ON_SEARCH: &str = "expire-on-search";
+const SCOPED_PROFILE: &str = "fixture-org:fixture-user";
+const OTHER_PROFILE: &str = "other-org:fixture-user";
+const EMPTY_MESSAGES: &str =
+    r#"{"success":true,"result":{"hasMore":false,"nextCursor":"0","conversationMessagesList":[]}}"#;
+const MISSING_READ_SCOPE: &str =
+    r#"{"success":false,"code":"PAT_SCOPE_AUTH_REQUIRED","data":{"errorType":"missing_scope"}}"#;
+
+fn option<'a>(arguments: &[&'a str], name: &str) -> Option<&'a str> {
+    arguments
+        .windows(2)
+        .find(|pair| pair[0] == name)
+        .map(|pair| pair[1])
+}
+
+fn record(operation: &str) {
+    if let Some(path) = env::var_os("WEWORK_E2E_DINGTALK_OPERATIONS") {
+        let mut log = fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+            .unwrap();
+        writeln!(log, "{operation}").unwrap();
+    }
+}
 
 fn auth_state_path() -> Option<PathBuf> {
     env::var_os("WEWORK_E2E_DINGTALK_AUTH_STATE").map(PathBuf::from)
@@ -81,29 +105,89 @@ fn main() {
             0,
         ),
         ["login", ..] => {
+            record("login");
             set_auth_state("ready");
             (r#"{"status":"ok"}"#, 0)
         }
+        ["version", "--format", "json"] => (r#"{"version":"1.0.58"}"#, 0),
         ["auth", "status", ..] => (
-            if auth_state() == EXPIRED {
-                r#"{"success":true,"authenticated":false,"reason":"token_refresh_failed"}"#
-            } else {
-                r#"{"success":true,"authenticated":true,"token_valid":true}"#
+            match option(&arguments, "--profile") {
+                _ if auth_state() == EXPIRED => {
+                    r#"{"success":true,"authenticated":false,"reason":"token_refresh_failed"}"#
+                }
+                Some(SCOPED_PROFILE) => {
+                    r#"{"success":true,"authenticated":true,"token_valid":true,"user_id":"fixture-user","corp_id":"fixture-org"}"#
+                }
+                Some(OTHER_PROFILE) => {
+                    r#"{"success":true,"authenticated":true,"token_valid":true,"user_id":"fixture-user","corp_id":"other-org"}"#
+                }
+                _ => r#"{"success":true,"authenticated":true,"token_valid":true}"#,
             },
             0,
         ),
         ["profile", "list", ..] => (
-            r#"{"currentProfile":"connection-test-account","profiles":[{"profile":"connection-test-account","userName":"Fixture","userId":"fixture-user"}]}"#,
+            r#"{"currentProfile":"connection-test-account","profiles":[{"profile":"connection-test-account","userName":"Fixture","userId":"fixture-user","corpId":"fixture-org","corpName":"Fixture Organization","isCurrent":true,"isOrgCurrent":true,"status":"active"},{"profile":"other-org:fixture-user","userName":"Fixture","userId":"fixture-user","corpId":"other-org","corpName":"Other Organization","isCurrent":false,"isOrgCurrent":false,"status":"active"}]}"#,
             0,
         ),
+        ["chat", "search", ..] if option(&arguments, "--query") == Some("Scoped Group") => {
+            assert_eq!(option(&arguments, "--profile"), Some(SCOPED_PROFILE));
+            search(
+                r#"{"result":{"groups":[{"openConversationId":"scoped-group","title":"Scoped Group"},{"openConversationId":"other-group","title":"Other Group"}],"hasMore":false}}"#,
+            )
+        }
         ["chat", "search", ..] => search(r#"{"result":{"groups":[],"hasMore":false}}"#),
+        ["contact", "user", "search", ..]
+            if option(&arguments, "--query") == Some("Scoped Contact") =>
+        {
+            assert_eq!(option(&arguments, "--profile"), Some(SCOPED_PROFILE));
+            search(
+                r#"{"result":[{"userId":"contact-user","openDingTalkId":"scoped-contact","name":"Scoped Contact"},{"userId":"other-user","openDingTalkId":"other-contact","name":"Other Contact"}]}"#,
+            )
+        }
         ["contact", "user", "search", ..] => search(
             r#"{"result":[{"userId":"fixture-user","openDingTalkId":"fixture-user","name":"Fixture"}]}"#,
         ),
-        ["chat", "message", "list-mentions", ..] | ["chat", "message", "search-advanced", ..] => (
-            r#"{"success":true,"result":{"hasMore":false,"nextCursor":"0","conversationMessagesList":[]}}"#,
-            0,
-        ),
+        ["chat", "conversation-info", ..] => {
+            assert_eq!(option(&arguments, "--profile"), Some(SCOPED_PROFILE));
+            assert_eq!(
+                option(&arguments, "--open-dingtalk-id"),
+                Some("scoped-contact")
+            );
+            (r#"{"result":{"openConversationId":"scoped-direct"}}"#, 0)
+        }
+        ["chat", "message", "list-mentions", ..]
+            if option(&arguments, "--profile") == Some(SCOPED_PROFILE) =>
+        {
+            assert_eq!(option(&arguments, "--group"), Some("scoped-group"));
+            record("selected-group-mentions");
+            if auth_state() == "read-denied" {
+                (MISSING_READ_SCOPE, 1)
+            } else {
+                (EMPTY_MESSAGES, 0)
+            }
+        }
+        ["chat", "message", "search-advanced", ..]
+            if option(&arguments, "--profile") == Some(SCOPED_PROFILE) =>
+        {
+            assert_eq!(
+                option(&arguments, "--conversation-ids"),
+                Some("scoped-direct")
+            );
+            assert_eq!(option(&arguments, "--sender-ids"), Some("scoped-contact"));
+            record("selected-direct-messages");
+            if auth_state() == "read-denied" {
+                (MISSING_READ_SCOPE, 1)
+            } else {
+                (EMPTY_MESSAGES, 0)
+            }
+        }
+        ["chat", "message", "list-mentions", ..] | ["chat", "message", "search-advanced", ..] => {
+            (EMPTY_MESSAGES, 0)
+        }
+        ["chat", "message", "reply" | "send" | "send-by-bot", ..] => {
+            record("send");
+            process::exit(2);
+        }
         _ => {
             eprintln!("Only declared DingTalk fixture reads are supported");
             process::exit(2);

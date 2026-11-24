@@ -3,6 +3,7 @@ import {
   verifyStandInProfileNavigation,
 } from '../modules/stand-in-profile-navigation.mjs'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
+import { verifyStandInDingTalkDelegation } from '../modules/stand-in-dingtalk-delegation.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -152,6 +153,7 @@ export function createDesktopScenario(options) {
         await verifyStandInGroupMessageScope(control, uiTimeoutMs)
         await control.command('click', '[data-testid="stand-in-primary-cancel"]')
         await verifyStandInProjectConnectionNames(control, uiTimeoutMs)
+        await verifyStandInDingTalkDelegation(control, USER, uiTimeoutMs, fixture)
       } finally {
         const current = await requestExecutor(
           control,
@@ -159,10 +161,22 @@ export function createDesktopScenario(options) {
           { userId: USER },
           uiTimeoutMs
         )
+        const settings = { ...initial, version: current.version }
+        const delegation = current.primary?.dingtalkDelegation
+        if (delegation) {
+          // The real store requires preserving the saved account in this disposable profile.
+          settings.primary = {
+            enabled: false,
+            prompt: '',
+            preferences: '',
+            ...initial.primary,
+            dingtalkDelegation: { ...delegation, enabled: false, sources: [] },
+          }
+        }
         await requestExecutor(
           control,
           'runtime.stand_in.personal.save',
-          { userId: USER, settings: { ...initial, version: current.version } },
+          { userId: USER, settings },
           uiTimeoutMs
         )
       }
