@@ -135,6 +135,7 @@ export function getStandInErrorMessage(
     | 'failed'
     | 'load_settings_failed'
     | 'save_settings_failed'
+    | 'task_permissions_save_failed'
     | 'load_environment_failed'
     | 'load_projects_failed' = 'failed'
 ): string {

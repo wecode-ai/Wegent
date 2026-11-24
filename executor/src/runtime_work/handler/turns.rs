@@ -1525,6 +1525,18 @@ impl RuntimeWorkRpcHandler {
             self.reject_stand_in_schedule_turn(&turn.request, &turn.local_task_id, error);
             return;
         }
+        // Read the device-owned choice at launch, after queued inputs are admitted.
+        turn.request.stand_in_task_permissions =
+            if turn.request.extra.contains_key("resource_event_keys") {
+                None
+            } else {
+                self.store
+                    .read_task(
+                        &turn.local_task_id,
+                        super::stand_in_task_permissions::task_permissions,
+                    )
+                    .flatten()
+            };
         if let Some(payload) = turn.send_payload.as_ref() {
             if !turn.request.new_session {
                 if let Some(link) = self

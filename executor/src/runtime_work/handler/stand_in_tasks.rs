@@ -1,5 +1,6 @@
 //! Primary stand-in orchestration uses the same task lifecycle as the workbench.
 use super::*;
+use crate::protocol::StandInTaskPermissions;
 use crate::task_runtime::mcp::{stand_in_tasks, StandInMcpIdentity};
 
 pub(super) fn owns_task(link: &RuntimeTaskLink, user: i64) -> bool {
@@ -191,7 +192,9 @@ impl RuntimeWorkRpcHandler {
                 .await;
         }
         if name == "create_task" {
-            return self.create_primary_task(&identity, &args).await;
+            let owner_task = actor.runtime_handle["origin"]["type"] == "stand_in_identity"
+                && self.has_current_stand_in_owner_request(&actor);
+            return self.create_primary_task(&identity, &args, owner_task).await;
         }
         let id = required(&args, "taskId")?;
         let gate = self.task_send_gate(&format!("stand-in-task-operation:{id}"));
@@ -294,6 +297,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         identity: &StandInMcpIdentity,
         args: &Value,
+        owner_task: bool,
     ) -> Result<Value, AppIpcError> {
         use sha2::{Digest, Sha256};
         let key = json!([
@@ -321,9 +325,17 @@ impl RuntimeWorkRpcHandler {
             .map_err(super::stand_in::settings_error)?;
         let mut config = settings["primary"].clone();
         config["userId"] = json!(identity.user);
-        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":false});
+        config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":owner_task});
         let sources = self.capture_delegated_read_sources(identity, args)?;
-        self.start_delegated_task(args, &id, &config, json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":false,"readSources":sources})).await
+        let permissions = owner_task.then(|| StandInTaskPermissions::from_role(&config));
+        self.start_delegated_task(
+            args,
+            &id,
+            &config,
+            json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":owner_task,"readSources":sources}),
+            permissions,
+        )
+        .await
     }
 
     pub(super) async fn start_delegated_task(
@@ -332,6 +344,7 @@ impl RuntimeWorkRpcHandler {
         id: &str,
         config: &Value,
         delegation: Value,
+        initial_permissions: Option<StandInTaskPermissions>,
     ) -> Result<Value, AppIpcError> {
         let ask = delegation["askBeforeAct"] == true;
         let mut origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":delegation["userId"],"deviceId":self.device_id,"sourceTaskId":delegation["sourceTaskId"],"askBeforeAct":ask});
@@ -364,7 +377,8 @@ impl RuntimeWorkRpcHandler {
             let result = Box::pin(self.send_stand_in_role_retry(payload, attempt)).await?;
             return super::stand_in_execution::accepted_stand_in_result(result);
         }
-        Box::pin(self.create_task(payload)).await
+        Box::pin(self.create_task_with_initial_permissions(payload, false, initial_permissions))
+            .await
     }
 }
 

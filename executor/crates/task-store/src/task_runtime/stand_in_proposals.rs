@@ -25,17 +25,22 @@ pub(super) fn manual_proposal_on(
     Ok(proposal)
 }
 
-fn preserve_learning_choices(before: &Value, draft: &mut Value) {
+fn preserve_owner_choices(before: &Value, draft: &mut Value) {
+    const OWNER_CHOICES: &[&str] = &["selfLearningEnabled", "taskPermissions"];
     fn preserve(before: &Value, draft: &mut Value) {
         if let Some(fields) = draft.as_object_mut() {
-            if let Some(value) = before.get("selfLearningEnabled") {
-                fields.insert("selfLearningEnabled".into(), value.clone());
-            } else {
-                fields.remove("selfLearningEnabled");
+            for key in OWNER_CHOICES {
+                if let Some(value) = before.get(key) {
+                    fields.insert((*key).into(), value.clone());
+                } else {
+                    fields.remove(*key);
+                }
             }
         }
     }
-    if before["primary"].get("selfLearningEnabled").is_some() && !draft["primary"].is_object() {
+    if OWNER_CHOICES.iter().any(|key| before["primary"].get(key).is_some())
+        && !draft["primary"].is_object()
+    {
         draft["primary"] = before["primary"].clone();
     } else if let Some(primary) = draft.get_mut("primary") {
         preserve(&before["primary"], primary);
@@ -104,7 +109,7 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let previous = read_personal(&connection, user, device)?;
-        preserve_learning_choices(&previous, &mut settings);
+        preserve_owner_choices(&previous, &mut settings);
         if let Some(role) = role {
             let other_roles = |settings: &Value| {
                 settings["roles"].as_array().map(|rows| {
@@ -167,7 +172,7 @@ impl LocalTaskStore {
         let previous = read_personal(&connection, user, device)?;
         let saved = if accept {
             let mut next = prepared.unwrap_or_else(|| proposal["settings"].clone());
-            preserve_learning_choices(&previous, &mut next);
+            preserve_owner_choices(&previous, &mut next);
             self.save_personal_stand_in_on(&connection, user, device, next)?
         } else {
             previous

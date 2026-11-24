@@ -1898,6 +1898,14 @@ export function createHybridWorkbenchServices(
           return (await standInApiForDevice(deviceId)).taskCommands.resolve(deviceId, resolution)
         },
       },
+      async setTaskPermissions(userId, deviceId, taskId, taskPermissions) {
+        return (await standInApiForDevice(deviceId)).setTaskPermissions(
+          userId,
+          deviceId,
+          taskId,
+          taskPermissions
+        )
+      },
       async gitConnection(deviceId, input) {
         return (await standInApiForDevice(deviceId)).gitConnection(deviceId, input)
       },

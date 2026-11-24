@@ -42,6 +42,7 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInProjectSetup } from './StandInProjectSetup'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
+import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
 import { createStandInRoleDraft } from './standInRoleDraft'
 import {
   StandInSettingsActions,
@@ -417,6 +418,7 @@ function StandInSettingsEditor({
       devices={userId === 0 ? [] : devices}
       disabled={saving || moving}
       onChange={value => {
+        if (value === role.executionDeviceId) return
         setNotice(false)
         updateRole(role.id, current => ({
           ...current,
@@ -424,6 +426,7 @@ function StandInSettingsEditor({
           model: undefined,
           modelOptions: undefined,
           workspace: undefined,
+          taskPermissions: undefined,
         }))
       }}
     />
@@ -710,6 +713,13 @@ function StandInSettingsEditor({
                   runtimeWork={runtimeWork}
                   devices={devices}
                   services={services}
+                />
+                <StandInTaskPermissionSettings
+                  value={role.taskPermissions}
+                  disabled={saving}
+                  onChange={taskPermissions =>
+                    updateRole(role.id, current => ({ ...current, taskPermissions }))
+                  }
                 />
                 <p className="text-xs text-text-secondary">
                   {t('standIn.personal.device_change_help')}

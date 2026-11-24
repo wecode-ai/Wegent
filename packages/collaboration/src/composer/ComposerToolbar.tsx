@@ -19,7 +19,10 @@ import {
   runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
-import { PermissionModeSelector } from '../controls/PermissionModeSelector'
+import {
+  PermissionModeSelector,
+  type ComposerPermissionControls,
+} from '../controls/PermissionModeSelector'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 
 export interface ComposerToolbarProps {
@@ -48,6 +51,7 @@ export interface ComposerToolbarProps {
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onSelectPermissionOptions?: (options: ModelOptions) => void
+  permissionControls?: ComposerPermissionControls | null
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   modelSelectorOverride?: ReactNode
   onFileSelect: (files: File | File[]) => void
@@ -100,6 +104,7 @@ export function ComposerToolbar({
   onSelectModelAndOptions,
   onSelectModelOption,
   onSelectPermissionOptions,
+  permissionControls,
   onBlockedModelSelect,
   modelSelectorOverride,
   onFileSelect,
@@ -159,13 +164,13 @@ export function ComposerToolbar({
     return () => observer.disconnect()
   }, [])
 
-  const permissionSelector = showExecutionTools ? (
+  const showPermissionSelector = showExecutionTools && permissionControls !== null
+  const permissionSelector = showPermissionSelector ? (
     <PermissionModeSelector
       translate={t}
       value={runtimePermissionMode(selectedModelOptions)}
       commandApproval={runtimeCommandApprovalMode(selectedModelOptions)}
       onCommandApprovalChange={mode => onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)}
-      disabled={disabled}
       iconOnly
       density="dense"
       onChange={(mode, approval) => {
@@ -179,6 +184,8 @@ export function ComposerToolbar({
         if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
         onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
       }}
+      {...permissionControls}
+      disabled={disabled || permissionControls?.disabled}
     />
   ) : null
 

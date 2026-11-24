@@ -18,6 +18,7 @@ import type {
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
+import type { ComposerPermissionControls } from '@wegent/collaboration/controls'
 import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { useElementGeometry } from '@wegent/collaboration/dom-events'
@@ -115,6 +116,7 @@ interface CompactChatComposerProps {
   selectedModel?: UnifiedModel | null
   activeModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
+  permissionControls?: ComposerPermissionControls | null
   onSelectModel?: (model: UnifiedModel | null) => boolean | void
   onSelectModelOption?: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
@@ -173,6 +175,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       selectedModel,
       activeModel,
       selectedModelOptions = {},
+      permissionControls,
       onSelectModel,
       onSelectModelOption,
       onBlockedModelSelect,
@@ -681,7 +684,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   <span>{t('workbench.pursue_goal', '追求目标')}</span>
                 </ControlButton>
               )}
-              {onSelectModelOption ? (
+              {permissionControls !== null && onSelectModelOption ? (
                 <div
                   data-testid="mobile-permission-mode-row"
                   className="flex h-14 w-full items-center justify-between gap-4 rounded-2xl px-4 text-text-primary"
@@ -696,11 +699,12 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                     onCommandApprovalChange={mode =>
                       onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)
                     }
-                    disabled={disabled}
                     onChange={(mode, approval) => {
                       if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
                       onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
                     }}
+                    {...permissionControls}
+                    disabled={disabled || permissionControls?.disabled}
                   />
                 </div>
               ) : null}

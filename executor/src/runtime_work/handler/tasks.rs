@@ -444,8 +444,18 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn create_task_with_activity(
         &self,
+        payload: Value,
+        activity: bool,
+    ) -> Result<Value, AppIpcError> {
+        self.create_task_with_initial_permissions(payload, activity, None)
+            .await
+    }
+
+    pub(super) async fn create_task_with_initial_permissions(
+        &self,
         mut payload: Value,
         activity: bool,
+        initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
     ) -> Result<Value, AppIpcError> {
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
@@ -457,13 +467,15 @@ impl RuntimeWorkRpcHandler {
             Some(gate) => Some(gate.lock().await),
             None => None,
         };
-        self.create_task_after_local_checks(payload, activity).await
+        self.create_task_after_local_checks(payload, activity, initial_permissions)
+            .await
     }
 
     async fn create_task_after_local_checks(
         &self,
         mut payload: Value,
         activity: bool,
+        initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
     ) -> Result<Value, AppIpcError> {
         let schema_version = payload
             .get("schemaVersion")
@@ -791,6 +803,16 @@ impl RuntimeWorkRpcHandler {
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         store_runtime_execution_request(&mut link.runtime_handle, &request);
         apply_runtime_profile_handle(&mut link.runtime_handle, &payload);
+        if is_codex_runtime(&runtime) {
+            let permissions = failed_start
+                .as_ref()
+                .and_then(super::stand_in_task_permissions::task_permissions)
+                .or(initial_permissions);
+            if let Some(permissions) = permissions {
+                link.runtime_handle[super::stand_in_task_permissions::TASK_PERMISSIONS] =
+                    json!(permissions);
+            }
+        }
         if let Some(executable_path) = request
             .extra
             .get("runtime_executable_path")
@@ -1177,7 +1199,7 @@ impl RuntimeWorkRpcHandler {
             self.bind_stand_in_owner_command(&mut payload, false);
             normalize_user_message_presentation(&mut payload)?;
             return self
-                .create_task_after_local_checks(payload, false)
+                .create_task_after_local_checks(payload, false, None)
                 .await
                 .map(Some);
         }

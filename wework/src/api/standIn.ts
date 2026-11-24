@@ -114,6 +114,7 @@ import {
   type PersonalStandInSettings,
   type StandInDelegationRoute,
   type StandInSourceConnection,
+  type StandInTaskPermissions,
 } from './personalStandIn'
 
 export interface StandInProposal {
@@ -340,6 +341,12 @@ export interface StandInExecutorApi {
     operation: 'start' | 'stop'
   ): Promise<PersonalStandInSettings>
   taskCommands: RuntimeTaskCommandsApi
+  setTaskPermissions(
+    userId: number,
+    deviceId: string,
+    taskId: string,
+    taskPermissions: StandInTaskPermissions
+  ): Promise<{ taskPermissions: StandInTaskPermissions }>
   checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
     userId: number,
@@ -583,6 +590,8 @@ export function createStandInExecutorApi(
   }
   return {
     taskCommands: createRuntimeTaskCommandsApi(request),
+    setTaskPermissions: (userId, deviceId, taskId, taskPermissions) =>
+      request('runtime.tasks.permissions.set', { userId, taskId, taskPermissions }, deviceId),
     gitConnection: (deviceId, input) => {
       const { channel, ...payload } = input
       if (channel === 'auth') {

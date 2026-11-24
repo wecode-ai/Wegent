@@ -1,6 +1,8 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
 use super::*;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use wegent_protocol::StandInTaskPermissions;
 
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
@@ -363,8 +365,17 @@ pub(super) fn validate_role(role: &Value) -> Result<(), TaskRuntimeError> {
             "invalid personal stand-in role".into(),
         ));
     }
+    validate_task_permissions(role)?;
     validate_connections(role)?;
     super::stand_in::validate_execution_settings(role)
+}
+
+fn validate_task_permissions(identity: &Value) -> Result<(), TaskRuntimeError> {
+    if let Some(permissions) = identity.get("taskPermissions") {
+        StandInTaskPermissions::deserialize(permissions)
+            .map_err(|_| TaskRuntimeError::Invalid("invalid Stand-in task permissions".into()))?;
+    }
+    Ok(())
 }
 
 fn validate_policy(policy: &Value) -> bool {
@@ -679,6 +690,7 @@ impl LocalTaskStore {
             {
                 return Err(TaskRuntimeError::Invalid("invalid primary stand-in".into()));
             }
+            validate_task_permissions(primary)?;
             validate_connections(primary)?;
         }
         let mut ids = HashSet::new();
@@ -708,6 +720,14 @@ impl LocalTaskStore {
                 .unwrap()
                 .iter()
                 .find(|before| before["id"] == role["id"]);
+            if before.is_none()
+                && role["migrationSource"].is_string()
+                && role.get("taskPermissions").is_some()
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "A portable Stand-in import cannot carry task permissions".into(),
+                ));
+            }
             let version = before
                 .and_then(|before| before["version"].as_i64())
                 .unwrap_or(0);

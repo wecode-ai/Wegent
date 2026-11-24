@@ -2736,7 +2736,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
-        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
+        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         let active_turn_id = if awaits_initial_goal_turn || awaits_event_goal_turn || resume_goal_only || restored_quota_goal {
@@ -3159,7 +3159,7 @@ async fn run_codex_app_server_turn_with_runtime(
         } else {
             None
         };
-        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
+        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         ensure_codex_turn_not_cancelled(&mut cancellation)?;
         // Cancellation owns the complete admission/read sequence, including
@@ -6955,9 +6955,20 @@ fn codex_has_full_access(request: &ExecutionRequest) -> bool {
     codex_runtime_permission_profile(request) == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
 }
 
+fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
+    codex_has_full_access(request) && !external_work::applies(request)
+}
+
 fn codex_full_access_command_approval(request: &ExecutionRequest) -> Option<&str> {
     if !codex_has_full_access(request) {
         return None;
+    }
+    if let Some(permissions) = request.stand_in_task_permissions {
+        return Some(
+            permissions
+                .command_approval
+                .map_or("manual", |mode| mode.as_str()),
+        );
     }
     match request
         .extra
@@ -6973,7 +6984,8 @@ fn codex_full_access_command_approval(request: &ExecutionRequest) -> Option<&str
 
 fn codex_auto_approve_commands(request: &ExecutionRequest) -> bool {
     codex_full_access_command_approval(request) == Some("automatic")
-        && stand_in_approval::native_reviewer(request).is_none()
+        && (request.stand_in_task_permissions.is_some()
+            || stand_in_approval::native_reviewer(request).is_none())
 }
 
 fn automatic_command_approval_id(message: &Value, enabled: bool) -> Option<Value> {
@@ -7009,7 +7021,7 @@ pub(crate) fn prepare_codex_runtime_notification(
     automatic_command_approval_id(message, codex_auto_approve_commands(request)).is_none()
         && prepare_runtime_notification(
             message,
-            codex_has_full_access(request),
+            codex_auto_approve_mcp_tool_calls(request),
             crate::runtime_work::stand_in_requires_confirmation(request),
         )
 }
