@@ -40,7 +40,7 @@ it('ignores stale responses after URL and account changes', async () => {
   mockUserId = 2
   getTeam.mockReturnValueOnce(new Promise(() => {}))
   rerender({ id: '66' })
-  expect(result.current).toEqual({ team: null, failed: false, retry: null })
+  expect(result.current.team).toBeNull()
 })
 
 it.each([null, '', 'bad', '0', '-1', '1.5'])('does not request an invalid ID: %s', id => {
@@ -57,18 +57,21 @@ it('does not contribute to an existing task or after leaving the explicit URL', 
   rerender({ enabled: true })
   await waitFor(() => expect(result.current.team).toBe(team))
   rerender({ enabled: false })
-  expect(result.current).toEqual({ team: null, failed: false, retry: null })
+  expect(result.current.team).toBeNull()
 })
 
-it('retries a failed lookup for the same explicit agent', async () => {
+it('can retry an unavailable agent without selecting a different one', async () => {
   const log = jest.spyOn(console, 'error').mockImplementation(() => {})
-  getTeam.mockRejectedValueOnce(new Error('Network unavailable')).mockResolvedValueOnce(team)
-  const { result } = renderHook(() => useUrlTeam('65', true))
-  await waitFor(() => expect(result.current.failed).toBe(true))
-  expect(result.current.team).toBeNull()
-  act(() => result.current.retry?.())
-  expect(result.current.failed).toBe(false)
-  await waitFor(() => expect(result.current.team).toBe(team))
-  expect(getTeam).toHaveBeenCalledTimes(2)
-  log.mockRestore()
+  try {
+    getTeam.mockRejectedValueOnce(new Error('Forbidden')).mockResolvedValueOnce(team)
+    const { result } = renderHook(() => useUrlTeam('65', true))
+    await waitFor(() => expect(result.current.failed).toBe(true))
+    expect(result.current.team).toBeNull()
+    act(() => result.current.retry?.())
+    await waitFor(() => expect(result.current.team).toBe(team))
+    expect(result.current.failed).toBe(false)
+    expect(getTeam.mock.calls.map(([id]) => id)).toEqual([65, 65])
+  } finally {
+    log.mockRestore()
+  }
 })

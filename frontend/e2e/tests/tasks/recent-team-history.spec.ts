@@ -279,6 +279,45 @@ for (const target of ['teamId', 'teamName'] as const) {
   })
 }
 
+test('a partner link selects and recommends the agent before the user sends', async ({
+  page,
+  history,
+  request,
+}) => {
+  const linked = await history.team('linked-recommendation')
+  const recent = await history.team('unrelated-recent')
+  await history.seed(recent)
+  const prompt = `${history.prefix}-partner-link`
+  const params = new URLSearchParams({
+    teamId: String(linked.id),
+    recommend: '1',
+    source: 'e2e-partner',
+  })
+  const configured = await request.post(MODEL_URL + '/tool-scenarios', {
+    data: { matchText: prompt, steps: [{ responseContent: 'Linked agent selected.' }] },
+  })
+  expect(configured.status()).toBe(200)
+  const sends = observeSends(page)
+  try {
+    await page.goto('/chat?' + params, { waitUntil: 'domcontentloaded' })
+    await expectSelected(page, linked)
+    await expect(
+      page.getByTestId(`quick-launcher-system_function-linked-agent-${linked.id}`)
+    ).toBeVisible({ timeout: 5_000 })
+    expect(sends).toHaveLength(0)
+    await page.getByTestId('message-input').fill(prompt)
+    await page.getByTestId('send-button').click({ timeout: 5_000 })
+    await expectPersistedSend(page, history, linked, prompt)
+    expect(sends).toHaveLength(1)
+    expect(new URL(page.url()).searchParams.get('source')).toBe('e2e-partner')
+  } finally {
+    const removed = await request.delete(
+      MODEL_URL + '/tool-scenarios?matchText=' + encodeURIComponent(prompt)
+    )
+    expect(removed.status()).toBe(200)
+  }
+})
+
 test('an existing task wins over recent history, URL team, and autoSend', async ({
   page,
   history,

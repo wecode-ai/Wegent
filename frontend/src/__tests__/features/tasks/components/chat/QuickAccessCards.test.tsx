@@ -242,53 +242,39 @@ describe('QuickAccessCards', () => {
     expect(screen.queryByText('Should not appear')).not.toBeInTheDocument()
   })
 
-  test.each([false, true])(
-    'prioritizes the linked agent (configured card: %s)',
-    async configured => {
-      const recommendedTeam = makeTeam({
-        id: 65,
-        name: 'linked-agent',
-        displayName: 'Linked agent',
-      })
-      const generalCard: QuickLaunchResponse['system_functions'][number] = {
-        type: 'system_function',
-        id: 'general',
-        title: 'General recommendation',
-        team_id: 2,
-        name: 'general-agent',
-        enabled: true,
-        order: 0,
-        input_presets: [],
-      }
-      const linkedCard = {
-        ...generalCard,
-        id: 'linked',
-        title: 'Configured linked agent',
-        team_id: recommendedTeam.id,
-      }
-      mockGetQuickLaunch.mockResolvedValueOnce({
-        system_functions: configured ? [generalCard, linkedCard] : [generalCard],
-        favorite_agents: [],
-      })
-
-      render(
-        <QuickAccessCards
-          teams={[recommendedTeam]}
-          selectedTeam={recommendedTeam}
-          onTeamSelect={jest.fn()}
-          currentMode="chat"
-          recommendedTeam={recommendedTeam}
-        />
-      )
-
-      const general = await screen.findByText(generalCard.title)
-      const linked = screen.getByText(configured ? linkedCard.title : 'Linked agent')
-      expect(
-        linked.compareDocumentPosition(general) & Node.DOCUMENT_POSITION_FOLLOWING
-      ).toBeTruthy()
-      if (configured) expect(screen.queryByText('Linked agent')).not.toBeInTheDocument()
+  test.each([false, true])('places a linked agent first (configured: %s)', async configured => {
+    const team = makeTeam({ id: 65, name: 'linked-agent', displayName: 'Linked agent' })
+    const general = {
+      type: 'system_function' as const,
+      id: 'general',
+      title: 'General recommendation',
+      team_id: 2,
+      name: 'general-agent',
+      enabled: true,
+      order: 0,
+      input_presets: [],
     }
-  )
+    const existing = { ...general, id: 'linked', title: 'Configured agent', team_id: team.id }
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: configured ? [general, existing] : [general],
+      favorite_agents: [],
+    })
+    render(
+      <QuickAccessCards
+        teams={[team]}
+        selectedTeam={team}
+        onTeamSelect={jest.fn()}
+        currentMode="chat"
+        recommendedTeam={team}
+      />
+    )
+
+    await screen.findByText(general.title)
+    const cards = screen.getAllByTestId(/^quick-launcher-system_function-/)
+    expect(cards).toHaveLength(2)
+    expect(cards[0]).toHaveTextContent(configured ? existing.title : 'Linked agent')
+    expect(cards[1]).toHaveTextContent(general.title)
+  })
 
   test('renders system functions and favorite agents in separate rows', async () => {
     mockGetQuickLaunch.mockResolvedValueOnce({
