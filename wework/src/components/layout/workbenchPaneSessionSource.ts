@@ -31,7 +31,7 @@ import {
 import { createPaneSessionView } from './workbenchPaneSessionView'
 import {
   deferHiddenConversationText,
-  isAssistantTextAppend,
+  isTranscriptOnlyStreamingUpdate,
   type PaneTranscript,
 } from './workbenchPaneConversationPresentation'
 import type {
@@ -523,7 +523,7 @@ export function createWorkbenchPaneSessionSource(
           separateTranscript &&
           streaming &&
           transcriptChanged &&
-          isAssistantTextAppend(transcriptSnapshot, nextTranscript)
+          isTranscriptOnlyStreamingUpdate(transcriptSnapshot, nextTranscript)
         transcriptSnapshot = nextTranscript
         if (!transcriptOnly)
           snapshot = createPaneSessionView(current, commands, search, attachmentCommands)

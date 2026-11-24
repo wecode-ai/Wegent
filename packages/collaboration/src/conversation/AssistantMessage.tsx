@@ -34,6 +34,7 @@ import {
   getProcessingSummaryStartMs,
   getStoppedElapsedDuration,
   getWebSearchToolBlocks,
+  hasSameAssistantRenderInputs,
   hasRunningProcessingBlocks,
   isCancelledAssistantMessage,
   shouldShowAssistantThinkingIndicator,
@@ -127,7 +128,17 @@ export function AssistantMessage({
       ? getStoppedElapsedDuration(message, runtimeTurn)
       : null
   const shouldShowStoppedNotice = isCancelled && message.stoppedNotice !== false
-  const renderProjection = useMemo(() => getAssistantRenderProjection(message), [message])
+  const [projected, setProjected] = useState(() => ({
+    message,
+    result: getAssistantRenderProjection(message),
+  }))
+  let renderProjection = projected.result
+  // Reasoning is rendered separately. Keep the tool and prose projections
+  // stable when the only thing that changed was the current reasoning text.
+  if (projected.message !== message && !hasSameAssistantRenderInputs(projected.message, message)) {
+    renderProjection = getAssistantRenderProjection(message)
+    setProjected({ message, result: renderProjection })
+  }
   const {
     content: visibleContent,
     hidden: shouldHideContent,
@@ -177,8 +188,9 @@ export function AssistantMessage({
         : [],
     [hasProcessingAfterContent, orderedRuntimeSegments]
   )
-  const expandedToolDetailStateKeys = displayBlocks.map(block =>
-    getProcessingDetailStateKey(processingItemScopeKey, block.id)
+  const expandedToolDetailStateKeys = useMemo(
+    () => displayBlocks.map(block => getProcessingDetailStateKey(processingItemScopeKey, block.id)),
+    [displayBlocks, processingItemScopeKey]
   )
   const hasExpandedToolDetail = useAnyPersistentProcessingExpansion(expandedToolDetailStateKeys)
   const usesFinalProcessingShell =

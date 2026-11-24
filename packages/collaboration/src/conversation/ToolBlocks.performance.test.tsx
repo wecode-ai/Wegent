@@ -4,7 +4,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '../i18n'
 import { ConversationTranslationProvider } from './ConversationTranslation'
+import { AssistantMessage } from './AssistantMessage'
+import * as presentation from './assistantMessagePresentation'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import * as activity from './blocks/ProcessingActivity'
 import * as labels from './blocks/toolBlockLabels'
 import * as details from './blocks/ToolBlockDetails'
@@ -63,6 +66,47 @@ function tool(status: ToolBlock['status'] = 'done'): ToolBlock {
 }
 
 describe('processing clock render isolation', () => {
+  it('keeps tool presentation stable while separate reasoning updates remain visible', () => {
+    const project = vi.spyOn(presentation, 'getAssistantRenderProjection')
+    const images = { identity: () => '', load: vi.fn(), download: vi.fn() }
+    const command = tool()
+    const thinking = {
+      id: 'reasoning',
+      subtaskId: 1,
+      type: 'thinking' as const,
+      content: 'Checking the workspace',
+      status: 'streaming' as const,
+      createdAt: Date.now(),
+    }
+    const update = (content: string, block = command) => {
+      const message: WorkbenchMessage = {
+        id: 'reply',
+        role: 'assistant',
+        status: 'streaming',
+        content: '',
+        createdAt: new Date().toISOString(),
+        blocks: [block, { ...thinking, content }],
+        runtimeDisplayItems: [
+          { id: block.id, type: 'block' },
+          { id: thinking.id, type: 'block' },
+        ],
+        streamingThinkingContent: content,
+      }
+      render(<AssistantMessage message={message} imageServices={images} devices={[]} />)
+    }
+    update(thinking.content)
+    project.mockClear()
+
+    update('Checking the workspace and tests')
+    expect(project).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Checking the workspace and tests')
+    expect(container.textContent).not.toContain('Searched code')
+
+    update('Checking the workspace and tests', { ...command, toolInput: { command: 'ls' } })
+    expect(project).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('Searched code')
+  })
+
   it('follows a burst of tool rows with one layout read in the next frame', () => {
     const first = tool()
     const second = { ...first, id: 'second' }
