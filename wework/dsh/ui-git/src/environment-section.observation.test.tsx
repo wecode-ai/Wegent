@@ -1,10 +1,33 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { ConversationSummarySurfaceProps } from '@/features/dsh-runtime/conversationSummarySurface'
 import type { EnvironmentInfo } from '@/types/environment'
 import GitConversationSummary from './environment-section'
+
+it('loads branches when the environment picker opens without refreshing the environment', async () => {
+  const info: EnvironmentInfo = {
+    additions: '+0',
+    deletions: '-0',
+    executionTarget: 'local',
+    isGitRepository: true,
+  }
+  const executeCommand = vi.fn(async (id: string) => {
+    if (id === 'git.list-branches') return ['main']
+  })
+  const services = {
+    getService: () => ({ read: () => ({ info }) }),
+    canExecuteCommand: () => true,
+    executeCommand,
+  } as unknown as ConversationSummarySurfaceProps['services']
+
+  render(<GitConversationSummary context={{}} services={services} />)
+  await userEvent.click(screen.getByTestId('environment-branch-row'))
+
+  expect(await screen.findByTestId('environment-branch-option')).toHaveTextContent('main')
+  expect(executeCommand.mock.calls.map(([id]) => id)).toEqual(['git.list-branches'])
+})
 
 function fixture(state: 'observing' | 'refreshing' | 'auth_required' | 'error', error?: string) {
   const info: EnvironmentInfo = {

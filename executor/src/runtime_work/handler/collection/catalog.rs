@@ -280,14 +280,9 @@ impl RuntimeWorkRpcHandler {
         let mut links = links
             .into_iter()
             .map(|mut link| {
-                if !is_codex_runtime(&link.runtime) {
-                    return link;
-                }
-
-                if let Some(thread_id) = link.thread_id.as_deref() {
-                    link.pinned = project_index.is_pinned_thread(thread_id);
-                    link.pinned_order = project_index.pinned_thread_order(thread_id);
-                }
+                sidebar::apply_sidebar_task_pin(&mut link, |thread_id| {
+                    project_index.pinned_thread_order(thread_id)
+                });
                 link
             })
             .collect::<Vec<_>>();

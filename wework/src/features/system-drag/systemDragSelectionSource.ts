@@ -164,10 +164,12 @@ export function createSystemDragSelectionSource() {
     if (observed())
       context!.setWorkbenchError(error instanceof Error ? error.message : String(error))
   }
-  const apply = async (payload: SystemDropPayload, input = context?.projectChat.input ?? '') => {
+  const apply = async (payload: SystemDropPayload, inputOverride?: string) => {
     if (!observed()) return
     const current = context!
     const owner = generation
+    const { draftStore, scopeKey } = current.projectChat
+    const input = inputOverride ?? draftStore.read(scopeKey).value
     let nextInput = input
     if (payload.text?.trim()) {
       const text = payload.text.trim()
@@ -390,11 +392,9 @@ export function createSystemDragSelectionSource() {
       if (!observed() || !selection) return
       const current = context!
       const owner = generation
-      current.projectChat.setInput(
-        current.projectChat.input
-          ? `${current.projectChat.input}\n${selection.text}`
-          : selection.text
-      )
+      const { draftStore, scopeKey, setInput } = current.projectChat
+      const input = draftStore.read(scopeKey).value
+      setInput(input ? `${input}\n${selection.text}` : selection.text)
       setSelection(null)
       document.getSelection()?.removeAllRanges()
       scheduleFrame(() => {

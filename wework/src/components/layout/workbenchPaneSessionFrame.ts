@@ -65,7 +65,8 @@ export interface PaneTranscriptReader {
 export function createPaneSessionFrame(
   external: PaneSessionExternal,
   state: PaneSessionState,
-  reader: PaneTranscriptReader
+  reader: PaneTranscriptReader,
+  readConversation: typeof getRuntimeConversationSnapshot
 ) {
   const { currentRuntimeTask, debugSnapshotEnabled } = external
   const queueDiagnosticSessionId = external.queueDiagnosticSessionId
@@ -120,12 +121,9 @@ export function createPaneSessionFrame(
     resetAttachments,
     dismissAttachmentError,
   } = attachmentState
-  const input = projectChat.inputByScope[inputScopeKey] ?? ''
-  const setInputForScope = projectChat.setInputForScope
-  const getInputRevisionForScope = projectChat.getInputRevisionForScope
-  const sharedInputRevision = getInputRevisionForScope(inputScopeKey)
-  const inputRevision = state.inputRevision
-  const replaceDraftKey = state.replaceDraftKey
+  const { draftStore, setInputForScope } = projectChat
+  const getInput = () => draftStore.read(inputScopeKey).value
+  const getInputRevisionForScope = (scope: string) => draftStore.read(scope).revision
   const localError = state.localError
   const error = projectChat.composerErrorByScope
     ? (projectChat.composerErrorByScope[inputScopeKey] ?? null)
@@ -178,7 +176,7 @@ export function createPaneSessionFrame(
     runtimeTaskLoadTarget !== null && transcriptLoadingMoreBeforeKey === runtimeTaskLoadTarget.key
   const draftMessages = state.draftMessages
   const conversation = runtimeTaskLoadTarget
-    ? getRuntimeConversationSnapshot(runtimeTaskLoadTarget.address)
+    ? readConversation(runtimeTaskLoadTarget.address)
     : EMPTY_RUNTIME_CONVERSATION_SNAPSHOT
   const {
     goal: threadGoal,
@@ -279,12 +277,10 @@ export function createPaneSessionFrame(
     removeAttachment,
     resetAttachments,
     dismissAttachmentError,
-    input,
+    draftStore,
+    getInput,
     setInputForScope,
     getInputRevisionForScope,
-    sharedInputRevision,
-    inputRevision,
-    replaceDraftKey,
     localError,
     error,
     answeredRequestUserInputIds,

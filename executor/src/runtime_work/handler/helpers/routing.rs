@@ -523,6 +523,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
     persisted.prompt = Value::String(String::new());
     persisted.history.clear();
     persisted.new_session = false;
+    persisted.legacy_session_fallback = false;
     persisted.message_id = None;
     persisted.backend_url = None;
     persisted.auth_token = None;

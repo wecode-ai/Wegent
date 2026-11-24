@@ -541,6 +541,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         for (kind, role, primary) in [
             ("stand_in_identity", Value::Null, true),
             ("stand_in_identity", json!("@primary"), true),
@@ -663,6 +667,7 @@ mod tests {
         let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"account",
             "kind":"group","id":"group","name":"Group","policy":{"automatic":true,"askBeforeAct":true}});
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         settings["roles"][0]["connections"] = json!([source]);
         settings["roles"][0]["enabled"] = json!(true);
         settings["roles"][0]["selfLearningEnabled"] = json!(true);

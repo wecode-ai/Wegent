@@ -1,0 +1,42 @@
+diff --git a/dist/markdown.js b/dist/markdown.js
+index 1588914845ab07cb48b7bbb9b04ae32d6fdb6e4b..4075298db44a4e8ad74d84c7b5be6818088df88d 100644
+--- a/dist/markdown.js
++++ b/dist/markdown.js
+@@ -40,7 +40,6 @@ const applyMarkdownZoom = (host, zoom) => {
+     host.style.setProperty('--markdown-font-size', `${16 * zoom}px`);
+ };
+ let mermaidRenderSequence = 0;
+-let mermaidRenderQueue = Promise.resolve();
+ const isDarkTheme = (documentRef, theme) => {
+     var _a, _b;
+     if (theme === 'dark') {
+@@ -73,21 +72,14 @@ const sanitizeMermaidSvg = (documentRef, svg) => {
+     return documentRef.importNode(parsed.documentElement, true);
+ };
+ const renderMermaidSvg = async (documentRef, source, theme) => {
+-    const render = async () => {
+-        const mermaidModule = await import('mermaid');
+-        const mermaid = mermaidModule.default;
+-        const id = `file-viewer-markdown-mermaid-${Date.now()}-${mermaidRenderSequence += 1}`;
+-        mermaid.initialize({
+-            startOnLoad: false,
+-            securityLevel: 'strict',
+-            theme: isDarkTheme(documentRef, theme) ? 'dark' : 'default',
+-        });
+-        const rendered = await mermaid.render(id, source);
+-        return sanitizeMermaidSvg(documentRef, rendered.svg);
+-    };
+-    const result = mermaidRenderQueue.then(render, render);
+-    mermaidRenderQueue = result.then(() => undefined, () => undefined);
+-    return result;
++    const { default: mermaid } = await import('mermaid');
++    const id = `file-viewer-markdown-mermaid-${Date.now()}-${mermaidRenderSequence += 1}`;
++    const rendered = await mermaid.render(id, source, undefined, {
++        startOnLoad: false,
++        securityLevel: 'strict',
++        theme: isDarkTheme(documentRef, theme) ? 'dark' : 'default',
++    });
++    return sanitizeMermaidSvg(documentRef, rendered.svg);
+ };
+ const renderEmbeddedMermaid = async (article, theme) => {
+     const documentRef = article.ownerDocument;

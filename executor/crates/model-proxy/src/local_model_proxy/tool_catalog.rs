@@ -2,7 +2,7 @@
 use serde_json::Value;
 
 // Unlinked server searches record catalog discovery without a client tool exchange.
-pub(super) fn is_unlinked_server_tool_search(item: &Value) -> bool {
+pub(in crate::local_model_proxy) fn is_unlinked_server_tool_search(item: &Value) -> bool {
     matches!(
         item["type"].as_str(),
         Some("tool_search_call" | "tool_search_output")

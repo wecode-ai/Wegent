@@ -204,6 +204,10 @@ export function mergeMarketplaceCatalog(
             // keep the card aligned with the version that detail and publication
             // flows will actually package.
             version: item.version || cloudItem.version,
+            updateAvailable:
+              cloudItem.visibility === 'personal'
+                ? item.updateAvailable
+                : cloudItem.updateAvailable,
             sharedVersion: cloudItem.sharedVersion ?? cloudItem.version,
             localPersonalSource: {
               marketplacePath: marketplacePath.trim(),

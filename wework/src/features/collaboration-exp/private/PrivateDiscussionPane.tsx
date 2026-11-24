@@ -1,6 +1,7 @@
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { prepareRuntimeAttachmentsForDevice } from '@/features/workbench/useWorkbenchRuntimeMessaging'
 import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
 import { useTranslation } from '@/hooks/useTranslation'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
@@ -290,6 +291,13 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                 assistantInteraction && actorId !== undefined
                   ? async input => {
                       try {
+                        const prepared = await prepareRuntimeAttachmentsForDevice(
+                          conversation.address.deviceId,
+                          state.devices,
+                          input.attachmentIds ?? [],
+                          input.runtimeOptions?.attachments ?? [],
+                          services.attachmentApi?.uploadLocalAttachmentToCloud
+                        )
                         const result = await assistantInteraction.send({
                           requestId: input.clientUserMessageId,
                           idempotencyKey: input.clientUserMessageId,
@@ -299,9 +307,14 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                           senderUserId: conversation.ownerUserId,
                           visibility: 'private',
                           message: input.message,
-                          attachmentIds: input.attachmentIds,
+                          ...(prepared.attachmentIds.length
+                            ? { attachmentIds: prepared.attachmentIds }
+                            : {}),
                           interruptWhenBusy: input.interruptWhenBusy,
-                          runtimeOptions: input.runtimeOptions,
+                          runtimeOptions: {
+                            ...input.runtimeOptions,
+                            attachments: prepared.attachments,
+                          },
                         })
                         return {
                           sent: true,

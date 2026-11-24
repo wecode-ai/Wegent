@@ -105,6 +105,7 @@ fn paused_issue_fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, 
         )
         .unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["enabled"] = json!(false);
     settings["roles"][0]["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[{"id":project.id,"store":"local"}],"excludedProjects":[],"tags":[],"policy":{"automatic":false,"askBeforeAct":false}});
     let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
@@ -451,6 +452,7 @@ async fn a_public_issue_request_cannot_change_its_trusted_origin_kind() {
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["enabled"] = json!(true);
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","publicConversation":true,"runtimeTaskId":"issue-chat","userId":7,"standInId":"default","projectStore":"cloud","cloudProjectId":"project","loopItemId":"one"});

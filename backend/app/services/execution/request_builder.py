@@ -222,6 +222,7 @@ class TaskRequestBuilder:
         # Session
         history_limit: Optional[int] = None,
         new_session: bool = False,
+        allow_new_session_fallback: bool = False,
         previous_bot_id: Optional[int] = None,
         attachments: Optional[List[dict]] = None,
         # Subscription
@@ -259,6 +260,8 @@ class TaskRequestBuilder:
             is_user_selected_kb: Whether knowledge bases are user-selected
             history_limit: Maximum number of history messages
             new_session: Whether to start a new session
+            allow_new_session_fallback: Whether an unproven continuation may
+                start a new session; only selected continuation callers set it
             attachments: List of attachment dictionaries
             is_subscription: Whether this is a subscription task
             system_mcp_config: System MCP configuration
@@ -613,6 +616,19 @@ class TaskRequestBuilder:
             new_session=new_session,
             is_subscription=is_subscription,
         )
+        legacy_session_fallback = self._should_start_new_session(
+            allow_new_session_fallback=allow_new_session_fallback,
+            new_session=new_session,
+            task=task,
+            user=user,
+            bot_configs=bot_config,
+            inherited_sessions=inherited_sessions,
+            legacy_session_bindings=legacy_session_bindings,
+        )
+        if legacy_session_fallback:
+            # The caller authorized a safe fresh-session fallback for this
+            # continuation, which has no authenticated prior-session evidence.
+            new_session = True
 
         execution_request = ExecutionRequest(
             task_id=task.id,
@@ -666,6 +682,7 @@ class TaskRequestBuilder:
             is_group_chat=is_group_chat,
             history_limit=history_limit,
             new_session=new_session,
+            legacy_session_fallback=legacy_session_fallback,
             fork_runtime=fork_runtime,
             inherited_sessions=inherited_sessions,
             legacy_session_bindings=legacy_session_bindings,
@@ -797,6 +814,31 @@ class TaskRequestBuilder:
             else []
         )
         return inherited, bindings
+
+    @staticmethod
+    def _should_start_new_session(
+        *,
+        allow_new_session_fallback: bool,
+        new_session: bool,
+        task: TaskResource,
+        user: User,
+        bot_configs: list[dict[str, Any]],
+        inherited_sessions: list[dict[str, Any]],
+        legacy_session_bindings: list[dict[str, Any]],
+    ) -> bool:
+        """Whether an unproven owner continuation may start a fresh session."""
+
+        return (
+            allow_new_session_fallback
+            and not new_session
+            and task.user_id == user.id
+            and any(
+                config.get("shell_type") in {"Codex", "ClaudeCode"}
+                for config in bot_configs
+            )
+            and not inherited_sessions
+            and not legacy_session_bindings
+        )
 
     @staticmethod
     def _build_legacy_session_bindings(

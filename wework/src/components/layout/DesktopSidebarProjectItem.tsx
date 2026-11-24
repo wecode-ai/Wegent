@@ -221,6 +221,7 @@ export function ProjectItem({
   const [projectMenuPosition, setProjectMenuPosition] = useState<ProjectCreateMenuPosition | null>(
     null
   )
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const prioritizedRuntimeTaskItems = runtimeTaskItems
   const visibleRuntimeTaskItems = useMemo(
     () =>
@@ -396,6 +397,7 @@ export function ProjectItem({
       <SidebarHoverCard
         testId={`project-hover-card-${project.id}`}
         interactive
+        disabled={projectMenuOpen || projectMenuPosition !== null}
         cardClassName="w-[320px]"
         content={
           <ProjectSidebarHoverCardContent
@@ -501,6 +503,7 @@ export function ProjectItem({
               testId={`project-menu-${project.id}`}
               contextMenuPosition={projectMenuPosition}
               onContextMenuClose={() => setProjectMenuPosition(null)}
+              onOpenChange={setProjectMenuOpen}
               items={[
                 {
                   label: projectPinned ? t('workbench.unpin_project') : t('workbench.pin_project'),

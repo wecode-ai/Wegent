@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
-  createSingleRootLocalProject,
   selectE2EModel,
   fetchJson,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -27,6 +26,7 @@ import {
   shellCommandPollResponse,
 } from '../modules/shell-command-response.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import { waitForSingleProjectByTitle } from '../modules/project-identity-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const MODEL = 'custom-responses-model'
@@ -37,15 +37,23 @@ const TOOL_OK = 'RESPONSES_SHELL_OK'
 const DONE = 'RESPONSES_TOOL_COMPLETED'
 const API_KEY = 'responses-protocol-fixture-key'
 const ERROR = "Unsupported custom tool: 'exec'. Only 'apply_patch' is supported."
+const PROJECT_KEY = 'responses-compatibility'
+const PROJECT_NAME = 'Responses compatibility'
 
 /** Exercise the real desktop/runtime/Codex chain against a strict model protocol oracle. */
-export function createDesktopScenario({ electronUserDataDirectory, workspacePath, resultDir }) {
+export function createDesktopScenario({
+  electronUserDataDirectory,
+  workspacePath,
+  resultDir,
+  uiTimeoutMs,
+}) {
   const requests = []
   let probeRequests = 0
   let nativeProbeRequests = 0
   let round = 1
   let cloudEnvironment
   let cloudModelId
+  let convertedWaitingContext = false
   const cloudRequest = (path, options = {}) =>
     fetchJson(`${cloudEnvironment.backendUrl}${path}`, {
       ...options,
@@ -168,6 +176,18 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         )
         return true
       }
+      if (round === 2) {
+        // The executor adds an empty waiting-subscription snapshot when continuing this task.
+        const waitingContext = body.input.find(
+          item =>
+            item.type === 'message' &&
+            item.role === 'user' &&
+            item.content?.[0]?.text === '[tool_result without a matching tool_call]' &&
+            item.content?.[1]?.text === '[]'
+        )
+        assert.ok(waitingContext, 'The cloud follow-up must carry the waiting snapshot as context')
+        convertedWaitingContext = true
+      }
       const tools = programmaticExecTools(body)
       const rejected = !native && tools.some(tool => tool.type === 'custom')
       requests.push({
@@ -232,7 +252,10 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       try {
         await control.command('navigate', 'body', { value: '/settings/personal/models' })
         await control.command('waitFor', `[data-testid="provider-row-${MODEL_ID}"]`)
-        await control.command('click', `[data-testid="provider-row-${MODEL_ID}"] [data-testid="provider-settings-section-toggle"]`)
+        await control.command(
+          'click',
+          `[data-testid="provider-row-${MODEL_ID}"] [data-testid="provider-settings-section-toggle"]`
+        )
         await control.command('click', `[data-testid="provider-model-edit-${MODEL_ID}"]`)
         const editor = `[data-testid="provider-model-editor-${MODEL_ID}"]`
         const compatibility = `[data-testid="provider-model-compatibility-${MODEL_ID}"]`
@@ -273,7 +296,28 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         )
         await control.command('click', '[data-testid="provider-editor-cancel"]')
         await control.command('navigate', 'body', { value: '/' })
-        await createSingleRootLocalProject(control, workspacePath, 'Responses compatibility')
+        // Project creation is test setup. Seed it through the real executor so
+        // native folder-picker focus cannot block the Responses check.
+        await control.command('seedLocalProject', 'body', {
+          value: JSON.stringify({
+            projectKey: PROJECT_KEY,
+            name: PROJECT_NAME,
+            path: workspacePath,
+          }),
+        })
+        await reloadMainWindow(control)
+        const { projectId } = await waitForSingleProjectByTitle(
+          control,
+          PROJECT_NAME,
+          'The Responses workspace was missing after seeding',
+          uiTimeoutMs
+        )
+        const projectRow = `[data-testid="project-row-${projectId}"]`
+        await control.command('hover', projectRow)
+        await control.command(
+          'clickWhenEnabled',
+          `${projectRow} [data-testid="project-new-conversation-button"]`
+        )
         await selectE2EModel(control, `local-model:${MODEL_ID}`, MODEL)
         for (round = 1; round <= 3; round += 1) {
           if (round === 2) {
@@ -296,6 +340,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         }
         assert.ok(requests.length >= 6, 'Local, cloud and native turns must execute real tools')
         assert.ok(requests.every(request => !request.rejected))
+        assert.ok(convertedWaitingContext, 'The cloud follow-up must convert the waiting snapshot')
       } catch (error) {
         errors.push(error)
       } finally {

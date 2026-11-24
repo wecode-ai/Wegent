@@ -110,6 +110,14 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       taskId: 'memory-review',
       runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
     }
+    const reported = {
+      ...scheduled,
+      taskId: 'reported-by-assistant',
+      runtimeHandle: {
+        ...scheduled.runtimeHandle,
+        executionRequest: { standInReportTo: { userId: 7, taskId: 'stand-in-chat-7-primary' } },
+      },
+    }
     const work = {
       projects: [],
       chats: [
@@ -118,10 +126,11 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
           tasks: [
             originSource === 'task list' ? review : { ...review, runtimeHandle: undefined },
             scheduled,
+            reported,
           ],
         },
       ],
-      totalTasks: 2,
+      totalTasks: 3,
     }
     const items = collectRuntimeTaskReminderItems(work)
     store.syncRuntimeWork(work)
@@ -141,6 +150,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
                 updatedAt: 2000,
               },
               scheduled,
+              reported,
             ],
           },
         ],
@@ -155,7 +165,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       store.turnSettled(address, 'turn-1', 'succeeded')
       store.executorSettled(address)
     }
-    expect([...store.getSnapshot().unreadTaskKeys]).toEqual([items[1].key])
+    expect([...store.getSnapshot().unreadTaskKeys]).toEqual([items[1].key, items[2].key])
     const source = createRuntimeTaskReminderSource(store)
     const stop = source.subscribe(() => {}, {
       items,
@@ -178,7 +188,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       expect(send.mock.calls.map(([notification]) => notification.address?.taskId)).toEqual([
         scheduled.taskId,
       ])
-      expect([...source.getSnapshot()]).toEqual([items[1].key])
+      expect([...source.getSnapshot()]).toEqual([items[1].key, items[2].key])
     } finally {
       stop()
     }

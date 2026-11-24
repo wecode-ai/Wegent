@@ -242,6 +242,7 @@ mod tests {
             crate::task_runtime::LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let old = json!({"providerId":"@wegent/dsh-connection-git/github","profile":"[\"https://github.com\",\"7\"]","id":"42","kind":"repository","name":"org/repo","subscriptionId":"receiver","generation":"old","policy":{"automatic":true,"askBeforeAct":true}});
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         let mut current = old.clone();
         current["generation"] = json!("new");
         settings["roles"][0]["connections"] = json!([current]);

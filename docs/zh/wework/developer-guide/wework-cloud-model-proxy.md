@@ -89,6 +89,10 @@ OpenAI Responses 上游在 `auto` 和 `standard` 模式下会收到 `type: "mess
 
 Responses 转为普通 function 工具、转为 Chat Completions 或转为 Anthropic Messages 时，代理将服务端工具搜索结果合并到出站工具目录，并从会话历史中省略没有 `call_id` 的服务端搜索调用与结果。已配对的常规工具调用和结果保留原有 ID 和顺序。原生 Responses 透传保留完整搜索历史。
 
+普通 Responses 与工具桥接共用已完成函数调用的校验。工具名或 `call_id` 缺失时，代理在转发该调用前返回 `response.failed`，日志只记录缺失字段的计数。续轮请求也会清理历史中的空名函数调用及其失败结果，并保留独立上下文。显式透传使用独立的转发路径。
+
+协议适配前，代理移除 assistant 消息中的空 `output_text` 文本块。若该消息因此没有剩余内容，代理会省略整条消息。若完整的工具调用及其结果之间夹有 assistant 消息，代理将这些消息移到该组工具调用之前。
+
 所有模型流共用 executor 的 SSE 分帧和数据解析模块，包括 Responses 工具桥接、普通 Responses、透传检查、Chat Completions、Anthropic Messages、工具历史记录和 Harness 适配器。解析按流中的先后顺序处理 LF、CRLF 和 CR 边界，跨块 CRLF 仍作为一个换行；拼接同一事件的全部 `data:` 行，并在网络块之间保留未完整接收的 UTF-8 字符。Responses 的工具分发和终态识别以 JSON `type` 为准，不依赖可选的 SSE `event:` 字段；重写事件时替换全部旧数据行，同时保留事件元数据。透传检查和历史记录不会修改转发的数据块。
 
 `model-sse-parsing` 桌面 E2E 复用真实 Electron、executor 和 Codex，仅模拟模型服务，覆盖 Responses function 桥接、原生 Responses、Chat Completions 和 Anthropic Messages。场景发送多行 JSON、混合换行、跨块中文和误导性事件头，要求真实 Code Mode 工具写入文件、读取文件，并将成功结果传入下一轮模型历史。Responses 工具响应在收到真实工具结果前保持 HTTP 流开启，验证完整 CR 终止帧无需等待 EOF 就能触发工具执行。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
@@ -166,7 +170,9 @@ executor 验证工具结果保留、无重复用户消息、自动恢复与取�
 
 ### Codex 外部上下文转换
 
-Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。发往 Chat Completions 或 Anthropic Messages 前，executor 在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍分别通过 `tool_call_id` 或 `tool_use_id` 与原调用配对。
+Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。executor 为 Responses、Chat Completions 和 Anthropic Messages 转换请求时，会在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍通过各自协议的调用 ID 与原调用配对。
+
+Responses 适配会添加 `[tool_result without a matching tool_call]` 来源标记，并保留原生 `input_image` 和 `input_file` 内容块。
 
 ### Codex 子代理消息转换
 

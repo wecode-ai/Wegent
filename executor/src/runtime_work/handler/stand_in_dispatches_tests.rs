@@ -504,6 +504,7 @@ async fn manual_issue_startup_intent_survives_restart_without_assignment_or_inta
     assert_eq!(pending[0].1["manual"], true);
     assert_eq!(pending[0].1["retryCount"], 1);
     let mut moved = store.personal_stand_in(7, "mac").unwrap();
+    moved["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     moved["roles"][0]["executionDeviceId"] = json!("remote");
     store.save_personal_stand_in(7, "mac", moved).unwrap();
     drop(handler);

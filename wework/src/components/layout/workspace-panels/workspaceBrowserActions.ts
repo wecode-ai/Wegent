@@ -102,6 +102,7 @@ export function createBrowserActions(model: BrowserSessionModel) {
     }
     if (
       state.status === 'needs_user' &&
+      state.approval &&
       state.errorCode &&
       state.errorCode !== 'approval_required'
     ) {
@@ -121,7 +122,17 @@ export function createBrowserActions(model: BrowserSessionModel) {
       return model.options.t('workbench.browser_agent_paused')
     }
     if (state.status === 'needs_user') {
-      return model.options.t('workbench.browser_agent_needs_user')
+      switch (state.errorCode) {
+        case 'approval_expired':
+          return model.options.t('workbench.browser_agent_approval_expired')
+        case 'approval_rejected':
+        case 'approval_cancelled':
+          return model.options.t('workbench.browser_agent_approval_stopped')
+        case 'wait_timeout':
+          return model.options.t('workbench.browser_agent_wait_timeout')
+        default:
+          return model.options.t('workbench.browser_agent_error')
+      }
     }
     return model.options.t('workbench.browser_agent_ready')
   }

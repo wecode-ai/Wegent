@@ -24,6 +24,7 @@ import {
   createBufferedComposerModel,
 } from './bufferedComposerModel'
 import type { Ref } from 'react'
+import { useScopedDraft, type ScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 export interface BufferedChatInputInsertion {
   id: number
   text: string
@@ -39,6 +40,7 @@ interface BufferedChatInputProps extends ChatInputProps {
   // Increment for every explicit external restore, even when the value is unchanged.
   // Without a new key, values matching pending publications are acknowledgements.
   replaceDraftKey?: number
+  draftScope?: string
   onDraftEdit?: (draft: string) => void
 }
 
@@ -50,13 +52,14 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   clearOnSubmit = true,
   insertion,
   replaceDraftKey,
+  draftScope,
   onDraftEdit,
   inputRef,
   onCompositionStart: onParentCompositionStart,
   onCompositionEnd: onParentCompositionEnd,
   ...props
 }: BufferedChatInputProps) {
-  const scopeKey = props.projectChat?.scopeKey
+  const scopeKey = draftScope ?? props.projectChat?.scopeKey
   const input = useMemo(
     () => ({
       value,
@@ -149,3 +152,37 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     />
   )
 })
+
+interface ScopedDraftChatInputProps extends Omit<
+  BufferedChatInputProps,
+  'value' | 'onChange' | 'replaceDraftKey'
+> {
+  draftStore: ScopedDraftStore
+  draftScope: string
+  writeDraft: (scope: string, value: string) => void
+}
+
+export function ScopedDraftChatInput({
+  draftStore,
+  draftScope,
+  writeDraft,
+  ...props
+}: ScopedDraftChatInputProps) {
+  const draft = useScopedDraft(draftStore, draftScope)
+  const onChange = useCallback(
+    (value: string) => {
+      writeDraft(draftScope, value)
+      return { appliedSynchronously: true } as const
+    },
+    [draftScope, writeDraft]
+  )
+  return (
+    <BufferedChatInput
+      {...props}
+      value={draft.value}
+      draftScope={draftScope}
+      replaceDraftKey={draft.replacement}
+      onChange={onChange}
+    />
+  )
+}

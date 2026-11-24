@@ -1,3 +1,4 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import {
   openProjectStandIn,
   discardStandInDraft,
@@ -24,6 +25,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   return {
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
+      await seedStandInRoleFixture(
+        (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        USER_ID
+      )
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
@@ -48,13 +53,18 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       const open = () => openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       const cancel = () => discardStandInDraft(control)
 
+      const initial = await read()
       await open()
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-auto"]'), '0')
       await control.command('fill', PROMPT, { value: 'Discarded initial draft' })
       await editProjectSource(control, true)
       assert.equal((await read()).enabled, false, 'First activation requires saving settings')
       await cancel()
-      assert.equal((await read()).version, 0, 'Cancel must not create a configuration')
+      assert.deepEqual(
+        await read(),
+        initial,
+        'Cancel must leave the seeded configuration unchanged'
+      )
 
       await open()
       await control.command('fill', PROMPT, { value: 'Saved manual settings' })

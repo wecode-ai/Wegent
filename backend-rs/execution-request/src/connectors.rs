@@ -113,7 +113,20 @@ fn assemble(request: &mut ExecutionRequest, apps: &[App], has_local_device: bool
             }
         }
     }
-    append_guidance(request, apps, &message, &selected);
+    if let Some(block) = connector_guidance(apps, &message, &selected, &request.skill_configs) {
+        if chat {
+            // Chat Shell reads the system instructions for every turn, including continuations.
+            if !request.system_prompt.is_empty() {
+                request.system_prompt.push_str("\n\n");
+            }
+            request.system_prompt.push_str(&block);
+        } else if let Some(text) = request.prompt.as_str() {
+            // Resumed coding sessions can retain their original system instructions.
+            request.prompt = json!(format!("{text}\n\n{block}"));
+        } else if let Some(parts) = request.prompt.as_array_mut() {
+            parts.push(json!({"type": "text", "text": block}));
+        }
+    }
 }
 
 fn update_provider_skills(
@@ -280,20 +293,18 @@ fn keywords_match(text: &str, keywords: &[String]) -> bool {
     })
 }
 
-fn append_guidance(
-    request: &mut ExecutionRequest,
+fn connector_guidance(
     apps: &[App],
     message: &str,
     selected: &HashSet<String>,
-) {
-    let selected_slugs: HashSet<_> = request
-        .skill_configs
+    skill_configs: &[Value],
+) -> Option<String> {
+    let selected_slugs: HashSet<_> = skill_configs
         .iter()
         .filter(|skill| selected.contains(skill["name"].as_str().unwrap_or("")))
         .filter_map(|skill| skill["connector_slug"].as_str())
         .collect();
-    let personal_slugs: HashSet<_> = request
-        .skill_configs
+    let personal_slugs: HashSet<_> = skill_configs
         .iter()
         .filter(|skill| skill.get("mcpServers").is_some())
         .filter_map(|skill| skill["connector_slug"].as_str())
@@ -319,7 +330,7 @@ fn append_guidance(
                 || keywords_match(message, &app.keywords))
     });
     if pending.is_empty() && !in_use {
-        return;
+        return None;
     }
     let links = pending
         .iter()
@@ -347,13 +358,9 @@ fn append_guidance(
     } else {
         ""
     };
-    let block =
-        format!("<wegent_connector_apps>\n{authorization}{link_rules}\n</wegent_connector_apps>");
-    if let Some(text) = request.prompt.as_str() {
-        request.prompt = json!(format!("{text}\n\n{block}"));
-    } else if let Some(parts) = request.prompt.as_array_mut() {
-        parts.push(json!({"type": "text", "text": block}));
-    }
+    Some(format!(
+        "<wegent_connector_apps>\n{authorization}{link_rules}\n</wegent_connector_apps>"
+    ))
 }
 
 #[cfg(test)]

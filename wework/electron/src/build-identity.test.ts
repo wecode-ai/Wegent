@@ -165,6 +165,7 @@ test.each(['', 'true'])(
     )
 
     expect(config.mac.hardenedRuntime).toBe(true)
+    expect(config.mac.extendInfo.NSDownloadsFolderUsageDescription).toContain('Downloads')
     expect(config.mac.extendInfo.NSMicrophoneUsageDescription).toContain('microphone')
     for (const path of [config.mac.entitlements, config.mac.entitlementsInherit]) {
       const entitlements = await readFile(path, 'utf8')

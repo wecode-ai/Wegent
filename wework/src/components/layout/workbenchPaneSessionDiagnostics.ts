@@ -47,7 +47,7 @@ export function createPaneSessionDiagnostics(owner: {
         queuedMessages: frame.queuedMessages,
         guidanceMessages: frame.guidanceMessages,
         codeCommentContextCount: frame.codeCommentContexts.length,
-        inputLength: frame.input.length,
+        inputLength: frame.getInput().length,
         transcript: {
           loading: frame.transcriptLoading,
           hasMoreBefore: frame.transcriptHasMoreBefore,

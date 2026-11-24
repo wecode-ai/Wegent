@@ -6,7 +6,7 @@ import { AttachmentImageView, type AttachmentImageServices } from './AttachmentI
 import { CollaborationTheme } from '../theme'
 
 type Attachment = { id: string; filename: string }
-type Image = { url: string; release: () => void }
+type Image = { url: string; blob?: Blob; release: () => void }
 const first = { id: 'A', filename: 'a.png' },
   second = { id: 'B', filename: 'b.png' },
   third = { id: 'C', filename: 'c.png' }
@@ -113,6 +113,37 @@ test('the lightbox borrows the preview URL and releases superseded gallery reads
   expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:A')
   act(() => root.render(null))
   expect(releasePreview).toHaveBeenCalledTimes(1)
+})
+
+test('provides the preview bytes for the selected gallery item and discards stale bytes', async () => {
+  const late = held()
+  const releaseLate = vi.fn()
+  const firstBytes = new Blob(['preview A'])
+  const thirdBytes = new Blob(['preview C'])
+  const renderLightbox = vi.fn<NonNullable<typeof services.renderLightbox>>(() => null)
+  services.renderLightbox = renderLightbox
+  vi.mocked(services.load)
+    .mockResolvedValueOnce({ url: 'blob:A', blob: firstBytes, release: vi.fn() })
+    .mockReturnValueOnce(late.promise)
+    .mockResolvedValueOnce({ url: 'blob:C', blob: thirdBytes, release: vi.fn() })
+
+  await render()
+  await click('preview')
+  expect(renderLightbox.mock.lastCall?.[0]).toMatchObject({
+    attachment: first,
+    url: 'blob:A',
+    blob: firstBytes,
+  })
+  await act(async () => renderLightbox.mock.lastCall?.[0].onNext?.())
+  await act(async () => renderLightbox.mock.lastCall?.[0].onNext?.())
+  await act(async () => late.resolve({ url: 'blob:B', blob: new Blob(['late B']), release: releaseLate }))
+  expect(renderLightbox.mock.lastCall?.[0]).toMatchObject({
+    attachment: third,
+    url: 'blob:C',
+    blob: thirdBytes,
+  })
+  expect(renderLightbox.mock.lastCall?.[0].blob).toBe(thirdBytes)
+  expect(releaseLate).toHaveBeenCalledOnce()
 })
 
 test('lazy loading uses the current attachment metadata when its identity stays unchanged', async () => {
