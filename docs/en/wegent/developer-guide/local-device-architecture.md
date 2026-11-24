@@ -64,6 +64,8 @@ Local Electron packages reuse the release package's brand metadata and update so
 
 The packaged Wework Electron app defaults to local-first mode. This mode does not start the frontend Node dev server and does not start an extra local HTTP Backend service. The React UI runs inside the Electron renderer, while the Electron main process provides the app's internal command layer.
 
+Core DSH serves bundled UI plugin entries at stable paths. The renderer includes its build's source SHA in the entry URL to bypass cached entries from older builds on the same origin. Entry responses use `no-store`, while content-hashed assets remain cacheable. This keeps the workbench and plugin on the same build of the React context module.
+
 Local-first mode has three local runtime roles: the Electron main process, the executor sidecar, and core DSH:
 
 ```mermaid

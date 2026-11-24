@@ -113,6 +113,15 @@ export function executorRequestPriority(
   method: string,
   params: Record<string, unknown>
 ): DshRequestPriority {
+  // Passive MCP App discovery fans out once per historical tool call when a
+  // transcript mounts. Keep it on the shared background lanes so it cannot
+  // occupy the interactive RPC path. App actions still stay foreground.
+  if (method === 'runtime.mcp_apps.request') {
+    const appMethod = params.method
+    return appMethod === undefined || appMethod === null || appMethod === 'discover'
+      ? 'background'
+      : 'foreground'
+  }
   if (method === 'device.execute_command') {
     const command = String(params.command_key ?? '')
     return command.startsWith('connection_observer_') ||

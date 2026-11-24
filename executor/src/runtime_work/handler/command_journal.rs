@@ -26,6 +26,8 @@ pub(super) struct RuntimeCommand {
     #[serde(default)]
     pub(super) native: Option<(u64, String, String)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) guidance_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) owner_resolution: Option<Value>,
     #[serde(default)]
     pub(super) resource_event_keys: Vec<String>,
@@ -123,6 +125,7 @@ impl RuntimeCommand {
             accepted_at: now_ms(),
             turn: turn.clone(),
             native: None,
+            guidance_turn_id: None,
             owner_resolution: None,
             resource_event_keys,
         }))
@@ -140,6 +143,13 @@ impl RuntimeCommand {
             "command_conflict",
             "commandId was already accepted with different input or execution identity",
         ))
+    }
+
+    pub(super) fn settle_guidance(mut self, turn_id: Option<String>) -> Self {
+        self.guidance_turn_id = turn_id;
+        self.state = CommandState::Settled;
+        self.retire_request();
+        self
     }
 
     fn retire_request(&mut self) {
@@ -193,6 +203,10 @@ impl RuntimeCommand {
             "state":self.state,"acceptedAt":self.accepted_at,"runtime":self.turn.runtime,"native":self.native,
             "commandFingerprint":self.fingerprint,
             "requiresUserReview":!self.is_owner_abandoned() && matches!(self.state, CommandState::RecoveryRequired | CommandState::AwaitingUser)});
+        if let Some(turn_id) = &self.guidance_turn_id {
+            receipt["guided"] = json!(true);
+            receipt["turnId"] = json!(turn_id);
+        }
         if self.is_owner_abandoned() {
             receipt["state"] = json!("abandoned");
         }
@@ -309,6 +323,36 @@ impl RuntimeWorkRpcHandler {
             })
             .max_by_key(|(at, _)| *at)
             .map(|(_, thread)| thread))
+    }
+
+    pub(super) async fn persist_guidance_command(
+        &self,
+        key: &str,
+        next: Option<RuntimeCommand>,
+    ) -> Result<(), AppIpcError> {
+        let _operation = self.turn_queue_operation.lock().await;
+        let update = |next: Option<RuntimeCommand>| {
+            let mut journal = self
+                .command_journal
+                .lock()
+                .expect("command journal poisoned");
+            match next {
+                Some(command) => journal.insert(key.to_owned(), command),
+                None => journal.remove(key),
+            }
+        };
+        let previous = update(next);
+        let queued = self
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .queued_turns
+            .clone();
+        if let Err(error) = self.persist_turn_queue(queued, None, &[]).await {
+            update(previous);
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(super) async fn existing_payload_command(

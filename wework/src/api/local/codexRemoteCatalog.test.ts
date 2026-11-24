@@ -484,6 +484,10 @@ describe('OpenAI official catalog persistence', () => {
         expect(await store.read()).toBe(previous)
 
         act(() => opened.result.current.refresh())
+        await waitFor(() => expect(write).toHaveBeenCalledTimes(2))
+        await act(async () => {
+          await write.mock.results[1].value
+        })
         await waitFor(() => {
           expect(opened.result.current.error).toBeNull()
           expect(opened.result.current.loading).toBe(false)

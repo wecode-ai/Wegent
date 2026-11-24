@@ -76,6 +76,16 @@ impl CodexAppServerClient {
         request: &ExecutionRequest,
         mut params: Map<String, Value>,
     ) -> Result<Value, String> {
+        // Thread resume owns the native writer lease. Concurrent resumes for the
+        // same thread must queue on the shared lifecycle gate instead of each
+        // retrying the native writer-busy error.
+        let thread_id = params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .ok_or("thread/resume requires a thread ID")?
+            .to_owned();
+        let gate = self.thread_lifecycle_gate(&thread_id).await;
+        let _admission = gate.lock().await;
         ensure_codex_mcp_endpoints().await?;
         let mut launch = CodexLaunchConfig {
             thread_config: task_identity_thread_config(request),

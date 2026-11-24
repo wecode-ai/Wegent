@@ -59,8 +59,18 @@ test('attempts to reload each completed build only once when loading fails', asy
 })
 
 test('disables application asset caching while development hot reload is active', () => {
-  assert.equal(weworkAssetCacheControl({}), 'public, max-age=31536000, immutable')
-  assert.equal(weworkAssetCacheControl({ WEWORK_APP_HOT_RELOAD: '1' }), 'no-store')
+  assert.equal(
+    weworkAssetCacheControl('assets/main-Cj_fgQl9.js', {}),
+    'public, max-age=31536000, immutable'
+  )
+  assert.equal(
+    weworkAssetCacheControl('assets/main-Cj_fgQl9.js', { WEWORK_APP_HOT_RELOAD: '1' }),
+    'no-store'
+  )
+})
+
+test('does not reuse stable plugin entry points across packaged builds', () => {
+  assert.equal(weworkAssetCacheControl('plugins/wework-ui-core-apps.js', {}), 'no-store')
 })
 
 test('reads the current application assets and build id for every page injection', async () => {

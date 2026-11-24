@@ -208,6 +208,43 @@ async fn passthrough_without_model_mapping_preserves_request_bytes() {
 }
 
 #[tokio::test]
+async fn responses_omits_mismatched_history_ids_and_keeps_call_pairing() {
+    let original = json!({"input": [
+        {"type": "custom_tool_call", "id": "fc_old", "call_id": "call_old",
+         "name": "apply_patch", "input": "patch"},
+        {"type": "custom_tool_call_output", "call_id": "call_old", "output": "done"},
+        {"type": "function_call", "id": "fc_valid", "call_id": "call_valid",
+         "name": "read", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call_valid", "output": "result"}
+    ]});
+    let mut expected = original["input"].clone();
+    expected[0].as_object_mut().unwrap().remove("id");
+
+    for mode in ["auto", "passthrough"] {
+        let upstream = super::super::upstream_from_model_config(&json!({
+            "base_url": "http://127.0.0.1:1",
+            "codex_request_mode": mode,
+            "tool_profile": "custom"
+        }))
+        .unwrap()
+        .unwrap();
+        let prepared = prepare(
+            &upstream,
+            &serde_json::to_vec(&original).unwrap(),
+            None,
+            &Default::default(),
+            false,
+            false,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+        let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(request["input"], expected, "mode {mode}");
+    }
+}
+
+#[tokio::test]
 async fn responses_adapts_agent_messages_in_auto_and_standard_modes() {
     let original = json!({"input": [
         {"type": "message", "role": "user",
