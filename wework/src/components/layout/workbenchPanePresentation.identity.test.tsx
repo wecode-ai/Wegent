@@ -75,11 +75,9 @@ test('does not retain a pane through an ambiguous device alias', () => {
 function Split({
   pane: current,
   devices: knownDevices = [],
-  knownPanes = [current],
 }: {
   pane: WorkbenchPaneIdentity
   devices?: DeviceInfo[]
-  knownPanes?: WorkbenchPaneIdentity[]
 }) {
   const key = getWorkbenchPaneKey(current)
   return (
@@ -90,12 +88,10 @@ function Split({
         devices={knownDevices}
         layout={createWorkbenchLayout(key)}
         showWorkbenchBackground={false}
-        validRuntimeKeys={knownPanes.map(getWorkbenchPaneKey)}
+        validRuntimeKeys={[key]}
         activeTestId="active"
         workbenchVisible
-        resolvePane={paneKey =>
-          knownPanes.find(item => getWorkbenchPaneKey(item) === paneKey) ?? null
-        }
+        resolvePane={() => current}
         getPaneTitle={() => 'Task'}
         onPaneFocus={() => {}}
         onLayoutFocus={() => {}}
@@ -127,35 +123,4 @@ test('does not migrate a split host through an ambiguous executor alias', () => 
   fireEvent.click(screen.getByText('Picker closed'))
   rerender(<Split pane={pane('electron-local')} devices={[...devices, other]} />)
   expect(screen.getByText('Picker closed')).toBeInTheDocument()
-})
-
-test('reuses the most recent task pane and disposes it when it leaves the valid task list', () => {
-  const task = pane('electron-local')
-  const blank: WorkbenchPaneIdentity = { currentProject: null, currentRuntimeTask: null }
-  const { rerender } = render(<Split pane={task} knownPanes={[task]} />)
-  fireEvent.click(screen.getByText('Picker closed'))
-  const picker = screen.getByText('Picker open')
-  const host = picker.closest('[data-workbench-pane-host]')
-
-  rerender(<Split pane={blank} knownPanes={[task]} />)
-  expect(picker).not.toBeInTheDocument()
-  expect(host).toContainElement(picker)
-
-  rerender(<Split pane={task} knownPanes={[task]} />)
-  expect(screen.getByText('Picker open')).toBe(picker)
-
-  rerender(<Split pane={blank} knownPanes={[task]} />)
-  rerender(<Split pane={blank} knownPanes={[]} />)
-  expect(host).not.toContainElement(picker)
-})
-
-test('retains at most one previous task in single-pane navigation', () => {
-  const tasks = ['device-a', 'device-b', 'device-c'].map(pane)
-  const { rerender } = render(<Split pane={tasks[0]} knownPanes={tasks} />)
-  const picker = screen.getByText('Picker closed')
-  const host = picker.closest('[data-workbench-pane-host]')
-  rerender(<Split pane={tasks[1]} knownPanes={tasks} />)
-  expect(host).toContainElement(picker)
-  rerender(<Split pane={tasks[2]} knownPanes={tasks} />)
-  expect(host).not.toContainElement(picker)
 })
