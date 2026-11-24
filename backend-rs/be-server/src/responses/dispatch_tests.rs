@@ -439,13 +439,13 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             &http,
             DispatchJob::Executor {
                 url,
-                body: ExecutorDispatchBody::Prepared(Ok(
+                body: ExecutorDispatchBody::Prepared(Box::new(Ok(
                     crate::executor_binding::DispatchRequest {
                         body: json!({}),
                         binding_token: "test-binding".into(),
                         service_token: "test-service-token".into(),
                     },
-                )),
+                ))),
                 start: Some(start_event(redis.clone(), &execution_request(), None)),
                 consumer: Box::new(consumer(mysql.clone(), redis.clone())),
                 task_id: TASK_ID,
