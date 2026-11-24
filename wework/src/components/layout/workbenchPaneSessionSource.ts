@@ -29,7 +29,11 @@ import {
   type PaneSessionFrame,
 } from './workbenchPaneSessionFrame'
 import { createPaneSessionView } from './workbenchPaneSessionView'
-import { deferHiddenConversationText } from './workbenchPaneConversationPresentation'
+import {
+  deferHiddenConversationText,
+  isAssistantTextAppend,
+  type PaneTranscript,
+} from './workbenchPaneConversationPresentation'
 import type {
   PaneCommandContext,
   PaneCommands,
@@ -50,7 +54,10 @@ import {
 } from './workbenchPaneSessionHelpers'
 
 /** One pane owns query cancellation, local drafts and the shared conversation subscriptions. */
-export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
+export function createWorkbenchPaneSessionSource(
+  initial: PaneSessionExternal,
+  separateTranscript = false
+) {
   const reconnect = createWorkbenchDeviceReconnect()
   let external = initial
   let accountId = initial.workbench.state.user?.id
@@ -58,6 +65,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   const lifecycleStore = initial.lifecycleStore
   const ownerKey = JSON.stringify([lifecycleStore.notificationScope, accountId ?? null])
   const listeners = new Set<() => void>()
+  const transcriptListeners = new Set<() => void>()
   let readerController = new AbortController()
   let goalReaderController = new AbortController()
   let goalReadScope: readonly unknown[] | undefined
@@ -99,21 +107,21 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     conversationFrame = undefined
     conversationTimer = undefined
   }
-  const flushConversation = () => {
+  const flushConversation = (streaming = false) => {
     cancelConversationPublication()
     pendingStreamPresentation = false
-    if (isActive()) publish()
+    if (isActive()) publish(streaming)
   }
   const presentStreamingProgress = () => {
     pendingStreamPresentation = true
-    if (windowActivity === 'foreground') flushConversation()
+    if (windowActivity === 'foreground') flushConversation(true)
     else if (windowActivity === 'background' && conversationTimer === undefined)
-      conversationTimer = setTimeout(flushConversation, 500)
+      conversationTimer = setTimeout(() => flushConversation(true), 500)
   }
   const publishConversation = () => {
     if (conversationFrame !== undefined || conversationTimer !== undefined) return
     if (typeof requestAnimationFrame === 'function')
-      conversationFrame = requestAnimationFrame(flushConversation)
+      conversationFrame = requestAnimationFrame(() => flushConversation())
     else conversationTimer = setTimeout(flushConversation, 16)
   }
   let publishing = false
@@ -165,9 +173,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     get mounted() {
       return isActive()
     },
-    get inputRevision() {
-      return state.inputRevision
-    },
+    inputRevision: 0,
     get activeInputScope() {
       return currentInputScope()
     },
@@ -237,6 +243,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   }
 
   const commands: PaneCommands = {
+    getInput: () => external.workbench.projectChat.draftStore.read(currentInputScope()).value,
     setQueuedMessages: (...args: Parameters<PaneCommands['setQueuedMessages']>) => {
       return bind().commands.setQueuedMessages(...args)
     },
@@ -464,9 +471,19 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     search,
     attachmentCommands
   )
+  let transcriptSnapshot = { messages: snapshot.messages, turns: snapshot.turns }
+  const transcript: PaneTranscript = {
+    getSnapshot: () => transcriptSnapshot,
+    subscribe(listener) {
+      transcriptListeners.add(listener)
+      return () => {
+        transcriptListeners.delete(listener)
+      }
+    },
+  }
   const differs = (previous: readonly unknown[] | undefined, next: readonly unknown[]) =>
     !previous || next.some((value, index) => !Object.is(value, previous[index]))
-  function publish() {
+  function publish(streaming = false) {
     if (publishing) {
       publishAgain = true
       return
@@ -490,13 +507,27 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
             )
           ) {
             state = { ...state, pendingGoalState: null }
+            streaming = false
             publishAgain = true
             continue
           }
         }
-        snapshot = createPaneSessionView(current, commands, search, attachmentCommands)
+        const { messages, turns } = current
+        const transcriptChanged =
+          messages !== transcriptSnapshot.messages || turns !== transcriptSnapshot.turns
+        const nextTranscript = transcriptChanged ? { messages, turns } : transcriptSnapshot
+        const transcriptOnly =
+          separateTranscript &&
+          streaming &&
+          transcriptChanged &&
+          isAssistantTextAppend(transcriptSnapshot, nextTranscript)
+        transcriptSnapshot = nextTranscript
+        if (!transcriptOnly)
+          snapshot = createPaneSessionView(current, commands, search, attachmentCommands)
         diagnostics.observe(current)
-        for (const listener of listeners) listener()
+        if (!transcriptOnly) for (const listener of listeners) listener()
+        if (transcriptChanged) for (const listener of transcriptListeners) listener()
+        streaming = false
       } while (publishAgain)
     } finally {
       publishing = false
@@ -570,7 +601,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       }
       reconcileGoal(current)
       const nextReadScope = [current.runtimeTaskLoadTarget?.key, state.transcriptReloadVersion]
-      if (differs(readScope, nextReadScope)) {
+      const readScopeChanged = differs(readScope, nextReadScope)
+      if (readScopeChanged) {
         const previousTarget = readScope?.[0]
         readScope = nextReadScope
         readerController.abort()
@@ -578,8 +610,10 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
         queryRevision++
         if (previousTarget !== current.runtimeTaskLoadTarget?.key)
           state = { ...state, answeredRequestUserInputIds: new Set() }
-        unsubscribeSearch?.()
-        unsubscribeSearch = search.subscribe(searchOptions(), publish)
+      }
+      unsubscribeSearch ??= search.subscribe(publish)
+      search.updateOptions(searchOptions())
+      if (readScopeChanged) {
         const targetContext = bind()
         if (targetContext.frame.runtimeTaskLoadTarget) {
           hydrateRuntimePaneTranscript(targetContext, readerController.signal)
@@ -592,9 +626,6 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
             transcriptLoadingMoreBeforeKey: null,
           }
         }
-      } else {
-        unsubscribeSearch?.()
-        unsubscribeSearch = search.subscribe(searchOptions(), publish)
       }
     } finally {
       reconciling = false
@@ -610,13 +641,13 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       )
     },
     getSnapshot: () => snapshot,
+    transcript,
     subscribe(next: PaneSessionExternal, listener: () => void) {
       const previousInputScope = currentInputScope()
       external = next
       accountId ??= next.workbench.state.user?.id
       listeners.add(listener)
-      if (previousInputScope !== currentInputScope())
-        state = { ...state, inputRevision: state.inputRevision + 1 }
+      if (previousInputScope !== currentInputScope()) live.inputRevision += 1
       const chat = next.workbench.projectChat
       const inputScope = currentInputScope()
       const signature = [
@@ -626,8 +657,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
         next.currentRuntimeTask?.workspacePath,
         next.workbench.state.runtimeWork,
         inputScope,
-        chat.inputByScope[inputScope],
-        chat.getInputRevisionForScope(inputScope),
+        chat.draftStore,
+        chat.setInputForScope,
         chat.composerErrorByScope?.[inputScope],
         chat.composerError,
         chat.goalDraftActiveByScope?.[inputScope],

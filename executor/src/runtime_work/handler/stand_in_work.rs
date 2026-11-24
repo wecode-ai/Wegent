@@ -845,6 +845,9 @@ mod tests {
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         let work = store
             .ingest_stand_in_message(
                 7,

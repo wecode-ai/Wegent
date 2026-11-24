@@ -1,0 +1,27 @@
+.control {
+  --range-thumb-size: 1.75rem;
+  --range-thumb-radius: calc(var(--range-thumb-size) / 2);
+}
+
+.rail {
+  padding-inline: var(--range-thumb-radius);
+}
+
+.thumb {
+  inline-size: var(--range-thumb-size);
+  block-size: var(--range-thumb-size);
+}
+
+.indicator {
+  box-sizing: content-box;
+  margin-inline-start: calc(-1 * var(--range-thumb-radius));
+  padding-inline-start: var(--range-thumb-radius);
+}
+
+.indicator[data-at-minimum] {
+  visibility: hidden;
+}
+
+.indicator[data-at-maximum] {
+  padding-inline-end: var(--range-thumb-radius);
+}

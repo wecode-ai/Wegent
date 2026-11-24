@@ -143,7 +143,7 @@ pub(super) fn prepare_request_with_model_hint(
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
-    normalize_responses_request_input(&mut responses_body, api_format);
+    normalize_responses_request_input(&mut responses_body, api_format == "openai-responses");
     group_responses_tool_history(&mut responses_body);
     image_budget::limit_request_images(&mut responses_body);
 
@@ -271,9 +271,7 @@ pub(super) fn apply_max_output_tokens(body: &mut Value, max_output_tokens: u64) 
     );
 }
 
-fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
-    let adapt_detached_context =
-        matches!(api_format, "anthropic-messages" | "openai-chat-completions");
+fn normalize_responses_request_input(body: &mut Value, native_responses: bool) {
     let Some(input) = body.get_mut("input") else {
         return;
     };
@@ -288,10 +286,7 @@ fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
     };
 
     for item in items {
-        if let Some(message) = adapt_detached_context
-            .then(|| chat::detached_context_message(item))
-            .flatten()
-        {
+        if let Some(message) = chat::detached_context_message(item, native_responses) {
             *item = message;
             continue;
         }

@@ -1,3 +1,4 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import { createStandInImConnectionsStory } from '../modules/stand-in-im-connections.mjs'
 import { verifyIssueAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import {
@@ -111,6 +112,10 @@ export function createDesktopScenario({
       await imStory.verify(control)
       assert.ok(userId, 'The scenario must use its authenticated backend identity')
       await ensureExperimentalFeaturesEnabled(control)
+      await seedStandInRoleFixture(
+        (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        userId
+      )
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)

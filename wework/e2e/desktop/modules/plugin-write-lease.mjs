@@ -110,30 +110,36 @@ export async function observePausedPluginWrites(cloud, installedId, userId = 1) 
 
 export async function holdInstalledPluginRow(cloud, installedId, userId = 1) {
   const fixture = await holdPluginCoordinationFault(cloud, 'plugin-row', userId, installedId)
-  const readOwner = () =>
-    cloud.queryDatabase(
-      `SELECT CAST(ENGINE_TRANSACTION_ID AS CHAR) AS transaction_id,
-     CAST(THREAD_ID AS CHAR) AS thread_id FROM performance_schema.data_locks
-     WHERE OBJECT_SCHEMA=%s AND OBJECT_NAME='kinds' AND INDEX_NAME='PRIMARY'
-     AND LOCK_TYPE='RECORD' AND LOCK_STATUS='GRANTED' AND LEFT(LOCK_MODE, 1)='X'
-     AND LOCK_DATA=%s ORDER BY ENGINE_TRANSACTION_ID, THREAD_ID`,
-      [cloud.databaseName, String(installedId)]
-    )
-  let owner
   try {
-    owner = await readOwner()
+    const { connectionId } = await fixture.waitFor('ready')
+    assert.ok(Number.isSafeInteger(connectionId) && connectionId > 0)
+    // The fixture locks one primary-key record in this session. MySQL can
+    // omit LOCK_DATA when the record's page is evicted from the buffer pool.
+    const readOwner = () =>
+      cloud.queryDatabase(
+        `SELECT CAST(locks.ENGINE_TRANSACTION_ID AS CHAR) AS transaction_id,
+         CAST(locks.THREAD_ID AS CHAR) AS thread_id
+         FROM performance_schema.data_locks AS locks
+         JOIN performance_schema.threads AS threads ON threads.THREAD_ID=locks.THREAD_ID
+         WHERE threads.PROCESSLIST_ID=%s AND locks.OBJECT_SCHEMA=%s
+         AND locks.OBJECT_NAME='kinds' AND locks.INDEX_NAME='PRIMARY'
+         AND locks.LOCK_TYPE='RECORD' AND locks.LOCK_STATUS='GRANTED'
+         AND LEFT(locks.LOCK_MODE, 1)='X'`,
+        [connectionId, cloud.databaseName]
+      )
+    const owner = await readOwner()
     assert.equal(owner.length, 1, 'The fixture did not acquire its target record lock')
+    return {
+      ...fixture,
+      async assertHeld() {
+        assert.ok(!fixture.events.includes('released'), 'The target row fixture was released')
+        assert.deepEqual(await readOwner(), owner, 'The target record lock owner changed')
+        return { held: true, blocked: fixture.events.includes('blocked') }
+      },
+    }
   } catch (error) {
     await fixture.release()
     throw error
-  }
-  return {
-    ...fixture,
-    async assertHeld() {
-      assert.ok(!fixture.events.includes('released'), 'The target row fixture was released')
-      assert.deepEqual(await readOwner(), owner, 'The target record lock owner changed')
-      return { held: true, blocked: fixture.events.includes('blocked') }
-    },
   }
 }
 

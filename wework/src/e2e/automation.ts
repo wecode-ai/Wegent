@@ -16,6 +16,7 @@ import { createElementFrameSampler } from './element-frame-metrics'
 import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
   testLocalModelConnection,
@@ -2373,6 +2374,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value || undefined,
         })
       )
+    case 'triggerBlobDownload': {
+      const input = JSON.parse(command.value ?? '{}') as { content?: string; filename?: string }
+      if (!input.filename?.trim()) throw new Error('triggerBlobDownload requires filename')
+      await saveBlobToDownloads(
+        new Blob([input.content ?? ''], { type: 'application/octet-stream' }),
+        input.filename
+      )
+      return ''
+    }
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
@@ -3845,6 +3855,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
+      if (command.value === 'pane-activity') {
+        const { pane } = getWorkbenchDebugSnapshot()
+        return JSON.stringify({
+          taskId: pane?.currentRuntimeTask?.taskId,
+          isBusy: pane?.status.isBusy,
+        })
+      }
       if (command.value === 'state-only') return JSON.stringify(getWorkbenchDebugSnapshot())
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),

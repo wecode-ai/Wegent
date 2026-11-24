@@ -324,13 +324,8 @@ export function OwnedWorkbenchProvider({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
   })
-  const {
-    inputs: draftInputByScope,
-    setInput: writeDraftInputForScope,
-    getRevision: getInputRevisionForScope,
-    goalDraftActiveByScope,
-    setGoalDraftActiveForScope,
-  } = useWorkspaceTabDraftInput(workspaceTabId)
+  const { draftStore, goalDraftActiveByScope, setGoalDraftActiveForScope } =
+    useWorkspaceTabDraftInput(workspaceTabId)
   const [personalHomeTaskDraftStore] = useState(createPersonalHomeTaskDraftStore)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
@@ -340,7 +335,6 @@ export function OwnedWorkbenchProvider({
   const [trialPluginAppByScope, setTrialPluginAppByScope] = useState<
     Record<string, LocalDeviceApp>
   >({})
-  const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
   const composerError = composerErrorByScope[projectChatScopeKey] ?? null
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
@@ -352,7 +346,13 @@ export function OwnedWorkbenchProvider({
     setTrialPluginAppByScope,
   })
   const setDraftInputForScope = useSetDraftInputForScope({
-    writeDraftInputForScope,
+    writeDraftInputForScope: draftStore.write,
+    setTrialTemplatesByScope,
+    setTrialPluginNameByScope,
+    setTrialPluginAppByScope,
+  })
+  const replaceInputForScope = useSetDraftInputForScope({
+    writeDraftInputForScope: draftStore.replace,
     setTrialTemplatesByScope,
     setTrialPluginNameByScope,
     setTrialPluginAppByScope,
@@ -593,10 +593,17 @@ export function OwnedWorkbenchProvider({
             scopeKey: projectChatScopeKey,
             standaloneChatKey: state.standaloneChatKey,
             availableModelNames: modelSelection.models.map(model => model.name),
-            currentInputLength: draftInput.length,
-            scopedInputLengths: Object.fromEntries(
-              Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
-            ),
+            get currentInputLength() {
+              return draftStore.read(projectChatScopeKey).value.length
+            },
+            get scopedInputLengths() {
+              return Object.fromEntries(
+                Object.entries(draftStore.exportInputs()).map(([scope, value]) => [
+                  scope,
+                  value.length,
+                ])
+              )
+            },
             attachmentCount: attachmentSelection.attachments.length,
             contextUsagePercent: currentContextUsage
               ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
@@ -691,7 +698,7 @@ export function OwnedWorkbenchProvider({
   const startNewProjectChat = useStartNewProjectChat({
     state,
     attachmentSelection,
-    draftInputByScope,
+    draftStore,
     projectSelectionStartedRef,
     ownershipKey,
     dispatch,
@@ -807,11 +814,10 @@ export function OwnedWorkbenchProvider({
   )
   const projectChatValue = useWorkbenchProjectChatValue({
     scopeKey: projectChatScopeKey,
-    inputByScope: draftInputByScope,
+    draftStore,
     goalDraftActiveByScope,
     personalHomeTaskDraftStore,
     setGoalDraftActiveForScope,
-    getInputRevisionForScope,
     models: conversationModels,
     skills: skillSelection.skills,
     selectedModel: modelSelection.selectedModel,
@@ -823,7 +829,6 @@ export function OwnedWorkbenchProvider({
     isModelCatalogReady: modelSelection.isCatalogReady,
     isModelSelectionReady: modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
     onModelSelectorOpenChange: handleModelSelectorOpenChange,
-    input: draftInput,
     composerError,
     composerErrorByScope,
     trialTemplates,
@@ -852,6 +857,7 @@ export function OwnedWorkbenchProvider({
     onBlockedModelSelect: handleBlockedModelSelect,
     setInput: setDraftInput,
     setInputForScope: setDraftInputForScope,
+    replaceInputForScope,
     setComposerError,
     setComposerErrorForScope,
     setSelectedSkills: skillSelection.setSelectedSkills,
@@ -861,8 +867,13 @@ export function OwnedWorkbenchProvider({
     handleFileSelectForScope: attachmentSelection.handleFileSelectForScope,
     addExistingAttachment: attachmentSelection.addExistingAttachment,
     addExistingAttachmentForScope: attachmentSelection.addExistingAttachmentForScope,
+    replaceImageAttachmentForScope: attachmentSelection.replaceImageAttachmentForScope,
+    getAttachment: attachmentSelection.getAttachment,
+    getAttachmentForScope: attachmentSelection.getAttachmentForScope,
     removeAttachment: attachmentSelection.removeAttachment,
     removeAttachmentForScope: attachmentSelection.removeAttachmentForScope,
+    releaseAttachment: attachmentSelection.releaseAttachment,
+    releaseAttachmentForScope: attachmentSelection.releaseAttachmentForScope,
     dismissAttachmentError: attachmentSelection.dismissAttachmentError,
     dismissAttachmentErrorForScope: attachmentSelection.dismissAttachmentErrorForScope,
     resetAttachments: attachmentSelection.resetAttachments,
@@ -928,7 +939,7 @@ export function OwnedWorkbenchProvider({
       updateLocalRuntimeTaskSnapshot,
       refreshWorkLists,
       refreshDevices,
-      draftInputByScope,
+      draftStore,
       projectChatScopeKey,
     }),
     stableConsumeQueuedPluginTrial: consumeQueuedPluginTrial,

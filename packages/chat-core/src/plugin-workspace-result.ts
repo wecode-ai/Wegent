@@ -51,6 +51,7 @@ function pluginWorkspaceResult(value: unknown): PluginWorkspaceResult | null {
 export function parsePluginWorkspaceResults(
   content: string,
 ): PluginWorkspaceResult[] {
+  if (!content.includes(PLUGIN_WORKSPACE_RESULT_MARKER)) return [];
   const results: PluginWorkspaceResult[] = [];
   for (const line of content.split(/\r?\n/)) {
     const markerIndex = line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER);
@@ -69,6 +70,8 @@ export function parsePluginWorkspaceResults(
 }
 
 export function stripPluginWorkspaceResultMarkers(content: string): string {
+  if (!content.includes(PLUGIN_WORKSPACE_RESULT_MARKER))
+    return content.replace(/\r\n/g, "\n").trimEnd();
   return projectPluginWorkspaceResultText(content).content;
 }
 

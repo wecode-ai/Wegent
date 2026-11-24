@@ -787,8 +787,9 @@ def test_background_coordination_failure_preserves_account_and_recovery(
 
 
 @pytest.mark.parametrize("superseded_attempts", [1, 3])
+@pytest.mark.parametrize("entry", ["marketplace", "sync-device"])
 def test_reinstall_waits_for_an_ack_that_survives_a_newer_cleanup_intent(
-    plugin_requests, monkeypatch, superseded_attempts
+    plugin_requests, monkeypatch, superseded_attempts, entry
 ):
     """A confirmed but fenced RPC must not return an uninstalling device row."""
     from copy import deepcopy
@@ -808,7 +809,7 @@ def test_reinstall_waits_for_an_ack_that_survives_a_newer_cleanup_intent(
             )
             .one()
         )
-        row.state = "uninstalling"
+        row.state = "uninstalling" if entry == "marketplace" else "pending"
     generations = []
     service = endpoints.device_capability_sync_service
     monkeypatch.setattr(
@@ -873,17 +874,41 @@ def test_reinstall_waits_for_an_ack_that_survives_a_newer_cleanup_intent(
         service, "sync_installed_plugin_to_device_result", sync_with_concurrent_cleanup
     )
 
-    response = context.write("marketplace")
+    response = (
+        context.write("marketplace")
+        if entry == "marketplace"
+        else context.client.post(
+            f"/plugins/installed/{account.id}/sync-device",
+            params={"device_id": DEVICE_ID},
+        )
+    )
 
     assert response.status_code == 200, response.text
     assert response.json()["sync"]["success"] is (superseded_attempts == 1)
-    device = next(
-        row
-        for row in response.json()["plugin"]["status"]["devices"]
-        if row["deviceId"] == DEVICE_ID
-    )
-    assert device["state"] == ("installed" if superseded_attempts == 1 else "pending")
-    assert device["actualReleaseId"] == context.release_id
+    if entry == "marketplace":
+        device = next(
+            row
+            for row in response.json()["plugin"]["status"]["devices"]
+            if row["deviceId"] == DEVICE_ID
+        )
+        assert device["state"] == (
+            "installed" if superseded_attempts == 1 else "pending"
+        )
+        assert device["actualReleaseId"] == context.release_id
+    with context.sessions() as db:
+        persisted = (
+            db.query(PluginDeviceInstallation)
+            .filter_by(
+                user_id=context.user_id,
+                installed_kind_id=account.id,
+                device_id=DEVICE_ID,
+            )
+            .one()
+        )
+        assert persisted.state == (
+            "installed" if superseded_attempts == 1 else "pending"
+        )
+        assert persisted.actual_release_id == context.release_id
     assert generations == ([7, 9] if superseded_attempts == 1 else [7, 9, 11])
     if superseded_attempts == 3:
         assert response.json()["sync"]["errors"] == [

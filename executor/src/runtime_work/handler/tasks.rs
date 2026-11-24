@@ -1578,11 +1578,10 @@ impl RuntimeWorkRpcHandler {
                     .as_ref()
                     .and_then(runtime_session_id_from_link)
             });
-        if thread_id.is_none()
-            && !(start_fresh_native_session && existing_link.is_some())
-            && !retrying_preparation
-            && !awaiting_identity_start
-        {
+        let can_start_without_thread = retrying_preparation
+            || awaiting_identity_start
+            || (start_fresh_native_session && existing_link.is_some());
+        if thread_id.is_none() && !can_start_without_thread {
             if let Some(result) = self
                 .recover_failed_session_start(existing_link.as_ref(), payload.clone(), activity)
                 .await?
@@ -3141,10 +3140,10 @@ impl RuntimeWorkRpcHandler {
             }
             // Keep the current identity thread until the new thread is bound
             // so the conversation can archive its native history.
-            if !thread_id.is_empty()
-                || !(request.new_session
-                    && super::super::conversation_sessions::is_identity_conversation(link))
-            {
+            let preserve_identity_thread = thread_id.is_empty()
+                && request.new_session
+                && super::super::conversation_sessions::is_identity_conversation(link);
+            if !preserve_identity_thread {
                 link.thread_id = (!thread_id.is_empty()).then(|| thread_id.to_owned());
             }
             clear_runtime_handle_messages(&mut link.runtime_handle);

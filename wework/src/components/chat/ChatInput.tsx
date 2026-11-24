@@ -1,5 +1,6 @@
 import type { CloudProject } from '@/api/deliveries'
 import { Button } from '@/components/ui/button'
+import { X } from 'lucide-react'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
 import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
@@ -151,8 +152,6 @@ export interface ProjectWorkControls {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-  onGenerateBranchName?: (sourceText: string) => Promise<string>
-  branchNameSource?: string
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
   // When false, the project trigger renders a static folder icon instead of the
@@ -182,6 +181,7 @@ export interface ChatInputProps {
   requireText?: boolean
   allowEmptySubmit?: boolean
   error?: string | null
+  onDismissError?: () => void
   disabledReason?: string
   placeholder?: string
   inputTestId?: string
@@ -326,6 +326,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     requireText = false,
     allowEmptySubmit = false,
     error,
+    onDismissError,
     disabledReason,
     placeholder,
     inputTestId,
@@ -648,7 +649,27 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     followUpBehavior,
     isStreaming,
   }
-  const errorBanner = <ComposerErrorBanner error={error} />
+  const errorBanner = (
+    <ComposerErrorBanner
+      error={error}
+      action={
+        onDismissError && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 text-current md:h-7 md:w-7"
+            aria-label={t('workbench.dismiss_composer_error')}
+            title={t('workbench.dismiss_composer_error')}
+            data-testid="dismiss-chat-input-error"
+            onClick={onDismissError}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        )
+      }
+    />
+  )
   const quotaWaitStatus = (
     <QuotaWaitStatus
       onCancel={onPause}

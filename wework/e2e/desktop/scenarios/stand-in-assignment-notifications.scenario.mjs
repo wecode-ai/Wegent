@@ -212,7 +212,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         { userId: user.id },
         uiTimeoutMs
       )
-      const template = personal.roles[0]
+      const template = personal.roles.find(role => role.id === settings.id)
+      assert.ok(template?.collaboration.enabled, 'The project role must retain its intake scope')
       const roleIds = ['fanout-review', 'fanout-docs']
       personal = await requestExecutor(
         control,

@@ -1,13 +1,16 @@
 """Real HTTP, JWT, MySQL and Redis checks for existing installation identities."""
 
 import logging
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from copy import deepcopy
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 
 from app.api.dependencies import get_db
 from app.api.endpoints.installed_plugins import router
@@ -17,17 +20,28 @@ from app.models.plugin_marketplace import (
     Plugin,
     PluginDeviceInstallation,
     PluginRelease,
+    PluginSubmission,
 )
+from app.models.plugin_publication import PluginPublicationRequest
+from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.services import (
     plugin_device_sync,
+)
+from app.services import plugin_marketplace_service as marketplace
+from app.services import (
     plugin_write_coordination,
     plugin_write_operations,
 )
 from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import installed_plugin_service
-from app.services.plugin_marketplace_identity import ENTERPRISE_CATALOG_NAMESPACE
+from app.services.plugin_local_sync import mutate_local_plugin
+from app.services.plugin_marketplace_identity import (
+    ENTERPRISE_CATALOG_NAMESPACE,
+    personal_catalog_namespace,
+)
 from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.plugin_write_coordination import PluginWriteError
 
 
 def _seed_catalog(context, active: bool, warm_state: bool):
@@ -180,6 +194,160 @@ def test_http_reinstall_uses_existing_identity_with_real_mysql_and_redis(
             )
     finally:
         held.release()
+        with context.sessions.begin() as db:
+            db.query(PluginRelease).filter_by(plugin_id=plugin_id).delete()
+            db.query(Plugin).filter_by(id=plugin_id).delete()
+
+
+@pytest.mark.parametrize("entry", ["account", "local"])
+@pytest.mark.parametrize("repair_race", [False, True])
+def test_private_restore_and_delete_use_one_lock_order(
+    context, monkeypatch, entry, repair_race
+):
+    """A restore waiting at the catalog must not hold deletion's installation lease."""
+    engine = context.sessions.kw["bind"]
+    for model in (PluginSubmission, PluginPublicationRequest, ResourceMember):
+        model.__table__.create(engine, checkfirst=True)
+    plugin_id, _, _, _ = _seed_catalog(context, active=True, warm_state=False)
+    service = plugin_marketplace_service
+    with context.sessions.begin() as db:
+        plugin = db.get(Plugin, plugin_id)
+        plugin.visibility = "personal"
+        plugin.catalog_namespace = personal_catalog_namespace(context.user_id)
+        installed = db.get(Kind, context.plugin_id)
+        installed.name = service._kind_name(plugin.catalog_namespace, plugin.slug)
+        installed.json = service._installed_payload(
+            plugin, db.get(PluginRelease, plugin.latest_release_id)
+        )
+        release_id = plugin.latest_release_id
+        if repair_race:
+            payload = deepcopy(installed.json)
+            payload["spec"]["releaseId"] = release_id + 1_000_000_000
+            payload["spec"]["source"]["providerKey"] = "legacy-marketplace"
+            installed.json = payload
+    with context.sessions() as db:
+        impact = service.get_personal_plugin_delete_impact(
+            db, plugin_id=plugin_id, user_id=context.user_id
+        )
+    monkeypatch.setenv("PLUGIN_LOCAL_SYNC_ENABLED", "true")
+    restoring = threading.local()
+    catalog_requested, deleted = threading.Event(), threading.Event()
+    operation_id = uuid.uuid4().hex
+    acquire_leases = marketplace.acquire_plugin_write_locks
+    repaired = False
+
+    def finish_another_repair_before_leasing(db, installations):
+        nonlocal repaired
+        targets = list(installations)
+        if (
+            repair_race
+            and targets
+            and getattr(restoring, "active", False)
+            and not repaired
+            and not catalog_requested.is_set()
+        ):
+            repaired = True
+            with context.sessions() as other:
+                assert (
+                    service.reconcile_stale_installed_catalog_refs(
+                        other, user_id=context.user_id, plugin_id=plugin_id
+                    )
+                    == 1
+                )
+        return acquire_leases(db, targets)
+
+    monkeypatch.setattr(
+        marketplace, "acquire_plugin_write_locks", finish_another_repair_before_leasing
+    )
+
+    def hold_restore_before_catalog(_conn, _cursor, statement, _params, _ctx, _many):
+        if (
+            getattr(restoring, "active", False)
+            and not catalog_requested.is_set()
+            and statement.startswith("SELECT plugins.")
+            and "FOR UPDATE" in statement
+        ):
+            catalog_requested.set()
+            assert deleted.wait(
+                10
+            ), "Deletion did not settle while restore awaited its row"
+
+    def restore():
+        restoring.active = True
+        with context.sessions() as db:
+            if entry == "local":
+                result = mutate_local_plugin(
+                    db,
+                    user_id=context.user_id,
+                    instance_id="private-restore-race",
+                    operation_id=operation_id,
+                    intent_order=1,
+                    action="install",
+                    target_id=plugin_id,
+                    payload={"restoreDeleted": True},
+                )
+                return int(result["metadata"]["labels"]["id"])
+            result = service.install(
+                db,
+                user_id=context.user_id,
+                plugin_id=plugin_id,
+                restore_deleted=True,
+            )
+            return int(result.metadata["labels"]["id"])
+
+    def delete():
+        try:
+            with context.sessions() as db:
+                service.delete_owned_personal_plugin(
+                    db,
+                    plugin_id=plugin_id,
+                    user_id=context.user_id,
+                    impact_revision=impact.impactRevision,
+                    revoke_and_delete=False,
+                )
+            return "ok"
+        except PluginWriteError as error:
+            return error.code
+        finally:
+            deleted.set()
+
+    event.listen(engine, "before_cursor_execute", hold_restore_before_catalog)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending_restore = pool.submit(restore)
+            try:
+                assert catalog_requested.wait(
+                    5
+                ), "Restore did not reach its catalog lock"
+                pending_delete = pool.submit(delete)
+                delete_result = pending_delete.result(timeout=10)
+                assert delete_result == "ok", delete_result
+                assert pending_restore.result(timeout=10) == context.plugin_id
+            finally:
+                deleted.set()
+        with context.sessions() as db:
+            assert db.get(Plugin, plugin_id).status == "published"
+            installed = db.get(Kind, context.plugin_id)
+            assert installed.is_active
+            assert installed.json["spec"]["releaseId"] == release_id
+        if entry == "local":
+            with context.sessions.begin() as db:
+                db.get(Plugin, plugin_id).status = "unpublished"
+            with context.sessions() as db:
+                replay = mutate_local_plugin(
+                    db,
+                    user_id=context.user_id,
+                    instance_id="private-restore-race",
+                    operation_id=operation_id,
+                    intent_order=1,
+                    action="install",
+                    target_id=plugin_id,
+                    payload={"restoreDeleted": True},
+                )
+                assert int(replay["metadata"]["labels"]["id"]) == context.plugin_id
+                assert db.get(Plugin, plugin_id).status == "unpublished"
+    finally:
+        event.remove(engine, "before_cursor_execute", hold_restore_before_catalog)
         with context.sessions.begin() as db:
             db.query(PluginRelease).filter_by(plugin_id=plugin_id).delete()
             db.query(Plugin).filter_by(id=plugin_id).delete()

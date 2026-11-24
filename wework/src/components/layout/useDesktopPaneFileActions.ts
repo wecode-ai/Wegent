@@ -13,6 +13,7 @@ import {
   type GitPatchAction,
 } from '@/api/environment'
 import type {
+  WorkspaceAttachmentPreviewSource,
   WorkspaceFileOpenOptions,
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
@@ -42,6 +43,11 @@ import type {
 import type { DesktopPaneWorkspaceSession } from './desktopPaneWorkspaceSession'
 import type { WorkbenchPaneContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { Dispatch, SetStateAction } from 'react'
+
+function rejectUnavailableDiff(message: string): Promise<never> {
+  return Promise.reject(new Error(message))
+}
+
 interface Input {
   captureScope: DesktopPaneWorkspaceSession['captureScope']
   loadTurnFileChangesDiff: WorkbenchPaneContextValue['loadTurnFileChangesDiff']
@@ -182,25 +188,18 @@ export function useDesktopPaneFileActions({
   )
   const openEnvironmentChangesReview = useCallback(
     async (mode: EnvironmentDiffMode = 'branch') => {
-      const scope = captureScope()
-
-      await openReviewFromDiffLoader(
-        async () => {
-          if (!loadEnvironmentDiff || !workspaceTarget) {
-            throw new Error(t('workbench.environment_review_unavailable'))
-          }
-          return loadEnvironmentDiff(workspaceTarget, mode)
-        },
-        {
-          reviewTitle: tChat(`file_changes.${mode}_label`),
-          reviewMode: mode,
-          branchName: environmentInfo.branchName,
-        }
-      )
-      if (!scope.isCurrent()) return
+      // The review session retains its reload function across pane renders.
+      const loadDiff =
+        loadEnvironmentDiff && workspaceTarget
+          ? loadEnvironmentDiff.bind(null, workspaceTarget, mode)
+          : rejectUnavailableDiff.bind(null, t('workbench.environment_review_unavailable'))
+      await openReviewFromDiffLoader(loadDiff, {
+        reviewTitle: tChat(`file_changes.${mode}_label`),
+        reviewMode: mode,
+        branchName: environmentInfo.branchName,
+      })
     },
     [
-      captureScope,
       environmentInfo.branchName,
       loadEnvironmentDiff,
       openReviewFromDiffLoader,
@@ -281,6 +280,19 @@ export function useDesktopPaneFileActions({
     },
     [fileWorkspaceTarget, setSelectedWorkspaceFile]
   )
+  const openAttachment = useCallback(
+    (attachment: WorkspaceAttachmentPreviewSource) => {
+      setOpenFileRequest(current => ({
+        id: (current?.id ?? 0) + 1,
+        path: attachment.filename,
+        target: current?.target,
+        attachment,
+      }))
+      openRightPanelTab('files')
+    },
+    [openRightPanelTab, setOpenFileRequest]
+  )
+
   const openWorkspaceFileFromMessage = useCallback(
     async (path: string, options?: WorkspaceFileOpenOptions) => {
       const scope = captureScope()
@@ -596,6 +608,7 @@ export function useDesktopPaneFileActions({
     selectFileWorkspaceTarget,
     openFileTab,
     handleFileWorkspaceSelectionChange,
+    openAttachment,
     openWorkspaceFileFromMessage,
     openLocalSkillFile,
     applyReviewPatch,

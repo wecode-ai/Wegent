@@ -7,8 +7,14 @@ export function ComposerErrorBanner({ error, action }: { error?: ReactNode; acti
       data-testid="chat-input-error"
       role="alert"
     >
-      {error}
-      {action}
+      {action ? (
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1 break-words">{error}</div>
+          {action}
+        </div>
+      ) : (
+        error
+      )}
     </div>
   ) : null
 }

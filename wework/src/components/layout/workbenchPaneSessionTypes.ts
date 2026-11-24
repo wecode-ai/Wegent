@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   ModelSelectionConfig,
   RequestUserInputResponse,
   RuntimeGoal,
@@ -13,6 +14,7 @@ import type {
 export interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
   debugSnapshotEnabled?: boolean
+  separateTranscript?: boolean
 }
 
 export interface SendRequestUserInputResponseOptions {
@@ -22,6 +24,9 @@ export interface SendRequestUserInputResponseOptions {
 }
 
 export interface RuntimePaneSendOptions {
+  standaloneAttachments?: Attachment[]
+  // Identifies the draft attachment whose full UI group belongs to a standalone submission.
+  draftAttachmentSourceId?: number
   // Capture before asynchronous submission preparation to protect unpublished edits.
   draftEditVersion?: number
   guideWhenBusy?: boolean
