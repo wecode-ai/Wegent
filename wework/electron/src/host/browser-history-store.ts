@@ -93,9 +93,16 @@ function hasUrlCredential(root: URL): boolean {
 function hasTitleCredential(value: string): boolean {
   const reference = historyUrlReference(value)
   const url = URL.parse(reference)
-  if (url && HISTORY_PROTOCOLS.includes(url.protocol)) return hasUrlCredential(url)
-  const relativeUrl = URL.parse(reference, 'https://history.invalid')
-  const decoded = decodeHistoryEscapes(value)
+  let text = value
+  if (url && HISTORY_PROTOCOLS.includes(url.protocol)) {
+    if (hasUrlCredential(url)) return true
+    // URL parsing can fold a title's appended text into the path or query.
+    const suffix = value.search(/\s/)
+    if (suffix === -1) return false
+    text = value.slice(suffix)
+  }
+  const relativeUrl = URL.parse(historyUrlReference(text), 'https://history.invalid')
+  const decoded = decodeHistoryEscapes(text)
   return (
     CREDENTIAL_IN_TITLE.test(decoded) ||
     CAS_TICKET_IN_TITLE.test(decoded) ||

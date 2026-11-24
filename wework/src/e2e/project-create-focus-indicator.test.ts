@@ -152,3 +152,20 @@ test('counts a focus border once, including a single changed side, and leaves re
   }
   expect(focusLayers(covered, rest)).toBe(1)
 })
+
+test('compares translucent borders against their own backgrounds', () => {
+  const edges = (color: string) => Array(4).fill({ width: 1, color })
+  const rest = {
+    ...paint(),
+    backgrounds: ['rgb(254, 254, 254)', white],
+    borders: edges('rgba(0, 0, 0, 0.5)'),
+  }
+  const focused = {
+    ...paint('none', blue),
+    backgrounds: ['rgb(0, 0, 0)', white],
+    borders: edges('rgba(254, 254, 254, 0.5)'),
+  }
+  expect(focusLayers(focused, rest)).toBe(1)
+  const unchanged = edges('rgba(100, 100, 100, 0.5)')
+  expect(focusLayers({ ...focused, borders: unchanged }, { ...rest, borders: unchanged })).toBe(1)
+})

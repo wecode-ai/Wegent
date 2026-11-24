@@ -137,7 +137,7 @@ function sample(bands, distance, background) {
   return { color: pixel(color), indicator: indicator && pixel(color) !== pixel(background) }
 }
 
-function countChangedBands(active, rest, inside, outside) {
+function countChangedBands(active, rest, activeBackgrounds, restBackgrounds) {
   const edges = [
     ...new Set([0, ...[...active, ...rest].flatMap(band => [band.from, band.to])]),
   ].sort((a, b) => a - b)
@@ -145,31 +145,43 @@ function countChangedBands(active, rest, inside, outside) {
   let previous = null
   for (let i = 1; i < edges.length; i++) {
     const distance = (edges[i] + edges[i - 1]) / 2
-    const background = distance < 0 ? inside : outside
+    const region = distance < 0 ? 'inside' : 'outside'
+    const background = activeBackgrounds[region]
     const now = sample(active, distance, background)
-    const before = sample(rest, distance, background)
-    const changed = now.indicator && before.color !== now.color ? now.color : null
+    const before = sample(rest, distance, restBackgrounds[region])
+    // A changed surface alone must not turn a resting border into a focus indicator.
+    const changed =
+      now.indicator &&
+      before.color !== now.color &&
+      sample(rest, distance, background).color !== now.color
+        ? now.color
+        : null
     if (changed !== null && changed !== previous) count++
     previous = changed
   }
   return count
 }
 
+function paintBackgrounds({ backgrounds }) {
+  const [surface, ...ancestors] = backgrounds
+  const outside = compositeBackground(ancestors)
+  return { outside, inside: over(colorChannels(surface), outside) }
+}
+
 export function focusLayers(focused, unfocused) {
   if (!focused.visible) return 0
   if (!unfocused?.visible)
     throw new Error('A visible unfocused baseline from the same control is required')
-  const [surface, ...ancestors] = focused.backgrounds
-  const outside = compositeBackground(ancestors)
-  const inside = over(colorChannels(surface), outside)
+  const activeBackgrounds = paintBackgrounds(focused)
+  const restBackgrounds = paintBackgrounds(unfocused)
   // A complete border is one band. A single highlighted edge can still expose a second band.
   return Math.max(
     ...focused.borders.map((border, side) =>
       countChangedBands(
         paintBands(focused, border),
         paintBands(unfocused, unfocused.borders[side]),
-        inside,
-        outside
+        activeBackgrounds,
+        restBackgrounds
       )
     )
   )

@@ -256,6 +256,30 @@ describe('BrowserHistoryStore', () => {
     expect(JSON.parse(await readFile(path, 'utf8'))).toHaveLength(2)
   })
 
+  test('strips credentials in text appended to a URL title and keeps encoded URL titles', async () => {
+    const { path, store } = await createStore()
+    const sensitive = 'https://docs.test/help access_token=synthetic-title-secret'
+    const ordinary = 'https://docs.test/help?filter=name%26signature%3Ddraft'
+    await writeFile(
+      path,
+      JSON.stringify([
+        { id: 'old', url: 'https://docs.test/old', title: sensitive, visitTimeMs: 1 },
+        { id: 'filter', url: 'https://docs.test/filter', title: ordinary, visitTimeMs: 2 },
+      ])
+    )
+    const id = await store.recordVisit('https://docs.test/new', 3, sensitive)
+    expect(id).not.toBeNull()
+    await store.backfillTitle(id!, sensitive)
+    await expect(
+      store.search({ text: '', endTimeMs: null, offset: 0, maxResults: 10 })
+    ).resolves.toMatchObject([
+      { id, title: null },
+      { id: 'filter', title: ordinary },
+      { id: 'old', title: null },
+    ])
+    expect(await readFile(path, 'utf8')).not.toContain('synthetic-title-secret')
+  })
+
   test('preserves cursor offset semantics for visits in the same millisecond', async () => {
     const { store } = await createStore()
     await store.recordVisit('https://example.test/1', 1_000, null)
