@@ -40,6 +40,7 @@ export function createMessageListViewportPort() {
   let input: ViewportInput | null = null
   let lease: symbol | null = null
   let previousLayoutKey: string | null = null
+  let previousScrollHeight: number | undefined
   let measurements: MeasurementSnapshot | null = null
   const uncacheable = new Set<string>()
   const pending = new Map<MarkdownWindowingScope, Set<HTMLElement>>()
@@ -84,6 +85,13 @@ export function createMessageListViewportPort() {
     if (!row || !element.contains(row)) return
     input.measureRow(row)
     capture()
+    if (!input.ready || !input.onLayoutChange) return
+    const scrollHeight = input.scrollElementRef?.current?.scrollHeight
+    if (scrollHeight === undefined || scrollHeight === previousScrollHeight) return
+    // Markdown can restore a clamped native range without changing the cached
+    // virtual row sizes. Reconcile the viewport in this DOM commit as well.
+    previousScrollHeight = scrollHeight
+    input.onLayoutChange()
   }
   return {
     chunkLayout,
@@ -130,8 +138,9 @@ export function createMessageListViewportPort() {
       capture()
       if (layoutChanged && next.virtual && next.ready) {
         next.scope.getViewportRenders().forEach(render => render())
+        const scroller = next.scrollElementRef?.current
+        previousScrollHeight = scroller?.scrollHeight
         if (isConversationDiagnosticsEnabled()) {
-          const scroller = next.scrollElementRef?.current
           recordConversationDiagnostic('virtual-range', {
             ...getConversationDiagnosticContext(node),
             rangeStart: next.virtualizer.range?.startIndex,

@@ -18,7 +18,6 @@ export function BranchPicker({
   triggerTestId,
   accessibleLabel,
   onListBranches,
-  onRefresh,
   onChoose,
   onOpenChange,
   footer,
@@ -35,7 +34,6 @@ export function BranchPicker({
   triggerTestId: string
   accessibleLabel: string
   onListBranches(): Promise<string[]>
-  onRefresh?(): Promise<void>
   onChoose(branch: string): Promise<void> | void
   onOpenChange?(open: boolean): void
   footer?: ReactNode
@@ -53,17 +51,8 @@ export function BranchPicker({
   const setOpen = (next: boolean) => setOpenRevision(next ? closeSignal : null)
   const [query, setQuery] = useState('')
   const branchResource = useMemo(
-    () =>
-      createAsyncResource(
-        prefix,
-        async signal => {
-          if (onRefresh) await onRefresh()
-          signal.throwIfAborted()
-          return onListBranches()
-        },
-        { refreshOnSubscribe: true }
-      ),
-    [prefix, onListBranches, onRefresh]
+    () => createAsyncResource(prefix, onListBranches, { refreshOnSubscribe: true }),
+    [prefix, onListBranches]
   )
   const snapshot = useSyncExternalStore(
     open ? branchResource.subscribe : subscribeIdleResource,
@@ -122,6 +111,7 @@ export function BranchPicker({
       menuTestId={prefix + '-branch-menu'}
       searchTestId={prefix + '-branch-search-input'}
       emptyTestId={prefix + '-branch-empty'}
+      contentClassName="md:w-80 md:max-h-[min(480px,var(--available-height))]"
       accessibleLabel={accessibleLabel}
       searchPlaceholder={t('workbench.environment_branch_search', '搜索分支')}
       emptyLabel={t('workbench.environment_branch_empty_results', '没有匹配的分支')}
@@ -169,7 +159,7 @@ export function BranchPicker({
         ) : undefined
       }
       renderOptions={list => (
-        <div data-testid={prefix + '-branch-list'} className="min-h-0 overflow-auto">
+        <div data-testid={prefix + '-branch-list'} className="flex min-h-0 flex-col">
           {list}
         </div>
       )}

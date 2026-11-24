@@ -340,9 +340,16 @@ export interface Attachment {
   workspace_file?: RuntimeWorkspaceFileReference;
   image_width?: number;
   image_height?: number;
+  image_markup_comments?: ImageMarkupComment[];
   ui_group_id?: string;
   ui_group_role?: "primary" | "companion";
   ui_kind?: "appshot" | "pasted-text";
+}
+
+export interface ImageMarkupComment {
+  x: number;
+  y: number;
+  text: string;
 }
 
 export interface RequestUserInputResponseAnswer {

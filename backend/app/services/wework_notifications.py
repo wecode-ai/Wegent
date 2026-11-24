@@ -59,6 +59,12 @@ def _delivery_channels(db: Session, *, user_id: int, kind: str) -> dict[str, boo
     preferences = get_notification_preferences(user) if user else None
     category = notification_category(kind)
     channel_preferences = getattr(preferences, category) if preferences else None
+    if kind == "issue_participation":
+        return {
+            "in_app": False,
+            "system": False,
+            "im": bool(channel_preferences.im) if channel_preferences else True,
+        }
     return {
         "in_app": channel_preferences.in_app if channel_preferences else True,
         "system": (
@@ -181,6 +187,27 @@ def create_notification(
             }
         )
     return notification
+
+
+def notify_issue_participation(
+    db: Session,
+    *,
+    user_id: int,
+    actor_user_id: int,
+    target: NotificationTarget,
+    created: bool = False,
+) -> None:
+    create_notification(
+        db,
+        user_id=user_id,
+        actor_user_id=actor_user_id,
+        kind="issue_participation",
+        title="Issue 已创建" if created else "你已加入 Issue",
+        body="打开 Wework 查看事项。",
+        project_id=target.project_id,
+        item_id=target.item_id,
+        payload=target.payload(),
+    )
 
 
 @event.listens_for(Session, "after_rollback")

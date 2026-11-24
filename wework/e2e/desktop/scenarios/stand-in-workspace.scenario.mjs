@@ -1,3 +1,4 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import {
   openStandInSettings,
   openStandInActivity,
@@ -220,6 +221,10 @@ export function createDesktopScenario({
         value: JSON.stringify({ projectKey: SOURCE, name: SOURCE, path: workspacePath }),
       })
       await ensureExperimentalFeaturesEnabled(control)
+      await seedStandInRoleFixture(
+        (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        USER_ID
+      )
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)

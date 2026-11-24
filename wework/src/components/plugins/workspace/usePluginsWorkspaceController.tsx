@@ -4,7 +4,7 @@ import { useInstalledPluginDetail } from '../hooks/useInstalledPluginDetail'
 import { useMarketplacePluginDetail } from '../hooks/useMarketplacePluginDetail'
 import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
 import type { FormEvent } from 'react'
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import type { PluginsWorkspaceProps } from './pluginWorkspaceTypes'
 import { createPluginMarketplaceRowLabels } from './pluginMarketplaceLabels'
@@ -21,6 +21,8 @@ import { usePluginWorkspaceInstallation } from '../workspace/usePluginWorkspaceI
 import { usePluginWorkspaceDeletion } from '../workspace/usePluginWorkspaceDeletion'
 import { usePluginInstalledOperations } from './usePluginInstalledOperations'
 import { usePluginWorkspaceCatalog } from './usePluginWorkspaceCatalog'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { capturePersonalPluginCloudInstall } from './personalPluginCloudInstall'
 import {
   matchingPublicationRequests,
   selectPrimaryPublication,
@@ -80,6 +82,7 @@ export function usePluginsWorkspaceController({
   pluginReference = null,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
+  const cloudSession = useContext(CloudConnectionContext)
   const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
     (key, fallback) => t(key, fallback)
   )
@@ -440,6 +443,8 @@ export function usePluginsWorkspaceController({
     requestDeletePersonalPlugin,
     confirmDeletePersonalPlugin,
   } = usePluginWorkspaceDeletion({
+    cloudMarketplaceAvailable,
+    cloudToken,
     publicationRequests,
     pluginApi,
     catalog,
@@ -611,6 +616,18 @@ export function usePluginsWorkspaceController({
     localConnectorAuthBySlug,
   })
 
+  const syncPersonalPluginInBackground = cloudMarketplaceAvailable
+    ? capturePersonalPluginCloudInstall(localPluginApi, {
+        apiBaseUrl: cloudApiBaseUrl,
+        userId: cloudUserId,
+        getToken: () =>
+          cloudSession?.getTokenForAccount
+            ? cloudSession.getTokenForAccount(cloudApiBaseUrl, cloudUserId ?? undefined)
+            : cloudToken,
+        onInstalled: () => catalog.refresh(false),
+      })
+    : undefined
+
   const {
     pendingInstall,
     setPendingInstall,
@@ -620,6 +637,7 @@ export function usePluginsWorkspaceController({
     installMarketplacePlugin,
     executeMarketplaceInstall,
   } = usePluginWorkspaceInstallation({
+    syncPersonalPluginInBackground,
     requestConfirmation,
     selectedMarketplacePlugin,
     selectedMarketplacePluginDetail,
@@ -856,6 +874,7 @@ export function usePluginsWorkspaceController({
     openPublicationProgress,
     openPublicationRevision,
     versionSubmission,
+    syncPersonalPluginInBackground,
     closePluginDetail,
     setSelectedPluginId,
     requestDeletePersonalPlugin,

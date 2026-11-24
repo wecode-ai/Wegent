@@ -5,7 +5,7 @@ import {
 import '@/i18n'
 import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -157,6 +157,35 @@ test('keeps the loaded empty task list visible while refreshing and after a refr
   expect(screen.getByTestId(emptyId)).toBe(emptyRow)
   expect(screen.getByTestId(statusId)).toHaveAttribute('role', 'alert')
 })
+
+test.each(['right-click', 'more button'])(
+  'dismisses the project preview for the %s menu',
+  async entry => {
+    renderSidebar()
+    const user = userEvent.setup()
+    const row = screen.getByTestId('project-row-7')
+    const cardId = 'project-hover-card-7'
+    const menuId = 'project-menu-7-menu'
+
+    await user.hover(row)
+    expect(await screen.findByTestId(cardId)).toBeVisible()
+
+    if (entry === 'right-click') {
+      fireEvent.contextMenu(row, { clientX: 120, clientY: 200 })
+    } else {
+      await user.click(screen.getByTestId('project-menu-7'))
+    }
+
+    expect(await screen.findByTestId(menuId)).toBeVisible()
+    await waitFor(() => expect(screen.queryByTestId(cardId)).not.toBeInTheDocument())
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId(menuId)).not.toBeInTheDocument())
+
+    await user.unhover(row)
+    await user.hover(row)
+    expect(await screen.findByTestId(cardId)).toBeVisible()
+  }
+)
 
 test('chat batch archive releases the sidebar while the request is pending', async () => {
   const archive = Promise.withResolvers<void>()

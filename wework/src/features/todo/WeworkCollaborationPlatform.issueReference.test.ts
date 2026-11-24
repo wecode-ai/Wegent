@@ -1,3 +1,4 @@
+import { createScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 
 import { createPersonalHomeTaskDraftStore } from './personalHomeTaskDrafts'
@@ -108,9 +109,8 @@ function createLocalDetailServices() {
 
 function createHomeDraft() {
   return {
-    inputByScope: {},
+    draftStore: createScopedDraftStore(),
     setInputForScope: vi.fn(),
-    getInputRevisionForScope: vi.fn(() => 0),
     personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
   }
 }

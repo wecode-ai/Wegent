@@ -226,7 +226,7 @@ export interface WorkbenchContextValue {
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
     scopeKey: string
-    inputByScope: Readonly<Record<string, string>>
+    draftStore: import('./scopedDraftStore').ScopedDraftStore
     goalDraftActiveByScope: Readonly<Record<string, boolean>>
     personalHomeTaskDraftStore: PersonalHomeTaskDraftStore
     setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
@@ -241,7 +241,6 @@ export interface WorkbenchContextValue {
     isModelCatalogReady: boolean
     isModelSelectionReady: boolean
     onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
-    input: string
     composerError?: string | null
     composerErrorByScope?: Readonly<Record<string, string>>
     trialTemplates: PluginPathComponent[]
@@ -280,7 +279,7 @@ export interface WorkbenchContextValue {
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
-    getInputRevisionForScope: (scopeKey: string) => number
+    replaceInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
@@ -290,8 +289,19 @@ export interface WorkbenchContextValue {
     handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
     addExistingAttachmentForScope: (scopeKey: string, attachment: Attachment) => void
+    replaceImageAttachmentForScope: (
+      scopeKey: string,
+      attachmentId: number,
+      file: File,
+      comments: NonNullable<Attachment['image_markup_comments']>,
+      signal: AbortSignal
+    ) => Promise<Attachment | null>
+    getAttachment: (attachmentId: number) => Attachment | undefined
+    getAttachmentForScope: (scopeKey: string, attachmentId: number) => Attachment | undefined
     removeAttachment: (attachmentId: number) => Promise<void>
     removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
+    releaseAttachment: (attachmentId: number) => void
+    releaseAttachmentForScope: (scopeKey: string, attachmentId: number) => void
     dismissAttachmentError: (filename: string) => void
     dismissAttachmentErrorForScope: (scopeKey: string, filename: string) => void
     resetAttachments: () => void
@@ -549,9 +559,4 @@ export interface WorkbenchProviderProps {
   syncCoreDshModels?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
-  /**
-   * Increments whenever a retained workspace tab is revealed again. Providers
-   * revalidate their per-tab runtime-work snapshot when it changes.
-   */
-  workspaceTabRevealRevision?: number
 }

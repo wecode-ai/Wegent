@@ -1,4 +1,4 @@
-import type { PluginMarketplaceItem } from '@/types/api'
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { getInitializedBundledPluginMarketplace } from '@/desktop/localExecutor'
 import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import type { InstalledPluginItem } from './PluginManagementRows'
@@ -28,6 +28,20 @@ export function isPackableCreatedPlugin(plugin: InstalledPluginItem): boolean {
     !isWegentManagedStorePlugin(plugin.raw) &&
     (plugin.origin === 'created' || plugin.raw.spec.source.type === 'local')
   )
+}
+
+export function personalPluginListingType(plugin: InstalledPlugin): 'plugin' | 'skill' {
+  const components = plugin.spec.components
+  const isSingleSkill =
+    components.skills.length === 1 &&
+    components.commands.length === 0 &&
+    components.agents.length === 0 &&
+    components.mcps.length === 0 &&
+    components.hooks.length === 0 &&
+    components.lsps.length === 0 &&
+    components.monitors.length === 0 &&
+    components.bins.length === 0
+  return isSingleSkill ? 'skill' : 'plugin'
 }
 
 export function createdPluginSlugFromKey(pluginKey: string): string {

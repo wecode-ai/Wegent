@@ -791,6 +791,7 @@ async def run() -> None:
         request = await server.wait_for_card(
             after=cards_before,
             item_key=coordinated.id,
+            kind_label="任务分配",
         )
         _assert_card(
             request,

@@ -13,6 +13,10 @@ use super::text_value::terminal_text_value;
 use wegent_execution_runtime::session;
 use wegent_task_store::task_store::subtask_column_index;
 
+mod knowledge_sources;
+
+use knowledge_sources::{KnowledgeSources, KnowledgeTool};
+
 const TERMINAL_CARD_STATUSES: [&str; 2] = ["populated", "error"];
 const NONTERMINAL_CARD_STATUSES: [&str; 2] = ["pending", "partial_ready"];
 
@@ -153,29 +157,46 @@ fn decode_tool_output_payloads(tool_output: Option<&Value>) -> Vec<Map<String, V
     payloads
 }
 
-/// `_extract_embedded_result_blocks`.
-fn extract_embedded_result_blocks(blocks: Option<&Value>) -> Vec<Value> {
-    let Some(Value::Array(items)) = blocks else {
-        return Vec::new();
+/// Enrich the merged result from the same decoded tool payloads.
+fn enrich_tool_result(result: &mut Map<String, Value>, include_knowledge_sources: bool) {
+    let Some(Value::Array(blocks)) = result.get("blocks") else {
+        return;
     };
     let mut embedded = Vec::new();
-    for block in items {
+    let mut sources =
+        include_knowledge_sources.then(|| KnowledgeSources::from_existing(result.get("sources")));
+    for block in blocks {
         let Value::Object(block) = block else {
             continue;
         };
         if block.get("type").and_then(Value::as_str) != Some("tool") {
             continue;
         }
+        let knowledge_tool = sources
+            .as_ref()
+            .and_then(|_| KnowledgeTool::from_block(block));
         for payload in decode_tool_output_payloads(block.get("tool_output")) {
-            let Some(Value::Object(result_data)) = payload.get("result_data") else {
-                continue;
-            };
-            if let Some(result_blocks @ Value::Array(_)) = result_data.get("blocks") {
+            if let (Some(sources), Some(tool)) = (&mut sources, knowledge_tool) {
+                sources.collect(tool, &payload);
+            }
+            if let Some(result_blocks @ Value::Array(_)) = payload
+                .get("result_data")
+                .and_then(|data| data.get("blocks"))
+            {
                 embedded = merge_blocks(&Value::Array(embedded), result_blocks);
             }
         }
     }
-    embedded
+    if !embedded.is_empty() {
+        let merged = merge_blocks(
+            result.get("blocks").unwrap_or(&Value::Null),
+            &Value::Array(embedded),
+        );
+        result.insert("blocks".into(), Value::Array(merged));
+    }
+    if let Some(sources) = sources {
+        sources.append_to(result);
+    }
 }
 
 /// `collect_completed_result`: the terminal result payload for one subtask.
@@ -273,14 +294,7 @@ pub async fn collect_completed_result<M: Mysql, R: Redis>(
         }
     }
 
-    let embedded = extract_embedded_result_blocks(final_result.get("blocks"));
-    if !embedded.is_empty() {
-        let merged = merge_blocks(
-            final_result.get("blocks").unwrap_or(&Value::Null),
-            &Value::Array(embedded),
-        );
-        final_result.insert("blocks".into(), Value::Array(merged));
-    }
+    enrich_tool_result(&mut final_result, normalized_status == "COMPLETED");
 
     if is_blank_text_value(final_result.get("value"))
         && (normalized_status == "COMPLETED" || !accumulated_content.trim().is_empty())

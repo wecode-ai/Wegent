@@ -143,6 +143,22 @@ function findClickedAnchor(event: MouseEvent): Element | null {
   return isAnchor(anchor) ? anchor : null
 }
 
+function isSameOriginBlobDownload(anchor: Element, resolvedHref: string): boolean {
+  if (
+    !(anchor instanceof HTMLAnchorElement) ||
+    !anchor.hasAttribute('download') ||
+    !resolvedHref.startsWith('blob:')
+  ) {
+    return false
+  }
+  try {
+    const parsed = new URL(resolvedHref)
+    return parsed.origin !== 'null' && parsed.origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
 export function installExternalLinkHandler() {
   const rejectUnsafeLink = (event: MouseEvent) => {
     const anchor = findClickedAnchor(event)
@@ -153,11 +169,11 @@ export function installExternalLinkHandler() {
       event.preventDefault()
       return
     }
-    if (
-      !isHttpUrl(resolvedAnchorHref(anchor)) &&
-      !href.startsWith('#') &&
-      !href.startsWith('wework:')
-    ) {
+    const resolved = resolvedAnchorHref(anchor)
+    if (event.type === 'click' && isSameOriginBlobDownload(anchor, resolved)) {
+      return
+    }
+    if (!isHttpUrl(resolved) && !href.startsWith('#') && !href.startsWith('wework:')) {
       event.preventDefault()
       event.stopImmediatePropagation()
     }

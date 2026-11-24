@@ -449,6 +449,7 @@ export function createDesktopScenario(options) {
         for (const testCase of cases) {
           current = testCase.name
           await openStandInSettings(control)
+          await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
           await control.command('waitFor', PANEL)
           await openExplicitModelMenu(control, `${PANEL} [data-testid="model-selector-button"]`)
           const option = selector(`model-option-${JSON.stringify(testCase.key)}`)

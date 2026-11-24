@@ -63,7 +63,9 @@ Each turn includes only these fields and brief usage guidance; full API instruct
 
 Desktop, mobile, and cloud-compiled Codex requests share one contract: `prompt` retains the user's text, which the executor converts to `input` for `turn/start` or `turn/steer`; application information travels separately in `additionalContext`. Project references, terminal state, and other application context are no longer concatenated into user text.
 
-Preserve `kind: application` for application context and `kind: untrusted` for external source content. Never promote external content into application instructions. Models still read project details through authorized tools. Context fields grant no permissions. The pinned Codex 0.169.1 renders `application` as developer messages and `untrusted` as separate `function_call_output` items in the `agent` namespace; neither is concatenated into user text.
+Preserve `kind: application` for application context and `kind: untrusted` for external source content. Never promote external content into application instructions. Models still read project details through authorized tools. Context fields grant no permissions. The pinned Codex 0.171.0 renders `application` as developer messages and `untrusted` as separate `function_call_output` items in the `agent` namespace; neither is concatenated into user text.
+
+When forwarding through the Responses model proxy, tool outputs without a call ID become separate user-role messages with the provenance marker `[tool_result without a matching tool_call]`. The user's prompt remains a separate message.
 
 ```mermaid
 sequenceDiagram

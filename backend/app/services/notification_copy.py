@@ -29,6 +29,7 @@ COLLABORATION_NOTIFICATION_KINDS = (
     "execution",
     "issue_dispatch_assignment",
     "issue_shared",
+    "issue_participation",
 )
 
 
