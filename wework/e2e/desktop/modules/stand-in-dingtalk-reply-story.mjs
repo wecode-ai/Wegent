@@ -236,6 +236,9 @@ export function createDingTalkReplyStory(options) {
         await control.command('fill', `${STORY_CHAT} [data-testid="chat-message-input"]`, {
           value: `${MARKER}-OWNER：看到这个群的新@时准备回复，每次发送让我确认。`,
         })
+        await control.command('waitFor', `${STORY_CHAT} [data-testid="send-message-button"]`, {
+          enabled: true,
+        })
         await control.command('press', `${STORY_CHAT} [data-testid="chat-message-input"]`, {
           key: 'Enter',
         })
