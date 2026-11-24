@@ -8,6 +8,8 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { TextField as Input } from '@wegent/collaboration/controls/TextField'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useState } from 'react'
@@ -195,32 +197,32 @@ function StandInTeamsDialog({
                   required
                 />
               </label>
-              <label className="grid gap-1">
+              <div className="grid gap-1">
                 {t('standIn.teams.lead')}
-                <select
-                  className="min-h-11 rounded-md border border-text-secondary/80 bg-background px-2 md:min-h-8"
-                  data-testid="stand-in-team-lead"
+                <SelectField
+                  accessibleLabel={t('standIn.teams.lead')}
+                  testId="stand-in-team-lead"
                   value={draft.leadId}
-                  onChange={event => {
-                    const leadId = event.target.value
+                  disabled={busy}
+                  onChange={leadId => {
                     const duty = Object.hasOwn(draft.members, leadId) ? draft.members[leadId] : ''
                     const members = { ...draft.members, [leadId]: duty }
                     if (leadId !== '@primary') delete members['@primary']
                     setDraft({ ...draft, leadId, members })
                   }}
-                >
-                  {draft.leadId !== '@primary' &&
-                    !leadRoles.some(role => role.id === draft.leadId) && (
-                      <option value={draft.leadId}>{draft.leadId}</option>
-                    )}
-                  <option value="@primary">{t('standIn.personal.default_role')}</option>
-                  {leadRoles.map(role => (
-                    <option key={role.id} value={role.id}>
-                      {candidates.get(role.id) ?? role.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={[
+                    ...(draft.leadId !== '@primary' &&
+                    !leadRoles.some(role => role.id === draft.leadId)
+                      ? [{ value: draft.leadId, label: draft.leadId }]
+                      : []),
+                    { value: '@primary', label: t('standIn.personal.default_role') },
+                    ...leadRoles.map(role => ({
+                      value: role.id,
+                      label: candidates.get(role.id) ?? role.name,
+                    })),
+                  ]}
+                />
+              </div>
               <fieldset className="space-y-2">
                 <legend className="mb-1 font-medium">{t('standIn.teams.members')}</legend>
                 {[...new Set([...candidates.keys(), ...Object.keys(draft.members)])]
@@ -232,14 +234,13 @@ function StandInTeamsDialog({
                     return (
                       <div key={id} className="space-y-1">
                         <label className="flex min-h-11 items-center gap-2 md:min-h-8">
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             data-testid={`stand-in-team-member-${id}`}
                             checked={included}
-                            disabled={isLead}
-                            onChange={event => {
+                            disabled={busy || isLead}
+                            onCheckedChange={checked => {
                               const members = { ...draft.members, [id]: '' }
-                              if (!event.target.checked) delete members[id]
+                              if (checked !== true) delete members[id]
                               setDraft({ ...draft, members })
                             }}
                           />

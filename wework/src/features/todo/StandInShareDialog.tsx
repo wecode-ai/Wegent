@@ -10,6 +10,9 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { TextField } from '@wegent/collaboration/controls/TextField'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { Radio, RadioGroup } from '@wegent/collaboration/controls/RadioGroup'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import { useState } from 'react'
 import { StandInNavigationButton } from './StandInRoleSelector'
 import { StandInReviewDialog } from './StandInReviewDialog'
@@ -201,27 +204,27 @@ function ShareContents({
     return (
       <div className="space-y-4">
         <fieldset className="space-y-4" disabled={busy}>
-          <label className="grid gap-1">
+          <div className="grid gap-1">
             {t('standIn.sharing.resource')}
-            <select
-              className="min-h-11 rounded-md border border-text-secondary/80 bg-background px-2 md:min-h-8"
-              data-testid="stand-in-share-resource"
+            <SelectField
+              accessibleLabel={t('standIn.sharing.resource')}
+              testId="stand-in-share-resource"
               value={source}
-              onChange={event => setSource(event.target.value)}
-            >
-              <option value="assistant:@primary">{t('standIn.personal.default_role')}</option>
-              {[...directory.values()].map((role, index) => (
-                <option key={role.id} value={`assistant:${role.id}`}>
-                  {standInRoleName(role, index, t('standIn.personal.unnamed_assistant'))}
-                </option>
-              ))}
-              {(settings.teams ?? []).map(team => (
-                <option key={team.id} value={`team:${team.id}`}>
-                  {team.name}
-                </option>
-              ))}
-            </select>
-          </label>
+              disabled={busy}
+              onChange={setSource}
+              options={[
+                { value: 'assistant:@primary', label: t('standIn.personal.default_role') },
+                ...[...directory.values()].map((role, index) => ({
+                  value: `assistant:${role.id}`,
+                  label: standInRoleName(role, index, t('standIn.personal.unnamed_assistant')),
+                })),
+                ...(settings.teams ?? []).map(team => ({
+                  value: `team:${team.id}`,
+                  label: team.name,
+                })),
+              ]}
+            />
+          </div>
           <form
             onSubmit={event => {
               event.preventDefault()
@@ -255,24 +258,31 @@ function ShareContents({
             </Button>
           </form>
           {matches?.length === 0 && <p role="status">{t('standIn.sharing.no_users')}</p>}
-          {matches?.map(person => (
-            <label key={person.id} className="flex min-h-11 items-center gap-2 md:min-h-8">
-              <input
-                type="radio"
-                name="stand-in-share-recipient"
-                data-testid={`stand-in-share-recipient-${person.id}`}
-                checked={recipient === person.id}
-                onChange={() => setRecipient(person.id)}
-              />
-              {person.user_name}
-            </label>
-          ))}
+          {!!matches?.length && (
+            <RadioGroup
+              name="stand-in-share-recipient"
+              aria-label={t('standIn.sharing.recipient')}
+              value={String(recipient ?? '')}
+              onValueChange={value => setRecipient(Number(value))}
+              disabled={busy}
+            >
+              {matches.map(person => (
+                <label key={person.id} className="flex min-h-11 items-center gap-2 md:min-h-8">
+                  <Radio
+                    value={String(person.id)}
+                    data-testid={`stand-in-share-recipient-${person.id}`}
+                  />
+                  {person.user_name}
+                </label>
+              ))}
+            </RadioGroup>
+          )}
           <label className="flex min-h-11 items-center gap-2 md:min-h-8">
-            <input
-              type="checkbox"
+            <Checkbox
               data-testid="stand-in-share-allow-copy"
               checked={allowCopy}
-              onChange={event => setAllowCopy(event.target.checked)}
+              disabled={busy}
+              onCheckedChange={checked => setAllowCopy(checked === true)}
             />
             {t('standIn.sharing.allow_copy')}
           </label>
