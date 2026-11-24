@@ -88,7 +88,10 @@ export function createDesktopScenario({
   subagentTextRelease,
 }) {
   const completion = createStreamingCompletionChecks({ resultDir, uiTimeoutMs })
-  const commandCancellation = createStreamingCommandCancellationChecks({ workspacePath, uiTimeoutMs })
+  const commandCancellation = createStreamingCommandCancellationChecks({
+    workspacePath,
+    uiTimeoutMs,
+  })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
   const backgroundWindowRefresh = createBackgroundWindowRefreshChecks({ uiTimeoutMs })
   const conversationScrollbar = createConversationScrollbarChecks({ resultDir, uiTimeoutMs })
