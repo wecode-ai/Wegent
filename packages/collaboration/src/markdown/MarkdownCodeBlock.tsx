@@ -164,7 +164,9 @@ export function MarkdownCodeBlock({
         isStreaming={isStreaming}
         syntaxHighlighted={Boolean(highlightedPrefix)}
       >
-        <style data-pierre-code-theme>{codeThemeCSS}</style>
+        <style href="wegent-markdown-code-theme" precedence="default">
+          {codeThemeCSS}
+        </style>
         <pre style={codeStyle}>
           <code {...codeProps}>
             <HighlightedCodeContent text={text} highlightedCode={highlightedPrefix} />
