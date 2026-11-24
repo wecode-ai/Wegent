@@ -309,6 +309,55 @@ def test_cp14_shared_issue_patch_updates_only_submitted_content(
     assert item.title == "Changed"
 
 
+def test_cp14_issue_detail_only_returns_visible_relations(
+    test_client: TestClient, test_db: Session, test_user: User, outsider: User
+) -> None:
+    def issue(title: str, parent_id: str | None = None) -> LoopItem:
+        return LoopItem(
+            title=title,
+            status="pending",
+            priority="medium",
+            parent_id=parent_id,
+            created_by_user_id=test_user.id,
+        )
+
+    parent = issue("Parent")
+    test_db.add(parent)
+    test_db.flush()
+    visible = issue("Visible child", parent.id)
+    private = issue("Private child", parent.id)
+    test_db.add_all([visible, private])
+    test_db.flush()
+    child_invitation = LoopItemCollaborator(
+        loop_item_id=visible.id,
+        user_id=outsider.id,
+        added_by_user_id=test_user.id,
+        source="manual",
+    )
+    test_db.add(child_invitation)
+    test_db.commit()
+    token = create_access_token(data={"sub": outsider.user_name})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    def relations(issue_id: str) -> list[str]:
+        result = test_client.get(f"/api/v1/loop-items/{issue_id}", headers=headers)
+        assert result.status_code == 200, result.text
+        return [item["id"] for item in result.json()["related_issues"]]
+
+    assert relations(visible.id) == []
+    test_db.add(
+        LoopItemCollaborator(
+            loop_item_id=parent.id,
+            user_id=outsider.id,
+            added_by_user_id=test_user.id,
+            source="manual",
+        )
+    )
+    test_db.commit()
+    assert relations(parent.id) == [visible.id]
+    assert relations(visible.id) == [parent.id]
+
+
 @pytest.mark.parametrize("remove_issue", [False, True])
 def test_cp14_unlinked_assignment_uses_shared_issue_endpoints(
     test_client: TestClient,

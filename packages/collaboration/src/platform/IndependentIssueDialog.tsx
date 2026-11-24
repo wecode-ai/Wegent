@@ -431,7 +431,7 @@ function IndependentIssueDialogContent({
                 key={issue.id}
                 mode="edit"
                 item={issue.detail}
-                allItems={[]}
+                allItems={issue.detail.related_issues ?? []}
                 port={detailPort}
                 editable
                 taskRefreshKey={`${issue.version}:${taskRevision}`}

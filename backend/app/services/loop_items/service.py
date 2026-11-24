@@ -1266,6 +1266,25 @@ class LoopItemService:
         access: CloudProjectAccess | None = None,
     ) -> dict[str, object]:
         values = self.response_values(db, item, user_id, access)
+        if values["can_view_detail"]:
+            related = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.cloud_project_id == item.cloud_project_id,
+                    or_(LoopItem.parent_id == item.id, LoopItem.id == item.parent_id),
+                )
+                .order_by(LoopItem.created_at, LoopItem.id)
+                .all()
+            )
+            if related:
+                context = LoopItemReadContext.load(db, related, user_id, access)
+                values["related_issues"] = [
+                    self.response_values(
+                        db, relation, user_id, access, read_context=context
+                    )
+                    for relation in related
+                    if relation.id in context.visible_ids
+                ]
         if not item.cloud_project_id:
             values["edit_context"] = self._unlinked_issue_edit_context(
                 db, item, user_id

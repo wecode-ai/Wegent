@@ -82,7 +82,7 @@ export interface IndependentIssue {
   created_at: string
   updated_at: string
   people: Record<string, string>
-  detail?: CollaborationIssue
+  detail?: IssueDetailResponse
   metadata: {
     participants: number[]
     direct_participants?: number[] | null
@@ -96,6 +96,7 @@ export interface IndependentIssue {
 }
 
 export interface IssueDetailResponse extends CollaborationIssue {
+  related_issues?: CollaborationIssue[]
   edit_context?: {
     participants: { user_id: number; user_name: string | null; direct: boolean }[]
     resources: IssueResourceParticipant[]
@@ -129,7 +130,7 @@ export function detailProjectId(
 
 export function unlinkedIssueFromDetail(
   detail: IssueDetailResponse
-): IndependentIssue & { detail: CollaborationIssue } {
+): IndependentIssue & { detail: IssueDetailResponse } {
   const context = detail.edit_context
   if (detail.cloud_project_id || !context || detail.can_view_detail === false)
     throw Object.assign(new Error('Issue not found'), { status: 404 })
@@ -251,7 +252,7 @@ export function createPersonalIssuesApi<Project>(client: PersonalIssueTransport)
         | 'assignee_team_id'
         | 'notify_assignee'
       > & { archived?: boolean }
-    ): Promise<IndependentIssue & { detail: CollaborationIssue }> {
+    ): Promise<IndependentIssue & { detail: IssueDetailResponse }> {
       return client
         .patch<IssueDetailResponse>(`/v1/loop-items/${encodeURIComponent(id)}`, fields)
         .then(unlinkedIssueFromDetail)

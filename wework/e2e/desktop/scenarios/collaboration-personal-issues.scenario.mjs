@@ -292,11 +292,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         visible: true,
       })
       await captureScreenshot(control, 'independent-issue-child-opened.png')
-      await click(control, `independent-issue-${homeIssue.id}`)
+      await click(control, 'issue-parent-link')
       await wait(control, `${activeHome} [data-testid="cloud-todo-detail-content"]`, {
         text: homeIssue.title,
         visible: true,
       })
+      await wait(control, `${activeHome} [data-testid="cloud-todo-open-child-task-${child.id}"]`, {
+        visible: true,
+      })
+      await captureScreenshot(control, 'independent-issue-child-returned.png')
       await verifySendModes(
         homeIssue,
         `/api/v1/personal-issues/${homeIssue.id}/comments`,

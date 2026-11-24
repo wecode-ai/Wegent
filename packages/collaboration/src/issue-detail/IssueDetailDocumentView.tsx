@@ -100,6 +100,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
     allAttachments,
     visibleAttachments,
     effectiveTasks,
+    parentItem,
     childItems,
     displayedTasks,
     executionChildItems,
@@ -646,6 +647,13 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
             ]}
             onOpen={props.onOpenRelatedIssue}
             onAddChild={editable ? editProps?.onAddChild : undefined}
+            translate={t}
+          />
+        ) : item && parentItem && props.onOpenChildTask ? (
+          <IssueHierarchySummary
+            item={item}
+            allItems={[parentItem]}
+            onOpen={props.onOpenChildTask}
             translate={t}
           />
         ) : null}

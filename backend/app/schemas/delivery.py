@@ -393,6 +393,7 @@ class IssueDetailEditContext(BaseModel):
 
 class LoopItemDetailResponse(LoopItemResponse):
     edit_context: IssueDetailEditContext | None = None
+    related_issues: list[LoopItemResponse] = Field(default_factory=list)
 
 
 class LoopItemListResponse(BaseModel):
