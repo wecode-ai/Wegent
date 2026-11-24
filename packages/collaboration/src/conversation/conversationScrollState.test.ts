@@ -36,7 +36,7 @@ it('offers to jump to latest after restoring a reading position without a native
   evictConversationViewport(key)
 })
 
-it('follows the measured transcript end without scrolling into temporary Markdown overflow', () => {
+it.each(['done', 'streaming'] as const)('restores the visible %s tail in the same commit', status => {
   const viewport = document.createElement('div')
   const content = viewport.appendChild(document.createElement('div'))
   const disconnect = vi.fn()
@@ -73,7 +73,7 @@ it('follows the measured transcript end without scrolling into temporary Markdow
         id: 'reply',
         role: 'assistant',
         content: 'Done',
-        status: 'done',
+        status,
         createdAt: '',
       },
     ],
@@ -96,7 +96,7 @@ it('follows the measured transcript end without scrolling into temporary Markdow
   notifyResize()
   expect(viewport.scrollTop).toBe(960)
 
-  // On reopen, the settled last row's Markdown expands before the cached size updates.
+  // On reopen, the last row's Markdown expands before the cached size updates.
   range.endIndex = 1
   state.handleVirtualLayoutChange()
   expect(viewport.scrollTop).toBe(1048)

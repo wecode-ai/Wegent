@@ -274,15 +274,15 @@ export function createConversationScrollState(
     if (currentScrollKey) setConversationScrollSnapshot(currentScrollKey, snapshot)
     publishScrollButton(measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport))
   }
-  const followEnd = (viewport: HTMLDivElement) => {
+  const followEnd = (viewport: HTMLDivElement, animate: boolean) => {
     const nativeHeight = viewport.scrollHeight
     const engine = readVirtualizer()
-    // A settled tail in the visible range owns the DOM bottom. Its Markdown
-    // can grow during this commit, before the virtualizer publishes row sizes.
-    const settledTailVisible =
-      engine && !streaming && engine.range?.endIndex === engine.options.count - 1
+    // A visible tail owns instant restoration, even when the task is still running.
+    // Markdown can grow in this commit before the virtualizer publishes row sizes.
+    const useNativeBottom =
+      !animate && engine && engine.range?.endIndex === engine.options.count - 1
     const height =
-      engine && !settledTailVisible
+      engine && !useNativeBottom
         ? Math.min(nativeHeight, Math.round(engine.getTotalSize() + engine.options.scrollMargin))
         : nativeHeight
     return Math.max(0, height - viewport.clientHeight)
@@ -298,14 +298,14 @@ export function createConversationScrollState(
       return
     const viewport = scrollRef.current
     if (!viewport) return
-    const end = followEnd(viewport)
+    const animate = nativeFollow !== null || smooth || followBehavior === 'smooth'
+    const end = followEnd(viewport, animate)
     const distanceFromBottom = Math.max(0, end - viewport.scrollTop)
     if (distanceFromBottom < 1) {
       cancelMotion()
       save(distanceFromBottom)
       return
     }
-    const animate = nativeFollow !== null || smooth || followBehavior === 'smooth'
     if (
       !animate ||
       window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ||
