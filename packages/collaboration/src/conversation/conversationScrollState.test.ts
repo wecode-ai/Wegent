@@ -32,8 +32,10 @@ it('follows the measured transcript end without scrolling into temporary Markdow
     scrollHeight: { get: () => scrollHeight },
   })
   viewport.scrollTop = 960
+  const range = { endIndex: 0 }
   const virtualizer = {
-    options: { scrollMargin: 1 },
+    options: { count: 2, scrollMargin: 1 },
+    range,
     getTotalSize: () => virtualSize,
     cancelScroll: vi.fn(),
   } as unknown as ConversationVirtualizer
@@ -66,11 +68,13 @@ it('follows the measured transcript end without scrolling into temporary Markdow
   notifyResize()
   expect(viewport.scrollTop).toBe(960)
 
-  // Real content becomes scrollable when its DOM range and virtual size catch up.
-  virtualSize = 1622
-  scrollHeight = 1623
+  // On reopen, the settled last row's Markdown expands before the cached size updates.
+  range.endIndex = 1
+  state.handleVirtualLayoutChange()
+  expect(viewport.scrollTop).toBe(1048)
+  virtualSize = 1690
   notifyResize()
-  expect(viewport.scrollTop).toBe(980)
+  expect(viewport.scrollTop).toBe(1048)
   releaseContent()
   expect(disconnect).toHaveBeenCalledOnce()
   dispose()

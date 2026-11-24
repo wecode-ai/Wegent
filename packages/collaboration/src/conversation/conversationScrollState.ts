@@ -278,11 +278,14 @@ export function createConversationScrollState(
   const followEnd = (viewport: HTMLDivElement) => {
     const nativeHeight = viewport.scrollHeight
     const engine = readVirtualizer()
-    // Newly mounted overscan Markdown can temporarily extend the DOM beyond
-    // the virtual range. Following that overflow can unmount the same row.
-    const height = engine
-      ? Math.min(nativeHeight, Math.round(engine.getTotalSize() + engine.options.scrollMargin))
-      : nativeHeight
+    // A settled tail in the visible range owns the DOM bottom. Its Markdown
+    // can grow during this commit, before the virtualizer publishes row sizes.
+    const settledTailVisible =
+      engine && !streaming && engine.range?.endIndex === engine.options.count - 1
+    const height =
+      engine && !settledTailVisible
+        ? Math.min(nativeHeight, Math.round(engine.getTotalSize() + engine.options.scrollMargin))
+        : nativeHeight
     return Math.max(0, height - viewport.clientHeight)
   }
   const follow = (smooth = false) => {
