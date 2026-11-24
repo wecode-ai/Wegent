@@ -1,6 +1,13 @@
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import { useDOMEvent, useWindowEvent, useElementGeometry } from '../dom-events'
+import { useDOMEvent, useWindowEvent } from '../dom-events'
 import type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
 import { scrollPositionKey } from './conversationScrollGeometry'
 import { useConversationFooterHeight } from './useConversationFooterHeight'
@@ -61,8 +68,6 @@ export function useConversationScrollController(options: Options) {
     }),
     [scrollRef, externalScrollInteractionRef]
   )
-  const geometryTargets = useMemo(() => [scrollRef, contentNode], [scrollRef])
-  const geometry = useElementGeometry(geometryTargets)
   const input = useMemo<ConversationScrollInput>(
     () => ({
       messages,
@@ -73,7 +78,6 @@ export function useConversationScrollController(options: Options) {
       onLoadTranscriptGap,
       autoScrollSuspended,
       initialScrollPosition,
-      geometry,
     }),
     [
       messages,
@@ -84,7 +88,6 @@ export function useConversationScrollController(options: Options) {
       onLoadTranscriptGap,
       autoScrollSuspended,
       initialScrollPosition,
-      geometry,
     ]
   )
   const initialConfiguration = {
@@ -94,7 +97,6 @@ export function useConversationScrollController(options: Options) {
     onLoadTranscriptGap,
     autoScrollSuspended,
     initialScrollPosition,
-    geometry,
   }
   const [owner, setOwner] = useState(() => ({
     key: currentScrollKey,
@@ -105,11 +107,14 @@ export function useConversationScrollController(options: Options) {
     resource = createConversationScrollState(currentScrollKey, initialConfiguration)
     setOwner({ key: currentScrollKey, resource })
   }
-  const subscribe = useCallback(
-    (listener: () => void) => resource.subscribe(listener, input, ports),
-    [resource, input, ports]
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
   )
-  const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
+  useLayoutEffect(() => {
+    resource.update(input, ports)
+  }, [input, ports, resource])
   const contentRef = contentNode
   const bindContentRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -184,9 +189,8 @@ export function useConversationScrollController(options: Options) {
     onVirtualScrollAdjustment: resource.onVirtualScrollAdjustment,
     captureNativeScrollRange: resource.captureNativeScrollRange,
     virtualAnchorToEnd:
-      snapshot.mode === 'follow' &&
+      snapshot.virtualAnchorToEnd &&
       !messages.some(message => message.status === 'streaming') &&
-      !snapshot.motionActive &&
       !autoScrollSuspended,
     virtualAnchor:
       snapshot.mode === 'navigate' || snapshot.mode === 'drag'

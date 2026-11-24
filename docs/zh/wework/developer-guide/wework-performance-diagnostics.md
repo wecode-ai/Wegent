@@ -209,9 +209,9 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # 开启 runtime work cache/emit mapping �
 
 ## 流式消息渲染
 
-Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离。消息状态仍实时接收并保持完整内容，`AssistantMarkdown` 使用轻量缓冲器在浏览器帧上逐步推进可见文本：积压较多时自适应加速，接近队尾时保留少量字符并缓慢释放，以平滑 executor 批量发送和短暂空档造成的视觉顿挫。流结束、内容被替换或发生非追加更新时会立即对齐完整文本，不会影响最终消息正确性。
+桌面会话缓存实时接收并保留 executor 的正文，集中合并高频增量通知。共享 Markdown 把每次发布的最新前缀直接交给 Streamdown，终态和交互操作即时发布。
 
-过程文本、thinking 和 plan block 的实时更新只传输 `content_delta`，不能在每个 delta 或完成节点重复发送从开头累计的完整 `content`。完成节点通常只携带 `status: done`；若 provider 的完成快照仅比已流式内容多一个尾部，则只补发该尾部增量。Wework 在浏览器动画帧内合并同一 block 的连续增量后再更新 React 状态，避免长程任务形成二次方级别的 IPC 复制和渲染压力。流式 block 更新属于可丢弃的 bulk 事件；发生 app IPC 背压时，终态事件仍保持优先，并由 transcript 对账恢复权威内容。Electron 主进程不得为每个 `response.*` 增量写 stdout；终端或父进程未及时消费输出时，同步 console 写入会阻塞 Browser 主线程和全部窗口输入。
+过程文本、thinking 和 plan block 的实时更新只传输 `content_delta`，不能在每个 delta 或完成节点重复发送从开头累计的完整 `content`。完成节点通常只携带 `status: done`；若 provider 的完成快照仅比已流式内容多一个尾部，则只补发该尾部增量。Wework 在运行时事件层按 16 ms 窗口合并同一 block 的连续增量，避免长程任务形成二次方级别的 IPC 复制和渲染压力。流式 block 更新属于可丢弃的 bulk 事件；发生 app IPC 背压时，终态事件仍保持优先，并由 transcript 对账恢复权威内容。Electron 主进程不得为每个 `response.*` 增量写 stdout；终端或父进程未及时消费输出时，同步 console 写入会阻塞 Browser 主线程和全部窗口输入。
 
 流式消息不执行 Pretext 全文高度测量，而是使用稳定的离屏占位高度；消息完成后再精确测量并缓存。已完成消息优先按消息对象和宽度命中高度缓存，避免每次流式更新都重新计算历史消息全文 hash。Composer、Workspace 操作栏、右侧工作区和底部终端也使用稳定属性与 memo 边界，避免随每个文本增量重复渲染。
 
@@ -220,10 +220,8 @@ Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离�
 排查流式卡顿时应区分以下情况：
 
 - 帧率稳定但输出一阵快、一阵慢：检查 stream `message` 事件间隔，通常是 executor 增量批量到达或存在网络/IPC 空档。
-- 存在长帧、密集样式重算或 Markdown 解析：检查是否绕过了文本缓冲、破坏了 Streamdown 组件引用稳定性，或重新引入了逐字符 DOM 动画。
+- 存在长帧、密集样式重算或 Markdown 解析：检查是否绕过了会话缓存的批量发布、破坏了 Streamdown 组件引用稳定性，或重新引入了逐字符 DOM 动画。
 - GC 时间异常高：确认 DevTools 是否开启 **Heap Allocations**。该采集项会显著放大长时间录制中的 GC；只排查交互流畅度时应关闭它。
-
-流式文本缓冲的单元测试位于 `wework/src/components/chat/useBufferedStreamingText.test.ts`。修改缓冲水位或推进速率时，应同时验证 Unicode 字符边界、非追加更新和流结束立即对齐行为。
 
 ## 常驻动画渲染
 

@@ -410,9 +410,8 @@ export function getWorkbenchDebugSnapshot(): WorkbenchDebugSnapshot {
 
 export function summarizeMessages(messages: WorkbenchMessage[]): MessageSummary {
   const activeAssistantMessage =
-    [...messages]
-      .reverse()
-      .find(message => message.role === 'assistant' && message.status === 'streaming') ?? null
+    messages.findLast(message => message.role === 'assistant' && message.status === 'streaming') ??
+    null
   const lastMessage = messages.at(-1) ?? null
 
   return {
@@ -682,22 +681,17 @@ function createMessageSummaryItem(message: WorkbenchMessage): MessageSummaryItem
 
 export function compareMessageStyles(messages: WorkbenchMessage[]): MessageStyleComparison {
   const transcriptMessage =
-    [...messages]
-      .reverse()
-      .find(
-        message =>
-          message.role === 'assistant' &&
-          message.status !== 'streaming' &&
-          typeof message.runtimeMessageIndex === 'number'
-      ) ??
-    [...messages]
-      .reverse()
-      .find(message => message.role === 'assistant' && message.status !== 'streaming') ??
+    messages.findLast(
+      message =>
+        message.role === 'assistant' &&
+        message.status !== 'streaming' &&
+        typeof message.runtimeMessageIndex === 'number'
+    ) ??
+    messages.findLast(message => message.role === 'assistant' && message.status !== 'streaming') ??
     null
   const streamingMessage =
-    [...messages]
-      .reverse()
-      .find(message => message.role === 'assistant' && message.status === 'streaming') ?? null
+    messages.findLast(message => message.role === 'assistant' && message.status === 'streaming') ??
+    null
   const transcriptLoaded = transcriptMessage
     ? createMessageStyleSample('Transcript loaded assistant message', transcriptMessage)
     : null
