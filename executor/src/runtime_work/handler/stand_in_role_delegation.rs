@@ -261,7 +261,7 @@ impl RuntimeWorkRpcHandler {
                     "roleDirectory": delegation["roleDirectory"],
                 }),
                 Some(StandInTaskPermissions::from_role(&role)),
-                None,
+                identity_conversation.then_some(&actor),
             )
             .await;
         match &result {

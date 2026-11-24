@@ -416,12 +416,20 @@ mod operation_tests {
     use super::*;
 
     #[tokio::test]
-    async fn primary_task_creation_rejects_superseded_or_cancelled_owner_requests() {
+    async fn task_creation_rejects_superseded_or_cancelled_owner_requests() {
         let root = tempfile::tempdir().unwrap();
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         handler.turn_queue_path = Arc::new(root.path().join("turn-queue.json"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        let mut specialist = crate::test_env::stand_in_role("mac");
+        specialist["id"] = json!("review");
+        specialist["name"] = json!("Review");
+        specialist["enabled"] = json!(true);
+        settings["roles"] = json!([specialist]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         let identity = StandInMcpIdentity {
             task_id: "primary".into(),
             user: 7,
@@ -436,11 +444,13 @@ mod operation_tests {
             coordinator_batch: None,
         };
         let owner = json!({"id":"original","taskId":"primary","userId":7,"deviceId":"mac","roleId":"@primary","revision":1,"cancelled":false});
-        for (revision, cancelled, after_admission) in [
-            (2, false, false),
-            (1, true, false),
-            (2, false, true),
-            (1, true, true),
+        for (operation, revision, cancelled, after_admission) in [
+            ("create_task", 2, false, false),
+            ("create_task", 1, true, false),
+            ("create_task", 2, false, true),
+            ("create_task", 1, true, true),
+            ("delegate_role_task", 2, false, true),
+            ("delegate_role_task", 1, true, true),
         ] {
             let mut current = owner.clone();
             current["revision"] = json!(revision);
@@ -449,7 +459,7 @@ mod operation_tests {
                 local_task_id: identity.task_id.clone(),
                 runtime_handle: json!({
                     "origin":{"type":"stand_in_identity","standInId":"@primary","userId":7,"deviceId":"mac"},
-                    "executionRequest":{"user_id":7,"standInOwnerRequest":owner},
+                    "executionRequest":{"user_id":7,"runtime_command_id":"owner-turn","standInOwnerRequest":owner},
                     "standInOwnerRequest":if after_admission { &owner } else { &current },
                 }),
                 ..Default::default()
@@ -457,8 +467,8 @@ mod operation_tests {
             let queue = handler.turn_queue_operation.lock().await;
             let mutation = handler.stand_in_task_operation(
                 identity.clone(),
-                "create_task",
-                json!({"requestId":"create","title":"Work","message":"Start work"}),
+                operation,
+                json!({"requestId":format!("{operation}-{revision}-{after_admission}"),"roleId":"review","title":"Work","message":"Start work"}),
             );
             tokio::pin!(mutation);
             if after_admission {
