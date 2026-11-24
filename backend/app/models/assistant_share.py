@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects import mysql
 from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.sql.functions import now
+from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.types import JSON
 
 from app.db.base import Base
@@ -28,9 +28,14 @@ _DATETIME = DateTime().with_variant(mysql.DATETIME(fsp=6), "mysql")
 _TABLE_OPTIONS = {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"}
 
 
-class _ShareTimestamp(now):
-    name = "now"
+class _ShareTimestamp(FunctionElement):
+    type = DateTime()
     inherit_cache = True
+
+
+@compiles(_ShareTimestamp)
+def _compile_share_timestamp(element, compiler, **kwargs) -> str:
+    return "CURRENT_TIMESTAMP"
 
 
 @compiles(_ShareTimestamp, "mysql")
