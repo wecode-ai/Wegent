@@ -71,7 +71,7 @@ MySQL 如果以 1213 中止插件同步事务，事务层先回滚并释放原�
 
 Native 授权写请求携带 `X-Wegent-Plugin-Auth-Contention: 1` 时，前置查询、插件租约、首次账号策略租约及写入前的所有权校验共用 200 毫秒截止时间，每个键尝试一次。Redis 确认租约已占用时，携带 `X-Wegent-Plugin-Auth-Result: 1` 或 `2` 的请求收到 HTTP 200 和可重试业务码 `plugin_write_busy`，仅协商短取锁预算的客户端收到带标记的 503。若 Redis 的取锁回执在截止时间内未返回，且服务端能确认写事务尚未开始，协商 `X-Wegent-Plugin-Auth-Result: 2` 的请求收到 HTTP 200 和可重试业务码 `plugin_write_lease_timeout`。这两个 HTTP 200 业务响应均携带 `success:false`、`retryable:true` 及响应头 `X-Wegent-Plugin-Auth-Contention: busy-before-write`。启用短预算但未协商版本 2 的请求在回执超时时仍收到无标记的 503。取锁回执超时可按 `outcome=redis_set_reply_unknown`（回执未知）与 `outcome=redis_set_reply_late`（截止后确认取得）单独统计。依赖故障和事务结果未知沿用原有错误响应。
 
-服务端先为迟到回执预留清理名额，再发送一次 `SET NX PX`，给初始租约 1 秒有效期。在 200 毫秒预算内收到确认后，服务端原子校验 token 和剩余有效期，并将租约延长至 180 秒，再进入写事务。迟到的初始回执只触发按 token 清理。初始回执始终未知时，租约最多自 Redis 执行 `SET` 起占用 1 秒。清理名额已满或续期未获确认时，协商版本 2 的客户端收到 `plugin_write_lease_timeout`，可分别按 `redis_cleanup_capacity_exhausted` 和 `redis_lease_promotion_not_confirmed` 统计。续期已生效且无法确认或释放的租约仍由 Redis 到期清理。已开始的事务遵循原有提交保护。
+服务端先为迟到回执预留清理名额，再发送一次 `SET NX PX 200`，给初始租约 200 毫秒有效期。在准入预算内收到确认后，服务端通过同一个 Lua 原子比较 token 并执行 `PEXPIRE`，将仍有效的租约延长至 180 秒，再进入写事务。临时 key 自身过期约束续期窗口，脚本不读取 `PTTL`，也不依赖 `redis.replicate_commands()`；过期 key 或其他持有人的 token 均不能续期。迟到的初始回执只触发按 token 清理。初始回执始终未知时，租约最多自 Redis 执行 `SET` 起占用 200 毫秒。清理名额已满或续期未获确认时，协商版本 2 的客户端收到 `plugin_write_lease_timeout`，可分别按 `redis_cleanup_capacity_exhausted` 和 `redis_lease_promotion_not_confirmed` 统计。续期已生效且无法确认或释放的租约仍由 Redis 到期清理。已开始的事务遵循原有提交保护。
 
 Executor 对同一次前台操作最多发出三次 HTTP 请求，争用重试和结果确认共用这个额度及原调用截止时间。
 
@@ -80,7 +80,7 @@ Executor 对同一次前台操作最多发出三次 HTTP 请求，争用重试�
 
 登录触发的登记有独立调度容量。会话或 Socket 恢复可用时立即唤醒前台调度，发现失败的目标仍按其原定时间重试。普通巡检最多同时执行四个插件的登记，运行时准备在取得登记名额前进行。同一插件中新加入的连接器也可独立准备，实际写入仍串行。临时发现失败保留该目标的前台登记预约。账号切换后，旧任务的结果不写入新会话的预约或退避状态。巡检沿用现有退避并重新读取状态。Socket 请求沿用原有协议。
 
-排查 Native 授权的争用、503 或慢请求时，用 `api.log` 的请求 ID 在 Rust `info.log` 中找 `Native plugin authorization finished`。预期争用记录为 `outcome=lock_busy_before_write`，在启用业务响应后仍可单独统计。按 `operation`、`failure_stage` 和 `outcome` 核对前置 MySQL 查询、Redis 取锁、授权事务、事务内 Redis 所有权校验、解锁及通知的耗时。标为 `mixed` 的阶段包含 MySQL 和 Redis 调用，事务内所有权校验的耗时是事务耗时的子集。依赖故障用 `failure_dependency` 标记，可用 `mysql_error_kind` 和数字 `mysql_errno` 区分已识别的 MySQL 错误。
+排查 Native 授权的争用、503 或慢请求时，用 `api.log` 的请求 ID 在 Rust `info.log` 中找 `Native plugin authorization finished`。预期争用记录为 `outcome=lock_busy_before_write`，在启用业务响应后仍可单独统计。按 `operation`、`failure_stage` 和 `outcome` 核对前置 MySQL 查询、Redis 取锁、授权事务、事务内 Redis 所有权校验、解锁及通知的耗时。标为 `mixed` 的阶段包含 MySQL 和 Redis 调用，事务内所有权校验的耗时是事务耗时的子集。依赖故障用 `failure_dependency` 标记，可用 `mysql_error_kind` 和数字 `mysql_errno` 区分已识别的 MySQL 错误。租约升级失败同时记录 `redis_error_kind`；已识别的脚本非确定性写入限制记录为 `redis_error_reason=write_after_nondeterministic`，不输出可能包含 token 或凭证参数的原始 Redis 错误。
 
 ## 部署与已有开发库
 
