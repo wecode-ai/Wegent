@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import { readSavedMemories } from '../modules/stand-in-memory-context.mjs'
 import {
   openStandInSettings,
@@ -124,6 +125,7 @@ export function createDesktopScenario({
         userId: USER,
         settings: {
           ...initial,
+          roles: [...initial.roles, standInRoleFixture(initial.executionDeviceId)],
           primary: { enabled: true, prompt: '帮我跟进工作', preferences: '回复简洁，发送前确认' },
         },
       })
@@ -187,11 +189,12 @@ export function createDesktopScenario({
       await control.command('waitFor', `${PANEL} [data-testid="project-work-button"]`, {
         text: NAME,
       })
+      await captureScreenshot(control, '04-restored-profile.png', PANEL)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-back-to-settings"]')
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-preferences"]'),
         saved.primary.preferences
       )
-      await captureScreenshot(control, '04-restored-profile.png', PANEL)
       await control.command('fill', '[data-testid="stand-in-preferences"]', { value: '未保存修改' })
       await control.command('click', '[data-testid="stand-in-primary-cancel"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-keep-editing"]')

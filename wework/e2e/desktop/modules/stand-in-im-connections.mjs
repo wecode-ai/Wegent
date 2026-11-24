@@ -7,7 +7,7 @@ import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 import { finishStandInOnboarding } from './stand-in-instance-flows.mjs'
 import { selectWorkbenchTheme } from './appearance-theme.mjs'
-import { verifyNarrowImMenu } from './stand-in-im-menu-layout.mjs'
+import { verifyNarrowImChannels } from './stand-in-im-channel-layout.mjs'
 
 /** Reuse the real Backend/Redis/Executor; only the external IM input is synthetic. */
 export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot }) {
@@ -67,13 +67,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
         '1',
         'IM channels must open from Manage stand-in'
       )
-      assert.equal(
-        await control.command('getElementCount', '[data-testid="stand-in-im-channel-telegram"]'),
-        '0',
-        'Unavailable channels belong in the add menu'
-      )
-      await verifyNarrowImMenu(control)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-add-channels"]')
+      await verifyNarrowImChannels(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       const closeConnections = async () => {
         await control.command('focusMainWindow')
@@ -111,8 +105,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('nativePress', '[data-testid="stand-in-im-dialog-close"]', {
         key: 'Escape',
       })
-      await control.command('waitFor', '[data-testid="stand-in-im-add-channels"]:focus')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-im-add-channels"]')
+      await control.command('waitFor', '[data-testid="stand-in-im-channel-telegram"]:focus')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       await control.command('waitFor', connections, { text: '还没有已登记的 Telegram 私聊' })
       keys = (await fixture({ operation: 'seed', count: 1 })).keys

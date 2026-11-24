@@ -113,6 +113,7 @@ mod tests {
             enqueue(&store, 7, duplicate);
             settings["primary"]["connections"] = json!([]);
             if other_role {
+                settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
                 settings["roles"][0]["enabled"] = json!(true);
                 settings["roles"][0]["connections"] = json!([repository]);
             }

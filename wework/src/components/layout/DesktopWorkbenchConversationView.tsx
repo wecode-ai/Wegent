@@ -519,6 +519,7 @@ export function DesktopWorkbenchConversationView({
                                     showPluginPicker={!hasConversation}
                                     submitDisabled={paneSession.status.isSubmitting}
                                     error={paneSession.error}
+                                    onDismissError={paneSession.clearError}
                                     disabledReason={inlineComposerDisabledReason}
                                     placeholder={t(
                                       'workbench.follow_up_placeholder',
@@ -788,6 +789,10 @@ export function DesktopWorkbenchConversationView({
                           paneSession.status.isSubmitting)
                       }
                       error={centralHarnessError ?? paneSession.error}
+                      onDismissError={() => {
+                        if (centralHarnessError) setCentralHarnessError(null)
+                        else paneSession.clearError()
+                      }}
                       disabledReason={
                         activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
                           ? inlineComposerDisabledReason

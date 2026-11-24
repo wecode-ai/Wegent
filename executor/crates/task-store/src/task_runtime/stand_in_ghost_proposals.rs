@@ -482,6 +482,9 @@ mod tests {
     #[test]
     fn role_route_can_apply_and_undo_ghost_without_rebinding_profile() {
         let (_root, store, mut settings, _) = training_fixture();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
         let role = &mut settings["roles"][0];
         role["enabled"] = json!(true);
         role["selfLearningEnabled"] = json!(true);

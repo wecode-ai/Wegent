@@ -300,6 +300,7 @@ mod tests {
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
         let source = json!({"providerId":"example/events","profile":"account","kind":"group","id":"one","name":"One", "policy":{"automatic":true,"askBeforeAct":true,"immediate":immediate,"sessionStrategy":strategy}});
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         settings["roles"][0]["enabled"] = json!(true);
         settings["roles"][0]["prompt"] = json!("Handle incoming work");
         settings["roles"][0]["connections"] = json!([source]);

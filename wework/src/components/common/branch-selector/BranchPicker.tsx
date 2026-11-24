@@ -111,6 +111,7 @@ export function BranchPicker({
       menuTestId={prefix + '-branch-menu'}
       searchTestId={prefix + '-branch-search-input'}
       emptyTestId={prefix + '-branch-empty'}
+      contentClassName="md:w-80 md:max-h-[min(480px,var(--available-height))]"
       accessibleLabel={accessibleLabel}
       searchPlaceholder={t('workbench.environment_branch_search', '搜索分支')}
       emptyLabel={t('workbench.environment_branch_empty_results', '没有匹配的分支')}
@@ -158,7 +159,7 @@ export function BranchPicker({
         ) : undefined
       }
       renderOptions={list => (
-        <div data-testid={prefix + '-branch-list'} className="min-h-0 overflow-auto">
+        <div data-testid={prefix + '-branch-list'} className="flex min-h-0 flex-col">
           {list}
         </div>
       )}

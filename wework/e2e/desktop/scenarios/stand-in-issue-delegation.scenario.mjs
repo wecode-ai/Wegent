@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { issueCommentFormSelector } from '../modules/issue-comment-selectors.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -63,8 +64,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           roles: [
             ...original.roles,
             {
-              ...original.roles[0],
-              id: ROLE,
+              ...standInRoleFixture(original.executionDeviceId, ROLE),
               name: ROLE,
               enabled: true,
               prompt: MARKER,

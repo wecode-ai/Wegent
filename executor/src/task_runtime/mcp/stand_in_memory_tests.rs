@@ -53,6 +53,7 @@ fn memory_recall_drops_revoked_sources_but_owner_can_still_delete_records() {
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let source = json!({"providerId":"@example/calendar/events","profile":"owner","kind":"calendar","id":"work","name":"Work calendar","policy":{"automatic":true,"askBeforeAct":true}});
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["connections"] = json!([source.clone()]);
     let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
     let scope = crate::task_runtime::personal_stand_in::connection_memory_scope(&source);
@@ -278,6 +279,7 @@ fn connected_work_keeps_bounded_payloads_and_revalidates_each_provider_scope() {
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
         let source = json!({"providerId":provider,"profile":"account","kind":"repository","id":"42","name":"org/repo","policy":{"automatic":true,"askBeforeAct":true}});
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         settings["roles"][0]["connections"] = json!([source.clone()]);
         store.save_personal_stand_in(7, "mac", settings).unwrap();
         let work = store
@@ -552,7 +554,8 @@ async fn stand_in_review_has_only_generic_read_tools_and_other_schedules_have_no
 fn stand_in_memory_tools_enforce_role_and_external_work_boundaries() {
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.db")).unwrap();
-    let settings = store.personal_stand_in(7, "mac").unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     store.save_personal_stand_in(7, "mac", settings).unwrap();
     let primary = StandInMcpIdentity {
         task_id: "primary".into(),

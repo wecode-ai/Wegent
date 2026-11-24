@@ -146,6 +146,7 @@ fn source_confirmation_fixture() -> (
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let source = |id, ask| json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"corp","kind":"group","id":id,"name":id,"policy":{"automatic":true,"askBeforeAct":ask,"immediate":false}});
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["connections"] =
         json!([source("group-a", false), source("group-b", true)]);

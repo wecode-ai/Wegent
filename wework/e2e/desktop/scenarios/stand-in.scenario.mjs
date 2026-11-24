@@ -1,3 +1,4 @@
+import { seedStandInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import {
   openStandInActivity,
@@ -187,6 +188,22 @@ export async function createDesktopScenario({
       )
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-select"]')
+      await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="stand-in-role-name"]'),
+        `${PROJECT} 助理`,
+        'An account with no roles can start creating its first role from a project'
+      )
+      await control.command('click', '[data-testid="stand-in-close"]')
+      await control.command('click', '[data-testid="stand-in-discard"]')
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+      await seedStandInRoleFixture(
+        (method, params) => requestExecutor(control, method, params, uiTimeoutMs),
+        USER_ID
+      )
+      await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`)
+      await control.command('waitFor', '[data-testid="stand-in-project-summary"]')
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-project-select"]'),
         'default'
