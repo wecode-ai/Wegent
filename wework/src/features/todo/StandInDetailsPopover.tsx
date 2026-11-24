@@ -8,6 +8,7 @@ import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   ArrowLeft,
   ArrowUpRight,
+  Bot,
   ChevronRight,
   CircleAlert,
   CircleCheck,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useRef, useState, type ReactNode } from 'react'
 import { AnchorPopover } from './AnchorPopover'
+import type { activeStandInBranchRows } from './standInDelegatedBranches'
 
 const activityStatusIcons = {
   pending: Clock,
@@ -37,6 +39,7 @@ export function StandInDetailsPopover({
   enabled,
   device,
   items,
+  activeDelegations,
   inbox,
   sourceErrors,
   overviewError,
@@ -55,6 +58,7 @@ export function StandInDetailsPopover({
   enabled: boolean
   device?: DeviceInfo
   items: RuntimeTaskReminderItem[]
+  activeDelegations: ReturnType<typeof activeStandInBranchRows>
   inbox: StandInInboxWork[]
   sourceErrors: StandInSourceError[]
   overviewError?: string | null
@@ -264,6 +268,49 @@ export function StandInDetailsPopover({
                   <ArrowUpRight aria-hidden="true" className="ml-auto h-4 w-4" />
                 </ControlButton>
               )}
+            </section>
+          )}
+          {activeDelegations.length > 0 && (
+            <section
+              aria-label={t('standIn.delegation.active')}
+              data-testid="stand-in-details-active-delegations"
+              className="border-t border-border pt-2"
+            >
+              <h3 className="mb-1 px-2 text-base font-medium">{t('standIn.delegation.active')}</h3>
+              {activeDelegations.map(branch => {
+                const address = branch.address
+                const content = (
+                  <>
+                    <Bot aria-hidden="true" className="size-4 shrink-0 text-text-muted" />
+                    <span className="min-w-0 flex-1 truncate" title={branch.title}>
+                      {branch.title}
+                    </span>
+                    <span className="max-w-[45%] text-right text-xs text-text-secondary">
+                      {t(`standIn.delegation.${branch.status}`)}
+                    </span>
+                  </>
+                )
+                return address && onOpenTask ? (
+                  <ControlButton
+                    key={branch.taskId}
+                    variant="unstyled"
+                    type="button"
+                    data-testid="stand-in-details-open-delegation"
+                    className={rowClass}
+                    onClick={() => {
+                      onClose()
+                      void onOpenTask(address)
+                    }}
+                  >
+                    {content}
+                    <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-text-muted" />
+                  </ControlButton>
+                ) : (
+                  <div key={branch.taskId} className="flex min-h-9 items-center gap-2 px-2 py-1">
+                    {content}
+                  </div>
+                )
+              })}
             </section>
           )}
           <section

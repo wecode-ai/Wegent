@@ -40,11 +40,13 @@ The desktop prompt above the composer offers **Notification settings**, **Don't 
 
 The number beside **My Stand-in** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. A completed stand-in turn generates at most one desktop notification showing its final reply. Background tasks routed through the stand-in deliver their results in the stand-in conversation. Primary notifications use the title **My Stand-in** and open the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
 
+<a id="assistant-role-delegation"></a>
+
 ## Delegate work to a specialist role
 
 In **My assistant**, name a role when you hand off work. When you leave the choice open, the assistant can assign work automatically if the responsibilities clearly match. If the choice affects the outcome and several roles fit, the assistant asks first. One request can be split across roles, and a specialist can hand off a part that calls for different expertise.
 
-Expand **Delegated tasks** at the bottom of the original conversation to see roles, progress, and errors. The card prioritizes work that is still active. You can answer supported questions right in the card. Open a task to read its independent conversation and handle native approval prompts. Each role uses its saved model and working directory, and its long-running chat remains available. Results flow back to the assigning assistant, which summarizes them in the original conversation.
+Expand a **Delegated tasks** card in the message history to see roles, progress, and errors. Open **Stand-in details** at the top right to see **Active delegations** in the popover. Select **Tasks and delegations** at the top right to see task activity and delegation history in one list in the right-hand panel. After the work ends, the card stays in the message history and the right-hand panel. You can answer supported questions right in the card. Open a task to read its independent conversation and handle native approval prompts. Each role uses its saved model and working directory, and its long-running chat remains available. Results flow back to the assigning assistant, which summarizes them in the original conversation.
 
 Cross-device delegation uses the role's configured execution device on the same Wework account. While that device is offline, the task shows **Waiting for device**. You can open the task from the original conversation once the device is online and accepts it.
 

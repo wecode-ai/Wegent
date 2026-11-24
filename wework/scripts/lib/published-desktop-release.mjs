@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { extractRuntimeArchive } from './extract-runtime-archive.mjs'
 import { hashReleaseAsset } from './portable-desktop-release.mjs'
+import { decodeReleaseBlocks } from '../../electron/src/runtime/release-block-map.mjs'
 
 const execute = promisify(execFile)
 const VERSION = /^\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?$/
@@ -44,6 +45,10 @@ async function verifyArchive(path, release) {
     (await hashReleaseAsset(path)) !== release.sha256
   )
     throw new Error('The immutable published desktop archive changed')
+}
+
+async function verifyBlockMap(path, release) {
+  decodeReleaseBlocks(await readFile(path), release.blockMap, release.bytes)
 }
 
 async function exists(path) {
@@ -170,6 +175,21 @@ export async function downloadPublishedDesktopArchive(options) {
     }
   }
   await verifyArchive(archive, release)
+  if (options.includeBlockMap && release.blockMap) {
+    const indexPath = `${archive}.blocks`
+    if (!(await exists(indexPath))) {
+      const pending = `${indexPath}.download-${randomUUID()}`
+      try {
+        await download(repository, tag, `${release.name}.blocks`, pending)
+        await verifyBlockMap(pending, release)
+        await rename(pending, indexPath)
+      } finally {
+        await rm(pending, { force: true })
+      }
+    } else {
+      await verifyBlockMap(indexPath, release)
+    }
+  }
   return { ...release, path: archive }
 }
 
@@ -191,6 +211,7 @@ export async function readPrebuiltDesktopRelease({
   platform,
   arch,
   installation,
+  includeBlockMap = false,
 }) {
   const release = JSON.parse(
     await readFile(join(directory, `release-${platform}-${arch}.json`), 'utf8')
@@ -198,6 +219,7 @@ export async function readPrebuiltDesktopRelease({
   validateRelease(release, { version, platform, arch })
   const archive = join(directory, release.name)
   await verifyArchive(archive, release)
+  if (includeBlockMap && release.blockMap) await verifyBlockMap(`${archive}.blocks`, release)
   await mkdir(dirname(installation), { recursive: true })
   return {
     ...release,
