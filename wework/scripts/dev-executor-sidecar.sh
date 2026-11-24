@@ -35,7 +35,7 @@ export WEGENT_EXECUTOR_SOURCE_DIR="$EXECUTOR_DIR"
 if is_stdio_server "${1:-}" && [ -z "${WEGENT_EXECUTOR_BINARY:-}" ]; then
   EXECUTOR_BINARY="$(cargo_target_binary_path "$EXECUTOR_DIR" debug wegent-executor)"
   if [ ! -x "$EXECUTOR_BINARY" ]; then
-    cargo build --manifest-path "$EXECUTOR_DIR/Cargo.toml" --bin wegent-executor
+    build_wegent_cargo_in_target --manifest-path "$EXECUTOR_DIR/Cargo.toml" --bin wegent-executor
   fi
   exec "$EXECUTOR_BINARY" "$@"
 fi
@@ -57,5 +57,5 @@ if [ "${WEGENT_CARGO_TARGET_DIR_AUTO:-0}" != "1" ] \
   exec "$(cargo_target_binary_path "$EXECUTOR_DIR" release wegent-executor)" "$@"
 fi
 
-cargo build --manifest-path "$EXECUTOR_DIR/Cargo.toml" --bin wegent-executor
+build_wegent_cargo_in_target --manifest-path "$EXECUTOR_DIR/Cargo.toml" --bin wegent-executor
 exec "$(cargo_target_binary_path "$EXECUTOR_DIR" debug wegent-executor)" "$@"
