@@ -522,9 +522,14 @@ pub(super) async fn call(
         };
     }
     let result = match name {
-        "configure_git_webhook"|"git_webhook_plan"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,
+        "configure_git_webhook" | "git_webhook_plan" => {
+            super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
+        }
         "search_memories" | "remember" | "forget_memory" | "list_memory_forgetting_rules" => {
-            let role_device = context.stand_in_delivery.as_ref().map(|turn| turn.role_device.as_str());
+            let role_device = context
+                .stand_in_delivery
+                .as_ref()
+                .map(|turn| turn.role_device.as_str());
             let result = memory_call(role_device, store, identity, name, arguments);
             if name == "search_memories" {
                 if let (Some(delivery), Ok(page)) = (&context.stand_in_delivery, &result) {
@@ -532,22 +537,48 @@ pub(super) async fn call(
                 }
             }
             result
-        },
+        }
         "connect_source" => connections::connect_source(arguments).await,
         "read_source" => connections::read_source(runtime, identity, arguments).await,
         "get_profile" => store
             .personal_stand_in(identity.user, &identity.device)
             .map_err(|e| e.to_string()),
-        "propose_profile" => super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await,
+        "propose_profile" => {
+            super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
+        }
         "list_work" => list_visible_work(store, identity),
         "read_work" => read_connected_work(runtime, identity, &arguments).await,
-        "reply" | "send_email" => reply_to_work(runtime,identity,&arguments, name == "send_email", context.stand_in_delivery.as_ref()).await,
-        "git_read" | "git_write" => super::git_connections::call(runtime, identity, arguments, name=="git_write",context.stand_in_delivery.as_ref()).await,
-        "prepare_git_workspace"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,
-        "list_connection_providers" => connections::list_providers(identity).await,
-        "search_connections" => crate::runtime_work::connection_host::call("listResources", arguments["providerId"].as_str(), arguments.clone())
+        "reply" | "send_email" => {
+            reply_to_work(
+                runtime,
+                identity,
+                &arguments,
+                name == "send_email",
+                context.stand_in_delivery.as_ref(),
+            )
             .await
-            .map_err(|e| format!("{}: {}", e.code, e.message)),
+        }
+        "git_read" | "git_write" => {
+            super::git_connections::call(
+                runtime,
+                identity,
+                arguments,
+                name == "git_write",
+                context.stand_in_delivery.as_ref(),
+            )
+            .await
+        }
+        "prepare_git_workspace" => {
+            super::stand_in_tasks::call(identity.clone(), name.to_owned(), arguments).await
+        }
+        "list_connection_providers" => connections::list_providers(identity).await,
+        "search_connections" => crate::runtime_work::connection_host::call(
+            "listResources",
+            arguments["providerId"].as_str(),
+            arguments.clone(),
+        )
+        .await
+        .map_err(|e| format!("{}: {}", e.code, e.message)),
         _ => Err(format!("Unknown {STAND_IN_MCP_SERVER_NAME} tool: {name}")),
     };
     match result {

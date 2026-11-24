@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 const TEMPLATES: [&str; 3] = ["document", "schedule", "process"];
+const ACCOUNT_METADATA: [&str; 3] = ["organizationId", "organizationName", "accountName"];
 
 pub fn is_primary_dingtalk(identity: &Value, source: &Value) -> bool {
     identity["id"] == "@primary" && source_provider(source) == DINGTALK_PROVIDER
@@ -173,10 +174,10 @@ fn next_version(version: u64) -> Result<u64, TaskRuntimeError> {
         .ok_or_else(|| invalid("Delegation version is exhausted"))
 }
 
-fn selected_account(primary: &Value, previous: &Value) -> Result<(Value, Value), TaskRuntimeError> {
+fn selected_account(primary: &Value, fallback: &Value) -> Result<(Value, Value), TaskRuntimeError> {
     let selected = dingtalk_sources(primary).next();
     let (profile, account) = selected
-        .map_or((&previous["profile"], &previous["accountId"]), |source| {
+        .map_or((&fallback["profile"], &fallback["accountId"]), |source| {
             (&source["profile"], &source["accountId"])
         });
     if !dingtalk_sources(primary).all(|source| {
@@ -201,6 +202,9 @@ pub(super) fn strip_source_markers(identity: &mut Value) {
     {
         if let Some(fields) = source.as_object_mut() {
             fields.remove("delegated");
+            if fields.get("providerId").and_then(Value::as_str) == Some(DINGTALK_PROVIDER) {
+                fields.remove("organizationId");
+            }
         }
     }
 }
@@ -229,6 +233,7 @@ pub(super) fn save_delegation(
     primary: &mut Value,
     previous_primary: &Value,
     direct_save: bool,
+    verified_account: Option<&Value>,
 ) -> Result<(), TaskRuntimeError> {
     let requested = primary["delegation"].clone();
     let previous = &previous_primary["delegation"];
@@ -245,7 +250,26 @@ pub(super) fn save_delegation(
             .as_str()
             .ok_or_else(|| invalid("Invalid delegation action"))?,
     };
-    let (profile, account) = selected_account(primary, previous)?;
+    let preparing = action == "prepare";
+    let binding = if preparing { &requested } else { previous };
+    let (profile, account) = selected_account(primary, binding)?;
+    if preparing
+        && (profile != requested["profile"]
+            || account != requested["accountId"]
+            || !valid_account_field(&profile, 512)
+            || !valid_account_field(&account, 256))
+    {
+        return Err(invalid("Prepare scope for one verified DingTalk account"));
+    }
+    if verified_account.is_some_and(|identity| {
+        identity["profile"] != profile
+            || identity["accountId"] != account
+            || !valid_account_field(&identity["organizationId"], 512)
+    }) {
+        return Err(invalid(
+            "The selected DingTalk account changed during verification",
+        ));
+    }
     let same_account = previous["profile"] == profile && previous["accountId"] == account;
     let was_authorized = same_account && previous["authorized"] == true;
     let has_sources = dingtalk_sources(primary).any(|source| source["paused"] != true);
@@ -255,6 +279,7 @@ pub(super) fn save_delegation(
             was_authorized,
             !was_authorized || previous["paused"] != false || !has_sources || !enabled,
         ),
+        "prepare" => (was_authorized, true),
         "enable" if !was_authorized && has_sources && enabled => (true, false),
         "pause" if was_authorized => (true, true),
         "resume" if was_authorized && previous["paused"] == true && has_sources && enabled => {
@@ -265,12 +290,23 @@ pub(super) fn save_delegation(
     let template_settings = templates(&requested, previous)?;
     let boundary = json!(now());
     let carry_boundaries = was_authorized && (previous["paused"] == false || paused);
+    let metadata = verified_account.unwrap_or(if same_account { previous } else { &Value::Null });
+    let mut account_metadata = serde_json::Map::new();
+    for field in ACCOUNT_METADATA {
+        if let Some(value) = metadata.get(field).filter(|value| !value.is_null()) {
+            if !valid_account_field(value, 512) {
+                return Err(invalid("Invalid DingTalk account metadata"));
+            }
+            account_metadata.insert(field.into(), value.clone());
+        }
+    }
     stamp_delegated_sources(
         primary,
         previous_primary,
         same_account,
         carry_boundaries,
-        &boundary,
+        if authorized { &boundary } else { &Value::Null },
+        account_metadata.get("organizationId"),
     );
     let changed = !same_account
         || previous["authorized"] != authorized
@@ -290,7 +326,7 @@ pub(super) fn save_delegation(
     };
     let cutoffs = TEMPLATES
         .into_iter()
-        .filter(|template| template_settings[*template] == true)
+        .filter(|template| authorized && template_settings[*template] == true)
         .map(|template| {
             let previous_cutoff = &previous["templateEnabledAfter"][template];
             let cutoff = if carry_boundaries
@@ -307,10 +343,20 @@ pub(super) fn save_delegation(
     primary["delegation"] = json!({
         "version": version, "profile": profile, "accountId": account, "authorized": authorized,
         "paused": paused, "templates": template_settings, "templateEnabledAfter": cutoffs,
-        "accountInvalidated": previous["accountInvalidated"] == true && !authorized,
-        "effectiveAfter": if changed { &boundary } else { &previous["effectiveAfter"] }
+        "accountInvalidated": !preparing && previous["accountInvalidated"] == true && !authorized,
+        "effectiveAfter": if !authorized { &Value::Null } else if changed { &boundary } else { &previous["effectiveAfter"] }
     });
+    primary["delegation"]
+        .as_object_mut()
+        .expect("delegation settings are an object")
+        .extend(account_metadata);
     Ok(())
+}
+
+fn valid_account_field(value: &Value, max_len: usize) -> bool {
+    value.as_str().is_some_and(|text| {
+        !text.trim().is_empty() && text.len() <= max_len && !text.chars().any(char::is_control)
+    })
 }
 
 fn stamp_delegated_sources(
@@ -319,6 +365,7 @@ fn stamp_delegated_sources(
     same_account: bool,
     carry_boundaries: bool,
     boundary: &Value,
+    organization_id: Option<&Value>,
 ) {
     for source in primary["connections"]
         .as_array_mut()
@@ -342,6 +389,9 @@ fn stamp_delegated_sources(
             boundary.clone()
         };
         source["delegated"] = json!(true);
+        if let Some(organization_id) = organization_id {
+            source["organizationId"] = organization_id.clone();
+        }
         source["paused"] = json!(paused);
         source["policy"]["automatic"] = json!(true);
         source["policy"]["askBeforeAct"] = json!(false);

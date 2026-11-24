@@ -1,8 +1,7 @@
-import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import type { PersonalStandInSettings, StandInIdentity } from '@/api/personalStandIn'
 import { connectionChangeEnablesIdentity, newStandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { DingTalkDelegationControls } from '@/features/collaboration-exp/stand-in/DingTalkDelegationControls'
 import {
   defaultDingTalkDelegation,
   dingTalkDelegationModel,
@@ -56,6 +55,7 @@ export function StandInPrimaryProfile({
   onReload,
   shortcuts,
   footerLeading,
+  dingtalkSourceProblem,
 }: {
   settings: PersonalStandInSettings
   saving: boolean
@@ -79,6 +79,7 @@ export function StandInPrimaryProfile({
   onReload?(): void
   shortcuts?: StandInSettingsShortcut[]
   footerLeading?: ReactNode
+  dingtalkSourceProblem?: string
 }) {
   const { t } = useTranslation('common')
   const blocked = saving || loading
@@ -180,25 +181,28 @@ export function StandInPrimaryProfile({
             : undefined,
       },
     })
-  const changeDelegationPause = async (action: 'pause' | 'resume') => {
-    if (!saved.delegation) return
+  const saveDingTalk = async (value: StandInIdentity) => {
     const next = await onSave(
       {
         ...settings,
-        primary: { ...saved, delegation: { ...saved.delegation, action } },
+        primary: value,
       },
       true
     )
-    const delegation = next?.primary?.delegation
-    if (delegation) {
-      setDraft(current => ({
-        ...current,
-        delegation: {
-          ...delegation,
-          templates: current.delegation?.templates ?? delegation.templates,
-        },
-      }))
-    }
+    const primary = next?.primary
+    if (!primary) return false
+    setDraft(current => ({
+      ...current,
+      enabled: primary.enabled,
+      model: primary.model,
+      modelOptions: primary.modelOptions,
+      delegation: primary.delegation,
+      connections: [
+        ...current.connections.filter(row => !isDingTalkSource(row)),
+        ...(primary.connections ?? []).filter(isDingTalkSource),
+      ],
+    }))
+    return true
   }
   const role = {
     ...defaultRole,
@@ -367,34 +371,14 @@ export function StandInPrimaryProfile({
             deviceId={settings.executionDeviceId}
             localDeviceId={localDeviceId}
             disabled={blocked}
-            dingTalkDelegation={original.delegation}
-            renderDingTalkDelegation={provider => (
-              <DingTalkDelegationControls
-                account={provider.availability}
-                saved={original}
-                draft={draft}
-                disabled={blocked || scheduleDirty || connectionDraftDirty}
-                dirty={dirty}
-                onToggleTemplate={(template, enabled) =>
-                  setDraft(current => {
-                    const delegation = current.delegation ?? defaultDingTalkDelegation
-                    return {
-                      ...current,
-                      delegation: {
-                        ...delegation,
-                        templates: { ...delegation.templates, [template]: enabled },
-                      },
-                    }
-                  })
-                }
-                onEnable={() =>
-                  void savePrimary(
-                    dingTalkDelegationModel(original, draft, provider.availability).submission(true)
-                  )
-                }
-                onPause={action => void changeDelegationPause(action)}
-              />
-            )}
+            dingTalk={{
+              saved: settings.primary ?? { enabled: false, prompt: '', preferences: '' },
+              services,
+              devices,
+              primaryStopped: Boolean(settings.lifecycle),
+              sourceProblem: dingtalkSourceProblem,
+              onSave: saveDingTalk,
+            }}
             onChange={value =>
               setDraft({
                 ...draft,
@@ -508,7 +492,11 @@ export function StandInPrimaryProfile({
             dequal(original, ordinarySubmission)
           }
           onCancel={close}
-          onSave={() => void savePrimary(ordinarySubmission)}
+          onSave={() => {
+            const save = () => void savePrimary(ordinarySubmission)
+            if (connectionRef.current) connectionRef.current.requestLeaveDingTalk(save)
+            else save()
+          }}
         >
           {error && (
             <div className="w-full">

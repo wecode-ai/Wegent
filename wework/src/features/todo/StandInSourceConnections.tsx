@@ -357,11 +357,13 @@ function StandInSourceConnectionsContent({
       className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
       data-testid={`${prefix}-connections`}
     >
-      <StandInConnectionHeader
-        icon={MessageSquare}
-        title={provider.displayName}
-        description={t('standIn.workspace.message_connection_help')}
-      />
+      {!delegatedDingTalk && (
+        <StandInConnectionHeader
+          icon={MessageSquare}
+          title={provider.displayName}
+          description={t('standIn.workspace.message_connection_help')}
+        />
+      )}
       {connectedScope}
       {!showAdding && (
         <ControlButton

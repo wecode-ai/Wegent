@@ -216,7 +216,9 @@ Open a source to install its plugin or sign in, then choose the receive scope an
 
 ### Primary assistant's DingTalk delegation
 
-Open **My stand-in → Primary assistant → Stand-in details → Manage stand-in → Connections → DingTalk**. Confirm the account and organization, then search for and add individual direct or group chats. Groups only process new messages that @mention you. You can choose sources during onboarding. Select **Enable delegation** here to create the first delegation version.
+Select **Connect DingTalk** during onboarding, or open **My stand-in → Primary assistant → Stand-in details → Manage stand-in → Connections → DingTalk**. Setup shows the execution device, the DingTalk component version it uses, and the current account and organization. Wework reuses a valid sign-in and available model. Confirm the account, then search for and add individual direct or group chats. Groups only process new messages that @mention you.
+
+Save the scope to continue setup later. When you select **Enable delegation**, the execution device checks read access for the selected conversations and model availability before creating the first delegation version. Follow the recovery prompts if the account needs permission, the model is unavailable, or a component update needs a restart.
 
 **Document links**, **Confirmed times and locations**, and **Existing standard procedures** are enabled by default. You can turn off any category. Replies require verifiable evidence from the same conversation and a current authorization check before submitting. Check the assistant's activity for the reason when a message lacks evidence or needs your judgment.
 

@@ -5,6 +5,7 @@ import {
 } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
+import { dingTalkInboxScope } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -162,7 +163,14 @@ export function StandInOverviewPage({
     deviceId ?? '',
     active && !!deviceId
   )
-  const inbox = useStandInInbox(api, props.userId, deviceId, active)
+  const inbox = useStandInInbox(
+    api,
+    props.userId,
+    deviceId,
+    active,
+    dingTalkInboxScope(saved?.primary?.delegation)
+  )
+  const dingtalkSourceProblem = inbox.sourceErrors.find(value => value.source.delegated)?.error.code
   const observation = useMemo(
     () => ({
       api,
@@ -877,6 +885,7 @@ export function StandInOverviewPage({
                       }
                       return saved ?? undefined
                     }}
+                    dingtalkSourceProblem={dingtalkSourceProblem}
                     error={state.error}
                     onReload={state.reload}
                     api={api}
@@ -940,6 +949,7 @@ export function StandInOverviewPage({
         localDeviceId: state.currentDeviceId,
         devices: props.devices,
         services: props.services,
+        dingtalkSourceProblem,
         onSelectDevice: primaryDeviceId
           ? undefined
           : device => {

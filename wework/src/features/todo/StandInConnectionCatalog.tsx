@@ -112,7 +112,8 @@ export function StandInConnectionCatalog({
         dingTalkDelegation?.authorized === true &&
         !dingTalkDelegation.paused &&
         !dingTalkDelegation.accountInvalidated &&
-        matchesDingTalkAccount(provider?.availability, dingTalkDelegation) &&
+        (Boolean(dingTalkDelegation.organizationId) ||
+          matchesDingTalkAccount(provider?.availability, dingTalkDelegation)) &&
         selected.some(row => row.delegated && !row.paused)
       const status = loading
         ? t('standIn.loading')
@@ -140,7 +141,13 @@ export function StandInConnectionCatalog({
             : id.startsWith(GIT_CONNECTION_PREFIX)
               ? GitBranch
               : MessageSquare,
-        name: provider?.displayName ?? t('standIn.workspace.connection_unknown_source'),
+        name:
+          provider?.displayName ??
+          t(
+            isDingTalk
+              ? 'standIn.dingtalk_delegation.provider'
+              : 'standIn.workspace.connection_unknown_source'
+          ),
         configured,
         active: configured && ready && !loading && (!primaryDingTalk || activeDelegation),
         quietStatus: ready && !loading && (!primaryDingTalk || activeDelegation),

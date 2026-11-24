@@ -596,9 +596,27 @@ impl LocalTaskStore {
         device: &str,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
+        self.save_personal_stand_in_with_verified_dingtalk_account(user, device, value, None)
+    }
+
+    /// Save after Executor preflight, keeping connector-verified identity out of client input.
+    pub fn save_personal_stand_in_with_verified_dingtalk_account(
+        &self,
+        user: i64,
+        device: &str,
+        value: Value,
+        verified_account: Option<&Value>,
+    ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let saved = self.save_personal_stand_in_on(&connection, user, device, value, true)?;
+        let saved = self.save_personal_stand_in_on(
+            &connection,
+            user,
+            device,
+            value,
+            true,
+            verified_account,
+        )?;
         connection.commit()?;
         Ok(saved)
     }
@@ -692,12 +710,10 @@ impl LocalTaskStore {
         user: i64,
         device: &str,
         value: Value,
-    ) -> Result<(), TaskRuntimeError> {
+    ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let result = self
-            .save_personal_stand_in_on(&transaction, user, device, value, true)
-            .map(|_| ());
+        let result = self.save_personal_stand_in_on(&transaction, user, device, value, true, None);
         transaction.rollback()?;
         result
     }
@@ -710,6 +726,7 @@ impl LocalTaskStore {
         device: &str,
         mut value: Value,
         direct_save: bool,
+        verified_account: Option<&Value>,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_personal_settings(&mut value)?;
         if let Some(object) = value.as_object_mut() {
@@ -764,6 +781,7 @@ impl LocalTaskStore {
                 &mut value["primary"],
                 &previous["primary"],
                 direct_save,
+                verified_account,
             )?;
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }

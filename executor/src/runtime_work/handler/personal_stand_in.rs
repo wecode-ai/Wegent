@@ -2,8 +2,102 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    project_role, role_project_matches, stand_in_identities,
+    project_role, role_project_matches, stand_in_connection, stand_in_identities, DINGTALK_PROVIDER,
 };
+
+fn active_dingtalk_delegation(primary: &Value) -> bool {
+    primary["enabled"] == true
+        && primary["delegation"]["authorized"] == true
+        && primary["delegation"]["paused"] == false
+}
+
+fn enabled_dingtalk_sources(primary: &Value) -> impl Iterator<Item = &Value> {
+    primary["connections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|source| {
+            source["providerId"] == DINGTALK_PROVIDER
+                && source["delegated"] == true
+                && source["paused"] != true
+        })
+}
+
+fn needs_dingtalk_read_preflight(primary: &Value, previous: &Value) -> bool {
+    if !active_dingtalk_delegation(primary) {
+        return false;
+    }
+    let delegation = &primary["delegation"];
+    let before = &previous["delegation"];
+    !active_dingtalk_delegation(previous)
+        || primary["model"] != previous["model"]
+        || ["profile", "accountId", "organizationId"]
+            .into_iter()
+            .any(|key| delegation[key] != before[key])
+        || ["document", "schedule", "process"]
+            .into_iter()
+            .any(|key| delegation["templates"][key] == true && before["templates"][key] != true)
+        || enabled_dingtalk_sources(primary).any(|source| {
+            !stand_in_connection(previous, source)
+                .is_some_and(|row| row["delegated"] == true && row["paused"] == false)
+        })
+}
+
+fn verified_dingtalk_readiness<'a>(
+    readiness: &'a Value,
+    expected: &Value,
+    read: bool,
+) -> Result<&'a Value, AppIpcError> {
+    let identity = &readiness["identity"];
+    let organization = &identity["organizationId"];
+    if readiness["status"] == "permissions_required" {
+        return Err(AppIpcError::new(
+            "dingtalk_permissions_required",
+            "Check the message permissions for the selected DingTalk conversations",
+        ));
+    }
+    if readiness["status"] == "auth_required" {
+        return Err(AppIpcError::new(
+            "connector_auth_required",
+            "Reconnect the selected DingTalk account",
+        ));
+    }
+    if readiness["status"] == "identity_required"
+        || (readiness["status"] == "ready"
+            && (identity["profile"] != expected["profile"]
+                || identity["accountId"] != expected["accountId"]
+                || organization.as_str().map_or(true, str::is_empty)
+                || (!expected["organizationId"].is_null()
+                    && organization != &expected["organizationId"])))
+    {
+        return Err(AppIpcError::new(
+            "dingtalk_identity_changed",
+            "Confirm the DingTalk account and organization again",
+        ));
+    }
+    if readiness["status"] != "ready" || (read && readiness["permissions"]["read"] != "verified") {
+        return Err(AppIpcError::new(
+            "dingtalk_not_ready",
+            "Check the DingTalk authorization and message permissions before enabling",
+        ));
+    }
+    Ok(identity)
+}
+
+fn unique_native_codex_default(catalog: &Value) -> Option<Value> {
+    let mut defaults = catalog["models"].as_array()?.iter().filter(|model| {
+        model["runtime"] == "codex" && model["is_default"] == true && model["source"] != "cloud"
+    });
+    let model = defaults.next()?;
+    if defaults.next().is_some() {
+        return None;
+    }
+    Some(json!({
+        "runtime": "codex",
+        "provider": model["provider"],
+        "model_id": model["model_id"],
+    }))
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn personal_stand_in_projects(&self) -> Result<Vec<Value>, AppIpcError> {
@@ -185,14 +279,22 @@ impl RuntimeWorkRpcHandler {
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
             let mut settings = payload["settings"].clone();
-            store
+            let normalized = store
                 .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
                 .map_err(settings_error)?;
+            let verified_account = self
+                .preflight_dingtalk_delegation(user, &mut settings, &normalized, &previous)
+                .await?;
             self.preflight_git_connections(&settings, &previous).await?;
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
             let saved = store
-                .save_personal_stand_in(user, &self.device_id, settings)
+                .save_personal_stand_in_with_verified_dingtalk_account(
+                    user,
+                    &self.device_id,
+                    settings,
+                    verified_account.as_ref(),
+                )
                 .map_err(settings_error)?;
             Ok(saved)
         } else {
@@ -200,6 +302,80 @@ impl RuntimeWorkRpcHandler {
                 .read_personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)
         }
+    }
+
+    pub(super) async fn preflight_dingtalk_delegation(
+        &self,
+        user: i64,
+        settings: &mut Value,
+        normalized: &Value,
+        previous: &Value,
+    ) -> Result<Option<Value>, AppIpcError> {
+        let primary = &normalized["primary"];
+        let before = &previous["primary"];
+        let delegation = &primary["delegation"];
+        let preparing = settings["primary"]["delegation"]["action"] == "prepare";
+        let verify_read = needs_dingtalk_read_preflight(primary, before);
+        if preparing || delegation != &before["delegation"] || verify_read {
+            self.verify_local_stand_in_owner(user)?;
+        }
+        if !preparing && !verify_read {
+            return Ok(None);
+        }
+        if !self.stand_in_role_runs_here(primary) {
+            return Err(AppIpcError::new(
+                "dingtalk_device_mismatch",
+                "Select the local executor to configure DingTalk delegation",
+            ));
+        }
+        let mut input = json!({"readiness":true,"profile":delegation["profile"]});
+        if verify_read {
+            input["sources"] = json!(enabled_dingtalk_sources(primary)
+                .map(|source| json!({"id":source["id"],"kind":source["kind"]}))
+                .collect::<Vec<_>>());
+        }
+        let readiness = self
+            .connection_call("check", Some(DINGTALK_PROVIDER), input)
+            .await?;
+        let identity = verified_dingtalk_readiness(&readiness, delegation, verify_read)?;
+        if verify_read {
+            let selected_model = primary
+                .get("model")
+                .filter(|model| !model.is_null())
+                .unwrap_or(&before["model"]);
+            settings["primary"]["model"] = self.preflight_dingtalk_model(selected_model).await?;
+        }
+        Ok(Some(identity.clone()))
+    }
+
+    async fn preflight_dingtalk_model(&self, selection: &Value) -> Result<Value, AppIpcError> {
+        let catalog = self.runner_catalog().await?;
+        let model = if selection.is_null() {
+            unique_native_codex_default(&catalog).unwrap_or(Value::Null)
+        } else {
+            selection.clone()
+        };
+        if model["runtime"] != "codex" {
+            return Err(AppIpcError::new(
+                "dingtalk_model_unavailable",
+                "Select an available Codex model for DingTalk delegation",
+            ));
+        }
+        let environment = json!({"mode":"fixed","environment_id":self.device_id});
+        let policy = json!({"mode":"fixed","model":model});
+        crate::task_runtime::runner_routing::validate_policies(Some(&environment), Some(&policy))
+            .map_err(settings_error)?;
+        let mut routing = json!({"runnerPolicy":{
+            "runtime":"codex","execution_policy":environment,"model_policy":policy
+        }});
+        crate::task_runtime::runner_routing::resolve_pending(
+            &mut routing,
+            Some(&catalog),
+            &self.device_id,
+        )
+        .map_err(settings_error)?;
+        self.materialize_runner_cloud_models(&mut routing).await?;
+        Ok(model)
     }
 
     pub(super) async fn prepare_connection_boundaries(
@@ -376,6 +552,61 @@ fn dispatch_authorizes_role(role: &Value, issue: &Value) -> bool {
         .rsplit_once(':')
         .map(|(_, role_id)| role["id"].as_str() == Some(role_id))
         .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod delegation_preflight_tests {
+    use super::*;
+
+    #[test]
+    fn only_activation_or_widening_requires_read_preflight() {
+        let active = json!({
+            "enabled": true,
+            "delegation": {
+                "authorized": true, "paused": false, "profile": "org:user", "accountId": "account",
+                "templates": {"document": true, "schedule": false, "process": true}
+            },
+            "connections": [{
+                "providerId": DINGTALK_PROVIDER, "delegated": true, "paused": false,
+                "profile": "org:user", "kind": "group", "id": "selected"
+            }]
+        });
+        let mut draft = active.clone();
+        draft["delegation"]["paused"] = json!(true);
+        assert!(!needs_dingtalk_read_preflight(&draft, &active));
+        assert!(needs_dingtalk_read_preflight(&active, &draft));
+        draft = active.clone();
+        draft["delegation"]["templates"]["document"] = json!(false);
+        assert!(!needs_dingtalk_read_preflight(&draft, &active));
+        draft["delegation"]["templates"]["schedule"] = json!(true);
+        assert!(needs_dingtalk_read_preflight(&draft, &active));
+        draft = active.clone();
+        draft["connections"][0]["id"] = json!("another");
+        assert!(needs_dingtalk_read_preflight(&draft, &active));
+    }
+
+    #[test]
+    fn account_verification_does_not_supply_message_access() {
+        let account = json!({"profile":"org:user","accountId":"account","organizationId":"org"});
+        let mut readiness =
+            json!({"status":"ready","identity":account,"permissions":{"read":"unchecked"}});
+        assert!(verified_dingtalk_readiness(&readiness, &account, false).is_ok());
+        assert_eq!(
+            verified_dingtalk_readiness(&readiness, &account, true)
+                .unwrap_err()
+                .code,
+            "dingtalk_not_ready"
+        );
+        readiness["permissions"]["read"] = json!("verified");
+        assert!(verified_dingtalk_readiness(&readiness, &account, true).is_ok());
+        readiness["identity"]["organizationId"] = json!("other");
+        assert_eq!(
+            verified_dingtalk_readiness(&readiness, &account, true)
+                .unwrap_err()
+                .code,
+            "dingtalk_identity_changed"
+        );
+    }
 }
 
 #[cfg(test)]

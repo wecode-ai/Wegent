@@ -1498,7 +1498,7 @@ mod tests {
         let package = tempfile::tempdir().unwrap();
         fs::write(
             package.path().join("logout.sh"),
-            "#!/bin/sh\nrm -- \"$1\"\nprintf '{\"status\":\"ok\"}\\n'\n",
+            "#!/bin/sh\nmv \"$1\" \"$1.revoked\" || exit 1\nprintf '{\"status\":\"ok\"}\\n'\n",
         )
         .unwrap();
         let connector = |slug, opted_in| {
@@ -1521,6 +1521,7 @@ mod tests {
         logout_before_plugin_uninstall(package.path(), &manifest).await;
 
         assert!(!package.path().join("clear-auth").exists());
+        assert!(package.path().join("clear-auth.revoked").is_file());
         assert_eq!(
             fs::read_to_string(package.path().join("keep-auth")).unwrap(),
             "authorized"

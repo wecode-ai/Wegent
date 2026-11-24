@@ -1,6 +1,9 @@
 import { roleIncludesProject, type PersonalStandInSettings } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { delegationResultLabel } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
+import {
+  delegationResultLabel,
+  dingTalkInboxScope,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -48,7 +51,8 @@ export function StandInHomeWorkspace(props: Props) {
     services.standInApi,
     userId,
     deviceId,
-    active && (view === 'list' || view === 'conversation')
+    active && (view === 'list' || view === 'conversation'),
+    dingTalkInboxScope(settings.primary?.delegation)
   )
   const [opened, setOpened] = useState<
     Array<{ key: string; title: string; address: RuntimeTaskAddress }>

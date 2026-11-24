@@ -129,17 +129,23 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     setError(null)
     setSearched(false)
     try {
-      const result = await input.api.searchConnectionResources(
+      const request = [
         input.deviceId,
         input.provider.id,
         state.kind,
         state.query.trim(),
-        cursor
-      )
+        cursor,
+      ] as const
+      const profile = input.delegatedDingTalk ? input.provider.availability.profile : undefined
+      const result = profile
+        ? await input.api.searchConnectionResources(...request, undefined, profile)
+        : await input.api.searchConnectionResources(...request)
       if (!isCurrent(sequence)) return
       const items = result.items.filter(row =>
         input.delegatedDingTalk
-          ? isDingTalkDelegationSource(row) &&
+          ? row.providerId === input.provider.id &&
+            row.kind === state.kind &&
+            isDingTalkDelegationSource(row) &&
             matchesDingTalkAccount(input.provider.availability, row)
           : !state.excluding ||
             (row.profile === state.excluding.profile && row.kind === state.excluding.kind)

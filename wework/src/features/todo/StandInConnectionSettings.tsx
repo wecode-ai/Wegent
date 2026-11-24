@@ -1,13 +1,14 @@
-import {
-  STAND_IN_DINGTALK_PROVIDER,
-  type StandInDingTalkDelegation,
-  type StandInRole,
-} from '@/api/personalStandIn'
+import { STAND_IN_DINGTALK_PROVIDER, type StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
 import {
   AutomationsPage,
   type AutomationNavigationHandle,
 } from '@/features/automations/AutomationsPage'
+import {
+  DingTalkDelegationControls,
+  type DingTalkDelegationNavigation,
+  type DingTalkDelegationSettings,
+} from '@/features/collaboration-exp/stand-in/DingTalkDelegationControls'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { CollaborationProject, TagDraftStore } from '@wegent/collaboration'
@@ -21,7 +22,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type ReactNode,
   type Ref,
 } from 'react'
 import { StandInConnectionCatalog } from './StandInConnectionCatalog'
@@ -36,6 +36,7 @@ import { StandInSourceConnections } from './StandInSourceConnections'
 export interface StandInConnectionNavigationHandle extends AutomationNavigationHandle {
   /** True means the source editor already confirmed discarding unsaved changes. */
   requestLeave(action: (discarded?: boolean) => void): void
+  requestLeaveDingTalk(action: () => void): void
   back(): void
 }
 
@@ -60,8 +61,7 @@ export function StandInConnectionSettings({
   projectScopeConfigured,
   ref,
   onNavigate,
-  renderDingTalkDelegation,
-  dingTalkDelegation,
+  dingTalk,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -83,8 +83,7 @@ export function StandInConnectionSettings({
   projectScopeConfigured?: boolean
   ref?: Ref<StandInConnectionNavigationHandle>
   onNavigate?(action: () => void): void
-  renderDingTalkDelegation?(provider: ConnectionProviderDescriptor): ReactNode
-  dingTalkDelegation?: StandInDingTalkDelegation
+  dingTalk?: DingTalkDelegationSettings
 }) {
   const { t, i18n } = useTranslation('common')
   const pending = Boolean(
@@ -135,9 +134,11 @@ export function StandInConnectionSettings({
   const calendarRef = useRef<AutomationNavigationHandle>(null)
   const emailRef = useRef<AutomationNavigationHandle>(null)
   const projectRef = useRef<StandInProjectNavigationHandle>(null)
+  const dingTalkRef = useRef<DingTalkDelegationNavigation>(null)
   const requestLeave = (action: (discarded?: boolean) => void) => {
     const editor = calendarRef.current ?? emailRef.current
-    if (projectRef.current) projectRef.current.requestLeave(action)
+    if (dingTalkRef.current) dingTalkRef.current.requestLeave(() => action(false))
+    else if (projectRef.current) projectRef.current.requestLeave(action)
     else if (editor) editor.requestLeave(() => action(false))
     else action(false)
   }
@@ -148,6 +149,10 @@ export function StandInConnectionSettings({
     },
     requestLeave(action) {
       requestLeave(action)
+    },
+    requestLeaveDingTalk(action) {
+      if (dingTalkRef.current) dingTalkRef.current.requestLeave(action)
+      else action()
     },
   }))
   const matches = state.api === api && state.deviceId === deviceId && state.locale === i18n.language
@@ -235,7 +240,18 @@ export function StandInConnectionSettings({
                 disabled={disabled || loading}
                 onInstall={() => void install(provider)}
               />
-              {provider.id === EMAIL_PROVIDER ? (
+              {provider.id === STAND_IN_DINGTALK_PROVIDER && dingTalk ? (
+                <DingTalkDelegationControls
+                  ref={dingTalkRef}
+                  key={deviceId}
+                  settings={dingTalk}
+                  api={api}
+                  provider={provider}
+                  deviceId={deviceId}
+                  localDeviceId={localDeviceId}
+                  disabled={disabled || loading}
+                />
+              ) : provider.id === EMAIL_PROVIDER ? (
                 <StandInEmailConnections
                   ownerApi={api}
                   userId={scheduling?.userId}
@@ -275,6 +291,7 @@ export function StandInConnectionSettings({
                 />
               ) : null}
               {provider.id !== EMAIL_PROVIDER &&
+                !(provider.id === STAND_IN_DINGTALK_PROVIDER && dingTalk) &&
                 !['ready', 'auth_required'].includes(provider.availability.status) && (
                   <UnavailableSourceConnections
                     role={role}
@@ -283,7 +300,6 @@ export function StandInConnectionSettings({
                     onChange={onChange}
                   />
                 )}
-              {provider.id === STAND_IN_DINGTALK_PROVIDER && renderDingTalkDelegation?.(provider)}
             </>
           ) : (
             <div className="space-y-3">
@@ -305,7 +321,7 @@ export function StandInConnectionSettings({
             projectScopeConfigured={projectScopeConfigured}
             projects={projects}
             providers={providers}
-            dingTalkDelegation={dingTalkDelegation}
+            dingTalkDelegation={dingTalk?.saved.delegation}
             loading={loading}
             disabled={disabled}
             scheduling={Boolean(scheduling)}

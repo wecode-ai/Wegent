@@ -101,6 +101,39 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.connections.catalog', {})
   })
 
+  test('keeps the selected DingTalk profile on readiness and resource requests', async () => {
+    const request = vi.fn()
+    const services = createLocalAppServices({
+      request,
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+    })
+    const providerId = 'connection/dingtalk'
+    const profile = 'team:alice'
+    const sources = [{ id: 'room', kind: 'group' as const }]
+    await services.standInApi!.connectionReadiness('device', providerId, profile, sources)
+    await services.standInApi!.searchConnectionResources(
+      'device',
+      providerId,
+      'group',
+      'Team',
+      undefined,
+      undefined,
+      profile
+    )
+    expect(request).toHaveBeenNthCalledWith(1, 'runtime.connections.readiness', {
+      providerId,
+      profile,
+      sources,
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'runtime.connections.resources', {
+      providerId,
+      profile,
+      kind: 'group',
+      query: 'Team',
+      cursor: undefined,
+    })
+  })
+
   test('loads project plugins from disk without either online Codex catalog', async () => {
     const listFromDisk = vi
       .spyOn(codexPlugins, 'listLocalInstalledPluginsFromDisk')

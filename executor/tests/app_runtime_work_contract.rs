@@ -593,6 +593,7 @@ async fn app_runtime_persists_local_task_thread_mapping() {
 #[tokio::test]
 async fn app_runtime_create_standalone_chat_generates_default_workspace() {
     let _lock = env_lock().await;
+    let _workspace_override = EnvGuard::set("WEGENT_STANDALONE_WORKSPACE_ROOT", "");
     let home = temp_path("wegent-app-runtime-chat-home", "dir");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _executor_home = EnvGuard::set(
