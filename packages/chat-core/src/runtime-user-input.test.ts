@@ -239,6 +239,9 @@ describe('async request user input', () => {
     const resolved = resolveAsyncRequestUserInputAnswers(messages)
 
     expect(resolved).toBe(messages)
+    expect(resolveAsyncRequestUserInputReplies(messages).get('user-1')).toEqual([
+      { question: 'Which state jitters?', answer: 'Reading' },
+    ])
   })
 
   test('does not resolve blocking questions from later user messages', () => {

@@ -243,11 +243,7 @@ function asyncQuestionPrompts<TAttachment, TFileChanges>(
   return (message.blocks ?? []).flatMap(block => {
     if (block.type !== 'tool') return []
     const payload = block.renderPayload
-    if (
-      !isRequestUserInputPayload(payload) ||
-      !isAsyncRequestUserInputPayload(payload) ||
-      hasRequestUserInputResponse(payload)
-    ) {
+    if (!isRequestUserInputPayload(payload) || !isAsyncRequestUserInputPayload(payload)) {
       return []
     }
     return (payload.questions ?? []).map((question, index) => ({
