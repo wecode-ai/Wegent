@@ -95,9 +95,10 @@ export function findGitMarketplaceVersionHint(
   catalogs: PluginManagementState['gitMarketplaceVersions']
 ) {
   const marketplace = installedPluginMarketplaceId(plugin)
-  return marketplace
+  const hint = marketplace
     ? catalogs.get(marketplace)?.versions.get(plugin.spec.source.pluginKey)
     : undefined
+  return hint?.current === plugin.spec.version ? hint : undefined
 }
 
 function comparableGitVersion(version: string | null) {
@@ -318,8 +319,6 @@ export function createPluginManagementSource({
       if (isCurrent()) {
         loading = false
         publish()
-        const deviceId = getSnapshot().currentDeviceId
-        if (deviceId !== initialDeviceId) void refreshPublishedMarketplace(deviceId)
       }
     }
   }
@@ -539,9 +538,7 @@ export function createPluginManagementSource({
   function reconcileGitMarketplaceSources(marketplaces: ConfiguredCodexMarketplace[]) {
     if (!profileIsCurrent()) return
     configuredMarketplaceRevisions = new Map(
-      marketplaces
-        .filter(marketplace => marketplace.installed !== null)
-        .map(marketplace => [marketplace.id, marketplace.sourceRevision])
+      marketplaces.map(marketplace => [marketplace.id, marketplace.sourceRevision])
     )
     set('gitMarketplaceVersions', previous => {
       const entries = [...previous].filter(
@@ -622,7 +619,44 @@ export function createPluginManagementSource({
     return false
   }
 
-  async function updatePublishedPlugin(id: string | number, targetReleaseId: number) {
+  async function preparePublishedPluginUpdate(id: string | number) {
+    const isCurrent = currentView()
+    if (!isCurrent() || state.updatingPluginId !== null) return null
+    const deviceId = getSnapshot().currentDeviceId
+    set('updatingPluginId', id)
+    try {
+      const { items } = await cloudPluginApi.listInstalledPlugins(deviceId)
+      if (!isCurrent()) return null
+      const releaseId = items.find(item => String(toInstalledPluginItem(item).id) === String(id))
+        ?.spec.releaseId
+      if (!releaseId) throw new Error('PLUGIN_UPDATE_RELEASE_CHANGED')
+      return releaseId
+    } catch (error) {
+      if (isCurrent()) {
+        const message = getErrorMessage(
+          error,
+          translator()('workbench.plugins_update_release_changed')
+        )
+        set('pluginOperationNotice', {
+          id: 'update-plugin-error-' + id,
+          kind: 'error',
+          message:
+            message === 'PLUGIN_UPDATE_RELEASE_CHANGED'
+              ? translator()('workbench.plugins_update_release_changed')
+              : message,
+        })
+      }
+      return null
+    } finally {
+      if (isCurrent()) set('updatingPluginId', null)
+    }
+  }
+
+  async function updatePublishedPlugin(
+    id: string | number,
+    targetReleaseId: number,
+    expectedCurrentReleaseId: number
+  ) {
     const isCurrent = currentView()
     const snapshot = getSnapshot()
     if (!isCurrent() || state.updatingPluginId !== null || !snapshot.currentDeviceId) return
@@ -642,12 +676,6 @@ export function createPluginManagementSource({
     const scope = capturePluginMarketplaceScope(cacheKey, deviceId)
     set('updatingPluginId', id)
     try {
-      const { items: accountInstalls } = await cloudPluginApi.listInstalledPlugins(deviceId)
-      if (!isCurrent()) return
-      const expectedCurrentReleaseId = accountInstalls.find(
-        item => String(toInstalledPluginItem(item).id) === String(target.id)
-      )?.spec.releaseId
-      if (!expectedCurrentReleaseId) throw new Error('PLUGIN_UPDATE_RELEASE_CHANGED')
       const updated = await cloudPluginApi.updatePublishedRelease(
         target.id,
         { releaseId: target.releaseId, expectedCurrentReleaseId },
@@ -708,6 +736,7 @@ export function createPluginManagementSource({
 
   return {
     getSnapshot,
+    preparePublishedPluginUpdate,
     updatePublishedPlugin,
     checkGitMarketplace,
     reconcileGitMarketplaceSources,
@@ -836,9 +865,12 @@ export function createPluginManagementSource({
                   overlays.delete(field)
                   overlayRevision += 1
                 }
+              const previousDeviceId = getSnapshot().currentDeviceId
               inventory = next
               if (hasLoadedPluginInventory(next)) loading = false
               publish()
+              if (getSnapshot().currentDeviceId !== previousDeviceId)
+                void refreshPublishedMarketplace(next.deviceId)
             })
             const current = getPluginMarketplaceCache(cacheKey)
             inventory = knownDeviceId && current?.deviceId !== knownDeviceId ? null : current

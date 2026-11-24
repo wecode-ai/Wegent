@@ -11,6 +11,9 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use toml_edit::DocumentMut;
 
+mod manifest_read;
+use manifest_read::read_install_marketplace_name;
+
 const WEWORK_PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
 const MARKETPLACE_QR_DRAIN_BUDGET: Duration = Duration::from_secs(10);
 const MARKETPLACE_LOGOUT_BUDGET: Duration = Duration::from_secs(45);
@@ -162,7 +165,10 @@ impl RuntimeWorkRpcHandler {
                     .await
                     .is_err()
                 {
-                    log_executor_event("marketplace connector logout timed out", &[]);
+                    return Err(AppIpcError::new(
+                        "marketplace_logout_timeout",
+                        "Connector logout timed out. The remaining plugins were not uninstalled. Retry marketplace removal.",
+                    ));
                 }
             }
             let _marketplace = self.bundled_plugin_marketplace_reconciliation.lock().await;
@@ -380,24 +386,6 @@ async fn check_marketplace_write_at(
         ));
     }
     Ok(())
-}
-
-async fn read_install_marketplace_name(path: PathBuf) -> Result<String, AppIpcError> {
-    let mut read = tokio::task::spawn_blocking(move || {
-        crate::local::plugin_catalog::read_marketplace_manifest_name(&path)
-    });
-    match tokio::time::timeout(MARKETPLACE_MANIFEST_TIMEOUT, &mut read).await {
-        Ok(result) => result
-            .map_err(marketplace_management_error)?
-            .map_err(marketplace_management_error),
-        Err(_) => {
-            read.abort();
-            Err(AppIpcError::new(
-                "marketplace_manifest_timeout",
-                "Reading the marketplace manifest timed out. Retry the installation.",
-            ))
-        }
-    }
 }
 
 fn marketplace_write_conflicts(

@@ -505,11 +505,16 @@ function invalidateReadState(deviceId: string | null = null): void {
   didHydrateReadStateSession = false
   warmupReadStatePromise = null
   if (typeof window !== 'undefined') {
-    window.localStorage.removeItem(READ_STATE_LOCAL_STORAGE_KEY)
-    window.sessionStorage.removeItem(READ_STATE_SESSION_STORAGE_KEY)
-    for (const legacyKey of READ_STATE_LEGACY_STORAGE_KEYS) {
-      window.localStorage.removeItem(legacyKey)
-      window.sessionStorage.removeItem(legacyKey)
+    try {
+      window.localStorage.removeItem(READ_STATE_LOCAL_STORAGE_KEY)
+      window.sessionStorage.removeItem(READ_STATE_SESSION_STORAGE_KEY)
+      for (const legacyKey of READ_STATE_LEGACY_STORAGE_KEYS) {
+        window.localStorage.removeItem(legacyKey)
+        window.sessionStorage.removeItem(legacyKey)
+      }
+    } catch {
+      didHydrateReadStateSession = true
+      console.warn('[Wework plugins] Failed to clear persisted catalog cache')
     }
   }
 }
@@ -3574,12 +3579,19 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return readDetailForInstalledPlugin(installed)
     },
     async listConfiguredMarketplaces() {
-      const scope = await captureInstalledReadScope()
+      const accountEpoch = getPluginMarketplaceAccountEpoch()
+      const scope = await ensureLocalExecutorStarted()
       const configured = await requestLocalExecutor<Omit<ConfiguredCodexMarketplace, 'name'>[]>(
         'runtime.codex.marketplace.list_configured',
         {}
       )
-      await verifyInstalledReadCurrent(scope)
+      const current = await ensureLocalExecutorStarted()
+      if (
+        accountEpoch !== getPluginMarketplaceAccountEpoch() ||
+        current.deviceId !== scope.deviceId ||
+        current.runtimeInstanceId !== scope.runtimeInstanceId
+      )
+        throw new ExpiredPluginInventoryRequest()
       if (!Array.isArray(configured)) throw new Error('Invalid configured marketplaces')
       const names = new Map(cachedState?.marketplaces.map(market => [market.id, market.name]))
       return configured.map(source => ({ ...source, name: names.get(source.id) ?? source.id }))
@@ -3603,7 +3615,11 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           installationsRevision,
           confirmedPluginIds,
         })
-        if (selectedMarketplaceId() === id) rememberSelectedMarketplaceId('')
+        try {
+          if (selectedMarketplaceId() === id) rememberSelectedMarketplaceId('')
+        } catch {
+          console.warn('[Wework plugins] Failed to clear removed marketplace selection')
+        }
       } finally {
         clearLocalCodexPluginsReadStateCache()
       }

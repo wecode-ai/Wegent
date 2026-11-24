@@ -353,6 +353,7 @@ export async function verifyGitMarketplaceVersions({ codexHome, control, executo
       '.codex-plugin/plugin.json'
     )
     await access(otherPackage)
+    await access(join(executorHome, otherMarker))
 
     const openRemoval = async installedMarket => {
       const activeCatalog = join(installedMarket.installedRoot, '.agents/plugins/marketplace.json')

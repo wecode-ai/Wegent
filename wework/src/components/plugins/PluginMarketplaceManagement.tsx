@@ -48,10 +48,9 @@ export function PluginMarketplaceManagement({
     marketplace => marketplace.installed === null || !marketplace.installationsRevision
   )
   const error =
-    failure ??
-    (snapshot.status === 'error'
+    snapshot.status === 'error'
       ? getErrorMessage(snapshot.error, t('workbench.plugins_marketplace_sources_load_failed'))
-      : null)
+      : null
 
   const remove = async (marketplace: ConfiguredCodexMarketplace) => {
     if (marketplace.installed === null || !marketplace.installationsRevision) return
@@ -66,6 +65,7 @@ export function PluginMarketplaceManagement({
         ids
       )
       resource.update(items => items?.filter(item => item.id !== marketplace.id))
+      void resource.reload()
       onRemoved(marketplace)
     } catch (reason) {
       setFailure(getErrorMessage(reason, t('workbench.plugins_marketplace_removal_failed')))
@@ -84,6 +84,11 @@ export function PluginMarketplaceManagement({
       aria-labelledby="plugin-management-marketplaces-tab"
       data-testid="plugin-management-marketplaces-panel"
     >
+      {failure && (
+        <p className="mb-3 text-sm text-destructive" role="alert">
+          {failure}
+        </p>
+      )}
       {(error || inventoryUnavailable) && (
         <div
           className="mb-3 flex flex-wrap items-center gap-2 text-sm text-destructive"

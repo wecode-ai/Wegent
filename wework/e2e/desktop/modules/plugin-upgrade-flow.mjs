@@ -180,6 +180,10 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   const competingPath = `/plugins/installed/${competingId}?device_id=${deviceId}`
   await request(competingPath, 'PUT', { updatePolicy: 'manual' })
   const competingSlug = `${pluginKey}-beta`
+  const conflictingRelease = await env.publishPluginRelease({
+    slug: competingSlug,
+    version: '0.2.1',
+  })
   await env.publishPluginRelease({ slug: competingSlug, version: newVersion })
   await control.command('click', '[data-testid="plugin-management-surface-marketplaces"]')
   await control.command('click', '[data-testid="plugin-management-surface-wework"]')
@@ -193,10 +197,6 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await control.command('waitFor', '[data-testid="plugin-management-update-confirm"]', {
     text: 'v' + newVersion,
     timeoutMs: PLUGIN_SYNC_TIMEOUT_MS,
-  })
-  const conflictingRelease = await env.publishPluginRelease({
-    slug: competingSlug,
-    version: '0.4.1',
   })
   await request(competingPath, 'PUT', { releaseId: conflictingRelease.releaseId })
   await control.command('clickWhenEnabled', '[data-testid="plugin-management-update-confirm"]', {

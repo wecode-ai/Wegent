@@ -33,12 +33,29 @@ pub(super) fn preferred_native_version(candidate: &str, selected: &str) -> bool 
         return true;
     }
     match (
-        semver::Version::parse(candidate),
-        semver::Version::parse(selected),
+        comparable_native_version(candidate),
+        comparable_native_version(selected),
     ) {
-        (Ok(candidate), Ok(selected)) => candidate > selected,
-        _ => candidate > selected,
+        (Some(candidate_version), Some(selected_version)) => candidate_version
+            .cmp(&selected_version)
+            .then_with(|| candidate.cmp(selected))
+            .is_gt(),
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (None, None) => candidate > selected,
     }
+}
+
+fn comparable_native_version(value: &str) -> Option<semver::Version> {
+    let version = value.strip_prefix('v').unwrap_or(value);
+    let core_end = version.find(['-', '+']).unwrap_or(version.len());
+    let (core, suffix) = version.split_at(core_end);
+    let normalized = if core.split('.').count() == 2 {
+        format!("{core}.0{suffix}")
+    } else {
+        version.to_owned()
+    };
+    semver::Version::parse(&normalized).ok()
 }
 
 pub fn read_codex_marketplace_cache(
@@ -195,6 +212,24 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_version_preference_is_total_for_supported_and_custom_versions() {
+        let ordered = [
+            "1-custom", "2-custom", "9.0", "9.0.0", "10.0", "10.0.0", "local",
+        ];
+        for (index, candidate) in ordered.iter().enumerate() {
+            for (other_index, selected) in ordered.iter().enumerate() {
+                assert_eq!(
+                    preferred_native_version(candidate, selected),
+                    index > other_index,
+                    "{candidate} compared with {selected}"
+                );
+            }
+        }
+        assert!(preferred_native_version("v10.0", "v9.0"));
+        assert!(preferred_native_version("10.0", "10.0-beta.1"));
+    }
 
     #[test]
     fn detects_same_version_changes_and_removed_files() {

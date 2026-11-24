@@ -96,6 +96,8 @@ In **Marketplace sources**, choose **Check for updates** for a Git marketplace y
 
 Open **Left sidebar → Plugins → Manage plugins → Marketplace sources**. In the marketplace row, choose **More actions → Remove marketplace**. Review the plugins installed on this device from the marketplace. If the dialog lists any plugins, choose **Uninstall and remove**. If the installations change before removal, review the updated list and confirm again.
 
+Removal processes each plugin's logout and uninstall in sequence. If logout times out, removal stops and leaves that plugin and later plugins installed. Completed uninstalls are not rolled back; review the current list before retrying removal.
+
 ## Import a personal plugin
 
 On the **Plugins** page, choose **Create → Import plugin** to import a standard ZIP package that follows the `wework-plugins` format. The ZIP root must contain `.codex-plugin/plugin.json`, and any Skills or MCP servers must be included in the same plugin package. Encrypted or password-protected ZIP files are not supported.

@@ -159,6 +159,7 @@ function PluginManagementWorkspaceContent({
     requestUninstallPlugin,
     confirmUninstallPlugin,
     copyMarketplacePlugin,
+    preparePublishedPluginUpdate,
     updatePublishedPlugin,
     checkGitMarketplace,
     reconcileGitMarketplaceSources,
@@ -169,6 +170,7 @@ function PluginManagementWorkspaceContent({
     id: string | number
     name: string
     releaseId: number
+    expectedCurrentReleaseId: number
     version: string
   } | null>(null)
   const tabs = [
@@ -543,13 +545,19 @@ function PluginManagementWorkspaceContent({
                         updateDisabled={updatingPluginId !== null || !currentDeviceId}
                         onUpdate={
                           update
-                            ? () =>
+                            ? async () => {
+                                const expectedCurrentReleaseId = await preparePublishedPluginUpdate(
+                                  update.id
+                                )
+                                if (expectedCurrentReleaseId === null) return
                                 setPendingUpdate({
                                   id: plugin.id,
                                   name: plugin.name,
                                   releaseId: update.releaseId,
+                                  expectedCurrentReleaseId,
                                   version: update.version,
                                 })
+                              }
                             : undefined
                         }
                         onOpen={() => openInstalledPluginDetail(plugin)}
@@ -622,7 +630,11 @@ function PluginManagementWorkspaceContent({
           onClose={() => setPendingUpdate(null)}
           onConfirm={() => {
             setPendingUpdate(null)
-            void updatePublishedPlugin(pendingUpdate.id, pendingUpdate.releaseId)
+            void updatePublishedPlugin(
+              pendingUpdate.id,
+              pendingUpdate.releaseId,
+              pendingUpdate.expectedCurrentReleaseId
+            )
           }}
         />
       )}
