@@ -406,6 +406,23 @@ describe('async reply client identity', () => {
     expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
   })
 
+  test('rejects same-turn guidance that predates the question', () => {
+    const question = {
+      ...assistantMessage(ASYNC_PAYLOAD),
+      createdAt: '2026-09-29T03:05:02.000Z',
+      turnId: 'turn-1',
+    }
+    const guidance = {
+      ...userMessage('Start this turn'),
+      createdAt: '2026-09-29T03:05:01.000Z',
+      turnId: 'turn-1',
+      runtimeGuidance: true,
+    }
+    const messages = [question, guidance]
+
+    expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+  })
+
   test('still settles from an ordinary reply without turn identity', () => {
     const question = {
       ...assistantMessage(ASYNC_PAYLOAD),

@@ -165,7 +165,7 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
       if (!rows) return resolveAsyncBlock<TFileChanges>(block, [])
       const offset = offsetByReply.get(reply.id) ?? 0
       const count = block.renderPayload.questions?.length ?? 0
-      if (rows.length < offset + count) return resolveAsyncBlock<TFileChanges>(block, [])
+      if (rows.length < offset + count) return block
       offsetByReply.set(reply.id, offset + count)
       return resolveAsyncBlock<TFileChanges>(block, rows.slice(offset, offset + count))
     })
@@ -204,6 +204,7 @@ export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
       const eligible = questions.filter(question =>
         asyncReplyCanAnswerTurn(message, {
           clientUserMessageId: question.clientUserMessageId,
+          createdAt: question.createdAt,
           turnId: question.turnId,
         })
       )
@@ -226,12 +227,13 @@ interface PendingAsyncQuestion {
   prompt: string
   turnId: string | null
   clientUserMessageId: string | null
+  createdAt: string | null
 }
 
 function asyncQuestionPrompts<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>
 ): PendingAsyncQuestion[] {
-  const { clientUserMessageId, turnId } = asyncQuestionTurn(message)
+  const { clientUserMessageId, createdAt, turnId } = asyncQuestionTurn(message)
   return (message.blocks ?? []).flatMap(block => {
     if (block.type !== 'tool') return []
     const payload = block.renderPayload
@@ -247,6 +249,7 @@ function asyncQuestionPrompts<TAttachment, TFileChanges>(
         question.question?.trim() || question.id?.trim() || `question_${index + 1}`,
       turnId,
       clientUserMessageId,
+      createdAt,
     }))
   })
 }
@@ -308,13 +311,14 @@ function asyncReplyByMessageIndex<TAttachment, TFileChanges>(
   return replies
 }
 
-type AsyncReplyMessage = Pick<WorkbenchMessage, 'id' | 'turnId'> & {
+type AsyncReplyMessage = Pick<WorkbenchMessage, 'createdAt' | 'id' | 'turnId'> & {
   runtimeClientUserMessageId?: string | null
   runtimeGuidance?: boolean | null
 }
 
 interface AsyncQuestionTurn {
   clientUserMessageId: string | null
+  createdAt: string | null
   turnId: string | null
 }
 
@@ -325,6 +329,7 @@ function asyncQuestionTurn<TAttachment, TFileChanges>(
     clientUserMessageId:
       (message as WorkbenchMessage & { runtimeClientUserMessageId?: string | null })
         .runtimeClientUserMessageId?.trim() || null,
+    createdAt: message.createdAt?.trim() || null,
     turnId: message.turnId?.trim() || null,
   }
 }
@@ -332,6 +337,10 @@ function asyncQuestionTurn<TAttachment, TFileChanges>(
 /** A turn prompt introduces its questions; only later turns or guidance can answer them. */
 function asyncReplyCanAnswerTurn(reply: AsyncReplyMessage, question: AsyncQuestionTurn): boolean {
   if (question.clientUserMessageId && reply.id === question.clientUserMessageId) return false
+  const replyTime = Date.parse(reply.createdAt)
+  const questionTime = Date.parse(question.createdAt ?? '')
+  if (Number.isFinite(replyTime) && Number.isFinite(questionTime) && replyTime < questionTime)
+    return false
   const replyTurnId = reply.turnId
   if (!question.turnId || !replyTurnId || question.turnId !== replyTurnId) return true
   return reply.runtimeGuidance === true
