@@ -710,7 +710,7 @@ fn assistant_message_phase(
 }
 
 pub(super) fn assistant_message_phase_name(item: &Value) -> Option<String> {
-    string_field(item, "phase").map(normalized_phase_or_status)
+    crate::codex_phase::codex_phase_name(item)
 }
 
 pub(super) fn normalized_phase_or_status(value: String) -> String {

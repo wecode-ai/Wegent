@@ -575,3 +575,46 @@ fn canonical_turn_retains_artifacts_from_segments_before_guidance() {
         "src/one.rs"
     );
 }
+
+#[test]
+fn transcript_keeps_channel_commentary_out_of_final_content() {
+    let thread = json!({
+        "id": "thread-1",
+        "turns": [{
+            "id": "turn-1",
+            "status": "completed",
+            "items": [
+                {
+                    "id": "prompt",
+                    "type": "userMessage",
+                    "content": [{"type": "inputText", "text": "Continue"}]
+                },
+                {
+                    "id": "progress",
+                    "type": "agentMessage",
+                    "channel": "commentary",
+                    "text": "Working on it"
+                },
+                {
+                    "id": "final",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Done"
+                }
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let progress = messages
+        .iter()
+        .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+        .find(|block| block["content"] == "Working on it")
+        .expect("commentary process block");
+
+    assert_eq!(progress["type"], "text");
+    assert!(messages.iter().all(|message| !message["content"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Working on it")));
+}
