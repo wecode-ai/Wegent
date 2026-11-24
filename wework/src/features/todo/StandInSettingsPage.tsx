@@ -121,7 +121,6 @@ function StandInSettingsEditor({
   const { t } = useTranslation('common')
   const roleDraftRequest = useMemo(
     () => ({
-      defaultRoleName: t('standIn.personal.default_role'),
       project: initialProject
         ? {
             id: initialProject.id,
