@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { requestExecutor } from './executor-rpc.mjs'
+import { verifyStandInDelegationVisual } from './stand-in-delegation-visual.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
 
@@ -34,9 +35,9 @@ async function selectSource(control, query, selected, unselected) {
   await control.command('waitFor', dingtalk(`remove-${selected}`))
 }
 
-export async function verifyStandInDingTalkDelegation(control, userId, uiTimeoutMs, fixture) {
+export async function verifyStandInDingTalkDelegation(control, userId, fixture, options) {
   const load = () =>
-    requestExecutor(control, 'runtime.stand_in.personal.get', { userId }, uiTimeoutMs)
+    requestExecutor(control, 'runtime.stand_in.personal.get', { userId }, options.uiTimeoutMs)
   await fixture.setAuthState('scoped-ready')
   const initial = (await load()).primary
   await control.command('clickWhenEnabled', id('stand-in-primary-open'))
@@ -46,6 +47,7 @@ export async function verifyStandInDingTalkDelegation(control, userId, uiTimeout
   for (const template of ['document', 'schedule', 'process']) {
     await control.command('waitFor', `${delegation(`template-${template}`)}[aria-checked="true"]`)
   }
+  await verifyStandInDelegationVisual(control, options)
   await selectSource(control, 'Scoped Group', 'scoped-group', 'other-group')
   await control.command('clickWhenEnabled', dingtalk('add'))
   await control.command('select', dingtalk('kind'), { value: 'direct' })

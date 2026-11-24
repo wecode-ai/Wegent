@@ -179,7 +179,7 @@ function AssistantComposerSession({
               { value: 'auto', label: t('assistant.automatic') },
               ...settings.roles.map(item => ({
                 value: JSON.stringify([item.id]),
-                label: item.name || t('assistant.specialist'),
+                label: item.name || t('assistant.unnamedAssistant'),
               })),
             ]}
             accessibleLabel={t('assistant.chooseRole')}
@@ -189,7 +189,9 @@ function AssistantComposerSession({
             className="assistant-role-select text-xs"
             triggerContent={
               <>
-                <span>{role?.name || t('assistant.automatic')}</span>
+                <span>
+                  {role ? role.name || t('assistant.unnamedAssistant') : t('assistant.automatic')}
+                </span>
                 <ChevronDown size={14} aria-hidden="true" />
               </>
             }

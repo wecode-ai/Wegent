@@ -16,8 +16,7 @@ export async function verifyStandInGroupMessageScope(control, uiTimeoutMs, roleI
     )
     return settings.roles.find(role => role.id === roleId)
   }
-  const open = async () => {
-    await openStandInSettings(control)
+  const openSource = async () => {
     await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
     await openConnectionTypePicker(control)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')
@@ -28,18 +27,20 @@ export async function verifyStandInGroupMessageScope(control, uiTimeoutMs, roleI
   for (const mode of ['all-messages', 'mentions']) {
     await control.command('select', selector, { value: mode })
     await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-    await control.command('waitFor', '[data-testid="stand-in-page"]', { visible: false })
+    await control.command('waitFor', '[data-testid="stand-in-connections-open"]')
+    await control.command('waitFor', '[data-testid="stand-in-saved"]')
     const saved = (await load()).connections.find(row => row.id === groupId)
     assert.equal(saved.collectionKey, mode === 'all-messages' ? mode : undefined)
     assert.equal(saved.profile, original.profile)
     assert.deepEqual(saved.policy, original.policy)
-    await open()
+    await openSource()
     assert.equal(await control.command('getValue', selector), mode)
   }
   await control.command('select', selector, { value: 'all-messages' })
   await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')
   await control.command('clickWhenEnabled', '[data-testid="stand-in-discard"]')
   await control.command('waitFor', '[data-testid="stand-in-page"]', { visible: false })
-  await open()
+  await openStandInSettings(control)
+  await openSource()
   assert.equal(await control.command('getValue', selector), 'mentions')
 }

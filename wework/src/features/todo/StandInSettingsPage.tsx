@@ -121,7 +121,6 @@ function StandInSettingsEditor({
   const { t } = useTranslation('common')
   const roleDraftRequest = useMemo(
     () => ({
-      defaultRoleName: t('standIn.personal.default_role'),
       project: initialProject
         ? {
             id: initialProject.id,
@@ -232,7 +231,7 @@ function StandInSettingsEditor({
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
     executionDeviceId,
-    view === 'advanced'
+    view === 'advanced' || ((view === 'main' || view === 'create') && Boolean(role?.workspace))
   )
 
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
@@ -564,7 +563,7 @@ function StandInSettingsEditor({
                       : standInRoleName(
                           role,
                           draft.roles.indexOf(role),
-                          t('standIn.personal.default_role')
+                          t('standIn.personal.unnamed_assistant')
                         )
                   }
                 />
@@ -589,6 +588,7 @@ function StandInSettingsEditor({
                 <StandInRequirements
                   key={role.id}
                   role={role}
+                  runtimeWork={runtimeWork}
                   services={services}
                   onChange={update => updateRole(role.id, update)}
                   disabled={saving}
@@ -801,7 +801,7 @@ function StandInSettingsEditor({
                       ? 'standIn.personal.disable_project'
                       : 'standIn.personal.enable_and_use'
                     : view === 'create' && !initialProject
-                      ? 'standIn.personal.create_role'
+                      ? 'standIn.personal.create_title'
                       : view === 'connections'
                         ? 'standIn.personal.save_connections'
                         : 'standIn.save'
@@ -837,7 +837,7 @@ function StandInSettingsEditor({
             >
               <p className="text-sm">
                 {t('standIn.personal.delete_role_help', {
-                  name: role.name || t('standIn.personal.default_role'),
+                  name: role.name || t('standIn.personal.unnamed_assistant'),
                 })}
               </p>
               <div className="mt-3 flex justify-end gap-2">

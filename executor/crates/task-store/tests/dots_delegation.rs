@@ -475,3 +475,265 @@ fn durable_send_claim_rechecks_current_policy_and_keeps_unknown_on_restart() {
         .unwrap()
         .is_none());
 }
+
+#[test]
+fn source_pause_global_pause_and_scope_removal_block_already_queued_replies() {
+    for change in ["source pause", "global pause", "scope removal"] {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let mut settings = draft(
+            &store,
+            json!([
+                source("team", "group", "account-a"),
+                source("peer", "direct", "account-a")
+            ]),
+        );
+        settings["primary"]["delegation"] = json!({"action":"enable"});
+        let mut settings = saved(&store, settings);
+        let group = settings["primary"]["connections"][0].clone();
+        let direct = settings["primary"]["connections"][1].clone();
+        let event =
+            json!({"id":"question", "text":"Where is the guide?", "at":"2099-01-01T00:00:00Z"});
+        let group_item = store
+            .ingest_stand_in_message(7, "@primary", &group, &event, None)
+            .unwrap();
+        let direct_item = store
+            .ingest_stand_in_message(7, "@primary", &direct, &event, None)
+            .unwrap();
+
+        match change {
+            "source pause" => settings["primary"]["connections"][0]["paused"] = json!(true),
+            "global pause" => settings["primary"]["delegation"]["action"] = json!("pause"),
+            "scope removal" => settings["primary"]["connections"] = json!([direct]),
+            _ => unreachable!(),
+        }
+        saved(&store, settings);
+        for (item, permitted) in [(group_item, false), (direct_item, change != "global pause")] {
+            let id = item["id"].as_str().unwrap();
+            let record = item["latestMessage"]["recordId"].as_str().unwrap();
+            let decision = json!({"action":"reply","template":"document","reason":"Quoted guide."});
+            let claim = store
+                .record_delegation_decision(7, "desktop", id, record, decision)
+                .unwrap();
+            assert_eq!(claim.is_some(), permitted, "Claim after {change}");
+            let persisted = store.stand_in_work(7, id).unwrap();
+            if permitted {
+                assert_eq!(persisted["delegationResult"]["status"], "submitting");
+            } else {
+                assert_eq!(persisted["status"], "pending");
+                assert!(persisted["delegationResult"].is_null());
+            }
+        }
+    }
+}
+
+#[test]
+fn unknown_submission_survives_restart_and_blocks_linked_followup_but_not_independent_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let settings = saved(&store, settings);
+    let source = &settings["primary"]["connections"][0];
+    let original =
+        json!({"id":"original", "text":"Where is the guide?", "at":"2099-01-01T00:00:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &original, None)
+        .unwrap();
+    let work = item["id"].as_str().unwrap();
+    let record = item["latestMessage"]["recordId"].as_str().unwrap();
+    let decision = json!({"action":"reply","template":"document","reason":"Quoted guide."});
+    assert!(store
+        .record_delegation_decision(7, "desktop", work, record, decision.clone())
+        .unwrap()
+        .is_some());
+    store
+        .finish_delegated_submission(7, work, record, None)
+        .unwrap();
+    drop(store);
+
+    let store = LocalTaskStore::open(&path).unwrap();
+    let replayed = store
+        .ingest_stand_in_message(7, "@primary", source, &original, None)
+        .unwrap();
+    assert_eq!(replayed["id"], work);
+    assert_eq!(replayed["messageCount"], 1);
+    assert_eq!(replayed["delegationResult"]["status"], "unknown");
+    let followup = json!({"id":"followup","quotedMessageId":"original","text":"Any update?","at":"2099-01-01T00:01:00Z"});
+    let linked = store
+        .ingest_stand_in_message(7, "@primary", source, &followup, Some(work))
+        .unwrap();
+    assert_eq!(linked["id"], work);
+    let linked_message = store
+        .known_stand_in_message(7, "@primary", source, "followup")
+        .unwrap()
+        .unwrap();
+    let linked_record = linked_message["recordId"].as_str().unwrap();
+    assert_ne!(linked_record, record);
+    assert!(store
+        .record_delegation_decision(7, "desktop", work, linked_record, decision.clone())
+        .unwrap()
+        .is_none());
+    let messages = store.stand_in_messages(7, work).unwrap();
+    assert_eq!(messages.len(), 2);
+    let original = messages
+        .iter()
+        .find(|message| message["id"] == "original")
+        .unwrap();
+    let followup = messages
+        .iter()
+        .find(|message| message["id"] == "followup")
+        .unwrap();
+    assert_eq!(original["delegationResult"]["status"], "unknown");
+    assert_eq!(followup["delegationResult"]["action"], "skip");
+
+    let independent = json!({"id":"independent", "text":"Where is the release checklist?", "at":"2099-01-01T00:02:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &independent, None)
+        .unwrap();
+    let independent_work = item["id"].as_str().unwrap();
+    let independent_record = item["latestMessage"]["recordId"].as_str().unwrap();
+    assert_ne!(independent_work, work);
+    assert!(store
+        .record_delegation_decision(7, "desktop", independent_work, independent_record, decision)
+        .unwrap()
+        .is_some());
+    store
+        .finish_delegated_submission(
+            7,
+            independent_work,
+            independent_record,
+            Some("channel-receipt"),
+        )
+        .unwrap();
+    let result = store.stand_in_work(7, independent_work).unwrap();
+    assert_eq!(result["delegationResult"]["status"], "sent");
+    assert_eq!(result["delegationResult"]["receiptId"], "channel-receipt");
+}
+
+#[test]
+fn send_claim_respects_each_template_switch_independently() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let mut settings = saved(&store, settings);
+    let templates = ["document", "schedule", "process"];
+    for disabled in templates {
+        for template in templates {
+            settings["primary"]["delegation"]["templates"][template] = json!(template != disabled);
+        }
+        settings = saved(&store, settings);
+        let source = &settings["primary"]["connections"][0];
+        for template in templates {
+            let event = json!({
+                "id": format!("{disabled}-off-{template}"),
+                "text":"Question",
+                "at":"2099-01-01T00:00:00Z"
+            });
+            let item = store
+                .ingest_stand_in_message(7, "@primary", source, &event, None)
+                .unwrap();
+            let work = item["id"].as_str().unwrap();
+            let record = item["latestMessage"]["recordId"].as_str().unwrap();
+            let decision =
+                json!({"action":"reply","template":template,"reason":"Quoted evidence."});
+            let claim = store
+                .record_delegation_decision(7, "desktop", work, record, decision)
+                .unwrap();
+            assert_eq!(
+                claim.is_some(),
+                template != disabled,
+                "{disabled} disabled, {template} evaluated"
+            );
+        }
+    }
+}
+
+#[test]
+fn unsupported_actions_never_claim_a_send_and_handoff_keeps_its_reason() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let settings = saved(&store, settings);
+    let source = &settings["primary"]["connections"][0];
+    let event = json!({"id":"question", "text":"Where is the guide?", "at":"2099-01-01T00:00:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &event, None)
+        .unwrap();
+    let work = item["id"].as_str().unwrap();
+    let record = item["latestMessage"]["recordId"].as_str().unwrap();
+    for action in ["ask", "wait"] {
+        let decision = json!({"action":action,"reason":"No guide has been shared."});
+        assert!(store
+            .record_delegation_decision(7, "desktop", work, record, decision)
+            .is_err());
+        let persisted = store.stand_in_work(7, work).unwrap();
+        assert_eq!(persisted["status"], "pending");
+        assert!(persisted["delegationResult"].is_null());
+    }
+
+    let reason = "No guide has been shared in this conversation.";
+    let decision = json!({"action":"needs_user","reason":reason});
+    assert!(store
+        .record_delegation_decision(7, "desktop", work, record, decision)
+        .unwrap()
+        .is_none());
+    let result = store.stand_in_work(7, work).unwrap();
+    assert_eq!(result["delegationResult"]["action"], "needs_user");
+    assert_eq!(result["delegationResult"]["status"], "complete");
+    assert_eq!(result["delegationResult"]["reason"], reason);
+    assert!(result["delegationResult"]["receiptId"].is_null());
+}
+
+#[test]
+fn recovery_gap_stays_visible_across_progress_and_restart_until_acknowledged() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut source = source("peer", "direct", "account-a");
+    source["delegated"] = json!(true);
+    source["enabledAfter"] = json!("2026-11-24T00:00:00Z");
+    let gap =
+        json!({"reason":"duration","from":"2026-11-24T00:00:00Z","until":"2026-11-24T00:31:00Z"});
+    let progressed = json!({"checkpoint":{"after":"2026-11-24T00:32:00Z","cursor":"0"}});
+    store
+        .save_stand_in_source(
+            7,
+            &source,
+            &json!({"checkpoint":{"after":gap["until"],"cursor":"0"},"delegationGap":gap}),
+        )
+        .unwrap();
+    store.save_stand_in_source(7, &source, &progressed).unwrap();
+    drop(store);
+
+    let store = LocalTaskStore::open(&path).unwrap();
+    let notices = store.stand_in_source_errors(7).unwrap();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0]["error"]["code"], "dingtalk_delegation_gap");
+    assert_eq!(notices[0]["delegationGap"], gap);
+    assert_eq!(notices[0]["checkpoint"], progressed["checkpoint"]);
+
+    let mut failed = progressed.clone();
+    failed["error"] = json!({"code":"source_network_failure","retryable":true});
+    store.save_stand_in_source(7, &source, &failed).unwrap();
+    assert_eq!(
+        store.stand_in_source_errors(7).unwrap()[0]["error"],
+        failed["error"]
+    );
+    store.acknowledge_stand_in_source_error(7, &source).unwrap();
+    assert_eq!(
+        store.stand_in_source_errors(7).unwrap()[0]["delegationGap"],
+        gap
+    );
+
+    store.acknowledge_stand_in_source_error(7, &source).unwrap();
+    store.save_stand_in_source(7, &source, &progressed).unwrap();
+    assert!(store.stand_in_source_errors(7).unwrap().is_empty());
+    assert_eq!(
+        store.stand_in_source(7, &source).unwrap()["checkpoint"],
+        progressed["checkpoint"]
+    );
+}

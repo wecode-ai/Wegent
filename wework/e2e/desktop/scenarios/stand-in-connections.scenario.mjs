@@ -181,7 +181,7 @@ export function createDesktopScenario(options) {
         await verifyStandInGroupMessageScope(control, uiTimeoutMs, SCENARIO_ROLE)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')
         await verifyStandInProjectConnectionNames(control, uiTimeoutMs)
-        await verifyStandInDingTalkDelegation(control, USER, uiTimeoutMs, fixture)
+        await verifyStandInDingTalkDelegation(control, USER, fixture, options)
       } finally {
         const current = await requestExecutor(
           control,

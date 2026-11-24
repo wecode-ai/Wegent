@@ -12,7 +12,7 @@ Open **Settings → Coding → Git hosting**, confirm the execution device and p
 
 Open **Environment** in a task conversation to inspect the current branch's PR/MR. Its status icon opens check results and connector synchronization status. The Environment panel also shows synchronization in progress, authorization requirements or synchronization errors while retaining the last successfully retrieved PR/MR state. For authorization or synchronization errors, use **Configure code hosting tools** in that panel to check configuration on the execution device, then refresh. Interface status and AI event waits share connector collection; refreshing the interface does not call the model.
 
-For repository events, use **My Stand-in → role profile → connection sources → GitHub/GitLab**, not just the status switch. Distinguish missing CLI, sign-in, network and permission failures before choosing login or retry.
+For repository events, use **My assistants → role profile → connection sources → GitHub/GitLab**, not just the status switch. Distinguish missing CLI, sign-in, network and permission failures before choosing login or retry.
 
 The branch name in Environment is a borderless interactive row. Select the name or its trailing arrow to open the branch picker. Branch and delivery actions share the other rows' left alignment.
 

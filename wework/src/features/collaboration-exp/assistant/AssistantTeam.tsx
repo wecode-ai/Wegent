@@ -50,7 +50,7 @@ export function AssistantTeam({
     },
     ...settings.roles.map(role => ({
       id: role.id,
-      name: role.name || t('assistant.specialist'),
+      name: role.name || t('assistant.unnamedAssistant'),
       role,
       collaboration: role.collaboration,
     })),
@@ -161,7 +161,7 @@ export function AssistantTeam({
         open={deleting !== null}
         title={t('assistant.deleteRoleTitle')}
         description={t('assistant.deleteRoleDescription', {
-          name: deleting?.name || t('assistant.specialist'),
+          name: deleting?.name || t('assistant.unnamedAssistant'),
         })}
         cancelLabel={t('assistant.cancel')}
         confirmLabel={t('assistant.delete')}

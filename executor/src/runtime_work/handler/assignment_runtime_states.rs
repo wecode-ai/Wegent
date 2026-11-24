@@ -51,6 +51,7 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         issue: &Value,
         binding: &Value,
+        error: &AppIpcError,
     ) -> Result<(), AppIpcError> {
         if config["projectStore"] != "cloud"
             || config["manual"] == true
@@ -66,7 +67,8 @@ impl RuntimeWorkRpcHandler {
             .queue_assignment_receipt(&json!({
                 "projectId":config["projectId"],"issueId":issue["id"],"assignmentId":binding["assignmentId"],
                 "userId":config["userId"],"deviceId":self.cloud_device_id()?,"backendUrl":connection.backend_url,
-                "taskId":null,"dispatch":{"state":"failed","reasonCode":"execution_rejected","observedAt":chrono::Utc::now()},
+                "taskId":null,"dispatch":{"state":"failed","reasonCode":"execution_rejected",
+                    "failureCode":error.code,"observedAt":chrono::Utc::now()},
             })).map_err(settings_error)
     }
 

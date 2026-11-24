@@ -13,6 +13,9 @@ import { readImages } from './read-images.js'
 
 const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 const GROUP_CATCH_UP_WINDOW_MINUTES = 15
+const DELEGATION_CATCH_UP_MS = 30 * 60_000
+const DELEGATION_CATCH_UP_MESSAGES = 50
+const MAX_DELEGATION_CATCH_UP_PAGES = 8
 const READINESS_ERRORS = new Map([
   ['connector_auth_required', 'auth_required'],
   ['dingtalk_account_changed', 'identity_required'],
@@ -202,6 +205,11 @@ export function createProvider() {
       const selfId = await ownIdentity(ctx, required(source, 'profile'), identities, account)
       const start = checkpoint?.after ?? required(source, 'enabledAfter')
       const now = Date.now()
+      if (account) {
+        const page = await collectDelegatedMessages(ctx, source, start, now, selfId)
+        await boundAccount(ctx, source, readTool)
+        return page
+      }
       const boundedGroup = source.collectionKey === 'all-messages'
       const windowMinutes = boundedGroup ? checkpoint?.windowMinutes : undefined
       const windowEnd = boundedGroup
@@ -217,7 +225,6 @@ export function createProvider() {
         hasMore,
         nextCursor: next,
       } = await readMessagePage(ctx, source, { start, end: until, limit: 100, cursor }, selfId)
-      if (account) await boundAccount(ctx, source, readTool)
       const catchingUp = boundedGroup && Date.parse(until) < now
       const nextCheckpoint = hasMore
         ? { after: start, until, cursor: next }
@@ -231,6 +238,44 @@ export function createProvider() {
       }
     },
   }
+}
+
+async function collectDelegatedMessages(ctx, source, from, now, ownId) {
+  const fromTime = Date.parse(from)
+  if (!Number.isFinite(fromTime) || fromTime > now)
+    throw invalid('Invalid DingTalk delegation checkpoint')
+  const until = new Date(now).toISOString()
+  const nextCheckpoint = { after: until, cursor: '0' }
+  const gap = reason => ({
+    events: [],
+    hasMore: false,
+    nextCheckpoint: { ...nextCheckpoint, delegationGap: { reason, from, until } },
+  })
+  if (now - fromTime > DELEGATION_CATCH_UP_MS) return gap('duration')
+
+  const events = new Map()
+  const cursors = new Set()
+  let cursor = '0'
+  // No page may enter the inbox before the entire bounded window is checked.
+  for (let page = 0; page < MAX_DELEGATION_CATCH_UP_PAGES; page++) {
+    if (cursors.has(cursor)) throw invalid('DingTalk delegation pagination repeated a cursor')
+    cursors.add(cursor)
+    const result = await readMessagePage(
+      ctx,
+      source,
+      { start: from, end: until, limit: DELEGATION_CATCH_UP_MESSAGES + 1, cursor },
+      ownId
+    )
+    for (const event of result.events) {
+      const at = Date.parse(event.at)
+      if (at <= fromTime || at > now || event.recalled) continue
+      events.set(event.id, event)
+      if (events.size > DELEGATION_CATCH_UP_MESSAGES) return gap('volume')
+    }
+    if (!result.hasMore) return { events: [...events.values()], nextCheckpoint, hasMore: false }
+    cursor = result.nextCursor
+  }
+  throw invalid('DingTalk delegation collection could not complete within the page limit')
 }
 
 function messageSentAt(message) {

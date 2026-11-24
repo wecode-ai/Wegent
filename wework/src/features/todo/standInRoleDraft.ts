@@ -1,12 +1,10 @@
 import {
   newStandInRole,
-  standInRoleName,
   type PersonalStandInSettings,
   type StandInProjectRef,
 } from '@/api/personalStandIn'
 
 export interface InitialStandInRoleRequest {
-  defaultRoleName: string
   project?: StandInProjectRef
   projectRoleName?: string
 }
@@ -27,8 +25,5 @@ export function createStandInRoleDraft(
       projects: [request.project],
     }
   }
-  const roles = current.roles.map((row, index) =>
-    row.name ? row : { ...row, name: standInRoleName(row, index, request.defaultRoleName) }
-  )
-  return { draft: { ...current, roles: [...roles, role] }, role }
+  return { draft: { ...current, roles: [...current.roles, role] }, role }
 }

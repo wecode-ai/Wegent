@@ -448,7 +448,8 @@ test('probes only selected conversations and reports denied reads and mismatched
   )
 })
 
-test('search and collection keep using the explicitly selected organization profile', async () => {
+test('search and collection keep using the explicitly selected organization profile', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-24T00:10:00Z') })
   const { ctx, provider, calls, state } = readinessFixture()
   const profile = 'org-b:owner'
   const { identity } = await provider.check(ctx, { readiness: true, profile })
