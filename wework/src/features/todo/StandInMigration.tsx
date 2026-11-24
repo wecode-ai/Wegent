@@ -1,4 +1,4 @@
-import type { StandInRole } from '@/api/personalStandIn'
+import { standInRoleName, type StandInRole } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
@@ -83,10 +83,10 @@ export function StandInMigration({
           className="max-w-full"
         />
         <SelectContent>
-          <SelectItem value="@primary">{t('standIn.title')}</SelectItem>
-          {roles.map(role => (
+          <SelectItem value="@primary">{t('standIn.personal.default_role')}</SelectItem>
+          {roles.map((role, index) => (
             <SelectItem key={role.id} value={String(role.id)}>
-              {role.name || role.id}
+              {standInRoleName(role, index, t('standIn.personal.unnamed_assistant'))}
             </SelectItem>
           ))}
         </SelectContent>

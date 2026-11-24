@@ -64,7 +64,7 @@ export function StandInProposalCard({
                     previous
                       ? 'standIn.workspace.update_role'
                       : 'standIn.workspace.proposal_create_role',
-                    { name: role.name || t('standIn.personal.default_role') }
+                    { name: role.name || t('standIn.personal.unnamed_assistant') }
                   )}
                   identity={role}
                   previous={previous}
@@ -75,7 +75,7 @@ export function StandInProposalCard({
             {removed.map(role => (
               <p key={role.id} className="py-3 text-sm">
                 {t('standIn.workspace.remove_role', {
-                  name: role.name || t('standIn.personal.default_role'),
+                  name: role.name || t('standIn.personal.unnamed_assistant'),
                 })}
               </p>
             ))}
