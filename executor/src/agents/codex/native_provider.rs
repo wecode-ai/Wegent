@@ -148,7 +148,6 @@ pub(super) fn official_proxy_overrides(base_url: String, supports_websockets: bo
     let mut selected = defaults("openai");
     selected.insert("base_url".into(), json!(base_url));
     selected.insert("supports_websockets".into(), json!(supports_websockets));
-    selected.insert("supports_standalone_web_search".into(), json!(false));
     serialize(selected)
 }
 
@@ -269,7 +268,7 @@ mod tests {
             assert_eq!(config["name"], "OpenAI");
             assert_eq!(config["requires_openai_auth"], true);
             assert_eq!(config["supports_websockets"], supports_websockets);
-            assert_eq!(config["supports_standalone_web_search"], false);
+            assert_eq!(config["supports_standalone_web_search"], true);
             assert!(config.get("auth").is_none());
             assert!(config.get("experimental_bearer_token").is_none());
         }
