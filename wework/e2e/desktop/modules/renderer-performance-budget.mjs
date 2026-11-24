@@ -33,18 +33,24 @@ export function assertRendererPerformanceBudget(metrics) {
   assert.ok(violations.length === 0, violations.join(', '))
 }
 
-// Runs in the isolated Electron renderer. Keep only numeric timing evidence.
+// Runs in the isolated Electron renderer. Keep timings and bundled script identifiers.
 function installProbe() {
   if (document.visibilityState !== 'visible') throw new Error('Renderer is not visible')
   const entries = { longtask: [], 'long-animation-frame': [] }
-  const observers = Object.entries(entries).map(([type, durations]) => {
+  const longFrames = []
+  const clickTimes = {}
+  const recordEntry = entry => {
+    entries[entry.entryType].push(entry.duration)
+    if (entry.entryType === 'long-animation-frame') longFrames.push(entry)
+  }
+  const observers = Object.keys(entries).map(type => {
     if (!PerformanceObserver.supportedEntryTypes.includes(type)) {
       throw new Error('Missing PerformanceObserver entry type ' + type)
     }
     const observer = new PerformanceObserver(list => {
-      for (const entry of list.getEntries()) durations.push(entry.duration)
+      for (const entry of list.getEntries()) recordEntry(entry)
     })
-    return { observer, type, durations }
+    return { observer, type }
   })
   for (const { observer, type } of observers) observer.observe({ type })
   const clicks = {}
@@ -58,6 +64,7 @@ function installProbe() {
     if (!event.isTrusted || !armed?.element.contains(event.target)) return
     const { phase } = armed
     armed = undefined
+    clickTimes[phase] = event.timeStamp
     afterFrame().then(() => {
       clicks[phase] = performance.now() - event.timeStamp
     })
@@ -79,12 +86,34 @@ function installProbe() {
     async stop() {
       window.removeEventListener('click', onClick, true)
       await afterFrame()
-      for (const { observer, durations } of observers) {
-        for (const entry of observer.takeRecords()) durations.push(entry.duration)
+      for (const { observer } of observers) {
+        for (const entry of observer.takeRecords()) recordEntry(entry)
         observer.disconnect()
       }
-      delete globalThis.__weworkE2ERendererPerformance
       return { clicks, entries }
+    },
+    finish(includeDiagnostics) {
+      delete globalThis.__weworkE2ERendererPerformance
+      if (!includeDiagnostics) return null
+      return {
+        clickTimes,
+        frames: longFrames.map(frame => ({
+          startTime: frame.startTime,
+          duration: frame.duration,
+          renderStart: frame.renderStart,
+          styleAndLayoutStart: frame.styleAndLayoutStart,
+          scripts: frame.scripts.map(script => ({
+            startTime: script.startTime,
+            duration: script.duration,
+            forcedStyleAndLayoutDuration: script.forcedStyleAndLayoutDuration,
+            sourceCharPosition: script.sourceCharPosition,
+            // Never retain URLs, query parameters, or inline script source.
+            asset: script.sourceURL?.match(
+              /\/assets\/([A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8}\.m?js)(?:[?#]|$)/
+            )?.[1],
+          })),
+        })),
+      }
     },
   }
   return true
@@ -153,6 +182,7 @@ export async function withRendererPerformanceBudget(control, { resultDir, name }
   const evidence = { limits: RENDERER_PERFORMANCE_BUDGET, cpu: {}, memory: [], readyMs: {} }
   const errors = []
   let stop
+  let finish
   let detach
   try {
     await control.command('focusMainWindow', 'body')
@@ -178,12 +208,14 @@ export async function withRendererPerformanceBudget(control, { resultDir, name }
       )
     const sampleMemory = async phase => {
       const { usedSize } = await command('Runtime.getHeapUsage')
-      const { nodes, jsEventListeners } = await command('Memory.getDOMCounters')
-      evidence.memory.push({ phase, usedSize, nodes, jsEventListeners })
+      const { documents, nodes, jsEventListeners } = await command('Memory.getDOMCounters')
+      evidence.memory.push({ phase, usedSize, documents, nodes, jsEventListeners })
     }
     await command('Performance.enable', { timeDomain: 'threadTicks' })
     await sampleMemory('before')
     await evaluate('(' + installProbe.toString() + ')()')
+    finish = includeDiagnostics =>
+      evaluate(PROBE + '.finish(' + JSON.stringify(includeDiagnostics) + ')')
     stop = async () => {
       evidence.timing = await evaluate(PROBE + '.stop()')
       evidence.cpu.end = await readCpu()
@@ -223,6 +255,12 @@ export async function withRendererPerformanceBudget(control, { resultDir, name }
   } catch (error) {
     errors.push(error)
   } finally {
+    // Collect attribution after the final CPU and DOM samples.
+    await finish?.(errors.length > 0)
+      .then(details => {
+        if (details) evidence.longFrameAttribution = details
+      })
+      .catch(error => errors.push(error))
     await detach?.().catch(error => errors.push(error))
   }
   evidence.errors = errors.map(error => error.message)
