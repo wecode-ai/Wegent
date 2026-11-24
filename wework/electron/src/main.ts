@@ -150,7 +150,12 @@ import {
   showStartupRecovery,
 } from './host/startup-recovery-window.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
-import { activateTrayAction, ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
+import {
+  activateTrayAction,
+  ElectronTrayManager,
+  type TrayAction,
+  type TrayMenuState,
+} from './host/tray-manager.js'
 import { createTrayIcon, trayIconFilename } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { openApplicationLogDirectory } from './host/application-log-directory.js'
@@ -478,9 +483,7 @@ const pluginDevelopmentChildRuntime =
       })
     : null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
-let pendingTrayState:
-  | Parameters<ElectronTrayManager<Electron.Menu | null, Tray>['setState']>[0]
-  | null = null
+let pendingTrayState: TrayMenuState | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
 const startupTelemetry = new StartupTelemetryLifecycle({

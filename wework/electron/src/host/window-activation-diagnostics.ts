@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto'
 
-export type WindowActivationInitiator =
-  | 'user'
-  | 'agent'
-  | 'plugin'
-  | 'system'
-  | 'e2e'
-  | 'external_or_user'
-  | 'unknown'
+export const WINDOW_ACTIVATION_INITIATORS = [
+  'user',
+  'agent',
+  'plugin',
+  'system',
+  'e2e',
+  'external_or_user',
+  'unknown',
+] as const
+
+export type WindowActivationInitiator = (typeof WINDOW_ACTIVATION_INITIATORS)[number]
 
 export interface WindowActivationEvent {
   reason: string
