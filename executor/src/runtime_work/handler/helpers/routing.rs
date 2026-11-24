@@ -112,12 +112,12 @@ fn apply_local_execution_state(
     link.turn_status = Some("inProgress".to_owned());
 }
 
-fn settle_pending_native_admission(link: &mut RuntimeTaskLink, outcome: &str) {
+fn settle_pending_native_admission(link: &mut RuntimeTaskLink, outcome: &str, completed_at: i64) {
     if crate::runtime_work::lifecycle::native_execution_state(link).is_some_and(|state| {
         state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
             && state.process_generation.is_none()
     }) {
-        crate::runtime_work::lifecycle::settle_native_execution(link, outcome);
+        crate::runtime_work::lifecycle::settle_native_execution_at(link, outcome, completed_at);
     }
 }
 
@@ -130,7 +130,7 @@ fn apply_local_task_failure_at(
     error: &AppIpcError,
     failed_at: i64,
 ) -> i64 {
-    settle_pending_native_admission(link, "failed");
+    settle_pending_native_admission(link, "failed", failed_at);
     link.running = false;
     link.status = "failed".to_owned();
     link.thread_status = "failed".to_owned();

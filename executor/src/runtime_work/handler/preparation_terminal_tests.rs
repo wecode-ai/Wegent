@@ -66,6 +66,26 @@ async fn cancelled_preparation_settles_committed_native_admission() {
     assert_preparation_terminal_state(true);
 }
 
+#[test]
+fn native_failure_projection_uses_the_recorded_completion_time() {
+    let mut task = RuntimeTaskLink::new_pending("task".into(), "/workspace".into(), "Task".into());
+    crate::runtime_work::lifecycle::begin_native_request(&mut task);
+
+    let failed_at = 1_795_494_273_009;
+    apply_local_task_failure_at(
+        &mut task,
+        &AppIpcError::new("preparation_failed", "Setup failed"),
+        failed_at,
+    );
+
+    let wire = crate::runtime_work::response::local_task_json(task);
+    assert_eq!(wire["completedAt"], failed_at);
+    assert_eq!(
+        wire["runtimeHandle"]["startupFailure"]["failedAt"],
+        failed_at
+    );
+}
+
 #[tokio::test]
 async fn preparation_failure_survives_refresh_and_replaces_a_previous_success() {
     let (mut handler, root) = isolated_runtime_work_handler("preparation-failure-refresh");

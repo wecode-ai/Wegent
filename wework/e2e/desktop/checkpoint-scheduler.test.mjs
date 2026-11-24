@@ -194,7 +194,8 @@ test('isolates the idle and stream recovery CPU benchmarks on Linux Core only', 
     },
   })
 
-  for (const checkpoint of benchmarks) assert.equal(isResourceExclusiveCheckpoint(checkpoint), false)
+  for (const checkpoint of benchmarks)
+    assert.equal(isResourceExclusiveCheckpoint(checkpoint), false)
 })
 
 for (const checkpoint of ['python-runtime', 'plugin-development']) {
@@ -206,6 +207,9 @@ for (const checkpoint of ['python-runtime', 'plugin-development']) {
       'claude-runtime',
       'conversation-state',
       'stand-in-sessions',
+      'mcp-apps',
+      'codex-notification-isolation',
+      'collaboration-local-group-cancellation',
     ]
     const independent = 'tray-lifecycle'
     const active = new Set()

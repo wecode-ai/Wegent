@@ -26,7 +26,7 @@ The existing Linux Core CI measures CPU for `idle-executor-requests`, `streaming
 
 Linux Core shards run the idle workbench and Executor stream recovery checkpoints in isolation before starting the shard's parallel checkpoints. This prevents concurrent desktop sessions from inflating the measured processes' CPU time.
 
-[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) tracks a baseline per checkpoint and runner platform. Scheduled or manually dispatched Wework E2E runs on `main` update the baseline. Pull requests and the merge queue only read it. When an existing shard runs the corresponding checkpoint, CI reports the current value, baseline, and ratio. With a baseline, CI fails when either process uses more than 150% of the baseline CPU time or the checkpoint produces no sample. Before the first baseline, CI can pass and reports any available samples.
+[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) tracks baselines by checkpoint, runner OS, architecture, and CPU model. Scheduled or manually dispatched Wework E2E runs on `main` update the baseline. Pull requests and the merge queue only read it. When an existing shard runs the corresponding checkpoint, CI reports the current value, baseline, and ratio. With a baseline, CI fails when either process uses more than 150% of the baseline CPU time or the checkpoint produces no sample. Before the first baseline, CI can pass and reports any available samples.
 
 ## Periodic plugin recovery E2E
 
