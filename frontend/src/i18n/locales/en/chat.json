@@ -7,7 +7,7 @@
   },
   "input": {
     "no_team_placeholder": "Please select or create an agent first",
-    "linked_agent_unavailable": "The linked agent is unavailable. Try reopening the link or select another agent.",
+    "linked_agent_unavailable": "The requested agent is unavailable. Try again or select another agent.",
     "loading_teams_placeholder": "Loading agents...",
     "expand": "Expand input area",
     "collapse": "Collapse input area"

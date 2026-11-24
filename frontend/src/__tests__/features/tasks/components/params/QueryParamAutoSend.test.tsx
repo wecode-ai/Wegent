@@ -77,7 +77,7 @@ it('prefills immediately and sends through the latest callback after selection i
   expect(sendWithFinalTeam).toHaveBeenCalledWith('hello')
   expect(mockReplace).not.toHaveBeenCalled()
   // The send callback navigates using the query captured before auto-send.
-  setQuery('q=hello&autoSend=true&teamId=20&projectId=3&taskId=42')
+  setQuery('q=hello&autoSend=true&teamId=20&recommend=1&projectId=3&taskId=42')
   rerender(
     <QueryParamAutoSend
       {...initial}
@@ -115,45 +115,42 @@ it('cleans the query when sending rejects without task navigation', async () => 
   expect(initial.onSendMessage).toHaveBeenCalledTimes(1)
 })
 
-it.each(['teamId=20&teamName=default-team', 'teamName=recent-team&teamNamespace=default'])(
-  'waits for the requested URL team to commit for %s',
-  target => {
-    setQuery(`q=hello&autoSend=true&${target}`)
-    const initial = props({ isTeamSelectionReady: false })
-    const { rerender } = render(<QueryParamAutoSend {...initial} />)
+it('waits for the requested team name to commit', () => {
+  setQuery('q=hello&autoSend=true&teamName=recent-team&teamNamespace=default')
+  const initial = props({ isTeamSelectionReady: false })
+  const { rerender } = render(<QueryParamAutoSend {...initial} />)
 
-    expect(initial.onTeamChange).toHaveBeenCalledWith(recentTeam)
-    advance(600)
-    expect(initial.onTeamChange).toHaveBeenCalledTimes(1)
-    expect(initial.onSendMessage).not.toHaveBeenCalled()
+  expect(initial.onTeamChange).toHaveBeenCalledWith(recentTeam)
+  advance(600)
+  expect(initial.onTeamChange).toHaveBeenCalledTimes(1)
+  expect(initial.onSendMessage).not.toHaveBeenCalled()
 
-    rerender(<QueryParamAutoSend {...initial} isTeamSelectionReady />)
-    advance()
-    expect(initial.onSendMessage).not.toHaveBeenCalled()
-    rerender(<QueryParamAutoSend {...initial} selectedTeam={recentTeam} />)
-    advance()
-    expect(initial.onSendMessage).not.toHaveBeenCalled()
+  rerender(<QueryParamAutoSend {...initial} isTeamSelectionReady />)
+  advance()
+  expect(initial.onSendMessage).not.toHaveBeenCalled()
+  rerender(<QueryParamAutoSend {...initial} selectedTeam={recentTeam} />)
+  advance()
+  expect(initial.onSendMessage).not.toHaveBeenCalled()
 
-    rerender(<QueryParamAutoSend {...initial} selectedTeam={recentTeam} isTeamSelectionReady />)
-    advance()
-    expect(initial.onSendMessage).toHaveBeenCalledTimes(1)
-    expect(initial.onSendMessage).toHaveBeenCalledWith('hello')
-  }
-)
+  rerender(<QueryParamAutoSend {...initial} selectedTeam={recentTeam} isTeamSelectionReady />)
+  advance()
+  expect(initial.onSendMessage).toHaveBeenCalledTimes(1)
+  expect(initial.onSendMessage).toHaveBeenCalledWith('hello')
+})
 
 it('times out rather than sending with a URL team change that never commits', () => {
-  setQuery('q=hello&autoSend=true&teamId=20')
+  setQuery('q=hello&autoSend=true&teamId=20&recommend=1')
   const initial = props()
   render(<QueryParamAutoSend {...initial} />)
 
   advance(10_200)
-  expect(initial.onTeamChange).toHaveBeenCalledTimes(1)
+  expect(initial.onTeamChange).not.toHaveBeenCalled()
   expect(initial.onSendMessage).not.toHaveBeenCalled()
-  expect(mockReplace).toHaveBeenCalledWith('/chat')
+  expect(mockReplace).toHaveBeenCalledWith('/chat?teamId=20&recommend=1')
 })
 
-it('waits for the latest connection and catalog state before selecting and sending', () => {
-  setQuery('q=hello&autoSend=true&teamId=20')
+it('honors an explicit ID ahead of a team name without waiting for the catalog', () => {
+  setQuery('q=100%25+match&autoSend=true&teamId=20&teamName=default-team')
   mockIsConnected = false
   const initial = props({ isTeamsLoading: true })
   const { rerender } = render(<QueryParamAutoSend {...initial} />)
@@ -165,13 +162,12 @@ it('waits for the latest connection and catalog state before selecting and sendi
   rerender(<QueryParamAutoSend {...initial} />)
   advance()
   expect(initial.onTeamChange).not.toHaveBeenCalled()
-  rerender(<QueryParamAutoSend {...initial} isTeamsLoading={false} />)
-  advance()
-  expect(initial.onTeamChange).toHaveBeenCalledWith(recentTeam)
   expect(initial.onSendMessage).not.toHaveBeenCalled()
-  rerender(<QueryParamAutoSend {...initial} isTeamsLoading={false} selectedTeam={recentTeam} />)
+  rerender(<QueryParamAutoSend {...initial} selectedTeam={recentTeam} />)
   advance()
-  expect(initial.onSendMessage).toHaveBeenCalledWith('hello')
+  expect(initial.onTeamChange).not.toHaveBeenCalled()
+  expect(initial.onPrefillMessage).toHaveBeenCalledWith('100% match')
+  expect(initial.onSendMessage).toHaveBeenCalledWith('100% match')
 })
 
 it('preserves modifier keys and cancels automatic sending after user input', () => {

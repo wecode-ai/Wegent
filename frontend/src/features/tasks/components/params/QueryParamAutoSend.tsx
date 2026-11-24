@@ -117,17 +117,23 @@ export default function QueryParamAutoSend({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // Remove q, teamId, teamName, teamNamespace, and autoSend from URL without adding browser history entries
-  const clearQueryParams = useCallback(() => {
-    const url = new URL(window.location.href)
-    url.searchParams.delete('q')
-    url.searchParams.delete('teamId')
-    url.searchParams.delete('teamName')
-    url.searchParams.delete('teamNamespace')
-    url.searchParams.delete('autoSend')
-    url.searchParams.delete('autosend')
-    router.replace(url.pathname + url.search)
-  }, [router])
+  // Remove consumed action parameters without adding a browser history entry.
+  const clearQueryParams = useCallback(
+    (keepTeamId = false) => {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('q')
+      if (!keepTeamId) {
+        url.searchParams.delete('teamId')
+        url.searchParams.delete('recommend')
+      }
+      url.searchParams.delete('teamName')
+      url.searchParams.delete('teamNamespace')
+      url.searchParams.delete('autoSend')
+      url.searchParams.delete('autosend')
+      router.replace(url.pathname + url.search)
+    },
+    [router]
+  )
 
   // Prefill input box immediately when q param is present (even before auto-send conditions are met)
   const prefillDoneRef = useRef(false)
@@ -138,7 +144,7 @@ export default function QueryParamAutoSend({
     const query = searchParams.get('q')
     if (!query) return
 
-    const decodedMessage = decodeURIComponent(query).trim()
+    const decodedMessage = query.trim()
     if (!decodedMessage) return
 
     prefillDoneRef.current = true
@@ -165,7 +171,7 @@ export default function QueryParamAutoSend({
     const query = searchParams.get('q')
     if (!query) return
 
-    const decodedMessage = decodeURIComponent(query).trim()
+    const decodedMessage = query.trim()
     if (!decodedMessage) return
 
     // Only auto-send when autoSend=true is explicitly set in the URL
@@ -178,7 +184,7 @@ export default function QueryParamAutoSend({
     }
 
     const teamIdParam = searchParams.get('teamId')
-    const targetTeamId = teamIdParam ? Number(teamIdParam) : null
+    const targetTeamId = teamIdParam === null ? null : Number(teamIdParam)
 
     // Support team lookup by name and namespace (user-friendly alternative to teamId)
     const teamNameParam = searchParams.get('teamName')
@@ -196,7 +202,7 @@ export default function QueryParamAutoSend({
 
     const finishWithoutSending = () => {
       completed = true
-      clearQueryParams()
+      clearQueryParams(true)
     }
 
     const waitForReadiness = () => {
@@ -220,24 +226,33 @@ export default function QueryParamAutoSend({
       const teamsLoading = isTeamsLoadingRef.current
       const currentTeams = teamsRef.current
 
-      if (!connected || teamsLoading || currentTeams.length === 0) {
+      if (!connected) {
         waitForReadiness()
         return
       }
-      // Switch team if requested (by ID or by name+namespace)
-      let targetTeam: Team | undefined
-
-      if (targetTeamId) {
-        // Lookup by ID (backward compatible)
-        targetTeam = currentTeams.find(t => t.id === targetTeamId)
-      } else if (teamNameParam) {
-        // Lookup by name and namespace (user-friendly)
-        targetTeam = currentTeams.find(
-          t => t.name === teamNameParam && t.namespace === teamNamespaceParam
-        )
-      }
 
       const currentSelectedTeam = selectedTeamRef.current
+      // ChatArea resolves explicit IDs independently of the catalog.
+      if (targetTeamId !== null) {
+        if (isTeamSelectionReadyRef.current && currentSelectedTeam?.id === targetTeamId) {
+          executeAutoSend(decodedMessage)
+        } else {
+          waitForReadiness()
+        }
+        return
+      }
+
+      if (teamsLoading || currentTeams.length === 0) {
+        waitForReadiness()
+        return
+      }
+      const targetTeam = teamNameParam
+        ? currentTeams.find(t => t.name === teamNameParam && t.namespace === teamNamespaceParam)
+        : undefined
+      if (teamNameParam && !targetTeam) {
+        waitForReadiness()
+        return
+      }
       if (targetTeam && currentSelectedTeam?.id !== targetTeam.id) {
         if (requestedTeamId !== targetTeam.id) {
           requestedTeamId = targetTeam.id
@@ -251,7 +266,6 @@ export default function QueryParamAutoSend({
         waitForReadiness()
         return
       }
-      // An unknown URL target retains the existing current-team behavior.
       executeAutoSend(decodedMessage)
     }
 
@@ -264,7 +278,7 @@ export default function QueryParamAutoSend({
       awaitingTaskNavigationRef.current = true
       onSendMessageRef.current(message).catch(() => {
         awaitingTaskNavigationRef.current = false
-        clearQueryParams()
+        clearQueryParams(true)
         // Error handling is done inside onSendMessage (toast etc.)
       })
     }

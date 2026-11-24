@@ -55,6 +55,8 @@ let mockRecentTeamIds: number[] = []
 let mockRecentTeamsLoading = false
 let mockEarlyDefaultTeam: Team | null = null
 let mockUrlTeam: Team | null = null
+let mockUrlTeamFailed = false
+const mockRetryUrlTeam = jest.fn()
 let mockUseStatefulSelection = false
 let mockAutoSentTeamIds: Array<number | null> = []
 const mockHandleTeamChange = jest.fn()
@@ -78,7 +80,8 @@ jest.mock('@/features/tasks/hooks/useDefaultTeam', () => ({
 jest.mock('@/features/tasks/hooks/useUrlTeam', () => ({
   useUrlTeam: (_id: string | null, enabled: boolean) => ({
     team: enabled ? mockUrlTeam : null,
-    failed: false,
+    failed: enabled && mockUrlTeamFailed,
+    retry: enabled && mockUrlTeamFailed ? mockRetryUrlTeam : null,
   }),
 }))
 let mockChatAreaSelectedModel: Record<string, unknown> | null = null
@@ -399,7 +402,8 @@ jest.mock('@/features/tasks/components/hooks/useAttachmentUpload', () => ({
   }),
 }))
 jest.mock('@/lib/scheme', () => ({
-  useSchemeMessageActions: jest.fn(),
+  useSchemeMessageActions: jest.requireActual('@/lib/scheme/hooks/useSchemeMessageActions')
+    .useSchemeMessageActions,
 }))
 jest.mock('@/features/tasks/components/params', () => ({
   QueryParamAutoSend: jest.requireActual('@/features/tasks/components/params/QueryParamAutoSend')
@@ -482,6 +486,8 @@ describe('ChatArea pipeline next-step dialog', () => {
     mockRecentTeamsLoading = false
     mockEarlyDefaultTeam = null
     mockUrlTeam = null
+    mockUrlTeamFailed = false
+    mockRetryUrlTeam.mockClear()
     mockUseStatefulSelection = false
     mockHandleTeamChange.mockReset()
     mockChatAreaSelectedModel = null
@@ -788,6 +794,8 @@ describe('ChatArea selection while the catalog loads', () => {
     mockNewChatTeam = null
     mockEarlyDefaultTeam = null
     mockUrlTeam = null
+    mockUrlTeamFailed = false
+    mockRetryUrlTeam.mockClear()
     mockUseStatefulSelection = false
     mockTaskMessages = new Map()
     mockHandleTeamChange.mockReset().mockImplementation((team: Team | null) => {
@@ -969,6 +977,78 @@ describe('ChatArea selection while the catalog loads', () => {
     })
     expect(mockAutoSentTeamIds).toEqual([65])
     expect(mockHandleSendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a user keep the current agent after a linked-agent failure', () => {
+    mockUseStatefulSelection = true
+    const catalog = [mockSelectedTeam]
+    const view = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    mockNewChatParams = new URLSearchParams('teamId=65')
+    mockUrlTeamFailed = true
+    view.rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    expect(screen.getByTestId('chat-input-card')).toHaveAttribute('data-can-submit', 'false')
+
+    fireEvent.click(screen.getByTestId('quick-access-cards'))
+    expect(screen.queryByTestId('retry-linked-agent')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-input-card')).toHaveAttribute('data-can-submit', 'true')
+  })
+
+  it('keeps an external prompt until linked-agent retry succeeds', async () => {
+    mockNewChatParams = new URLSearchParams('teamId=65')
+    mockUrlTeamFailed = true
+    const request = {
+      requestId: 'linked-prompt',
+      message: 'Explain this',
+      artifactContext: { artifact_id: 'artifact', node_id: 'node' },
+    }
+    const onConsumed = jest.fn()
+    const props = {
+      teams: [defaultTeam],
+      isTeamsLoading: false,
+      taskType: 'chat' as const,
+      externalPromptRequest: request,
+      onExternalPromptConsumed: onConsumed,
+    }
+    const view = render(<ChatArea {...props} />)
+    expect(mockHandleSendMessage).not.toHaveBeenCalled()
+    expect(onConsumed).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('retry-linked-agent'))
+    expect(mockRetryUrlTeam).toHaveBeenCalledTimes(1)
+    mockUrlTeamFailed = false
+    mockUrlTeam = { ...defaultTeam, id: 65 }
+    view.rerender(<ChatArea {...props} />)
+    await waitFor(() =>
+      expect(mockHandleSendMessage).toHaveBeenCalledWith('Explain this', {
+        artifactContext: request.artifactContext,
+      })
+    )
+    view.rerender(<ChatArea {...props} />)
+    expect(onConsumed).toHaveBeenCalledTimes(1)
+    expect(mockHandleSendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects scheme sends while a linked agent is pending or a named agent is unavailable', () => {
+    mockUseStatefulSelection = true
+    mockAutoSentTeamIds = []
+    const catalog = [defaultTeam]
+    const view = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    mockNewChatParams = new URLSearchParams('teamId=65')
+    view.rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+
+    const send = (team?: string) =>
+      fireEvent(window, new CustomEvent('wegent:send-message', { detail: { text: 'hello', team } }))
+    send()
+    send('65')
+    send(String(defaultTeam.id))
+    expect(mockHandleSendMessage).not.toHaveBeenCalled()
+
+    mockUrlTeam = { ...defaultTeam, id: 65 }
+    view.rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
+    send('99')
+    expect(mockHandleSendMessage).not.toHaveBeenCalled()
+    send()
+    expect(mockAutoSentTeamIds).toEqual([65])
   })
 
   it('waits for the requested agent before auto-sending instead of using the catalog default', async () => {

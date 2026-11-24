@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { teamApis } from '@/apis/team'
 import { useUser } from '@/features/common/UserContext'
 import type { Team } from '@/types/api'
@@ -11,8 +11,12 @@ export function useUrlTeam(id: string | null, enabled: boolean) {
   const userId = user?.id
   const teamId = id ? Number(id) : NaN
   const isValidTeamId = Number.isSafeInteger(teamId) && teamId > 0
-  const key = `${userId}:${teamId}`
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => setAttempt(previous => previous + 1), [])
+  const key = `${enabled}:${userId}:${teamId}:${attempt}`
   const [result, setResult] = useState<{ key: string; team: Team | null } | null>(null)
+
+  if (result && result.key !== key) setResult(null)
 
   useEffect(() => {
     if (!enabled || userId === undefined || !isValidTeamId) return
@@ -31,8 +35,8 @@ export function useUrlTeam(id: string | null, enabled: boolean) {
     return () => controller.abort()
   }, [enabled, userId, teamId, key, isValidTeamId])
 
-  if (!enabled || id === null) return { team: null, failed: false }
-  if (!isValidTeamId) return { team: null, failed: true }
-  if (result?.key !== key) return { team: null, failed: false }
-  return { team: result.team, failed: result.team === null }
+  if (!enabled || id === null) return { team: null, failed: false, retry: null }
+  if (!isValidTeamId) return { team: null, failed: true, retry: null }
+  if (result?.key !== key) return { team: null, failed: false, retry: null }
+  return { team: result.team, failed: result.team === null, retry: result.team ? null : retry }
 }
