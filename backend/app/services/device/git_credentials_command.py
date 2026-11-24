@@ -10,11 +10,8 @@ from app.services.device.git_credential_paths import GIT_CREDENTIAL_PATHS_SCRIPT
 
 GIT_CREDENTIALS_SECRET_ENV = "WEGENT_SECRET_GIT_CREDENTIALS"
 
-GIT_CREDENTIAL_SYNC_SCRIPT = (
-    GIT_CREDENTIAL_PATHS_SCRIPT
-    + "\n"
-    + r'''
-from contextlib import ExitStack
+GIT_CREDENTIAL_SYNC_SCRIPT = GIT_CREDENTIAL_PATHS_SCRIPT + "\n" + r'''
+from contextlib import ExitStack, contextmanager
 import fcntl
 import hashlib
 import json
@@ -49,6 +46,18 @@ def emit(payload, exit_code=0):
 
 def fail(code):
     emit({"error": code}, 1)
+
+
+class SyncFailure(RuntimeError):
+    """A device failure with a safe code for the synchronization response."""
+
+
+@contextmanager
+def report_io_failure(code):
+    try:
+        yield
+    except (OSError, UnicodeError) as exc:
+        raise SyncFailure(code) from exc
 
 
 def ensure_mode(path, mode):
@@ -271,33 +280,31 @@ def configure_cli(account, revision):
                 result, account["token"], spawn_error=spawn_error
             ),
         }
+    reason_code = None
     if "--git-protocol" not in flags:
         # Legacy CLIs (e.g. glab 1.2x) cannot select the git protocol at login
-        # and default to ssh; force https afterwards so CLI-driven git
-        # operations also use the synced HTTPS credentials. Failure is
-        # harmless because the managed gitconfig already rewrites ssh to https.
-        subprocess.run(
-            [
-                executable,
-                "config",
-                "set",
-                "git_protocol",
-                "https",
-                "--host",
-                account["domain"],
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=10,
-            check=False,
-            env=environment,
-        )
+        # and default to ssh. Git's managed URL rewrites cover this case even
+        # if the CLI cannot update its stored protocol preference.
+        try:
+            preference = subprocess.run(
+                [executable, "config", "set", "git_protocol", "https",
+                 "--host", account["domain"]],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+                env=environment,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            preference = None
+        if preference is None or preference.returncode != 0:
+            reason_code = "cli_git_protocol_failed"
         secure_tree(config_dir)
     return {
         "provider": tool,
         "domain": account["domain"],
         "status": "configured",
-        "reason_code": None,
+        "reason_code": reason_code,
     }
 
 
@@ -313,9 +320,23 @@ def restore(path, saved):
         return
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(path.name + ".restore-" + uuid.uuid4().hex)
-    temporary.write_bytes(saved[0])
-    temporary.chmod(saved[1])
-    os.replace(temporary, path)
+    try:
+        temporary.write_bytes(saved[0])
+        temporary.chmod(saved[1])
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def restore_configurations(backups):
+    failed = False
+    for path, saved in backups.items():
+        try:
+            restore(path, saved)
+        except OSError:
+            failed = True
+    if failed:
+        raise SyncFailure("credential_rollback_failed")
 
 
 def strip_managed_blocks(content):
@@ -330,13 +351,25 @@ def strip_managed_blocks(content):
         if end < len(content) and content[end] == "\n":
             end += 1
         content = content[:start] + content[end:]
-    return content.rstrip() + ("\n" if content.strip() else "")
+    return content
 
 
-def update_profile(path, enabled, root):
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
-    content = path.read_text(encoding="utf-8") if path.exists() else ""
-    content = strip_managed_blocks(content)
+def update_profile(path, enabled, root, backups):
+    with report_io_failure("profile_update_failed"):
+        saved = snapshot(path)
+        original = saved[0].decode("utf-8") if saved else ""
+        content = managed_profile_content(original, enabled, root)
+        if content == original:
+            return
+        backups[path] = saved
+        if content:
+            write_file(path, content, saved[1] if saved else 0o600)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def managed_profile_content(original, enabled, root):
+    content = strip_managed_blocks(original)
     if enabled:
         if content and not content.endswith("\n"):
             content += "\n"
@@ -349,25 +382,23 @@ def update_profile(path, enabled, root):
             + MANAGED_END
             + "\n"
         )
-    if content:
-        write_file(path, content, mode)
-    else:
-        path.unlink(missing_ok=True)
+    return content
 
 
 def git_config(global_config, *arguments, allow_missing=False):
     environment = os.environ.copy()
     environment["GIT_CONFIG_GLOBAL"] = str(global_config)
-    result = subprocess.run(
-        ["git", "config", "--global", *arguments],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        env=environment,
-    )
+    with report_io_failure("git_config_failed"):
+        result = subprocess.run(
+            ["git", "config", "--global", *arguments],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            env=environment,
+        )
     if result.returncode == 0 or (allow_missing and result.returncode in {1, 5}):
         return
-    raise RuntimeError("git_config_failed")
+    raise SyncFailure("git_config_failed")
 
 
 def exact_value_pattern(value):
@@ -381,7 +412,8 @@ def update_global_git_config(global_config, include_path, enabled, home):
     if not global_config.exists() and not enabled:
         return
     if not global_config.exists():
-        write_file(global_config, "", 0o600)
+        with report_io_failure("git_config_failed"):
+            write_file(global_config, "", 0o600)
     git_config(
         global_config,
         "--unset-all",
@@ -428,11 +460,11 @@ def remove_legacy_files(home, warnings):
         except OSError:
             warnings.append("legacy_cleanup_failed")
     legacy_root = home / ".wecode" / "git-auth"
-    if legacy_root.exists():
-        try:
+    try:
+        if legacy_root.exists():
             shutil.rmtree(legacy_root)
-        except OSError:
-            warnings.append("legacy_cleanup_failed")
+    except OSError:
+        warnings.append("legacy_cleanup_failed")
 
 
 def configured_cli_exports(cli_results, root):
@@ -451,8 +483,7 @@ def configured_cli_exports(cli_results, root):
 
 def clear_managed_state(home, root, current, revisions, global_config, profile_paths):
     previous_domains = previous_account_domains(home, current, revisions, global_config)
-    tracked_paths = [path for path in [global_config, *profile_paths] if path is not None]
-    backups = {path: snapshot(path) for path in tracked_paths}
+    backups = {global_config: snapshot(global_config)} if global_config is not None else {}
     removed_root = None
     try:
         if root.exists():
@@ -466,7 +497,7 @@ def clear_managed_state(home, root, current, revisions, global_config, profile_p
         )
         for path in profile_paths:
             if path.exists():
-                update_profile(path, False, root)
+                update_profile(path, False, root, backups)
         warnings = []
         if removed_root:
             shutil.rmtree(removed_root)
@@ -474,19 +505,14 @@ def clear_managed_state(home, root, current, revisions, global_config, profile_p
             remove_legacy_files(home, warnings)
         return previous_domains, warnings
     except Exception:
-        for path, saved in backups.items():
-            restore(path, saved)
-        if removed_root and removed_root.exists() and not root.exists():
-            os.replace(removed_root, root)
+        try:
+            restore_configurations(backups)
+        finally:
+            if removed_root and removed_root.exists() and not root.exists():
+                os.replace(removed_root, root)
         raise
 
-
-def apply_accounts(home, root, current, revisions, global_config, profile_paths, accounts):
-    previous_domains = previous_account_domains(home, current, revisions, global_config)
-    revision_name = "%d-%s" % (int(time.time()), uuid.uuid4().hex)
-    staging = revisions / (".staging-" + revision_name)
-    revision = revisions / revision_name
-    staging.mkdir(parents=True, mode=0o700)
+def stage_accounts(home, root, staging, accounts):
     tokens_dir = staging / "tokens"
     identities_dir = staging / "identities"
     tokens_dir.mkdir(mode=0o700)
@@ -535,8 +561,7 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
         env=environment,
     )
     if validation.returncode != 0:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise RuntimeError("managed_git_config_invalid")
+        raise SyncFailure("managed_git_config_invalid")
 
     cli_results = []
     for account in accounts:
@@ -544,47 +569,62 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
         if cli_result:
             cli_results.append(cli_result)
 
-    write_file(staging / "manifest.json", json.dumps(manifest, separators=(",", ":")), 0o600)
     secure_tree(staging)
-    os.replace(staging, revision)
+    return cli_results, identity_warnings
 
-    tracked_paths = [path for path in [global_config, *profile_paths, root / "env.sh"] if path is not None]
+
+def publish_accounts(home, root, current, revision, global_config, profile_paths, cli_results):
+    env_path = root / "env.sh"
+    tracked_paths = [path for path in (global_config, env_path) if path is not None]
     backups = {path: snapshot(path) for path in tracked_paths}
-    previous_target = os.readlink(current) if current.is_symlink() else None
-    switched = False
-    next_link = None
+    next_link = root / (".current-" + uuid.uuid4().hex)
     try:
         include_path = root / "current" / "gitconfig"
         update_global_git_config(global_config, include_path, True, home)
         env_source = configured_cli_exports(cli_results, root)
         if env_source:
-            write_file(root / "env.sh", env_source, 0o600)
+            write_file(env_path, env_source, 0o600)
         else:
-            (root / "env.sh").unlink(missing_ok=True)
+            env_path.unlink(missing_ok=True)
         for path in profile_paths:
             if path == home / ".profile" or path.exists():
-                update_profile(path, bool(env_source), root)
+                update_profile(path, bool(env_source), root, backups)
 
-        next_link = root / (".current-" + uuid.uuid4().hex)
-        next_link.symlink_to(Path("revisions") / revision_name)
+        next_link.symlink_to(revision.relative_to(root))
         os.replace(next_link, current)
-        switched = True
     except Exception:
-        for path, saved in backups.items():
-            restore(path, saved)
-        if next_link is not None:
+        try:
+            restore_configurations(backups)
+        finally:
             next_link.unlink(missing_ok=True)
-        if switched:
-            current.unlink(missing_ok=True)
-            if previous_target:
-                current.symlink_to(previous_target)
-        shutil.rmtree(revision, ignore_errors=True)
         raise
+
+
+def apply_accounts(home, root, current, revisions, global_config, profile_paths, accounts):
+    previous_domains = previous_account_domains(home, current, revisions, global_config)
+    revision_name = "%d-%s" % (int(time.time()), uuid.uuid4().hex)
+    staging = revisions / (".staging-" + revision_name)
+    revision = revisions / revision_name
+    with ExitStack() as cleanup:
+        with report_io_failure("credential_stage_failed"):
+            staging.mkdir(parents=True, mode=0o700)
+            cleanup.callback(shutil.rmtree, staging, ignore_errors=True)
+            cli_results, identity_warnings = stage_accounts(home, root, staging, accounts)
+            os.replace(staging, revision)
+            cleanup.callback(shutil.rmtree, revision, ignore_errors=True)
+        with report_io_failure("credential_publish_failed"):
+            publish_accounts(home, root, current, revision, global_config, profile_paths, cli_results)
+        cleanup.pop_all()
 
     warnings = []
     if global_config is not None:
         remove_legacy_files(home, warnings)
-    for child in revisions.iterdir():
+    try:
+        children = list(revisions.iterdir())
+    except OSError:
+        warnings.append("stale_cleanup_failed")
+        children = []
+    for child in children:
         if child == revision:
             continue
         try:
@@ -612,10 +652,11 @@ def previous_account_domains(home, current, revisions, global_config):
 
 
 def private_directory(path):
-    if path.is_symlink() or (path.exists() and not path.is_dir()):
-        fail("credential_directory_invalid")
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    ensure_mode(path, 0o700)
+    with report_io_failure("credential_directory_unwritable"):
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            fail("credential_directory_invalid")
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        ensure_mode(path, 0o700)
 
 
 def validate_legacy_store(root, error_code="legacy_credentials_unmanaged"):
@@ -647,29 +688,31 @@ def validate_target_store(root):
 
 
 def acquire_lock(stack, path):
-    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    lock = stack.enter_context(os.fdopen(descriptor, "r+"))
-    if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
-        fail("credential_lock_invalid")
-    try:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        fail("sync_in_progress")
+    with report_io_failure("credential_lock_failed"):
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        lock = stack.enter_context(os.fdopen(descriptor, "r+"))
+        if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
+            fail("credential_lock_invalid")
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fail("sync_in_progress")
 
 
-def main():
-    os.umask(0o077)
+def reconcile():
     raw_payload = os.environ.pop(SECRET_ENV, "")
     if not raw_payload:
         fail("credential_payload_missing")
     try:
         payload = json.loads(raw_payload)
-        accounts = payload.get("accounts", [])
+        accounts = payload.get("accounts", []) if isinstance(payload, dict) else None
         if not isinstance(accounts, list):
             raise ValueError
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError):
         fail("credential_payload_invalid")
     raw_payload = None
+    if accounts and not shutil.which("git"):
+        fail("git_not_found")
 
     try:
         home, workbench, root, isolated = credential_paths()
@@ -699,8 +742,8 @@ def main():
             acquire_lock(stack, legacy_lock)
             validate_legacy_store(legacy_root)
         validate_target_store(root)
-        try:
-            if not accounts:
+        if not accounts:
+            with report_io_failure("credential_publish_failed"):
                 removed_domains, warnings = clear_managed_state(
                     home,
                     root,
@@ -709,37 +752,40 @@ def main():
                     global_config,
                     profile_paths,
                 )
-                emit(
-                    {
-                        "synced_domains": [],
-                        "removed_domains": removed_domains,
-                        "identity_warning_domains": [],
-                        "cli": [],
-                        "warnings": warnings,
-                    }
-                )
+            return {
+                "synced_domains": [],
+                "removed_domains": removed_domains,
+                "identity_warning_domains": [],
+                "cli": [],
+                "warnings": warnings,
+            }
 
-            private_directory(root)
-            private_directory(revisions)
-            result = apply_accounts(
-                home,
-                root,
-                current,
-                revisions,
-                global_config,
-                profile_paths,
-                accounts,
-            )
-            emit(result)
-        except SystemExit:
-            raise
-        except Exception:
-            fail("credential_apply_failed")
+        private_directory(root)
+        private_directory(revisions)
+        return apply_accounts(
+            home,
+            root,
+            current,
+            revisions,
+            global_config,
+            profile_paths,
+            accounts,
+        )
+
+
+def main():
+    os.umask(0o077)
+    try:
+        result = reconcile()
+    except SyncFailure as exc:
+        fail(str(exc))
+    except Exception:
+        fail("credential_apply_failed")
+    emit(result)
 
 
 main()
 '''.strip()
-)
 
 
 SYNC_GIT_CREDENTIALS_COMMAND = f"python3 -c {shlex.quote(GIT_CREDENTIAL_SYNC_SCRIPT)}"

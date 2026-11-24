@@ -1,4 +1,5 @@
 import userEvent from '@testing-library/user-event'
+import { ApiError } from '@/api/http'
 import i18n from '@/i18n'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -95,6 +96,23 @@ async function select() {
   await user.click(screen.getByTestId('git-device-sync-select'))
   await user.click(await screen.findByRole('option', { name: /Remote/i }))
 }
+
+test('shows a localized device failure and keeps the selected device retryable', async () => {
+  current.syncGitAccounts.mockRejectedValueOnce(
+    new ApiError('Git is unavailable on the device', 502, 'git_not_found')
+  )
+  render(<DeviceGitSyncSection />)
+  await select()
+
+  await userEvent.click(screen.getByTestId('git-device-sync-submit'))
+  expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
+    i18n.t('workbench.git_device_sync_git_missing', { ns: 'common' })
+  )
+  await userEvent.click(screen.getByTestId('git-device-sync-submit'))
+
+  expect(await screen.findByTestId('git-device-sync-result')).toBeInTheDocument()
+  expect(screen.queryByTestId('git-device-sync-error')).not.toBeInTheDocument()
+})
 
 test('publishes account metadata independently while the device inventory is pending', async () => {
   const pending = deferred<DeviceInfo[]>()

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.exceptions import CustomHTTPException
 from app.models.user import User
 from app.schemas.device import (
     DeviceCommandRequest,
@@ -648,10 +649,13 @@ async def sync_device_git_accounts(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
-    except (
-        DeviceGitCredentialTargetError,
-        DeviceGitCredentialConflictError,
-    ) as exc:
+    except DeviceGitCredentialConflictError as exc:
+        raise CustomHTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+            error_code=exc.error_code,
+        ) from exc
+    except DeviceGitCredentialTargetError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
@@ -662,14 +666,16 @@ async def sync_device_git_accounts(
             detail=str(exc),
         ) from exc
     except DeviceGitCredentialUnknownResultError as exc:
-        raise HTTPException(
+        raise CustomHTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=str(exc),
+            error_code=exc.error_code,
         ) from exc
     except DeviceGitCredentialSyncError as exc:
-        raise HTTPException(
+        raise CustomHTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
+            error_code=exc.error_code,
         ) from exc
 
 
