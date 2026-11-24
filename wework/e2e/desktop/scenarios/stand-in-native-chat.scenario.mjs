@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { access, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { createDesktopScenario as createSessions } from './stand-in-sessions.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
@@ -16,14 +14,10 @@ import {
   toolOutputText,
 } from '../modules/response-protocol.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
-import { shellCommandResponse } from '../modules/shell-command-response.mjs'
 
 const FIRST = 'STAND_IN_NATIVE_BACKGROUND_REQUEST'
 const NEXT = 'STAND_IN_NATIVE_SECOND_MESSAGE'
 const AUTO = 'STAND_IN_NATIVE_AUTOMATIC_GUIDANCE'
-const APPROVAL = 'STAND_IN_NATIVE_APPROVAL_REQUEST'
-const APPROVAL_GUIDANCE = 'STAND_IN_NATIVE_MESSAGE_DURING_APPROVAL'
-const APPROVAL_RESULT = '收到补充消息，已按审批结果处理。'
 const CHILD = 'STAND_IN_NATIVE_CHILD_WORK'
 const CHILD_RESULT = 'Native child verified its isolated work.'
 const RESULT = '原生子代理已经完成后台检查。'
@@ -35,12 +29,10 @@ const CHAT =
 /** Extend the CI-owned session checkpoint without another app or Backend lifecycle. */
 export function createDesktopScenario(options) {
   const sessions = createSessions(options)
-  const approvalFile = join(options.workspacePath, 'stand-in-guidance-approval.tmp')
   let active = false
   let spawned = false
   let followedUp = false
   let automaticallyGuided = false
-  let approvalRequested = false
   let childResultObserved = false
   let nativeWaitObserved = false
   let lastWaitCallId
@@ -68,29 +60,6 @@ export function createDesktopScenario(options) {
       const body = await readRequestBody(request)
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
-      if (input.includes(APPROVAL)) {
-        if (!approvalRequested) {
-          approvalRequested = true
-          reply(
-            response,
-            shellCommandResponse(
-              body,
-              'stand-in-guidance-approval',
-              `rm '${approvalFile.replaceAll("'", "'\\''")}'`,
-              options.workspacePath,
-              {
-                sandbox_permissions: 'require_escalated',
-                justification: '验证单次审批仍由用户决定。',
-              }
-            )
-          )
-        } else if (input.includes(APPROVAL_GUIDANCE)) {
-          reply(response, [assistantMessage(APPROVAL_RESULT)])
-        } else {
-          reply(response, [assistantMessage('审批已结束。')])
-        }
-        return true
-      }
       if (input.includes(NOTIFICATION_REQUEST)) {
         assert.equal(
           notificationResponse,
@@ -303,28 +272,6 @@ export function createDesktopScenario(options) {
           [{ title: '我的助理', body: NOTIFICATION_RESULT }],
           'The acknowledgement and result must produce only one system notification from the assistant'
         )
-        await control.command('focusMainWindow', 'body')
-        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        await writeFile(approvalFile, 'Awaiting explicit approval')
-        await send(APPROVAL)
-        const approvalCard = `${CHAT} [data-testid="request-user-input-card"]`
-        await control.command('waitFor', approvalCard, {
-          timeoutMs: options.modelResponseTimeoutMs,
-        })
-        await send(APPROVAL_GUIDANCE)
-        await control.command('waitFor', approvalCard)
-        const waiting = await rpc('runtime.tasks.get', { taskId: primary.task.taskId })
-        assert.equal(waiting.task.interactionStatus, 'waitingForUserInput')
-        await access(approvalFile)
-        await control.command(
-          'clickWhenEnabled',
-          `${approvalCard} [data-testid="request-user-input-option-__codex_approval-0"]`
-        )
-        await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
-          text: APPROVAL_RESULT,
-          timeoutMs: options.modelResponseTimeoutMs,
-        })
-        await assert.rejects(access(approvalFile), { code: 'ENOENT' })
       } finally {
         releaseChild()
         if (notificationResponse && !notificationResponse.writableEnded) notificationResponse.end()

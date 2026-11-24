@@ -22,6 +22,7 @@ import {
 const TASK = 'stand-in-confirmation-work'
 const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
 const DISPLAY_MESSAGE = '请在隔离工作区创建验证文件，执行前先让我确认。'
+const FOLLOWUP = 'STAND_IN_CONFIRMATION_FOLLOWUP'
 const ROOT = '[data-testid="stand-in-overview"]'
 
 export function createDesktopScenario({
@@ -43,9 +44,13 @@ export function createDesktopScenario({
       if (!JSON.stringify(body.input ?? []).includes(PROMPT)) return false
       const id = `stand-in-approval-${Date.now()}`
       let events
-      if (requestContainsToolOutput(body, 'stand-in-file-write'))
+      if (requestContainsToolOutput(body, 'stand-in-file-write')) {
+        assert.ok(
+          JSON.stringify(body.input ?? []).includes(FOLLOWUP),
+          'The approved turn must receive the follow-up'
+        )
         events = [assistantMessage('已按你的单次确认完成操作。')]
-      else {
+      } else {
         try {
           events = shellCommandResponse(
             body,
@@ -177,6 +182,22 @@ export function createDesktopScenario({
         await control.command('getComputedStyleValue', removal, { value: 'color' }),
         await control.command('getComputedStyleValue', question, { value: 'color' })
       )
+      const guide = await requestExecutor(
+        control,
+        'runtime.tasks.guidance',
+        { taskId: TASK, message: FOLLOWUP, clientGuidanceId: FOLLOWUP },
+        uiTimeoutMs
+      )
+      assert.equal(guide.accepted, true, JSON.stringify(guide))
+      await control.command('waitFor', '[data-testid="request-user-input-card"]')
+      const pending = await requestExecutor(
+        control,
+        'runtime.tasks.get',
+        { taskId: TASK },
+        uiTimeoutMs
+      )
+      assert.equal(pending.task.interactionStatus, 'waitingForUserInput')
+      await assert.rejects(access(file), { code: 'ENOENT' })
       await captureScreenshot(control, '02-action-awaiting-confirmation.png')
       await control.command('click', '[data-testid="request-user-input-option-__codex_approval-0"]')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
