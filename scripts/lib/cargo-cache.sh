@@ -89,6 +89,11 @@ configure_wegent_cargo_target_dir() {
   configure_wegent_sccache "$canonical_project_dir" "$CARGO_TARGET_DIR"
 }
 
+build_wegent_cargo_in_target() {
+  # sccache hashes CARGO_TARGET_DIR for Rust, so pass this path only to Cargo.
+  env -u CARGO_TARGET_DIR cargo build --target-dir "$CARGO_TARGET_DIR" "$@"
+}
+
 cargo_target_dir_for() {
   local manifest_dir="$1"
 

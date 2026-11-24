@@ -1925,6 +1925,14 @@ describe('TemporaryChatPanel', () => {
       hideProcessing: true,
     },
     { existing: true, target: 'official', role: 'primary', providerFailure: true },
+    {
+      existing: true,
+      target: 'official',
+      role: 'primary',
+      providerFailure: true,
+      profileModelOnly: true,
+    },
+    { existing: true, target: 'custom', role: 'primary', profileModelOnly: true },
     { existing: true, target: 'official', role: 'primary', providerPending: true },
     { existing: true, target: 'cloud', role: 'primary', revertBeforeSend: true },
     {
@@ -1935,7 +1943,7 @@ describe('TemporaryChatPanel', () => {
       changeTargetRoundtrip: true,
     },
   ])(
-    'sends the $role chat with a temporary $target model across providers (existing=$existing, busy=$busy, empty=$globalCatalogEmpty, removed=$oldModelRemoved, catalogFailed=$localCatalogFailed, legacy=$legacyProvider, retry=$retry, processingHidden=$hideProcessing, pending=$providerPending, reverted=$revertBeforeSend, roundtrip=$changeTargetRoundtrip)',
+    'sends the $role chat with a $target model across providers (profileOnly=$profileModelOnly, existing=$existing, busy=$busy, empty=$globalCatalogEmpty, removed=$oldModelRemoved, catalogFailed=$localCatalogFailed, legacy=$legacyProvider, retry=$retry, processingHidden=$hideProcessing, pending=$providerPending, reverted=$revertBeforeSend, roundtrip=$changeTargetRoundtrip)',
     async ({
       existing,
       target,
@@ -1949,6 +1957,7 @@ describe('TemporaryChatPanel', () => {
       retry = false,
       hideProcessing = false,
       providerFailure = false,
+      profileModelOnly = false,
       providerPending = false,
       revertBeforeSend = false,
       changeTargetRoundtrip = false,
@@ -1993,7 +2002,10 @@ describe('TemporaryChatPanel', () => {
         enabled: true,
         prompt: '',
         version: 1,
-        model: native,
+        model:
+          profileModelOnly && target === 'custom'
+            ? { ...native, provider: 'company', model_id: 'company-codex' }
+            : native,
         modelOptions: { reasoning: 'high' },
       }
       const before = structuredClone(profile)
@@ -2139,6 +2151,7 @@ describe('TemporaryChatPanel', () => {
                 nativeConversation
                 assistantSend={assistantTransport ? assistantSend : undefined}
                 hideProcessing={hideProcessing}
+                showModelSelector={!profileModelOnly}
                 currentProject={null}
                 source={null}
                 instanceId={`switch-${role}-${existing}`}
@@ -2154,6 +2167,29 @@ describe('TemporaryChatPanel', () => {
       try {
         const view = render(<Conversation />)
         await waitFor(() => expect(services.standInApi.catalog).toHaveBeenCalled())
+        if (profileModelOnly) {
+          const recover = await screen.findByTestId('stand-in-conversation-new-session')
+          expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
+          expect(screen.getByTestId('send-message-button')).toBeDisabled()
+          await user.click(recover)
+          await user.click(screen.getByTestId('stand-in-conversation-cancel-new-session'))
+          expect(screen.getByTestId('send-message-button')).toBeDisabled()
+          expect(screen.getByTestId('chat-message-input')).toHaveTextContent(
+            'Keep this stand-in draft'
+          )
+          await user.click(recover)
+          await user.click(screen.getByTestId('stand-in-conversation-confirm-new-session'))
+          expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+          await user.click(screen.getByTestId('send-message-button'))
+          await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+          expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).toEqual(
+            expect.objectContaining({
+              startNewSession: true,
+              expectedThreadId: taskAddress.threadId,
+            })
+          )
+          return
+        }
         if (oldModelRemoved || localCatalogFailed || providerFailure || providerPending) {
           await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeDisabled())
           expect(screen.getByTestId('model-selector-button')).toBeEnabled()

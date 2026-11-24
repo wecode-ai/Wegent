@@ -74,5 +74,5 @@ export function useStandInActiveModelProvider({
   const refresh = useCallback(() => {
     if (canRead) void resource.reload()
   }, [resource, canRead])
-  return { provider, pending, failed, refresh }
+  return { provider, pending, failed, refreshing: pending && query.status === 'loading', refresh }
 }

@@ -13,7 +13,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
 
 const USER = 9001
 const TASK = `stand-in-chat-${USER}-primary`
@@ -164,7 +163,6 @@ export function createDesktopScenario({
           },
           uiTimeoutMs
         )
-      await selectE2EModel(control, undefined, undefined, CHAT)
       await control.command(
         'fill',
         `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,

@@ -9,6 +9,7 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
+use wegent_execution_contracts::model_request_headers::apply_wework_headers;
 
 use crate::{
     agent_session,
@@ -384,6 +385,7 @@ fn apply_claude_header_environment(
         );
     }
 
+    apply_wework_headers(&mut default_headers);
     if !default_headers.is_empty() {
         let serialized_default_headers = serde_json::to_string(&headers_to_json(&default_headers))
             .expect("header map should serialize");
@@ -411,6 +413,7 @@ fn apply_claude_header_environment(
         }
     }
 
+    apply_wework_headers(&mut custom_headers);
     if !custom_headers.is_empty() {
         spec = spec.env(
             "ANTHROPIC_CUSTOM_HEADERS",
