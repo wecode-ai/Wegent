@@ -610,6 +610,14 @@ export function createDesktopScenario({
           assert.equal(task.runtimeHandle.origin.standInId, role.id)
           assert.equal(await realpath(task.workspacePath), workspaces[index])
         }
+        // A compact viewport can unmount the original request after the result and panel visit.
+        await control.command(
+          'scrollToRatioAsUser',
+          `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
+          {
+            value: '0',
+          }
+        )
         await control.command('clickElementWithText', row, {
           text: '核实迁移回滚',
           visible: true,
