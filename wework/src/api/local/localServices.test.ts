@@ -5463,6 +5463,7 @@ describe('createLocalAppServices', () => {
 
       const result = api.sendRuntimeMessage({
         address: { deviceId: 'local-device', taskId: 'task-1' },
+        clientUserMessageId: 'queued-answer',
         message: 'allow_once',
         [responseField]: requestUserInputResponse,
       })
@@ -5473,6 +5474,7 @@ describe('createLocalAppServices', () => {
           {
             taskId: 'task-1',
             address: { deviceId: 'device-uuid', taskId: 'task-1' },
+            clientUserMessageId: 'queued-answer',
             message: 'allow_once',
             requestUserInputResponse,
           },

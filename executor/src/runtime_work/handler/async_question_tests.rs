@@ -437,7 +437,7 @@ async fn assert_async_question_attachment_groups() {
         "question_1":{"answers":[],"attachments":[{"id":1}]},
         "question_2":{"answers":["First line\nSecond line"],"attachments":[{"id":-2}]}
     }});
-    let mut payload = json!({"taskId":"task","message":"First line\nSecond line", "attachments":files,
+    let mut payload = json!({"taskId":"task","clientUserMessageId":"queued-answer", "message":"First line\nSecond line", "attachments":files,
         "requestUserInputResponse":response});
     let prepared = handler.prepare_question_reply(&payload).await.unwrap();
     handler
@@ -446,6 +446,8 @@ async fn assert_async_question_attachment_groups() {
         .unwrap();
     let mut request = execution_request(&payload).unwrap();
     apply_runtime_payload_metadata(&mut request, &payload);
+    assert_eq!(payload["clientUserMessageId"], "queued-answer");
+    assert_eq!(payload["clientGuidanceId"], "queued-answer");
     assert_eq!(request.prompt, payload["message"]);
     let groups: Value = serde_json::from_str(
         request
