@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { verifyArchivedStandInNotification } from '../modules/stand-in-archived-notification.mjs'
+import { setAssignmentNotification } from '../modules/issue-save-notification-flows.mjs'
 import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import {
   assistantMessage,
@@ -66,6 +67,64 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   async function refreshInbox(control) {
     await control.command('click', '[data-testid="wework-notifications-refresh"]')
     await control.command('waitFor', '[data-testid="wework-notifications-refresh"]:not([disabled])')
+  }
+
+  async function verifySelfReassignment(control) {
+    const issue = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
+      title: `${MARKER} self reassignment`,
+      assignee_user_id: user.id,
+      tags: ['fanout'],
+      notify_assignee: false,
+    })
+    const tasksPath = `/v1/loop-items/${issue.id}/tasks`
+    const detail =
+      '[data-workspace-tab-content][aria-hidden="false"] [data-testid="collaboration-issue-detail"]'
+    const picker = `${detail} [data-testid="cloud-todo-detail-assignee"]`
+    const activity = `${detail} [data-testid="cloud-task-activity-${issue.id}"]`
+    await control.command('click', '[data-testid="wework-notifications-button"]')
+    await control.command('openWeworkScheme', 'body', {
+      value: `wework://boards/${project.id}/issues/${issue.id}`,
+    })
+    await control.command('clickWhenEnabled', `${picker}[data-value="user:${user.id}"]`)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="cloud-todo-detail-assignee-option-empty"]'
+    )
+    await control.command('waitFor', `${activity} [data-testid="cloud-task-assignment-event-1"]`)
+    assert.equal((await request(`/v1/loop-items/${issue.id}`)).assignee_user_id, null)
+    assert.deepEqual(
+      await request(tasksPath),
+      [],
+      'Silent initial assignment must not start a task'
+    )
+
+    await control.command('clickWhenEnabled', picker)
+    await setAssignmentNotification(control, true)
+    await control.command(
+      'clickWhenEnabled',
+      `[data-testid="cloud-todo-detail-assignee-option-user:${user.id}"]`
+    )
+    await control.command('waitFor', `${activity} [data-testid="cloud-task-assignment-event-2"]`)
+    const reassigned = await request(`/v1/loop-items/${issue.id}`)
+    assert.equal(String(reassigned.assignee_user_id), String(user.id))
+    const rows = await until(
+      () => request(tasksPath),
+      rows => rows.length === 1 && rows[0].stand_in_pending === false,
+      'Notified self-reassignment did not start an assistant task'
+    )
+    const [binding] = rows
+    assert.equal(binding.human_assignment_id, reassigned.human_task_binding.humanAssignmentId)
+    assert.equal(binding.device_id, deviceId)
+    await until(
+      () => requestExecutor(control, 'runtime.tasks.get', { taskId: binding.task_id }, uiTimeoutMs),
+      result => {
+        assert.notEqual(result.task?.status, 'failed', JSON.stringify(result))
+        return result.task?.status === 'done'
+      },
+      'The self-reassigned assistant task did not complete'
+    )
+    await control.command('clickWhenEnabled', `${detail} [data-testid="cloud-todo-detail-close"]`)
+    await control.command('waitFor', detail, { visible: false })
   }
 
   return {
@@ -300,6 +359,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       assert.equal(await countAssignments(fanout), 1)
       assert.equal(modelRequests, 2, 'Inbox refresh must not replay the selected role')
       assert.deepEqual(await request(`/v1/loop-items/${fanout.id}/tasks`), completedBindings)
+      await verifySelfReassignment(control)
       await requestExecutor(
         control,
         'runtime.stand_in.personal.save',

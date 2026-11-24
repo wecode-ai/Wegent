@@ -396,9 +396,25 @@ async fn list(
     runtime: &TaskRuntime,
     context: &SpaceMcpRequestContext,
     space: &Value,
+    participating: bool,
 ) -> Result<Vec<Value>, String> {
     authorize(runtime, context, space, "list_board_items").await?;
     let items = if space["project_store"] == "backend" {
+        if participating {
+            let result = cloud(
+                context,
+                "list_board_items",
+                json!({"space_id":space["space_id"],"participating":true}),
+            )
+            .await?;
+            if result["participation"] != "mine" {
+                return Err("source_unavailable: backend has no participation filter".into());
+            }
+            return result["items"]
+                .as_array()
+                .cloned()
+                .ok_or_else(|| "Invalid Issue list".into());
+        }
         let backend = BackendToolContext {
             backend_url: context
                 .backend_url
@@ -424,10 +440,25 @@ async fn list(
         )
         .await?
     };
-    items
-        .as_array()
-        .cloned()
-        .ok_or_else(|| "Invalid Issue list".into())
+    let mut items = items.as_array().cloned().ok_or("Invalid Issue list")?;
+    if participating {
+        let project_id = space["space_id"].as_str().ok_or("Missing project")?;
+        let mut viewers = vec![0];
+        if let Some(user) = context
+            .principal_id
+            .as_deref()
+            .and_then(|id| id.parse::<i64>().ok())
+            .filter(|id| *id > 0)
+        {
+            viewers.push(user);
+        }
+        let ids = runtime
+            .stand_in_store()
+            .participating_issue_ids(project_id, &viewers)
+            .map_err(|error| error.to_string())?;
+        items.retain(|item| item["id"].as_str().is_some_and(|id| ids.contains(id)));
+    }
+    Ok(items)
 }
 
 fn registry() -> &'static Mutex<Queries> {
@@ -457,7 +488,7 @@ async fn existing(
             return Err("cursor_expired".into());
         }
         for (space, visible) in &state.guards {
-            let current = list(runtime, context, space)
+            let current = list(runtime, context, space, false)
                 .await
                 .map_err(|_| "query_scope_changed")?;
             let current = current
@@ -604,8 +635,16 @@ pub(super) async fn search(
             if state.filters.get("include_archived").is_some() {
                 return Err("unsupported_filter: archive selection".into());
             }
-            let items = list(runtime, context, &space).await?;
-            let guard = items
+            let participating = state.filters["participation"] == "mine";
+            let items = list(runtime, context, &space, participating).await?;
+            let board;
+            let visible = if participating && state.filters.get("has_children").is_some() {
+                board = list(runtime, context, &space, false).await?;
+                &board
+            } else {
+                &items
+            };
+            let guard = visible
                 .iter()
                 .map(|item| {
                     (
@@ -614,7 +653,7 @@ pub(super) async fn search(
                     )
                 })
                 .collect();
-            let parents = items
+            let parents = visible
                 .iter()
                 .filter_map(|item| item["parent_id"].as_str().map(str::to_owned))
                 .collect::<HashSet<_>>();

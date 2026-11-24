@@ -540,7 +540,18 @@ impl RuntimeWorkRpcHandler {
 
     async fn poll_local_stand_in(&self, configs: &[Value]) -> Result<(), AppIpcError> {
         let project = configs[0]["projectId"].as_str().unwrap_or_default();
+        let user = configs[0]["userId"].as_i64().unwrap_or_default();
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let participant_ids = if configs
+            .iter()
+            .any(crate::task_runtime::personal_stand_in::role_receives_participating_issues)
+        {
+            store
+                .participating_issue_ids(project, &[0, user])
+                .map_err(settings_error)?
+        } else {
+            Default::default()
+        };
         for issue in store.list_tasks(project).map_err(settings_error)? {
             if issue.assignee_user_id != configs[0]["userId"].as_i64() {
                 continue;
@@ -561,11 +572,19 @@ impl RuntimeWorkRpcHandler {
             }
             let eligible: Vec<Value> = configs
                 .iter()
+                .filter_map(|config| {
+                    super::personal_stand_in::issue_role_config(
+                        config,
+                        user,
+                        project,
+                        "local",
+                        participant_ids.contains(&issue.id),
+                    )
+                })
                 .filter(|config| {
                     self.stand_in_issue_runs_here(config, &issue_value)
                         && assignment_after_enable(&json!({"created_at":assignment["at"]}), config)
                 })
-                .cloned()
                 .collect();
             if eligible.is_empty() {
                 continue;

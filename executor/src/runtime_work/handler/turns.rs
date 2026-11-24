@@ -119,8 +119,12 @@ pub(super) fn read_runtime_turn_queue(
 }
 
 pub(super) fn read_runtime_turn_state(queue_path: &Path) -> Result<RuntimeTurnQueueState, String> {
-    let Ok(envelope_bytes) = fs::read(queue_path) else {
-        return Ok(RuntimeTurnQueueState::default());
+    let envelope_bytes = match fs::read(queue_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RuntimeTurnQueueState::default());
+        }
+        Err(error) => return Err(format!("Failed to read {}: {error}", queue_path.display())),
     };
     let envelope = serde_json::from_slice::<EncryptedRuntimeTurnQueue>(&envelope_bytes)
         .map_err(|error| format!("Failed to parse {}: {error}", queue_path.display()))?;
@@ -174,7 +178,7 @@ pub(super) fn write_runtime_turn_queue(
     write_runtime_turn_state(queue_path, turns, &HashMap::new(), &Default::default())
 }
 
-fn write_runtime_turn_state(
+pub(super) fn write_runtime_turn_state(
     queue_path: &Path,
     turns: &VecDeque<SpawnTurnRequest>,
     active_goal_turns: &HashMap<String, SpawnTurnRequest>,
@@ -352,12 +356,14 @@ fn hook_user_id(value: &Value) -> Option<String> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum TurnAdmission {
+pub(super) enum TurnAdmission {
     Normal,
     Forced,
     Queue,
     Continuation,
 }
+
+const USE_SAVED_STAND_IN_PERMISSIONS: &str = "useSavedStandInTaskPermissions";
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn persist_turn_queue(
@@ -449,7 +455,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn spawn_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, TurnAdmission::Normal)
+        self.schedule_turn(turn, TurnAdmission::Normal, false)
             .await
             .map(|_| ())
     }
@@ -458,13 +464,13 @@ impl RuntimeWorkRpcHandler {
         &self,
         turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, TurnAdmission::Forced)
+        self.schedule_turn(turn, TurnAdmission::Forced, false)
             .await
             .map(|_| ())
     }
 
     pub(super) async fn queue_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, TurnAdmission::Queue)
+        self.schedule_turn(turn, TurnAdmission::Queue, false)
             .await
             .map(|_| ())
     }
@@ -472,17 +478,31 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn submit_continuation(
         &self,
         turn: SpawnTurnRequest,
+        use_saved_stand_in_permissions: bool,
     ) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, TurnAdmission::Continuation)
-            .await
-            .map(|_| ())
+        self.schedule_turn(
+            turn,
+            TurnAdmission::Continuation,
+            use_saved_stand_in_permissions,
+        )
+        .await
+        .map(|_| ())
     }
 
-    async fn schedule_turn(
+    pub(super) async fn schedule_turn(
         &self,
         mut turn: SpawnTurnRequest,
         admission: TurnAdmission,
+        use_saved_stand_in_permissions: bool,
     ) -> Result<bool, AppIpcError> {
+        // Only native admission may opt into owner-granted permissions. The queue
+        // retains this decision for restart and re-reads the current grant at launch.
+        turn.request.extra.remove(USE_SAVED_STAND_IN_PERMISSIONS);
+        if use_saved_stand_in_permissions {
+            turn.request
+                .extra
+                .insert(USE_SAVED_STAND_IN_PERMISSIONS.into(), Value::Bool(true));
+        }
         turn.bind_task_kind(&self.store);
         // Binding restores immutable origin; recompute the host's per-run manual fact
         // before the admission snapshot drops transient confirmation metadata.
@@ -956,7 +976,7 @@ impl RuntimeWorkRpcHandler {
             .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
         // A native Goal mutation may update only disk state when its session
         // has unloaded. Resume it through the existing owner and admission flow.
-        self.schedule_turn(turn, TurnAdmission::Normal).await
+        self.schedule_turn(turn, TurnAdmission::Normal, false).await
     }
 
     pub(super) async fn persist_current_turn_state(&self) -> Result<(), AppIpcError> {
@@ -1394,8 +1414,17 @@ impl RuntimeWorkRpcHandler {
         turn_id: Option<&str>,
     ) -> ExecutionRequest {
         let mut event_request = request.clone();
+        event_request.extra.remove("standInGuidanceSources");
         if let Some(turn_id) = turn_id {
             event_request.subtask_id = turn_id.to_owned();
+            if let Some(Some(sources)) = self.store.read_task(local_task_id, |link| {
+                let replies = &link.runtime_handle["standInGuidanceReplies"];
+                (replies["turnId"] == turn_id).then(|| replies["sources"].clone())
+            }) {
+                event_request
+                    .extra
+                    .insert("standInGuidanceSources".into(), sources);
+            }
         }
         let continuation = turn_id.is_some_and(|turn_id| {
             self.store.read_task(local_task_id, |link| {
@@ -1516,6 +1545,19 @@ impl RuntimeWorkRpcHandler {
             self.reject_stand_in_schedule_turn(&turn.request, &turn.local_task_id, error);
             return;
         }
+        let use_saved_stand_in_permissions = turn.request.extra.get(USE_SAVED_STAND_IN_PERMISSIONS)
+            == Some(&Value::Bool(true))
+            && !turn.request.extra.contains_key("resource_event_keys");
+        turn.request.stand_in_task_permissions = if use_saved_stand_in_permissions {
+            self.store
+                .read_task(
+                    &turn.local_task_id,
+                    super::stand_in_task_permissions::task_permissions,
+                )
+                .flatten()
+        } else {
+            None
+        };
         if let Some(payload) = turn.send_payload.as_ref() {
             if !turn.request.new_session {
                 if let Some(link) = self

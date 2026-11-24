@@ -46,7 +46,7 @@ import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
-import type { StandInNotification } from './standInNotifications'
+import { standInStartFailureCopy, type StandInNotification } from './standInNotifications'
 import { useStandInNotifications } from './useStandInNotifications'
 
 type InboxCategory = 'tasks' | WeworkNotificationCategory
@@ -826,6 +826,12 @@ function ConnectedNotificationCenter({
                   busy,
                   onClick: () =>
                     selectedCloudCategory && openNotification(notification, selectedCloudCategory),
+                  ...(notification.payload.action === 'stand_in_start_failed' &&
+                    standInStartFailureCopy(
+                      t,
+                      notification.payload.itemTitle ?? notification.title,
+                      notification.payload.failureCode
+                    )),
                 }
                 return notification.kind === 'issue_dispatch_assignment' ? (
                   <StandInNotificationProcessing

@@ -57,6 +57,7 @@ import {
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
+import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import { findModelForSelection } from '@/features/workbench/runtimeContextUsage'
 import {
   deriveRuntimePaneStatus,
@@ -118,6 +119,7 @@ export function TemporaryChatPanel({
   assistantMessageStyle,
   markReadWhenActive = false,
   nativeConversation = false,
+  allowMessagesDuringApproval = false,
   modelControls,
   allowInitialGoal = false,
   expanded = false,
@@ -162,6 +164,7 @@ export function TemporaryChatPanel({
     loadRuntimeTranscriptForPane,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
+    refreshWorkLists,
   } = useWorkbenchPaneContext()
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: services.attachmentApi?.uploadAttachment,
@@ -198,6 +201,14 @@ export function TemporaryChatPanel({
     contextUsageStore.getSnapshot
   )
   const taskLifecycle = useRuntimeTaskLifecycle(address)
+  const taskPermissions = useRuntimeTaskPermissions(
+    address,
+    taskLifecycle?.task,
+    state.user?.id,
+    services.standInApi,
+    refreshWorkLists,
+    active && !readOnly
+  )
   const activeThreadId = taskLifecycle?.task?.threadId ?? address?.threadId
   const taskModelSelection = address ? projectChat.resolveRuntimeTaskModelSelection(address) : null
   const activeModelSelection =
@@ -291,6 +302,7 @@ export function TemporaryChatPanel({
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
+      ...taskPermissions,
       scopeKey: instanceId,
       trialTemplates: trialGuide?.templates ?? [],
       trialPluginName: trialGuide?.pluginName,
@@ -354,6 +366,7 @@ export function TemporaryChatPanel({
       attachmentSelection,
       contextUsage,
       projectChat,
+      taskPermissions,
       taskModelSelection,
       instanceId,
       trialGuide,
@@ -528,8 +541,18 @@ export function TemporaryChatPanel({
       : explicitNewSession && (activeProviderPending || requiresNewSession))
       ? { startNewSession: true, expectedThreadId: activeThreadId }
       : {}
+  const pendingRequest =
+    focusedRequest === undefined
+      ? pendingRequestUserInputPayload(presentation.messages, hiddenRequestUserInputIds)
+      : focusedRequest &&
+          !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
+        ? focusedRequest
+        : null
+  const showComposerWhilePending =
+    allowMessagesDuringApproval &&
+    (pendingRequest?.interactionKind ?? pendingRequest?.interaction_kind) === 'approval'
   const canSendWithCurrentModel = () => {
-    if (nativeConversation && taskLifecycle?.interactionStatus) {
+    if (nativeConversation && taskLifecycle?.interactionStatus && !showComposerWhilePending) {
       setError(t('standIn.native_input_pending'))
       return false
     }
@@ -859,13 +882,6 @@ export function TemporaryChatPanel({
     releaseDraftAttachment: attachmentSelection.releaseAttachmentForScope,
     getDraftAttachment: attachmentSelection.getAttachment,
   })
-  const pendingRequest =
-    focusedRequest === undefined
-      ? pendingRequestUserInputPayload(presentation.messages, hiddenRequestUserInputIds)
-      : focusedRequest &&
-          !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
-        ? focusedRequest
-        : null
   const pendingRequestKey = pendingRequest && requestUserInputPayloadKey(pendingRequest)
   const recoveryAvailable =
     needsSessionConfirmation &&
@@ -975,6 +991,7 @@ export function TemporaryChatPanel({
             <RequestUserInputComposer
               payload={pendingRequest}
               source={address}
+              showComposerWhilePending={showComposerWhilePending}
               renderQuestion={onCollapse =>
                 pendingRequest ? (
                   <RequestUserInputCard

@@ -28,6 +28,7 @@ import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTria
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   isCloudDevice,
@@ -177,6 +178,13 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const runtimeTaskSummary = findRuntimeTask(state.runtimeWork, currentRuntimeTask)
+  const taskPermissions = useRuntimeTaskPermissions(
+    currentRuntimeTask,
+    runtimeTaskSummary,
+    state.user?.id,
+    services.standInApi,
+    onRefreshWorkLists
+  )
   const currentRuntimeUsesCodex =
     (runtimeTaskSummary?.runtime ?? currentRuntimeTask?.runtime ?? 'codex').toLowerCase() ===
     'codex'
@@ -205,6 +213,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   }, [retryFailedMessage])
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...effectiveProjectChat,
+    ...taskPermissions,
     modelSelectorOpenSignal,
     setSelectedModel: model => {
       effectiveProjectChat.setSelectedModel(model)

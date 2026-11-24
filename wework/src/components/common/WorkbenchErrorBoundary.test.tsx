@@ -1,9 +1,12 @@
 import i18n from '@/i18n'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { WorkbenchErrorBoundary } from './WorkbenchErrorBoundary'
+
+vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: vi.fn() }))
 
 function BrokenRender(): never {
   throw new Error('Render failed')
@@ -50,8 +53,10 @@ describe('Workbench error recovery', () => {
     )
   })
 
-  test('recovers from an update crash and reloads only when requested', () => {
+  test('copies the update crash details after a clipboard failure and reloads only when requested', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
+    const copy = vi.mocked(copyTextToClipboard)
+    copy.mockRejectedValueOnce(new Error('Clipboard unavailable')).mockResolvedValueOnce(undefined)
     const reload = vi.fn()
     vi.stubGlobal(
       'window',
@@ -68,6 +73,14 @@ describe('Workbench error recovery', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Crash' }))
     expect(screen.getByRole('alert')).toHaveTextContent('尚未保存的内容可能会丢失')
+    const copyButton = screen.getByRole('button', { name: '复制调试信息' })
+    fireEvent.click(copyButton)
+    expect(await screen.findByText('复制失败，请重试。')).toBeVisible()
+    fireEvent.click(copyButton)
+    expect(await screen.findByText('已复制调试信息')).toBeVisible()
+    expect(copy).toHaveBeenLastCalledWith(
+      expect.stringMatching(/Render failed[\s\S]*at InteractiveCrash/)
+    )
     expect(reload).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '刷新页面' }))
     expect(reload).toHaveBeenCalledOnce()

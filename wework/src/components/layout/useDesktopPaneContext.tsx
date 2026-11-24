@@ -35,6 +35,7 @@ import {
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
 import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
+import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import {
   DEFAULT_ENVIRONMENT_INFO_VISIBILITY,
   sanitizeEmbeddedBrowserLabelSegment,
@@ -93,6 +94,7 @@ export function useDesktopPaneContext({
     workspaceTabId,
     loadRuntimeTranscriptForPane,
     sendRuntimePaneMessage,
+    refreshWorkLists,
   } = useWorkbenchPaneContext()
   const deviceApi = services?.deviceApi
   const { t } = useTranslation('common')
@@ -135,6 +137,14 @@ export function useDesktopPaneContext({
     runtimeWork,
     currentRuntimeTask
   )
+  const taskPermissions = useRuntimeTaskPermissions(
+    currentRuntimeTask,
+    runtimeTaskSummary,
+    state.user?.id,
+    services?.standInApi,
+    refreshWorkLists,
+    paneActive && paneVisible && workbenchVisible
+  )
   const paneModelChat = useMemo<ProjectChatControls>(() => {
     if (!currentRuntimeTask) return projectChat
     const selection = projectChat.resolveRuntimeTaskModelSelection(
@@ -144,8 +154,9 @@ export function useDesktopPaneContext({
     return {
       ...projectChat,
       ...runtimeTaskModelControlOverrides(projectChat, currentRuntimeTask, selection),
+      ...taskPermissions,
     }
-  }, [currentRuntimeTask, projectChat, runtimeTaskSummary])
+  }, [currentRuntimeTask, projectChat, runtimeTaskSummary, taskPermissions])
   const currentProjectSpaceRuntimeTask = currentRuntimeTask
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
   const runtimeTaskDescription =

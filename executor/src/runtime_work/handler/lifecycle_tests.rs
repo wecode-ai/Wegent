@@ -728,18 +728,21 @@ async fn continuation_admission_observes_a_turn_that_settled_during_preparation(
     assert!(!handler.is_busy_local_task("task-1"));
 
     handler
-        .submit_continuation(SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: "task-1".into(),
-            runtime: "codex".into(),
-            request,
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: Some("thread-1".into()),
-            initial_thread_goal: None,
-        })
+        .submit_continuation(
+            SpawnTurnRequest {
+                task_kind: None,
+                local_task_id: "task-1".into(),
+                runtime: "codex".into(),
+                request,
+                send_payload: None,
+                direct_thread_id: None,
+                fork_thread_id: None,
+                fork_thread_path: None,
+                resume_thread_id: Some("thread-1".into()),
+                initial_thread_goal: None,
+            },
+            false,
+        )
         .await
         .unwrap();
     assert_eq!(handler.queued_local_task_position("task-1"), None);

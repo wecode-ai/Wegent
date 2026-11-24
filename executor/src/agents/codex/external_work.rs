@@ -1,5 +1,6 @@
 //! Keep source work reviewable without removing its normal network capabilities.
 use super::*;
+use crate::protocol::StandInPermissionMode;
 use crate::runtime_work::external_work_kind;
 
 pub(super) const SOURCE_READ_PROFILE: &str = "wework-source-read";
@@ -26,6 +27,13 @@ pub(super) fn applies(request: &ExecutionRequest) -> bool {
 }
 
 pub(super) fn reviewer(request: &ExecutionRequest) -> &'static str {
+    if request.stand_in_task_permissions.is_some() {
+        return if codex_full_access_command_approval(request) == Some("ai") {
+            "auto_review"
+        } else {
+            "user"
+        };
+    }
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         "user"
     } else {
@@ -102,6 +110,13 @@ pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value
 
 pub(super) fn profile(request: &ExecutionRequest) -> Option<&'static str> {
     applies(request).then(|| {
+        if let Some(permissions) = request.stand_in_task_permissions {
+            return match permissions.permission_mode {
+                StandInPermissionMode::ReadOnly => SOURCE_READ_PROFILE,
+                StandInPermissionMode::WorkspaceWrite => CODEX_WORKSPACE_PERMISSION_PROFILE,
+                StandInPermissionMode::FullAccess => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+            };
+        }
         if git_work(request) {
             GIT_PROJECT_PROFILE
         } else if crate::runtime_work::stand_in_requires_confirmation(request) {
@@ -155,6 +170,69 @@ pub(super) fn configure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{StandInCommandApproval, StandInTaskPermissions};
+
+    #[test]
+    fn stand_in_task_permissions_select_native_profile_and_keep_mcp_review() {
+        let mut request: ExecutionRequest = serde_json::from_value(json!({
+            "origin":{"type":"stand_in_task","initiatedBy":"stand_in","askBeforeAct":true},
+            "stand_in_task_permissions":{"permissionMode":"full-access","commandApproval":"automatic"}
+        }))
+        .unwrap();
+        assert!(request.stand_in_task_permissions.is_none());
+        assert_eq!(profile(&request), Some(SOURCE_READ_PROFILE));
+
+        for (permission_mode, command_approval, expected_profile, expected_reviewer) in [
+            (
+                StandInPermissionMode::ReadOnly,
+                None,
+                SOURCE_READ_PROFILE,
+                "user",
+            ),
+            (
+                StandInPermissionMode::WorkspaceWrite,
+                None,
+                CODEX_WORKSPACE_PERMISSION_PROFILE,
+                "user",
+            ),
+            (
+                StandInPermissionMode::FullAccess,
+                None,
+                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+                "user",
+            ),
+            (
+                StandInPermissionMode::FullAccess,
+                Some(StandInCommandApproval::Ai),
+                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+                "auto_review",
+            ),
+            (
+                StandInPermissionMode::FullAccess,
+                Some(StandInCommandApproval::Automatic),
+                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+                "user",
+            ),
+        ] {
+            request.stand_in_task_permissions = Some(StandInTaskPermissions {
+                permission_mode,
+                command_approval,
+            });
+            let mut params = Map::new();
+            insert_codex_runtime_permissions(&mut params, &request);
+            assert_eq!(params["permissions"], expected_profile);
+            assert_eq!(params["approvalsReviewer"], expected_reviewer);
+            assert_eq!(
+                permission_config(&request)["default_permissions"],
+                expected_profile
+            );
+            assert!(!codex_auto_approve_mcp_tool_calls(&request));
+            assert_eq!(
+                codex_auto_approve_commands(&request),
+                command_approval == Some(StandInCommandApproval::Automatic)
+            );
+        }
+    }
 
     #[test]
     fn delegated_work_uses_ai_review_and_preserves_explicit_human_review() {
