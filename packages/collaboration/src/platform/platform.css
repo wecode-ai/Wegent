@@ -4533,6 +4533,10 @@ button.collaboration-project-offline:hover {
 }
 
 @container issue-list (max-width: 21rem) {
+  .collaboration-issue-task-names {
+    display: none;
+  }
+
   .collaboration-issue-table:not(:has(thead)) td.collaboration-issue-table-status {
     overflow: hidden;
     padding-inline: 4px;
