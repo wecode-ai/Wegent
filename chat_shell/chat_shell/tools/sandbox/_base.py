@@ -359,11 +359,9 @@ class SandboxManager:
             if self.skill_identity_token:
                 metadata["skill_identity_token"] = self.skill_identity_token
 
-            if self.load_skill_tool is not None and hasattr(
-                self.load_skill_tool, "get_loaded_skills"
-            ):
+            if self.load_skill_tool is not None:
                 required_skills = sorted(
-                    set(self.load_skill_tool.get_loaded_skills()) - {"sandbox"}
+                    self.load_skill_tool.get_loaded_sandbox_skills() - {"sandbox"}
                 )
                 if required_skills:
                     metadata["required_skills"] = json.dumps(

@@ -145,6 +145,7 @@ class LoadSkillTool(BaseTool):
     skill_names: list[str]  # Available skill names for this session
     # Skill metadata from ChatRequest (skill_configs)
     skill_metadata: dict[str, dict] = {}  # skill_name -> {description, prompt, ...}
+    chat_only_skills: set[str] = Field(default_factory=set)
     # Number of turns to retain a loaded skill (default: 5)
     skill_retention_turns: int = DEFAULT_SKILL_RETENTION_TURNS
 
@@ -791,6 +792,10 @@ The following skills provide specialized guidance for specific tasks. When your 
             Set of skill names that have been loaded
         """
         return self._expanded_skills.copy()
+
+    def get_loaded_sandbox_skills(self) -> set[str]:
+        """Return active Skills that need deployment to the sandbox."""
+        return self._expanded_skills - self.chat_only_skills
 
     def get_skill_remaining_turns(self, skill_name: str) -> int:
         """Get the remaining turns for a loaded skill.
