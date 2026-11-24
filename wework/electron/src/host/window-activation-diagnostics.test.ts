@@ -79,37 +79,47 @@ describe('redactUrl', () => {
 })
 
 describe('formatWindowActivationLine', () => {
-  const before = captureWindowActivationSnapshotSafe(fakeElectron, {
-    id: 9,
-    isDestroyed: () => false,
-    isVisible: () => false,
-    isFocused: () => false,
-  })
-
   test('emits exactly one parseable JSON line with before/after snapshots', () => {
-    const line = formatWindowActivationLine(
-      {
-        reason: 'workspace-open',
-        initiator: 'user',
-        userInitiated: true,
-        target: 'workspace-1',
-        url: 'https://example.com/p?token=secret-token',
-        label: 'multi\nline',
-        agentStatus: 'needs_user',
-      },
-      before,
-      { appActive: true, appHidden: false, dockVisible: true, focusedWindowId: 9 }
-    )
-    expect(line.startsWith('[window-activation] ')).toBe(true)
-    expect(line).not.toContain('\n')
-    const payload = JSON.parse(line.slice('[window-activation] '.length)) as Record<string, unknown>
-    expect(payload.reason).toBe('workspace-open')
-    expect(payload.url).toBe('https://example.com/p?token=*')
-    expect(payload.appActiveBefore).toBe(true)
-    expect(payload.targetFocusedBefore).toBe(false)
-    expect(payload.agentStatus).toBe('needs_user')
-    expect(payload.appActiveAfter).toBe(true)
-    expect(payload.focusedWindowIdAfter).toBe(9)
+    // The snapshot semantics under test are the darwin ones; force the
+    // platform explicitly so CI on linux runs the same branch.
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    const before = captureWindowActivationSnapshotSafe(fakeElectron, {
+      id: 9,
+      isDestroyed: () => false,
+      isVisible: () => false,
+      isFocused: () => false,
+    })
+    try {
+      const line = formatWindowActivationLine(
+        {
+          reason: 'workspace-open',
+          initiator: 'user',
+          userInitiated: true,
+          target: 'workspace-1',
+          url: 'https://example.com/p?token=secret-token',
+          label: 'multi\nline',
+          agentStatus: 'needs_user',
+        },
+        before,
+        { appActive: true, appHidden: false, dockVisible: true, focusedWindowId: 9 }
+      )
+      expect(line.startsWith('[window-activation] ')).toBe(true)
+      expect(line).not.toContain('\n')
+      const payload = JSON.parse(line.slice('[window-activation] '.length)) as Record<
+        string,
+        unknown
+      >
+      expect(payload.reason).toBe('workspace-open')
+      expect(payload.url).toBe('https://example.com/p?token=*')
+      expect(payload.appActiveBefore).toBe(true)
+      expect(payload.targetFocusedBefore).toBe(false)
+      expect(payload.agentStatus).toBe('needs_user')
+      expect(payload.appActiveAfter).toBe(true)
+      expect(payload.focusedWindowIdAfter).toBe(9)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
+    }
   })
 
   test('omits fields that are not provided, including missing snapshots', () => {
@@ -162,16 +172,22 @@ describe('activation request correlation', () => {
 })
 
 describe('diagnostics safety boundary', () => {
-  test('a throwing Electron accessor leaves the snapshot undefined', () => {
-    const throwingElectron = {
-      app: {
-        isActive: () => {
-          throw new Error('boom')
+  test('a throwing Electron accessor leaves the snapshot undefined on darwin', () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    try {
+      const throwingElectron = {
+        app: {
+          isActive: () => {
+            throw new Error('boom')
+          },
         },
-      },
-      BrowserWindow: { getFocusedWindow: () => null },
+        BrowserWindow: { getFocusedWindow: () => null },
+      }
+      expect(captureWindowActivationSnapshotSafe(throwingElectron)).toBeUndefined()
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
     }
-    expect(captureWindowActivationSnapshotSafe(throwingElectron)).toBeUndefined()
   })
 
   test('capture, format, and console failures never reach the caller', () => {

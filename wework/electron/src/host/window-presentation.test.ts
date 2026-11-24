@@ -107,56 +107,65 @@ describe('application activation', () => {
 
 describe('did-become-active correlation', () => {
   test('attributes an activation that follows a background presentation', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
     electronMocks.appActive = false
     const { application, info } = activationHarness()
-    const actions = {
-      keepInBackground: () => false,
-      openWorkbenchWindow: vi.fn(async () => undefined),
-      reportError: vi.fn(),
-    }
-    registerApplicationActivation(application, actions)
-    const { target } = createWindow()
-    presentWindow(target, {
-      reason: 'popout-show',
-      initiator: 'user',
-      userInitiated: true,
-      target: 'popout',
-    })
-    application.emit('did-become-active')
-    await flushPresentationLogging()
+    try {
+      const actions = {
+        keepInBackground: () => false,
+        openWorkbenchWindow: vi.fn(async () => undefined),
+        reportError: vi.fn(),
+      }
+      registerApplicationActivation(application, actions)
+      const { target } = createWindow()
+      presentWindow(target, {
+        reason: 'popout-show',
+        initiator: 'user',
+        userInitiated: true,
+        target: 'popout',
+      })
+      application.emit('did-become-active')
+      await flushPresentationLogging()
 
-    const lines = activationLines(info)
-    const didBecomeActive = lines.find(line => line.reason === 'did-become-active')
-    expect(didBecomeActive).toBeDefined()
-    expect(didBecomeActive?.initiator).toBe('user')
-    expect(didBecomeActive?.userInitiated).toBe(true)
-    expect(didBecomeActive?.activationOutcome).toBe('requested')
-    expect(didBecomeActive?.requestedReason).toBe('popout-show')
-    info.mockRestore()
-    electronMocks.appActive = false
+      const lines = activationLines(info)
+      const didBecomeActive = lines.find(line => line.reason === 'did-become-active')
+      expect(didBecomeActive).toBeDefined()
+      expect(didBecomeActive?.initiator).toBe('user')
+      expect(didBecomeActive?.userInitiated).toBe(true)
+      expect(didBecomeActive?.activationOutcome).toBe('requested')
+      expect(didBecomeActive?.requestedReason).toBe('popout-show')
+    } finally {
+      info.mockRestore()
+      electronMocks.appActive = false
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
+    }
   })
 
   test('carries the redacted deep link through scheme-open presentations', async () => {
     electronMocks.appActive = false
     const { info } = activationHarness()
-    const { target } = createWindow()
-    presentWindow(target, {
-      reason: 'scheme-open',
-      initiator: 'external_or_user',
-      userInitiated: null,
-      target: 'main',
-      url: 'wework://tasks/dev-1/task-9?token=secret-secret',
-    })
-    await flushPresentationLogging()
+    try {
+      const { target } = createWindow()
+      presentWindow(target, {
+        reason: 'scheme-open',
+        initiator: 'external_or_user',
+        userInitiated: null,
+        target: 'main',
+        url: 'wework://tasks/dev-1/task-9?token=secret-secret',
+      })
+      await flushPresentationLogging()
 
-    const lines = activationLines(info)
-    const line = lines.find(item => item.reason === 'scheme-open')
-    expect(line?.url).toBe('wework://tasks/dev-1/task-9?token=*')
-    info.mockRestore()
-    // This presentation registered a correlation request that no
-    // did-become-active consumed; drain it so later tests stay isolated.
-    takeCorrelatedActivationRequest()
-    electronMocks.appActive = false
+      const lines = activationLines(info)
+      const line = lines.find(item => item.reason === 'scheme-open')
+      expect(line?.url).toBe('wework://tasks/dev-1/task-9?token=*')
+      // This presentation registered a correlation request that no
+      // did-become-active consumed; drain it so later tests stay isolated.
+    } finally {
+      info.mockRestore()
+      takeCorrelatedActivationRequest()
+      electronMocks.appActive = false
+    }
   })
 
   test('does not register correlation on non-darwin platforms where activity is unknown', async () => {
@@ -195,61 +204,70 @@ describe('did-become-active correlation', () => {
   test('does not misattribute a user switch after a presentation while the app was active', async () => {
     electronMocks.appActive = true
     const { application, info } = activationHarness()
-    const actions = {
-      keepInBackground: () => false,
-      openWorkbenchWindow: vi.fn(async () => undefined),
-      reportError: vi.fn(),
-    }
-    registerApplicationActivation(application, actions)
-    const { target } = createWindow()
-    presentWindow(target, {
-      reason: 'workspace-open',
-      initiator: 'unknown',
-      userInitiated: null,
-      target: 'workspace-1',
-    })
-    application.emit('did-become-active')
-    await flushPresentationLogging()
+    try {
+      const actions = {
+        keepInBackground: () => false,
+        openWorkbenchWindow: vi.fn(async () => undefined),
+        reportError: vi.fn(),
+      }
+      registerApplicationActivation(application, actions)
+      const { target } = createWindow()
+      presentWindow(target, {
+        reason: 'workspace-open',
+        initiator: 'unknown',
+        userInitiated: null,
+        target: 'workspace-1',
+      })
+      application.emit('did-become-active')
+      await flushPresentationLogging()
 
-    const lines = activationLines(info)
-    expect(lines.find(line => line.reason === 'did-become-active')).toBeUndefined()
-    expect(lines.find(line => line.reason === 'workspace-open')).toBeDefined()
-    info.mockRestore()
-    electronMocks.appActive = false
+      const lines = activationLines(info)
+      expect(lines.find(line => line.reason === 'did-become-active')).toBeUndefined()
+      expect(lines.find(line => line.reason === 'workspace-open')).toBeDefined()
+    } finally {
+      info.mockRestore()
+      electronMocks.appActive = false
+    }
   })
 
   test('consumes the pending request when focus synchronously emits did-become-active', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
     electronMocks.appActive = false
     const { application, info } = activationHarness()
-    const actions = {
-      keepInBackground: () => false,
-      openWorkbenchWindow: vi.fn(async () => undefined),
-      reportError: vi.fn(),
+    try {
+      const actions = {
+        keepInBackground: () => false,
+        openWorkbenchWindow: vi.fn(async () => undefined),
+        reportError: vi.fn(),
+      }
+      registerApplicationActivation(application, actions)
+      const { target } = createWindow()
+      target.focus = vi.fn(() => {
+        application.emit('did-become-active')
+      })
+
+      presentWindow(target, {
+        reason: 'popout-show',
+        initiator: 'user',
+        userInitiated: true,
+        target: 'popout',
+      })
+      await flushPresentationLogging()
+
+      const lines = activationLines(info)
+      const didBecomeActive = lines.find(line => line.reason === 'did-become-active')
+      expect(didBecomeActive).toBeDefined()
+      expect(didBecomeActive?.initiator).toBe('user')
+      expect(didBecomeActive?.activationOutcome).toBe('requested')
+      expect(didBecomeActive?.requestedReason).toBe('popout-show')
+      const presentation = lines.find(line => line.reason === 'popout-show')
+      expect(presentation?.correlationId).toBe(didBecomeActive?.correlationId)
+    } finally {
+      info.mockRestore()
+      electronMocks.appActive = false
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
     }
-    registerApplicationActivation(application, actions)
-    const { target } = createWindow()
-    target.focus = vi.fn(() => {
-      application.emit('did-become-active')
-    })
-
-    presentWindow(target, {
-      reason: 'popout-show',
-      initiator: 'user',
-      userInitiated: true,
-      target: 'popout',
-    })
-    await flushPresentationLogging()
-
-    const lines = activationLines(info)
-    const didBecomeActive = lines.find(line => line.reason === 'did-become-active')
-    expect(didBecomeActive).toBeDefined()
-    expect(didBecomeActive?.initiator).toBe('user')
-    expect(didBecomeActive?.activationOutcome).toBe('requested')
-    expect(didBecomeActive?.requestedReason).toBe('popout-show')
-    const presentation = lines.find(line => line.reason === 'popout-show')
-    expect(presentation?.correlationId).toBe(didBecomeActive?.correlationId)
-    info.mockRestore()
-    electronMocks.appActive = false
   })
 })
 
