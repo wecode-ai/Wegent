@@ -1,0 +1,12 @@
+{
+  "order": 83020,
+  "scenario": "./scenarios/bulk-worktree-archive.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 122020,
+      "shard": 8,
+      "position": 11200
+    }
+  }
+}

@@ -5973,6 +5973,8 @@ async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktree
         .worktrees
         .prepare(&source, "regular", None, false)
         .unwrap();
+    let unrelated_git = Path::new(&unrelated.path).join(".git");
+    fs::remove_file(unrelated_git).unwrap();
     for (id, path) in [
         ("regular", source.display().to_string()),
         ("shared-a", prepared.path.clone()),
@@ -5995,6 +5997,16 @@ async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktree
     assert!(source.join("tracked.txt").exists());
     assert!(Path::new(&unrelated.path).exists());
     assert!(Path::new(&prepared.path).exists());
+    assert_eq!(
+        handler
+            .worktrees
+            .worktree_for_cleanup(Path::new(&unrelated.path))
+            .unwrap()
+            .unwrap()
+            .state,
+        "active",
+        "Archiving tasks must not reconcile unrelated worktrees"
+    );
     let result = handler
         .archive_task(json!({"taskId":"shared-b", "cleanupWorktree":true}))
         .await
