@@ -296,15 +296,40 @@ impl RuntimeWorkRpcHandler {
                 AppIpcError::new("connection_response_invalid", "Missing connection events")
             })?
             .clone();
-        let checkpoint = page["nextCheckpoint"].as_object().ok_or_else(|| {
+        let mut checkpoint = page["nextCheckpoint"].as_object().cloned().ok_or_else(|| {
             AppIpcError::new(
                 "connection_response_invalid",
                 "Missing connection checkpoint",
             )
         })?;
         validate_collection_version(store, user, &self.device_id, settings_version)?;
+        let gap = checkpoint.remove("delegationGap");
+        let mut next = json!({"checkpoint":checkpoint});
+        if let Some(gap) = gap {
+            let from = gap["from"]
+                .as_str()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
+            let until = gap["until"]
+                .as_str()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
+            if source["delegated"] != true
+                || !messages.is_empty()
+                || page["hasMore"] != false
+                || next["checkpoint"]["cursor"] != "0"
+                || next["checkpoint"]["after"] != gap["until"]
+                || !matches!(gap["reason"].as_str(), Some("duration" | "volume"))
+                || !from.zip(until).is_some_and(|(from, until)| from < until)
+            {
+                return Err(AppIpcError::new(
+                    "connection_response_invalid",
+                    "Invalid DingTalk delegation recovery checkpoint",
+                ));
+            }
+            next["delegationGap"] = gap;
+            return Ok(next);
+        }
         let event_count = messages.len();
-        let page = (messages, json!({"checkpoint":checkpoint}));
+        let page = (messages, next);
         let next = self
             .collect_connection_page(store, user, source, roles, page)
             .await?;
@@ -583,6 +608,8 @@ fn save_collection_result(
             } else {
                 json!({})
             };
+            // The store preserves the latest notice when updating a source checkpoint.
+            next.as_object_mut().unwrap().remove("delegationGap");
             next["error"] = json!({"code":error.code,"message":error.message,"retryable":true});
             if let Some(code) = &error.provider_code {
                 next["error"]["providerCode"] = json!(code);

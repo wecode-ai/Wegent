@@ -5773,6 +5773,7 @@
       "result_submitting": "正在提交答复",
       "result_sent": "已自动答复",
       "result_unknown": "答复送达待确认",
+      "dismiss_gap": "知道了",
       "onboarding": "如需开启自动答复，请在主助理的钉钉连接设置中单独开启代管。"
     },
     "native_input_pending": "请先通过当前问题或权限确认卡片完成确认，再发送新消息。",
@@ -6370,6 +6371,7 @@
       "connector_auth_required": "此连接需要授权，请完成账号授权后重试。",
       "source_removed": "该来源已断开连接，请重新添加来源。",
       "connection_configuration_changed": "采集期间连接设置发生变化，请刷新后重试。",
+      "dingtalk_delegation_gap": "钉钉断线超过 30 分钟或积压超过 50 条，已跳过这段消息。新消息将继续代管。",
       "dependency_cloud_required": "此插件来自 Wework 默认市场。请先登录 Wework 云端账号，并将执行设备连接到该账号，再安装所需插件。",
       "dependency_catalog_unavailable": "无法在默认市场中唯一确认所需插件。请刷新插件市场并检查插件来源及账号访问权限后重试。",
       "dependency_conflict": "依赖插件的版本或启用状态不符合此连接的要求。请在插件管理中检查后重试。",

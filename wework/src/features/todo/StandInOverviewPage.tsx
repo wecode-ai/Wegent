@@ -769,21 +769,26 @@ export function StandInOverviewPage({
               >
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{value.source.name}</p>
-                  <p role="alert" className="mt-1 text-sm text-text-secondary">
+                  <p
+                    role={value.error.code === 'dingtalk_delegation_gap' ? 'status' : 'alert'}
+                    className="mt-1 text-sm text-text-secondary"
+                  >
                     {getStandInErrorMessage(value.error)}
                   </p>
                 </div>
                 <ControlButton
                   variant="unstyled"
                   type="button"
-                  data-testid={`stand-in-source-retry-${value.source.id}`}
+                  data-testid={`stand-in-source-${value.error.code === 'dingtalk_delegation_gap' ? 'acknowledge' : 'retry'}-${value.source.id}`}
                   className="min-h-11 shrink-0 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
                   aria-busy={
                     sameOwner && view.retryingSources.has(standInOverviewSourceKey(value.source))
                   }
                   onClick={() => void overview.retrySource(value.source)}
                 >
-                  {t('standIn.reload')}
+                  {value.error.code === 'dingtalk_delegation_gap'
+                    ? t('standIn.dingtalk_delegation.dismiss_gap')
+                    : t('standIn.reload')}
                 </ControlButton>
               </div>
             ))}

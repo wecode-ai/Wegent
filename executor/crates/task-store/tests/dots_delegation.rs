@@ -579,3 +579,53 @@ fn unsupported_actions_never_claim_a_send_and_handoff_keeps_its_reason() {
     assert_eq!(result["delegationResult"]["reason"], reason);
     assert!(result["delegationResult"]["receiptId"].is_null());
 }
+
+#[test]
+fn recovery_gap_stays_visible_across_progress_and_restart_until_acknowledged() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut source = source("peer", "direct", "account-a");
+    source["delegated"] = json!(true);
+    source["enabledAfter"] = json!("2026-11-24T00:00:00Z");
+    let gap =
+        json!({"reason":"duration","from":"2026-11-24T00:00:00Z","until":"2026-11-24T00:31:00Z"});
+    let progressed = json!({"checkpoint":{"after":"2026-11-24T00:32:00Z","cursor":"0"}});
+    store
+        .save_stand_in_source(
+            7,
+            &source,
+            &json!({"checkpoint":{"after":gap["until"],"cursor":"0"},"delegationGap":gap}),
+        )
+        .unwrap();
+    store.save_stand_in_source(7, &source, &progressed).unwrap();
+    drop(store);
+
+    let store = LocalTaskStore::open(&path).unwrap();
+    let notices = store.stand_in_source_errors(7).unwrap();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0]["error"]["code"], "dingtalk_delegation_gap");
+    assert_eq!(notices[0]["delegationGap"], gap);
+    assert_eq!(notices[0]["checkpoint"], progressed["checkpoint"]);
+
+    let mut failed = progressed.clone();
+    failed["error"] = json!({"code":"source_network_failure","retryable":true});
+    store.save_stand_in_source(7, &source, &failed).unwrap();
+    assert_eq!(
+        store.stand_in_source_errors(7).unwrap()[0]["error"],
+        failed["error"]
+    );
+    store.acknowledge_stand_in_source_error(7, &source).unwrap();
+    assert_eq!(
+        store.stand_in_source_errors(7).unwrap()[0]["delegationGap"],
+        gap
+    );
+
+    store.acknowledge_stand_in_source_error(7, &source).unwrap();
+    store.save_stand_in_source(7, &source, &progressed).unwrap();
+    assert!(store.stand_in_source_errors(7).unwrap().is_empty());
+    assert_eq!(
+        store.stand_in_source(7, &source).unwrap()["checkpoint"],
+        progressed["checkpoint"]
+    );
+}

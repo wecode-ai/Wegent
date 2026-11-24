@@ -3,6 +3,18 @@ use super::personal_stand_in::{source_collection_namespace, source_namespace};
 use super::*;
 use sha2::{Digest, Sha256};
 
+fn stand_in_source_key(user: i64, source: &Value) -> String {
+    stand_in_record_key(
+        "stand-in-source",
+        &json!([
+            user,
+            source_collection_namespace(source),
+            source["kind"],
+            source["id"]
+        ]),
+    )
+}
+
 #[path = "stand_in_dots_inbox.rs"]
 mod dots_inbox;
 
@@ -501,24 +513,30 @@ impl LocalTaskStore {
 
     pub fn stand_in_source_errors(&self, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
-        let mut statement=connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_source' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.error') IS NOT NULL ORDER BY updated_at DESC")?;
+        let mut statement = connection.prepare(
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_source'
+             AND json_extract(metadata,'$.userId')=?1
+             AND (json_extract(metadata,'$.error') IS NOT NULL
+                  OR json_extract(metadata,'$.delegationGap') IS NOT NULL)
+             ORDER BY updated_at DESC",
+        )?;
         let rows = statement.query_map(params![user], |row| row.get::<_, String>(0))?;
         rows.map(|row| {
-            serde_json::from_str(&row?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+            let mut state: Value = serde_json::from_str(&row?)
+                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+            if state["error"].is_null() {
+                state["error"] = json!({
+                    "code":"dingtalk_delegation_gap",
+                    "message":"DingTalk delegation skipped a recovery window",
+                    "retryable":false
+                });
+            }
+            Ok(state)
         })
         .collect()
     }
     pub fn stand_in_source(&self, user: i64, source: &Value) -> Result<Value, TaskRuntimeError> {
-        let key = stand_in_record_key(
-            "stand-in-source",
-            &json!([
-                user,
-                source_collection_namespace(source),
-                source["kind"],
-                source["id"]
-            ]),
-        );
+        let key = stand_in_source_key(user, source);
         let connection = self.connection()?;
         Ok(read_record(&connection, &key, "stand_in_source")?.unwrap_or(Value::Null))
     }
@@ -529,20 +547,50 @@ impl LocalTaskStore {
         source: &Value,
         state: &Value,
     ) -> Result<(), TaskRuntimeError> {
-        let key = stand_in_record_key(
-            "stand-in-source",
-            &json!([
-                user,
-                source_collection_namespace(source),
-                source["kind"],
-                source["id"]
-            ]),
-        );
+        let key = stand_in_source_key(user, source);
         let mut state = state.clone();
         state["userId"] = json!(user);
         state["source"] = source.clone();
-        let connection = self.connection()?;
-        write_record(&connection, &key, "stand_in_source", &state)
+        let mut connection = self.connection()?;
+        if source["delegated"] != true {
+            return write_record(&connection, &key, "stand_in_source", &state);
+        }
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if state["delegationGap"].is_null() {
+            if let Some(current) =
+                read_record(&transaction, &key, "stand_in_source")?.filter(|current| {
+                    !current["delegationGap"].is_null()
+                        && ["enabledAfter", "generation", "subscriptionId"]
+                            .into_iter()
+                            .all(|field| current["source"][field] == source[field])
+                })
+            {
+                state["delegationGap"] = current["delegationGap"].clone();
+            }
+        }
+        write_record(&transaction, &key, "stand_in_source", &state)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn acknowledge_stand_in_source_error(
+        &self,
+        user: i64,
+        source: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let key = stand_in_source_key(user, source);
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(mut current) = read_record(&transaction, &key, "stand_in_source")? {
+            if let Some(state) = current.as_object_mut() {
+                if state.remove("error").map_or(true, |error| error.is_null()) {
+                    state.remove("delegationGap");
+                }
+            }
+            write_record(&transaction, &key, "stand_in_source", &current)?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn stand_in_work(&self, user: i64, id: &str) -> Result<Value, TaskRuntimeError> {

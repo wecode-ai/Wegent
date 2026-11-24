@@ -238,6 +238,86 @@ test('delegated private intake binds native direct conversation and ignores othe
   }
 })
 
+test('delegated recovery skips a window longer than 30 minutes and collects subsequent events', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, calls, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const from = new Date(Date.now() - 30 * 60_000 - 1).toISOString()
+    const gap = await registry.call(providerId, 'collect', {
+      source,
+      checkpoint: { after: from, cursor: '0' },
+    })
+    assert.deepEqual(gap, {
+      events: [],
+      hasMore: false,
+      nextCheckpoint: {
+        after: new Date(Date.parse(clock)).toISOString(),
+        cursor: '0',
+        delegationGap: {
+          reason: 'duration',
+          from,
+          until: new Date(Date.parse(clock)).toISOString(),
+        },
+      },
+    })
+    assert.ok(!calls.some(call => call.tool === 'listMentions'))
+
+    t.mock.timers.tick(2000)
+    state.mentions = searchResult(
+      conversation('group', [
+        message('at-boundary', clock),
+        message('new', new Date().toISOString()),
+      ])
+    )
+    const resumed = await registry.call(providerId, 'collect', {
+      source,
+      checkpoint: gap.nextCheckpoint,
+    })
+    assert.deepEqual(
+      resumed.events.map(event => event.id),
+      ['new']
+    )
+    assert.deepEqual(resumed.nextCheckpoint, { after: new Date().toISOString(), cursor: '0' })
+  } finally {
+    dispose()
+  }
+})
+
+test('delegated recovery checks the complete 50-message limit before releasing paged events', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const direct = { ...source, kind: 'direct', id: 'peer' }
+    const events = Array.from({ length: 51 }, (_, index) => message(`ask-${index}`))
+    let overflow = false
+    state.search = ({ cursor, limit }) => {
+      assert.equal(limit, '51')
+      if (cursor === '0')
+        return searchPage('second', conversation('direct', events.slice(0, 25), true))
+      assert.equal(cursor, 'second')
+      return searchResult(conversation('direct', events.slice(24, overflow ? 51 : 50), true))
+    }
+    const checkpoint = { after: new Date(Date.now() - 30 * 60_000).toISOString(), cursor: '0' }
+    const accepted = await registry.call(providerId, 'collect', { source: direct, checkpoint })
+    assert.equal(accepted.events.length, 50)
+    assert.equal(accepted.nextCheckpoint.delegationGap, undefined)
+
+    overflow = true
+    const gap = await registry.call(providerId, 'collect', { source: direct, checkpoint })
+    assert.deepEqual(gap.events, [])
+    assert.equal(gap.hasMore, false)
+    assert.deepEqual(gap.nextCheckpoint.delegationGap, {
+      reason: 'volume',
+      from: checkpoint.after,
+      until: new Date(Date.parse(clock)).toISOString(),
+    })
+  } finally {
+    dispose()
+  }
+})
+
 test('delegated private history detects the owner taking over even on a later search page', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
   const { ctx, calls, state } = fixture()

@@ -11,6 +11,7 @@ import { verifyStandInProjectConnectionNames } from '../modules/stand-in-project
 import { verifyStandInConnectionCatalog } from '../modules/stand-in-connection-catalog.mjs'
 import { verifyStandInSessionSettings } from '../modules/stand-in-session-settings.mjs'
 import { verifyStandInGroupMessageScope } from '../modules/stand-in-group-message-scope.mjs'
+import { verifyStandInDelegationVisual } from '../modules/stand-in-delegation-visual.mjs'
 
 const DINGTALK = '@wegent/dsh-connection-dingtalk/dingtalk'
 const USER = 9001
@@ -134,6 +135,7 @@ export function createDesktopScenario(options) {
         for (const template of templates) {
           await control.command('waitFor', `${template}[aria-checked="true"]`)
         }
+        await verifyStandInDelegationVisual(control, options)
         await control.command('clickWhenEnabled', templates[0])
         await control.command('waitFor', `${templates[0]}[aria-checked="false"]`)
         await control.command('waitFor', `${templates[1]}[aria-checked="true"]`)
@@ -164,7 +166,13 @@ export function createDesktopScenario(options) {
                   tags: [],
                   executionDeviceId: current.executionDeviceId,
                   version: 0,
-                  collaboration: { enabled: false, allProjects: false, projects: [], excludedProjects: [], tags: [] },
+                  collaboration: {
+                    enabled: false,
+                    allProjects: false,
+                    projects: [],
+                    excludedProjects: [],
+                    tags: [],
+                  },
                   connections: current.primary.connections,
                 },
               ],
@@ -182,7 +190,10 @@ export function createDesktopScenario(options) {
         await openStandInSettings(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
         await openConnectionTypePicker(control)
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-add-dingtalk-connection"]'
+        )
         await verifyStandInSessionSettings(control, uiTimeoutMs, SCENARIO_ROLE)
         await verifyStandInGroupMessageScope(control, uiTimeoutMs, SCENARIO_ROLE)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')

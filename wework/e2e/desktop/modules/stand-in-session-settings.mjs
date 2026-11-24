@@ -1,4 +1,3 @@
-import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
@@ -32,13 +31,13 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
       )
         await control.command('clickWhenEnabled', strategy)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-page"]', {
-        visible: false,
-      })
+      // Saving a source returns to the open role settings.
+      await control.command('waitFor', '[data-testid="stand-in-connections-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-saved"]')
       const saved = await load()
-      const source = saved.roles.find(role => role.id === roleId).connections.find(
-        row => row.id === 'connection-migration-fixture'
-      )
+      const source = saved.roles
+        .find(role => role.id === roleId)
+        .connections.find(row => row.id === 'connection-migration-fixture')
       assert.deepEqual(
         { ...source.policy, sessionStrategy: source.policy.sessionStrategy ?? 'reuse' },
         {
@@ -48,7 +47,6 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
           sessionStrategy,
         }
       )
-      await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')

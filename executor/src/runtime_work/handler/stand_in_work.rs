@@ -622,14 +622,8 @@ impl RuntimeWorkRpcHandler {
                 "Source is not connected",
             ));
         }
-        let mut state = store
-            .stand_in_source(user, source)
-            .map_err(settings_error)?;
-        if let Some(object) = state.as_object_mut() {
-            object.remove("error");
-        }
         store
-            .save_stand_in_source(user, source, &state)
+            .acknowledge_stand_in_source_error(user, source)
             .map_err(settings_error)?;
         Ok(json!({"success":true}))
     }

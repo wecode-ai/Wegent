@@ -5782,6 +5782,7 @@
       "result_submitting": "Sending reply",
       "result_sent": "Automatic reply sent",
       "result_unknown": "Reply delivery unconfirmed",
+      "dismiss_gap": "Dismiss",
       "onboarding": "Enable automatic replies separately in the primary assistant's DingTalk settings."
     },
     "delegation": {
@@ -6380,6 +6381,7 @@
       "connector_auth_required": "This connection requires authorization. Authorize the account and try again.",
       "source_removed": "This source was disconnected. Connect it again.",
       "connection_configuration_changed": "Connection settings changed during collection. Refresh and try again.",
+      "dingtalk_delegation_gap": "DingTalk delegation skipped messages after more than 30 minutes offline or a backlog of over 50 messages. New messages will still be handled.",
       "dependency_cloud_required": "This plugin comes from the Wework default marketplace. Sign in to Wework and connect the execution device to that account before installing the required plugin.",
       "dependency_catalog_unavailable": "The required plugin could not be uniquely identified in the default marketplace. Refresh the marketplace and check its source and your account access before trying again.",
       "dependency_conflict": "The dependency version or enabled state does not meet this connection’s requirements. Check it in plugin management and try again.",
