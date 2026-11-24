@@ -192,11 +192,14 @@ impl RuntimeWorkRpcHandler {
                 .await;
         }
         if name == "create_task" {
-            let owner_task = actor.runtime_handle["origin"]["type"] == "stand_in_identity";
-            if owner_task && !self.has_current_stand_in_owner_request(&actor) {
+            let owner_request =
+                (actor.runtime_handle["origin"]["type"] == "stand_in_identity").then_some(&actor);
+            if owner_request.is_some_and(|actor| !self.has_current_stand_in_owner_request(actor)) {
                 return Err(super::stand_in_role_delegation::denied());
             }
-            return self.create_primary_task(&identity, &args, owner_task).await;
+            return self
+                .create_primary_task(&identity, &args, owner_request)
+                .await;
         }
         let id = required(&args, "taskId")?;
         let gate = self.task_send_gate(&format!("stand-in-task-operation:{id}"));
@@ -299,7 +302,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         identity: &StandInMcpIdentity,
         args: &Value,
-        owner_task: bool,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         use sha2::{Digest, Sha256};
         let key = json!([
@@ -327,6 +330,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(super::stand_in::settings_error)?;
         let mut config = settings["primary"].clone();
         config["userId"] = json!(identity.user);
+        let owner_task = owner_request.is_some();
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":owner_task});
         let sources = self.capture_delegated_read_sources(identity, args)?;
         let permissions = owner_task.then(|| StandInTaskPermissions::from_role(&config));
@@ -336,6 +340,7 @@ impl RuntimeWorkRpcHandler {
             &config,
             json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":owner_task,"readSources":sources}),
             permissions,
+            owner_request,
         )
         .await
     }
@@ -347,6 +352,7 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         delegation: Value,
         initial_permissions: Option<StandInTaskPermissions>,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         let ask = delegation["askBeforeAct"] == true;
         let mut origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":delegation["userId"],"deviceId":self.device_id,"sourceTaskId":delegation["sourceTaskId"],"askBeforeAct":ask});
@@ -379,8 +385,13 @@ impl RuntimeWorkRpcHandler {
             let result = Box::pin(self.send_stand_in_role_retry(payload, attempt)).await?;
             return super::stand_in_execution::accepted_stand_in_result(result);
         }
-        Box::pin(self.create_task_with_initial_permissions(payload, false, initial_permissions))
-            .await
+        Box::pin(self.create_task_with_initial_permissions(
+            payload,
+            false,
+            initial_permissions,
+            owner_request,
+        ))
+        .await
     }
 }
 
@@ -410,6 +421,7 @@ mod operation_tests {
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        handler.turn_queue_path = Arc::new(root.path().join("turn-queue.json"));
         let identity = StandInMcpIdentity {
             task_id: "primary".into(),
             user: 7,
@@ -424,7 +436,12 @@ mod operation_tests {
             coordinator_batch: None,
         };
         let owner = json!({"id":"original","taskId":"primary","userId":7,"deviceId":"mac","roleId":"@primary","revision":1,"cancelled":false});
-        for (revision, cancelled) in [(2, false), (1, true)] {
+        for (revision, cancelled, after_admission) in [
+            (2, false, false),
+            (1, true, false),
+            (2, false, true),
+            (1, true, true),
+        ] {
             let mut current = owner.clone();
             current["revision"] = json!(revision);
             current["cancelled"] = json!(cancelled);
@@ -433,18 +450,30 @@ mod operation_tests {
                 runtime_handle: json!({
                     "origin":{"type":"stand_in_identity","standInId":"@primary","userId":7,"deviceId":"mac"},
                     "executionRequest":{"user_id":7,"standInOwnerRequest":owner},
-                    "standInOwnerRequest":current,
+                    "standInOwnerRequest":if after_admission { &owner } else { &current },
                 }),
                 ..Default::default()
             });
-            let error = handler
-                .stand_in_task_operation(
-                    identity.clone(),
-                    "create_task",
-                    json!({"requestId":"create","title":"Work","message":"Start work"}),
-                )
-                .await
-                .unwrap_err();
+            let queue = handler.turn_queue_operation.lock().await;
+            let mutation = handler.stand_in_task_operation(
+                identity.clone(),
+                "create_task",
+                json!({"requestId":"create","title":"Work","message":"Start work"}),
+            );
+            tokio::pin!(mutation);
+            if after_admission {
+                assert!(futures_util::poll!(mutation.as_mut()).is_pending());
+                assert_eq!(handler.local_task_links(true).len(), 1);
+                if cancelled {
+                    handler
+                        .cancel_stand_in_owner_request(&identity.task_id, &owner)
+                        .unwrap();
+                } else {
+                    handler.record_stand_in_owner_admission(&identity.task_id, &current);
+                }
+            }
+            drop(queue);
+            let error = mutation.await.unwrap_err();
             assert_eq!(error.code, "permission_denied");
             assert_eq!(handler.local_task_links(true).len(), 1);
         }

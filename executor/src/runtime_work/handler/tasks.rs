@@ -453,7 +453,7 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         activity: bool,
     ) -> Result<Value, AppIpcError> {
-        self.create_task_with_initial_permissions(payload, activity, None)
+        self.create_task_with_initial_permissions(payload, activity, None, None)
             .await
     }
 
@@ -462,6 +462,7 @@ impl RuntimeWorkRpcHandler {
         mut payload: Value,
         activity: bool,
         initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
@@ -473,7 +474,7 @@ impl RuntimeWorkRpcHandler {
             Some(gate) => Some(gate.lock().await),
             None => None,
         };
-        self.create_task_after_local_checks(payload, activity, initial_permissions)
+        self.create_task_after_local_checks(payload, activity, initial_permissions, owner_request)
             .await
     }
 
@@ -482,6 +483,7 @@ impl RuntimeWorkRpcHandler {
         mut payload: Value,
         activity: bool,
         initial_permissions: Option<crate::protocol::StandInTaskPermissions>,
+        owner_request: Option<&RuntimeTaskLink>,
     ) -> Result<Value, AppIpcError> {
         let schema_version = payload
             .get("schemaVersion")
@@ -553,7 +555,6 @@ impl RuntimeWorkRpcHandler {
         set_runtime_task_title(&mut request, &title);
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
-        self.retain_runtime_model_config(&local_task_id, &request.model_config);
         log_executor_event(
             "runtime task create identity",
             &[
@@ -883,7 +884,25 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let mut runtime_handle = runtime_handle_json(&link);
-        self.upsert_local_task(link);
+        {
+            // Owner admissions publish under the queue lock and cancellation
+            // uses the lifecycle lock, including the preparation fast path.
+            let _queue = if owner_request.is_some() {
+                Some(self.turn_queue_operation.lock().await)
+            } else {
+                None
+            };
+            let _lifecycle = owner_request.map(|_| {
+                self.stand_in_lifecycle_gate
+                    .lock()
+                    .expect("stand-in lifecycle gate poisoned")
+            });
+            if owner_request.is_some_and(|actor| !self.has_current_stand_in_owner_request(actor)) {
+                return Err(super::stand_in_role_delegation::denied());
+            }
+            self.retain_runtime_model_config(&local_task_id, &request.model_config);
+            self.upsert_local_task(link);
+        }
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
@@ -1209,7 +1228,7 @@ impl RuntimeWorkRpcHandler {
             self.bind_stand_in_owner_command(&mut payload, false);
             normalize_user_message_presentation(&mut payload)?;
             return self
-                .create_task_after_local_checks(payload, false, None)
+                .create_task_after_local_checks(payload, false, None, None)
                 .await
                 .map(Some);
         }

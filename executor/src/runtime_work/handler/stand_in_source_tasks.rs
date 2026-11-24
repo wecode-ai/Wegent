@@ -133,7 +133,7 @@ impl RuntimeWorkRpcHandler {
         }
         let delegation = json!({"userId":identity.user,"sourceTaskId":identity.task_id,
             "sourceMessageId":message,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"],"readSources":[]});
-        self.start_delegated_task(args, &id, &config, delegation, None)
+        self.start_delegated_task(args, &id, &config, delegation, None, None)
             .await
     }
 

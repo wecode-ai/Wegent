@@ -125,7 +125,7 @@ impl RuntimeWorkRpcHandler {
                 "roleDelegation":intent["roleDelegation"],
                 "roleDirectory":actor.runtime_handle["executionRequest"]["standInDelegation"]["roleDirectory"],
                 "attempt":attempt,
-            }), Some(StandInTaskPermissions::from_role(&role))).await;
+            }), Some(StandInTaskPermissions::from_role(&role)), None).await;
             match response {
                 Ok(response) if response["accepted"] == true => {
                     store.record_stand_in_role_task_address(id, user, &self.device_id)

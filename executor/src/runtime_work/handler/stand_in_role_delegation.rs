@@ -261,6 +261,7 @@ impl RuntimeWorkRpcHandler {
                     "roleDirectory": delegation["roleDirectory"],
                 }),
                 Some(StandInTaskPermissions::from_role(&role)),
+                None,
             )
             .await;
         match &result {
@@ -456,7 +457,7 @@ impl RuntimeWorkRpcHandler {
             "userId":user,"sourceTaskId":intent["sourceTaskId"],"sourceDeviceId":intent["sourceDevice"],
             "sourceRoute":intent["sourceRoute"],"askBeforeAct":true,"readSources":[],
             "roleDelegation":intent["roleDelegation"],"roleDirectory":verified["roleDirectory"],"attempt":attempt,
-        }), Some(StandInTaskPermissions::from_role(&role))).await?;
+        }), Some(StandInTaskPermissions::from_role(&role)), None).await?;
         if result["accepted"] == true {
             store
                 .record_stand_in_role_task_address(id, user, target)

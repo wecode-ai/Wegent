@@ -39,7 +39,7 @@ impl RuntimeWorkRpcHandler {
             .await
             .map(Some);
         }
-        Box::pin(self.create_task_after_local_checks(payload, activity, None))
+        Box::pin(self.create_task_after_local_checks(payload, activity, None, None))
             .await
             .map(Some)
     }
