@@ -684,6 +684,7 @@ export function createDesktopScenario({
     },
     async verify(control) {
       const sidebar = '[data-testid="desktop-sidebar"]'
+      await control.command('waitFor', sidebar, { timeoutMs: uiTimeoutMs })
       if ((await control.command('getAttribute', sidebar, { value: 'aria-hidden' })) === 'true') {
         await control.command('clickWhenEnabled', '[data-testid="expand-sidebar-button"]', {
           visible: true,

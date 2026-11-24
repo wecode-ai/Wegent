@@ -49,7 +49,14 @@ const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
   unreadTaskKeys: new Set(),
 }
 
+function sameTaskKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  if (left.size !== right.size) return false
+  for (const key of left) if (!right.has(key)) return false
+  return true
+}
+
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
+  'getSidebarSnapshot',
   'subscribe',
   'getSnapshot',
   'getCurrentTask',
@@ -77,6 +84,11 @@ export class RuntimeTaskLifecycleStore {
   private unreadRevision = 0
   private version = 0
   private snapshot = EMPTY_STORE_SNAPSHOT
+  private sidebarSnapshot = {
+    runningTaskKeys: EMPTY_STORE_SNAPSHOT.runningTaskKeys,
+    waitingTaskKeys: new Set<string>() as ReadonlySet<string>,
+    busyTaskKeys: new Set<string>() as ReadonlySet<string>,
+  }
   private batchDepth = 0
   private publishPending = false
 
@@ -102,6 +114,7 @@ export class RuntimeTaskLifecycleStore {
   }
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
+  getSidebarSnapshot = () => this.sidebarSnapshot
 
   batch<T>(update: () => T): T {
     this.batchDepth++
@@ -876,12 +889,16 @@ export class RuntimeTaskLifecycleStore {
     const runningTaskKeys = new Set<string>()
     const queuedTaskKeys = new Set<string>()
     const unreadTaskKeys = new Set<string>()
+    const waitingTaskKeys = new Set<string>()
+    const busyTaskKeys = new Set<string>()
     for (const [key, machine] of this.machines) {
       const task = machine.getSnapshot()
       tasks.set(key, task)
       if (task.derived.isRunning) runningTaskKeys.add(key)
       if (task.derived.isQueued) queuedTaskKeys.add(key)
       if (task.derived.shouldShowUnread) unreadTaskKeys.add(key)
+      if (task.derived.shouldShowSidebarWaiting) waitingTaskKeys.add(key)
+      if (task.derived.isBusy) busyTaskKeys.add(key)
     }
     this.version += 1
     this.snapshot = {
@@ -890,6 +907,14 @@ export class RuntimeTaskLifecycleStore {
       runningTaskKeys,
       queuedTaskKeys,
       unreadTaskKeys,
+    }
+    const sidebar = this.sidebarSnapshot
+    if (
+      !sameTaskKeys(sidebar.runningTaskKeys, runningTaskKeys) ||
+      !sameTaskKeys(sidebar.waitingTaskKeys, waitingTaskKeys) ||
+      !sameTaskKeys(sidebar.busyTaskKeys, busyTaskKeys)
+    ) {
+      this.sidebarSnapshot = { runningTaskKeys, waitingTaskKeys, busyTaskKeys }
     }
     this.persistUnreadKeys()
     this.persistRunningKeys()

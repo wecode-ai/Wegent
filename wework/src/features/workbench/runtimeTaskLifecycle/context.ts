@@ -43,6 +43,12 @@ export function useRuntimeTaskLifecycleResolver(explicitStore?: RuntimeTaskLifec
   )
 }
 
+export function useRuntimeTaskSidebarSnapshot() {
+  const store = useContext(RuntimeTaskLifecycleContext)
+  if (!store) throw new Error('RuntimeTaskLifecycleProvider is required')
+  return useSyncExternalStore(store.subscribe, store.getSidebarSnapshot, store.getSidebarSnapshot)
+}
+
 export function useRuntimeTaskLifecycle(
   address: RuntimeTaskAddress | null | undefined
 ): RuntimeTaskLifecycleSnapshot | null {

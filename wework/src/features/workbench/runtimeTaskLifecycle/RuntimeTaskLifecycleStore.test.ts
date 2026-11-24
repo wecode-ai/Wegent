@@ -317,6 +317,21 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(observed?.turn.id).toBe('turn-1')
   })
 
+  test('changes the sidebar snapshot only when a displayed state changes', () => {
+    const store = new RuntimeTaskLifecycleStore('sidebar-states')
+    store.syncRuntimeTask(address, task({ running: true }))
+    const initial = store.getSidebarSnapshot()
+    const key = getRuntimeTaskLifecycleKey(address)
+    expect(initial.runningTaskKeys.has(key)).toBe(true)
+    expect(initial.busyTaskKeys.has(key)).toBe(true)
+
+    store.syncRuntimeTask(address, task({ running: true, title: 'Updated title' }))
+    expect(store.getSidebarSnapshot()).toBe(initial)
+
+    store.userInputRequested(address)
+    expect(store.getSidebarSnapshot().waitingTaskKeys.has(key)).toBe(true)
+  })
+
   test('keeps execution busy while replacing the running spinner with a waiting signal', () => {
     const store = new RuntimeTaskLifecycleStore('waiting-input-snapshot-test')
     store.syncRuntimeWork(
