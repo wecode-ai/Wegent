@@ -4,7 +4,9 @@
 
 use serde_json::{Map, Value, json};
 
-use super::model_config::extract_model_config;
+use brz_http_server::StatusCode;
+
+use super::model_config::{ModelConfigError, extract_model_config};
 use super::request::{BuildExecutionRequestInput, model_resolution_error};
 use super::resolution;
 use super::wework::models as wework_models;
@@ -110,9 +112,15 @@ fn apply_crd(
     spec: &Value,
     name: &str,
 ) -> Result<(), FastApiError> {
-    let Ok(full) = extract_model_config(spec) else {
-        return Ok(());
-    };
+    let full = extract_model_config(spec).map_err(|error| match error {
+        ModelConfigError::NoEnv => FastApiError::internal(),
+        ModelConfigError::MaskedApiKey | ModelConfigError::CryptoConfiguration => {
+            FastApiError::detail(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Cloud model credentials are unavailable; check the encryption configuration",
+            )
+        }
+    })?;
     let full = Value::Object(full);
     config.insert(
         "model_id".into(),
