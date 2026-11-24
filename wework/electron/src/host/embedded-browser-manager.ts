@@ -218,6 +218,7 @@ export class EmbeddedBrowserManager {
     const handleNavigation = (event: Electron.Event, url: string) => {
       if (!url.startsWith('wework://')) return
       event.preventDefault()
+      console.info('[window-activation]', { reason: 'browser-navigate', url })
       this.openWeworkScheme(url)
     }
     contents.on('will-navigate', handleNavigation)
@@ -304,8 +305,14 @@ export class EmbeddedBrowserManager {
     }
     this.backgroundPages.set(normalizedId, entry)
     view.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith('wework://')) this.openWeworkScheme(url)
-      else if (isBrowserUrl(url)) void shell.openExternal(url)
+      if (url.startsWith('wework://')) {
+        console.info('[window-activation]', {
+          reason: 'browser-background-window-open',
+          backgroundPageId: normalizedId,
+          url,
+        })
+        this.openWeworkScheme(url)
+      } else if (isBrowserUrl(url)) void shell.openExternal(url)
       return { action: 'deny' }
     })
     this.interceptWeworkNavigation(view.webContents)
@@ -444,8 +451,14 @@ export class EmbeddedBrowserManager {
   requestPopupTab(parentLabel: string, url: string): void {
     const entry = this.entries.get(parentLabel)
     if (!entry || !isBrowserUrl(url)) {
-      if (url.startsWith('wework://')) this.openWeworkScheme(url)
-      else if (isBrowserUrl(url)) void shell.openExternal(url)
+      if (url.startsWith('wework://')) {
+        console.info('[window-activation]', {
+          reason: 'browser-popup-request',
+          parentLabel: entry?.label ?? null,
+          url,
+        })
+        this.openWeworkScheme(url)
+      } else if (isBrowserUrl(url)) void shell.openExternal(url)
       return
     }
     this.emit('popup', {
@@ -520,6 +533,11 @@ export class EmbeddedBrowserManager {
     )
     contents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('wework://')) {
+        console.info('[window-activation]', {
+          reason: 'browser-window-open',
+          label: entry.label,
+          url,
+        })
         this.openWeworkScheme(url)
       } else if (isBrowserUrl(url)) {
         this.emit('popup', {

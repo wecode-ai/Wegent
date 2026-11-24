@@ -496,8 +496,25 @@ function queueScheme(url: string): void {
   desktopHostEvents.publish('wework-scheme-requested', {})
 }
 
+/**
+ * One-line evidence for every attempt to activate the app while it is in the
+ * background. Focus stealing happens exactly when these fire without a
+ * matching user action, so keep them greppable under a stable tag.
+ */
+function logWindowActivation(reason: string, extra: Record<string, unknown> = {}): void {
+  console.info('[window-activation]', {
+    reason,
+    appActive: app.isActive(),
+    ...(process.platform === 'darwin'
+      ? { appHidden: app.isHidden(), dockVisible: app.dock?.isVisible() ?? null }
+      : {}),
+    ...extra,
+  })
+}
+
 function openSchemeInMainWindow(url: string): void {
   queueScheme(url)
+  logWindowActivation('scheme-open', { url })
   void reactivateMainWindow().catch(error => {
     console.error('[navigation] failed to activate main window for scheme navigation', error)
   })
@@ -506,6 +523,7 @@ function openSchemeInMainWindow(url: string): void {
 app.on('open-url', (event, url) => {
   event.preventDefault()
   queueScheme(url)
+  logWindowActivation('open-url', { url })
   if (mainWindow?.isMinimized()) mainWindow.restore()
   mainWindow?.show()
   mainWindow?.focus()
@@ -753,6 +771,7 @@ app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
   if (focusStartupRecoveryIfActive()) return
   if (focusStartupSplashIfActive()) return
   if (!mainWindow) return
+  logWindowActivation('second-instance')
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
@@ -1887,6 +1906,7 @@ async function reactivateWorkbenchWindow(preferredWindow: BrowserWindow | null):
   } else {
     await setDockVisible(true)
   }
+  if (!app.isActive()) logWindowActivation('reactivate-from-background')
   const presented = presentWorkbenchWindow(preferredWindow, mainWindow)
   if (presented && presented === mainWindow) await loadPrimaryDshView()
 }
