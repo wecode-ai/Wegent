@@ -27,7 +27,7 @@ export interface WindowActivationEvent {
 }
 
 export interface WindowActivationSnapshot {
-  appActive: boolean
+  appActive: boolean | null
   appHidden: boolean | null
   dockVisible: boolean | null
   focusedWindowId: number | null
@@ -66,6 +66,15 @@ const MAX_URL_LENGTH = 320
 const CORRELATION_WINDOW_MS = 5000
 
 let lastActivationRequest: PendingWindowActivationRequest | null = null
+/**
+ * Whether the application is currently active. app.isActive() is a darwin-only
+ * Electron API, so callers on other platforms receive null ("unknown") instead
+ * of a throw, and diagnostics must treat unknown as non-blocking.
+ */
+export function applicationActive(app: { isActive?: () => boolean }): boolean | null {
+  if (process.platform !== 'darwin') return null
+  return app.isActive?.() ?? null
+}
 
 /**
  * Redact a URL for diagnostics: keep protocol, host, path and query key names,
@@ -80,7 +89,8 @@ export function redactUrl(value: string, maxLength = MAX_URL_LENGTH): string {
   try {
     parsed = new URL(raw)
   } catch {
-    return truncateDiagnosticsText(raw, maxLength)
+    // Never echo unparseable input: it may carry tokens or fragments.
+    return '[invalid-url]'
   }
   if (parsed.username) parsed.username = 'redacted'
   if (parsed.password) parsed.password = 'redacted'
@@ -143,7 +153,7 @@ export function captureWindowActivationSnapshot(
 ): WindowActivationSnapshot {
   const darwin = process.platform === 'darwin'
   const snapshot: WindowActivationSnapshot = {
-    appActive: electron.app.isActive(),
+    appActive: applicationActive(electron.app),
     appHidden: darwin ? (electron.app.isHidden?.() ?? null) : null,
     dockVisible: darwin ? (electron.app.dock?.isVisible() ?? null) : null,
     focusedWindowId: electron.BrowserWindow.getFocusedWindow()?.id ?? null,
@@ -180,6 +190,7 @@ export function formatWindowActivationLine(
     target: event.target,
     label: event.label,
     agentActive: event.agentActive,
+    agentStatus: event.agentStatus,
     correlationId: event.correlationId,
     activationOutcome: event.activationOutcome,
     requestedReason: event.requestedReason,

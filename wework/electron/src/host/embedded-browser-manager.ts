@@ -12,7 +12,10 @@ import {
   type WebContents,
 } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { logWindowActivationForElectron } from './window-activation-diagnostics.js'
+import {
+  applicationActive,
+  logWindowActivationForElectron,
+} from './window-activation-diagnostics.js'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -371,7 +374,8 @@ export class EmbeddedBrowserManager {
 
   async navigateBackgroundPage(id: string, rawUrl: string): Promise<BrowserBackgroundPageState> {
     const entry = this.requiredBackgroundPage(id)
-    if (!app.isActive() && !this.backgroundNavigationsLogged.has(id)) {
+    const navigationActivity = applicationActive(app)
+    if (navigationActivity !== true && !this.backgroundNavigationsLogged.has(id)) {
       this.backgroundNavigationsLogged.add(id)
       logWindowActivationForElectron(
         {
@@ -419,6 +423,8 @@ export class EmbeddedBrowserManager {
     const entry = this.backgroundPages.get(normalizedId)
     if (!entry) return
     this.backgroundPages.delete(normalizedId)
+    this.backgroundNavigationsLogged.delete(normalizedId)
+    this.backgroundOperationsLogged.delete(normalizedId)
     if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close()
   }
 
@@ -457,7 +463,8 @@ export class EmbeddedBrowserManager {
 
   attach(label: string, contents: WebContents): void {
     const normalizedLabel = requiredLabel(label)
-    if (!app.isActive()) {
+    const attachActivity = applicationActive(app)
+    if (attachActivity === false) {
       logWindowActivationForElectron(
         {
           reason: 'webview-attach',
@@ -541,7 +548,11 @@ export class EmbeddedBrowserManager {
   async open(input: BrowserOpenInput): Promise<BrowserPageState> {
     const label = requiredLabel(input.label)
     const isNewEntry = !this.entries.has(label)
-    if (isNewEntry || !app.isActive()) {
+    const openActivity = applicationActive(app)
+    const reopenWhileBackgrounded = openActivity === false
+    const reopenWhileUnknown = openActivity === null && !this.backgroundOperationsLogged.has(label)
+    if (isNewEntry || reopenWhileBackgrounded || reopenWhileUnknown) {
+      if (reopenWhileUnknown) this.backgroundOperationsLogged.add(label)
       logWindowActivationForElectron(
         {
           reason: isNewEntry ? 'browser-open' : 'browser-reopen',
@@ -1005,7 +1016,7 @@ export class EmbeddedBrowserManager {
     const approvalRequested =
       effectiveStatus === 'needs_user' && previousAgentStatus !== 'needs_user'
     const firstBackgroundOperation =
-      !app.isActive() && !this.backgroundOperationsLogged.has(normalizedLabel)
+      applicationActive(app) !== true && !this.backgroundOperationsLogged.has(normalizedLabel)
     if (crossedEngagementBoundary || approvalRequested || firstBackgroundOperation) {
       logWindowActivationForElectron(
         {

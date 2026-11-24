@@ -45,11 +45,36 @@ describe('redactUrl', () => {
     )
   })
 
-  test('flattens control characters and caps the length of unparseable input', () => {
-    const raw = `not-a-url\n${'x'.repeat(400)}`
-    const redacted = redactUrl(raw)
-    expect(redacted).not.toContain('\n')
+  test('returns a fixed marker for unparseable URLs without echoing input', () => {
+    const redacted = redactUrl('not-a-url?token=secret-token&session=abc#frag')
+    expect(redacted).toBe('[invalid-url]')
+  })
+
+  test('caps the length of a long valid URL', () => {
+    const redacted = redactUrl(`https://example.com/${'a'.repeat(400)}?q=1`)
     expect(redacted.length).toBeLessThanOrEqual(320)
+    expect(redacted.startsWith('https://example.com/')).toBe(true)
+  })
+
+  test('treats non-darwin platforms as unknown activity without calling app.isActive', () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    try {
+      const throwingElectron = {
+        app: {
+          isActive: () => {
+            throw new Error('darwin only')
+          },
+        },
+        BrowserWindow: { getFocusedWindow: () => null },
+      }
+      const snapshot = captureWindowActivationSnapshotSafe(throwingElectron)
+      expect(snapshot?.appActive).toBeNull()
+      expect(snapshot?.appHidden).toBeNull()
+      expect(snapshot?.dockVisible).toBeNull()
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
+    }
   })
 })
 
@@ -70,6 +95,7 @@ describe('formatWindowActivationLine', () => {
         target: 'workspace-1',
         url: 'https://example.com/p?token=secret-token',
         label: 'multi\nline',
+        agentStatus: 'needs_user',
       },
       before,
       { appActive: true, appHidden: false, dockVisible: true, focusedWindowId: 9 }
@@ -81,6 +107,7 @@ describe('formatWindowActivationLine', () => {
     expect(payload.url).toBe('https://example.com/p?token=*')
     expect(payload.appActiveBefore).toBe(true)
     expect(payload.targetFocusedBefore).toBe(false)
+    expect(payload.agentStatus).toBe('needs_user')
     expect(payload.appActiveAfter).toBe(true)
     expect(payload.focusedWindowIdAfter).toBe(9)
   })

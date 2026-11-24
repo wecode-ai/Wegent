@@ -7,6 +7,7 @@ import {
   registerApplicationActivation,
   type PresentableWindow,
 } from './window-presentation.js'
+import { takeCorrelatedActivationRequest } from './window-activation-diagnostics.js'
 
 const electronMocks = vi.hoisted(() => ({ appActive: false, throwOnActive: false }))
 
@@ -32,6 +33,9 @@ async function flushPresentationLogging(): Promise<void> {
 }
 
 function activationHarness() {
+  // Drain any correlation request left behind by an earlier test so
+  // attribution assertions stay deterministic.
+  takeCorrelatedActivationRequest()
   const application = Object.assign(new EventEmitter(), { hide: vi.fn() })
   const info = vi.spyOn(console, 'info').mockImplementation(() => {})
   return { application, info }
@@ -130,6 +134,62 @@ describe('did-become-active correlation', () => {
     expect(didBecomeActive?.requestedReason).toBe('popout-show')
     info.mockRestore()
     electronMocks.appActive = false
+  })
+
+  test('carries the redacted deep link through scheme-open presentations', async () => {
+    electronMocks.appActive = false
+    const { info } = activationHarness()
+    const { target } = createWindow()
+    presentWindow(target, {
+      reason: 'scheme-open',
+      initiator: 'external_or_user',
+      userInitiated: null,
+      target: 'main',
+      url: 'wework://tasks/dev-1/task-9?token=secret-secret',
+    })
+    await flushPresentationLogging()
+
+    const lines = activationLines(info)
+    const line = lines.find(item => item.reason === 'scheme-open')
+    expect(line?.url).toBe('wework://tasks/dev-1/task-9?token=*')
+    info.mockRestore()
+    // This presentation registered a correlation request that no
+    // did-become-active consumed; drain it so later tests stay isolated.
+    takeCorrelatedActivationRequest()
+    electronMocks.appActive = false
+  })
+
+  test('does not register correlation on non-darwin platforms where activity is unknown', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    try {
+      electronMocks.appActive = false
+      const { application, info } = activationHarness()
+      const actions = {
+        keepInBackground: () => false,
+        openWorkbenchWindow: vi.fn(async () => undefined),
+        reportError: vi.fn(),
+      }
+      registerApplicationActivation(application, actions)
+      const { target } = createWindow()
+      presentWindow(target, {
+        reason: 'popout-show',
+        initiator: 'user',
+        userInitiated: true,
+        target: 'popout',
+      })
+      application.emit('did-become-active')
+      await flushPresentationLogging()
+
+      const lines = activationLines(info)
+      expect(lines.find(line => line.reason === 'did-become-active')).toBeUndefined()
+      const presentation = lines.find(line => line.reason === 'popout-show')
+      expect(presentation?.appActiveBefore).toBeNull()
+      info.mockRestore()
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
+      electronMocks.appActive = false
+    }
   })
 
   test('does not misattribute a user switch after a presentation while the app was active', async () => {

@@ -30,6 +30,7 @@ export interface PresentationInfo {
   initiator: WindowActivationInitiator
   userInitiated: boolean | null
   target?: string
+  url?: string
   agentActive?: boolean
 }
 
@@ -123,6 +124,7 @@ export function presentWindow(target: PresentableWindow, info: PresentationInfo)
         initiator: info.initiator,
         userInitiated: info.userInitiated,
         target: info.target,
+        url: info.url,
         agentActive: info.agentActive,
         correlationId,
       },

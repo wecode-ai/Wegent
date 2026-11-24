@@ -256,6 +256,33 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     }
   )
 
+  test('activation diagnostics never break browser flows on non-darwin platforms', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-nondarwin-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    try {
+      manager.attach('nondarwin-browser', contents as unknown as WebContents)
+      const page = await manager.open({
+        label: 'nondarwin-browser',
+        url: 'https://example.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      expect(page.url).toBe('https://example.test/')
+      manager.emitAgentState('nondarwin-browser', 'running')
+      manager.emitAgentState('nondarwin-browser', 'idle')
+      manager.createBackgroundPage('nondarwin-bg')
+      await manager.navigateBackgroundPage('nondarwin-bg', 'https://example.test/page')
+      manager.closeBackgroundPage('nondarwin-bg')
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('distinguishes host registration from initial navigation completion', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-navigation-'))
     const manager = new EmbeddedBrowserManager(directory)
