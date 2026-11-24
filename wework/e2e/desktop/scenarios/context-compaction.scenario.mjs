@@ -75,7 +75,7 @@ function requestKind(body) {
   }
 }
 
-export function currentSessionContext(body) {
+export function currentSessionContext(body, { required = true } = {}) {
   const texts = (body?.input ?? []).flatMap(item =>
     Array.isArray(item.content) ? item.content.map(part => part.text ?? '') : [item.content ?? '']
   )
@@ -85,18 +85,23 @@ export function currentSessionContext(body) {
       match => match[1]
     )
   )
-  assert.ok(contexts.length > 0, 'The model request did not receive current session context')
+  if (contexts.length === 0) {
+    assert.ok(!required, 'The model request did not receive current session context')
+    return null
+  }
   const content = contexts.at(-1)
   const jsonStart = content.indexOf('\n')
   assert.ok(jsonStart >= 0, 'The current session context is missing its JSON payload')
   const context = JSON.parse(content.slice(jsonStart).trim())
   assert.match(context.conversation_id, /^conv_/)
-  assert.match(context.response_id, /^resp_/)
+  assert.equal(
+    Object.hasOwn(context, 'response_id'),
+    false,
+    'The model received a Wework response ID'
+  )
   const conversation = JSON.parse(Buffer.from(context.conversation_id.slice(5), 'base64url'))
-  const response = JSON.parse(Buffer.from(context.response_id.slice(5), 'base64url'))
-  assert.deepEqual(response.slice(0, 2), conversation)
-  assert.equal(response.length, 3)
-  assert.ok(response[2])
+  assert.equal(conversation.length, 2)
+  assert.ok(conversation[1])
   assert.equal(context.execution.type, 'wework')
   assert.equal(context.execution.device_id, conversation[0])
   assert.ok(context.model_name)
@@ -384,9 +389,11 @@ export function createDesktopScenario(options) {
           true,
           'The follow-up model request did not contain the compacted context summary'
         )
-        const followUpSession = currentSessionContext(followUpRequest)
-        assert.equal(followUpSession.conversation_id, initialSession.conversation_id)
-        assert.notEqual(followUpSession.response_id, initialSession.response_id)
+        // Compaction can discard the earlier fragment, and Codex skips unchanged context.
+        const followUpSession = currentSessionContext(followUpRequest, { required: false })
+        if (followUpSession) {
+          assert.equal(followUpSession.conversation_id, initialSession.conversation_id)
+        }
         await captureScreenshot(control, 'context-compaction-05-follow-up-verified.png', 'body')
         await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
         // Run the interrupted-compaction coverage first: it asserts on the

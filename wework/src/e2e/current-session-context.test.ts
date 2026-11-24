@@ -4,7 +4,10 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { beforeAll, describe, expect, test } from 'vitest'
 
-let currentSessionContext: (body: unknown) => Record<string, unknown>
+let currentSessionContext: (
+  body: unknown,
+  options?: { required: boolean }
+) => Record<string, unknown> | null
 
 beforeAll(async () => {
   const scenarioUrl = pathToFileURL(
@@ -14,13 +17,12 @@ beforeAll(async () => {
   currentSessionContext = scenario.currentSessionContext
 })
 
-function session(messageId: string) {
+function session(modelName = 'local-model') {
   const encode = (parts: string[]) => Buffer.from(JSON.stringify(parts)).toString('base64url')
   return {
     conversation_id: `conv_${encode(['device-1', 'task-1'])}`,
-    response_id: `resp_${encode(['device-1', 'task-1', messageId])}`,
     execution: { type: 'wework', device_id: 'device-1' },
-    model_name: 'local-model',
+    model_name: modelName,
     model: null,
     api_conversation_supported: true,
   }
@@ -34,7 +36,7 @@ function contextText(value: unknown) {
 function request(...texts: string[]) {
   return {
     input: texts.map(text => ({
-      role: 'user',
+      role: 'developer',
       content: [{ type: 'input_text', text }],
     })),
   }
@@ -42,7 +44,7 @@ function request(...texts: string[]) {
 
 describe('currentSessionContext', () => {
   test('parses the Codex context envelope without including its closing tag', () => {
-    const expected = session('message-1')
+    const expected = session()
     const body = request(
       `${contextText(expected)}\n<other.context>\n{"conversation_id":"unrelated"}</other.context>`
     )
@@ -51,23 +53,24 @@ describe('currentSessionContext', () => {
   })
 
   test('reads the latest context when earlier turns remain in the input', () => {
-    const first = session('message-1')
-    const latest = session('message-2')
+    const first = session('first-model')
+    const latest = session('latest-model')
 
     expect(currentSessionContext(request(contextText(first), contextText(latest)))).toEqual(latest)
   })
 
   test('rejects missing context instead of reading unrelated JSON', () => {
-    expect(() => currentSessionContext(request(JSON.stringify(session('message-1'))))).toThrow(
+    expect(() => currentSessionContext(request(JSON.stringify(session())))).toThrow(
       'The model request did not receive current session context'
     )
+    expect(currentSessionContext(request(), { required: false })).toBeNull()
   })
 
   test('rejects malformed current context instead of accepting an older turn', () => {
     expect(() =>
       currentSessionContext(
         request(
-          contextText(session('message-1')),
+          contextText(session()),
           '<wework.session.current>Current Wework HTTP API IDs.\n{invalid}</wework.session.current>'
         )
       )
