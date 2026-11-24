@@ -35,8 +35,10 @@ function searchPage(nextCursor, ...conversationMessagesList) {
 function fixture() {
   const calls = []
   const state = {
+    currentProfile: profile,
     userId: 'owner',
     orgId: 'organization',
+    tokenOrganization: 'organization',
     mentions: searchResult(conversation('group', [message('ask')])),
     search: searchResult(
       conversation('group', [
@@ -53,15 +55,22 @@ function fixture() {
       describe: async () => ({ pluginKey: 'dingtalk', connectorSlug: 'local' }),
       async callTool(_alias, input) {
         calls.push(input)
-        if (input.tool === 'authStatus') return { authenticated: true }
+        if (input.tool === 'authStatus')
+          return {
+            authenticated: true,
+            token_valid: true,
+            user_id: state.userId,
+            corp_id: state.tokenOrganization,
+          }
         if (input.tool === 'listProfiles')
           return {
-            currentProfile: profile,
+            currentProfile: state.currentProfile,
             profiles: [
               {
-                profile,
+                profile: state.currentProfile,
                 userId: state.userId,
                 userName: 'Owner',
+                corpId: state.orgId,
                 orgId: state.orgId,
                 orgName: 'Team',
               },
@@ -88,7 +97,7 @@ function fixture() {
   return { ctx, calls, state }
 }
 
-async function register(ctx) {
+async function register(ctx, expectedProfile = profile) {
   const registry = new ConnectionRegistry({
     inventory: async () => [
       {
@@ -108,7 +117,7 @@ async function register(ctx) {
     { dingtalk: createProvider() }
   )
   const [{ availability }] = await registry.catalog()
-  assert.equal(availability.profile, profile)
+  assert.equal(availability.profile, expectedProfile)
   assert.equal(availability.organizationName, 'Team')
   assert.match(availability.accountId, /^[a-f0-9]{64}$/)
   return {
@@ -116,7 +125,7 @@ async function register(ctx) {
     dispose,
     source: {
       providerId,
-      profile,
+      profile: expectedProfile,
       accountId: availability.accountId,
       kind: 'group',
       id: 'group',
@@ -359,6 +368,45 @@ test('short group recovery keeps the fixed window and only releases verified men
   }
 })
 
+test('the group recovery volume cap counts events that cannot receive replies', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, calls, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const ask = message('ask')
+    const ineligible = [
+      message('manual-owner', at, { senderOpenDingTalkId: 'self' }),
+      message('automated-bot', at, { sendType: 'robot' }),
+      message('ai-reply', at, { messageAiSendFlag: 1 }),
+      message('recalled', at, { recalled: true }),
+      message('file', at, { messageType: 'file' }),
+      ...Array.from({ length: 44 }, (_, index) => message(`without-mention-${index}`)),
+    ]
+    const checkpoint = { after: '2026-11-24T00:09:00.000Z', cursor: '0', recover: true }
+    state.search = searchResult(conversation('group', [ask, ...ineligible]))
+    state.mentions = searchResult(conversation('group', [ask, ...ineligible.slice(0, 5)]))
+    const accepted = await registry.call(providerId, 'collect', { source, checkpoint })
+    assert.deepEqual(
+      accepted.events.map(row => row.id),
+      ['ask']
+    )
+    assert.equal(accepted.nextCheckpoint.delegationGap, undefined)
+
+    calls.length = 0
+    state.search.result.conversationMessagesList[0].messages.push(message('one-more-nonmention'))
+    const skipped = await registry.call(providerId, 'collect', { source, checkpoint })
+    assert.deepEqual(skipped.events, [])
+    assert.deepEqual(skipped.nextCheckpoint.delegationGap, {
+      reason: 'volume',
+      from: checkpoint.after,
+      until: new Date(Date.parse(clock)).toISOString(),
+    })
+    assert.ok(!calls.some(call => call.tool === 'listMentions'))
+  } finally {
+    dispose()
+  }
+})
+
 test('short recovery records a coverage gap without releasing a partial page', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
   const { ctx, state } = fixture()
@@ -380,6 +428,83 @@ test('short recovery records a coverage gap without releasing a partial page', a
         delegationGap: { reason: 'coverage', from: after, until },
       },
     })
+  } finally {
+    dispose()
+  }
+})
+
+test('a changed recovered mention skips the entire window and subsequent live collection resumes', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const checkpoint = { after: '2026-11-24T00:09:00.000Z', cursor: '0', recover: true }
+    const unchanged = message('a-unchanged')
+    const edited = message('b-edited')
+    state.search = searchResult(conversation('group', [unchanged, edited]))
+    state.mentions = searchResult(
+      conversation('group', [unchanged, { ...edited, content: 'The question has changed' }])
+    )
+    const gap = await registry.call(providerId, 'collect', { source, checkpoint })
+    const until = new Date(Date.parse(clock)).toISOString()
+    assert.deepEqual(gap, {
+      events: [],
+      hasMore: false,
+      nextCheckpoint: {
+        after: until,
+        cursor: '0',
+        delegationGap: { reason: 'coverage', from: checkpoint.after, until },
+      },
+    })
+
+    t.mock.timers.tick(2000)
+    state.mentions = searchResult(
+      conversation('group', [edited, message('new', new Date().toISOString())])
+    )
+    const live = await registry.call(providerId, 'collect', {
+      source,
+      checkpoint: gap.nextCheckpoint,
+    })
+    assert.deepEqual(
+      live.events.map(row => row.id),
+      ['new']
+    )
+    assert.deepEqual(live.nextCheckpoint, { after: new Date().toISOString(), cursor: '0' })
+  } finally {
+    dispose()
+  }
+})
+
+test('recovery cannot release a selected organization window if its token changes mid-read', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state, calls } = fixture()
+  state.currentProfile = `${state.orgId}:${state.userId}`
+  const { registry, dispose, source } = await register(ctx, state.currentProfile)
+  try {
+    const ask = message('ask')
+    const input = {
+      source: { ...source, organizationId: state.orgId },
+      checkpoint: { after: '2026-11-24T00:09:00.000Z', cursor: '0', recover: true },
+    }
+    state.search = searchResult(conversation('group', [ask]))
+    const intact = await registry.call(providerId, 'collect', input)
+    assert.deepEqual(
+      intact.events.map(row => row.id),
+      ['ask']
+    )
+
+    calls.length = 0
+    state.search = args => {
+      assert.equal(args.profile, state.currentProfile)
+      state.tokenOrganization = 'different-organization'
+      return searchResult(conversation('group', [ask]))
+    }
+    await assert.rejects(registry.call(providerId, 'collect', input), {
+      code: 'dingtalk_account_changed',
+    })
+    for (const { arguments: args } of calls.filter(call => call.tool === 'authStatus')) {
+      assert.equal(args.profile, state.currentProfile)
+    }
   } finally {
     dispose()
   }

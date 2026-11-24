@@ -59,6 +59,8 @@ export function createDingTalkDelegationMailbox(options) {
         publishFile('replies.jsonl', ''),
         publishFile('offline', 'false'),
         publishFile('unknown-receipt', ''),
+        publishFile('delivery.tsv', ''),
+        publishFile('matching-receipt', 'false'),
         setAccount({ userId: DINGTALK_DELEGATION_IDS.owner, orgId: DINGTALK_DELEGATION_IDS.org }),
       ])
       const preparedBinary = process.env.WEWORK_E2E_DWS_DELEGATION_FIXTURE_BIN
@@ -79,6 +81,15 @@ export function createDingTalkDelegationMailbox(options) {
     setAccount,
     setUnknownReceipt(messageId) {
       return publishFile('unknown-receipt', messageId == null ? '' : identity(messageId))
+    },
+    configureDelivery({ channelTaskMessageId, rejectedMessageId }) {
+      return publishFile(
+        'delivery.tsv',
+        `${identity(channelTaskMessageId)}\t${identity(rejectedMessageId)}`
+      )
+    },
+    releaseMatchingReceipt() {
+      return publishFile('matching-receipt', 'true')
     },
     replies: () => records('replies.jsonl'),
     reads: () => records('reads.jsonl'),

@@ -21,6 +21,7 @@ import {
   createDingTalkDelegationMailbox,
   DINGTALK_DELEGATION_IDS as ids,
 } from '../modules/stand-in-dingtalk-delegation-fixture.mjs'
+import { verifyDingTalkDelivery } from '../modules/stand-in-dingtalk-delivery.mjs'
 import { STORY_USER, storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 
 const PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
@@ -247,6 +248,7 @@ export function createDesktopScenario(options) {
           assert.equal(external[0].aiTag, true, 'Outgoing reply must have the native AI tag')
           assert.equal(external[0].offline, false)
           assert.match(external[0].uuid, /^[0-9a-f]{64}$/)
+          assert.equal(external[0].uuid, result.attemptId)
           assert.equal(result.action, 'reply')
           assert.equal(result.template, sample.decision.template)
           assert.deepEqual(
@@ -255,6 +257,11 @@ export function createDesktopScenario(options) {
           )
           assert.match(result.contextFingerprint, /^[0-9a-f]{64}$/)
           assert.equal(result.receiptId, `accepted-${question.id}`)
+          const submitted = Date.parse(result.submittedAt)
+          assert.ok(
+            Date.parse(question.at) <= submitted && submitted <= Date.parse(result.finishedAt),
+            `${question.id}: submission must be recorded between arrival and receipt`
+          )
           const latency = Date.parse(result.finishedAt) - Date.parse(question.at)
           assert.ok(latency >= 0 && latency <= REPLY_LIMIT_MS, `${question.id}: ${latency}ms`)
           results.push({
@@ -262,6 +269,9 @@ export function createDesktopScenario(options) {
             template: result.template,
             kind: question.kind,
             latency,
+            policyVersion: result.policyVersion,
+            attemptId: result.attemptId,
+            submittedAt: result.submittedAt,
             receiptId: result.receiptId,
             aiTag: external[0].aiTag,
           })
@@ -498,7 +508,13 @@ export function createDesktopScenario(options) {
         })
         const followup = replyCase('receipt-followup', 'group', 'document', Date.now() + 500)
         followup.question.quotedMessageId = unknown.question.id
-        await publishCases([followup])
+        const pending = replyCase('pending-task-receipt', 'group', 'document', Date.now() + 500)
+        const rejected = replyCase('rejected-submit', 'direct', 'schedule', Date.now() + 500)
+        await mailbox.configureDelivery({
+          channelTaskMessageId: pending.question.id,
+          rejectedMessageId: rejected.question.id,
+        })
+        await publishCases([followup, pending, rejected])
         const [followupResult] = await awaitOutcomes(
           [followup.question.id],
           'complete',
@@ -511,6 +527,18 @@ export function createDesktopScenario(options) {
           1
         )
         await assertSilent([followup])
+
+        await Promise.all([
+          awaitOutcomes([pending.question.id], 'unknown', 'Channel task must stay unconfirmed'),
+          awaitOutcomes([rejected.question.id], 'failed', 'Explicit channel refusal must fail'),
+        ])
+        const delivery = await verifyDingTalkDelivery(control, {
+          mailbox,
+          work,
+          pending: records().get(pending.question.id),
+          rejected: records().get(rejected.question.id),
+          timeout: options.uiTimeoutMs,
+        })
 
         async function testRecoveryGap(kind, reason, makeGapSamples) {
           await mailbox.setOffline(true)
@@ -602,11 +630,23 @@ export function createDesktopScenario(options) {
               modelBoundary: 'synthetic structured decisions',
               channelBoundary: 'native DingTalk CLI protocol fixture',
               results,
+              delivery,
               negatives: [
                 ...negative.map((sample, index) => ({
                   id: sample.question.id,
                   action: denied[index].action,
+                  reason: denied[index].reason,
                 })),
+                {
+                  id: forged.question.id,
+                  action: denied.at(-1).action,
+                  reason: denied.at(-1).reason,
+                },
+                {
+                  id: changed.question.id,
+                  action: changedResult.action,
+                  reason: changedResult.reason,
+                },
                 ...excluded.map(item => ({ id: item.id, action: 'uncollected' })),
               ],
               recovery: {

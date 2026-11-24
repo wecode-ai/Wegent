@@ -250,8 +250,44 @@ fn reply(root: &Path, args: &[&str]) -> String {
     if unknown {
         return r#"{"success":true,"result":{}}"#.into();
     }
+    let delivery = read(root, "delivery.tsv");
+    if let Some((pending, rejected)) = delivery.split_once('\t') {
+        if message == rejected {
+            println!(
+                r#"{{"success":false,"code":"PAT_SCOPE_AUTH_REQUIRED","data":{{"errorType":"missing_scope"}}}}"#
+            );
+            process::exit(6);
+        }
+        if message == pending {
+            let task = quote(&format!("task-{pending}"));
+            return format!("{{\"success\":true,\"result\":{{\"openTaskId\":{task}}}}}");
+        }
+    }
     let receipt = quote(&format!("accepted-{message}"));
     format!("{{\"success\":true,\"result\":{{\"openMessageId\":{receipt}}}}}")
+}
+
+fn query_send_status(root: &Path, args: &[&str]) -> String {
+    let task_id = required(args, "--open-task-id");
+    let profile = required(args, "--profile");
+    let delivery = read(root, "delivery.tsv");
+    let (pending, _) = delivery.split_once('\t').expect("Configured channel task");
+    assert_eq!(task_id, format!("task-{pending}"));
+    assert_eq!(profile, PROFILE);
+    assert_eq!(required(args, "--format"), "json");
+    let matching = read(root, "matching-receipt") == "true";
+    let conversation = if matching { GROUP } else { OTHER_GROUP };
+    let task = quote(task_id);
+    let receipt = quote(&format!("accepted-{pending}"));
+    append(
+        root,
+        "reads.jsonl",
+        format!(
+            "{{\"operation\":\"query-send-status\",\"taskId\":{task},\"profile\":{},\"matching\":{matching}}}",
+            quote(profile)
+        ),
+    );
+    format!("{{\"success\":true,\"result\":{{\"openTaskId\":{task},\"openConversationId\":\"{conversation}\",\"openMessageId\":{receipt}}}}}")
 }
 
 fn matching_resources(args: &[&str], rows: &[(&str, String)]) -> String {
@@ -314,6 +350,7 @@ fn main() {
         ["chat", "message", "list-mentions", ..] => search_messages(&root, &args, true),
         ["chat", "message", "search-advanced", ..] => search_messages(&root, &args, false),
         ["chat", "message", "reply", ..] => reply(&root, &args),
+        ["chat", "message", "query-send-status", ..] => query_send_status(&root, &args),
         _ => panic!("Unrecognized isolated DingTalk command: {:?}", args.iter().take(3).collect::<Vec<_>>()),
     };
     println!("{response}");

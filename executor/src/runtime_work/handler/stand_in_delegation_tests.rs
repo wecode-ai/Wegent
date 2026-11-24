@@ -2,6 +2,80 @@ use super::*;
 
 const QUESTION_AT: i64 = 1_795_507_200_000;
 
+#[tokio::test]
+async fn interrupted_dingtalk_submission_reopens_as_unknown_without_replaying() {
+    let root = tempfile::tempdir().unwrap();
+    let device = "desktop";
+    let make_handler = || RuntimeWorkRpcHandler {
+        store: RuntimeWorkStore::new(root.path().join("runtime.json")),
+        task_store_path: Arc::new(root.path().join("tasks.sqlite")),
+        ..RuntimeWorkRpcHandler::new(device, "unused")
+    };
+    let handler = make_handler();
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut settings = store.personal_stand_in(7, device).unwrap();
+    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
+    settings["primary"]["connections"] = json!([{
+        "providerId":DINGTALK_PROVIDER,"kind":"direct","id":"peer","name":"Peer",
+        "profile":"current","accountId":"account","policy":{"automatic":false,"askBeforeAct":true}
+    }]);
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let settings = store.save_personal_stand_in(7, device, settings).unwrap();
+    let source = &settings["primary"]["connections"][0];
+    let event = json!({"id":"question","text":"Where is the guide?","at":"2099-01-01T00:00:00Z"});
+    let work = store
+        .ingest_stand_in_message(7, "@primary", source, &event, None)
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    let record_id = work["latestMessage"]["recordId"].as_str().unwrap();
+    let gate = handler.task_send_gate(&format!("dingtalk-dispatch:{work_id}"));
+    let sending = gate.lock().await;
+    assert!(store
+        .record_delegation_decision(
+            7,
+            device,
+            work_id,
+            record_id,
+            json!({
+                "action":"reply","template":"document","attemptId":"attempt-question",
+                "policyVersion":settings["primary"]["delegation"]["version"]
+            }),
+        )
+        .unwrap()
+        .is_some());
+    let list = || json!({"userId":7,"roleId":"@primary"});
+    let in_flight = handler.list_connection_stand_in_work(list()).unwrap();
+    let submitted_at = &in_flight["items"][0]["delegationResult"]["submittedAt"];
+    assert!(submitted_at.is_string());
+    assert_eq!(
+        in_flight["items"][0]["delegationResult"]["status"],
+        "submitting"
+    );
+    drop(sending);
+    drop(handler);
+    drop(store);
+
+    let restarted = make_handler();
+    let store = LocalTaskStore::open(restarted.task_store_path.as_ref()).unwrap();
+    let recovered = restarted.list_connection_stand_in_work(list()).unwrap();
+    let result = &recovered["items"][0]["delegationResult"];
+    assert_eq!(result["status"], "unknown");
+    assert_eq!(result["attemptId"], "attempt-question");
+    assert_eq!(result["submittedAt"], *submitted_at);
+    assert!(result["receiptId"].is_null());
+    let replay = store
+        .ingest_stand_in_message(7, "@primary", source, &event, None)
+        .unwrap();
+    assert_eq!(replay["id"], work_id);
+    assert_eq!(replay["messageCount"], 1);
+    restarted
+        .run_connection_stand_in_work(json!({"userId":7,"workId":work_id}))
+        .await
+        .unwrap();
+    let replayed = restarted.list_connection_stand_in_work(list()).unwrap();
+    assert_eq!(replayed["items"][0]["delegationResult"], *result);
+}
+
 fn conversation(question: &str, history: &[(&str, &str)]) -> Value {
     let messages: Vec<_> = history
         .iter()

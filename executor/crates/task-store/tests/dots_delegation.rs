@@ -313,6 +313,14 @@ fn ordinary_saves_keep_pauses_and_account_switches_revoke_old_authority() {
     assert!(active_delegated_source(&primary(&settings), &old_source).is_none());
     settings["primary"]["delegation"]["action"] = json!("pause");
     let mut settings = saved(&store, settings);
+    let paused_at = settings["primary"]["delegation"]["effectiveAfter"].clone();
+    assert!(paused_at.is_string());
+    let group = &settings["primary"]["connections"][1];
+    assert!(!permits_delegated_message(
+        &primary(&settings),
+        group,
+        &paused_at
+    ));
     settings["primary"]["connections"][0]
         .as_object_mut()
         .unwrap()
@@ -328,7 +336,14 @@ fn ordinary_saves_keep_pauses_and_account_switches_revoke_old_authority() {
     let mut settings = saved(&store, settings);
     let current = primary(&settings);
     assert!(!permits_delegated_message(&current, &old_source, &old));
-    assert!(active_delegated_source(&current, &current["connections"][1]).is_some());
+    let group = &current["connections"][1];
+    assert!(active_delegated_source(&current, group).is_some());
+    assert!(!permits_delegated_message(&current, group, &paused_at));
+    assert!(permits_delegated_message(
+        &current,
+        group,
+        &instant_after(&group["enabledAfter"]),
+    ));
     settings["primary"]["connections"] = json!([]);
     let mut settings = saved(&store, settings);
     let version_before_switch = settings["primary"]["delegation"]["version"]
