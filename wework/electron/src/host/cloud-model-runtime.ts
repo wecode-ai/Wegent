@@ -9,8 +9,11 @@ import {
 } from './cloud-connection-profile.js'
 import type { ModelRuntimeTransport } from './model-runtime-request.js'
 
+interface RuntimeCredentials {
+  token: string | null
+}
+
 interface RuntimeSocket {
-  token: string
   client: CloudRuntimeIpcClient
   pending: number
 }
@@ -19,6 +22,7 @@ interface RuntimeSocket {
 export class CloudModelRuntime {
   private current: {
     identity: string
+    credentials: RuntimeCredentials
     active: RuntimeSocket
     draining: Set<RuntimeSocket>
   } | null = null
@@ -42,12 +46,19 @@ export class CloudModelRuntime {
     const identity = JSON.stringify([target, account])
     if (this.current?.identity !== identity) {
       this.dispose()
-      this.current = { identity, active: this.createSocket(target, token), draining: new Set() }
+      const credentials = { token }
+      this.current = {
+        identity,
+        credentials,
+        active: this.createSocket(target, credentials),
+        draining: new Set(),
+      }
     }
     const current = this.current
-    if (current.active.token !== token) {
+    if (current.credentials.token !== token) {
       const previous = current.active
-      current.active = this.createSocket(target, token)
+      current.active = this.createSocket(target, current.credentials)
+      current.credentials.token = token
       if (previous.pending) current.draining.add(previous)
       else previous.client.dispose()
     }
@@ -78,19 +89,19 @@ export class CloudModelRuntime {
     const current = this.current
     this.current = null
     if (!current) return
+    current.credentials.token = null
     current.active.client.dispose()
     for (const socket of current.draining) socket.client.dispose()
     current.draining.clear()
   }
 
-  private createSocket(target: CloudRuntimeTarget, token: string): RuntimeSocket {
+  private createSocket(target: CloudRuntimeTarget, credentials: RuntimeCredentials): RuntimeSocket {
     return {
-      token,
       pending: 0,
       client: createCloudRuntimeIpcClient({
         socketBaseUrl: target.socketBaseUrl,
         socketPath: target.socketPath,
-        getToken: () => token,
+        getToken: () => credentials.token,
       }),
     }
   }

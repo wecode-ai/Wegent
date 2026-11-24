@@ -30,6 +30,7 @@ test('reuses the current native socket until the product token rotates', async (
   await runtime.transport(input)
   expect(createClient).toHaveBeenCalledOnce()
   expect(cloud.dispose).not.toHaveBeenCalled()
+  expect(createClient.mock.calls[0][0].getToken()).toBe('first')
   const current = await runtime.transport(input)
   await current.request('runtime.tasks.send', {}, 'chosen-device')
   expect(createClient).toHaveBeenCalledTimes(2)
@@ -38,7 +39,6 @@ test('reuses the current native socket until the product token rotates', async (
     socketBaseUrl: target.socketBaseUrl,
     socketPath: target.socketPath,
   })
-  expect(createClient.mock.calls[0][0].getToken()).toBe('first')
   expect(options.getToken()).toBe('rotated')
   expect(refresh).toHaveBeenCalledWith(target.apiBaseUrl, 7)
   expect(cloud.request).toHaveBeenCalledWith(
@@ -54,17 +54,23 @@ test('reuses the current native socket until the product token rotates', async (
   expect(rotated.dispose).toHaveBeenCalledOnce()
 })
 
-test('drains in-flight calls while new requests use the rotated socket', async () => {
+test('authenticates a draining request on reconnect with the rotated token', async () => {
   const started = Promise.withResolvers<void>()
+  const reconnect = Promise.withResolvers<void>()
   const reply = Promise.withResolvers<{ accepted: boolean }>()
+  const createClient = vi.mocked(createCloudRuntimeIpcClient)
   const original = {
-    request: vi.fn(() => {
+    request: vi.fn(async () => {
       started.resolve()
+      await reconnect.promise
+      if (createClient.mock.calls[0][0].getToken() !== 'rotated') {
+        throw new Error('Socket authentication expired')
+      }
       return reply.promise
     }),
     dispose: vi.fn(),
   }
-  vi.mocked(createCloudRuntimeIpcClient).mockReturnValueOnce(original as never)
+  createClient.mockReturnValueOnce(original as never)
   const refresh = vi.fn().mockResolvedValueOnce('first').mockResolvedValue('rotated')
   const runtime = new CloudModelRuntime(async () => ({ ...target, user: { id: 7 } }), refresh)
   const transport = await runtime.transport(input)
@@ -76,6 +82,7 @@ test('drains in-flight calls while new requests use the rotated socket', async (
   expect(cloud.request).toHaveBeenCalledWith('runtime.tasks.send', {}, input.deviceId, undefined)
   expect(original.dispose).not.toHaveBeenCalled()
 
+  reconnect.resolve()
   reply.resolve({ accepted: true })
   await expect(pending).resolves.toEqual({ accepted: true })
   expect(original.dispose).toHaveBeenCalledOnce()
@@ -96,24 +103,32 @@ test.each([
   expect(createCloudRuntimeIpcClient).not.toHaveBeenCalled()
 })
 
-test('replaces the prior native socket when the saved account changes', async () => {
-  let id = 7
-  const runtime = new CloudModelRuntime(
-    async () => ({
-      ...target,
-      user: { id },
-      credentialMode: 'legacy_access_token',
-      token: 'legacy',
-    }),
-    vi.fn()
-  )
-  await runtime.transport(input)
-  id = 8
-  await expect(runtime.transport(input)).rejects.toThrow('account changed')
-  await runtime.transport({ ...input, expectedUserId: 8 })
+test.each([
+  { target, account: 8, error: 'account changed' },
+  {
+    target: { ...target, socketPath: '/other/socket.io' },
+    account: 7,
+    error: 'target is not configured',
+  },
+])('revokes prior socket authentication when the saved scope changes: $error', async changed => {
+  const createClient = vi.mocked(createCloudRuntimeIpcClient)
+  let profile = { ...target, user: { id: 7 }, token: 'initial' }
+  const runtime = new CloudModelRuntime(async () => profile, vi.fn())
+  const transport = await runtime.transport(input)
+  const prior = createClient.mock.calls[0][0]
+  expect(prior.getToken()).toBe('initial')
+
+  profile = { ...changed.target, user: { id: changed.account }, token: 'different' }
+  await expect(runtime.transport(input)).rejects.toThrow(changed.error)
+  await runtime.transport({ ...input, target: changed.target, expectedUserId: changed.account })
   expect(cloud.dispose).toHaveBeenCalledOnce()
-  expect(createCloudRuntimeIpcClient).toHaveBeenCalledTimes(2)
+  expect(createClient).toHaveBeenCalledTimes(2)
+  expect(prior.getToken()).toBeNull()
+  const current = createClient.mock.calls[1][0]
+  expect(current.getToken()).toBe('different')
+  await expect(transport.request('runtime.tasks.create', {}, input.deviceId)).rejects.toThrow()
   runtime.dispose()
+  expect(current.getToken()).toBeNull()
 })
 
 test('does not dispatch an acquired request after its saved account changes or it is disposed', async () => {
