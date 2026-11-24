@@ -8,6 +8,17 @@ import {
   type PresentableWindow,
 } from './window-presentation.js'
 
+vi.mock('electron', () => ({
+  app: { isActive: () => false, isHidden: () => false },
+  BrowserWindow: { getFocusedWindow: () => null },
+}))
+
+const testPresentation = {
+  reason: 'test-present',
+  initiator: 'system' as const,
+  userInitiated: null,
+}
+
 describe('application activation', () => {
   function setup(keepInBackground = false) {
     const application = Object.assign(new EventEmitter(), { hide: vi.fn() })
@@ -72,7 +83,7 @@ describe('presentWindow', () => {
   test('reveals and focuses a renderer without waiting for application content readiness', () => {
     const { target, webContents } = createWindow({ minimized: true })
 
-    expect(presentWindow(target)).toBe(true)
+    expect(presentWindow(target, testPresentation)).toBe(true)
 
     expect(target.restore).toHaveBeenCalledOnce()
     expect(target.show).toHaveBeenCalledOnce()
@@ -83,7 +94,7 @@ describe('presentWindow', () => {
   test('does not interact with a destroyed native window', () => {
     const { target, webContents } = createWindow({ destroyed: true })
 
-    expect(presentWindow(target)).toBe(false)
+    expect(presentWindow(target, testPresentation)).toBe(false)
 
     expect(target.restore).not.toHaveBeenCalled()
     expect(target.show).not.toHaveBeenCalled()
@@ -95,7 +106,7 @@ describe('presentWindow', () => {
     const { target, webContents } = createWindow()
     webContents.isDestroyed.mockReturnValue(true)
 
-    expect(presentWindow(target)).toBe(true)
+    expect(presentWindow(target, testPresentation)).toBe(true)
 
     expect(target.show).toHaveBeenCalledOnce()
     expect(target.focus).toHaveBeenCalledOnce()
@@ -108,7 +119,7 @@ describe('presentWorkbenchWindow', () => {
     const main = createWindow().target
     const detached = createWindow({ minimized: true }).target
 
-    expect(presentWorkbenchWindow(detached, main)).toBe(detached)
+    expect(presentWorkbenchWindow(detached, main, testPresentation)).toBe(detached)
     expect(detached.restore).toHaveBeenCalledOnce()
     expect(detached.focus).toHaveBeenCalledOnce()
     expect(main.show).not.toHaveBeenCalled()
@@ -118,7 +129,7 @@ describe('presentWorkbenchWindow', () => {
     const main = createWindow().target
     const detached = createWindow({ destroyed: true }).target
 
-    expect(presentWorkbenchWindow(detached, main)).toBe(main)
+    expect(presentWorkbenchWindow(detached, main, testPresentation)).toBe(main)
     expect(main.focus).toHaveBeenCalledOnce()
   })
 })

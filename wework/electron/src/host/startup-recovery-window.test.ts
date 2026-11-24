@@ -23,6 +23,8 @@ const fixture = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   app: {
     whenReady: async () => undefined,
+    isActive: () => false,
+    isHidden: () => false,
     quit: fixture.quit,
     relaunch: fixture.relaunch,
     getPath: () => '/logs',
@@ -32,6 +34,10 @@ vi.mock('electron', () => ({
     constructor(options: unknown) {
       fixture.create(options)
       return fixture.window
+    }
+
+    static getFocusedWindow() {
+      return null
     }
   },
   nativeTheme: { shouldUseDarkColors: false },

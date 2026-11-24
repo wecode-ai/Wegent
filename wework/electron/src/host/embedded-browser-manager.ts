@@ -3,6 +3,7 @@ import {
   dshBrowserRequestHeaders,
 } from '../runtime/dsh-browser-auth.js'
 import {
+  app,
   BrowserWindow,
   WebContentsView,
   session,
@@ -11,6 +12,10 @@ import {
   type WebContents,
 } from 'electron'
 import { randomUUID } from 'node:crypto'
+import {
+  captureWindowActivationSnapshot,
+  logWindowActivation,
+} from './window-activation-diagnostics.js'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -166,6 +171,7 @@ export class EmbeddedBrowserManager {
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
   private readonly agentActive = new Set<string>()
+  private readonly lastAgentStatuses = new Map<string, string>()
   private readonly agentApprovals = new BrowserAgentApprovals(label =>
     this.emitAgentState(label, 'idle')
   )
@@ -218,7 +224,16 @@ export class EmbeddedBrowserManager {
     const handleNavigation = (event: Electron.Event, url: string) => {
       if (!url.startsWith('wework://')) return
       event.preventDefault()
-      console.info('[window-activation]', { reason: 'browser-navigate', url })
+      logWindowActivation(
+        {
+          reason: 'browser-navigate',
+          initiator: 'system',
+          userInitiated: null,
+          target: 'browser',
+          url,
+        },
+        captureWindowActivationSnapshot({ app, BrowserWindow })
+      )
       this.openWeworkScheme(url)
     }
     contents.on('will-navigate', handleNavigation)
@@ -304,13 +319,29 @@ export class EmbeddedBrowserManager {
       navigationError: null as BrowserBackgroundPageState['navigationError'],
     }
     this.backgroundPages.set(normalizedId, entry)
+    logWindowActivation(
+      {
+        reason: 'browser-background-create',
+        initiator: 'agent',
+        userInitiated: false,
+        target: 'browser',
+        label: normalizedId,
+      },
+      captureWindowActivationSnapshot({ app, BrowserWindow })
+    )
     view.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('wework://')) {
-        console.info('[window-activation]', {
-          reason: 'browser-background-window-open',
-          backgroundPageId: normalizedId,
-          url,
-        })
+        logWindowActivation(
+          {
+            reason: 'browser-background-window-open',
+            initiator: 'system',
+            userInitiated: null,
+            target: 'browser',
+            label: normalizedId,
+            url,
+          },
+          captureWindowActivationSnapshot({ app, BrowserWindow })
+        )
         this.openWeworkScheme(url)
       } else if (isBrowserUrl(url)) void shell.openExternal(url)
       return { action: 'deny' }
@@ -340,6 +371,17 @@ export class EmbeddedBrowserManager {
 
   async navigateBackgroundPage(id: string, rawUrl: string): Promise<BrowserBackgroundPageState> {
     const entry = this.requiredBackgroundPage(id)
+    logWindowActivation(
+      {
+        reason: 'browser-background-navigate',
+        initiator: 'agent',
+        userInitiated: false,
+        target: 'browser',
+        label: id,
+        url: rawUrl,
+      },
+      captureWindowActivationSnapshot({ app, BrowserWindow })
+    )
     entry.navigationError = null
     entry.httpResponseCode = null
     entry.httpStatusText = null
@@ -412,6 +454,18 @@ export class EmbeddedBrowserManager {
 
   attach(label: string, contents: WebContents): void {
     const normalizedLabel = requiredLabel(label)
+    if (!app.isActive()) {
+      logWindowActivation(
+        {
+          reason: 'webview-attach',
+          initiator: 'system',
+          userInitiated: null,
+          target: 'browser',
+          label: normalizedLabel,
+        },
+        captureWindowActivationSnapshot({ app, BrowserWindow })
+      )
+    }
     const existing = this.entries.get(normalizedLabel)
     if (existing && existing.contents.id !== contents.id) {
       this.close(normalizedLabel, existing.nativeLabel)
@@ -452,11 +506,17 @@ export class EmbeddedBrowserManager {
     const entry = this.entries.get(parentLabel)
     if (!entry || !isBrowserUrl(url)) {
       if (url.startsWith('wework://')) {
-        console.info('[window-activation]', {
-          reason: 'browser-popup-request',
-          parentLabel: entry?.label ?? null,
-          url,
-        })
+        logWindowActivation(
+          {
+            reason: 'browser-popup-request',
+            initiator: 'system',
+            userInitiated: null,
+            target: 'browser',
+            label: entry?.label,
+            url,
+          },
+          captureWindowActivationSnapshot({ app, BrowserWindow })
+        )
         this.openWeworkScheme(url)
       } else if (isBrowserUrl(url)) void shell.openExternal(url)
       return
@@ -477,6 +537,21 @@ export class EmbeddedBrowserManager {
 
   async open(input: BrowserOpenInput): Promise<BrowserPageState> {
     const label = requiredLabel(input.label)
+    const isNewEntry = !this.entries.has(label)
+    if (isNewEntry || !app.isActive()) {
+      logWindowActivation(
+        {
+          reason: isNewEntry ? 'browser-open' : 'browser-reopen',
+          initiator: 'agent',
+          userInitiated: false,
+          target: 'browser',
+          label,
+          agentActive: this.agentActive.has(label),
+          url: input.url,
+        },
+        captureWindowActivationSnapshot({ app, BrowserWindow })
+      )
+    }
     const existing = this.entries.get(label)
     if (existing) return this.openExisting(existing, input)
     const contents = await this.waitForAttachedContents(label)
@@ -533,11 +608,18 @@ export class EmbeddedBrowserManager {
     )
     contents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('wework://')) {
-        console.info('[window-activation]', {
-          reason: 'browser-window-open',
-          label: entry.label,
-          url,
-        })
+        logWindowActivation(
+          {
+            reason: 'browser-window-open',
+            initiator: 'system',
+            userInitiated: null,
+            target: 'browser',
+            label: entry.label,
+            agentActive: this.agentActive.has(entry.label),
+            url,
+          },
+          captureWindowActivationSnapshot({ app, BrowserWindow })
+        )
         this.openWeworkScheme(url)
       } else if (isBrowserUrl(url)) {
         this.emit('popup', {
@@ -821,6 +903,11 @@ export class EmbeddedBrowserManager {
     this.clearAgentCursorHide(fromLabel)
     if (cursorState && !this.agentActive.has(fromLabel)) this.scheduleAgentCursorHide(target)
     if (this.agentActive.delete(fromLabel)) this.agentActive.add(target)
+    const previousAgentStatus = this.lastAgentStatuses.get(fromLabel)
+    if (previousAgentStatus !== undefined) {
+      this.lastAgentStatuses.delete(fromLabel)
+      this.lastAgentStatuses.set(target, previousAgentStatus)
+    }
     if (attached && !attached.isDestroyed()) this.resolveAttachmentWaiters(target, attached)
   }
 
@@ -899,6 +986,23 @@ export class EmbeddedBrowserManager {
       this.agentActive.delete(normalizedLabel)
       if (status === 'idle') this.scheduleAgentCursorHide(normalizedLabel)
       else this.hideAgentCursor(normalizedLabel)
+    }
+    const previousAgentStatus = this.lastAgentStatuses.get(normalizedLabel)
+    this.lastAgentStatuses.set(normalizedLabel, status)
+    const crossedIdleBoundary =
+      (previousAgentStatus === undefined || previousAgentStatus === 'idle') !== (status === 'idle')
+    if (crossedIdleBoundary || !app.isActive()) {
+      logWindowActivation(
+        {
+          reason: 'agent-control',
+          initiator: 'agent',
+          userInitiated: false,
+          target: 'browser',
+          label: normalizedLabel,
+          agentActive: this.agentActive.has(normalizedLabel),
+        },
+        captureWindowActivationSnapshot({ app, BrowserWindow })
+      )
     }
     this.emit('agent-state', {
       label: normalizedLabel,
@@ -1058,6 +1162,7 @@ export class EmbeddedBrowserManager {
   private clearLabelScopedState(label: string): void {
     this.agentControlPaused.delete(label)
     this.agentActive.delete(label)
+    this.lastAgentStatuses.delete(label)
     this.clearAgentCursorHide(label)
     this.agentCursorStates.delete(label)
     this.agentCursorArrivals.delete(label)

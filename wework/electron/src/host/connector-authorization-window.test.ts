@@ -40,7 +40,12 @@ vi.mock('electron', () => ({
     constructor() {
       return mocks.window
     }
+
+    static getFocusedWindow() {
+      return null
+    }
   },
+  app: { isActive: () => false, isHidden: () => false },
   session: {
     fromPartition: mocks.fromPartition,
   },

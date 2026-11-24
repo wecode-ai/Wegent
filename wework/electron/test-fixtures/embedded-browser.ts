@@ -25,9 +25,12 @@ const electronMocks = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   app: {
     getLocale: electronMocks.appGetLocale,
+    isActive: () => true,
+    isHidden: () => false,
   },
   BrowserWindow: {
     getAllWindows: vi.fn(() => []),
+    getFocusedWindow: vi.fn(() => null),
   },
   WebContentsView: class {
     readonly webContents = electronMocks.createBackgroundWebContents()

@@ -125,6 +125,11 @@ import {
   presentWorkbenchWindow,
   registerApplicationActivation,
 } from './host/window-presentation.js'
+import {
+  captureWindowActivationSnapshot,
+  logWindowActivation,
+  type WindowActivationEvent,
+} from './host/window-activation-diagnostics.js'
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
 import { createWeworkProcessExplorerService } from './host/process-explorer-service.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
@@ -455,7 +460,13 @@ const pluginDevelopmentChildRuntime =
     ? new PluginDevelopmentChildRuntime({
         statePath: process.env.WEWORK_PLUGIN_DEVELOPMENT_STATE_PATH.trim(),
         sourceRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT.trim(),
-        focus: reactivateMainWindow,
+        focus: () =>
+          reactivateMainWindow({
+            reason: 'plugin-development-focus',
+            initiator: 'plugin',
+            userInitiated: false,
+            target: 'main',
+          }),
         openDevTools: () =>
           mainWindow?.webContents.openDevTools({ mode: 'detach', activate: true }),
         restartCoreDsh: restartPrimaryCoreDsh,
@@ -497,25 +508,23 @@ function queueScheme(url: string): void {
 }
 
 /**
- * One-line evidence for every attempt to activate the app while it is in the
- * background. Focus stealing happens exactly when these fire without a
- * matching user action, so keep them greppable under a stable tag.
+ * Diagnostic helper for activation paths that do not flow through
+ * presentWindow. Every event becomes exactly one greppable line whose URL
+ * fields are redacted by the shared formatter.
  */
-function logWindowActivation(reason: string, extra: Record<string, unknown> = {}): void {
-  console.info('[window-activation]', {
-    reason,
-    appActive: app.isActive(),
-    ...(process.platform === 'darwin'
-      ? { appHidden: app.isHidden(), dockVisible: app.dock?.isVisible() ?? null }
-      : {}),
-    ...extra,
-  })
+function logActivation(event: WindowActivationEvent, target?: BrowserWindow): void {
+  logWindowActivation(event, captureWindowActivationSnapshot({ app, BrowserWindow }, target))
 }
 
 function openSchemeInMainWindow(url: string): void {
   queueScheme(url)
-  logWindowActivation('scheme-open', { url })
-  void reactivateMainWindow().catch(error => {
+  void reactivateMainWindow({
+    reason: 'scheme-open',
+    initiator: 'external_or_user',
+    userInitiated: null,
+    target: 'main',
+    url,
+  }).catch(error => {
     console.error('[navigation] failed to activate main window for scheme navigation', error)
   })
 }
@@ -523,7 +532,13 @@ function openSchemeInMainWindow(url: string): void {
 app.on('open-url', (event, url) => {
   event.preventDefault()
   queueScheme(url)
-  logWindowActivation('open-url', { url })
+  logActivation({
+    reason: 'open-url',
+    initiator: 'external_or_user',
+    userInitiated: null,
+    target: 'main',
+    url,
+  })
   if (mainWindow?.isMinimized()) mainWindow.restore()
   mainWindow?.show()
   mainWindow?.focus()
@@ -748,7 +763,14 @@ function focusStartupSplashIfActive(): boolean {
   if (!startupSplashBlocksMainWindowActivation(snapshot ?? null)) return false
 
   const target = startupSplashWindow
-  return target ? presentWindow(target) : false
+  return target
+    ? presentWindow(target, {
+        reason: 'startup-splash-focus',
+        initiator: 'system',
+        userInitiated: null,
+        target: 'splash',
+      })
+    : false
 }
 
 app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
@@ -771,7 +793,12 @@ app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
   if (focusStartupRecoveryIfActive()) return
   if (focusStartupSplashIfActive()) return
   if (!mainWindow) return
-  logWindowActivation('second-instance')
+  logActivation({
+    reason: 'second-instance',
+    initiator: 'external_or_user',
+    userInitiated: null,
+    target: 'main',
+  })
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
@@ -1217,7 +1244,12 @@ async function openWorkspaceWindow(input: {
   }
   const existing = workspaceWindows.get(input.label)
   if (existing && !existing.isDestroyed()) {
-    presentWindow(existing)
+    presentWindow(existing, {
+      reason: 'workspace-open',
+      initiator: 'user',
+      userInitiated: true,
+      target: input.label,
+    })
     return
   }
   const dshUrl = desktopRuntime.coreDshUrl()
@@ -1256,7 +1288,12 @@ async function openWorkspaceWindow(input: {
     await workspaceWindow.loadURL(target.toString(), {
       extraHeaders: `X-Wework-Window-Label: ${input.label}`,
     })
-    presentWindow(workspaceWindow)
+    presentWindow(workspaceWindow, {
+      reason: 'workspace-open',
+      initiator: 'user',
+      userInitiated: true,
+      target: input.label,
+    })
   } catch (error) {
     workspaceWindows.delete(input.label)
     workspaceWindow.destroy()
@@ -1420,6 +1457,15 @@ async function openProcessExplorerWindow(): Promise<void> {
   const existing = processExplorerWindow
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore()
+    logActivation(
+      {
+        reason: 'process-explorer-open',
+        initiator: 'user',
+        userInitiated: true,
+        target: 'process-explorer',
+      },
+      existing
+    )
     existing.show()
     existing.focus()
     return
@@ -1458,6 +1504,15 @@ async function openProcessExplorerWindow(): Promise<void> {
       extraHeaders: 'X-Wework-Window-Label: process-explorer',
     })
     await waitForRendererSelector(window.webContents, '[data-testid="process-explorer-window"]')
+    logActivation(
+      {
+        reason: 'process-explorer-open',
+        initiator: 'user',
+        userInitiated: true,
+        target: 'process-explorer',
+      },
+      window
+    )
     window.show()
     window.focus()
   } catch (error) {
@@ -1531,7 +1586,12 @@ async function showPopoutWindow(): Promise<void> {
     Math.round(display.workArea.x + (display.workArea.width - bounds.width) / 2),
     Math.round(display.workArea.y + (display.workArea.height - bounds.height) / 2)
   )
-  presentWindow(target)
+  presentWindow(target, {
+    reason: 'popout-show',
+    initiator: 'user',
+    userInitiated: true,
+    target: 'popout',
+  })
 }
 
 async function togglePopoutWindow(): Promise<void> {
@@ -1890,11 +1950,14 @@ const rendererStartupReady = createStartupReadyHandler(async (source: string) =>
   scheduleComputerUseStartup()
 })
 
-async function reactivateMainWindow(): Promise<void> {
-  await reactivateWorkbenchWindow(null)
+async function reactivateMainWindow(activation?: WindowActivationEvent): Promise<void> {
+  await reactivateWorkbenchWindow(null, activation)
 }
 
-async function reactivateWorkbenchWindow(preferredWindow: BrowserWindow | null): Promise<void> {
+async function reactivateWorkbenchWindow(
+  preferredWindow: BrowserWindow | null,
+  activation?: WindowActivationEvent
+): Promise<void> {
   if (focusStartupRecoveryIfActive()) return
   if (focusStartupSplashIfActive()) return
   if (quitting) return
@@ -1906,8 +1969,16 @@ async function reactivateWorkbenchWindow(preferredWindow: BrowserWindow | null):
   } else {
     await setDockVisible(true)
   }
-  if (!app.isActive()) logWindowActivation('reactivate-from-background')
-  const presented = presentWorkbenchWindow(preferredWindow, mainWindow)
+  const presented = presentWorkbenchWindow(
+    preferredWindow,
+    mainWindow,
+    activation ?? {
+      reason: 'reactivate',
+      initiator: 'unknown',
+      userInitiated: null,
+      target: 'main',
+    }
+  )
   if (presented && presented === mainWindow) await loadPrimaryDshView()
 }
 
@@ -1916,11 +1987,30 @@ function dispatchTrayAction(action: TrayAction): void {
     requestApplicationShutdown(() => app.quit())
     return
   }
-  void activateTrayAction(action, reactivateMainWindow, readyAction => {
-    if (!quitting) desktopHostEvents.publish('tray.action', readyAction)
-  }).catch(error => {
+  void activateTrayAction(
+    action,
+    () => reactivateMainWindow(activationEventForTrayAction(action)),
+    readyAction => {
+      if (!quitting) desktopHostEvents.publish('tray.action', readyAction)
+    }
+  ).catch(error => {
     console.error('[window] failed to handle tray action', error)
   })
+}
+
+function activationEventForTrayAction(action: TrayAction): WindowActivationEvent {
+  if (action.type === 'open-task') {
+    return {
+      reason: `${action.source}-open-task`,
+      initiator: 'user',
+      userInitiated: true,
+      target: 'main',
+    }
+  }
+  if (action.type === 'open-settings') {
+    return { reason: 'tray-open-settings', initiator: 'user', userInitiated: true, target: 'main' }
+  }
+  return { reason: 'tray-action', initiator: 'user', userInitiated: true, target: 'main' }
 }
 
 /**
@@ -1950,6 +2040,10 @@ function menuLabelForWindow(window: BrowserWindow): string {
 function revealApplicationMenuWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (window.isMinimized()) window.restore()
+  logActivation(
+    { reason: 'menu-reveal', initiator: 'user', userInitiated: true, target: 'main' },
+    window
+  )
   window.show()
   window.focus()
 }
@@ -2006,7 +2100,13 @@ function installApplicationMenu(): void {
     openDevTools: window => openWindowDevTools(window),
     openLogDirectory: openApplicationLogDirectory,
     openProcessExplorer: openProcessExplorerWindow,
-    showMain: reactivateMainWindow,
+    showMain: () =>
+      reactivateMainWindow({
+        reason: 'menu-show-main',
+        initiator: 'user',
+        userInitiated: true,
+        target: 'main',
+      }),
     quit: () => requestApplicationShutdown(() => app.quit()),
     openExternal: url => shell.openExternal(url),
     reportError: error => console.error('[application-menu] action failed', error),
@@ -2799,7 +2899,13 @@ async function configureDesktopRuntime(): Promise<void> {
                     : (workspaceWindows.get(windowLabel)?.webContents ?? null),
           cancelCloseToTray: cancelMainWindowClose,
           closeToTray: closeMainWindowToTray,
-          focusMainWindow: reactivateMainWindow,
+          focusMainWindow: () =>
+            reactivateMainWindow({
+              reason: 'e2e-focus-main',
+              initiator: 'e2e',
+              userInitiated: false,
+              target: 'main',
+            }),
           focusWindow: windowLabel => {
             const target =
               windowLabel === 'main'
@@ -2807,7 +2913,14 @@ async function configureDesktopRuntime(): Promise<void> {
                 : windowLabel === 'popout-window'
                   ? popoutWindow
                   : (workspaceWindows.get(windowLabel) ?? null)
-            if (target) presentWindow(target)
+            if (target) {
+              presentWindow(target, {
+                reason: 'e2e-focus-window',
+                initiator: 'e2e',
+                userInitiated: false,
+                target: windowLabel,
+              })
+            }
           },
           hideMainWindow: hideMainWindowToBackground,
           openProcessExplorer: () => openProcessExplorerWindow(),
@@ -2869,7 +2982,13 @@ async function configureDesktopRuntime(): Promise<void> {
             return snapshot ? { ...snapshot, dockBadge: app.dock?.getBadge() ?? null } : null
           },
           openWorkspace: openWorkspaceWindow,
-          showMain: reactivateMainWindow,
+          showMain: () =>
+            reactivateMainWindow({
+              reason: 'show-main',
+              initiator: 'user',
+              userInitiated: true,
+              target: 'main',
+            }),
           closeWorkspace: label => {
             const target = workspaceWindows.get(label)
             if (!target || target.isDestroyed()) throw new Error('Workspace window is unavailable')
@@ -3138,7 +3257,13 @@ if (hasSingleInstanceLock) {
       appshots = new AppshotsService({
         captureRoot: join(executorHome, 'workspace', 'attachments', 'draft', 'appshots'),
         events: desktopHostEvents,
-        showMain: reactivateMainWindow,
+        showMain: () =>
+          reactivateMainWindow({
+            reason: 'appshot-reveal',
+            initiator: 'user',
+            userInitiated: true,
+            target: 'main',
+          }),
         playSound: async () => {
           const preferences = await requiredPreferences().read()
           if (preferences.appshotsPlaySound !== false) shell.beep()
@@ -3690,7 +3815,13 @@ app.on('browser-window-focus', (_event, window) => {
 
 registerApplicationActivation(app, {
   keepInBackground: () => keepE2EWindowInBackground && !e2eForegroundActivationAllowed,
-  openWorkbenchWindow: () => reactivateWorkbenchWindow(lastFocusedWorkbenchWindow),
+  openWorkbenchWindow: () =>
+    reactivateWorkbenchWindow(lastFocusedWorkbenchWindow, {
+      reason: 'dock-activate',
+      initiator: 'user',
+      userInitiated: true,
+      target: 'main',
+    }),
   reportError: error => {
     console.error('[window] failed to reactivate workbench window', error)
   },

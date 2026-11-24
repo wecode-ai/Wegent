@@ -17,7 +17,11 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow, session } from 'electron'
+import { app, BrowserWindow, session } from 'electron'
+import {
+  captureWindowActivationSnapshot,
+  logWindowActivation,
+} from './window-activation-diagnostics.js'
 
 /** Throwaway partition: nothing survives the consent flow. */
 const CONNECTOR_AUTHORIZATION_PARTITION = 'connector-authorization'
@@ -110,6 +114,15 @@ export async function openConnectorAuthorizationWindow(
   window.setMenuBarVisibility(false)
   // The consent page navigates itself; popups would escape the isolated flow.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  logWindowActivation(
+    {
+      reason: 'connector-auth-window',
+      initiator: 'unknown',
+      userInitiated: null,
+      target: 'connector-auth',
+    },
+    captureWindowActivationSnapshot({ app, BrowserWindow }, window)
+  )
 
   let resolveClosed!: () => void
   const closed = new Promise<void>(resolve => {

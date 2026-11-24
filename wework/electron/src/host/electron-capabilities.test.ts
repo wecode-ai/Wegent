@@ -71,8 +71,14 @@ vi.mock('electron', () => ({
     once: vi.fn(),
     getPath: electronMocks.appGetPath,
     getVersion: electronMocks.appGetVersion,
+    isActive: () => false,
+    isHidden: () => false,
   },
-  BrowserWindow: class BrowserWindow {},
+  BrowserWindow: class BrowserWindow {
+    static getFocusedWindow() {
+      return null
+    }
+  },
   clipboard: {
     availableFormats: electronMocks.clipboardAvailableFormats,
     readBuffer: electronMocks.clipboardReadBuffer,

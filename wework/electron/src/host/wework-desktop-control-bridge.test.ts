@@ -5,6 +5,11 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { WeworkDesktopControlBridge } from './wework-desktop-control-bridge.js'
 import { PythonRuntimeDownloadTimeoutError } from '../runtime/python-runtime-downloads.js'
 
+vi.mock('electron', () => ({
+  app: { isActive: () => false, isHidden: () => false },
+  BrowserWindow: { getFocusedWindow: () => null },
+}))
+
 const directories: string[] = []
 
 afterEach(async () => {

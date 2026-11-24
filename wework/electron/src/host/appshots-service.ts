@@ -203,7 +203,6 @@ export class AppshotsService {
         textAttachment,
       })
       completed = true
-      console.info('[window-activation]', { reason: 'appshot-reveal' })
       void Promise.resolve()
         .then(() => this.options.showMain())
         .catch(error => {
