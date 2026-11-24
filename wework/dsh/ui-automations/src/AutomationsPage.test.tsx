@@ -22,6 +22,7 @@ const automation: Automation = {
 }
 
 const automationApi = {
+  createAutomation: vi.fn(),
   listAutomations: vi.fn().mockResolvedValue({ items: [automation] }),
   listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
   updateAutomation: vi.fn(),
@@ -35,8 +36,8 @@ const workbenchMock = {
     runtimeWork: null as RuntimeWorkListResponse | null,
     currentProject: null,
     currentRuntimeTask: null,
-    standaloneDeviceId: null,
-    standaloneWorkspacePath: null,
+    standaloneDeviceId: null as string | null,
+    standaloneWorkspacePath: null as string | null,
     defaultTeam: null,
   },
   services: { automationApi },
@@ -91,6 +92,8 @@ describe('AutomationsPage', () => {
     workbenchMock.state.defaultTeam = null
     workbenchMock.state.devices = []
     workbenchMock.state.runtimeWork = null
+    workbenchMock.state.standaloneDeviceId = null
+    workbenchMock.state.standaloneWorkspacePath = null
   })
 
   test('protects arrangement drafts when creating, selecting or closing details', async () => {
@@ -169,9 +172,14 @@ describe('AutomationsPage', () => {
     }
   })
 
-  test('retains the selected cloud project worktree across saving and reopening', async () => {
+  test.each([20, undefined])('round-trips a cloud worktree with ID %s', async id => {
     const deviceId = 'cloud-device'
     const projectKey = 'release-project'
+    const worktreePath = '/worktrees/stable'
+    const binding = {
+      runtimeProjectKey: projectKey,
+      ...(id == null ? { workspacePath: worktreePath } : { deviceWorkspaceId: id }),
+    }
     const rootWorkspace = {
       id: 19,
       deviceId,
@@ -187,8 +195,8 @@ describe('AutomationsPage', () => {
             rootWorkspace,
             {
               ...rootWorkspace,
-              id: 20,
-              workspacePath: '/worktrees/stable',
+              id,
+              workspacePath: worktreePath,
               workspaceKind: 'worktree',
               label: 'stable branch',
             },
@@ -245,10 +253,7 @@ describe('AutomationsPage', () => {
     await act(() => Promise.resolve())
     await chooseProject(/stable branch/)
     await save()
-    expect(saved.taskRequest).toMatchObject({
-      runtimeProjectKey: projectKey,
-      deviceWorkspaceId: 20,
-    })
+    expect(saved.taskRequest).toMatchObject(binding)
     expect(selectProject()).toHaveTextContent('stable branch')
     view.unmount()
 
@@ -260,10 +265,7 @@ describe('AutomationsPage', () => {
       target: { value: 'Review the release notes' },
     })
     await save()
-    expect(saved.taskRequest).toMatchObject({
-      runtimeProjectKey: projectKey,
-      deviceWorkspaceId: 20,
-    })
+    expect(saved.taskRequest).toMatchObject(binding)
 
     workbenchMock.state.runtimeWork = runtimeWork
     reopened.rerender(<AutomationsPage embedded />)
@@ -273,5 +275,60 @@ describe('AutomationsPage', () => {
     expect(saved.taskRequest).toMatchObject({ standaloneChatWorkspace: true })
     expect(saved.taskRequest).not.toHaveProperty('runtimeProjectKey')
     expect(selectProject()).toHaveAttribute('data-value', '')
+  })
+
+  test('binds the inherited workspace when the project list loads after the draft opens', async () => {
+    const deviceId = 'local-device'
+    const workspacePath = '/workspace/inherited'
+    workbenchMock.state.devices = [
+      {
+        id: 1,
+        device_id: deviceId,
+        name: 'Local executor',
+        device_type: 'local',
+        status: 'online',
+        bind_shell: 'claudecode',
+        executor_version: '9.0.0',
+        is_default: false,
+      },
+    ]
+    workbenchMock.state.standaloneDeviceId = deviceId
+    workbenchMock.state.standaloneWorkspacePath = workspacePath
+    automationApi.listAutomations.mockResolvedValue({ items: [] })
+    automationApi.createAutomation.mockResolvedValue({ automation })
+
+    const view = render(<AutomationsPage embedded />)
+    await act(() => Promise.resolve())
+    fireEvent.click(screen.getByTestId('create-automation-button'))
+    const projectPicker = screen.getByTestId('automation-project-select')
+    expect(projectPicker).toHaveTextContent(workspacePath)
+
+    workbenchMock.state.runtimeWork = {
+      projects: [
+        {
+          project: { key: 'inherited', name: 'Inherited project', source: 'local_project' },
+          deviceWorkspaces: [{ id: 19, deviceId, available: true, tasks: [], workspacePath }],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    view.rerender(<AutomationsPage embedded />)
+    expect(projectPicker).toHaveTextContent('Inherited project')
+    fireEvent.change(screen.getByTestId('automation-name-input'), { target: { value: 'Review' } })
+    fireEvent.change(screen.getByTestId('automation-prompt-input'), {
+      target: { value: 'Review the linked project' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('automation-save-button'))
+    })
+    expect(automationApi.createAutomation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskRequest: expect.objectContaining({
+          runtimeProjectKey: 'inherited',
+          deviceWorkspaceId: 19,
+        }),
+      })
+    )
   })
 })

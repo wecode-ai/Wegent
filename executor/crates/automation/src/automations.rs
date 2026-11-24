@@ -538,6 +538,7 @@ impl AutomationStore {
     pub fn reconcile_interrupted_runs(
         &self,
         resumable_run_ids: &HashSet<&str>,
+        resumable_goal_task_ids: &HashSet<&str>,
     ) -> Result<usize, String> {
         let mut state = self.lock_state()?;
         if state.restored_active_run_ids.is_empty() {
@@ -547,19 +548,34 @@ impl AutomationStore {
         let now = Utc::now();
         let mut reconciled = 0;
         for run in &mut next.runs {
-            if next.restored_active_run_ids.contains(&run.id)
-                && !resumable_run_ids.contains(run.id.as_str())
-                && matches!(
+            if !next.restored_active_run_ids.contains(&run.id)
+                || resumable_run_ids.contains(run.id.as_str())
+                || !matches!(
                     run.status,
                     AutomationRunStatus::Pending | AutomationRunStatus::Running
                 )
             {
-                run.status = AutomationRunStatus::NeedsAttention;
-                run.error =
-                    Some("Executor restarted before the automation run could finish".into());
-                run.updated_at = now;
-                reconciled += 1;
+                continue;
             }
+            // Independent runs own a task. A Goal follow-up may replace the turn
+            // that originally carried its automation metadata.
+            let recovering_goal = run
+                .task_id
+                .as_deref()
+                .is_some_and(|id| resumable_goal_task_ids.contains(id))
+                && next
+                    .automations
+                    .get(&run.automation_id)
+                    .is_some_and(|automation| {
+                        matches!(automation.conversation_mode, ConversationMode::Independent)
+                    });
+            if recovering_goal {
+                continue;
+            }
+            run.status = AutomationRunStatus::NeedsAttention;
+            run.error = Some("Executor restarted before the automation run could finish".into());
+            run.updated_at = now;
+            reconciled += 1;
         }
         if reconciled > 0 {
             self.write_state(&next)?;

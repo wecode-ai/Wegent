@@ -61,7 +61,7 @@ export interface AutomationProjectOption {
   workspacePath: string
   workspaceKind: RuntimeProjectWork['deviceWorkspaces'][number]['workspaceKind']
   workspaceLabel: string | null
-  target: RuntimeTaskWorkspaceBinding
+  target: AutomationProjectTarget
 }
 
 export interface AutomationTaskOption {
@@ -137,29 +137,30 @@ export function automationProjectTargetForPath(
 ): AutomationProjectTarget | null {
   if (!workspacePath) return null
   const options = buildAutomationProjectOptions(projects, deviceId)
-  return findAutomationProjectOption(options, { workspacePath })?.target ?? null
+  return findAutomationProjectOption(options, { workspacePath })?.target ?? { workspacePath }
 }
 
 function automationProjectTarget(
   project: RuntimeProjectWork,
   workspace: RuntimeProjectWork['deviceWorkspaces'][number]
-): RuntimeTaskWorkspaceBinding {
+): AutomationProjectTarget {
   const isDeviceProject =
     project.project.source === 'local_project' || project.project.source === 'remote_project'
   const backendProjectId =
     workspace.projectId ?? (!isDeviceProject ? project.project.id : undefined)
+  const workspaceTarget =
+    workspace.id == null
+      ? { workspacePath: workspace.workspacePath }
+      : { deviceWorkspaceId: workspace.id }
   if (backendProjectId != null) {
-    return {
-      projectId: backendProjectId,
-      ...(workspace.id != null ? { deviceWorkspaceId: workspace.id } : {}),
-    }
+    return { projectId: backendProjectId, ...workspaceTarget }
   }
   return {
     deviceId:
       workspace.workspaceSource === 'remote' && workspace.remoteHostId
         ? workspace.remoteHostId
         : workspace.deviceId,
-    ...(workspace.id != null ? { deviceWorkspaceId: workspace.id } : {}),
+    ...workspaceTarget,
     runtimeProjectKey: project.project.key,
     runtimeProjectName: project.project.name,
     runtimeWorkspaceRoots: [

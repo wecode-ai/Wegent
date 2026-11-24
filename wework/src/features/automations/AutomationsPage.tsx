@@ -28,7 +28,7 @@ import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import { getWorkbenchDeviceIds, resolveWorkbenchDeviceId } from '@/lib/workbench-device'
 import { track } from '@/telemetry/client'
 import type { RuntimeSendRequest, RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
 import type {
@@ -411,7 +411,18 @@ export function AutomationsPage({
     if (!draft.deviceId) {
       throw new Error(t('todo.automation_target_required', '请选择设备'))
     }
-    const projectTarget = draft.conversationMode === 'independent' ? draft.projectTarget : null
+    const project = draft.conversationMode === 'independent' ? draft.projectTarget : null
+    const projectTarget =
+      project?.workspacePath &&
+      project.projectId == null &&
+      project.deviceWorkspaceId == null &&
+      !project.runtimeProjectKey
+        ? automationProjectTargetForPath(
+            state.runtimeWork?.projects ?? [],
+            resolveWorkbenchDeviceId(state.devices, draft.deviceId) ?? draft.deviceId,
+            project.workspacePath
+          )
+        : project
     const taskRequest: RuntimeTaskCreateRequest = {
       schemaVersion: 2,
       ...(standInOwner

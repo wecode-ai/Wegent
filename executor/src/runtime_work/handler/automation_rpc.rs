@@ -19,7 +19,8 @@ pub(super) fn reconcile_interrupted_runs(
         .chain(active_goal_turns.values())
         .filter_map(|turn| turn.request.extra.get("automation_info")?["runId"].as_str())
         .collect::<HashSet<_>>();
-    match store.reconcile_interrupted_runs(&resumable_run_ids) {
+    let resumable_goal_task_ids = active_goal_turns.keys().map(String::as_str).collect();
+    match store.reconcile_interrupted_runs(&resumable_run_ids, &resumable_goal_task_ids) {
         Ok(0) => {}
         Ok(count) => log_executor_event(
             "interrupted automation runs reconciled",
@@ -436,13 +437,13 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("automations.json");
         let queue_path = directory.path().join("turn-queue.json");
-        let (interrupted, queued, goal, coordinated) = {
+        let (interrupted, queued, goal, continued, coordinated) = {
             let store = AutomationStore::new(path.clone());
-            let start = |id, task_id, task_request: Value| {
+            let start = |id, task_id, mode, task_request: Value| {
                 let automation = serde_json::from_value(json!({
                     "id": id, "name": id, "prompt": "Work on schedule",
                     "version": 0, "schedule": {"type":"interval", "value":1, "unit":"hours"},
-                    "taskPayload": {},
+                    "taskPayload": {}, "conversationMode": mode,
                     "taskRequest": task_request
                 }))
                 .unwrap();
@@ -452,12 +453,24 @@ mod tests {
                 store.get_run(&run.id).unwrap()
             };
             (
-                start("interrupted", "shared-task".into(), json!({})),
-                start("queued", "shared-task".into(), json!({})),
-                start("goal", "goal-task".into(), json!({})),
+                start(
+                    "interrupted",
+                    "shared-task".into(),
+                    "independent",
+                    json!({}),
+                ),
+                start("queued", "shared-task".into(), "independent", json!({})),
+                start("goal", "goal-task".into(), "independent", json!({})),
+                start(
+                    "continued",
+                    "goal-task".into(),
+                    "continue_thread",
+                    json!({}),
+                ),
                 start(
                     "coordinated",
                     "stand-in-task".into(),
+                    "independent",
                     json!({
                         "standInOwner": {"userId": 7, "roleId": "@primary"},
                         "standInCalendar": {},
@@ -475,7 +488,13 @@ mod tests {
         turns::write_runtime_turn_state(
             &queue_path,
             &VecDeque::from([restore_turn(&queued)]),
-            &HashMap::from([("goal-task".to_owned(), restore_turn(&goal))]),
+            &HashMap::from([(
+                "goal-task".to_owned(),
+                serde_json::from_value::<SpawnTurnRequest>(json!({
+                    "localTaskId": goal.task_id, "request": { "prompt": "Continue the goal" },
+                }))
+                .unwrap(),
+            )]),
             &Default::default(),
         )
         .unwrap();
@@ -490,6 +509,10 @@ mod tests {
         let reconciled = store.get_run(&interrupted.id).unwrap();
         assert_eq!(reconciled.status, AutomationRunStatus::NeedsAttention);
         assert_eq!(reconciled.task_id, interrupted.task_id);
+        assert_eq!(
+            store.get_run(&continued.id).unwrap().status,
+            AutomationRunStatus::NeedsAttention
+        );
         for run in [queued, goal, coordinated] {
             assert_eq!(
                 store.get_run(&run.id).unwrap().status,
