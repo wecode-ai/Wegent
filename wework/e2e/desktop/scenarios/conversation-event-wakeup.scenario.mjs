@@ -75,6 +75,7 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
   let busyStarted = false
   let ownerResponse
   let resumedGoalDeadline
+  let goalCompletionItemId
   const releaseBusy = () => {
     if (!busyResponse) return
     const { response, id } = busyResponse
@@ -337,16 +338,22 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
       const held = phase === 'human' ? human.intercept(modelRequestTexts(body), response) : null
       if (held) return held
       const id = `conversation-event-${++sequence}`
+      const modelOutput =
+        phase === 'resumed_goal_seed'
+          ? [assistantMessage('Ready to resume a Goal.')]
+          : modelEvents(body, phase)
+      const goalCompletion =
+        phase === 'goal' &&
+        modelOutput.find(({ item }) =>
+          item?.content?.some(part => part.text?.includes(`${MARKER}_goal_DONE`))
+        )
+      if (goalCompletion) {
+        goalCompletionItemId = goalCompletion.item.id
+        // Simulate model latency so this resumed turn has whole seconds to display.
+        await delay(1200)
+      }
       response.writeHead(200, { 'content-type': 'text/event-stream' })
-      response.end(
-        createSse([
-          responseCreated(id),
-          ...(phase === 'resumed_goal_seed'
-            ? [assistantMessage('Ready to resume a Goal.')]
-            : modelEvents(body, phase)),
-          responseCompleted(id),
-        ])
-      )
+      response.end(createSse([responseCreated(id), ...modelOutput, responseCompleted(id)]))
       return true
     },
     async verify(control) {
@@ -767,6 +774,16 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
             { text: `${MARKER}_${phase}_DONE`, timeoutMs: 30000 }
           )
+          if (phase === 'goal') {
+            assert.ok(goalCompletionItemId, 'The woken Goal must have a distinct native result')
+            const duration = `${assistant}:has([data-runtime-item-id="${goalCompletionItemId}"]) [data-testid="final-processing-toggle"] [data-testid="processing-duration-label"]`
+            await control.command('waitFor', duration, { timeoutMs: uiTimeoutMs })
+            assert.match(
+              await control.command('getText', duration),
+              /^(?:用时|Worked for)\s*[1-9]\d*/,
+              'The completed event-woken turn must show nonzero processing time'
+            )
+          }
           const after = await getTask()
           assert.equal(
             after.task.threadId,

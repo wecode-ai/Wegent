@@ -36,6 +36,26 @@ function requestBlock(id: string, turnId: string): ProcessingBlock {
 }
 
 describe('runtimeConversationTurns', () => {
+  test('keeps executor timing when start and completion arrive together', () => {
+    const completedAt = Date.parse('2026-09-16T10:00:10Z')
+    const durationMs = 7900
+    const startedAt = completedAt - durationMs
+    const turns = reduceRuntimeConversationTurns(
+      [{ id: 'resumed', status: 'streaming', startedAt: completedAt, items: [] }],
+      { type: 'assistant_done', subtaskId: 'resumed', startedAt, completedAt, durationMs }
+    )
+    expect(turns[0]).toMatchObject({
+      startedAt,
+      completedAt: new Date(completedAt).toISOString(),
+      durationMs,
+    })
+    const cached = [{ ...turns[0], startedAt: completedAt, durationMs: 1 }]
+    expect(mergeRuntimeConversationTurns(cached, turns)[0]).toMatchObject({
+      startedAt,
+      durationMs,
+    })
+  })
+
   test('projects stable turn start and completion timestamps through streaming and transcript restore', () => {
     vi.useFakeTimers()
     try {

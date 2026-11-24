@@ -60,18 +60,24 @@ export function mergeRuntimeConversationTurn(
   const preserveStreamingThinking =
     snapshot.status === "streaming" &&
     assistantTextContent(local.items) === assistantTextContent(snapshot.items);
-  const timing = isTerminalTurnStatus(local.status)
-    ? {
-        startedAt: local.startedAt ?? snapshot.startedAt,
-        durationMs: local.durationMs ?? snapshot.durationMs,
-        completedAt: local.completedAt ?? snapshot.completedAt,
-      }
-    : isTerminalTurnStatus(snapshot.status) && local.startedAt !== undefined
+  const snapshotIsTerminal = isTerminalTurnStatus(snapshot.status);
+  const localIsTerminal = isTerminalTurnStatus(local.status);
+  const hasLongerRecordedDuration =
+    snapshotIsTerminal && (snapshot.durationMs ?? 0) > (local.durationMs ?? 0);
+  const preserveLocalTiming = localIsTerminal && !hasLongerRecordedDuration;
+  const timing =
+    !localIsTerminal && snapshotIsTerminal && local.startedAt !== undefined
       ? completeRuntimeTurnTiming(local, snapshot)
       : {
-          startedAt: local.startedAt ?? snapshot.startedAt,
-          durationMs: snapshot.durationMs,
-          completedAt: snapshot.completedAt,
+          startedAt: hasLongerRecordedDuration
+            ? (snapshot.startedAt ?? local.startedAt)
+            : (local.startedAt ?? snapshot.startedAt),
+          durationMs: preserveLocalTiming
+            ? (local.durationMs ?? snapshot.durationMs)
+            : snapshot.durationMs,
+          completedAt: preserveLocalTiming
+            ? (local.completedAt ?? snapshot.completedAt)
+            : snapshot.completedAt,
         };
   return {
     ...local,

@@ -66,10 +66,12 @@ export function turnStatus(
   return turn.status;
 }
 
-/** Live completion closes the same wall-clock interval used by the running label. */
 export function completeRuntimeTurnTiming(
   turn: RuntimeConversationTurn,
-  source: { startedAt?: number; durationMs?: number },
+  source: Pick<
+    RuntimeConversationTurn,
+    "startedAt" | "completedAt" | "durationMs"
+  >,
 ): Pick<RuntimeConversationTurn, "startedAt" | "completedAt" | "durationMs"> {
   if (
     ["done", "failed", "cancelled"].includes(turn.status) &&
@@ -82,13 +84,27 @@ export function completeRuntimeTurnTiming(
       durationMs: turn.durationMs ?? source.durationMs,
     };
   }
-  const completedAt = Date.now();
+  const recordedEnd =
+    typeof source.completedAt === "number"
+      ? source.completedAt
+      : Date.parse(source.completedAt ?? "");
+  const completedAt = Number.isFinite(recordedEnd) ? recordedEnd : Date.now();
+  const startedAt = turn.startedAt ?? source.startedAt;
+  const elapsed =
+    startedAt === undefined ? undefined : Math.max(0, completedAt - startedAt);
+  // Replay can deliver start and completion together. The elapsed time at the
+  // renderer may omit work that the executor already measured.
+  const durationMs =
+    source.durationMs !== undefined
+      ? Math.max(source.durationMs, elapsed ?? 0)
+      : elapsed;
   return {
-    startedAt: turn.startedAt ?? source.startedAt,
+    startedAt:
+      durationMs !== undefined &&
+      (elapsed === undefined || durationMs > elapsed)
+        ? completedAt - durationMs
+        : startedAt,
     completedAt: new Date(completedAt).toISOString(),
-    durationMs:
-      turn.startedAt === undefined
-        ? source.durationMs
-        : Math.max(0, completedAt - turn.startedAt),
+    durationMs,
   };
 }

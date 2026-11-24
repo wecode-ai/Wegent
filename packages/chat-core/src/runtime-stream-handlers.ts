@@ -536,6 +536,10 @@ export function createRuntimeTaskStreamHandlers(
           payload.result.value.trim() && { content: payload.result.value }),
         blocks,
         fileChanges,
+        completedAt:
+          typeof payload.result.completedAt === "number"
+            ? payload.result.completedAt
+            : (native?.completedAt ?? undefined),
         ...((typeof payload.result.durationMs === "number" ||
           typeof payload.result.duration_ms === "number") && {
           durationMs:
