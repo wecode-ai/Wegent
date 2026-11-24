@@ -9,7 +9,7 @@
 use brz_mysql::{Json, Mysql};
 use serde_json::{Value, json};
 
-use super::event::ExecutionEvent;
+use wegent_execution_events::event::ExecutionEvent;
 
 const INSERT_SPAN_SQL: &str = "INSERT INTO task_timing_spans \
     (task_id, subtask_id, parent_span_id, span_id, kind, actor_id, actor_type, actor_label, status, start_at_ms, end_at_ms, duration_ms, clock, source, metadata) \

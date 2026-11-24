@@ -184,6 +184,11 @@ async fn process_event(
     };
 
     prepare_interactive_form_event(&state.interactive_form, &mut event).await;
+    if let Err(error) =
+        timing_spans::persist_callback_timing(&state.mysql, &event, executor.0, executor.1).await
+    {
+        tracing::warn!(%error, "task timing span persistence failed");
+    }
     let mut emitter = StatusUpdatingEmitter::new(redis.to_owned(), event.task_id, event.subtask_id);
     if terminal_status.is_none()
         && let Err(error) = emitter.emit(&mut event).await
