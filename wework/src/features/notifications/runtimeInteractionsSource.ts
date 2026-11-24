@@ -7,7 +7,9 @@ import type { TFunction } from 'i18next'
 import {
   isAsyncRequestUserInputPayload,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@wegent/chat-core/runtime-user-input'
+import type { RequestUserInputResponse } from '@wegent/chat-core/runtime'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -40,6 +42,7 @@ import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNo
 import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
 import { weworkInteractionScheme } from './scheme'
 import { replyToInteractionProject } from './interactionProjectReply'
+import { prepareRuntimeQuestionResponse } from '@/features/workbench/useWorkbenchRuntimeMessaging'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
@@ -534,13 +537,18 @@ export function createRuntimeInteractionsSource(
   const respond = async (
     item: RuntimeInteraction,
     answer: string,
-    options?: { clientMessageId?: string; send?: () => Promise<boolean> }
+    options?: {
+      clientMessageId?: string
+      send?: () => Promise<boolean>
+      response?: RequestUserInputResponse
+    }
   ): Promise<boolean> => {
     if (!active()) return false
     const api = context.source?.services?.runtimeWorkApi
     if (
       (!api && !item.sharedRequest) ||
-      !answer.trim() ||
+      (!answer.trim() &&
+        (!options?.response || !requestUserInputResponseAttachments(options.response).length)) ||
       !canReplyToInteraction(item) ||
       inFlight.has(item.id)
     )
@@ -566,7 +574,8 @@ export function createRuntimeInteractionsSource(
             answer,
             options?.clientMessageId ?? crypto.randomUUID(),
             services,
-            context.t('interactions.failed')
+            context.t('interactions.failed'),
+            options?.response ? requestUserInputResponseAttachments(options.response) : []
           )
         }
         await issueDiscovery.refresh()
@@ -605,16 +614,50 @@ export function createRuntimeInteractionsSource(
         )
           throw new Error(context.t('interactions.expired'))
         if (!active() || context.source?.services?.runtimeWorkApi !== api) return false
-        const response = interactionResponse(live.payload, {
-          [live.payload.questions![0].id!]: { answers: [answer] },
-        })
+        const asyncInput = isAsyncRequestUserInputPayload(live.payload)
+        const originalResponse = {
+          ...(options?.response ??
+            interactionResponse(live.payload, {
+              [live.payload.questions![0].id!]: { answers: [answer] },
+            })),
+          ...(asyncInput ? { delivery: 'async' as const } : {}),
+        }
+        const response = live.project
+          ? originalResponse
+          : await prepareRuntimeQuestionResponse(
+              originalResponse,
+              live.task.address.deviceId,
+              context.source?.devices ?? [],
+              context.source?.services?.attachmentApi?.uploadLocalAttachmentToCloud
+            )
+        if (!active() || context.source?.services?.runtimeWorkApi !== api) return false
         const previousClient = clientIds.get(item.id)
         const id =
           options?.clientMessageId ??
           (previousClient?.answer === answer ? previousClient.id : crypto.randomUUID())
         clientIds.set(item.id, { answer, id })
         const message = requestUserInputResponseText(response)
-        const asyncInput = isAsyncRequestUserInputPayload(live.payload)
+        const attachments = requestUserInputResponseAttachments(response)
+        const runtimePayload =
+          !options?.send && !live.project
+            ? await prepareRuntimeContinuationModel(
+                {
+                  address: live.task.address,
+                  message,
+                  ...(attachments.length ? { attachments } : {}),
+                  ...(asyncInput ? { queueIfBusy: true } : {}),
+                  requestUserInputResponse: response,
+                  clientUserMessageId: id,
+                },
+                {
+                  projects: [],
+                  chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
+                  totalTasks: 1,
+                },
+                () => api.listRuntimeWork()
+              )
+            : undefined
+        if (!active() || context.source?.services?.runtimeWorkApi !== api) return false
         const result = options?.send
           ? { accepted: await options.send(), error: undefined }
           : live.project
@@ -623,34 +666,10 @@ export function createRuntimeInteractionsSource(
                 message,
                 id,
                 context.source!.services!,
-                context.t('interactions.failed')
+                context.t('interactions.failed'),
+                attachments
               ).then(() => ({ accepted: true, error: undefined }))
-            : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
-              ? await api.guideRuntimeTask({
-                  address: live.task.address,
-                  message,
-                  clientGuidanceId: id,
-                })
-              : await api.sendRuntimeMessage(
-                  await prepareRuntimeContinuationModel(
-                    {
-                      address: live.task.address,
-                      message,
-                      ...(asyncInput
-                        ? {
-                            queueIfBusy: true,
-                          }
-                        : { requestUserInputResponse: response }),
-                      clientUserMessageId: id,
-                    },
-                    {
-                      projects: [],
-                      chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
-                      totalTasks: 1,
-                    },
-                    () => api.listRuntimeWork()
-                  )
-                )
+            : await api.sendRuntimeMessage(runtimePayload!)
         const accepted = result.accepted ?? ('success' in result && result.success)
         if (!accepted) throw new Error(result.error || context.t('notifications.failed'))
         saveInteractionState(acceptancePrefix + item.id, true)

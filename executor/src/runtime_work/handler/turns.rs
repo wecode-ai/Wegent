@@ -1426,11 +1426,31 @@ impl RuntimeWorkRpcHandler {
                     .insert("standInGuidanceSources".into(), sources);
             }
         }
-        let continuation = turn_id.is_some_and(|turn_id| {
+        let client_id = request
+            .extra
+            .get("client_user_message_id")
+            .or_else(|| request.extra.get("clientUserMessageId"))
+            .and_then(Value::as_str);
+        // A new send may reuse a request subtask before turn/start returns.
+        // Only this client's native binding distinguishes an autonomous continuation.
+        let continuation = turn_id.zip(client_id).is_some_and(|(turn_id, client_id)| {
             self.store.read_task(local_task_id, |link| {
-                link.runtime_handle
-                    .get("turnIdsBySubtask")
-                    .and_then(|mappings| mappings.get(request.subtask_id.as_str()))
+                link.runtime_handle["userMessagePresentations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|presentation| {
+                        presentation
+                            .get("clientUserMessageId")
+                            .or_else(|| presentation.get("client_user_message_id"))
+                            .and_then(Value::as_str)
+                            == Some(client_id)
+                    })
+                    .and_then(|presentation| {
+                        presentation
+                            .get("turnId")
+                            .or_else(|| presentation.get("turn_id"))
+                    })
                     .and_then(Value::as_str)
                     .is_some_and(|initial| initial != turn_id)
             }) == Some(true)

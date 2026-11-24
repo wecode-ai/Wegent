@@ -354,6 +354,10 @@ export function createWorkbenchPaneSessionSource(
       if (!isActive()) return Promise.resolve(undefined)
       return bind().commands.ignoreRequestUserInput(...args)
     },
+    skipRequestUserInput: (...args: Parameters<PaneCommands['skipRequestUserInput']>) => {
+      if (!isActive()) return
+      return bind().commands.skipRequestUserInput(...args)
+    },
     sendQueuedMessage: (...args: Parameters<PaneCommands['sendQueuedMessage']>) => {
       if (!isActive()) return Promise.resolve(undefined)
       return bind().commands.sendQueuedMessage(...args)

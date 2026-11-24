@@ -25,10 +25,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Preserve the original 30s start period plus 30 five-second health checks.
-deadline=$((SECONDS + 180))
 wait_for_url() {
   local name="$1" url="$2" container="${3:-}"
+  # Preserve the original 30s start period plus 30 five-second health checks.
+  # Begin the budget after image acquisition and container creation.
+  local deadline=$((SECONDS + 180))
   while ((SECONDS < deadline)); do
     if [[ -n "$container" ]]; then
       local state

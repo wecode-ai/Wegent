@@ -2504,6 +2504,9 @@ export function createRuntimeWorkApiFromIpc(
             address: { ...data.address, deviceId: localDeviceId, taskId },
             message: data.message,
             requestUserInputResponse: inputResponse,
+            ...(data.clientUserMessageId ? { clientUserMessageId: data.clientUserMessageId } : {}),
+            ...(data.attachmentIds?.length ? { attachmentIds: data.attachmentIds } : {}),
+            ...(data.attachments?.length ? { attachments: data.attachments } : {}),
           },
           localDeviceId
         )

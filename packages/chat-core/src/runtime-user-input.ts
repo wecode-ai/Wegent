@@ -89,6 +89,10 @@ export function requestUserInputResponseText(response: RequestUserInputResponse)
   return answers.length > 0 ? answers.join('\n') : '继续'
 }
 
+export function requestUserInputResponseAttachments(response: RequestUserInputResponse) {
+  return Object.values(response.answers).flatMap(answer => answer.attachments ?? [])
+}
+
 export function isImplementationPlanRequestUserInput(
   payload: RequestUserInputPayload | null | undefined
 ): boolean {
@@ -140,8 +144,9 @@ export function isAsyncRequestUserInputPayload(
 export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
   messages: WorkbenchMessage<TAttachment, TFileChanges>[]
 ): WorkbenchMessage<TAttachment, TFileChanges>[] {
-  const replyByIndex = asyncReplyByMessageIndex(messages)
+  if (!messages.some(hasAsyncRequestUserInput)) return messages
   const rowsByReply = resolveAsyncRequestUserInputReplies(messages)
+  const replyByIndex = asyncReplyByMessageIndex(messages)
   const offsetByReply = new Map<string, number>()
   let changed = false
   const resolved = messages.map((message, index) => {
@@ -152,18 +157,24 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
       if (
         block.type !== 'tool' ||
         !isRequestUserInputPayload(block.renderPayload) ||
-        !isAsyncRequestUserInputPayload(block.renderPayload)
+        !isAsyncRequestUserInputPayload(block.renderPayload) ||
+        hasRequestUserInputResponse(block.renderPayload)
       ) {
         return block
       }
+      if (
+        !asyncReplyCanAnswerTurn(reply, {
+          ...asyncQuestionTurn(message),
+          createdAtMs: block.createdAt,
+        })
+      )
+        return block
+      if (!rows) return resolveAsyncBlock<TFileChanges>(block, [])
       const offset = offsetByReply.get(reply.id) ?? 0
       const count = block.renderPayload.questions?.length ?? 0
+      if (rows.length < offset + count) return block
       offsetByReply.set(reply.id, offset + count)
-      return resolveAsyncBlock<TFileChanges>(
-        block,
-        reply.content,
-        rows?.slice(offset, offset + count)
-      )
+      return resolveAsyncBlock<TFileChanges>(block, rows.slice(offset, offset + count))
     })
     if (!blocks || blocks.every((block, blockIndex) => block === message.blocks![blockIndex])) {
       return message
@@ -172,6 +183,18 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
     return { ...message, blocks }
   })
   return changed ? resolved : messages
+}
+
+function hasAsyncRequestUserInput<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>
+): boolean {
+  return Boolean(
+    message.blocks?.some(block => {
+      if (block.type !== 'tool') return false
+      const payload = block.renderPayload
+      return isRequestUserInputPayload(payload) && isAsyncRequestUserInputPayload(payload)
+    })
+  )
 }
 
 export interface AsyncRequestUserInputReply {
@@ -194,12 +217,24 @@ export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
   messages: WorkbenchMessage<TAttachment, TFileChanges>[]
 ): Map<string, AsyncRequestUserInputReply[]> {
   const replies = new Map<string, AsyncRequestUserInputReply[]>()
-  let questions: string[] = []
+  let questions: PendingAsyncQuestion[] = []
   for (const message of messages) {
     if (isDeliveredRequestUserInputReply(message)) {
-      const rows = pairQuestionsWithReply(questions, message.content)
-      if (rows.length > 0) replies.set(message.id, rows)
-      questions = []
+      const eligible = questions.filter(question =>
+        asyncReplyCanAnswerTurn(message, {
+          clientUserMessageId: question.clientUserMessageId,
+          createdAtMs: question.createdAtMs,
+          turnId: question.turnId,
+        })
+      )
+      if (eligible.length > 0) {
+        const rows = pairQuestionsWithReply(
+          eligible.map(question => question.prompt),
+          message.content
+        )
+        if (rows.length > 0) replies.set(message.id, rows)
+        questions = questions.filter(question => !eligible.includes(question))
+      }
     } else {
       questions.push(...asyncQuestionPrompts(message))
     }
@@ -207,19 +242,30 @@ export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
   return replies
 }
 
+interface PendingAsyncQuestion {
+  prompt: string
+  turnId: string | null
+  clientUserMessageId: string | null
+  createdAtMs: number | null
+}
+
 function asyncQuestionPrompts<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>
-): string[] {
+): PendingAsyncQuestion[] {
+  const { clientUserMessageId, turnId } = asyncQuestionTurn(message)
   return (message.blocks ?? []).flatMap(block => {
     if (block.type !== 'tool') return []
     const payload = block.renderPayload
     if (!isRequestUserInputPayload(payload) || !isAsyncRequestUserInputPayload(payload)) {
       return []
     }
-    return (payload.questions ?? []).map(
-      (question, index) =>
-        question.question?.trim() || question.id?.trim() || `question_${index + 1}`
-    )
+    return (payload.questions ?? []).map((question, index) => ({
+      prompt:
+        question.question?.trim() || question.id?.trim() || `question_${index + 1}`,
+      turnId,
+      clientUserMessageId,
+      createdAtMs: Number.isFinite(block.createdAt) ? block.createdAt : null,
+    }))
   })
 }
 
@@ -246,8 +292,7 @@ function pairQuestionsWithReply(questions: string[], reply: string): AsyncReques
 
 function resolveAsyncBlock<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
-  reply: string,
-  rows?: AsyncRequestUserInputReply[]
+  rows: AsyncRequestUserInputReply[]
 ): WorkbenchProcessingBlock<TFileChanges> {
   if (block.type !== 'tool') return block
   const payload = block.renderPayload
@@ -260,19 +305,59 @@ function resolveAsyncBlock<TFileChanges>(
     status: 'done',
     renderPayload: {
       ...payload,
-      response: asyncRequestUserInputResponse(payload, reply, rows),
+      response: asyncRequestUserInputResponse(payload, rows),
     },
   }
 }
 
-function asyncReplyByMessageIndex(messages: WorkbenchMessage[]): (WorkbenchMessage | null)[] {
-  const replies: (WorkbenchMessage | null)[] = new Array(messages.length).fill(null)
-  let reply: WorkbenchMessage | null = null
+function asyncReplyByMessageIndex<TAttachment, TFileChanges>(
+  messages: WorkbenchMessage<TAttachment, TFileChanges>[]
+): (WorkbenchMessage<TAttachment, TFileChanges> | null)[] {
+  const replies: (WorkbenchMessage<TAttachment, TFileChanges> | null)[] = new Array(
+    messages.length
+  ).fill(null)
+  let reply: WorkbenchMessage<TAttachment, TFileChanges> | null = null
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    replies[index] = reply
+    replies[index] = reply && asyncReplyCanAnswerTurn(reply, asyncQuestionTurn(messages[index]))
+      ? reply
+      : null
     if (isDeliveredRequestUserInputReply(messages[index])) reply = messages[index]
   }
   return replies
+}
+
+type AsyncReplyMessage = Pick<WorkbenchMessage, 'createdAt' | 'id' | 'turnId'> & {
+  runtimeClientUserMessageId?: string | null
+  runtimeGuidance?: boolean | null
+}
+
+interface AsyncQuestionTurn {
+  clientUserMessageId: string | null
+  createdAtMs: number | null
+  turnId: string | null
+}
+
+function asyncQuestionTurn<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>
+): AsyncQuestionTurn {
+  return {
+    clientUserMessageId:
+      (message as WorkbenchMessage & { runtimeClientUserMessageId?: string | null })
+        .runtimeClientUserMessageId?.trim() || null,
+    createdAtMs: null,
+    turnId: message.turnId?.trim() || null,
+  }
+}
+
+/** A turn prompt introduces its questions; only later turns or guidance can answer them. */
+function asyncReplyCanAnswerTurn(reply: AsyncReplyMessage, question: AsyncQuestionTurn): boolean {
+  if (question.clientUserMessageId && reply.id === question.clientUserMessageId) return false
+  const replyTime = Date.parse(reply.createdAt)
+  if (Number.isFinite(replyTime) && question.createdAtMs != null && replyTime < question.createdAtMs)
+    return false
+  const replyTurnId = reply.turnId
+  if (!question.turnId || !replyTurnId || question.turnId !== replyTurnId) return true
+  return reply.runtimeGuidance === true
 }
 
 /** The user message that answers a preceding question, whenever the composer sent it. */
@@ -283,8 +368,7 @@ export function isDeliveredRequestUserInputReply(message: WorkbenchMessage): boo
 /** A single free-form reply answers every question the async card asked. */
 function asyncRequestUserInputResponse(
   payload: RequestUserInputPayload,
-  reply: string,
-  rows?: AsyncRequestUserInputReply[]
+  rows: AsyncRequestUserInputReply[]
 ): RequestUserInputResponse {
   return {
     requestId: payload.requestId ?? payload.request_id,
@@ -293,7 +377,7 @@ function asyncRequestUserInputResponse(
     answers: Object.fromEntries(
       (payload.questions ?? []).map((question, index) => [
         question.id?.trim() || `question_${index + 1}`,
-        { answers: [rows?.[index]?.answer ?? reply] },
+        { answers: rows[index] ? [rows[index].answer] : [] },
       ])
     ),
   }

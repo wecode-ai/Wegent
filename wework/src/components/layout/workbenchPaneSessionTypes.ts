@@ -56,6 +56,7 @@ export interface RuntimeMessageSendResult {
   accepted: boolean
   queued: boolean
   queuePosition?: number | null
+  guidanceTurnId?: string
 }
 
 export interface LoadedTranscriptRange {

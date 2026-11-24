@@ -11,6 +11,7 @@ for multi-worker deployments.
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
@@ -45,6 +46,8 @@ def create_socketio_server() -> socketio.AsyncServer:
         # A half-open subscription must time out so redis-py can resubscribe.
         mgr = ObservedRedisManager(
             redis_url,
+            ack_diagnostics=os.environ.get("WEWORK_E2E_SOCKET_ACK_DIAGNOSTICS")
+            == "true",
             redis_options={
                 "client_name": settings.SOCKETIO_REDIS_CLIENT_NAME,
                 "socket_timeout": settings.SOCKETIO_REDIS_SOCKET_TIMEOUT,
