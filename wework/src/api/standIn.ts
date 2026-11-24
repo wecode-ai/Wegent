@@ -305,6 +305,11 @@ export interface RemoteStandInRoleBranch {
   cancelGroup?: boolean
 }
 
+export interface StandInTaskPermissionSnapshot {
+  taskPermissions: StandInTaskPermissions
+  snapshotRevision?: string | null
+}
+
 export interface StandInExecutorApi {
   deviceIdentity(deviceId: string): Promise<{ deviceId: string; backendDeviceId: string }>
   gitConnection(deviceId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>
@@ -346,7 +351,7 @@ export interface StandInExecutorApi {
     deviceId: string,
     taskId: string,
     taskPermissions: StandInTaskPermissions
-  ): Promise<{ taskPermissions: StandInTaskPermissions }>
+  ): Promise<StandInTaskPermissionSnapshot>
   checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
     userId: number,

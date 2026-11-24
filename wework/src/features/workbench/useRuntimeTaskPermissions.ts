@@ -1,8 +1,10 @@
 import type { StandInTaskPermissions } from '@/api/personalStandIn'
+import type { StandInTaskPermissionSnapshot } from '@/api/standIn'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
 import { useRef, useState } from 'react'
+import { isNewerRuntimeTaskSnapshotRevision } from './runtimeTaskLifecycle/projection'
 import type { RefreshWorkLists } from './workbenchContextTypes'
 import type { WorkbenchServices } from './workbenchServices'
 
@@ -13,15 +15,14 @@ const HIDDEN_TASK_PERMISSIONS: ComposerControls = { permissionControls: null }
 interface PermissionMutation {
   scope: string
   pending?: boolean
-  before?: StandInTaskPermissions
-  saved?: StandInTaskPermissions
+  snapshot: StandInTaskPermissionSnapshot
   error?: string
 }
 
-function samePermissions(left?: StandInTaskPermissions, right?: StandInTaskPermissions) {
+function samePermissions(left: StandInTaskPermissions, right: StandInTaskPermissions) {
   return (
-    left?.permissionMode === right?.permissionMode &&
-    (left?.commandApproval ?? 'manual') === (right?.commandApproval ?? 'manual')
+    left.permissionMode === right.permissionMode &&
+    (left.commandApproval ?? 'manual') === (right.commandApproval ?? 'manual')
   )
 }
 
@@ -40,9 +41,6 @@ export function useRuntimeTaskPermissions(
   const stored = handle?.taskPermissions as StandInTaskPermissions | undefined
   const scope = JSON.stringify([userId, address?.deviceId, address?.taskId])
   const current = mutation?.scope === scope ? mutation : null
-  if (current?.saved && !current.pending && !samePermissions(current.before, stored)) {
-    setMutation(null)
-  }
   if (
     !address ||
     !stored ||
@@ -53,17 +51,30 @@ export function useRuntimeTaskPermissions(
   ) {
     return origin?.type === 'stand_in_task' ? HIDDEN_TASK_PERMISSIONS : NO_TASK_PERMISSIONS
   }
-  const permissions =
-    current?.saved && samePermissions(current.before, stored) ? current.saved : stored
+  const storedSnapshot = { taskPermissions: stored, snapshotRevision: task?.snapshotRevision }
+  let snapshot = current?.snapshot ?? storedSnapshot
+  if (
+    current &&
+    isNewerRuntimeTaskSnapshotRevision(storedSnapshot.snapshotRevision, snapshot.snapshotRevision)
+  ) {
+    snapshot = storedSnapshot
+    setMutation({ ...current, snapshot })
+  }
+  const permissions = snapshot.taskPermissions
   const save = async (next: StandInTaskPermissions) => {
     if (!active || inFlight.current.has(scope) || samePermissions(permissions, next)) return
     inFlight.current.add(scope)
-    setMutation({ scope, pending: true, before: stored, saved: current?.saved })
+    setMutation({ scope, pending: true, snapshot })
     try {
       const result = await api.setTaskPermissions(userId, address.deviceId, address.taskId, next)
-      setMutation(value =>
-        value?.scope === scope ? { scope, before: stored, saved: result.taskPermissions } : value
-      )
+      setMutation(value => {
+        if (value?.scope !== scope) return value
+        const newer = isNewerRuntimeTaskSnapshotRevision(
+          value.snapshot.snapshotRevision,
+          result.snapshotRevision
+        )
+        return { scope, snapshot: newer ? value.snapshot : result }
+      })
     } catch (cause) {
       reportStandInError('save_task_permissions', cause, address.deviceId)
       const error = getStandInErrorMessage(cause, 'task_permissions_save_failed')

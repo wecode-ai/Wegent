@@ -28,17 +28,21 @@ impl RuntimeWorkRpcHandler {
                 None
             }
         };
-        let current = self
+        let (current, revision) = self
             .store
-            .read_task(task, owned_permissions)
+            .read_task(task, |link| {
+                owned_permissions(link)
+                    .map(|permissions| (permissions, link.snapshot_revision.clone()))
+            })
             .flatten()
             .ok_or_else(super::stand_in_role_delegation::denied)?;
         if current == permissions {
-            return Ok(json!({"taskPermissions":current}));
+            return Ok(json!({"taskPermissions":current,"snapshotRevision":revision}));
         }
 
         let mut saved = false;
-        self.store
+        let updated = self
+            .store
             .try_update_task(task, |link| {
                 if owned_permissions(link).is_some() {
                     link.runtime_handle[TASK_PERMISSIONS] = json!(permissions);
@@ -54,12 +58,11 @@ impl RuntimeWorkRpcHandler {
                     "task_permissions_save_failed",
                     "Could not save task permissions",
                 )
-            })?;
-        if !saved {
-            return Err(super::stand_in_role_delegation::denied());
-        }
+            })?
+            .filter(|_| saved)
+            .ok_or_else(super::stand_in_role_delegation::denied)?;
         emit_runtime_work_changed(&self.event_tx, &self.device_id, task);
-        Ok(json!({"taskPermissions":permissions}))
+        Ok(json!({"taskPermissions":permissions,"snapshotRevision":updated.snapshot_revision}))
     }
 }
 
@@ -89,20 +92,29 @@ mod tests {
             task.parent = Some(json!({"taskId":"specialist"}));
             task.runtime_handle[TASK_PERMISSIONS] = json!({"permissionMode":"full-access"});
         });
+        let read_task =
+            || handler.get_task(&json!({"taskId":"specialist"})).unwrap()["task"].clone();
+        let initial = read_task();
         assert_eq!(
-            handler.get_task(&json!({"taskId":"specialist"})).unwrap()["task"]["runtimeHandle"]
-                [TASK_PERMISSIONS],
+            initial["runtimeHandle"][TASK_PERMISSIONS],
             json!({"permissionMode":"read-only"})
         );
-        let update = |task: &str, user| {
+        let revision = |snapshot: &Value| {
+            snapshot["snapshotRevision"]
+                .as_str()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+        };
+        let update = |task: &str, user, mode: &str| {
             json!({"method":"runtime.tasks.permissions.set", "payload":{
-                "taskId":task,"userId":user,"taskPermissions":{"permissionMode":"workspace-write"}
+                "taskId":task,"userId":user,"taskPermissions":{"permissionMode":mode}
             }})
         };
         for (task, user) in [("specialist", 8), ("source-worker", 7), ("forked", 7)] {
             assert_eq!(
                 handler
-                    .handle_runtime_rpc(update(task, user))
+                    .handle_runtime_rpc(update(task, user, "workspace-write"))
                     .await
                     .unwrap_err()
                     .code,
@@ -110,17 +122,31 @@ mod tests {
             );
         }
         let saved = handler
-            .handle_runtime_rpc(update("specialist", 7))
+            .handle_runtime_rpc(update("specialist", 7, "workspace-write"))
             .await
             .unwrap();
         assert_eq!(
             saved[TASK_PERMISSIONS],
             json!({"permissionMode":"workspace-write"})
         );
+        assert!(revision(&saved) > revision(&initial));
+        assert_eq!(revision(&read_task()), revision(&saved));
+
+        let read_only = update("specialist", 7, "read-only");
+        let restored = handler.handle_runtime_rpc(read_only.clone()).await.unwrap();
+        assert!(revision(&restored) > revision(&saved));
+        assert_eq!(
+            handler.handle_runtime_rpc(read_only).await.unwrap(),
+            restored
+        );
         let reloaded = RuntimeWorkStore::new(index).get_task("specialist").unwrap();
         assert_eq!(
             json!(task_permissions(&reloaded).unwrap()),
-            saved[TASK_PERMISSIONS]
+            restored[TASK_PERMISSIONS]
+        );
+        assert_eq!(
+            reloaded.snapshot_revision.as_deref(),
+            restored["snapshotRevision"].as_str()
         );
     }
 }

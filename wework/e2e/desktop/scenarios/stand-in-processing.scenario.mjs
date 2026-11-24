@@ -3,6 +3,7 @@ import {
   openStandInActivity,
 } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -32,6 +33,24 @@ const USER = 9001
 const ROLE = 'silent-review'
 const MARKER = 'SILENT_INTAKE_REAL_ASSIGNMENT'
 const FOLLOWUP = 'SILENT_PROGRESS_CHECK'
+const BACKGROUND_PERMISSION_PROBE = 'BACKGROUND_PERMISSION_PROBE'
+const BACKGROUND_PERMISSION_DONE = 'BACKGROUND_PERMISSION_DONE'
+const BACKGROUND_CONTINUE_CALL = 'background-continue-owner-task'
+const FULL_ACCESS = { permissionMode: 'full-access' }
+
+function assertNativeTaskPermission(log, taskId, profile) {
+  assert.ok(
+    log
+      .split('\n')
+      .some(
+        line =>
+          line.includes(`codex source sandbox applied task_id=${taskId} `) &&
+          line.includes(String.raw`\"id\":\"${profile}\"`) &&
+          line.includes(String.raw`reviewer="\"user\""`)
+      ),
+    `Native Codex task ${taskId} must apply ${profile} with the human reviewer`
+  )
+}
 
 function processingInput(body) {
   const input = Array.isArray(body.input) ? body.input : [body.input]
@@ -60,6 +79,7 @@ export function createDesktopScenario({
   captureScreenshot,
   workspacePath,
   executorHome,
+  resultDir,
   uiTimeoutMs,
   modelResponseTimeoutMs,
 }) {
@@ -68,6 +88,8 @@ export function createDesktopScenario({
   let workCalls = 0
   let ordinaryTaskId
   let createdTaskId
+  let checkBackgroundPermission = false
+  let backgroundContinueAccepted = false
   let intake
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const meetingStory = createMeetingUserStory({
@@ -140,6 +162,31 @@ export function createDesktopScenario({
         events = [assistantMessage(`${ONBOARDING_FIRST_MESSAGE}_ANSWERED`)]
       } else if (latestUserInput.includes(ONBOARDING_FOLLOWUP)) {
         events = [assistantMessage(`${ONBOARDING_FOLLOWUP}_ANSWERED`)]
+      } else if (
+        checkBackgroundPermission &&
+        latestUserInput.includes('Review this silent intake batch')
+      ) {
+        if (requestContainsToolOutput(body, BACKGROUND_CONTINUE_CALL)) {
+          const result = JSON.parse(readMcpToolOutput(body, BACKGROUND_CONTINUE_CALL))
+          assert.equal(result.accepted, true, 'The real coordinator must enqueue this follow-up')
+          assert.equal(result.taskId, createdTaskId)
+          backgroundContinueAccepted = true
+          events = [assistantMessage('已安排后台续办。')]
+        } else {
+          events = mcpToolRequestEvents(body, {
+            toolName: 'continue_task',
+            directToolName: 'mcp__wework_stand_in__continue_task',
+            argumentsValue: {
+              taskId: createdTaskId,
+              requestId: BACKGROUND_CONTINUE_CALL,
+              message: BACKGROUND_PERMISSION_PROBE,
+            },
+            searchCallId: `${BACKGROUND_CONTINUE_CALL}-search`,
+            toolCallId: BACKGROUND_CONTINUE_CALL,
+          }).events
+        }
+      } else if (latestUserInput.includes(BACKGROUND_PERMISSION_PROBE)) {
+        events = [assistantMessage(BACKGROUND_PERMISSION_DONE)]
       } else if (input.includes('Review this silent intake batch')) {
         coordinatorCalls++
         const readId = `silent-read-${round}`
@@ -254,6 +301,7 @@ export function createDesktopScenario({
               preferences: 'Only delegate concrete work.',
               model,
               workspace,
+              taskPermissions: FULL_ACCESS,
             },
             roles: [
               {
@@ -480,6 +528,56 @@ export function createDesktopScenario({
         )
         assert.ok(createdTaskId)
         await captureScreenshot(control, 'silent-06-primary-creates-task.png')
+        const ownerTask = await waitFor(
+          () => rpc(control, 'runtime.tasks.get', { taskId: createdTaskId }),
+          value => value.task?.status === 'done',
+          modelResponseTimeoutMs
+        )
+        assert.deepEqual(ownerTask.task.runtimeHandle.taskPermissions, FULL_ACCESS)
+        const ownerThreadId = ownerTask.task.runtimeHandle.threadId
+        assert.ok(ownerThreadId)
+        const executorLog = join(resultDir, 'executor.log')
+        const ownerLog = await readFile(executorLog, 'utf8')
+        assertNativeTaskPermission(ownerLog, createdTaskId, ':danger-full-access')
+
+        checkBackgroundPermission = true
+        const scheduledBackground = await rpc(control, 'runtime.coordination.wake', {
+          contextId: `personal:${USER}`,
+        })
+        assert.equal(scheduledBackground.accepted, true)
+        await waitFor(
+          () => rpc(control, 'runtime.tasks.transcript', { taskId: createdTaskId, limit: 20 }),
+          transcript =>
+            backgroundContinueAccepted &&
+            transcript.messages?.some(
+              message =>
+                message.role === 'assistant' &&
+                message.content?.includes(BACKGROUND_PERMISSION_DONE)
+            ),
+          modelResponseTimeoutMs
+        )
+        checkBackgroundPermission = false
+        const backgroundTask = await rpc(control, 'runtime.tasks.get', { taskId: createdTaskId })
+        assert.equal(backgroundTask.task.runtimeHandle.threadId, ownerThreadId)
+        assert.deepEqual(backgroundTask.task.runtimeHandle.taskPermissions, FULL_ACCESS)
+        assertNativeTaskPermission(
+          (await readFile(executorLog, 'utf8')).slice(ownerLog.length),
+          createdTaskId,
+          'wework-source-read'
+        )
+        const afterPermissionProbe = await rpc(control, 'runtime.stand_in.personal.get', {
+          userId: USER,
+        })
+        await rpc(control, 'runtime.stand_in.personal.save', {
+          userId: USER,
+          settings: {
+            ...afterPermissionProbe,
+            primary: {
+              ...afterPermissionProbe.primary,
+              taskPermissions: initial.primary?.taskPermissions,
+            },
+          },
+        })
         await control.command('fill', input, { value: 'PRIMARY_ORCHESTRATE_TASK_CONTINUE' })
         await control.command('press', input, { key: 'Enter' })
         await control.command(

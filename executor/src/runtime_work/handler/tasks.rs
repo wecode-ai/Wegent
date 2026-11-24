@@ -5,10 +5,16 @@
 #[cfg(test)]
 use super::context_compaction::context_compaction_outcome;
 use super::context_compaction::wait_for_context_compaction;
+use super::turns::TurnAdmission;
 use super::*;
 
 #[path = "startup_recovery.rs"]
 mod startup_recovery;
+
+enum OwnerMessage {
+    Direct,
+    Interrupt,
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn create_collaboration_dispatch(
@@ -905,11 +911,14 @@ impl RuntimeWorkRpcHandler {
                 resume_thread_id: None,
                 initial_thread_goal,
             };
-            let spawn_result = if force_start {
-                self.spawn_forced_turn(turn).await
+            let admission = if force_start {
+                TurnAdmission::Forced
             } else {
-                self.spawn_turn(turn).await
+                TurnAdmission::Normal
             };
+            let spawn_result = self
+                .schedule_turn(turn, admission, initial_permissions.is_some())
+                .await;
             if let Err(error) = spawn_result {
                 self.retain_failed_runtime_task(&local_task_id, &error);
                 self.forget_runtime_model_config(&local_task_id);
@@ -1104,7 +1113,7 @@ impl RuntimeWorkRpcHandler {
         }) {
             return Ok(json!({"success": false, "accepted": false, "code": "owner_unavailable"}));
         }
-        self.send_message_with_activity_checks(payload, true, false, true, None)
+        self.send_message_with_activity_checks(payload, true, None, true, None)
             .await
     }
 
@@ -1117,7 +1126,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, false, false, false, Some(attempt))
+        self.send_message_with_activity_checks(payload, false, None, false, Some(attempt))
             .await
     }
 
@@ -1140,7 +1149,8 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&self.canonical_local_task_id(&local_task_id));
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, false, owner_input, from_event, None)
+        let owner_message = owner_input.then_some(OwnerMessage::Direct);
+        self.send_message_with_activity_checks(payload, false, owner_message, from_event, None)
             .await
     }
 
@@ -1203,13 +1213,17 @@ impl RuntimeWorkRpcHandler {
                 .await
                 .map(Some);
         }
-        self.send_message_after_local_checks(payload)
+        self.send_message_after_local_checks(payload, None)
             .await
             .map(Some)
     }
 
-    async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false, false, false, None)
+    async fn send_message_after_local_checks(
+        &self,
+        payload: Value,
+        owner_message: Option<OwnerMessage>,
+    ) -> Result<Value, AppIpcError> {
+        self.send_message_with_activity_checks(payload, false, owner_message, false, None)
             .await
     }
 
@@ -1221,7 +1235,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true, false, false, None)
+        self.send_message_with_activity_checks(payload, true, None, false, None)
             .await
     }
 
@@ -1229,7 +1243,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         mut payload: Value,
         activity: bool,
-        owner_input: bool,
+        owner_message: Option<OwnerMessage>,
         from_event: bool,
         role_retry_attempt: Option<u64>,
     ) -> Result<Value, AppIpcError> {
@@ -1304,11 +1318,11 @@ impl RuntimeWorkRpcHandler {
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
         let question_response = request_user_input_response(&payload);
         // The desktop delivers an async answer as the next ordinary user message.
-        let owner_input = owner_input
-            && question_response.is_none()
-            && !existing_link.as_ref().is_some_and(|link| {
+        let reply_input = question_response.is_some()
+            || existing_link.as_ref().is_some_and(|link| {
                 link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
             });
+        let owner_input = matches!(owner_message, Some(OwnerMessage::Direct)) && !reply_input;
         let ordinary_input = question_response.is_none();
         if let Some(response) = question_response {
             if response["delivery"] == "async" {
@@ -1689,6 +1703,8 @@ impl RuntimeWorkRpcHandler {
         );
 
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
+        let use_saved_stand_in_permissions =
+            (owner_message.is_some() && !reply_input) || role_retry_attempt.is_some();
         let turn = SpawnTurnRequest {
             // A verified retry already restored its origin and advanced only the attempt.
             // Rebinding at admission would replace it with the preceding attempt.
@@ -1704,9 +1720,11 @@ impl RuntimeWorkRpcHandler {
             initial_thread_goal,
         };
         if was_busy && !completed_native_turn {
-            self.submit_continuation(turn).await?;
+            self.submit_continuation(turn, use_saved_stand_in_permissions)
+                .await?;
         } else {
-            self.spawn_turn(turn).await?;
+            self.schedule_turn(turn, TurnAdmission::Normal, use_saved_stand_in_permissions)
+                .await?;
         }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
@@ -1764,7 +1782,9 @@ impl RuntimeWorkRpcHandler {
                 );
             }
             // Ordinary admission rechecks a newer owner under the reacquired gate.
-            return self.send_message_after_local_checks(payload).await;
+            return self
+                .send_message_after_local_checks(payload, Some(OwnerMessage::Interrupt))
+                .await;
         }
         if let Some(thread_id) = thread_id.as_deref() {
             if self
@@ -1776,7 +1796,9 @@ impl RuntimeWorkRpcHandler {
                 )
                 .await
             {
-                return self.send_message_after_local_checks(payload).await;
+                return self
+                    .send_message_after_local_checks(payload, Some(OwnerMessage::Interrupt))
+                    .await;
             }
             let provider_stopped = tokio::time::timeout(
                 Duration::from_secs(10),
@@ -1791,7 +1813,8 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
-        self.send_message_after_local_checks(payload).await
+        self.send_message_after_local_checks(payload, Some(OwnerMessage::Interrupt))
+            .await
     }
 
     async fn settle_local_execution_from_terminal_codex_turn(
@@ -2029,18 +2052,22 @@ impl RuntimeWorkRpcHandler {
         } else {
             (None, Some(thread_id))
         };
-        self.spawn_turn(SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: local_task_id.clone(),
-            runtime: "codex".to_owned(),
-            request,
-            send_payload: None,
-            direct_thread_id,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id,
-            initial_thread_goal: None,
-        })
+        self.schedule_turn(
+            SpawnTurnRequest {
+                task_kind: None,
+                local_task_id: local_task_id.clone(),
+                runtime: "codex".to_owned(),
+                request,
+                send_payload: None,
+                direct_thread_id,
+                fork_thread_id: None,
+                fork_thread_path: None,
+                resume_thread_id,
+                initial_thread_goal: None,
+            },
+            TurnAdmission::Normal,
+            true,
+        )
         .await?;
 
         Ok(json!({
