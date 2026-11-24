@@ -193,7 +193,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       assert.ok(
         Math.abs(Date.parse(homeDetail.created_at) - Date.parse(homeProjectIssue.created_at)) <
           60_000,
-        'Issues created together with and without a project must have the same creation time'
+        `Issues created together must use the same clock: personal ${homeDetail.created_at}, project ${homeProjectIssue.created_at}`
       )
     },
     async verify(control) {
