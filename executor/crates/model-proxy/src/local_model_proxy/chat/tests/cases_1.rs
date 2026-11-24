@@ -90,6 +90,7 @@ async fn converts_streaming_reasoning_text_and_custom_tool() {
     assert!(output.contains("response.reasoning_summary_text.delta"));
     assert!(output.contains("response.output_text.delta"));
     assert!(output.contains("response.custom_tool_call_input.delta"));
+    assert!(output.contains("\"item_id\":\"ctc_1\""));
     assert!(output.contains("\"input\":\"patch\""));
     assert!(output.contains("response.completed"));
     assert!(output.contains("\"input_tokens\":10"));
