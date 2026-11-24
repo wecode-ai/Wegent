@@ -502,6 +502,8 @@ Claude Code、Agno 运行时和 Codex 任务 shell 都会收到一组任务身�
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
 
+Wework 桌面应用启动本地 executor 时，会传入 Electron 报告的应用版本。executor 向模型发送请求时会附上 `x-wework-version`、`x-wework-platform` 和 `x-wework-arch`，分别表示应用版本、操作系统和执行架构。经 Wegent 模型网关的请求使用网关的上游请求头转发机制，模型服务收到相同的字段名。
+
 ### 聊天任务设备解析与 Claude Code 启动上下文
 
 普通聊天 Task 通过本地 executor 执行时，Backend 在创建或继续任务前解析真实派发设备，优先级如下：
