@@ -5,10 +5,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, type WebContents } from 'electron'
 import { PythonRuntimeDownloadTimeoutError } from '../runtime/python-runtime-downloads.js'
-import {
-  captureWindowActivationSnapshot,
-  logWindowActivation,
-} from './window-activation-diagnostics.js'
+import { logWindowActivationForElectron } from './window-activation-diagnostics.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { VerificationDevtools } from './verification-devtools.js'
 
@@ -316,14 +313,15 @@ export class WeworkDesktopControlBridge {
   private async dispatch(request: DesktopControlRequest): Promise<unknown> {
     if (request.action === 'focus') {
       const target = this.requiredWindow()
-      logWindowActivation(
+      logWindowActivationForElectron(
         {
           reason: 'desktop-control-focus',
           initiator: 'plugin',
           userInitiated: false,
           target: 'main',
         },
-        captureWindowActivationSnapshot({ app, BrowserWindow }, target)
+        { app, BrowserWindow },
+        target
       )
       if (target.isMinimized()) target.restore()
       target.show()

@@ -31,10 +31,7 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat, writeFile } from 'node:fs/promises'
-import {
-  captureWindowActivationSnapshot,
-  logWindowActivation,
-} from './window-activation-diagnostics.js'
+import { logWindowActivationForElectron } from './window-activation-diagnostics.js'
 import { cpuLoadRatioBetween, cpuTimeSample } from './system-cpu.js'
 import { availableMemoryRatio } from './maintenance-memory.js'
 import { basename, join, resolve } from 'node:path'
@@ -1055,30 +1052,30 @@ export function createElectronCapabilityRouter(
   })
   router.register('window.close', () => requiredWindow(window).close())
   router.register('dialog.open', params => {
-    logWindowActivation(
+    logWindowActivationForElectron(
       { reason: 'native-dialog', initiator: 'unknown', userInitiated: null, target: 'dialog-open' },
-      captureWindowActivationSnapshot({ app, BrowserWindow })
+      { app, BrowserWindow }
     )
     const override = e2eOpenDialogOverride()
     return override ?? dialog.showOpenDialog(requiredWindow(window), openDialogOptions(params))
   })
   router.register('dialog.save', params => {
-    logWindowActivation(
+    logWindowActivationForElectron(
       { reason: 'native-dialog', initiator: 'unknown', userInitiated: null, target: 'dialog-save' },
-      captureWindowActivationSnapshot({ app, BrowserWindow })
+      { app, BrowserWindow }
     )
     const override = e2eSaveDialogOverride()
     return override ?? dialog.showSaveDialog(requiredWindow(window), saveDialogOptions(params))
   })
   router.register('dialog.message', params => {
-    logWindowActivation(
+    logWindowActivationForElectron(
       {
         reason: 'native-dialog',
         initiator: 'unknown',
         userInitiated: null,
         target: 'dialog-message',
       },
-      captureWindowActivationSnapshot({ app, BrowserWindow })
+      { app, BrowserWindow }
     )
     return dialog.showMessageBox(requiredWindow(window), messageBoxOptions(params))
   })

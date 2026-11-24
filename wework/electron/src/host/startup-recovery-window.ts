@@ -1,8 +1,5 @@
 import { app, BrowserWindow, clipboard, ipcMain, nativeTheme, shell } from 'electron'
-import {
-  captureWindowActivationSnapshot,
-  logWindowActivation,
-} from './window-activation-diagnostics.js'
+import { logWindowActivationForElectron } from './window-activation-diagnostics.js'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -26,14 +23,15 @@ export function showStartupRecovery(error: unknown): Promise<BrowserWindow> {
   recoveryActive = true
   failure = error instanceof Error ? error.message : String(error)
   if (recoveryWindow && !recoveryWindow.isDestroyed()) {
-    logWindowActivation(
+    logWindowActivationForElectron(
       {
         reason: 'startup-recovery',
         initiator: 'system',
         userInitiated: null,
         target: 'startup-recovery',
       },
-      captureWindowActivationSnapshot({ app, BrowserWindow }, recoveryWindow)
+      { app, BrowserWindow },
+      recoveryWindow
     )
     recoveryWindow.show()
     recoveryWindow.focus()
@@ -94,14 +92,15 @@ async function openRecoveryWindow(): Promise<BrowserWindow> {
     await window.loadFile(resolve(dist, 'shell/index.html'), {
       query: { theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light', recovery: '1' },
     })
-    logWindowActivation(
+    logWindowActivationForElectron(
       {
         reason: 'startup-recovery',
         initiator: 'system',
         userInitiated: null,
         target: 'startup-recovery',
       },
-      captureWindowActivationSnapshot({ app, BrowserWindow }, window)
+      { app, BrowserWindow },
+      window
     )
     window.show()
     return window

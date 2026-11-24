@@ -12,10 +12,7 @@ import {
   type WebContents,
 } from 'electron'
 import { randomUUID } from 'node:crypto'
-import {
-  captureWindowActivationSnapshot,
-  logWindowActivation,
-} from './window-activation-diagnostics.js'
+import { logWindowActivationForElectron } from './window-activation-diagnostics.js'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -226,7 +223,7 @@ export class EmbeddedBrowserManager {
     const handleNavigation = (event: Electron.Event, url: string) => {
       if (!url.startsWith('wework://')) return
       event.preventDefault()
-      logWindowActivation(
+      logWindowActivationForElectron(
         {
           reason: 'browser-navigate',
           initiator: 'system',
@@ -234,7 +231,7 @@ export class EmbeddedBrowserManager {
           target: 'browser',
           url,
         },
-        captureWindowActivationSnapshot({ app, BrowserWindow })
+        { app, BrowserWindow }
       )
       this.openWeworkScheme(url)
     }
@@ -321,7 +318,7 @@ export class EmbeddedBrowserManager {
       navigationError: null as BrowserBackgroundPageState['navigationError'],
     }
     this.backgroundPages.set(normalizedId, entry)
-    logWindowActivation(
+    logWindowActivationForElectron(
       {
         reason: 'browser-background-create',
         initiator: 'plugin',
@@ -329,11 +326,11 @@ export class EmbeddedBrowserManager {
         target: 'browser',
         label: normalizedId,
       },
-      captureWindowActivationSnapshot({ app, BrowserWindow })
+      { app, BrowserWindow }
     )
     view.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('wework://')) {
-        logWindowActivation(
+        logWindowActivationForElectron(
           {
             reason: 'browser-background-window-open',
             initiator: 'system',
@@ -342,7 +339,7 @@ export class EmbeddedBrowserManager {
             label: normalizedId,
             url,
           },
-          captureWindowActivationSnapshot({ app, BrowserWindow })
+          { app, BrowserWindow }
         )
         this.openWeworkScheme(url)
       } else if (isBrowserUrl(url)) void shell.openExternal(url)
@@ -376,7 +373,7 @@ export class EmbeddedBrowserManager {
     const entry = this.requiredBackgroundPage(id)
     if (!app.isActive() && !this.backgroundNavigationsLogged.has(id)) {
       this.backgroundNavigationsLogged.add(id)
-      logWindowActivation(
+      logWindowActivationForElectron(
         {
           reason: 'browser-background-navigate',
           initiator: 'plugin',
@@ -385,7 +382,7 @@ export class EmbeddedBrowserManager {
           label: id,
           url: rawUrl,
         },
-        captureWindowActivationSnapshot({ app, BrowserWindow })
+        { app, BrowserWindow }
       )
     }
     entry.navigationError = null
@@ -461,7 +458,7 @@ export class EmbeddedBrowserManager {
   attach(label: string, contents: WebContents): void {
     const normalizedLabel = requiredLabel(label)
     if (!app.isActive()) {
-      logWindowActivation(
+      logWindowActivationForElectron(
         {
           reason: 'webview-attach',
           initiator: 'system',
@@ -469,7 +466,7 @@ export class EmbeddedBrowserManager {
           target: 'browser',
           label: normalizedLabel,
         },
-        captureWindowActivationSnapshot({ app, BrowserWindow })
+        { app, BrowserWindow }
       )
     }
     const existing = this.entries.get(normalizedLabel)
@@ -512,7 +509,7 @@ export class EmbeddedBrowserManager {
     const entry = this.entries.get(parentLabel)
     if (!entry || !isBrowserUrl(url)) {
       if (url.startsWith('wework://')) {
-        logWindowActivation(
+        logWindowActivationForElectron(
           {
             reason: 'browser-popup-request',
             initiator: 'system',
@@ -521,7 +518,7 @@ export class EmbeddedBrowserManager {
             label: entry?.label,
             url,
           },
-          captureWindowActivationSnapshot({ app, BrowserWindow })
+          { app, BrowserWindow }
         )
         this.openWeworkScheme(url)
       } else if (isBrowserUrl(url)) void shell.openExternal(url)
@@ -545,7 +542,7 @@ export class EmbeddedBrowserManager {
     const label = requiredLabel(input.label)
     const isNewEntry = !this.entries.has(label)
     if (isNewEntry || !app.isActive()) {
-      logWindowActivation(
+      logWindowActivationForElectron(
         {
           reason: isNewEntry ? 'browser-open' : 'browser-reopen',
           initiator: 'unknown',
@@ -555,7 +552,7 @@ export class EmbeddedBrowserManager {
           agentActive: this.agentActive.has(label),
           url: input.url,
         },
-        captureWindowActivationSnapshot({ app, BrowserWindow })
+        { app, BrowserWindow }
       )
     }
     const existing = this.entries.get(label)
@@ -614,7 +611,7 @@ export class EmbeddedBrowserManager {
     )
     contents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('wework://')) {
-        logWindowActivation(
+        logWindowActivationForElectron(
           {
             reason: 'browser-window-open',
             initiator: 'system',
@@ -624,7 +621,7 @@ export class EmbeddedBrowserManager {
             agentActive: this.agentActive.has(entry.label),
             url,
           },
-          captureWindowActivationSnapshot({ app, BrowserWindow })
+          { app, BrowserWindow }
         )
         this.openWeworkScheme(url)
       } else if (isBrowserUrl(url)) {
@@ -1010,7 +1007,7 @@ export class EmbeddedBrowserManager {
     const firstBackgroundOperation =
       !app.isActive() && !this.backgroundOperationsLogged.has(normalizedLabel)
     if (crossedEngagementBoundary || approvalRequested || firstBackgroundOperation) {
-      logWindowActivation(
+      logWindowActivationForElectron(
         {
           reason: 'agent-control',
           initiator: 'agent',
@@ -1020,7 +1017,7 @@ export class EmbeddedBrowserManager {
           agentActive: this.agentActive.has(normalizedLabel),
           agentStatus: effectiveStatus,
         },
-        captureWindowActivationSnapshot({ app, BrowserWindow })
+        { app, BrowserWindow }
       )
       if (firstBackgroundOperation) this.backgroundOperationsLogged.add(normalizedLabel)
     }

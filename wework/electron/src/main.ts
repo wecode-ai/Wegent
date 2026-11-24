@@ -3294,11 +3294,11 @@ if (hasSingleInstanceLock) {
       appshots = new AppshotsService({
         captureRoot: join(executorHome, 'workspace', 'attachments', 'draft', 'appshots'),
         events: desktopHostEvents,
-        showMain: () =>
+        showMain: origin =>
           reactivateMainWindow({
             reason: 'appshot-reveal',
-            initiator: 'user',
-            userInitiated: true,
+            initiator: origin === 'shortcut' ? 'user' : 'unknown',
+            userInitiated: origin === 'shortcut' ? true : null,
             target: 'main',
           }),
         playSound: async () => {

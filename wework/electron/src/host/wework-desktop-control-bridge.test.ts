@@ -5,8 +5,16 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { WeworkDesktopControlBridge } from './wework-desktop-control-bridge.js'
 import { PythonRuntimeDownloadTimeoutError } from '../runtime/python-runtime-downloads.js'
 
+const electronMocks = vi.hoisted(() => ({ throwOnActive: false }))
+
 vi.mock('electron', () => ({
-  app: { isActive: () => false, isHidden: () => false },
+  app: {
+    isActive: () => {
+      if (electronMocks.throwOnActive) throw new Error('isActive failed')
+      return false
+    },
+    isHidden: () => false,
+  },
   BrowserWindow: { getFocusedWindow: () => null },
 }))
 
@@ -332,6 +340,44 @@ describe('WeworkDesktopControlBridge', () => {
 
     await bridge.stop()
     await expect(readdir(registryDirectory)).resolves.toEqual([])
+  })
+
+  test('desktop-control focus keeps working when activation diagnostics throw', async () => {
+    const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-focus-'))
+    directories.push(registryDirectory)
+    const show = vi.fn()
+    const focus = vi.fn()
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: 'focus-diagnostics-example',
+      instanceKind: 'main',
+      displayName: 'Wework',
+      projectRoot: null,
+      registryDirectory,
+      window: () =>
+        ({
+          focus,
+          isMinimized: () => false,
+          show,
+          webContents: { isDestroyed: () => false },
+        }) as never,
+    })
+
+    await bridge.start()
+    const [filename] = await readdir(registryDirectory)
+    const record = JSON.parse(await readFile(join(registryDirectory, filename), 'utf8'))
+    electronMocks.throwOnActive = true
+    const focusResponse = await fetch(`http://${record.address}/desktop`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${record.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'focus' }),
+    }).then(response => response.json())
+    electronMocks.throwOnActive = false
+
+    expect(focusResponse).toMatchObject({ ok: true, data: { ok: true } })
+    expect(show).toHaveBeenCalledOnce()
+    expect(focus).toHaveBeenCalledOnce()
+
+    await bridge.stop()
   })
 
   test('falls back to CDP when Electron capturePage fails with UnknownVizError', async () => {
