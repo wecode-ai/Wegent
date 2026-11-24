@@ -7,6 +7,7 @@ import {
   verifyIssueAssociationRecovery,
   chooseIssueProperty,
   verifyEnglishLinkedIssueLayout,
+  pressFocusedIssueKey,
 } from '../modules/independent-issue-draft.mjs'
 import assert from 'node:assert/strict'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
@@ -291,6 +292,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         text: child.title,
         visible: true,
       })
+      await wait(control, `${activeHome} [data-testid="issue-parent-link"]`, {
+        text: homeIssue.title,
+        visible: true,
+      })
       await captureScreenshot(control, 'independent-issue-child-opened.png')
       await click(control, 'issue-parent-link')
       await wait(control, `${activeHome} [data-testid="cloud-todo-detail-content"]`, {
@@ -346,7 +351,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         reopen: async () => {
           const target = sidebar('collaboration-primary-create-issue')
           await revealCollaborationSidebarElement(control, target)
-          await control.command('nativePress', target, { key: 'Enter', timeoutMs: uiTimeoutMs })
+          await pressFocusedIssueKey(control, target, 'Enter')
         },
         captureScreenshot,
       })
@@ -662,9 +667,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await verifyIssueDeviceLayout(control, appDevice.id)
       await captureScreenshot(control, 'new-issue-project-devices.png')
-      await control.command('nativePress', '[data-testid="issue-environment-picker"]', {
-        key: 'Escape',
-      })
+      await pressFocusedIssueKey(control, '[data-testid="issue-environment-picker"]', 'Escape')
       await wait(control, '[data-testid="issue-environment-picker"]', { visible: false })
       assert.equal(
         await control.command('getValue', '[data-testid="independent-issue-title"]'),
