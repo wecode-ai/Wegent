@@ -585,6 +585,22 @@ export function createDesktopScenario({
           text: ORDINARY_TASK,
           visible: true,
         })
+        const activityList = `${PANEL} [data-testid="stand-in-sidebar-activity-list"]`
+        await control.command(
+          'waitFor',
+          `${activityList} > li > [data-testid="stand-in-delegated-work"]`,
+          {
+            visible: true,
+          }
+        )
+        await control.command(
+          'waitFor',
+          `${activityList} > li > [data-testid="stand-in-sidebar-task"]`,
+          {
+            text: ORDINARY_TASK,
+            visible: true,
+          }
+        )
         await captureScreenshot(control, '05b-delegation-and-tasks-panel.png', ROOT)
         await control.command('clickWhenEnabled', PANEL_TOGGLE)
         await control.command('waitFor', PANEL, { visible: false })

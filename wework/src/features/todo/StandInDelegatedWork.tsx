@@ -6,6 +6,10 @@ import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteract
 import { RuntimeInteractionReply } from '@/features/notifications/RuntimeInteractionReply'
 import { canReplyToInteraction } from '@/features/notifications/runtimeInteractions'
 import type { RuntimeTaskAddress } from '@/types/api'
+import {
+  WORKSPACE_ACTIVITY_ROW_CLASS,
+  WorkspaceActivityRowContent,
+} from '@/components/chat/WorkspaceActivityRowContent'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   CollapsiblePanel,
@@ -24,7 +28,7 @@ import {
 
 type Props = {
   branches: Branch[]
-  showTitle?: boolean
+  inSidebar?: boolean
   expanded: boolean
   onExpandedChange(expanded: boolean): void
   taskId: string
@@ -35,7 +39,7 @@ type Props = {
 
 export function StandInDelegatedWork({
   branches: current,
-  showTitle,
+  inSidebar,
   expanded,
   onExpandedChange,
   taskId,
@@ -77,14 +81,18 @@ export function StandInDelegatedWork({
         'cancelled',
       ] as const
     ).find(status => statuses.includes(status)) ?? 'completed'
-  const title = showTitle
-    ? current.length > 1
-      ? t('standIn.delegation.groupTitle', {
-          title: current[0].title,
-          count: current.length - 1,
-        })
-      : current[0].title
-    : t('standIn.delegation.title')
+  const progress = t('standIn.delegation.progress', {
+    completed: statuses.filter(status => status === 'completed').length,
+    total: statuses.length,
+  })
+  const statusLabel =
+    summary !== 'completed' || groupCancelled
+      ? t(`standIn.delegation.${groupCancelled ? 'delegationCancelled' : summary}`)
+      : null
+  const partialCancellation =
+    cancelledCount > 0 && !groupCancelled && summary !== 'cancelled'
+      ? t('standIn.delegation.cancelledCount', { count: cancelledCount })
+      : null
   const rows: Branch[] = []
   function addBranch(parentId: string) {
     const children = current
@@ -132,35 +140,57 @@ export function StandInDelegatedWork({
     <CollapsibleRoot
       open={expanded}
       onOpenChange={onExpandedChange}
-      className="group my-3 rounded-xl border border-border text-sm"
+      className={inSidebar ? 'text-sm' : 'group my-3 rounded-xl border border-border text-sm'}
       data-testid="stand-in-delegated-work"
       data-delegation-root={current[0].root}
     >
       <CollapsibleTrigger
-        className="min-h-11 px-3 md:min-h-10"
+        className={
+          inSidebar
+            ? WORKSPACE_ACTIVITY_ROW_CLASS + ' [&>.collapsible-chevron]:order-last'
+            : 'min-h-11 px-3 md:min-h-10'
+        }
         data-testid="stand-in-delegated-work-toggle"
       >
-        <Bot aria-hidden="true" className="size-4 shrink-0 text-text-secondary" />
-        <span className="min-w-0 flex-1 break-words font-medium">{title}</span>
-        <span className="shrink-0 text-xs text-text-secondary">
-          {t('standIn.delegation.progress', {
-            completed: statuses.filter(status => status === 'completed').length,
-            total: statuses.length,
-          })}
-        </span>
-        {cancelledCount > 0 && !groupCancelled && summary !== 'cancelled' && (
-          <span className="shrink-0 text-xs text-text-secondary">
-            {t('standIn.delegation.cancelledCount', { count: cancelledCount })}
-          </span>
-        )}
-        {(summary !== 'completed' || groupCancelled) && (
-          <span className="max-w-[52%] shrink-0 text-right text-xs text-text-secondary">
-            {t(`standIn.delegation.${groupCancelled ? 'delegationCancelled' : summary}`)}
-          </span>
+        {inSidebar ? (
+          <WorkspaceActivityRowContent
+            icon={
+              <Bot aria-hidden="true" className="mt-0.5 size-6 shrink-0 p-1 text-text-secondary" />
+            }
+            title={current[0].title}
+            status={statusLabel ?? progress}
+            detail={
+              statusLabel
+                ? [progress, partialCancellation].filter(Boolean).join(' · ')
+                : t('standIn.delegation.branchCount', { count: statuses.length })
+            }
+          />
+        ) : (
+          <>
+            <Bot aria-hidden="true" className="size-4 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 break-words font-medium">
+              {t('standIn.delegation.title')}
+            </span>
+            <span className="shrink-0 text-xs text-text-secondary">{progress}</span>
+            {partialCancellation && (
+              <span className="shrink-0 text-xs text-text-secondary">{partialCancellation}</span>
+            )}
+            {statusLabel && (
+              <span className="max-w-[52%] shrink-0 text-right text-xs text-text-secondary">
+                {statusLabel}
+              </span>
+            )}
+          </>
         )}
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <ul className="max-h-56 overflow-y-auto border-t border-border px-3 py-1">
+        <ul
+          className={
+            inSidebar
+              ? 'max-h-56 overflow-y-auto pl-7 py-1'
+              : 'max-h-56 overflow-y-auto border-t border-border px-3 py-1'
+          }
+        >
           {rows.map(row => {
             const { address, taskId, ancestors, role, status, error, title } = row
             const key = address ? getRuntimeTaskReminderKey(address) : undefined
@@ -275,7 +305,13 @@ export function StandInDelegatedWork({
           })}
         </ul>
         {current.some(canCancel) && (
-          <div className="flex justify-end border-t border-border p-2">
+          <div
+            className={
+              inSidebar
+                ? 'flex justify-end px-2 pb-2'
+                : 'flex justify-end border-t border-border p-2'
+            }
+          >
             <Button
               variant="unstyled"
               type="button"

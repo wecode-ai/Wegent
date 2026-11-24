@@ -31,6 +31,7 @@ import {
   standInDelegationsByMessage,
 } from './standInDelegatedBranches'
 import { StandInDelegatedWork } from './StandInDelegatedWork'
+import { StandInSidebarTaskList, type StandInSidebarTasks } from './StandInSidebarTaskList'
 import { useStandInConversationModel } from './useStandInConversationModel'
 
 export function StandInConversation({
@@ -45,7 +46,7 @@ export function StandInConversation({
   onDraftRequestConsumed,
   contentFooter,
   delegationPanelOpen,
-  taskList,
+  sidebarTasks,
   renderDetails,
   settings,
   services,
@@ -62,7 +63,7 @@ export function StandInConversation({
   onDraftRequestConsumed?(id: number): void
   contentFooter?: ReactNode
   delegationPanelOpen?: boolean
-  taskList?: ReactNode
+  sidebarTasks?: StandInSidebarTasks
   renderDetails?(activeBranches: ReturnType<typeof activeStandInBranchRows>): ReactNode
   settings?: Pick<WorkspaceStandInSettings, 'model' | 'modelOptions'>
   services?: WorkbenchServices
@@ -167,14 +168,13 @@ export function StandInConversation({
     () => new Set()
   )
   const groups = groupStandInDelegations(delegatedWork)
-  const delegationTitle = t('standIn.delegation.title')
-  const renderDelegation = (group: (typeof groups)[number], showTitle = false) => {
-    const expansionKey = `${showTitle ? 'panel' : 'message'}:${group.root}`
+  const renderDelegation = (group: (typeof groups)[number], inSidebar = false) => {
+    const expansionKey = `${inSidebar ? 'panel' : 'message'}:${group.root}`
     return (
       <StandInDelegatedWork
         key={group.root}
         branches={group.branches}
-        showTitle={showTitle}
+        inSidebar={inSidebar}
         expanded={expandedDelegations.has(expansionKey)}
         onExpandedChange={expanded => {
           setExpandedDelegations(previous => {
@@ -299,29 +299,15 @@ export function StandInConversation({
           {conversation}
         </div>
         {delegationPanelOpen && (
-          <aside
-            id="stand-in-delegation-panel"
-            aria-label={t('standIn.delegation.panel')}
-            data-testid="stand-in-delegation-panel"
-            className="flex min-w-0 flex-1 flex-col border-border bg-background md:w-80 md:flex-none md:border-l"
-          >
-            <h2 className="border-b border-border px-4 py-3 text-sm font-medium">
-              {t('standIn.delegation.panel')}
-            </h2>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3">
-              <section aria-label={delegationTitle} className="pt-3">
-                <h3 className="px-1 text-sm font-medium">{delegationTitle}</h3>
-                {groups.length ? (
-                  groups.toReversed().map(group => renderDelegation(group, true))
-                ) : (
-                  <p className="px-1 py-3 text-sm text-text-secondary">
-                    {t('standIn.delegation.empty')}
-                  </p>
-                )}
-              </section>
-              {taskList}
-            </div>
-          </aside>
+          <StandInSidebarTaskList
+            tasks={sidebarTasks}
+            delegations={groups.map(group => ({
+              key: group.root,
+              createdAt: group.createdAt,
+              content: renderDelegation(group, true),
+            }))}
+            onOpenTask={onOpenTask}
+          />
         )}
       </div>
       {details}

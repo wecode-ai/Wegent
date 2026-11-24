@@ -48,7 +48,6 @@ import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
 import { StandInWorkList } from './StandInWorkList'
-import { StandInSidebarTaskList } from './StandInSidebarTaskList'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { useStandInInbox } from './useStandInInbox'
 import { useStandInProcessingStatus } from './useStandInProcessingStatus'
@@ -631,16 +630,11 @@ export function StandInOverviewPage({
             {api && deviceId ? (
               <StandInConversation
                 delegationPanelOpen={delegationPanelOpen}
-                taskList={
-                  delegationPanelOpen && (
-                    <StandInSidebarTaskList
-                      items={roleItems}
-                      inbox={visibleInbox}
-                      onOpenTask={onOpenTask}
-                      onAllActivity={() => setReview('work')}
-                    />
-                  )
-                }
+                sidebarTasks={{
+                  items: roleItems,
+                  inbox: visibleInbox,
+                  onAllActivity: () => setReview('work'),
+                }}
                 renderDetails={renderDetails}
                 contentFooter={
                   review !== 'proposal' && (proposalCard || proposalFailure) ? (

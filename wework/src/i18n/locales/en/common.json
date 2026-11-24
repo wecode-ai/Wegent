@@ -5751,12 +5751,11 @@
   },
   "standIn": {
     "delegation": {
-      "groupTitle": "{{title}} and {{count}} more",
-      "tasksEmpty": "No tasks yet",
+      "branchCount_one": "{{count}} delegated task",
+      "branchCount_other": "{{count}} delegated tasks",
+      "panelEmpty": "No tasks or delegations yet",
       "panel": "Tasks and delegations",
-      "tasks": "Tasks",
       "active": "Active delegations",
-      "empty": "No delegated tasks yet",
       "title": "Delegated tasks",
       "details": "View details",
       "prerequisites": "Depends on {{tasks}}",
