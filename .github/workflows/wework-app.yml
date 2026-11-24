@@ -657,6 +657,7 @@ jobs:
             /wework/scripts/lib/
             /wework/e2e/desktop/upgrade-suite.mjs
             /wework/electron/src/runtime/upgrade-policy.mjs
+            /wework/electron/src/runtime/release-block-map.mjs
             /wework/electron/src/runtime/release-preparation-progress.mjs
             /wework/upgrade-policy.json
       - name: Resolve completed release build artifacts
@@ -719,6 +720,7 @@ jobs:
             wework/package.json
             wework/upgrade-policy.json
             wework/electron/package.json
+            wework/electron/scripts/bundled-component-layout.cjs
             wework/electron/src
             wework/e2e
             wework/scripts
@@ -850,6 +852,7 @@ jobs:
             /wework/upgrade-policy.json
             /wework/e2e/desktop/upgrade-suite.mjs
             /wework/electron/src/runtime/upgrade-policy.mjs
+            /wework/electron/src/runtime/release-block-map.mjs
             /wework/electron/src/runtime/release-preparation-progress.mjs
       - name: Download frozen source upgrade plans
         uses: actions/download-artifact@v4
