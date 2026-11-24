@@ -99,7 +99,7 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   const taskIds = new Map()
-  const reported = new Set()
+  const reported = new Map()
   const waitingModels = new Map()
   const cancellationTasks = new Map()
   const dependencyTasks = new Map()
@@ -107,6 +107,7 @@ export function createDesktopScenario({
   const retryRuns = [0, 0]
   let dependentStarted = false
   let prerequisiteReleased = false
+  let readOnlyFollowUpReported = false
   let writingWorkspace
   let sequence = 0
   const reply = (response, events) => {
@@ -239,12 +240,26 @@ export function createDesktopScenario({
         }
         const finalResult = results[0]?.item?.role === 'assistant'
         if (finalResult && [taskIds.get(roles[0].id), taskIds.get(roles[1].id)].includes(child)) {
+          const resultId = latest.match(/resultId=([^,]+),/)?.[1]
+          assert.ok(resultId, 'A branch report must identify its execution result')
+          if (
+            child === taskIds.get(roles[1].id) &&
+            JSON.stringify(results).includes(READ_ONLY_RESULT)
+          ) {
+            assert.equal(readOnlyFollowUpReported, false, 'The follow-up must report once')
+            assert.ok(reported.has(child), 'The original branch must have reported first')
+            assert.notEqual(resultId, reported.get(child), 'The follow-up must have a new result')
+            assert.ok(latest.includes('status=done,'), 'The follow-up must complete successfully')
+            readOnlyFollowUpReported = true
+            reply(response, [])
+            return true
+          }
           assert.equal(
             reported.has(child),
             false,
             'A branch must report only after aggregating its children'
           )
-          reported.add(child)
+          reported.set(child, resultId)
           reply(response, reported.size === 2 ? [assistantMessage(FINAL)] : [])
         } else {
           reply(response, results)
@@ -927,6 +942,12 @@ export function createDesktopScenario({
         )
         await waitForNativeProfile(writingTaskId, 'wework-source-read', fromOffset)
         await assert.rejects(readFile(join(writingWorkspace, READ_ONLY_FILE)), { code: 'ENOENT' })
+        await storyUntil(
+          () => Promise.resolve(readOnlyFollowUpReported),
+          Boolean,
+          modelResponseTimeoutMs,
+          'The read-only follow-up must deliver its distinct result to the original conversation'
+        )
         const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
         assert.equal(
           saved.roles.find(role => role.id === roles[1].id)?.taskPermissions?.permissionMode,

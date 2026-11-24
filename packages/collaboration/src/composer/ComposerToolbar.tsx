@@ -164,30 +164,36 @@ export function ComposerToolbar({
     return () => observer.disconnect()
   }, [])
 
-  const showPermissionSelector = showExecutionTools && permissionControls !== null
-  const permissionSelector = showPermissionSelector ? (
-    <PermissionModeSelector
-      translate={t}
-      value={runtimePermissionMode(selectedModelOptions)}
-      commandApproval={runtimeCommandApprovalMode(selectedModelOptions)}
-      onCommandApprovalChange={mode => onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)}
-      iconOnly
-      density="dense"
-      onChange={(mode, approval) => {
-        if (onSelectPermissionOptions) {
-          onSelectPermissionOptions({
-            [RUNTIME_PERMISSION_MODE_OPTION]: mode,
-            ...(approval ? { [RUNTIME_COMMAND_APPROVAL_OPTION]: approval } : {}),
-          })
-          return
+  const selectedPermissionControls: ComposerPermissionControls | null =
+    permissionControls === undefined
+      ? {
+          value: runtimePermissionMode(selectedModelOptions),
+          commandApproval: runtimeCommandApprovalMode(selectedModelOptions),
+          onCommandApprovalChange: mode =>
+            onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode),
+          onChange: (mode, approval) => {
+            if (onSelectPermissionOptions) {
+              onSelectPermissionOptions({
+                [RUNTIME_PERMISSION_MODE_OPTION]: mode,
+                ...(approval ? { [RUNTIME_COMMAND_APPROVAL_OPTION]: approval } : {}),
+              })
+              return
+            }
+            if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+            onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+          },
         }
-        if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
-        onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
-      }}
-      {...permissionControls}
-      disabled={disabled || permissionControls?.disabled}
-    />
-  ) : null
+      : permissionControls
+  const permissionSelector =
+    showExecutionTools && selectedPermissionControls ? (
+      <PermissionModeSelector
+        translate={t}
+        iconOnly
+        density="dense"
+        {...selectedPermissionControls}
+        disabled={disabled || selectedPermissionControls.disabled}
+      />
+    ) : null
 
   return (
     <div

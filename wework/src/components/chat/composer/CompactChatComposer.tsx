@@ -211,6 +211,19 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       setTextState({ external: value, hasText: value.trim().length > 0 })
     const hasText = textState.hasText
     const [phraseError, setPhraseError] = useState<string | null>(null)
+    const selectedPermissionControls: ComposerPermissionControls | null | undefined =
+      permissionControls === undefined && onSelectModelOption
+        ? {
+            value: runtimePermissionMode(selectedModelOptions),
+            commandApproval: runtimeCommandApprovalMode(selectedModelOptions),
+            onCommandApprovalChange: mode =>
+              onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode),
+            onChange: (mode, approval) => {
+              if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+              onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+            },
+          }
+        : permissionControls
 
     useImperativeHandle(
       ref,
@@ -684,7 +697,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   <span>{t('workbench.pursue_goal', '追求目标')}</span>
                 </ControlButton>
               )}
-              {permissionControls !== null && onSelectModelOption ? (
+              {selectedPermissionControls ? (
                 <div
                   data-testid="mobile-permission-mode-row"
                   className="flex h-14 w-full items-center justify-between gap-4 rounded-2xl px-4 text-text-primary"
@@ -694,17 +707,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                     <span>{t('workbench.permission_mode', '权限模式')}</span>
                   </span>
                   <PermissionModeSelector
-                    value={runtimePermissionMode(selectedModelOptions)}
-                    commandApproval={runtimeCommandApprovalMode(selectedModelOptions)}
-                    onCommandApprovalChange={mode =>
-                      onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)
-                    }
-                    onChange={(mode, approval) => {
-                      if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
-                      onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
-                    }}
-                    {...permissionControls}
-                    disabled={disabled || permissionControls?.disabled}
+                    {...selectedPermissionControls}
+                    disabled={disabled || selectedPermissionControls.disabled}
                   />
                 </div>
               ) : null}

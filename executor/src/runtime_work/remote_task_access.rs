@@ -201,7 +201,9 @@ mod tests {
         ] {
             assert!(reader.authorize(method, None).is_err());
             assert!(reader.authorize(method, Some("project-session")).is_err());
-            assert!(reader.authorize(method, Some("stand-in-role-task")).is_err());
+            assert!(reader
+                .authorize(method, Some("stand-in-role-task"))
+                .is_err());
             access.update(json!({"enabled": true})).unwrap();
             assert!(reader.authorize(method, None).is_ok());
             assert!(peer.authorize(method, None).is_err());

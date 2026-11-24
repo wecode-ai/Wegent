@@ -192,8 +192,10 @@ impl RuntimeWorkRpcHandler {
                 .await;
         }
         if name == "create_task" {
-            let owner_task = actor.runtime_handle["origin"]["type"] == "stand_in_identity"
-                && self.has_current_stand_in_owner_request(&actor);
+            let owner_task = actor.runtime_handle["origin"]["type"] == "stand_in_identity";
+            if owner_task && !self.has_current_stand_in_owner_request(&actor) {
+                return Err(super::stand_in_role_delegation::denied());
+            }
             return self.create_primary_task(&identity, &args, owner_task).await;
         }
         let id = required(&args, "taskId")?;
@@ -401,6 +403,52 @@ mod tests {
 #[cfg(test)]
 mod operation_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn primary_task_creation_rejects_superseded_or_cancelled_owner_requests() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let identity = StandInMcpIdentity {
+            task_id: "primary".into(),
+            user: 7,
+            device: "mac".into(),
+            role: Some("@primary".into()),
+            work: None,
+            project: None,
+            review: false,
+            memory_review: false,
+            readonly_worker: false,
+            ask_before_act: true,
+            coordinator_batch: None,
+        };
+        let owner = json!({"id":"original","taskId":"primary","userId":7,"deviceId":"mac","roleId":"@primary","revision":1,"cancelled":false});
+        for (revision, cancelled) in [(2, false), (1, true)] {
+            let mut current = owner.clone();
+            current["revision"] = json!(revision);
+            current["cancelled"] = json!(cancelled);
+            handler.upsert_local_task(RuntimeTaskLink {
+                local_task_id: identity.task_id.clone(),
+                runtime_handle: json!({
+                    "origin":{"type":"stand_in_identity","standInId":"@primary","userId":7,"deviceId":"mac"},
+                    "executionRequest":{"user_id":7,"standInOwnerRequest":owner},
+                    "standInOwnerRequest":current,
+                }),
+                ..Default::default()
+            });
+            let error = handler
+                .stand_in_task_operation(
+                    identity.clone(),
+                    "create_task",
+                    json!({"requestId":"create","title":"Work","message":"Start work"}),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "permission_denied");
+            assert_eq!(handler.local_task_links(true).len(), 1);
+        }
+    }
 
     #[tokio::test]
     async fn coordinator_mutations_wait_for_settings_and_recheck_revoked_batches() {

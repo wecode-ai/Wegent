@@ -38,17 +38,20 @@ const BACKGROUND_PERMISSION_DONE = 'BACKGROUND_PERMISSION_DONE'
 const BACKGROUND_CONTINUE_CALL = 'background-continue-owner-task'
 const FULL_ACCESS = { permissionMode: 'full-access' }
 
-function assertNativeTaskPermission(log, taskId, profile) {
+function assertNativeThreadPermission(log, threadId, profile) {
+  const applied = log
+    .split('\n')
+    .filter(
+      line =>
+        line.includes('codex source sandbox applied ') && line.includes(` thread_id=${threadId} `)
+    )
   assert.ok(
-    log
-      .split('\n')
-      .some(
-        line =>
-          line.includes(`codex source sandbox applied task_id=${taskId} `) &&
-          line.includes(String.raw`\"id\":\"${profile}\"`) &&
-          line.includes(String.raw`reviewer="\"user\""`)
-      ),
-    `Native Codex task ${taskId} must apply ${profile} with the human reviewer`
+    applied.some(
+      line =>
+        line.includes(String.raw`\"id\":\"${profile}\"`) &&
+        line.includes(String.raw`reviewer="\"user\""`)
+    ),
+    `Native Codex thread ${threadId} must apply ${profile} with the human reviewer. Observed: ${applied.join('\n') || 'no application'}`
   )
 }
 
@@ -538,7 +541,7 @@ export function createDesktopScenario({
         assert.ok(ownerThreadId)
         const executorLog = join(resultDir, 'executor.log')
         const ownerLog = await readFile(executorLog, 'utf8')
-        assertNativeTaskPermission(ownerLog, createdTaskId, ':danger-full-access')
+        assertNativeThreadPermission(ownerLog, ownerThreadId, ':danger-full-access')
 
         checkBackgroundPermission = true
         const scheduledBackground = await rpc(control, 'runtime.coordination.wake', {
@@ -560,9 +563,9 @@ export function createDesktopScenario({
         const backgroundTask = await rpc(control, 'runtime.tasks.get', { taskId: createdTaskId })
         assert.equal(backgroundTask.task.runtimeHandle.threadId, ownerThreadId)
         assert.deepEqual(backgroundTask.task.runtimeHandle.taskPermissions, FULL_ACCESS)
-        assertNativeTaskPermission(
+        assertNativeThreadPermission(
           (await readFile(executorLog, 'utf8')).slice(ownerLog.length),
-          createdTaskId,
+          ownerThreadId,
           'wework-source-read'
         )
         const afterPermissionProbe = await rpc(control, 'runtime.stand_in.personal.get', {

@@ -59,3 +59,38 @@ test('keeps the newest permission when earlier refreshes arrive after a save', a
   rerender(secondSave)
   expect(result.current.permissionControls?.value).toBe('full-access')
 })
+
+test('retains a failed permission save error through a newer task summary', async () => {
+  const initial = taskSnapshot('1', 'read-only')
+  const firstSave = taskSnapshot('2', 'workspace-write')
+  const refreshed = taskSnapshot('3', 'workspace-write')
+  const save = Promise.withResolvers<never>()
+  const api = {
+    setTaskPermissions: vi
+      .fn()
+      .mockResolvedValueOnce({
+        snapshotRevision: firstSave.snapshotRevision,
+        taskPermissions: firstSave.runtimeHandle!.taskPermissions,
+      })
+      .mockReturnValueOnce(save.promise),
+  } as WorkbenchServices['standInApi']
+  const refresh = vi.fn().mockResolvedValue(undefined)
+  const { result, rerender } = renderHook(
+    (task: RuntimeTaskSummary) => useRuntimeTaskPermissions(address, task, 7, api, refresh),
+    { initialProps: initial }
+  )
+
+  await act(async () => result.current.permissionControls?.onChange('workspace-write'))
+  act(() => result.current.permissionControls?.onChange('read-only'))
+  expect(result.current.permissionControls?.disabled).toBe(true)
+  rerender(firstSave)
+  await act(async () => save.reject(new Error('device_offline')))
+
+  const error = result.current.permissionError?.message
+  expect(error).toBeTruthy()
+  rerender(refreshed)
+  expect(result.current.permissionControls?.value).toBe('workspace-write')
+  expect(result.current.permissionError?.message).toBe(error)
+  act(() => result.current.permissionError?.dismiss())
+  expect(result.current.permissionError).toBeUndefined()
+})

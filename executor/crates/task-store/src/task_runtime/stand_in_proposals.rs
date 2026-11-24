@@ -38,7 +38,9 @@ fn preserve_owner_choices(before: &Value, draft: &mut Value) {
             }
         }
     }
-    if OWNER_CHOICES.iter().any(|key| before["primary"].get(key).is_some())
+    if OWNER_CHOICES
+        .iter()
+        .any(|key| before["primary"].get(key).is_some())
         && !draft["primary"].is_object()
     {
         draft["primary"] = before["primary"].clone();

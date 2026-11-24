@@ -1653,7 +1653,12 @@ impl RuntimeWorkRpcHandler {
             || (start_fresh_native_session && existing_link.is_some());
         if thread_id.is_none() && !can_start_without_thread {
             if let Some(result) = self
-                .recover_failed_session_start(existing_link.as_ref(), payload.clone(), activity)
+                .recover_failed_session_start(
+                    existing_link.as_ref(),
+                    payload.clone(),
+                    activity,
+                    owner_message,
+                )
                 .await?
             {
                 return Ok(result);
