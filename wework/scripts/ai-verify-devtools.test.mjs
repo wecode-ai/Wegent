@@ -158,20 +158,30 @@ describe('DevTools evidence analysis', () => {
       {
         nodes: [
           { id: 1, callFrame: frame, children: [2] },
-          { id: 2, callFrame: { ...frame, functionName: 'child' } },
+          {
+            id: 2,
+            callFrame: { ...frame, functionName: 'child' },
+            children: [3],
+          },
+          { id: 3, callFrame: { ...frame, scriptId: '0', url: '', functionName: 'measure' } },
         ],
-        samples: [1, 2, 2],
-        timeDeltas: [1000, 2000, 3000],
+        samples: [1, 2, 2, 3],
+        timeDeltas: [1000, 2000, 3000, 2000],
       },
       maps
     )
     expect(result[0]).toMatchObject({
       function: 'child',
       selfMs: 5,
-      totalMs: 5,
+      totalMs: 7,
       location: { mapped: true, source: '/src/app.ts', line: 7, column: 1 },
     })
-    expect(result[1]).toMatchObject({ selfMs: 1, totalMs: 6 })
+    expect(result[1]).toMatchObject({
+      function: 'measure',
+      selfMs: 2,
+      caller: { function: 'child', location: { mapped: true, source: '/src/app.ts', line: 7 } },
+    })
+    expect(result[2]).toMatchObject({ selfMs: 1, totalMs: 8 })
     expect(sourceLocation(frame)).toEqual({
       mapped: false,
       generated: { url: frame.url, line: 1, column: 1 },

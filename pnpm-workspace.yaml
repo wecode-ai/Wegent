@@ -64,6 +64,7 @@ minimumReleaseAgeExclude:
   - '@ui-sdk/react@0.1.0-beta.10'
 patchedDependencies:
   "@file-viewer/renderer-drawing@2.1.26": patches/@file-viewer__renderer-drawing@2.1.26.patch
+  '@file-viewer/renderer-text@2.1.26': patches/@file-viewer__renderer-text@2.1.26.patch
   '@ui-sdk/core@0.1.0-beta.10': patches/@ui-sdk__core@0.1.0-beta.10.patch
   # Batch accessibility row layout without changing terminal text or character alignment.
   "@xterm/xterm@6.0.0": patches/@xterm__xterm@6.0.0.patch

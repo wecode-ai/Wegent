@@ -249,7 +249,10 @@ export function createProjectChatClient(
       const latestMessages = new Map<string, ProjectChatMessage>()
       const resolvedSources = new Map<
         string,
-        Pick<ProjectChatMessage, 'traceRef' | 'traceState' | 'runtimeAddress'>
+        Pick<
+          ProjectChatMessage,
+          'traceRef' | 'traceState' | 'runtimeAddress' | 'metadata'
+        >
       >()
       const sourceReads = new Map<string, Promise<void>>()
       const resolveSource = (message: ProjectChatMessage, revision: number) => {
@@ -290,14 +293,24 @@ export function createProjectChatClient(
             if (superseded) return
             const latest = latestMessages.get(message.messageId)
             if (resolved && latest && latest.traceRef === message.traceRef) {
-              resolvedSources.set(message.messageId, {
+              // Restore the authorized title without replacing live stream metadata.
+              const source = {
                 traceRef: resolved.traceRef,
                 traceState: resolved.traceState,
                 runtimeAddress: resolved.runtimeAddress,
-              })
+                metadata:
+                  typeof resolved.metadata.workflow_task_title === 'string'
+                    ? {
+                        workflow_task_title:
+                          resolved.metadata.workflow_task_title,
+                      }
+                    : {},
+              }
+              resolvedSources.set(message.messageId, source)
               onMessage({
                 ...latest,
-                ...resolvedSources.get(message.messageId),
+                ...source,
+                metadata: { ...source.metadata, ...latest.metadata },
               })
             }
           })
@@ -332,8 +345,12 @@ export function createProjectChatClient(
         if (!inScope(message)) return
         const source = resolvedSources.get(message.messageId)
         const latest =
-          source?.traceRef === message.traceRef
-            ? { ...message, ...source }
+          source && source.traceRef === message.traceRef
+            ? {
+                ...message,
+                ...source,
+                metadata: { ...source.metadata, ...message.metadata },
+              }
             : message
         const previous = latestMessages.get(message.messageId)
         const isDelta = message.metadata.contentMode !== 'snapshot'

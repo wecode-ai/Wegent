@@ -29,18 +29,28 @@ pub(super) fn migrate_personal_settings(value: &mut Value) -> Result<bool, TaskR
         .into_iter()
         .flatten()
     {
-        changed |= migrate_agent_binding(identity)?;
-        changed |= migrate_identity_connections(identity)?;
-        changed |= migrate_connection_timing(identity, immediate);
+        changed |= normalize_stand_in_identity(identity, immediate)?;
     }
     if value["primary"].is_object() {
-        changed |= migrate_agent_binding(&mut value["primary"])?;
-        changed |= migrate_identity_connections(&mut value["primary"])?;
-        changed |= migrate_connection_timing(&mut value["primary"], immediate);
+        changed |= normalize_stand_in_identity(&mut value["primary"], immediate)?;
     }
     changed |= value
         .as_object_mut()
         .is_some_and(|fields| fields.remove("processing").is_some());
+    Ok(changed)
+}
+
+pub(super) fn normalize_stand_in_identity(
+    identity: &mut Value,
+    immediate: bool,
+) -> Result<bool, TaskRuntimeError> {
+    let mut changed = migrate_agent_binding(identity)?;
+    changed |= migrate_identity_connections(identity)?;
+    changed |= migrate_connection_timing(identity, immediate);
+    changed |= identity
+        .get_mut("workspace")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|workspace| workspace.remove("workspacePath").is_some());
     Ok(changed)
 }
 
@@ -160,7 +170,7 @@ pub(super) fn empty_role(id: &str, device: &str) -> Value {
 
 fn empty_personal(user: i64, device: &str) -> Value {
     json!({"userId":user,"executionDeviceId":device,"version":0,
-        "roles":[empty_role("default", device)]})
+        "roles":[]})
 }
 
 pub(super) fn personal_key(user: i64) -> String {
@@ -377,6 +387,7 @@ mod session_policy_tests {
     #[test]
     fn role_devices_survive_profile_reads_and_primary_identity_changes() {
         let mut settings = empty_personal(7, "mac");
+        settings["roles"] = json!([empty_role("default", "mac")]);
         settings["roles"][0]["executionDeviceId"] = json!("remote");
         settings["primary"] = implicit_primary();
         bind_personal_device(&mut settings, "new-mac");
@@ -393,10 +404,18 @@ mod session_policy_tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        assert_eq!(settings["roles"], json!([]));
+        store.materialize_implicit_primary(7, "mac").unwrap();
+        settings = store.personal_stand_in(7, "mac").unwrap();
+        let identities = stand_in_identities(&settings);
+        assert_eq!(identities.len(), 1);
+        assert_eq!(identities[0]["id"], "@primary");
+        settings["roles"] = json!([empty_role("default", "mac")]);
         settings["roles"][0]["executionDeviceId"] = json!("remote");
         store.save_personal_stand_in(7, "mac", settings).unwrap();
         let restored = store.personal_stand_in(7, "mac").unwrap();
         assert_eq!(restored["executionDeviceId"], "mac");
+        assert_eq!(restored["roles"][0]["id"], "default");
         assert_eq!(restored["roles"][0]["executionDeviceId"], "remote");
     }
 
@@ -896,6 +915,7 @@ mod email_policy_tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([empty_role("default", "mac")]);
         settings["roles"][0]["connections"] = json!([{
             "providerId":"example/events","profile":"account","kind":"resource",
             "id":"shared","name":"Shared","collectionKey":"selected:v1",

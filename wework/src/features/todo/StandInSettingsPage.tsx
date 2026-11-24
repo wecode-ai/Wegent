@@ -24,7 +24,7 @@ import { TextField as ControlInput } from '@wegent/collaboration/controls/TextFi
 import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { dequal } from 'dequal'
-import { Folder, Plus, Trash2 } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import type { ReactNode, Ref } from 'react'
 import {
   useCallback,
@@ -48,19 +48,28 @@ import {
   StandInSettingsEntry,
   StandInSettingsError,
   StandInSettingsHeader,
+  StandInSettingsPanel,
+  StandInSettingsShortcuts,
+  type StandInSettingsShortcut,
 } from './StandInSettingsLayout'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 
-type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
+type View =
+  | 'project'
+  | 'main'
+  | 'connections'
+  | 'advanced'
+  | 'create'
+  | StandInSettingsShortcut['id']
 export interface StandInSettingsHandle {
   requestClose(): void
   requestLeave(action: () => void): void
 }
 
 interface StandInSettingsPageProps {
-  management?: ReactNode
+  shortcuts?: StandInSettingsShortcut[]
   footerLeading?: ReactNode
   api: SharedWorkspaceApi
   projects: CollaborationProject[]
@@ -88,7 +97,7 @@ export function StandInSettingsPage({ ref, ...props }: StandInSettingsPageProps)
 
 /** Edit one device-owned stand-in draft and persist it only after an explicit save. */
 function StandInSettingsEditor({
-  management,
+  shortcuts,
   footerLeading,
   projects,
   services,
@@ -112,7 +121,6 @@ function StandInSettingsEditor({
   const { t } = useTranslation('common')
   const roleDraftRequest = useMemo(
     () => ({
-      defaultRoleName: t('standIn.personal.default_role'),
       project: initialProject
         ? {
             id: initialProject.id,
@@ -223,9 +231,10 @@ function StandInSettingsEditor({
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
     executionDeviceId,
-    view === 'advanced'
+    view === 'advanced' || ((view === 'main' || view === 'create') && Boolean(role?.workspace))
   )
 
+  const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
   const openView = (next: View) => {
     setRoleNameError(false)
     setHistory(current => [...current, { view, draft }])
@@ -283,7 +292,6 @@ function StandInSettingsEditor({
     if (connectionRef.current) connectionRef.current.requestLeave(cancelChanges)
     else cancelChanges()
   }
-  const dialogRef = useRef<HTMLElement>(null)
   useImperativeHandle(ref, () => ({
     requestClose: closeSettings,
     requestLeave,
@@ -388,337 +396,300 @@ function StandInSettingsEditor({
         })
       )
     : []
-  const title = view === 'main' ? 'personal.settings_title' : `personal.${view}_title`
   const projectConfigured =
     role && (role.collaboration.allProjects || role.collaboration.projects.length > 0)
   const receivingSources = Boolean(
     role?.enabled && ((projectConfigured && role.collaboration.enabled) || role.connections?.length)
   )
+  const canDeleteRole =
+    initialProfileId &&
+    !initialProject &&
+    view === 'main' &&
+    saved?.roles.some(row => row.id === role?.id)
+
+  const deviceControl = role && (
+    <StandInDeviceSelect
+      testId="stand-in-role-device"
+      ariaLabel={t('standIn.personal.execution_device')}
+      value={role.executionDeviceId}
+      currentDeviceId={state.currentDeviceId}
+      devices={userId === 0 ? [] : devices}
+      disabled={saving || moving}
+      onChange={value => {
+        setNotice(false)
+        updateRole(role.id, current => ({
+          ...current,
+          executionDeviceId: value,
+          model: undefined,
+          modelOptions: undefined,
+          workspace: undefined,
+        }))
+      }}
+    />
+  )
 
   return (
-    <DialogSurface
+    <StandInSettingsPanel
+      testId="stand-in-page"
+      contentTestId="stand-in-settings"
       onClose={close}
       active={Boolean(initialCreate || initialProfileId) && !confirmDiscard}
-      render={
-        <section
-          ref={dialogRef}
-          className={`min-h-0 px-5 text-base text-text-primary ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'} ${initialProject ? '' : 'h-full'}`}
-          data-testid="stand-in-page"
-        />
-      }
+      embedded={Boolean(initialProject)}
+      calendarOpen={calendarOpen}
     >
-      <div
-        className={
-          calendarOpen ? 'flex h-full min-h-0 w-full flex-col' : 'flex min-h-full w-full flex-col'
-        }
-        data-testid="stand-in-settings"
-      >
-        <StandInSettingsHeader
-          path={[
-            {
-              label: t('standIn.personal.settings_title'),
-              testId: 'stand-in-path-settings',
-              onClick: view !== (initialProject ? 'project' : 'main') ? close : undefined,
-            },
-            ...(view === 'connections'
+      <StandInSettingsHeader
+        path={[
+          {
+            label: t('standIn.workspace.role_profile'),
+            testId: 'stand-in-path-settings',
+            onClick: view !== (initialProject ? 'project' : 'main') ? close : undefined,
+          },
+          ...(view === 'connections'
+            ? [
+                {
+                  label: t('standIn.workspace.connections'),
+                  testId: 'stand-in-path-connections',
+                  onClick: connectionDetailOpen ? () => connectionRef.current?.back() : undefined,
+                },
+                ...(connectionTitle
+                  ? [{ label: connectionTitle, testId: 'stand-in-path-source' }]
+                  : []),
+              ]
+            : view === 'advanced'
               ? [
                   {
-                    label: t('standIn.workspace.connections'),
-                    testId: 'stand-in-path-connections',
-                    onClick: connectionDetailOpen ? () => connectionRef.current?.back() : undefined,
+                    label: t('standIn.workspace.execution_settings'),
+                    testId: 'stand-in-path-advanced',
                   },
-                  ...(connectionTitle
-                    ? [{ label: connectionTitle, testId: 'stand-in-path-source' }]
-                    : []),
                 ]
-              : view === 'advanced'
-                ? [
-                    {
-                      label: t('standIn.personal.advanced_title'),
-                      testId: 'stand-in-path-advanced',
-                    },
-                  ]
+              : shortcutPage
+                ? [{ label: shortcutPage.label, testId: 'stand-in-path-tool' }]
                 : []),
-          ]}
-          title={
-            initialProject && (view === 'project' || view === 'create')
-              ? t('standIn.personal.project_title', { project: initialProject.name })
-              : t(`standIn.${title}`)
-          }
-          description={t(
-            initialProject && (view === 'project' || view === 'create')
-              ? 'standIn.personal.project_description'
-              : view === 'main'
-                ? 'standIn.personal.description'
-                : view === 'connections'
-                  ? 'standIn.personal.connections_help'
-                  : view === 'create'
-                    ? 'standIn.personal.create_help'
-                    : 'standIn.personal.advanced_help',
-            { project: initialProject?.name }
-          )}
-          disabled={saving}
-          back={
-            view !== (initialProject ? 'project' : 'main')
-              ? {
-                  testId:
-                    view === 'connections' && connectionDetailOpen
-                      ? 'stand-in-connections-back'
-                      : 'stand-in-back',
-                  onClick: () => {
-                    if (view === 'connections' && connectionDetailOpen)
-                      connectionRef.current?.back()
-                    else close()
-                  },
-                }
-              : onCancel
-                ? { testId: 'stand-in-settings-back', onClick: closeSettings }
+        ]}
+        title={
+          initialProject && (view === 'project' || view === 'create')
+            ? t('standIn.personal.project_title', { project: initialProject.name })
+            : t(
+                view === 'create'
+                  ? 'standIn.personal.create_title'
+                  : 'standIn.workspace.role_profile'
+              )
+        }
+        description={
+          initialProject && (view === 'project' || view === 'create')
+            ? t('standIn.personal.project_description', { project: initialProject.name })
+            : view === 'create'
+              ? t('standIn.personal.create_help')
+              : undefined
+        }
+        disabled={saving}
+        back={
+          view !== (initialProject ? 'project' : 'main')
+            ? {
+                testId:
+                  view === 'connections' && connectionDetailOpen
+                    ? 'stand-in-connections-back'
+                    : 'stand-in-back',
+                onClick: () => {
+                  if (view === 'connections' && connectionDetailOpen) connectionRef.current?.back()
+                  else close()
+                },
+              }
+            : onCancel
+              ? { testId: 'stand-in-settings-back', onClick: closeSettings }
+              : undefined
+        }
+        close={onCancel ? { testId: 'stand-in-close', onClick: closeSettings } : undefined}
+      />
+      {!loading && draft && initialProject && (view === 'project' || view === 'create') && (
+        <div className={view === 'create' ? 'mb-4' : undefined}>
+          <StandInProjectSetup
+            project={initialProject}
+            roles={draft.roles.filter(row => view !== 'create' || row.id !== role?.id)}
+            projectRoleId={projectRoleId}
+            role={role}
+            onOpenSettings={
+              onOpenPersonalSettings && role
+                ? () => onOpenPersonalSettings(role.id, draft.executionDeviceId)
                 : undefined
-          }
-          close={onCancel ? { testId: 'stand-in-close', onClick: closeSettings } : undefined}
-          actions={
-            view === 'main' &&
-            !initialProject && (
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="stand-in-list-configure"
-                disabled={saving || loading}
-                onClick={createRole}
-                className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-40 md:min-h-8"
-              >
-                <Plus className="h-4 w-4" />
-                {t('standIn.personal.add_role')}
-              </ControlButton>
-            )
-          }
-        />
-        {loading ? (
-          <p role="status" className="px-5 py-8 text-text-secondary">
-            {t('standIn.loading')}
-          </p>
-        ) : draft && role ? (
-          <>
-            <div className={calendarOpen ? 'flex min-h-0 flex-1 flex-col' : 'space-y-5 pb-5'}>
-              {initialProject && (view === 'project' || view === 'create') && (
-                <StandInProjectSetup
-                  project={initialProject}
-                  roles={draft.roles.filter(row => view !== 'create' || row.id !== role.id)}
-                  projectRoleId={projectRoleId}
-                  role={role}
-                  onOpenSettings={
-                    onOpenPersonalSettings
-                      ? () => onOpenPersonalSettings(role.id, draft.executionDeviceId)
-                      : undefined
-                  }
-                  saving={saving}
-                  creating={view === 'create'}
-                  onChoose={value => {
-                    if (value === '__new') createRole()
-                    else {
-                      if (view === 'create') {
-                        const previous = history.at(-1)?.draft
-                        if (previous) setDraft(previous)
-                        setHistory(current => current.slice(0, -1))
-                      }
-                      setSelectedId(value)
-                      setView('project')
-                    }
-                  }}
-                />
-              )}
-              {(view === 'main' || view === 'create') && (
-                <label className="grid gap-2">
-                  <span className="text-text-secondary">
-                    {t(
-                      initialProject
-                        ? 'standIn.personal.stand_in_name'
-                        : 'standIn.personal.role_name'
-                    )}
-                  </span>
-                  <ControlInput
-                    ref={roleNameInput}
-                    autoFocus={view === 'create'}
-                    data-testid="stand-in-role-name"
-                    value={role.name}
-                    disabled={saving}
-                    aria-invalid={roleNameError}
-                    aria-describedby={roleNameError ? 'stand-in-role-name-error' : undefined}
-                    onChange={event => {
-                      setRoleNameError(false)
-                      changeRole({ ...role, name: event.target.value })
-                    }}
-                    className="min-h-11 placeholder:text-text-secondary md:min-h-9"
-                    placeholder={
-                      view === 'create'
-                        ? t('standIn.personal.role_name_placeholder')
-                        : standInRoleName(
-                            role,
-                            draft.roles.indexOf(role),
-                            t('standIn.personal.default_role')
-                          )
-                    }
-                  />
-                  {roleNameError && (
-                    <span id="stand-in-role-name-error" role="alert" className="text-xs text-error">
-                      {t('standIn.personal.role_name_required')}
-                    </span>
+            }
+            saving={saving}
+            creating={view === 'create'}
+            onChoose={value => {
+              if (value === '__new') createRole()
+              else {
+                if (view === 'create') {
+                  const previous = history.at(-1)?.draft
+                  if (previous) setDraft(previous)
+                  setHistory(current => current.slice(0, -1))
+                }
+                setSelectedId(value)
+                setView('project')
+              }
+            }}
+          />
+        </div>
+      )}
+      {loading ? (
+        <p role="status" className="px-5 py-8 text-text-secondary">
+          {t('standIn.loading')}
+        </p>
+      ) : draft && role ? (
+        <>
+          <div className={calendarOpen ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
+            {(view === 'main' || view === 'create') && (
+              <label className="grid gap-2">
+                <span className="text-text-secondary">
+                  {t(
+                    initialProject ? 'standIn.personal.stand_in_name' : 'standIn.personal.role_name'
                   )}
-                </label>
-              )}
-              {initialProject && (view === 'main' || view === 'connections') && (
-                <p
-                  data-testid="stand-in-project-context"
-                  className="rounded-lg bg-muted px-3 py-2 text-text-secondary"
-                >
-                  {t('standIn.personal.current_project', { project: initialProject.name })}
-                </p>
-              )}
-              {(view === 'main' || view === 'create') && (
-                <div className="space-y-2">
-                  <h2 className="font-medium">{t('standIn.personal.requirements')}</h2>
-                  <StandInRequirements
-                    key={role.id}
-                    role={role}
-                    services={services}
-                    onChange={update => updateRole(role.id, update)}
-                    disabled={saving}
-                    onSave={() => void save()}
-                  />
-                </div>
-              )}
-              {(view === 'main' || (view === 'create' && !initialProject)) && (
-                <>
-                  <StandInSelfLearningSetting
-                    enabled={role.selfLearningEnabled}
-                    savedEnabled={
-                      saved?.roles.find(item => item.id === role.id)?.selfLearningEnabled
-                    }
-                    disabled={saving}
-                    onChange={selfLearningEnabled =>
-                      updateRole(role.id, current => ({ ...current, selfLearningEnabled }))
-                    }
-                  />
-                  <div>
-                    <StandInSettingsEntry
-                      label={t('standIn.workspace.connections')}
-                      description={t('standIn.workspace.connections_help')}
-                      testId="stand-in-connections-open"
-                      disabled={saving}
-                      onClick={() => openView('connections')}
-                    />
-                    {projectConfigured || role.connections?.length ? (
-                      <div
-                        className="flex items-start gap-3 py-2 text-sm text-text-secondary"
-                        data-testid="stand-in-source-summary"
-                      >
-                        <Folder className="mt-0.5 h-4 w-4 shrink-0" />
-                        <div>
-                          {projectConfigured && (
-                            <>
-                              <p>{t('standIn.personal.collaboration')}</p>
-                              <p className="mt-1 text-xs text-text-secondary">
-                                {t(
-                                  role.collaboration.allProjects
-                                    ? 'standIn.personal.connected_all'
-                                    : 'standIn.personal.connected_selected',
-                                  { count: included.length }
-                                )}
-                              </p>
-                              {!role.collaboration.enabled && receivingSources && (
-                                <p className="mt-1 text-xs text-text-secondary">
-                                  {t('standIn.workspace.connection_receiving_paused')}
-                                </p>
-                              )}
-                            </>
-                          )}
-                          {!!role.connections?.length && (
-                            <p className="mt-1 text-xs text-text-secondary">
-                              {t('standIn.workspace.source_connections', {
-                                count: role.connections.length,
-                              })}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ) : null}
-                    {!receivingSources && (
-                      <p
-                        className="text-sm text-text-secondary"
-                        data-testid="stand-in-sources-empty"
-                      >
-                        {t(
-                          projectConfigured || role.connections?.length
-                            ? 'standIn.personal.no_receiving_sources'
-                            : 'standIn.personal.no_sources'
-                        )}
-                      </p>
-                    )}
-                  </div>
-                </>
-              )}
-              {(view === 'main' || view === 'create') && (
-                <>
-                  <StandInSettingsEntry
-                    testId="stand-in-advanced-open"
-                    disabled={saving}
-                    onClick={() => openView('advanced')}
-                    label={t('standIn.personal.more')}
-                    description={t('standIn.personal.more_summary')}
-                  />
-                </>
-              )}
-              {view === 'connections' && (
-                <StandInConnectionSettings
-                  initialCalendar={calendarEntry}
-                  onDetailTitleChange={setConnectionTitle}
-                  onCalendarViewChange={calendarViewChanged}
-                  onDetailViewChange={setConnectionDetailOpen}
-                  ref={connectionRef}
-                  onNavigate={navigation.requestLeave}
-                  role={role}
-                  savedConfiguration={saved?.roles.find(item => item.id === role.id)}
-                  scheduling={{ userId, roleId: role.id }}
-                  onScheduleDirtyChange={setScheduleDirty}
-                  tagDraft={tagDraft}
-                  projects={projects}
-                  focusedProjectId={initialProject?.id}
+                </span>
+                <ControlInput
+                  ref={roleNameInput}
+                  autoFocus={view === 'create'}
+                  data-testid="stand-in-role-name"
+                  value={role.name}
                   disabled={saving}
-                  onChange={changeRole}
-                  api={services.standInApi}
-                  deviceId={executionDeviceId!}
-                  localDeviceId={state.currentDeviceId}
+                  aria-invalid={roleNameError}
+                  aria-describedby={roleNameError ? 'stand-in-role-name-error' : undefined}
+                  onChange={event => {
+                    setRoleNameError(false)
+                    changeRole({ ...role, name: event.target.value })
+                  }}
+                  className="min-h-11 placeholder:text-text-secondary md:min-h-9"
+                  placeholder={
+                    view === 'create'
+                      ? t('standIn.personal.role_name_placeholder')
+                      : standInRoleName(
+                          role,
+                          draft.roles.indexOf(role),
+                          t('standIn.personal.unnamed_assistant')
+                        )
+                  }
                 />
-              )}
-              {(view === 'main' || view === 'create' || view === 'advanced') && (
-                <label className="grid gap-2 text-sm">
-                  <span className="text-text-secondary">
-                    {t('standIn.personal.execution_device')}
+                {roleNameError && (
+                  <span id="stand-in-role-name-error" role="alert" className="text-xs text-error">
+                    {t('standIn.personal.role_name_required')}
                   </span>
-                  <StandInDeviceSelect
-                    testId="stand-in-role-device"
-                    ariaLabel={t('standIn.personal.execution_device')}
-                    value={role.executionDeviceId}
-                    currentDeviceId={state.currentDeviceId}
-                    devices={userId === 0 ? [] : devices}
-                    disabled={saving || moving}
-                    onChange={value => {
-                      setNotice(false)
-                      updateRole(role.id, current => ({
-                        ...current,
-                        executionDeviceId: value,
-                        model: undefined,
-                        modelOptions: undefined,
-                        workspace: undefined,
-                      }))
-                    }}
-                  />
-                  <span className="text-xs text-text-secondary">
-                    {t('standIn.personal.device_change_help')}
-                  </span>
-                </label>
-              )}
-              {view === 'advanced' && (
+                )}
+              </label>
+            )}
+            {initialProject && (view === 'main' || view === 'connections') && (
+              <p
+                data-testid="stand-in-project-context"
+                className="rounded-lg bg-muted px-3 py-2 text-text-secondary"
+              >
+                {t('standIn.personal.current_project', { project: initialProject.name })}
+              </p>
+            )}
+            {(view === 'main' || view === 'create') && (
+              <div className="space-y-2">
+                <h2 className="font-medium">{t('standIn.personal.requirements')}</h2>
+                <StandInRequirements
+                  key={role.id}
+                  role={role}
+                  runtimeWork={runtimeWork}
+                  services={services}
+                  onChange={update => updateRole(role.id, update)}
+                  disabled={saving}
+                  onSave={() => void save()}
+                />
+              </div>
+            )}
+            {(view === 'main' || (view === 'create' && !initialProject)) && (
+              <>
+                <StandInSelfLearningSetting
+                  enabled={role.selfLearningEnabled}
+                  savedEnabled={saved?.roles.find(item => item.id === role.id)?.selfLearningEnabled}
+                  disabled={saving}
+                  onChange={selfLearningEnabled =>
+                    updateRole(role.id, current => ({ ...current, selfLearningEnabled }))
+                  }
+                />
+                <StandInSettingsEntry
+                  label={t('standIn.workspace.connections')}
+                  description={t('standIn.workspace.connections_help')}
+                  testId="stand-in-connections-open"
+                  disabled={saving}
+                  onClick={() => openView('connections')}
+                  summary={
+                    <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      {(projectConfigured || !!role.connections?.length) && (
+                        <span data-testid="stand-in-source-summary">
+                          {projectConfigured &&
+                            `${t('standIn.personal.collaboration')} · ${t(
+                              role.collaboration.allProjects
+                                ? 'standIn.personal.connected_all'
+                                : 'standIn.personal.connected_selected',
+                              { count: included.length }
+                            )}`}
+                          {projectConfigured && !!role.connections?.length && ' · '}
+                          {!!role.connections?.length &&
+                            t('standIn.workspace.source_connections', {
+                              count: role.connections.length,
+                            })}
+                          {projectConfigured &&
+                            !role.collaboration.enabled &&
+                            receivingSources &&
+                            ` · ${t('standIn.workspace.connection_receiving_paused')}`}
+                        </span>
+                      )}
+                      {!receivingSources && (
+                        <span data-testid="stand-in-sources-empty">
+                          {t(
+                            projectConfigured || role.connections?.length
+                              ? 'standIn.personal.no_receiving_sources'
+                              : 'standIn.personal.no_sources'
+                          )}
+                        </span>
+                      )}
+                    </span>
+                  }
+                />
+              </>
+            )}
+            {(view === 'main' || view === 'create') && (
+              <StandInSettingsEntry
+                testId="stand-in-advanced-open"
+                disabled={saving}
+                onClick={() => openView('advanced')}
+                label={t('standIn.workspace.execution_settings')}
+                description={t('standIn.workspace.execution_settings_help')}
+                footer={
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-sm">
+                    <span className="text-text-secondary">
+                      {t('standIn.personal.execution_device')}
+                    </span>
+                    {deviceControl}
+                  </div>
+                }
+              />
+            )}
+            {view === 'connections' && (
+              <StandInConnectionSettings
+                initialCalendar={calendarEntry}
+                onDetailTitleChange={setConnectionTitle}
+                onCalendarViewChange={calendarViewChanged}
+                onDetailViewChange={setConnectionDetailOpen}
+                hideHeading
+                ref={connectionRef}
+                onNavigate={navigation.requestLeave}
+                role={role}
+                savedConfiguration={saved?.roles.find(item => item.id === role.id)}
+                scheduling={{ userId, roleId: role.id }}
+                onScheduleDirtyChange={setScheduleDirty}
+                tagDraft={tagDraft}
+                projects={projects}
+                focusedProjectId={initialProject?.id}
+                disabled={saving}
+                onChange={changeRole}
+                api={services.standInApi}
+                deviceId={executionDeviceId!}
+                localDeviceId={state.currentDeviceId}
+              />
+            )}
+            {view === 'advanced' && (
+              <>
                 <StandInComposer
                   key={role.id}
                   draft={role}
@@ -735,178 +706,183 @@ function StandInSettingsEditor({
                   disabled={saving}
                   submitDisabled={saving}
                   showPrompt={false}
+                  deviceControl={deviceControl}
                   runtimeWork={runtimeWork}
                   devices={devices}
                   services={services}
                 />
-              )}
-              {view === 'advanced' && (
+                <p className="text-xs text-text-secondary">
+                  {t('standIn.personal.device_change_help')}
+                </p>
                 <StandInSettingsError
                   error={runtimeError}
                   retry={{ testId: 'stand-in-role-environment-retry', onClick: retryRuntimeWork }}
                 />
-              )}
-              <StandInSettingsError
-                error={state.error}
-                retry={{
-                  testId: 'stand-in-reload',
-                  disabled: saving,
-                  onClick: () => requestLeave(state.reload),
-                }}
-              />
-              {notice && (
-                <p
-                  role="status"
-                  data-testid="stand-in-saved"
-                  className="text-sm text-text-secondary"
-                >
-                  {t('standIn.saved')}
-                </p>
-              )}
-              <ConfirmDialog
-                open={confirmDiscard}
-                destructive
-                title={t('standIn.personal.discard_help')}
-                description={t('standIn.personal.discard_description')}
-                cancelLabel={t('standIn.personal.keep_editing')}
-                confirmLabel={t('standIn.personal.discard')}
-                confirmTestId="stand-in-discard"
-                cancelTestId="stand-in-keep-editing"
-                onClose={() => {
-                  navigation.cancelLeave()
-                  setConfirmDiscard(false)
-                }}
-                onConfirm={() => {
-                  setDraft(saved)
-                  setSelectedId(saved?.roles.some(row => row.id === selectedId) ? selectedId : '')
-                  setRoleNameError(false)
-                  setConfirmDiscard(false)
-                  navigation.confirmLeave(() => onCancel?.())
-                }}
-              />
-            </div>
-            {view === 'main' && management}
-            {!scheduleDirty && (
-              <StandInSettingsActions
-                prefix="stand-in"
-                busy={saving}
-                leading={footerLeading}
-                disabled={saving}
-                saveDisabled={
-                  saving ||
-                  moving ||
-                  scheduleDirty ||
-                  connectionDraftDirty ||
-                  (view === 'project' && !projectRoleId)
-                }
-                onCancel={cancelView}
-                onSave={() => void save(view === 'project' && projectEnabled)}
-                saveLabel={t(
-                  saving
-                    ? 'standIn.saving'
-                    : view === 'project'
-                      ? projectEnabled
-                        ? 'standIn.personal.disable_project'
-                        : 'standIn.personal.enable_and_use'
-                      : view === 'create' && !initialProject
-                        ? 'standIn.personal.create_role'
-                        : view === 'connections'
-                          ? 'standIn.personal.save_connections'
-                          : 'standIn.save'
-                )}
-              >
-                {initialProfileId &&
-                  !initialProject &&
-                  view === 'main' &&
-                  saved?.roles.some(row => row.id === role.id) && (
-                    <ControlButton
-                      type="button"
-                      data-testid="stand-in-role-delete"
-                      disabled={saving || loading}
-                      onClick={() => setConfirmDelete(true)}
-                      variant="destructive-ghost"
-                      size="sm"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      {t('standIn.personal.delete_role')}
-                    </ControlButton>
-                  )}
-                <span className="mr-auto text-xs text-text-secondary">
-                  {view === 'connections' ? (
-                    t('standIn.personal.connections_only')
-                  ) : initialProject && view === 'create' ? (
-                    <span data-testid="stand-in-project-auto-connect">
-                      {t('standIn.personal.project_connect_help', { project: initialProject.name })}
-                    </span>
-                  ) : (
-                    ''
-                  )}
-                </span>
-              </StandInSettingsActions>
+              </>
             )}
-            {confirmDelete && saved && (
-              <DialogSurface
-                kind="alertdialog"
-                onClose={() => {
-                  if (!saving) (() => setConfirmDelete(false))()
-                }}
-                modal={false}
-                render={
-                  <div
-                    aria-label={t('standIn.personal.delete_role')}
-                    className="border-t border-border px-5 py-4"
-                  />
-                }
-              >
-                <p className="text-sm">
-                  {t('standIn.personal.delete_role_help', {
-                    name: role.name || t('standIn.personal.default_role'),
-                  })}
-                </p>
-                <div className="mt-3 flex justify-end gap-2">
-                  <ControlButton
-                    variant="unstyled"
-                    type="button"
-                    data-testid="stand-in-role-delete-cancel"
-                    disabled={saving}
-                    onClick={() => setConfirmDelete(false)}
-                    className="min-h-11 rounded-md px-3 hover:bg-muted md:min-h-8"
-                  >
-                    {t('standIn.cancel')}
-                  </ControlButton>
-                  <ControlButton
-                    variant="destructive"
-                    size="sm"
-                    type="button"
-                    data-testid="stand-in-role-delete-confirm"
-                    disabled={saving}
-                    onClick={async () => {
-                      const result = await state.save({
-                        ...saved,
-                        roles: saved.roles.filter(row => row.id !== role.id),
-                      })
-                      if (result) {
-                        setConfirmDelete(false)
-                        onDeleted?.()
-                        onCancel?.()
-                      }
-                    }}
-                  >
-                    {t('standIn.personal.confirm_delete_role')}
-                  </ControlButton>
-                </div>
-              </DialogSurface>
-            )}
-          </>
-        ) : (
-          <div className="px-5 pb-5">
             <StandInSettingsError
               error={state.error}
-              retry={{ testId: 'stand-in-reload', onClick: state.reload }}
+              retry={{
+                testId: 'stand-in-reload',
+                disabled: saving,
+                onClick: () => requestLeave(state.reload),
+              }}
+            />
+            {notice && (
+              <p role="status" data-testid="stand-in-saved" className="text-sm text-text-secondary">
+                {t('standIn.saved')}
+              </p>
+            )}
+            <ConfirmDialog
+              open={confirmDiscard}
+              destructive
+              title={t('standIn.personal.discard_help')}
+              description={t('standIn.personal.discard_description')}
+              cancelLabel={t('standIn.personal.keep_editing')}
+              confirmLabel={t('standIn.personal.discard')}
+              confirmTestId="stand-in-discard"
+              cancelTestId="stand-in-keep-editing"
+              onClose={() => {
+                navigation.cancelLeave()
+                setConfirmDiscard(false)
+              }}
+              onConfirm={() => {
+                setDraft(saved)
+                setSelectedId(saved?.roles.some(row => row.id === selectedId) ? selectedId : '')
+                setRoleNameError(false)
+                setConfirmDiscard(false)
+                navigation.confirmLeave(() => onCancel?.())
+              }}
             />
           </div>
-        )}
-      </div>
-    </DialogSurface>
+          {view === 'main' && (
+            <StandInSettingsShortcuts shortcuts={shortcuts} disabled={saving} onOpen={openView} />
+          )}
+          {shortcutPage?.content}
+          {!scheduleDirty && !shortcutPage && (
+            <StandInSettingsActions
+              prefix="stand-in"
+              busy={saving}
+              leading={
+                (footerLeading || canDeleteRole) && (
+                  <>
+                    {footerLeading}
+                    {canDeleteRole && (
+                      <ControlButton
+                        type="button"
+                        data-testid="stand-in-role-delete"
+                        disabled={saving || loading}
+                        onClick={() => setConfirmDelete(true)}
+                        variant="destructive-ghost"
+                        size="sm"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        {t('standIn.personal.delete_role')}
+                      </ControlButton>
+                    )}
+                  </>
+                )
+              }
+              disabled={saving}
+              saveDisabled={
+                saving ||
+                moving ||
+                scheduleDirty ||
+                connectionDraftDirty ||
+                (view === 'project' && !projectRoleId)
+              }
+              onCancel={cancelView}
+              onSave={() => void save(view === 'project' && projectEnabled)}
+              saveLabel={t(
+                saving
+                  ? 'standIn.saving'
+                  : view === 'project'
+                    ? projectEnabled
+                      ? 'standIn.personal.disable_project'
+                      : 'standIn.personal.enable_and_use'
+                    : view === 'create' && !initialProject
+                      ? 'standIn.personal.create_title'
+                      : view === 'connections'
+                        ? 'standIn.personal.save_connections'
+                        : 'standIn.save'
+              )}
+            >
+              {view === 'connections' ? (
+                <span className="mr-auto text-xs text-text-secondary">
+                  {t('standIn.personal.connections_only')}
+                </span>
+              ) : initialProject && view === 'create' ? (
+                <span
+                  data-testid="stand-in-project-auto-connect"
+                  className="mr-auto text-xs text-text-secondary"
+                >
+                  {t('standIn.personal.project_connect_help', { project: initialProject.name })}
+                </span>
+              ) : null}
+            </StandInSettingsActions>
+          )}
+          {confirmDelete && saved && (
+            <DialogSurface
+              kind="alertdialog"
+              onClose={() => {
+                if (!saving) (() => setConfirmDelete(false))()
+              }}
+              modal={false}
+              render={
+                <div
+                  aria-label={t('standIn.personal.delete_role')}
+                  className="border-t border-border px-5 py-4"
+                />
+              }
+            >
+              <p className="text-sm">
+                {t('standIn.personal.delete_role_help', {
+                  name: role.name || t('standIn.personal.unnamed_assistant'),
+                })}
+              </p>
+              <div className="mt-3 flex justify-end gap-2">
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  data-testid="stand-in-role-delete-cancel"
+                  disabled={saving}
+                  onClick={() => setConfirmDelete(false)}
+                  className="min-h-11 rounded-md px-3 hover:bg-muted md:min-h-8"
+                >
+                  {t('standIn.cancel')}
+                </ControlButton>
+                <ControlButton
+                  variant="destructive"
+                  size="sm"
+                  type="button"
+                  data-testid="stand-in-role-delete-confirm"
+                  disabled={saving}
+                  onClick={async () => {
+                    const result = await state.save({
+                      ...saved,
+                      roles: saved.roles.filter(row => row.id !== role.id),
+                    })
+                    if (result) {
+                      setConfirmDelete(false)
+                      onDeleted?.()
+                      onCancel?.()
+                    }
+                  }}
+                >
+                  {t('standIn.personal.confirm_delete_role')}
+                </ControlButton>
+              </div>
+            </DialogSurface>
+          )}
+        </>
+      ) : (
+        <div className="px-5 pb-5">
+          <StandInSettingsError
+            error={state.error}
+            retry={{ testId: 'stand-in-reload', onClick: state.reload }}
+          />
+        </div>
+      )}
+    </StandInSettingsPanel>
   )
 }

@@ -117,7 +117,7 @@ function reportRendererFailure(error: unknown): void {
 
 function renderStartupFailure(container: HTMLElement, error: unknown): void {
   reportRendererFailure(error)
-  createRoot(container).render(<WorkbenchErrorPage kind="startup" />)
+  createRoot(container).render(<WorkbenchErrorPage kind="startup" error={error} />)
 }
 
 const desktopStorageReady = (async () => {

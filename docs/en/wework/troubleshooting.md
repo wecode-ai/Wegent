@@ -69,6 +69,11 @@ local list and apply later results in the background. To diagnose a long wait, c
 When `model-loading.log` contains `runtime.inventory.slow`, it reports the time spent reading the
 Executor identity, requesting the list, and verifying the identity again.
 
+At startup, Wework limits concurrent forwarding of pending assignment notifications to leave local
+connections available for foreground requests such as the task list. If identity verification is
+slow, compare request dispatch and response times in `executor-transport.log` from the same period
+to identify local request queueing.
+
 ## Conversation export remains on packaging
 
 In the desktop log directory, inspect `dsh-core-runtime.log` for `[wework-conversation-export]` and the export task ID. Finalization logs report the start, completion, or failure of document sync, asset sync, packaging, and destination replacement, including stage duration and asset count. They omit file paths and contents. A stage with only a start event identifies the file operation to investigate; the packaging message alone does not establish that the export has failed.
@@ -173,7 +178,9 @@ Every request has a `requestId`. In the desktop client, this value is sent to th
 
 ## Getting help
 
-Select **Report a problem** in the upper-right corner of any Wework desktop page, including tasks, new conversations, Plugins, My Stand-in, Scheduled and Settings. Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
+If Wework displays a page error or startup error screen, select **Copy debug info** to copy the current error and any available stack traces to the clipboard. Save this information before refreshing, then review it before pasting it into a problem report. If copying fails, select the button again to retry.
+
+Select **Report a problem** in the upper-right corner of any Wework desktop page, including tasks, new conversations, Plugins, My assistants, Scheduled and Settings. Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
 
 Optional information behaves as follows:
 

@@ -121,12 +121,9 @@ export function createPaneSessionFrame(
     resetAttachments,
     dismissAttachmentError,
   } = attachmentState
-  const input = projectChat.inputByScope[inputScopeKey] ?? ''
-  const setInputForScope = projectChat.setInputForScope
-  const getInputRevisionForScope = projectChat.getInputRevisionForScope
-  const sharedInputRevision = getInputRevisionForScope(inputScopeKey)
-  const inputRevision = state.inputRevision
-  const replaceDraftKey = state.replaceDraftKey
+  const { draftStore, setInputForScope } = projectChat
+  const getInput = () => draftStore.read(inputScopeKey).value
+  const getInputRevisionForScope = (scope: string) => draftStore.read(scope).revision
   const localError = state.localError
   const error = projectChat.composerErrorByScope
     ? (projectChat.composerErrorByScope[inputScopeKey] ?? null)
@@ -280,12 +277,10 @@ export function createPaneSessionFrame(
     removeAttachment,
     resetAttachments,
     dismissAttachmentError,
-    input,
+    draftStore,
+    getInput,
     setInputForScope,
     getInputRevisionForScope,
-    sharedInputRevision,
-    inputRevision,
-    replaceDraftKey,
     localError,
     error,
     answeredRequestUserInputIds,

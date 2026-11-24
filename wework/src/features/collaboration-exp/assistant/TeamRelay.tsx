@@ -32,7 +32,7 @@ export function TeamRelay({
   const { t } = useTranslation('collaborationExp')
   const members = nodes.map(node => {
     const name =
-      node.name || t(node.isDefault ? 'assistant.defaultAssistant' : 'assistant.specialist')
+      node.name || t(node.isDefault ? 'assistant.defaultAssistant' : 'assistant.unnamedAssistant')
     const status = [
       t(`teamRelay.state.${ready ? node.state : 'unknown'}`),
       ...(!node.enabled ? [t('teamRelay.paused')] : []),

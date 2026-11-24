@@ -98,15 +98,22 @@ function sourceFingerprint() {
 
 function runBuild() {
   return new Promise((resolveBuild, rejectBuild) => {
+    const env = { ...process.env }
+    delete env.CARGO_TARGET_DIR
     const build = spawn(
       'cargo',
-      ['build', '--manifest-path', manifestPath, '--bin', 'wegent-executor'],
+      [
+        'build',
+        '--target-dir',
+        targetDir,
+        '--manifest-path',
+        manifestPath,
+        '--bin',
+        'wegent-executor',
+      ],
       {
         cwd: executorDir,
-        env: {
-          ...process.env,
-          CARGO_TARGET_DIR: targetDir,
-        },
+        env,
         stdio: ['ignore', 'pipe', 'pipe'],
       }
     )

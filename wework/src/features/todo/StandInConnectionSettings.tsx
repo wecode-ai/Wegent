@@ -293,7 +293,6 @@ export function StandInConnectionSettings({
             projects={projects}
             providers={providers}
             loading={loading}
-            local={deviceId === localDeviceId}
             disabled={disabled}
             scheduling={Boolean(scheduling)}
             onSelect={setView}

@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { IMPrivateSession } from '@/types/api'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { Check, ChevronRight, MessageSquare } from 'lucide-react'
+import { Check, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { StandInReviewDialog } from './StandInReviewDialog'
 
@@ -53,13 +53,11 @@ export function StandInImConnectionDialog({
       onClose={onClose}
     >
       <div className="mx-auto max-w-lg space-y-5" data-testid="stand-in-im-connections">
-        <div className="space-y-2 rounded-2xl bg-muted/50 px-5 py-6 text-center">
-          <MessageSquare aria-hidden="true" className="mx-auto mb-3 h-7 w-7 text-text-secondary" />
-          <h3 className="text-lg font-medium">{t('standIn.im.connect_channel', { channel })}</h3>
-          <p className="text-sm text-text-secondary">
+        <div className="space-y-1">
+          <p className="break-words text-sm text-text-secondary">
             {t('standIn.im.target_help', { name, channel })}
           </p>
-          {deviceName && <p className="text-xs text-text-secondary">{deviceName}</p>}
+          {deviceName && <p className="break-words text-xs text-text-secondary">{deviceName}</p>}
         </div>
         {offline && (
           <p role="status" className="text-sm text-text-secondary">
@@ -86,7 +84,7 @@ export function StandInImConnectionDialog({
             )}
             {!loading && !error && !sessions.length && (
               <div
-                className="space-y-2 text-sm text-text-secondary"
+                className="space-y-2 rounded-lg bg-muted/50 px-3 py-3 text-sm text-text-secondary"
                 data-testid="stand-in-im-empty"
               >
                 <p>{t('standIn.im.empty_channel', { channel })}</p>
@@ -161,7 +159,7 @@ export function StandInImConnectionDialog({
               {sessions.length > 0 && (
                 <Button
                   data-testid="stand-in-im-submit"
-                  className="min-h-11 w-full rounded-full"
+                  className="min-h-11 w-full whitespace-normal rounded-lg"
                   disabled={loading || Boolean(saving) || !selected}
                   onClick={() => {
                     if (isConnected) onClose()

@@ -1,7 +1,12 @@
-import { roleSelectsProject, standInRoleName } from '@/api/personalStandIn'
+import {
+  roleSelectsProject,
+  standInConversationTaskId,
+  standInRoleName,
+} from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkspaceNavigationDetail } from '@/lib/navigation'
@@ -13,7 +18,7 @@ import { StandInIcon } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { useDOMEvent, useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { Check, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
+import { Check, PanelRight, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
 import type { ComponentProps, ReactNode, Ref } from 'react'
 import {
   useCallback,
@@ -27,7 +32,8 @@ import {
 import { createPortal } from 'react-dom'
 import { StandInConversation } from './StandInConversation'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
-import { StandInGhostRevisionEntry } from './StandInGhostRevisionEntry'
+import type { activeStandInBranchRows } from './standInDelegatedBranches'
+import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInOnboarding } from './StandInOnboarding'
@@ -37,7 +43,7 @@ import { standInProcessingFailure } from './standInProcessingFailure'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
-import { StandInSettingsDisclosure, StandInSettingsEntry } from './StandInSettingsLayout'
+import type { StandInSettingsShortcut } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
@@ -239,7 +245,10 @@ export function StandInOverviewPage({
     if (panelRef.current) panelRef.current.requestLeave(action)
     else action()
   }
+  const openMemory = useStableEvent(() => leavePanel(() => openProfile('memory')))
+  const [delegationPanelScope, setDelegationPanelScope] = useState<string | null>(null)
   const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
+  const delegationPanelOpen = delegationPanelScope === detailsScope
   const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
   const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
   const role =
@@ -262,7 +271,14 @@ export function StandInOverviewPage({
             standInWorkRole(item) === roleId))
     )
     .sort((a, b) => standInState(b).updatedAt.localeCompare(standInState(a).updatedAt))
-  const roleItems = roleId ? items.filter(item => standInWorkRole(item) === roleId) : items
+  const conversationTaskId = standInConversationTaskId(props.userId, roleId)
+  const roleItems = items.filter(item => {
+    if (roleId && standInWorkRole(item) !== roleId) return false
+    const origin = item.task.runtimeHandle?.origin as
+      | { roleDelegation?: { ancestors?: string[] } }
+      | undefined
+    return origin?.roleDelegation?.ancestors?.[0] !== conversationTaskId
+  })
   const chooseRole = (id?: string, executionDevice?: string) =>
     leavePanel(() => {
       const target =
@@ -331,46 +347,52 @@ export function StandInOverviewPage({
     processingFailure.summary ??
     processingFailure.message ??
     (processing.status?.awaitingUser ? t('standIn.processing.needs_input') : null)
-  const management = (
-    <section data-testid="stand-in-settings-tools" className="mt-4 space-y-4">
-      {active && deviceId && (profile === 'primary' || profile === 'role') && (
-        <StandInSettingsDisclosure
-          testId="stand-in-im-channels"
-          label={t('standIn.im.title')}
-          description={t('standIn.im.settings_help')}
-        >
-          <StandInImConnections
-            services={props.services}
-            devices={props.devices}
-            deviceId={deviceId}
-            roleId={profile === 'role' ? roleId : undefined}
-            name={
-              profile === 'role' && role
-                ? standInRoleName(
-                    role,
-                    Math.max(0, roles.indexOf(role)),
-                    t('standIn.personal.default_role')
-                  )
-                : t('standIn.title')
-            }
-            onOpenChange={setImDialogOpen}
-          />
-        </StandInSettingsDisclosure>
-      )}
-      {api && saved && (
-        <StandInSettingsEntry
-          testId="stand-in-memory-open"
-          label={t('standIn.memory.title')}
-          description={t('standIn.memory.settings_help')}
-          disabled={false}
-          onClick={() => leavePanel(() => openProfile('memory'))}
+  const shortcuts: StandInSettingsShortcut[] = []
+  if (active && deviceId && (profile === 'primary' || profile === 'role')) {
+    shortcuts.push({
+      id: 'im',
+      testId: 'stand-in-im-channels-toggle',
+      containerTestId: 'stand-in-im-channels',
+      label: t('standIn.im.title'),
+      description: t('standIn.im.settings_help'),
+      content: (
+        <StandInImConnections
+          services={props.services}
+          devices={props.devices}
+          deviceId={deviceId}
+          roleId={profile === 'role' ? roleId : undefined}
+          name={
+            profile === 'role' && role
+              ? standInRoleName(
+                  role,
+                  Math.max(0, roles.indexOf(role)),
+                  t('standIn.personal.unnamed_assistant')
+                )
+              : t('standIn.personal.default_role')
+          }
+          onOpenChange={setImDialogOpen}
         />
-      )}
-      {api &&
-        saved &&
-        (roleId ? saved.roles.find(role => role.id === roleId) : saved.primary)
-          ?.selfLearningEnabled !== undefined && (
-          <StandInGhostRevisionEntry
+      ),
+    })
+  }
+  if (api && saved) {
+    shortcuts.push({
+      id: 'memory',
+      testId: 'stand-in-memory-open',
+      label: t('standIn.memory.title'),
+      description: t('standIn.memory.settings_help'),
+      onClick: openMemory,
+    })
+    if (
+      (roleId ? saved.roles.find(item => item.id === roleId) : saved.primary)
+        ?.selfLearningEnabled !== undefined
+    ) {
+      shortcuts.push({
+        id: 'revision',
+        testId: 'stand-in-ghost-revision-open',
+        label: t('standIn.workspace.ghost_revision'),
+        content: (
+          <StandInGhostRevisionPanel
             key={JSON.stringify([saved.userId, saved.executionDeviceId, saved.version, roleId])}
             api={api}
             userId={saved.userId}
@@ -378,167 +400,13 @@ export function StandInOverviewPage({
             roleId={roleId}
             requestLeave={leavePanel}
           />
-        )}
-    </section>
-  )
-  const content = (
-    <section
-      className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
-      data-testid="stand-in-overview"
-    >
-      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2">
-          <nav
-            className="min-w-0 flex-1 overflow-x-auto"
-            aria-label={t('standIn.workspace.switch_role')}
-            data-testid="stand-in-role-selector"
-          >
-            <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="stand-in-primary-open"
-                aria-current={!roleId ? 'page' : undefined}
-                onClick={() => chooseRole()}
-                className={roleTabClass(!roleId)}
-              >
-                <UserRound aria-hidden="true" className="h-4 w-4" />
-                {t('standIn.title')}
-                {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
-              </ControlButton>
-              {roles.map((value, index) => {
-                const projects = props.projects.filter(project =>
-                  roleSelectsProject(value, {
-                    id: project.id,
-                    store: project.project_store === 'local' ? 'local' : 'cloud',
-                  })
-                )
-                const scope = [
-                  ...projects.map(project => project.name),
-                  ...(value.connections ?? []).map(source => source.name),
-                ].join(' · ')
-                const selected =
-                  roleId === value.id && (!roleLocations || value.executionDeviceId === deviceId)
-                return (
-                  <ControlButton
-                    variant="unstyled"
-                    key={`${value.migrationSource ?? value.executionDeviceId}:${value.id}`}
-                    type="button"
-                    data-testid={`stand-in-overview-role-${value.id}${roles.filter(role => role.id === value.id).length > 1 ? `-${value.executionDeviceId}` : ''}`}
-                    aria-current={selected ? 'page' : undefined}
-                    title={
-                      scope ||
-                      t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
-                    }
-                    onClick={() => chooseRole(value.id, value.executionDeviceId)}
-                    className={roleTabClass(selected)}
-                  >
-                    <StandInIcon
-                      enabled={value.enabled}
-                      className={`h-4 w-4 ${selected ? '[&_g]:text-background' : ''}`}
-                    />
-                    <span className="max-w-40 truncate">
-                      {standInRoleName(value, index, t('standIn.personal.default_role'))}
-                    </span>
-                    {selected && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
-                    <span className="sr-only">{scope}</span>
-                    <span className="sr-only">
-                      {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
-                      {t('standIn.personal.connected_selected', { count: projects.length })}
-                    </span>
-                  </ControlButton>
-                )
-              })}
-              <Tooltip label={t('standIn.workspace.create_role')} side="bottom">
-                <ControlButton
-                  variant="unstyled"
-                  type="button"
-                  data-testid="stand-in-create-role"
-                  aria-label={t('standIn.workspace.create_role')}
-                  onClick={event => {
-                    const trigger = event.currentTarget
-                    leavePanel(() => {
-                      setCalendarRequest(0)
-                      openProfile('create', trigger)
-                    })
-                  }}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted md:h-8 md:w-8"
-                >
-                  <Plus aria-hidden="true" className="h-4 w-4" />
-                </ControlButton>
-              </Tooltip>
-            </div>
-          </nav>
-          <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
-            <ControlButton
-              variant="unstyled"
-              type="button"
-              data-testid="stand-in-details-open"
-              ref={detailsTrigger}
-              aria-label={t('standIn.workspace.details_title')}
-              aria-haspopup="dialog"
-              aria-expanded={!!detailsAnchor}
-              disabled={(!state.saved && state.loading) || state.saving}
-              onClick={event => {
-                const anchor = event.currentTarget
-                setDetailsTarget(detailsAnchor ? null : { anchor, scope: detailsScope })
-              }}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
-            >
-              <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
-            </ControlButton>
-          </Tooltip>
-          <p data-testid="stand-in-role-help" className="w-full text-sm text-text-secondary">
-            {t('standIn.workspace.role_help')}
-          </p>
-        </header>
-        {state.loading && !state.saved ? (
-          <p role="status" className="p-5 text-text-secondary">
-            {t('standIn.loading')}
-          </p>
-        ) : state.error && !state.saved ? (
-          <div role="alert" className="p-5 text-error">
-            <p>{state.error}</p>
-            <ControlButton
-              variant="unstyled"
-              type="button"
-              data-testid="stand-in-overview-retry"
-              onClick={reload}
-              className="mt-2 min-h-11 min-w-11 underline md:min-h-8"
-            >
-              {t('standIn.reload')}
-            </ControlButton>
-          </div>
-        ) : (
-          <>
-            {api && deviceId ? (
-              <StandInConversation
-                contentFooter={
-                  review !== 'proposal' && (proposalCard || proposalFailure) ? (
-                    <>
-                      {proposalCard}
-                      {proposalFailure}
-                    </>
-                  ) : null
-                }
-                draftRequest={!roleId ? exampleDraft : undefined}
-                onDraftRequestConsumed={id =>
-                  setExampleDraft(current => (current?.id === id ? undefined : current))
-                }
-                active={active}
-                key={`${deviceId}:${props.userId}:${roleId ? `role:${roleId}` : 'primary'}`}
-                api={api}
-                userId={props.userId}
-                deviceId={deviceId}
-                roleId={roleId}
-                settings={roleId ? saved?.roles.find(role => role.id === roleId) : saved?.primary}
-                services={props.services}
-                onOpenTask={onOpenTask}
-              />
-            ) : null}
-          </>
-        )}
-        {detailsAnchor && active && (
+        ),
+      })
+    }
+  }
+  const renderDetails =
+    detailsAnchor && active
+      ? (activeBranches: ReturnType<typeof activeStandInBranchRows>) => (
           <StandInDetailsPopover
             key={`${props.userId}:${deviceId}:${roleId ?? '@primary'}`}
             anchor={detailsAnchor}
@@ -547,9 +415,9 @@ export function StandInOverviewPage({
                 ? standInRoleName(
                     role,
                     Math.max(0, roles.indexOf(role)),
-                    t('standIn.personal.default_role')
+                    t('standIn.personal.unnamed_assistant')
                   )
-                : t('standIn.title')
+                : t('standIn.personal.default_role')
             }
             enabled={role ? role.enabled : saved?.primary?.enabled !== false}
             device={device}
@@ -558,6 +426,7 @@ export function StandInOverviewPage({
                 !(item.task.runtimeHandle?.origin as Record<string, unknown> | undefined)
                   ?.inboxStatus
             )}
+            activeDelegations={activeBranches}
             inbox={visibleInbox}
             sourceErrors={inbox.sourceErrors}
             overviewError={overviewError}
@@ -609,7 +478,188 @@ export function StandInOverviewPage({
             }
             onOpenTask={onOpenTask}
           />
+        )
+      : undefined
+  const conversationAvailable = api && deviceId && (state.saved || (!state.loading && !state.error))
+  const content = (
+    <section
+      className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
+      data-testid="stand-in-overview"
+    >
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2">
+          <nav
+            className="min-w-0 flex-1 overflow-x-auto"
+            aria-label={t('standIn.workspace.switch_role')}
+            data-testid="stand-in-role-selector"
+          >
+            <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="stand-in-primary-open"
+                aria-current={!roleId ? 'page' : undefined}
+                onClick={() => chooseRole()}
+                className={roleTabClass(!roleId)}
+              >
+                <UserRound aria-hidden="true" className="h-4 w-4" />
+                {t('standIn.personal.default_role')}
+                {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
+              </ControlButton>
+              {roles.map((value, index) => {
+                const projects = props.projects.filter(project =>
+                  roleSelectsProject(value, {
+                    id: project.id,
+                    store: project.project_store === 'local' ? 'local' : 'cloud',
+                  })
+                )
+                const scope = [
+                  ...projects.map(project => project.name),
+                  ...(value.connections ?? []).map(source => source.name),
+                ].join(' · ')
+                const selected =
+                  roleId === value.id && (!roleLocations || value.executionDeviceId === deviceId)
+                return (
+                  <ControlButton
+                    variant="unstyled"
+                    key={`${value.migrationSource ?? value.executionDeviceId}:${value.id}`}
+                    type="button"
+                    data-testid={`stand-in-overview-role-${value.id}${roles.filter(role => role.id === value.id).length > 1 ? `-${value.executionDeviceId}` : ''}`}
+                    aria-current={selected ? 'page' : undefined}
+                    title={
+                      scope ||
+                      t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
+                    }
+                    onClick={() => chooseRole(value.id, value.executionDeviceId)}
+                    className={roleTabClass(selected)}
+                  >
+                    <StandInIcon
+                      enabled={value.enabled}
+                      className={`h-4 w-4 ${selected ? '[&_g]:text-background' : ''}`}
+                    />
+                    <span className="max-w-40 truncate">
+                      {standInRoleName(value, index, t('standIn.personal.unnamed_assistant'))}
+                    </span>
+                    {selected && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
+                    <span className="sr-only">{scope}</span>
+                    <span className="sr-only">
+                      {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
+                      {t('standIn.personal.connected_selected', { count: projects.length })}
+                    </span>
+                  </ControlButton>
+                )
+              })}
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="stand-in-create-role"
+                onClick={event => {
+                  const trigger = event.currentTarget
+                  leavePanel(() => {
+                    setCalendarRequest(0)
+                    openProfile('create', trigger)
+                  })
+                }}
+                className="flex h-11 shrink-0 items-center gap-1 rounded-md px-2 text-text-secondary hover:bg-muted md:h-8"
+              >
+                <Plus aria-hidden="true" className="h-4 w-4" />
+                {t('standIn.personal.create_title')}
+              </ControlButton>
+            </div>
+          </nav>
+          {api && deviceId && saved && (
+            <Tooltip label={t('standIn.delegation.panel')} side="bottom" align="end">
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="stand-in-delegation-panel-toggle"
+                aria-label={t('standIn.delegation.title')}
+                aria-expanded={delegationPanelOpen}
+                aria-controls={delegationPanelOpen ? 'stand-in-delegation-panel' : undefined}
+                onClick={() => setDelegationPanelScope(delegationPanelOpen ? null : detailsScope)}
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8 ${delegationPanelOpen ? 'bg-muted' : ''}`}
+              >
+                <PanelRight aria-hidden="true" className="size-4" />
+              </ControlButton>
+            </Tooltip>
+          )}
+          <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="stand-in-details-open"
+              ref={detailsTrigger}
+              aria-label={t('standIn.workspace.details_title')}
+              aria-haspopup="dialog"
+              aria-expanded={!!detailsAnchor}
+              disabled={(!state.saved && state.loading) || state.saving}
+              onClick={event => {
+                const anchor = event.currentTarget
+                setDetailsTarget(detailsAnchor ? null : { anchor, scope: detailsScope })
+              }}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
+            >
+              <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
+            </ControlButton>
+          </Tooltip>
+          <p data-testid="stand-in-role-help" className="w-full text-sm text-text-secondary">
+            {t('standIn.workspace.role_help')}
+          </p>
+        </header>
+        {state.loading && !state.saved ? (
+          <p role="status" className="p-5 text-text-secondary">
+            {t('standIn.loading')}
+          </p>
+        ) : state.error && !state.saved ? (
+          <div role="alert" className="p-5 text-error">
+            <p>{state.error}</p>
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="stand-in-overview-retry"
+              onClick={reload}
+              className="mt-2 min-h-11 min-w-11 underline md:min-h-8"
+            >
+              {t('standIn.reload')}
+            </ControlButton>
+          </div>
+        ) : (
+          <>
+            {api && deviceId ? (
+              <StandInConversation
+                delegationPanelOpen={delegationPanelOpen}
+                sidebarTasks={{
+                  items: roleItems,
+                  inbox: visibleInbox,
+                  onAllActivity: () => setReview('work'),
+                }}
+                renderDetails={renderDetails}
+                contentFooter={
+                  review !== 'proposal' && (proposalCard || proposalFailure) ? (
+                    <>
+                      {proposalCard}
+                      {proposalFailure}
+                    </>
+                  ) : null
+                }
+                draftRequest={!roleId ? exampleDraft : undefined}
+                onDraftRequestConsumed={id =>
+                  setExampleDraft(current => (current?.id === id ? undefined : current))
+                }
+                active={active}
+                key={`${deviceId}:${props.userId}:${roleId ? `role:${roleId}` : 'primary'}`}
+                api={api}
+                userId={props.userId}
+                deviceId={deviceId}
+                roleId={roleId}
+                settings={roleId ? saved?.roles.find(role => role.id === roleId) : saved?.primary}
+                services={props.services}
+                onOpenTask={onOpenTask}
+              />
+            ) : null}
+          </>
         )}
+        {!conversationAvailable && renderDetails?.([])}
         <StandInReviewDialog
           open={active && review === 'work'}
           title={t('standIn.workspace.details_activity')}
@@ -797,7 +847,7 @@ export function StandInOverviewPage({
                 ) : profile === 'primary' && state.draft ? (
                   <StandInPrimaryProfile
                     ref={panelRef}
-                    management={management}
+                    shortcuts={shortcuts}
                     footerLeading={
                       !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
                     }
@@ -834,7 +884,7 @@ export function StandInOverviewPage({
                     key={`${profile === 'create' ? '@create' : (roleId ?? '@default')}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
                     {...props}
-                    management={management}
+                    shortcuts={shortcuts}
                     footerLeading={
                       !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
                     }
@@ -885,6 +935,7 @@ export function StandInOverviewPage({
         projects: props.projects,
         localDeviceId: state.currentDeviceId,
         devices: props.devices,
+        services: props.services,
         onSelectDevice: primaryDeviceId
           ? undefined
           : device => {

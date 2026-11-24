@@ -429,6 +429,7 @@ pub(super) fn convert_responses_input_item(
         {
             let mut converted = item.clone();
             converted["type"] = Value::String("function_call".to_owned());
+            converted.as_object_mut().unwrap().remove("id");
             if bridge_namespace_tools {
                 converted["name"] = Value::String(responses_call_wire_name(
                     context,
@@ -459,6 +460,7 @@ pub(super) fn convert_responses_input_item(
                 {
                     let mut converted = item.clone();
                     converted["type"] = Value::String("function_call_output".to_owned());
+                    converted.as_object_mut().unwrap().remove("id");
                     return Ok(converted);
                 }
             }

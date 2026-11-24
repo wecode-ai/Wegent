@@ -3,7 +3,7 @@ import type { Element } from 'hast'
 import 'katex/dist/katex.min.css'
 import { FileReferenceIcon } from '../composer/FileReferenceIcon'
 import { MarkdownLinkScope } from './markdownLinkScope'
-import { Fragment, createContext, memo, useContext, useMemo } from 'react'
+import { Fragment, createContext, memo, useContext, useMemo, useState } from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import { Folder, Link2 } from 'lucide-react'
 import { Streamdown, defaultRemarkPlugins, type ExtraProps, type StreamdownProps } from 'streamdown'
@@ -43,7 +43,6 @@ import { getRecognizedLink } from './link-preview'
 import { createTableMarkdownRehypePlugins } from './markdownTableSource'
 import { preprocessCjkEmphasis } from './preprocessCjkEmphasis'
 import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelimiters'
-import { useBufferedStreamingText } from './useBufferedStreamingText'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -123,7 +122,6 @@ type AssistantMarkdownPart =
   | {
       kind: 'markdown'
       content: string
-      windowed: boolean
       wholeSource: boolean
     }
   | { kind: 'visualization'; file: string; mode?: 'wide'; title?: string }
@@ -141,7 +139,6 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 }: AssistantMarkdownProps) {
   const services = useMarkdownServices()
   const renderVisualization = renderVisualizationOverride ?? services.renderVisualization
-  const bufferedContent = useBufferedStreamingText(content, isStreaming)
   const streamdownMode =
     variant === 'default' || variant === 'process' || isStreaming
       ? ('streaming' as const)
@@ -154,12 +151,12 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         normalizeMathDelimiters(
           protectComposerReferenceLinks(
             variant === 'user'
-              ? bufferedContent
-              : stripUnsupportedContentReferenceCitations(bufferedContent)
+              ? content
+              : stripUnsupportedContentReferenceCitations(content)
           )
         )
       ),
-    [bufferedContent, variant]
+    [content, variant]
   )
   // Only unfinished annotation syntax depends on the stream lifecycle. Plain text keeps
   // the same plugin identities so completed blocks retain their parsed trees.
@@ -176,6 +173,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     return plugins
   }, [variant, annotationsStreaming, preserveLineBreaks])
   const windowMarkdown = Boolean(services.windowMarkdown) && variant === 'default'
+  const [hasStreamed, setHasStreamed] = useState(isStreaming)
+  if (isStreaming && !hasStreamed) setHasStreamed(true)
+  // Keep live block identities through completion. Settled history already has display chunks.
+  const parseWindowInOnePass = windowMarkdown && !hasStreamed
   const contentParts = useMemo(() => {
     const parts =
       variant === 'user' || !renderVisualization
@@ -186,11 +187,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       const wholeSource = hasMarkdownReferenceDefinitions(part.content)
       const chunks =
         windowMarkdown && !wholeSource ? splitStaticMarkdownChunks(part.content) : [part.content]
-      const windowed = windowMarkdown
       return chunks.map(content => ({
         kind: 'markdown',
         content,
-        windowed,
         wholeSource,
       }))
     })
@@ -386,49 +385,22 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <div
           className={`${variant === 'user' ? 'user-markdown' : variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
         >
-          {contentParts.map((part, index) =>
-            part.kind === 'visualization' ? (
-              <Fragment key={`${part.file}-${index}`}>{renderVisualization?.(part)}</Fragment>
-            ) : part.windowed ? (
-              <WindowedMarkdownChunk
-                key={`markdown-${index}`}
-                chunkIndex={index}
-                content={part.content}
-                eager={isStreaming && (index === 0 || index === contentParts.length - 1)}
-              >
-                <MarkdownStreamingContext.Provider
-                  value={isStreaming && index === contentParts.length - 1}
-                >
-                  <Streamdown
-                    mode={streamdownMode}
-                    parseIncompleteMarkdown={variant === 'default' || isStreaming}
-                    plugins={markdownPlugins}
-                    parseMarkdownIntoBlocksFn={
-                      part.wholeSource ? completeMarkdownSource : undefined
-                    }
-                    isAnimating={false}
-                    controls={false}
-                    linkSafety={{ enabled: false }}
-                    lineNumbers={false}
-                    urlTransform={transformMarkdownUrl}
-                    components={components}
-                    rehypePlugins={tableMarkdownRehypePlugins}
-                    remarkPlugins={remarkPlugins}
-                  >
-                    {prepareAssistantMarkdownContent(
-                      part.content,
-                      isStreaming && index === contentParts.length - 1
-                    )}
-                  </Streamdown>
-                </MarkdownStreamingContext.Provider>
-              </WindowedMarkdownChunk>
-            ) : (
-              <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
+          {contentParts.map((part, index) => {
+            if (part.kind === 'visualization') {
+              return <Fragment key={`${part.file}-${index}`}>{renderVisualization?.(part)}</Fragment>
+            }
+            const key = `markdown-${index}`
+            const isLastPart = index === contentParts.length - 1
+            const partStreaming = isStreaming && (!windowMarkdown || isLastPart)
+            const markdown = (
+              <MarkdownStreamingContext.Provider key={key} value={partStreaming}>
                 <Streamdown
                   mode={streamdownMode}
                   parseIncompleteMarkdown={variant === 'default' || isStreaming}
                   plugins={markdownPlugins}
-                  parseMarkdownIntoBlocksFn={part.wholeSource ? completeMarkdownSource : undefined}
+                  parseMarkdownIntoBlocksFn={
+                    part.wholeSource || parseWindowInOnePass ? completeMarkdownSource : undefined
+                  }
                   isAnimating={false}
                   controls={false}
                   linkSafety={{ enabled: false }}
@@ -440,11 +412,21 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
                 >
                   {variant === 'user'
                     ? part.content
-                    : prepareAssistantMarkdownContent(part.content, isStreaming)}
+                    : prepareAssistantMarkdownContent(part.content, partStreaming)}
                 </Streamdown>
               </MarkdownStreamingContext.Provider>
             )
-          )}
+            return windowMarkdown ? (
+              <WindowedMarkdownChunk
+                key={key}
+                chunkIndex={index}
+                content={part.content}
+                eager={isStreaming && (index === 0 || isLastPart)}
+              >
+                {markdown}
+              </WindowedMarkdownChunk>
+            ) : markdown
+          })}
         </div>
       </MarkdownFileOpenContext.Provider>
     </MarkdownCustomLinkContext.Provider>

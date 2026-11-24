@@ -4,7 +4,9 @@
 
 use serde_json::{Map, Value, json};
 
-use super::model_config::extract_model_config;
+use brz_http_server::StatusCode;
+
+use super::model_config::{ModelConfigError, extract_model_config};
 use super::request::{BuildExecutionRequestInput, model_resolution_error};
 use super::resolution;
 use super::wework::models as wework_models;
@@ -110,8 +112,15 @@ fn apply_crd(
     spec: &Value,
     name: &str,
 ) -> Result<(), FastApiError> {
-    let Ok(full) = extract_model_config(spec) else {
-        return Ok(());
+    let full = match extract_model_config(spec) {
+        Ok(full) => full,
+        Err(ModelConfigError::NoEnv) => return Ok(()),
+        Err(ModelConfigError::MaskedApiKey | ModelConfigError::CryptoConfiguration) => {
+            return Err(FastApiError::detail(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Cloud model credentials are unavailable; check the encryption configuration",
+            ));
+        }
     };
     let full = Value::Object(full);
     config.insert(
@@ -251,7 +260,7 @@ mod tests {
     fn keeps_runtime_protocol_and_explicit_anthropic_endpoint() {
         let spec = json!({"modelConfig":{"env":{
             "model": "claude", "model_id": "claude-provider", "base_url": "https://example.test/",
-            "api_key": "test-key", "DEFAULT_HEADERS": {"X-Test":"value"}
+            "api_key": "sk-test-key", "DEFAULT_HEADERS": {"X-Test":"value"}
         }}});
         let mut config = Map::from_iter([("protocol".into(), json!("openai-responses"))]);
         apply_crd(&mut config, &spec, "model").unwrap();

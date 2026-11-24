@@ -466,7 +466,9 @@ mod tests {
             )
             .is_err());
         let mut settings = store.personal_stand_in(7, "device").unwrap();
-        settings["roles"][0]["prompt"] = json!("changed responsibilities");
+        let mut role = crate::task_runtime::personal_stand_in::empty_role("default", "device");
+        role["prompt"] = json!("changed responsibilities");
+        settings["roles"] = json!([role]);
         store.save_personal_stand_in(7, "device", settings).unwrap();
         assert!(store
             .commit_stand_in_route(7, "device", "snapshot", "digest", (&state, &state), &[])

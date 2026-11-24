@@ -92,7 +92,23 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
     }
     for (const [subscriptionId, subscription] of subscriptionEntries) {
       if (event.event === 'wework.notification.created') {
-        subscription.handlers.onWeworkNotification?.()
+        const { id, stored, standInStartFailure } = event.payload
+        const { userId, itemTitle, code, url } = asRecord(standInStartFailure)
+        subscription.handlers.onWeworkNotification?.(
+          typeof id === 'string'
+            ? {
+                id,
+                stored: stored !== false,
+                standInStartFailure:
+                  typeof userId === 'number' &&
+                  typeof itemTitle === 'string' &&
+                  typeof code === 'string' &&
+                  typeof url === 'string'
+                    ? { userId, itemTitle, code, url }
+                    : undefined,
+              }
+            : undefined
+        )
         continue
       }
       if (event.event === 'wework.issue.assignments.changed') {

@@ -54,7 +54,17 @@ def mutate_local_plugin(
     source_device_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Commit account intent, idempotent result in one transaction."""
-    with _rejection_context(db, user_id, instance_id, operation_id, intent_order):
+    restore_deleted = (
+        action == "install" and (payload or {}).get("restoreDeleted") is True
+    )
+    with _rejection_context(
+        db,
+        user_id,
+        instance_id,
+        operation_id,
+        intent_order,
+        update_target=target_id if action == "update" else None,
+    ):
         acquire_plugin_write_lock(
             db, user_id, name=f"@operation:{instance_id}:{operation_id}"
         )
@@ -93,10 +103,11 @@ def mutate_local_plugin(
         if action in {"install", "ensure_builtin"}:
             # Resolve supersession from owned state before catalog repair can
             # change its identity or fail for a withdrawn catalog entry.
-            if (
+            is_new_operation = (
                 _replay_operation(db, user_id, instance_id, operation_id, request_hash)
                 is None
-            ):
+            )
+            if is_new_operation:
                 _guard_existing_intent(
                     db, user_id, instance_id, action, target_id, intent_order
                 )
@@ -111,6 +122,10 @@ def mutate_local_plugin(
                 catalog = _builtin_catalog_plugin(db, str(target_id))
                 plugin_id = catalog.id if catalog is not None else None
             if plugin_id is not None:
+                if is_new_operation and restore_deleted:
+                    plugin_marketplace_service.lock_private_plugin_for_install(
+                        db, user_id, plugin_id
+                    )
                 plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
                     db,
                     user_id=user_id,
@@ -119,6 +134,14 @@ def mutate_local_plugin(
         acquire_plugin_write_lock(
             db, user_id, name=f"@operation:{instance_id}:{operation_id}"
         )
+        if (
+            restore_deleted
+            and _replay_operation(db, user_id, instance_id, operation_id, request_hash)
+            is None
+        ):
+            plugin_marketplace_service.lock_private_plugin_for_install(
+                db, user_id, int(target_id)
+            )
         acquire_plugin_write_lock(
             db, user_id, name=local_write_name(db, user_id, action, target_id)
         )
@@ -139,6 +162,7 @@ def mutate_local_plugin(
                 user_id=user_id,
                 plugin_id=target_id,
                 release_id=(payload or {}).get("releaseId"),
+                restore_deleted=restore_deleted,
                 commit=False,
             )
         elif action == "ensure_builtin":
@@ -157,6 +181,7 @@ def mutate_local_plugin(
                     user_id=user_id,
                     installed_id=target_id,
                     release_id=request.releaseId,
+                    expected_current_release_id=request.expectedCurrentReleaseId,
                     commit=False,
                 )
             else:
@@ -324,7 +349,13 @@ def _guard_intent_order(
 
 @contextmanager
 def _rejection_context(
-    db: Session, user_id: int, instance: str, operation: str, order: int | None
+    db: Session,
+    user_id: int,
+    instance: str,
+    operation: str,
+    order: int | None,
+    *,
+    update_target: int | str | None,
 ) -> Iterator[None]:
     """Identify only known, unaccepted business rejections for this exact request.
 
@@ -335,7 +366,8 @@ def _rejection_context(
         yield
     except HTTPException as failure:
         definitive = failure.status_code in {400, 403, 404, 422} or (
-            failure.status_code == 409 and failure.detail == "INTENT_SUPERSEDED"
+            failure.status_code == 409
+            and failure.detail in ("INTENT_SUPERSEDED", "PLUGIN_UPDATE_RELEASE_CHANGED")
         )
         if definitive and type(order) is int and 0 < order < 2**63:
             # A timed-out predecessor may still be committing this same ID.
@@ -356,9 +388,17 @@ def _rejection_context(
                 type(value) is not int for value in orders.values()
             ):
                 raise HTTPException(409, "plugin_write_conflict") from failure
-            # A compacted ID is not proof of nonacceptance. A strictly newer
-            # order cannot have been accepted before any retained watermark.
-            unaccepted = accepted is None and order > max(orders.values(), default=0)
+            # A compacted ID is not proof of nonacceptance. Release updates
+            # bind to one installed ID and reach this rejection after its
+            # order guard. Other targets cannot have accepted this request.
+            if (
+                failure.detail == "PLUGIN_UPDATE_RELEASE_CHANGED"
+                and update_target is not None
+            ):
+                watermark = orders.get(str(update_target), 0)
+            else:
+                watermark = max(orders.values(), default=0)
+            unaccepted = accepted is None and order > watermark
             if unaccepted or failure.detail == "INTENT_SUPERSEDED":
                 failure.headers = {
                     **(failure.headers or {}),

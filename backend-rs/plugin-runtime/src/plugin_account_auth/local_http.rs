@@ -533,7 +533,7 @@ fn admission_failure(error: NativeAdmissionError, timing: &mut ExchangeTiming) -
     let redis_failure = matches!(
         &error,
         NativeAdmissionError::RedisUnavailable
-            | NativeAdmissionError::RedisPromotionUnavailable
+            | NativeAdmissionError::RedisPromotionUnavailable(_)
             | NativeAdmissionError::Verify(_)
     );
     let (outcome, response) = match error {
@@ -564,10 +564,13 @@ fn admission_failure(error: NativeAdmissionError, timing: &mut ExchangeTiming) -
             timing.record_redis_failure("redis_lease_promotion_not_confirmed");
             return ExchangeFailure::LeaseTimeoutBeforeWrite;
         }
-        NativeAdmissionError::RedisPromotionUnavailable => (
-            "redis_lease_promotion_failed",
-            safe_error(fail("plugin_write_unavailable")),
-        ),
+        NativeAdmissionError::RedisPromotionUnavailable(error) => {
+            timing.record_redis_error(&error);
+            (
+                "redis_lease_promotion_failed",
+                safe_error(fail("plugin_write_unavailable")),
+            )
+        }
         NativeAdmissionError::CleanupCapacityExhausted => {
             timing.outcome = Some("redis_cleanup_capacity_exhausted");
             return ExchangeFailure::LeaseTimeoutBeforeWrite;
@@ -671,7 +674,12 @@ mod tests {
                 "/lease-timeout" => NativeAdmissionError::RedisReplyUnknown,
                 "/late-lease-reply" => NativeAdmissionError::RedisReplyLate,
                 "/promotion-unconfirmed" => NativeAdmissionError::RedisPromotionNotConfirmed,
-                "/promotion-failed" => NativeAdmissionError::RedisPromotionUnavailable,
+                "/promotion-failed" => {
+                    NativeAdmissionError::RedisPromotionUnavailable(brz_redis::RedisError::new(
+                        brz_redis::ErrorKind::ResponseError,
+                        "script failed",
+                    ))
+                }
                 "/cleanup-capacity" => NativeAdmissionError::CleanupCapacityExhausted,
                 "/admission-deadline" => NativeAdmissionError::Deadline,
                 "/redis-unavailable" => NativeAdmissionError::RedisUnavailable,

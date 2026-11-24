@@ -1394,8 +1394,17 @@ impl RuntimeWorkRpcHandler {
         turn_id: Option<&str>,
     ) -> ExecutionRequest {
         let mut event_request = request.clone();
+        event_request.extra.remove("standInGuidanceSources");
         if let Some(turn_id) = turn_id {
             event_request.subtask_id = turn_id.to_owned();
+            if let Some(Some(sources)) = self.store.read_task(local_task_id, |link| {
+                let replies = &link.runtime_handle["standInGuidanceReplies"];
+                (replies["turnId"] == turn_id).then(|| replies["sources"].clone())
+            }) {
+                event_request
+                    .extra
+                    .insert("standInGuidanceSources".into(), sources);
+            }
         }
         let continuation = turn_id.is_some_and(|turn_id| {
             self.store.read_task(local_task_id, |link| {

@@ -229,6 +229,7 @@ function closeDebugPanel() {
   emitDebugPanelVisibility(false)
 }
 function emitDebugPanelVisibility(expanded: boolean) {
+  document.body.toggleAttribute('data-wework-debug-panel-expanded', expanded)
   setEmbeddedBrowserOcclusion(DEBUG_PANEL_OCCLUSION_ID, expanded)
   window.dispatchEvent(new CustomEvent(DEBUG_PANEL_VISIBILITY_EVENT, { detail: { expanded } }))
 }

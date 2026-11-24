@@ -12,8 +12,8 @@ import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRe
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
 import { ApplicationMenuButton } from './ApplicationMenuButton'
 import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
-import { useRef, type CSSProperties, type ReactNode } from 'react'
-import { useElementGeometry } from '@wegent/collaboration/dom-events'
+import type { CSSProperties, ReactNode } from 'react'
+import { useElementWidth } from '@wegent/collaboration/dom-events'
 import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
 import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 
@@ -36,10 +36,8 @@ export function ChromeTitlebar({
   const isDesktop = isDesktopRuntime()
   const platform = getPlatform()
   const feedbackSlotVisible = isDesktop
-  const actionsRef = useRef<HTMLDivElement>(null)
+  const [actionsWidth, actionsRef] = useElementWidth<HTMLDivElement>()
   const fixedActionsWidth = 'var(--titlebar-fixed-actions-width, 0px)'
-  const geometry = useElementGeometry([actionsRef])
-  const actionsWidth = geometry?.elements[0]?.width ?? 0
 
   return (
     <div

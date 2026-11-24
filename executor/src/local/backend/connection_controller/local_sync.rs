@@ -331,7 +331,8 @@ async fn submit(
             return Ok(SubmitOutcome::Superseded);
         }
         let definitive = matches!(status.as_u16(), 400 | 403 | 404 | 422)
-            || (status.as_u16() == 409 && code == "INTENT_SUPERSEDED");
+            || (status.as_u16() == 409
+                && matches!(code, "INTENT_SUPERSEDED" | "PLUGIN_UPDATE_RELEASE_CHANGED"));
         if ack && rejected && definitive && value["detail"].is_string() {
             return Ok(SubmitOutcome::Rejected {
                 failure: error(code),

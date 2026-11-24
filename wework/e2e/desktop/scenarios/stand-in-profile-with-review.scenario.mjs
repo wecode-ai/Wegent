@@ -345,6 +345,19 @@ export function createDesktopScenario(options) {
       await control.command('waitFor', GUIDE, { visible: false })
       await control.command('waitFor', '[data-testid="stand-in-details-open"]')
       const afterSetup = await rpc('runtime.stand_in.personal.get', { userId: USER })
+      const roleSelector = '[data-testid="stand-in-role-selector"]'
+      await control.command('waitFor', `${roleSelector} [data-testid="stand-in-primary-open"]`, {
+        text: '默认助理',
+      })
+      assert.equal(
+        await control.command(
+          'getElementCount',
+          `${roleSelector} [data-testid^="stand-in-overview-role-"]`
+        ),
+        '0',
+        'First-time setup must display only the primary stand-in'
+      )
+      assert.deepEqual(afterSetup.roles, [], 'First-time setup must not save a scenario role')
       assert.equal(
         afterSetup.primary.enabled,
         true,

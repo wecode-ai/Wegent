@@ -33,10 +33,17 @@ struct Channels {
     im: bool,
 }
 
+const STAND_IN_START_FAILED: &str = "stand_in_start_failed";
+
 fn channels(preferences: &Value, kind: &str) -> Channels {
     let collaboration = matches!(
         kind,
-        "assignment" | "mention" | "execution" | "issue_dispatch_assignment" | "issue_shared"
+        "assignment"
+            | "mention"
+            | "execution"
+            | "issue_dispatch_assignment"
+            | "issue_shared"
+            | "issue_participation"
     );
     let category = if collaboration {
         "collaboration"
@@ -44,9 +51,10 @@ fn channels(preferences: &Value, kind: &str) -> Channels {
         "general"
     };
     let selected = &preferences["wework_notification_preferences"][category];
+    let im_only = kind == "issue_participation";
     Channels {
-        in_app: selected["in_app"].as_bool().unwrap_or(true),
-        system: if collaboration {
+        in_app: !im_only && selected["in_app"].as_bool().unwrap_or(true),
+        system: if collaboration && !im_only {
             selected["system"].as_bool().unwrap_or(true)
         } else {
             false
@@ -78,7 +86,16 @@ pub async fn create_on(
         .and_then(|user| user.preferences)
         .and_then(|value| serde_json::from_str::<Value>(&value).ok())
         .unwrap_or(json!({}));
-    let channels = channels(&preferences, kind);
+    let channels = if payload["action"] == STAND_IN_START_FAILED {
+        let selected = &preferences["wework_notification_preferences"]["stand_in"];
+        Channels {
+            in_app: selected["in_app"].as_bool().unwrap_or(true),
+            system: selected["system"].as_bool().unwrap_or(true),
+            im: false,
+        }
+    } else {
+        channels(&preferences, kind)
+    };
     let now = Utc::now().naive_utc();
     let id = uuid();
     let project = payload["projectId"].as_str().unwrap_or("");
@@ -112,6 +129,45 @@ pub async fn create_on(
         channels,
         stored: channels.in_app,
     })
+}
+
+pub async fn stand_in_start_failure_on(
+    tx: &mut impl MysqlTransaction,
+    user: i64,
+    project: &str,
+    issue: &str,
+    title: &str,
+    code: Option<&str>,
+) -> MysqlResult<Pending> {
+    let (code, body) = match code {
+        Some("workspace_unavailable") => (
+            "workspace_unavailable",
+            "所选工作目录在执行设备上不可用。请检查助理的运行环境后重试。",
+        ),
+        Some("workspace_not_git") => (
+            "workspace_not_git",
+            "所选工作目录不是 Git 仓库。请检查助理的工作区设置后重试。",
+        ),
+        _ => (
+            "stand_in_start_failed",
+            "助理未能启动。请检查助理的运行环境后重试。",
+        ),
+    };
+    let notification_title = format!("助理启动失败：{title}")
+        .chars()
+        .take(256)
+        .collect::<String>();
+    create_on(
+        tx,
+        user,
+        user,
+        "execution",
+        &notification_title,
+        body,
+        json!({"projectId":project,"itemId":issue,"itemTitle":title,
+            "action":STAND_IN_START_FAILED,"failureCode":code,"status":"failed"}),
+    )
+    .await
 }
 
 pub async fn target(
@@ -344,10 +400,20 @@ pub async fn deliver(
     let user = notification["user_id"].as_i64().unwrap_or(0);
     if let Some(redis) = redis {
         let mut frames = Vec::new();
-        if pending.stored {
-            frames.push(
-                json!({"event":"wework.notification.created","payload":{"id":notification["id"]}}),
-            );
+        let stand_in_alert =
+            pending.channels.system && notification["payload"]["action"] == STAND_IN_START_FAILED;
+        if pending.stored || stand_in_alert {
+            let mut payload = json!({"id":notification["id"]});
+            if !pending.stored {
+                payload["stored"] = json!(false);
+            }
+            if stand_in_alert {
+                payload["standInStartFailure"] = json!({
+                    "userId":user,"itemTitle":notification["payload"]["itemTitle"],
+                    "code":notification["payload"]["failureCode"],"url":notification["url"],
+                });
+            }
+            frames.push(json!({"event":"wework.notification.created","payload":payload}));
         }
         if pending.channels.system && notification["kind"] == "assignment" {
             frames.push(json!({"event":"project.task.assigned","payload":notification["payload"]}));
@@ -468,6 +534,18 @@ fn push_facts(payload: &Value) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issue_participation_uses_only_the_collaboration_im_channel() {
+        let default = channels(&Value::Null, "issue_participation");
+        assert!(!default.in_app && !default.system && default.im);
+        let disabled = channels(
+            &json!({"wework_notification_preferences":{"collaboration":{"im":false},"general":{"im":true}}}),
+            "issue_participation",
+        );
+        assert!(!disabled.in_app && !disabled.system && !disabled.im);
+    }
+
     #[test]
     fn disabled_inbox_does_not_disable_other_channels() {
         let selected = channels(

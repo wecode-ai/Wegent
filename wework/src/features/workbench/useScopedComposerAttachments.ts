@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useMemo } from 'react'
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
 import type { WorkbenchContextValue } from './workbenchContextTypes'
 
@@ -19,43 +19,41 @@ export function useScopedComposerAttachments(
     handleFileSelectForScope,
     addExistingAttachmentForScope,
     removeAttachmentForScope,
+    releaseAttachmentForScope,
     dismissAttachmentErrorForScope,
     resetAttachmentsForScope,
   } = owner
-  const captureAttachments = useCallback(
-    () => captureAttachmentsForScope(scope),
-    [captureAttachmentsForScope, scope]
+  const commands = useMemo(
+    () => ({
+      captureAttachments: () => captureAttachmentsForScope(scope),
+      handleFileSelect: (files: File | File[]) => handleFileSelectForScope(scope, files),
+      addExistingAttachment: (attachment: Attachment) =>
+        addExistingAttachmentForScope(scope, attachment),
+      removeAttachment: (id: number) => removeAttachmentForScope(scope, id),
+      releaseAttachment: (id: number) => releaseAttachmentForScope(scope, id),
+      dismissAttachmentError: (filename: string) => dismissAttachmentErrorForScope(scope, filename),
+      resetAttachments: () => resetAttachmentsForScope(scope),
+    }),
+    [
+      scope,
+      captureAttachmentsForScope,
+      handleFileSelectForScope,
+      addExistingAttachmentForScope,
+      removeAttachmentForScope,
+      releaseAttachmentForScope,
+      dismissAttachmentErrorForScope,
+      resetAttachmentsForScope,
+    ]
   )
-  const handleFileSelect = useCallback(
-    (files: File | File[]) => handleFileSelectForScope(scope, files),
-    [handleFileSelectForScope, scope]
+  return useMemo(
+    () => ({
+      ...state,
+      ...commands,
+      getAttachment: (id: number) => state.attachments.find(attachment => attachment.id === id),
+      isAttachmentReadyToSend:
+        state.uploadingFiles.size === 0 &&
+        state.attachments.every(attachment => attachment.status === 'ready'),
+    }),
+    [state, commands]
   )
-  const addExistingAttachment = useCallback(
-    (attachment: Attachment) => addExistingAttachmentForScope(scope, attachment),
-    [addExistingAttachmentForScope, scope]
-  )
-  const removeAttachment = useCallback(
-    (id: number) => removeAttachmentForScope(scope, id),
-    [removeAttachmentForScope, scope]
-  )
-  const dismissAttachmentError = useCallback(
-    (filename: string) => dismissAttachmentErrorForScope(scope, filename),
-    [dismissAttachmentErrorForScope, scope]
-  )
-  const resetAttachments = useCallback(
-    () => resetAttachmentsForScope(scope),
-    [resetAttachmentsForScope, scope]
-  )
-  return {
-    ...state,
-    isAttachmentReadyToSend:
-      state.uploadingFiles.size === 0 &&
-      state.attachments.every(attachment => attachment.status === 'ready'),
-    captureAttachments,
-    handleFileSelect,
-    addExistingAttachment,
-    removeAttachment,
-    dismissAttachmentError,
-    resetAttachments,
-  }
 }

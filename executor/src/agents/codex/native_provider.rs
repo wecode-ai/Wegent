@@ -116,11 +116,12 @@ pub(super) fn with_headers(
     selected
         .entry("name".to_owned())
         .or_insert_with(|| json!(provider));
-    if !headers.is_empty() {
-        let mut merged = parse_header_map(selected.get("http_headers"));
-        for (key, value) in headers {
-            insert_header(&mut merged, &key, &value);
-        }
+    let mut merged = parse_header_map(selected.get("http_headers"));
+    for (key, value) in headers {
+        insert_header(&mut merged, &key, &value);
+    }
+    wegent_execution_contracts::model_request_headers::apply_wework_headers(&mut merged);
+    if !merged.is_empty() {
         selected.insert(
             "http_headers".into(),
             json!(merged.into_iter().collect::<BTreeMap<_, _>>()),

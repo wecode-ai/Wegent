@@ -303,6 +303,29 @@ async fn create_issue(
     read(&state.mysql, &id, user.0.id).await
 }
 
+async fn participation_notice(
+    tx: &mut impl MysqlTransaction,
+    recipient: i32,
+    actor: i32,
+    created: bool,
+    payload: Value,
+) -> brz_mysql::MysqlResult<crate::background_jobs::project::notifications::Pending> {
+    crate::background_jobs::project::notifications::create_on(
+        tx,
+        i64::from(recipient),
+        i64::from(actor),
+        "issue_participation",
+        if created {
+            "Issue 已创建"
+        } else {
+            "你已加入 Issue"
+        },
+        "打开 Wework 查看事项。",
+        payload,
+    )
+    .await
+}
+
 async fn create_issue_record(
     state: &AppState,
     user_id: i32,
@@ -358,10 +381,9 @@ async fn create_issue_record(
             if share.is_none_or(|share| share.project.is_none()) {
                 enqueue_personal_assignment(tx, id, user_id, &body, &metadata).await?;
             }
-            let mut notices = Vec::new();
             if let Some(share) = share {
                 share::insert_source(tx, &required, id, user_id, &share.source).await?;
-                let payload = if let Some(target) = &share.project {
+                if let Some(target) = &share.project {
                     let outcome = move_to_project(tx, user_id, id, target, true).await?;
                     if outcome != Admission::Allowed {
                         // Roll back the new issue and the private source reference.
@@ -370,20 +392,22 @@ async fn create_issue_record(
                     if let Some(assignee) = body.assignee_id.filter(|id| *id != user_id) {
                         enqueue_shared_project_assignment(tx, id, user_id, assignee).await?;
                     }
-                    json!({"projectId": target.project_id, "itemId": id})
-                } else {
-                    json!({"personalIssueId": id})
-                };
-                for recipient in metadata
-                    .participants
-                    .iter()
-                    .copied()
-                    .filter(|id| *id != user_id)
-                {
-                    let mut recipient_payload = payload.clone();
-                    if recipient_payload["personalIssueId"].is_string() {
-                        recipient_payload["assigned"] = json!(body.assignee_id == Some(recipient));
-                    }
+                }
+            }
+            let payload = if let Some(target) = share.and_then(|share| share.project.as_ref()) {
+                json!({"projectId": target.project_id, "itemId": id})
+            } else {
+                json!({"personalIssueId": id})
+            };
+            let recipients = std::iter::once(user_id)
+                .chain(metadata.participants.iter().copied().filter(|id| *id != user_id));
+            let mut notices = Vec::new();
+            for recipient in recipients {
+                let mut recipient_payload = payload.clone();
+                if recipient_payload["personalIssueId"].is_string() {
+                    recipient_payload["assigned"] = json!(body.assignee_id == Some(recipient));
+                }
+                if share.is_some() && recipient != user_id {
                     notices.push(
                         notifications::create_on(
                             tx,
@@ -395,6 +419,11 @@ async fn create_issue_record(
                             recipient_payload,
                         )
                         .await?,
+                    );
+                } else {
+                    recipient_payload["itemTitle"] = json!(body.title.trim());
+                    notices.push(
+                        participation_notice(tx, recipient, user_id, recipient == user_id, recipient_payload).await?,
                     );
                 }
             }
@@ -549,12 +578,12 @@ async fn update_issue(
 ) -> Result<Issue, FastApiError> {
     body.validate()?;
     let mut affected = [None, None];
+    let mut notices = Vec::new();
     let result = state.mysql.with_transaction(async |tx| {
         let Some(row) = locked(tx, issue_id).await? else { return Ok(Admission::Missing); };
         let result = admission(&row, user.0.id, &body);
         if result != Admission::Allowed { return Ok(result); }
-        let added: Vec<_> = body.participants.iter().copied().filter(|id| !row.metadata.0.participants.contains(id)).collect();
-        if !valid_people(tx, &added).await? || (body.assignee_id != row.assignee_id && !valid_people(tx, &body.assignee_id.into_iter().collect::<Vec<_>>()).await?) { return Ok(Admission::InvalidPeople); }
+        if body.assignee_id != row.assignee_id && !valid_people(tx, body.assignee_id.as_slice()).await? { return Ok(Admission::InvalidPeople); }
         let mut metadata = body.metadata();
         metadata.share = row.metadata.0.share.clone();
         metadata.resource_participants = if participants::references(&row.metadata.0.resource_participants) == body.resource_participants { row.metadata.0.resource_participants.clone() } else { let Some(resources) = participants::resolve(tx, user.0.id, &body.resource_participants).await? else { return Ok(Admission::InvalidPeople) }; resources };
@@ -562,6 +591,16 @@ async fn update_issue(
         metadata.participants.sort_unstable();
         metadata.participants.dedup();
         if !valid_people(tx, &metadata.participants).await? { return Ok(Admission::InvalidPeople); }
+        let previous: std::collections::HashSet<_> = row.metadata.0.participants.iter().copied().collect();
+        for &recipient in &metadata.participants {
+            if recipient != row.creator_id && !previous.contains(&recipient) {
+                notices.push(participation_notice(tx, recipient, user.0.id, false, json!({
+                    "personalIssueId": issue_id,
+                    "itemTitle": body.title.trim(),
+                    "assigned": body.assignee_id == Some(recipient),
+                })).await?);
+            }
+        }
         if body.assignee_id == row.assignee_id {
             metadata.assigned_at = row.metadata.0.assigned_at;
             metadata.assignment_id = row.metadata.0.assignment_id;
@@ -577,6 +616,9 @@ async fn update_issue(
         Ok(Admission::Allowed)
     }).await.map_err(internal)?;
     admitted(result)?;
+    for notice in notices {
+        crate::background_jobs::project::notifications::deliver(state, notice).await;
+    }
     for assignee in affected.into_iter().flatten() {
         assignment_count::invalidate(state, assignee).await;
     }

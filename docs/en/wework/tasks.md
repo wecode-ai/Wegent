@@ -8,6 +8,8 @@ sidebar_position: 4
 
 ## Individual composer controls
 
+When a red error notice appears above the task composer, select **Dismiss notice** on its right. Dismissing it leaves the draft and task run in place. If a plugin login check fails, the notice identifies the plugin to check.
+
 | Feature                          | UI steps                                                                         | Conditions and result                                                                                                      |
 | -------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | Photos and files                 | Composer + → add photos/files → choose → review attachments                      | Removing an attachment does not delete its source file                                                                     |
@@ -21,6 +23,8 @@ sidebar_position: 4
 | Queue, guide and pause           | Use the running-task send actions; pause to interrupt the current reply          | Message queues, execution queues and persistent goals are separate                                                         |
 
 ### Persistent-goal status and controls
+
+When you send a goal draft with images, a Codex model that supports image input receives them in the goal's first turn.
 
 After creating a Goal, inspect its status bar near the composer. Hover or focus it for **Edit goal** and **Delete goal**. The right-side action offers **Pause goal** or **Start goal**, depending on status. Pause a persistent goal explicitly, then decide whether the current reply also needs interruption; stopping one reply does not mean the persistent goal is paused.
 
@@ -88,7 +92,7 @@ When a registered event wakes a local conversation, the Executor delivers and de
 
 In the **task conversation composer**, ask AI to continue here when a document or another connected resource changes. AI discovers installed connection providers, selects the resource and saves a subscription through tools. No manual schedule setup is required. Ordinary conversations and Goals both support this; available events depend on the provider and account permissions. The device executor must advertise event protocol support. Older devices retain ordinary chat and existing PR status queries; unavailable event actions show an upgrade hint.
 
-A signal icon in the composer and task sidebar marks connection event waits, such as waiting for GitHub checks to finish. Above the composer, **Waiting for events; resumes automatically** identifies the source. Triggered events appear as short attributed receipts rather than full model continuation instructions. A Goal also shows **Waiting for events**. The host collects events without repeated model turns. Matching new events continue the original conversation with its model, permissions and workspace. Each subscription delivers one batch; AI can subscribe again when more input is needed. Local tasks require Wework to remain running; remote tasks require their device to be online. Recreating a Remote Docker device requires preserving its executor data volumes and native session directory to recover the original conversation's wait and Goal. No model calls run while the device is offline; the source determines which missed historical events remain available.
+A signal icon in the composer and task sidebar marks connection event waits, such as waiting for GitHub checks to finish. The waiting icon in the task sidebar pulses gently and stays still when Reduce Motion is enabled. Above the composer, **Waiting for events; resumes automatically** identifies the source. Triggered events appear as short attributed receipts rather than full model continuation instructions. A Goal also shows **Waiting for events**. The host collects events without repeated model turns. Matching new events continue the original conversation with its model, permissions and workspace. Each subscription delivers one batch; AI can subscribe again when more input is needed. Local tasks require Wework to remain running; remote tasks require their device to be online. Recreating a Remote Docker device requires preserving its executor data volumes and native session directory to recover the original conversation's wait and Goal. No model calls run while the device is offline; the source determines which missed historical events remain available.
 
 After an event arrives and before execution starts, **Event received; waiting for this conversation to continue** explains the pending delivery. An unresolved question or approval takes priority and shows **Event received; waiting for your answer or approval**. The Goal shows **Waiting to continue**, without asking you to start it again. Events never answer human requests or authorize external actions. Click **Cancel watch** on the source status row to cancel that subscription directly without a model call, or ask AI to cancel it. Cancellation also removes the subscription’s queued continuation. Work already started can finish, and a waiting Goal still requires a continuation. If the device is offline, reconnect before cancelling; a failed cancellation retains the watch and offers retry. For a waiting Goal, **Pause goal** also stops automatic recovery; paused, cleared or replaced Goals are never resumed by an old wait.
 
@@ -127,6 +131,10 @@ Conversation references retain completed visible assistant replies. A later tool
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
+<a id="image-preview"></a>
+
+In a desktop task, click an image thumbnail in the composer or transcript to open the preview. Use the header to zoom, download, open a local image in its default app, or move the image to the right-hand Files panel and continue editing in the same task. For local images, the **Open with** menu lists installed editors and can reveal the file in the file manager. In tasks where you can send messages, use the bottom toolbar to mark up the image or pin comments. Markup supports pen, text, shapes, selection and movement, erasing, undo and redo. You can add pinned comments alongside markup and add instructions before sending. When editing markup on a composer thumbnail, choose **Save** in the preview or Files panel to replace the draft attachment. Send the draft when ready. In comment mode, choose **Save comment** beside each pin, then **Send** in the bottom toolbar. The sent message includes each comment and its image-relative coordinates. With **Erase**, brush over an area before sending. **Remove BG** or selecting a **Resize** ratio sends an edit request immediately. The task model handles the request and the original image and unsent draft are preserved.
+
 ### Voice input
 
 Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also open **bottom-left account menu → Settings → Personal → General** and prepare the model in **Voice input**, below the basic preferences. This section appears when the official voice plugin has loaded and does not require Experimental features. Opening the page does not download a model or start recording.
@@ -152,6 +160,8 @@ Click the PR/MR status beside a task and choose **Continue fixing with AI** when
 <a id="task-board-association"></a>
 
 ## Add a conversation to a project-space board
+
+When an Issue is linked, the AI uses the conversation for ordinary follow-ups such as confirming a requirement or adding a constraint. It accesses the project space when you explicitly ask it to look up or act on the Issue, or when the current request requires Issue information missing from the conversation.
 
 Runtime task and private conversation titles are independent of the bound Issue title. Runs started from tasks, Issue details, or Collaboration never overwrite an existing Issue title when the conversation title changes. Edit the title in Issue details to rename the Issue.
 
@@ -263,6 +273,7 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 | Interrupt and send      | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
+If a command's exit result arrives after the response stops, its tool entry still updates to show the outcome and any output received.
 
 While a subagent is running, the composer keeps the Send button visible. Enter a draft to send a follow-up message.
 
@@ -300,6 +311,8 @@ A plan generated in Plan mode remains part of the visible response instead of be
 ## Manage conversations
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+You can click Archive on several tasks in succession. After each task's undo window closes, its request joins the same queue as batch archives. Tasks leave the list once they are successfully archived.
 
 Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
 

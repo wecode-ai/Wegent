@@ -98,6 +98,12 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     format!("Unsupported Codex app-server method: {method}"),
                 ));
             }
+            if method == "marketplace/remove" && data["params"].get("confirmedPluginIds").is_some()
+            {
+                return self
+                    .remove_marketplace_with_plugins(data["params"].clone())
+                    .await;
+            }
             // Bundled reconciliation rewrites the same complete configuration that
             // marketplace RPCs update. Keep an accepted native edit out of that window.
             let _marketplace_mutation = if matches!(
@@ -127,6 +133,7 @@ impl RuntimeWorkRpcHandler {
             .cloned()
             .filter(Value::is_object)
             .unwrap_or_else(|| json!({}));
+        super::plugin_marketplace::check_marketplace_write(&method, &params).await?;
         if method == "app/list" {
             log_executor_event(
                 "codex app catalog read started",

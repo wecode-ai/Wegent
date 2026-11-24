@@ -274,6 +274,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
         settings["roles"][0]["enabled"] = json!(true);
         let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
         let stopped = store
@@ -301,6 +304,11 @@ mod tests {
     fn stopped_targets_only_append_disabled_portable_imports_and_never_restore_their_enablement() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         store
             .transition_personal_stand_in(7, "mac", "stop")
             .unwrap();
