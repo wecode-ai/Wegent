@@ -1051,10 +1051,11 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     const nativeLabel = manager.state('workspace-browser').nativeLabel
     manager.relabel('workspace-browser', 'workspace-browser-task-1')
 
-    const windowOpenHandler = contents.setWindowOpenHandler.mock.calls[0]?.[0] as
-      | ((details: { url: string }) => { action: string })
-      | undefined
-    expect(windowOpenHandler?.({ url: 'https://example.test/linked-page' })).toEqual({
+    type WindowOpenHandler = (details: { url: string }) => { action: string }
+    const registeredHandler = contents.setWindowOpenHandler.mock.calls[0]?.[0]
+    expect(registeredHandler).toBeDefined()
+    const windowOpenHandler = registeredHandler as WindowOpenHandler
+    expect(windowOpenHandler({ url: 'https://example.test/linked-page' })).toEqual({
       action: 'deny',
     })
 
