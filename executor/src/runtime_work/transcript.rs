@@ -517,8 +517,10 @@ impl<'a> TurnTranscriptProjector<'a> {
             item,
             self.created_at,
             self.fold_commentary,
-            self.unphased_progress_item_ids
-                .contains(&item_id(item, "assistant-text")),
+            self.assistant_status == "streaming"
+                || self
+                    .unphased_progress_item_ids
+                    .contains(&item_id(item, "assistant-text")),
             &mut self.assistant,
             self.options,
         );
@@ -1213,24 +1215,40 @@ fn turn_should_fold_commentary(turn: &Value) -> bool {
 
 fn unphased_progress_item_ids(items: &[Value], interrupted: bool) -> HashSet<String> {
     let mut progress_ids = HashSet::new();
-    let mut reply_seen = interrupted;
-    for item in items.iter().rev() {
-        let kind = item_type(item);
-        if kind == "usermessage"
-            || (kind == "message"
-                && string_field(item, "role").is_some_and(|role| role.eq_ignore_ascii_case("user")))
-        {
-            reply_seen = interrupted;
-        } else if is_final_assistant_message(item) {
-            // Unphased agent messages before the latest reply are legacy process
-            // output. The latest unphased message remains the reply.
-            if reply_seen && assistant_message_phase_name(item).is_none() {
+    let mut segment_start = 0;
+    let mut user_count = 0;
+    for segment_end in 0..=items.len() {
+        if segment_end < items.len() && !is_user_message(&items[segment_end]) {
+            continue;
+        }
+        let segment = &items[segment_start..segment_end];
+        let guidance = user_count > 1;
+        let latest_reply = segment.iter().rposition(is_final_assistant_message);
+        let process_end = if interrupted {
+            segment.len()
+        } else if guidance {
+            latest_reply.unwrap_or(0)
+        } else {
+            0
+        };
+        for item in &segment[..process_end] {
+            if is_final_assistant_message(item) && assistant_message_phase_name(item).is_none() {
                 progress_ids.insert(item_id(item, "assistant-text"));
             }
-            reply_seen = true;
+        }
+        if segment_end < items.len() {
+            user_count += 1;
+            segment_start = segment_end + 1;
         }
     }
     progress_ids
+}
+
+fn is_user_message(item: &Value) -> bool {
+    let kind = item_type(item);
+    kind == "usermessage"
+        || (kind == "message"
+            && string_field(item, "role").is_some_and(|role| role.eq_ignore_ascii_case("user")))
 }
 
 fn turn_has_substantive_process(turn: &Value) -> bool {
