@@ -68,10 +68,20 @@ async fn guidance_uses_native_continuation_after_local_request_finishes() {
     assert_eq!(result["turnId"], "turn-2");
     assert_eq!(result["guidanceId"], "guide-2");
     assert!(!handler.is_active_local_task("task-1"));
-    assert_eq!(
-        handler.local_task_link("task-1").unwrap().execution_state,
-        before
-    );
+    let link = handler.local_task_link("task-1").unwrap();
+    let mut after = link.execution_state.clone();
+    // Recording the guidance presentation advances the snapshot revision, which
+    // versions task metadata as well as native turn progress.
+    if let (Some(after), Some(before)) = (after.as_mut(), before.as_ref()) {
+        after.revision = before.revision.clone();
+    }
+    assert_eq!(after, before);
+    assert!(link.runtime_handle["userMessagePresentations"]
+        .as_array()
+        .is_some_and(|presentations| presentations.iter().any(|presentation| {
+            presentation["clientUserMessageId"] == "guide-2"
+                && presentation["runtimeGuidance"] == true
+        })));
     handler
         .codex_app_server
         .request("test/stop", json!({}))
