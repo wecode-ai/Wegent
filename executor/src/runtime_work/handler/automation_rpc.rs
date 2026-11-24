@@ -215,11 +215,7 @@ impl RuntimeWorkRpcHandler {
         };
         let task_id = match automation.conversation_mode {
             ConversationMode::Independent => {
-                let task_id = format!(
-                    "automation-{}-{}",
-                    automation.id.chars().take(8).collect::<String>(),
-                    Utc::now().timestamp_millis()
-                );
+                let task_id = run.independent_task_id(Utc::now());
                 set_payload_string(&mut payload, "taskId", &task_id);
                 set_payload_string(&mut payload, "title", &automation.name);
                 task_id
@@ -452,6 +448,21 @@ mod tests {
                 store.mark_running(&run.id, task_id).unwrap();
                 store.get_run(&run.id).unwrap()
             };
+            let goal = start("goal", "goal-task".into(), "independent", json!({}));
+            let continued = start(
+                "continued",
+                "goal-task".into(),
+                "continue_thread",
+                json!({}),
+            );
+            for (run, mode) in [
+                (&goal, ConversationMode::ContinueThread),
+                (&continued, ConversationMode::Independent),
+            ] {
+                let mut automation = store.get(&run.automation_id).unwrap();
+                automation.conversation_mode = mode;
+                store.update(automation).unwrap();
+            }
             (
                 start(
                     "interrupted",
@@ -460,13 +471,8 @@ mod tests {
                     json!({}),
                 ),
                 start("queued", "shared-task".into(), "independent", json!({})),
-                start("goal", "goal-task".into(), "independent", json!({})),
-                start(
-                    "continued",
-                    "goal-task".into(),
-                    "continue_thread",
-                    json!({}),
-                ),
+                goal,
+                continued,
                 start(
                     "coordinated",
                     "stand-in-task".into(),

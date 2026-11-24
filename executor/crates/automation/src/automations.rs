@@ -132,6 +132,8 @@ pub struct AutomationRun {
     pub scheduled_for: DateTime<Utc>,
     pub trigger: String,
     pub status: AutomationRunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_mode: Option<ConversationMode>,
     #[serde(default)]
     pub task_id: Option<String>,
     #[serde(default)]
@@ -140,6 +142,38 @@ pub struct AutomationRun {
     pub updated_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordination: Option<ArrangementBinding>,
+}
+
+impl AutomationRun {
+    pub fn independent_task_id(&self, started_at: DateTime<Utc>) -> String {
+        format!(
+            "{}{}",
+            self.independent_task_prefix(),
+            started_at.timestamp_millis()
+        )
+    }
+
+    fn independent_task_prefix(&self) -> String {
+        let prefix = self.automation_id.chars().take(8).collect::<String>();
+        format!("automation-{prefix}-")
+    }
+
+    fn owns_task_for_goal_recovery(&self) -> bool {
+        if let Some(mode) = self.conversation_mode {
+            return matches!(mode, ConversationMode::Independent);
+        }
+        // Older records did not capture the mode. Earlier tasks with the same
+        // prefix could be targets of a later thread continuation.
+        let prefix = self.independent_task_prefix();
+        self.task_id
+            .as_deref()
+            .and_then(|task_id| task_id.strip_prefix(&prefix))
+            .and_then(|timestamp| timestamp.parse::<i64>().ok())
+            .is_some_and(|timestamp| {
+                (self.created_at.timestamp_millis()..=self.updated_at.timestamp_millis())
+                    .contains(&timestamp)
+            })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -372,6 +406,7 @@ impl AutomationStore {
                 scheduled_for,
                 trigger: "scheduled".to_owned(),
                 status,
+                conversation_mode: Some(automation.conversation_mode),
                 task_id: None,
                 error: if dispatch_error.is_some() {
                     dispatch_error
@@ -437,6 +472,7 @@ impl AutomationStore {
             } else {
                 AutomationRunStatus::Pending
             },
+            conversation_mode: Some(automation.conversation_mode),
             task_id: None,
             error: active.then(|| "previous automation run is still active".to_owned()),
             created_at: now,
@@ -563,12 +599,7 @@ impl AutomationStore {
                 .task_id
                 .as_deref()
                 .is_some_and(|id| resumable_goal_task_ids.contains(id))
-                && next
-                    .automations
-                    .get(&run.automation_id)
-                    .is_some_and(|automation| {
-                        matches!(automation.conversation_mode, ConversationMode::Independent)
-                    });
+                && run.owns_task_for_goal_recovery();
             if recovering_goal {
                 continue;
             }

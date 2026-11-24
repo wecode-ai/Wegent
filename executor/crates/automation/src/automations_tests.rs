@@ -4,11 +4,26 @@ use chrono::{TimeZone, Utc};
 use tempfile::tempdir;
 
 use super::{
-    initial_next_run, migrate_automation_state, read_state, Automation, AutomationRunStatus,
-    AutomationSchedule, AutomationState, AutomationStore, ConversationMode, IntervalUnit,
-    NotificationPolicy, MAX_RUNS_PER_AUTOMATION,
+    initial_next_run, migrate_automation_state, read_state, Automation, AutomationRun,
+    AutomationRunStatus, AutomationSchedule, AutomationState, AutomationStore, ConversationMode,
+    IntervalUnit, NotificationPolicy, MAX_RUNS_PER_AUTOMATION,
 };
 use serde_json::json;
+
+#[test]
+fn legacy_goal_recovery_requires_a_task_created_during_the_run() {
+    let now = Utc.with_ymd_and_hms(2026, 8, 14, 8, 0, 0).unwrap();
+    let mut run: AutomationRun = serde_json::from_value(json!({
+        "id": "legacy-run", "automationId": "weekday-review", "status": "running",
+        "trigger": "scheduled", "scheduledFor": now, "createdAt": now, "updatedAt": now,
+        "taskId": format!("automation-weekday--{}", now.timestamp_millis()),
+    }))
+    .unwrap();
+    assert!(run.owns_task_for_goal_recovery());
+
+    run.task_id = Some(run.independent_task_id(now - chrono::Duration::seconds(1)));
+    assert!(!run.owns_task_for_goal_recovery());
+}
 
 fn china_schedule() -> AutomationSchedule {
     serde_json::from_value(json!({"type":"cron","expression":"0 9 * * *","workdayOnly":true}))
