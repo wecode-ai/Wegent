@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { runnerModelKey, type RunnerModel } from '@wegent/collaboration'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
@@ -80,6 +80,20 @@ function openPrimaryProfile(
     },
   }
 }
+
+test('DingTalk personal status shows unavailability without offering an action', () => {
+  openPrimaryProfile()
+
+  const sources = within(screen.getByRole('region', { name: '知识来源' }))
+  const status = sources.getByRole('status', { name: '钉钉个人状态' })
+  expect(status).toBeVisible()
+  expect(status).toHaveTextContent(
+    '当前版本无法读取你的钉钉个人状态。基于此来源的私信自动回答已关闭。'
+  )
+  expect(sources.queryByRole('button')).not.toBeInTheDocument()
+  expect(sources.queryByRole('link')).not.toBeInTheDocument()
+  expect(sources.queryByRole('switch')).not.toBeInTheDocument()
+})
 
 test('a model change keeps the unified instructions for a profile without learning', async () => {
   const { model, save } = openPrimaryProfile()

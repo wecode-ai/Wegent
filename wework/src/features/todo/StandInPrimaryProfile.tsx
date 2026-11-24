@@ -10,7 +10,14 @@ import { createTagDraft } from '@wegent/collaboration'
 import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
 import { dequal } from 'dequal'
 import type { ReactNode, Ref } from 'react'
-import { useCallback, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { StandInComposer } from './StandInComposer'
 import type { StandInConnectionNavigationHandle } from './StandInConnectionSettings'
 import { StandInConnectionSettings } from './StandInConnectionSettings'
@@ -72,6 +79,8 @@ export function StandInPrimaryProfile({
   footerLeading?: ReactNode
 }) {
   const { t } = useTranslation('common')
+  const knowledgeSourcesId = useId()
+  const dingtalkStatusId = useId()
   const blocked = saving || loading
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
   const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
@@ -292,6 +301,23 @@ export function StandInPrimaryProfile({
               onClick={() => setView('connections')}
             />
           </div>
+          <section aria-labelledby={knowledgeSourcesId} className="mt-6 space-y-2">
+            <h3 id={knowledgeSourcesId} className="heading-sm">
+              {t('standIn.workspace.knowledge_sources')}
+            </h3>
+            <div className="space-y-1">
+              <p id={dingtalkStatusId} className="text-sm font-medium">
+                {t('standIn.workspace.dingtalk_personal_status')}
+              </p>
+              <p
+                role="status"
+                aria-labelledby={dingtalkStatusId}
+                className="text-sm text-text-secondary"
+              >
+                {t('standIn.workspace.dingtalk_personal_status_unavailable')}
+              </p>
+            </div>
+          </section>
         </>
       )}
       {connections && (
