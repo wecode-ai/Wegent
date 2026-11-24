@@ -605,9 +605,10 @@ export class RuntimeTaskLifecycleStore {
     let changed = eventChanged
     const next = machine.getSnapshot()
     if (
-      previous.execution.phase !== next.execution.phase ||
-      previous.turn.phase !== next.turn.phase ||
-      canonicalEvent.type === 'send_accepted'
+      import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' &&
+      (previous.execution.phase !== next.execution.phase ||
+        previous.turn.phase !== next.turn.phase ||
+        canonicalEvent.type === 'send_accepted')
     ) {
       logRuntimeTaskCreateStage('lifecycle-transition', {
         taskId: canonicalAddress.taskId,

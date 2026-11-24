@@ -87,6 +87,7 @@ jobs:
                 wework/src/components/chat/*|wework/src/components/layout/*|\
                 wework/src/desktop/tray*.ts|\
                 wework/src/features/notifications/*|wework/src/features/workbench/*|\
+                wework/src/features/todo/IssueAssignmentReceipts*|\
                 wework/electron/*|wework/scripts/profile-renderer*|wework/scripts/ai-verify-devtools*|\
                 wework/e2e/desktop/modules/streaming-text-fixture.mjs|\
                 wework/e2e/desktop/modules/response-protocol.mjs|\
