@@ -4533,6 +4533,13 @@ button.collaboration-project-offline:hover {
 }
 
 @container issue-list (max-width: 21rem) {
+  .collaboration-issue-table:not(:has(thead)) td.collaboration-issue-table-status {
+    overflow: hidden;
+    padding-inline: 4px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-col-assignee,
   .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-assignee {
     display: none;
