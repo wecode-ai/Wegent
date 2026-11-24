@@ -10,6 +10,7 @@ import {
 import { createWorkbenchRuntimeOperations } from './workbenchRuntimeOperations'
 import {
   createWorkbenchPaneActions,
+  useWorkbenchContextValue,
   useWorkbenchPaneValue,
   useWorkbenchProjectChatValue,
 } from './useWorkbenchContextProjection'
@@ -116,11 +117,7 @@ import {
   useUpdateGlobalImNotification,
 } from './useWorkbenchTaskCallbacks'
 import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
-import type {
-  WorkbenchContextValue,
-  WorkbenchPaneContextValue,
-  WorkbenchProviderProps,
-} from './workbenchContextTypes'
+import type { WorkbenchPaneContextValue, WorkbenchProviderProps } from './workbenchContextTypes'
 import {
   getModelSelectionScopeKey,
   getNewChatModelSelection,
@@ -897,7 +894,6 @@ export function OwnedWorkbenchProvider({
     state: paneState,
     isStartupReady,
     workspaceFileApi,
-    runtimeTaskReminders,
     projectChat: paneProjectChatValue,
     upgradingDevices,
     projectExecutionMode,
@@ -914,17 +910,14 @@ export function OwnedWorkbenchProvider({
     resolvedServices,
     t
   )
-  const value: WorkbenchContextValue = useMemo(
-    () => ({
-      ...paneValue,
-      workspaceTabId,
-      state,
-      cloudWorkStatus,
-      projectChat: projectChatValue,
-      updateUserPreferences,
-    }),
-    [paneValue, workspaceTabId, state, cloudWorkStatus, projectChatValue, updateUserPreferences]
-  )
+  const value = useWorkbenchContextValue(paneValue, {
+    workspaceTabId,
+    state,
+    cloudWorkStatus,
+    runtimeTaskReminders,
+    projectChat: projectChatValue,
+    updateUserPreferences,
+  })
 
   const operationTargets: WorkbenchSessionOperations = {
     ...createWorkbenchRuntimeOperations({

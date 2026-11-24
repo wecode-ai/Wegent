@@ -5,7 +5,7 @@ import {
   useOptionalAppearance,
 } from '@/features/appearance'
 import { useRuntimeTaskSummaryResolver } from '@/features/workbench/runtimeTaskLifecycle'
-import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -39,9 +39,8 @@ import { SingleWorkbenchPane } from './workbenchPanePresentation'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
 import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
-  const { state } = useWorkbenchPaneContext()
+  const { state, services, openRuntimeTask } = useWorkbenchPaneContext()
   const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(state.runtimeWork)
-  const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
   const { onLocalHarnessSessionStarted, onLocalHarnessSessionClose, onLocalHarnessSessionExit } =
     props

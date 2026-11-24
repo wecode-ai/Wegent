@@ -536,7 +536,7 @@ export type WorkbenchPaneState = Pick<
 
 export type WorkbenchPaneContextValue = Omit<
   WorkbenchContextValue,
-  'state' | 'cloudWorkStatus' | 'updateUserPreferences'
+  'state' | 'cloudWorkStatus' | 'runtimeTaskReminders' | 'updateUserPreferences'
 > & {
   state: WorkbenchPaneState
 }
