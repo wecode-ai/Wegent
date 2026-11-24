@@ -99,7 +99,7 @@ describe('dev-mac-app', () => {
     expect(source).toContain('mv -f "$EXECUTOR_BINARY_TEMP" "$WEGENT_EXECUTOR_BINARY"')
     expect(source).toContain('PREBUILD_SOURCE_EXECUTOR="true"')
     expect(source).toContain(
-      'cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor'
+      'build_wegent_cargo_in_target --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor'
     )
     expect(source).toContain('node "$SCRIPT_DIR/prepare-dev-dependencies.mjs"')
     expect(source).toContain('node "$SCRIPT_DIR/prepare-dev-component-resources.mjs"')
