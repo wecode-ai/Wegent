@@ -168,12 +168,6 @@ export function LiveProcessingPreview({
       else next.delete(rowId)
       return next
     })
-    if (!expanded) {
-      requestAnimationFrame(() => {
-        const scrollArea = scrollRef.current
-        if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
-      })
-    }
   }, [])
 
   useLayoutEffect(() => {
@@ -181,10 +175,14 @@ export function LiveProcessingPreview({
   }, [hasExpandedDetail, onExpandedDetailChange])
 
   useLayoutEffect(() => {
-    const scrollArea = scrollRef.current
-    if (!scrollArea) return
-    scrollArea.scrollTop = scrollArea.scrollHeight
-  }, [rows.length, showThinking])
+    if (hasExpandedDetail) return
+    // Coalesce tool updates before reading layout for the preview's scroll position.
+    const frame = requestAnimationFrame(() => {
+      const scrollArea = scrollRef.current
+      if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [rows.length, showThinking, hasExpandedDetail])
 
   return (
     <div className="ml-2 min-w-0 border-l border-border pl-3" data-testid="processing-live-preview">

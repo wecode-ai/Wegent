@@ -63,6 +63,31 @@ function tool(status: ToolBlock['status'] = 'done'): ToolBlock {
 }
 
 describe('processing clock render isolation', () => {
+  it('follows a burst of tool rows with one layout read in the next frame', () => {
+    const first = tool()
+    const second = { ...first, id: 'second' }
+    const third = { ...first, id: 'third' }
+    render(<ToolBlocksDisplay blocks={[first]} isStreaming />)
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="processing-live-preview-scroll"]'
+    )!
+    const readHeight = vi.fn(() => 400)
+    Object.defineProperty(viewport, 'scrollHeight', { get: readHeight })
+
+    render(<ToolBlocksDisplay blocks={[first, second]} isStreaming />)
+    render(<ToolBlocksDisplay blocks={[first, second, third]} isStreaming />)
+    expect(readHeight).not.toHaveBeenCalled()
+
+    act(() => vi.advanceTimersToNextFrame())
+    expect(readHeight).toHaveBeenCalledTimes(1)
+    expect(viewport.scrollTop).toBe(400)
+
+    render(<ToolBlocksDisplay blocks={[first]} isStreaming />)
+    render(null)
+    act(() => vi.advanceTimersToNextFrame())
+    expect(readHeight).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps completed tool rows stable while reasoning streams into the live preview', () => {
     const label = vi.spyOn(labels, 'getBlockLabel')
     const command = tool()

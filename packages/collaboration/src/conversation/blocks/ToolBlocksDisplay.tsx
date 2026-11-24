@@ -110,6 +110,16 @@ export const ToolBlocksDisplay = memo(function ToolBlocksDisplay({
   onOpenSubagent,
 }: ToolBlocksDisplayProps) {
   const { t } = useConversationTranslation()
+  const activityLabels = useMemo(
+    () => ({
+      command: t('tool_activity.command'),
+      file: t('tool_activity.file'),
+      search: t('tool_activity.search'),
+      edit: t('tool_activity.edit'),
+      other: t('tool_activity.other'),
+    }),
+    [t]
+  )
   const renderUserInput =
     useToolInteractionServices().renderRequestUserInput ?? renderDefaultUserInput
   const { retryBlock, hasRunningBlock } = useMemo(
@@ -414,13 +424,7 @@ export const ToolBlocksDisplay = memo(function ToolBlocksDisplay({
           onToggle={toggleSummary}
           title={summaryTitle}
           announceTitle={retryWaiting}
-          labels={{
-            command: t('tool_activity.command'),
-            file: t('tool_activity.file'),
-            search: t('tool_activity.search'),
-            edit: t('tool_activity.edit'),
-            other: t('tool_activity.other'),
-          }}
+          labels={activityLabels}
         />
       ) : null}
       <CollapsibleProcessingContent expanded={expanded}>
