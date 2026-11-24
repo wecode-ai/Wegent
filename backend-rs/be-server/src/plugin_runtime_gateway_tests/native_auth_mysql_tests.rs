@@ -155,10 +155,10 @@ async fn verify_lease_promotion(redis: &brz_redis::RedisService) -> anyhow::Resu
     );
     // Each pipeline tests one Redis-side ordering without relying on sleeps
     // or the client scheduler to keep a newly seeded key fresh.
-    for (initial_ttl, claimed_owner, expected_promotion) in [
-        (1_000, "owner", 1),
-        (700, "owner", 0),
-        (1_000, "previous-owner", 0),
+    for (expired, claimed_owner, expected_promotion) in [
+        (false, "owner", 1),
+        (false, "previous-owner", 0),
+        (true, "owner", 0),
     ] {
         let mut promote = cmd("EVAL");
         promote
@@ -166,32 +166,38 @@ async fn verify_lease_promotion(redis: &brz_redis::RedisService) -> anyhow::Resu
             .arg(1)
             .arg(&key)
             .arg(claimed_owner)
-            .arg(800)
             .arg(180_000);
         let mut ttl = cmd("PTTL");
         ttl.arg(&key);
         let mut pipeline = pipe();
-        pipeline
-            .set_with(
-                &key,
-                "owner",
-                SetOptions::default()
-                    .if_absent()
-                    .with_expiration(SetExpiration::Milliseconds(initial_ttl)),
-            )?
-            .command(promote)?
-            .command(ttl)?
-            .del([&key])?;
+        pipeline.set_with(
+            &key,
+            "owner",
+            SetOptions::default()
+                .if_absent()
+                .with_expiration(SetExpiration::Milliseconds(200)),
+        )?;
+        if expired {
+            let mut expire = cmd("PEXPIREAT");
+            expire.arg(&key).arg(1);
+            pipeline.command(expire)?;
+        }
+        pipeline.command(promote)?.command(ttl)?.del([&key])?;
         let mut results = redis.pipe(pipeline).await?;
         assert_eq!(results.take_value::<String>().await?, "OK");
+        if expired {
+            assert_eq!(results.take_value::<i64>().await?, 1);
+        }
         assert_eq!(results.take_value::<i64>().await?, expected_promotion);
         let remaining = results.take_value::<i64>().await?;
         if expected_promotion == 1 {
             assert!((179_000..=180_000).contains(&remaining));
+        } else if expired {
+            assert_eq!(remaining, -2);
         } else {
-            assert!((1..=initial_ttl as i64).contains(&remaining));
+            assert!((1..=200).contains(&remaining));
         }
-        assert_eq!(results.take::<i64>().await?, 1);
+        assert_eq!(results.take::<i64>().await?, i64::from(!expired));
     }
     Ok(())
 }

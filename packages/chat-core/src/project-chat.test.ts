@@ -209,6 +209,10 @@ describe('createProjectChatClient', () => {
       }
       const resolved: ProjectChatMessage = {
         ...room,
+        metadata: {
+          ...room.metadata,
+          workflow_task_title: 'Assigned member task',
+        },
         traceState: 'available',
         runtimeAddress: { deviceId: 'project-device', taskId: 'project-task' },
       }
@@ -252,11 +256,19 @@ describe('createProjectChatClient', () => {
       )
       if (event === 'chunk') {
         const calls = socket.emit.mock.calls.length
-        receive({ ...room, content: 'next delta' })
+        receive({
+          ...room,
+          content: 'next delta',
+          metadata: { ...room.metadata, runtime_event_sequence: '6' },
+        })
         expect(onChunk).toHaveBeenLastCalledWith(
           expect.objectContaining({
             content: 'next delta',
             runtimeAddress: resolved.runtimeAddress,
+            metadata: expect.objectContaining({
+              workflow_task_title: 'Assigned member task',
+              runtime_event_sequence: '6',
+            }),
           }),
         )
         expect(socket.emit).toHaveBeenCalledTimes(calls)

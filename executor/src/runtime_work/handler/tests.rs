@@ -3685,6 +3685,25 @@ async fn codex_model_discovery_waits_for_app_server_restart() {
 #[tokio::test]
 #[allow(clippy::await_holding_lock)] // Isolate process-wide Codex authentication paths.
 async fn codex_account_switch_waits_for_model_discovery() {
+    const ISOLATED: &str = "WEGENT_TEST_ISOLATED_ACCOUNT_SWITCH";
+    if env::var_os(ISOLATED).is_none() {
+        // Other native tests read the process-wide Home without taking ENV_LOCK.
+        // Isolate this test's no-write contract from their background startup.
+        let thread = std::thread::current();
+        let output = tokio::process::Command::new(env::current_exe().unwrap())
+            .args(["--exact", thread.name().unwrap(), "--nocapture"])
+            .env(ISOLATED, "1")
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "Isolated account switch failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let _lock = crate::test_env::lock();
     let home = tempfile::tempdir().unwrap();
     let _home = ScalarEnv::set("WEGENT_CODEX_HOME", home.path().to_str().unwrap());
@@ -3702,7 +3721,14 @@ async fn codex_account_switch_waits_for_model_discovery() {
         .unwrap_err();
     assert_eq!(error.code, "codex_account_switch_failed");
     assert_eq!(error.message, "Codex account was not found");
-    assert!(fs::read_dir(home.path()).unwrap().next().is_none());
+    let entries = fs::read_dir(home.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert!(
+        entries.is_empty(),
+        "Unexpected Codex home entries: {entries:?}"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -5973,6 +5999,8 @@ async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktree
         .worktrees
         .prepare(&source, "regular", None, false)
         .unwrap();
+    let unrelated_git = Path::new(&unrelated.path).join(".git");
+    fs::remove_file(unrelated_git).unwrap();
     for (id, path) in [
         ("regular", source.display().to_string()),
         ("shared-a", prepared.path.clone()),
@@ -5995,6 +6023,16 @@ async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktree
     assert!(source.join("tracked.txt").exists());
     assert!(Path::new(&unrelated.path).exists());
     assert!(Path::new(&prepared.path).exists());
+    assert_eq!(
+        handler
+            .worktrees
+            .worktree_for_cleanup(Path::new(&unrelated.path))
+            .unwrap()
+            .unwrap()
+            .state,
+        "active",
+        "Archiving tasks must not reconcile unrelated worktrees"
+    );
     let result = handler
         .archive_task(json!({"taskId":"shared-b", "cleanupWorktree":true}))
         .await

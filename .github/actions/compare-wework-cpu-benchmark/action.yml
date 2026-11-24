@@ -1,5 +1,5 @@
 name: Compare Wework desktop CPU benchmark
-description: Compare one desktop checkpoint with the latest main baseline on the same CPU model.
+description: Compare one desktop checkpoint with the latest main baseline for this runner platform and CPU model.
 inputs:
   checkpoint:
     description: Desktop checkpoint that produced the metrics
@@ -14,22 +14,24 @@ runs:
       id: cpu
       shell: bash
       run: |
-        model="$(node -p 'require("node:os").cpus()[0]?.model ?? ""')"
-        if [[ -z "$model" || "$model" == "unknown" ]]; then
-          echo "::error::Unable to identify the runner CPU model"
-          exit 1
-        fi
-        hash="$(printf '%s' "$model" | sha256sum | cut -c1-16)"
-        echo "hash=$hash" >> "$GITHUB_OUTPUT"
-        echo "CPU model: $model" >> "$GITHUB_STEP_SUMMARY"
+        node <<'JS'
+        const { appendFileSync } = require('node:fs')
+        const { createHash } = require('node:crypto')
+        const { cpus } = require('node:os')
+        const model = cpus()[0]?.model.trim()
+        if (!model || model === 'unknown') throw new Error('Runner CPU model is unavailable')
+        console.log(`CPU benchmark runner: ${model}`)
+        const fingerprint = createHash('sha256').update(model).digest('hex')
+        appendFileSync(process.env.GITHUB_OUTPUT, `model_key=${fingerprint}\n`)
+        JS
 
     - name: Restore the checkpoint baseline
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: .ci-cache/wework-cpu-benchmarks/${{ inputs.checkpoint }}.json
-        key: wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu.outputs.hash }}-${{ inputs.checkpoint }}-${{ github.run_id }}-${{ github.run_attempt }}
+        key: wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu.outputs.model_key }}-${{ inputs.checkpoint }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
-          wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu.outputs.hash }}-${{ inputs.checkpoint }}-
+          wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu.outputs.model_key }}-${{ inputs.checkpoint }}-
 
     - name: Report current sample and baseline availability
       id: sample
@@ -54,7 +56,7 @@ runs:
           cat "$sample"
           echo '~~~'
           if [[ ! -f "$baseline" ]]; then
-            echo "No main baseline is available for this checkpoint on the runner CPU model."
+            echo "No main baseline is available for this checkpoint on this CPU model."
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 
@@ -79,4 +81,4 @@ runs:
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: .ci-cache/wework-cpu-benchmarks/${{ inputs.checkpoint }}.json
-        key: wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu.outputs.hash }}-${{ inputs.checkpoint }}-${{ github.run_id }}-${{ github.run_attempt }}
+        key: wework-cpu-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu.outputs.model_key }}-${{ inputs.checkpoint }}-${{ github.run_id }}-${{ github.run_attempt }}

@@ -74,16 +74,29 @@ This feature requires matching backend, desktop, and local executor support. Whe
 
 ## Manage Codex plugins and Wework plugins
 
-In the Wework desktop app, open **Plugins → Manage plugins** and switch between two management surfaces:
+In the Wework desktop app, open **Plugins → Manage plugins** to switch between management tabs.
 
 - **Codex plugins** provide Skills, MCP servers, applications, and commands to AI. They are installed through Codex or Wegent plugin marketplaces and are used in tasks and conversations.
 - **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. A Wework plugin is the outer delivery unit and may carry an official-format Codex plugin; only those nested Codex capabilities appear in conversations and the task plugin picker.
+- **Marketplace sources** lists Git and local-folder marketplaces added by the user and counts their installations on this device.
+
+In **Codex plugins**, an installed plugin with a newer published release shows the current and target versions. Choose **Update** in its row and confirm to sync the release to this device.
 
 From **Wework plugins**, choose **Install plugin** and enter an npm package, Git source, or absolute local directory to install a plugin, or search installed plugins by name, package name, or source. Before every installation or update, a native confirmation shows the source and execution risk: the plugin and its dependencies may execute code and access files and networks with the current user's permissions. Execution starts only after **Allow installation** or **Allow update**. **Cancel** is the default; cancelling or closing the window leaves the plugin configuration unchanged. The same policy covers direct API calls, accepts any npm, Git, or absolute local-directory source, and applies only to that operation. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
 
 Wework validates the resulting DSH profile after each install, update, enable, disable, or uninstall operation. If validation fails, it restores the previous dependencies and configuration so the runtime is not left unbootable. Installation and updates keep the current runtime active without applying incomplete changes. After successful changes, continue managing plugins and choose **Restart plugin runtime** once when ready. Enabled and disabled states persist across Wework restarts.
 
 Starting a plugin development instance also requires confirmation of the linked absolute source directory. Cancellation preserves the current development instance and starts no process. Once allowed, the development session executes that source and its subsequent HMR changes.
+
+## Check a Git marketplace for updates
+
+In **Marketplace sources**, choose **Check for updates** for a Git marketplace you added. Wework reads the configured branch or tag and shows any newer versions in **Codex plugins**. The check provides version information.
+
+## Remove a custom plugin marketplace
+
+Open **Left sidebar → Plugins → Manage plugins → Marketplace sources**. In the marketplace row, choose **More actions → Remove marketplace**. Review the plugins installed on this device from the marketplace. If the dialog lists any plugins, choose **Uninstall and remove**. If the installations change before removal, review the updated list and confirm again.
+
+Removal processes each plugin's logout and uninstall in sequence. If logout times out, removal stops and leaves that plugin and later plugins installed. Completed uninstalls are not rolled back; review the current list before retrying removal.
 
 ## Import a personal plugin
 
