@@ -231,3 +231,33 @@ def test_prepare_executor_rejects_wrong_internal_service_token(client, mocker):
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid authentication token"}
+
+
+@pytest.mark.parametrize(
+    ("authorization", "expected_status"),
+    [(None, 401), ("Bearer wrong-token", 401), ("Bearer service-token", 200)],
+)
+def test_attachment_sync_requires_service_token(
+    client, mocker, authorization, expected_status
+):
+    from executor_manager.routers import routers
+
+    executor = mocker.Mock()
+    executor.submit_executor.return_value = {"status": "failed", "error_msg": "test"}
+    mocker.patch.object(
+        routers.ExecutorDispatcher, "get_executor", return_value=executor
+    )
+
+    headers = {"Authorization": authorization} if authorization else {}
+    response = client.post(
+        "/executor-manager/tasks/42/attachments/sync",
+        headers=headers,
+        json={"subtask_id": 43, "attachments": [{"id": 17}]},
+    )
+
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        assert response.json()["task_id"] == 42
+        executor.submit_executor.assert_called_once()
+    else:
+        executor.submit_executor.assert_not_called()

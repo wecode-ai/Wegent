@@ -1366,7 +1366,10 @@ async def prepare_executor(request: ExecutionRequest, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@api_router.post("/tasks/{task_id}/attachments/sync")
+@api_router.post(
+    "/tasks/{task_id}/attachments/sync",
+    dependencies=[Depends(verify_internal_service_token)],
+)
 async def sync_task_attachments(
     task_id: int, payload: Dict[str, Any], http_request: Request
 ):
