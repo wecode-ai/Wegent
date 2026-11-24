@@ -24,6 +24,7 @@ fn session_recovery_uses_native_receipts_and_never_restarts_unresolved_commands(
         owner_resolution: None,
         resource_event_keys: Vec::new(),
         native: None,
+        guidance_turn_id: None,
         turn: SpawnTurnRequest {
             task_kind: None,
             local_task_id: task_id(7),
