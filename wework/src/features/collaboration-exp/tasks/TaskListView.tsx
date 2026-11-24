@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Check, Circle, LoaderCircle, MessageSquare } from 'lucide-react'
+import { useCallback, useRef } from 'react'
 import { selectExperienceTaskState } from '../model'
 import type {
   ExperienceProjectData,
@@ -41,21 +42,40 @@ interface Props {
 
 export function TaskListView(props: Props) {
   const { t } = useTranslation('collaborationExp')
+  const mode = props.mode ?? 'tasks'
+  const scrollPositions = useRef({ tasks: 0, projects: 0 })
+  const attachScroller = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element) element.scrollTop = scrollPositions.current[mode]
+    },
+    [mode]
+  )
   const nowMs = useSidebarRelativeTimeRefresh(props.rows.length > 0)
   const groups = [...new Set(props.rows.map(row => row.status))]
+  const visibleProjects = props.projects.filter(
+    project => !props.filters.projectKey || project.key === props.filters.projectKey
+  )
   return (
     <section className="experience-task-list" data-testid="collaboration-exp-tasks">
       <TaskFilters
         value={props.filters}
         projects={props.projects}
         statuses={props.statuses}
-        mode={props.mode}
+        mode={mode}
         onModeChange={props.onModeChange}
         onCreate={props.onCreate}
         onCreateProject={props.onCreateProject}
         onChange={props.onFiltersChange}
       />
-      <div className="experience-task-scroll" aria-busy={props.loading}>
+      <div
+        key={mode}
+        ref={attachScroller}
+        className="experience-task-scroll"
+        aria-busy={props.loading}
+        onScroll={event => {
+          scrollPositions.current[mode] = event.currentTarget.scrollTop
+        }}
+      >
         {props.error && (
           <div role="alert" className="px-4 py-3 text-sm text-error">
             <p>{props.error}</p>
@@ -75,7 +95,7 @@ export function TaskListView(props: Props) {
         )}
         {!props.loading &&
           !props.error &&
-          !(props.mode === 'projects' ? props.projects.length : props.rows.length) && (
+          !(mode === 'projects' ? visibleProjects.length : props.rows.length) && (
             <p
               className="p-4 text-sm text-text-secondary"
               data-testid="collaboration-exp-tasks-empty"
@@ -83,12 +103,10 @@ export function TaskListView(props: Props) {
               {t('tasks.empty')}
             </p>
           )}
-        {props.mode === 'projects' ? (
+        {mode === 'projects' ? (
           <ProjectList
             nowMs={nowMs}
-            projects={props.projects.filter(
-              project => !props.filters.projectKey || project.key === props.filters.projectKey
-            )}
+            projects={visibleProjects}
             rows={props.rows}
             projectData={props.projectData}
             onOpenProject={props.onOpenProject}

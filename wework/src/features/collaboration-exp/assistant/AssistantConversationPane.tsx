@@ -41,7 +41,7 @@ function AssistantConversationContent({
   const source = useAssistantSources(active, false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const accepted = acceptedAssistantConversation(accountKey, address)
-  const ownerId = source.ownerId ?? accepted?.ownerUserId
+  const ownerId = source.ownerId
   const conversation =
     ownerId !== undefined
       ? selectAssistantConversation(

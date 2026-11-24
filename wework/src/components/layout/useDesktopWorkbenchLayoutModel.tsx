@@ -246,19 +246,21 @@ export function useDesktopWorkbenchLayoutModel({
   const standInContentRoute =
     ownedWorkspaceTab?.contentRoute ?? `${currentPath}${window.location.search}`
   const standInOpen = !routeWorkItemsOpen && standInContentRoute.split('?')[0] === '/stand-in'
+  const standInActive = standInOpen && routeActive && !settingsOpen
   const [standInRetention, setStandInRetention] = useState({
     open: standInOpen,
-    visited: standInOpen,
+    visited: standInActive,
     contentRoute: standInContentRoute,
     entryKey: 0,
   })
   if (
     standInRetention.open !== standInOpen ||
-    (standInOpen && standInRetention.contentRoute !== standInContentRoute)
+    (standInOpen && standInRetention.contentRoute !== standInContentRoute) ||
+    (standInActive && !standInRetention.visited)
   ) {
     setStandInRetention({
       open: standInOpen,
-      visited: standInRetention.visited || standInOpen,
+      visited: standInRetention.visited || standInActive,
       contentRoute: standInOpen ? standInContentRoute : standInRetention.contentRoute,
       entryKey: standInRetention.entryKey + (standInOpen ? 1 : 0),
     })
@@ -582,6 +584,10 @@ export function useDesktopWorkbenchLayoutModel({
   const closeSidebarPreview = useCallback(() => {
     setSidebarPreviewOpen(false)
   }, [setSidebarPreviewOpen])
+  const dismissCompactSidebar = () => {
+    setSidebarPreviewOpen(false)
+    setSidebarAutoCollapsed(true)
+  }
   const updateSidebarCollapsed = useCallback(
     (collapsed: boolean) => {
       setSidebarPreviewOpen(false)
@@ -736,6 +742,7 @@ export function useDesktopWorkbenchLayoutModel({
     setNotice,
     routeWorkItemsOpen,
     standInOpen,
+    standInActive,
     standInRetention,
     taskBoardOpen,
     routedDefaultWorkItemsOpen,
@@ -762,6 +769,7 @@ export function useDesktopWorkbenchLayoutModel({
     openSettings,
     openSidebarPreview,
     closeSidebarPreview,
+    dismissCompactSidebar,
     updateSidebarCollapsed,
     collapseSidebar,
     sidebarWidth,

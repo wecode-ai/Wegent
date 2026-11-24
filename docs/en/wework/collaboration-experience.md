@@ -4,7 +4,7 @@ sidebar_position: 18
 
 # Collaboration experience preview
 
-The independent **Collaboration exp** tab brings together Assistant, tasks, projects, task timelines and private discussions. Existing Collaboration and My Stand-in entries remain available.
+The **Collaboration exp** tab opens to tasks. Use the list toolbar to browse projects, then open a task timeline or private discussion. With the preview on, **My stand-in** in the Wework sidebar opens the new assistant center.
 
 ## Enable or roll back
 
@@ -16,7 +16,7 @@ The preview corresponds to `collab.experience.v1` and defaults to off. Experimen
 
 ## Assistant and assistant team
 
-1. Select **Assistant** on the left of Collaboration exp to open **My assistants**. Enter a question or goal at the bottom, use **Automatic delegation** or choose a configured specialist, then send. Model selection remains available in the compact input menu, including during loading or a failure. The first message enters the current account's selected assistant's private conversation. Ordinary questions do not automatically create project tasks. Empty input does not create a conversation.
+1. Select **My stand-in** in the Wework sidebar. On first use, choose a model and complete setup before the assistant starts. Enter a question or goal at the bottom, use **Automatic delegation** or choose a configured specialist, then send. The first message opens the selected assistant's private conversation for the current account. Ordinary questions leave project tasks unchanged, and empty input does not create a conversation.
 2. Unsent home input is saved for the current account, assistant identity and execution device. Return to that identity after switching to Tasks, changing tabs, refreshing or restarting to continue editing. Conversation input has its own draft and never populates another discussion.
 3. **Needs your decision** shows pending questions and configuration proposals. Select a task to open its timeline and continue the question through its related private discussion. Select **Review the proposed changes**, inspect the changes, then choose **Confirm and apply** or **Dismiss**. Stale proposals need to be regenerated. Changes take effect after application.
 4. Select **Recent discussions** in the header to expand existing private discussions, or resume work from **Recent progress** on the home page. A discussion bound to a project task opens the same project, task and private conversation with its saved draft. An independent assistant discussion opens in the assistant conversation pane. Use **Retry** when the source or current account's access cannot be confirmed.
@@ -27,7 +27,7 @@ Select **Manage assistants** in the header, or the team rail's management button
 
 ## Tasks, projects and timelines
 
-Switch between **Assistant** and **Tasks** on the left. Selecting the current navigation entry returns to its home while retaining task filters and project scope. The list toolbar switches between **Tasks** and **By project**. Select the search icon to expand search, relevance, status and project filters. **Related to me** is the default scope; **All visible** broadens it. Status grouping remains separate from relevance, and clearing one filter retains the others. Tasks keep their original project data and permissions.
+Use the list toolbar to switch between **Tasks** and **By project**. Select the search icon to expand search, relevance, status and project filters. **Related to me** is the default scope; **All visible** broadens it. Status grouping remains separate from relevance, and clearing one filter retains the others. Tasks keep their original project data and permissions. Open application settings from the top tab strip.
 
 The toolbar **+** and home **Create task** open the task form. The default **No project yet** creates an independent task on this device. Alternatively, choose an existing local or cloud project to save the task in that project. Enter the delivery goal, adjust the assignee, due date and summary as needed, then select **Create and open task**. The assignee defaults to you and the due date defaults to tomorrow. When a cloud project loads dispatchable assistants, select one or more member assistants and choose **Execution risk**. The default **Higher risk · confirm before acting** waits for confirmation. Automatic queueing requires **Low risk · policy may act automatically**, and the assistant's own policy must also allow it. Confirming creation writes the root task, each member's scoped child task and its dispatch records in one transaction. A roster read failure offers Retry in the same form without discarding entered content.
 

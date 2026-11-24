@@ -104,6 +104,32 @@ describe('collaboration experiment workspace tab', () => {
     ).toHaveLength(1)
   })
 
+  test('restores a pinned collaboration tab that last displayed the old assistant', () => {
+    const task = createWorkspaceTab('task', experimentLabels, { id: 'task', fixed: true })
+    const collaboration = createWorkspaceTab('auxiliary', experimentLabels, {
+      contentRoute: '/collaboration-exp?view=assistant&assistantTaskId=old&search=release',
+      fixed: true,
+    })
+    let current!: WorkspaceTabsContextValue
+    render(
+      <RoutingHarness
+        labels={experimentLabels}
+        fixedTabs={[task, collaboration]}
+        onContextValue={value => {
+          current = value
+        }}
+      />
+    )
+
+    act(() => current.selectTab(COLLABORATION_EXP_TAB_ID))
+    expect(current.activeTab.contentRoute).toBe('/collaboration-exp?search=release')
+    act(() => navigateTo('/collaboration-exp?view=assistant&profileId=role-1'))
+    expect(current.activeTab.contentRoute).toBe('/stand-in?profileId=role-1')
+    expect(current.tabs.find(tab => tab.id === COLLABORATION_EXP_TAB_ID)?.contentRoute).toBe(
+      '/collaboration-exp?search=release'
+    )
+  })
+
   test.each([true, false])(
     'preserves the experiment when notification navigation leaves it (pending tab exists: %s)',
     pendingExists => {

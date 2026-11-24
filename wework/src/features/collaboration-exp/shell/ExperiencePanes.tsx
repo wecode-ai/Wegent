@@ -3,13 +3,11 @@ import { Fragment, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Resizable, ResizablePanel } from '@wegent/collaboration/controls/Resizable'
 import { WorkbenchPaneHost } from '@/components/layout/workbenchPanePresentation'
-import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { ExperienceHeader } from './ExperienceHeader'
 import { PaneResizeHandle } from './PaneResizeHandle'
 import {
   createDefaultPaneLayout,
-  EXPERIENCE_DEFAULT_NAVIGATION_WIDTH,
   EXPERIENCE_MOBILE_MAX_WIDTH,
   EXPERIENCE_SEPARATOR_WIDTH,
   paneMinimumWidth,
@@ -19,8 +17,6 @@ import type { ExperiencePane, ExperiencePanesProps } from './types'
 import { useExperiencePaneHosts } from './useExperiencePaneHosts'
 import { useExperiencePaneWidth } from './useExperiencePaneWidth'
 import './ExperienceApp.css'
-
-const NAVIGATION_PANE_ID = 'collaboration-exp-navigation'
 
 function pointerFocusTarget(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) return null
@@ -44,49 +40,15 @@ function ExperiencePaneContent({
   return typeof content === 'function' ? content(onBack) : content
 }
 
-export function ExperiencePanes({
-  panes,
-  navigation,
-  navigationTitle,
-  navigationActions,
-  navigationWidth = EXPERIENCE_DEFAULT_NAVIGATION_WIDTH,
-  mobileNavigation,
-  onBack,
-  className,
-}: ExperiencePanesProps) {
-  const { t } = useTranslation('collaborationExp')
+export function ExperiencePanes({ panes, onBack, className }: ExperiencePanesProps) {
   const container = useRef<HTMLDivElement>(null)
   const [group] = useState(createResizableController)
   const width = useExperiencePaneWidth(container)
   const mobile = width <= EXPERIENCE_MOBILE_MAX_WIDTH
   const availablePanes = mobile ? panes.filter(pane => !pane.desktopOnly) : panes
-  const newestPane = availablePanes[availablePanes.length - 1]
-  const showNavigation = Boolean(
-    navigation &&
-    !mobile &&
-    (!newestPane ||
-      width >= navigationWidth + EXPERIENCE_SEPARATOR_WIDTH + paneMinimumWidth(newestPane))
-  )
-  const visibleIds = selectVisiblePaneIds(
-    availablePanes,
-    width,
-    showNavigation ? navigationWidth : null
-  )
-  const navigationPane: ExperiencePane = {
-    id: NAVIGATION_PANE_ID,
-    title: navigationTitle ?? t('shell.navigation'),
-    header: null,
-    actions: navigationActions,
-    content: navigation,
-    minWidth: navigationWidth,
-    defaultWidth: navigationWidth,
-  }
-  const allPanes = navigation ? [navigationPane, ...panes] : panes
-  const visiblePanes = [
-    ...(showNavigation ? [navigationPane] : []),
-    ...panes.filter(pane => visibleIds.includes(pane.id)),
-  ]
-  const signature = allPanes.map(pane => pane.id).join('\u0000')
+  const visibleIds = selectVisiblePaneIds(availablePanes, width)
+  const visiblePanes = panes.filter(pane => visibleIds.includes(pane.id))
+  const signature = panes.map(pane => pane.id).join('\u0000')
   const visibleSignature = visiblePanes.map(pane => pane.id).join('\u0000')
   const hosts = useExperiencePaneHosts(signature)
   const [savedLayouts, setSavedLayouts] = useState<Record<string, Record<string, number>>>({})
@@ -99,8 +61,8 @@ export function ExperiencePanes({
 
   useLayoutEffect(() => {
     const ids = signature.split('\u0000').filter(Boolean)
-    const previous = previousPaneIds.current.filter(id => id !== NAVIGATION_PANE_ID)
-    for (const id of ids.filter(id => id !== NAVIGATION_PANE_ID)) {
+    const previous = previousPaneIds.current
+    for (const id of ids) {
       if (!previous.includes(id) && previous.length) {
         if (lastInteraction.current) returnFocus.current.set(id, lastInteraction.current)
         pendingActivation.current = id
@@ -185,16 +147,8 @@ export function ExperiencePanes({
           ))}
         </Resizable>
       ) : null}
-      {mobileNavigation && mobile && availablePanes.length === 1 ? (
-        <div
-          className="experience-mobile-navigation"
-          data-testid="collaboration-exp-mobile-navigation"
-        >
-          {mobileNavigation}
-        </div>
-      ) : null}
       <div hidden aria-hidden="true">
-        {allPanes
+        {panes
           .filter(pane => !visiblePanes.some(visible => visible.id === pane.id))
           .map(pane =>
             hosts.has(pane.id) ? (
@@ -202,16 +156,10 @@ export function ExperiencePanes({
             ) : null
           )}
       </div>
-      {allPanes.map(pane => {
+      {panes.map((pane, index) => {
         const host = hosts.get(pane.id)
         if (!host) return null
-        const parent = availablePanes[availablePanes.findIndex(item => item.id === pane.id) - 1]
-        const backVisible =
-          pane.backVisibility !== 'collapsed-parent' ||
-          Boolean(parent && !visibleIds.includes(parent.id))
-        const canGoBack =
-          backVisible &&
-          Boolean(pane.onBack || (panes.findIndex(item => item.id === pane.id) > 0 && onBack))
+        const canGoBack = Boolean(pane.onBack || (index > 0 && onBack))
         const goBack = () => back(pane)
         return createPortal(
           <section

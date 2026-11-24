@@ -1,5 +1,10 @@
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
-import { isStandInBindingOwner, type StandInExecutorApi, type StandInProposal } from '@/api/standIn'
+import {
+  isStandInBindingOwner,
+  type StandInBindingTarget,
+  type StandInExecutorApi,
+  type StandInProposal,
+} from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { invalidatesExperienceRead } from '../data/useExperienceSourceReads'
 
@@ -26,7 +31,8 @@ export function createAssistantSourcesModel(
   services: WorkbenchServices,
   api: StandInExecutorApi | undefined,
   userId: number,
-  scope: string
+  scope: string,
+  expectedBinding?: Pick<StandInBindingTarget, 'userId' | 'deviceId'>
 ) {
   let snapshot: SourceSnapshot = {}
   const listeners = new Set<() => void>()
@@ -99,6 +105,13 @@ export function createAssistantSourcesModel(
       const binding = await api.binding(identity.deviceId)
       if (!current()) return
       const target = binding.target
+      if (
+        expectedBinding &&
+        (binding.status !== 'active' ||
+          target?.userId !== expectedBinding.userId ||
+          target.deviceId !== expectedBinding.deviceId)
+      )
+        throw Object.assign(new Error(), { code: 'permission_denied' })
       if (target && !isStandInBindingOwner(target.userId, userId)) {
         throw Object.assign(new Error(), { code: 'permission_denied' })
       }

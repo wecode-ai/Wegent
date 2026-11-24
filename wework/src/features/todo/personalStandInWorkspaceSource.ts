@@ -15,14 +15,14 @@ interface WorkspaceObservation {
   target?: StandInBindingTarget | null
   bindingStatus?: StandInInstanceBinding['status']
   ownerAvailable: boolean
+  entry?: { key: string; location?: RoleLocation }
   active: boolean
   embedded: boolean
-  contentRoute: string
-  entryRequestKey?: number
   requestLeave(action: () => void): void
 }
 interface WorkspaceSnapshot {
   roleLocation?: RoleLocation
+  entryKey?: string
   selectionScope?: string
   projects: CollaborationProject[]
   projectsScope?: string
@@ -32,16 +32,8 @@ interface WorkspaceSnapshot {
 }
 
 /** Owns the account workspace's role navigation and independently loaded project directory. */
-export function createPersonalStandInWorkspaceSource(
-  contentRoute: string,
-  entryRequestKey?: number
-) {
-  const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
+export function createPersonalStandInWorkspaceSource() {
   let snapshot: WorkspaceSnapshot = {
-    roleLocation:
-      query.get('profileId') && query.get('profileId') !== '@primary' && query.get('deviceId')
-        ? { deviceId: query.get('deviceId')!, roleId: query.get('profileId')!, settings: true }
-        : undefined,
     projects: [],
     projectsApi: null,
     loadingProjects: false,
@@ -49,7 +41,7 @@ export function createPersonalStandInWorkspaceSource(
   }
   const listeners = new Set<() => void>()
   let observation: WorkspaceObservation | undefined
-  let previousEntry = JSON.stringify([contentRoute, entryRequestKey])
+  let previousEntry: string | undefined
   let readRevision = 0
   let selectionRevision = 0
   const publish = (patch: Partial<WorkspaceSnapshot>) => {
@@ -76,7 +68,7 @@ export function createPersonalStandInWorkspaceSource(
       !owner.api ||
       !owner.target ||
       !owner.ownerAvailable ||
-      owner.bindingStatus !== 'active'
+      (owner.bindingStatus !== 'active' && owner.bindingStatus !== 'unbound')
     ) {
       if (snapshot.loadingProjects) publish({ loadingProjects: false })
       return
@@ -97,18 +89,15 @@ export function createPersonalStandInWorkspaceSource(
   }
   const consumeEntry = () => {
     const owner = observation!
-    const deviceId = owner.target?.deviceId
-    const entry = JSON.stringify([owner.contentRoute, owner.entryRequestKey])
-    if (previousEntry === entry || !deviceId) return
-    previousEntry = entry
-    const params = new URLSearchParams(owner.contentRoute.split('?')[1] ?? '')
-    const roleId = params.get('profileId') ?? undefined
-    const next = roleId && roleId !== '@primary' ? (params.get('deviceId') ?? deviceId) : deviceId
+    const entry = owner.entry
+    if (previousEntry === entry?.key || !entry) return
+    previousEntry = entry.key
     const revision = selectionRevision
     owner.requestLeave(() => {
       if (!listeners.size || selectionRevision !== revision) return
       publish({
-        roleLocation: { deviceId: next, roleId, settings: !!params.get('settingsRequest') },
+        entryKey: entry.key,
+        roleLocation: entry.location,
       })
     })
   }

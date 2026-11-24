@@ -150,7 +150,7 @@ Issue 详情的 **参与者 → +** 支持搜索多选，负责人选择器也�
 
 ### 分组与辅助功能定位
 
-协作 exp 的开启、顶部标签栏 **+ → 协作 exp** 入口和关闭回退：[协作体验预览](./collaboration-experience.md)。
+开启预览后，在顶部标签栏选择 **+ → 协作 exp** 查看任务与项目，或在 Wework 左侧栏选择 **我的助理** 打开新版助理中心。开启和回退步骤见[协作体验预览](./collaboration-experience.md)。
 
 模板导入中的模型选择：[协作模板与配置共享](./projects.md#collaboration-template-models)。
 

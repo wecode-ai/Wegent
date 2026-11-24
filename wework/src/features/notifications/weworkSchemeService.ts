@@ -19,7 +19,10 @@ import { subscribeDshSlot, WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUi
 import { openHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
 import type { AppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
 import { isCollaborationExpPath } from '@/features/collaboration-exp/collaborationExpFeature'
-import { buildCollaborationExpRoute } from '@/features/collaboration-exp/integration/deepLinks'
+import {
+  buildCollaborationExpRoute,
+  canonicalAssistantRoute,
+} from '@/features/collaboration-exp/integration/deepLinks'
 
 function openAuxiliaryRoute(tabs: WorkspaceTabsContextValue, title: string, contentRoute: string) {
   const pathname = new URL(contentRoute, 'https://wework.invalid').pathname
@@ -73,6 +76,11 @@ export function createWeworkSchemeService() {
     if (!destination) return true
     const order = ++navigationOrder
     if (destination.kind === 'collaboration-exp') {
+      const assistantRoute = canonicalAssistantRoute(destination.contentRoute)
+      if (assistantRoute !== destination.contentRoute) {
+        navigateWorkspaceTab(input.tabs, 'task', assistantRoute)
+        return true
+      }
       if (!input.experiment.loaded) {
         if (deferInRenderer) pendingUrls.add(url)
         return false
@@ -195,7 +203,8 @@ export function createWeworkSchemeService() {
         discussion: null,
         inspector: null,
         timelineFilter: null,
-        projectView: null,
+        projectView: destination.itemId ? null : 'overview',
+        ...(destination.itemId ? {} : { taskMode: 'projects' }),
         assistantDeviceId: null,
         assistantTaskId: null,
         commentId: destination.commentId ?? null,

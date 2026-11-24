@@ -3,6 +3,7 @@ import { isStandInBindingOwner } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { CollaborationExpErrorBoundary } from '@/features/collaboration-exp/CollaborationExpRoute'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -15,15 +16,27 @@ import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
 import { createPersonalStandInWorkspaceSource } from './personalStandInWorkspaceSource'
 import { availableStandInDevices } from './standInDevices'
+import { StandInActivation } from './StandInActivation'
 import { StandInHomeSetup, StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { StandInHomeWorkspace } from './StandInHomeWorkspace'
 import { StandInMigration } from './StandInMigration'
 import { StandInOverviewPage } from './StandInOverviewPage'
+import { StandInRouteFailure, StandInRouteLoading } from './StandInRouteState'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInEntry } from './useStandInEntry'
 import { useStandInInstance } from './useStandInInstance'
 import { useStandInRoleDirectory } from './useStandInRoleDirectory'
 import type { PersonalHomeCollaborationWork } from './WeworkPersonalHome'
@@ -41,7 +54,11 @@ type PersonalStandInWorkspaceProps = {
   embedded?: boolean
   homeProjects?: CollaborationProject[]
   collaborationWork?: PersonalHomeCollaborationWork
+  experienceEnabled?: boolean
 }
+
+const loadAssistantWorkspace = () =>
+  import('@/features/collaboration-exp/assistant/AssistantWorkspace')
 
 export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
   const cloud = useContext(CloudConnectionContext)
@@ -66,8 +83,10 @@ function AccountStandInWorkspace({
   embedded = false,
   homeProjects = [],
   collaborationWork,
+  experienceEnabled = false,
 }: PersonalStandInWorkspaceProps) {
   const { t, i18n } = useTranslation('common')
+  const { t: experienceT } = useTranslation('collaborationExp')
   const cloud = useContext(CloudConnectionContext)
   const [reentry, setReentry] = useState(0)
   const refreshKey = (entryRequestKey ?? 0) + reentry
@@ -79,11 +98,7 @@ function AccountStandInWorkspace({
     },
     { enabled: !embedded && active && contentRoute === '/stand-in' }
   )
-  const [workspaceSource] = useState(() =>
-    createPersonalStandInWorkspaceSource(contentRoute, entryRequestKey)
-  )
-  const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
-  const [initialBindingDevice] = useState(() => query.get('deviceId') ?? undefined)
+  const [workspaceSource] = useState(createPersonalStandInWorkspaceSource)
   const userId = Number(user.id)
   const backendUrl = cloud?.apiBaseUrl ?? ''
   const instance = useStandInInstance(
@@ -93,21 +108,104 @@ function AccountStandInWorkspace({
     !!cloud?.isConnected,
     active,
     backendUrl,
-    initialBindingDevice,
     refreshKey
   )
-  const { binding, localDeviceId, busy } = instance
+  const { binding, setupTarget, localDeviceId, busy } = instance
   const target = binding?.target
-  const ownerId = target?.userId ?? Number(user.id)
-  const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
+  const visibleTarget = target ?? setupTarget
+  const ownerId = visibleTarget?.userId ?? Number(user.id)
   const deviceId = target?.deviceId
-  const bindingScope = target ? JSON.stringify([target.userId, target.deviceId]) : undefined
+  const bindingScope = visibleTarget
+    ? JSON.stringify([visibleTarget.userId, visibleTarget.deviceId])
+    : undefined
   const ownerAvailable =
-    notificationOwnerMatches &&
-    (binding?.status === 'stopped' || !target || isStandInBindingOwner(target.userId, userId))
-  const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
+    binding?.status === 'stopped' || !target || isStandInBindingOwner(target.userId, userId)
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
+  const [experience, setExperience] = useState(() => ({
+    revision: 0,
+    Workspace: lazy(loadAssistantWorkspace),
+  }))
+  const AssistantWorkspace = experience.Workspace
   const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
+  const connected = Boolean(cloud?.isConnected)
+  const availableDevices = useMemo(
+    () => (connected ? availableStandInDevices(devices) : []),
+    [connected, devices]
+  )
+  const availableDeviceIds = useMemo(
+    () => availableDevices.map(device => device.device_id),
+    [availableDevices]
+  )
+  const authorizedDeviceIds = useMemo(() => {
+    const ids = new Set(availableDeviceIds)
+    if (localDeviceId) ids.add(localDeviceId)
+    return ids
+  }, [availableDeviceIds, localDeviceId])
+  const {
+    entry,
+    result,
+    retry: retryEntry,
+  } = useStandInEntry(
+    contentRoute,
+    services.standInApi,
+    binding?.status === 'active' && ownerAvailable ? (target ?? undefined) : undefined,
+    authorizedDeviceIds,
+    active && !embedded,
+    entryRequestKey
+  )
+  const entryError =
+    entry.kind === 'error'
+      ? entry.error
+      : entry.kind === 'home'
+        ? undefined
+        : !ownerAvailable || (entry.userId && binding && entry.userId !== String(ownerId))
+          ? 'forbidden'
+          : !binding && instance.error
+            ? 'lookup_failed'
+            : binding && binding.status !== 'active'
+              ? 'not_found'
+              : entry.kind === 'conversation' && !experienceEnabled
+                ? 'unsupported'
+                : result?.kind === 'error'
+                  ? result.error
+                  : undefined
+  const entryLoading =
+    entry.kind !== 'home' && (!binding || (entry.kind === 'identity' && result?.kind !== 'ready'))
+  const verifiedRole = result?.kind === 'ready' ? result : undefined
+  const settingsRequest = entry.kind === 'identity' ? entry.settingsRequest : undefined
+  const scheduled = 'scheduled' in entry && entry.scheduled
+  const routeLocation = useMemo(
+    () =>
+      !entryError && !entryLoading
+        ? {
+            key: JSON.stringify([contentRoute, entryRequestKey, bindingScope]),
+            location: verifiedRole
+              ? {
+                  deviceId: verifiedRole.deviceId,
+                  roleId: verifiedRole.profileId,
+                  settings: Boolean(settingsRequest),
+                }
+              : undefined,
+          }
+        : undefined,
+    [
+      entryError,
+      entryLoading,
+      contentRoute,
+      entryRequestKey,
+      bindingScope,
+      verifiedRole,
+      settingsRequest,
+    ]
+  )
+  const showAssistantExperience =
+    experienceEnabled &&
+    !embedded &&
+    !scheduled &&
+    !settingsRequest &&
+    (entry.kind === 'home' ||
+      entry.kind === 'conversation' ||
+      verifiedRole?.profileId === '@primary')
   const api = useMemo(
     () =>
       createWeworkPlatformApi(
@@ -129,13 +227,12 @@ function AccountStandInWorkspace({
         {
           api,
           bindingScope,
-          target,
+          target: visibleTarget,
           bindingStatus: binding?.status,
           ownerAvailable,
           active,
           embedded,
-          contentRoute,
-          entryRequestKey,
+          entry: routeLocation,
           requestLeave: action =>
             overview.current ? overview.current.requestLeave(action) : action(),
         },
@@ -145,13 +242,12 @@ function AccountStandInWorkspace({
       workspaceSource,
       api,
       bindingScope,
-      target,
+      visibleTarget,
       binding?.status,
       ownerAvailable,
       active,
       embedded,
-      contentRoute,
-      entryRequestKey,
+      routeLocation,
     ]
   )
   const view = useSyncExternalStore(
@@ -160,9 +256,9 @@ function AccountStandInWorkspace({
     workspaceSource.getSnapshot
   )
   const roleLocation =
-    !view.selectionScope || !bindingScope || view.selectionScope === bindingScope
+    view.entryKey === routeLocation?.key && view.selectionScope === bindingScope
       ? view.roleLocation
-      : undefined
+      : routeLocation?.location
   const selectedDevice =
     roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
   const sameProjectOwner = view.projectsApi === api && view.projectsScope === bindingScope
@@ -180,10 +276,16 @@ function AccountStandInWorkspace({
     services.standInApi,
     ownerId,
     deviceId,
-    !embedded && active && ownerAvailable && binding?.status === 'active',
+    !embedded &&
+      active &&
+      ownerAvailable &&
+      !entryError &&
+      !entryLoading &&
+      !showAssistantExperience &&
+      binding?.status === 'active',
     localDeviceId,
     refreshKey,
-    cloud?.isConnected ? availableStandInDevices(devices).map(device => device.device_id) : []
+    availableDeviceIds
   )
   const actions = (
     <ControlButton
@@ -207,9 +309,10 @@ function AccountStandInWorkspace({
   const upgradeRequired = requiresStandInUpgrade(
     instance.error ? instance.errorCause : error?.cause
   )
+  const returnToAssistant = () => navigateTo('/stand-in')
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="personal-stand-in-workspace">
-      {failure && (
+      {failure && !entryError && (
         <div
           role="alert"
           className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-error"
@@ -241,7 +344,23 @@ function AccountStandInWorkspace({
           </ControlButton>
         </div>
       )}
-      {!binding ? (
+      {entryError ? (
+        <StandInRouteFailure
+          title={experienceT('assistant.entry.linkTitle')}
+          description={experienceT(`assistant.entry.errors.${entryError}`)}
+          onReturn={returnToAssistant}
+          onRetry={
+            entryError === 'lookup_failed'
+              ? () => {
+                  instance.reload()
+                  void retryEntry?.()
+                }
+              : undefined
+          }
+        />
+      ) : entryLoading ? (
+        <StandInRouteLoading />
+      ) : !binding ? (
         !failure && (
           <p role="status" className="p-5 text-sm">
             {t('standIn.loading')}
@@ -251,8 +370,25 @@ function AccountStandInWorkspace({
         <p role="alert" className="p-5 text-sm" data-testid="stand-in-instance-owner-unavailable">
           {t('standIn.instance.owner_unavailable')}
         </p>
-      ) : binding.status === 'stopped' && embedded ? (
+      ) : (binding.status === 'unbound' || binding.status === 'stopped') && embedded ? (
         <StandInHomeSetupPrompt />
+      ) : binding.status === 'unbound' ? (
+        setupTarget ? (
+          <StandInActivation
+            active={active}
+            services={services}
+            target={setupTarget}
+            localDeviceId={localDeviceId}
+            projects={projects}
+            devices={devices}
+            error={instance.error}
+            busy={busy}
+            onActivate={instance.setup}
+            onClose={onClose}
+          />
+        ) : (
+          !failure && <StandInRouteLoading />
+        )
       ) : binding.status === 'stopped' ? (
         <section className="space-y-4 p-5" data-testid="stand-in-instance-stopped">
           <h2 className="text-heading-sm font-medium">{t('standIn.instance.stopped')}</h2>
@@ -270,7 +406,7 @@ function AccountStandInWorkspace({
                     },
                   ]),
               ...(cloud?.isConnected
-                ? availableStandInDevices(devices).map(device => ({
+                ? availableDevices.map(device => ({
                     userId: Number(user.id),
                     deviceId: device.device_id,
                     name: device.name,
@@ -346,24 +482,62 @@ function AccountStandInWorkspace({
             />
           )}
         </StandInHomeSetup>
+      ) : target && showAssistantExperience ? (
+        <CollaborationExpErrorBoundary
+          key={experience.revision}
+          fallback={
+            <StandInRouteFailure
+              title={experienceT('assistant.entry.loadTitle')}
+              description={experienceT('assistant.entry.loadFailed')}
+              onRetry={() =>
+                setExperience(current => ({
+                  revision: current.revision + 1,
+                  Workspace: lazy(loadAssistantWorkspace),
+                }))
+              }
+            />
+          }
+        >
+          <Suspense fallback={<StandInRouteLoading />}>
+            <AssistantWorkspace
+              active={active}
+              binding={target}
+              conversation={entry.kind === 'conversation' ? entry : undefined}
+              projects={projects}
+              localDeviceId={localDeviceId}
+              devices={devices}
+              headerActions={actions}
+              onClose={onClose}
+            />
+          </Suspense>
+        </CollaborationExpErrorBoundary>
       ) : target && api ? (
         <>
+          {experienceEnabled && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="ml-5 mt-2 w-fit max-md:min-h-11"
+              data-testid="stand-in-context-back"
+              onClick={() =>
+                overview.current
+                  ? overview.current.requestLeave(returnToAssistant)
+                  : returnToAssistant()
+              }
+            >
+              {experienceT('assistant.entry.back')}
+            </Button>
+          )}
           {directory?.error && (
             <p role="alert" className="px-5 py-2 text-sm text-error">
               {directory.error}
             </p>
           )}
           <StandInOverviewPage
-            key={`${ownerId}:${selectedDevice}`}
+            key={JSON.stringify([ownerId, selectedDevice, contentRoute])}
             ref={overview}
             headerActions={actions}
-            initialProfileId={
-              roleLocation?.settings
-                ? roleLocation.roleId
-                : roleLocation
-                  ? undefined
-                  : (query.get('profileId') ?? undefined)
-            }
+            initialProfileId={roleLocation?.settings ? roleLocation.roleId : undefined}
             initialSelectedRoleId={roleLocation?.roleId}
             initialDeviceId={selectedDevice}
             primaryDeviceId={deviceId}
@@ -371,12 +545,8 @@ function AccountStandInWorkspace({
             localDeviceId={localDeviceId}
             entryRequestKey={entryRequestKey}
             entryRoute={contentRoute}
-            settingsRequestKey={
-              roleLocation?.settings || routeMatches
-                ? (query.get('settingsRequest') ?? undefined)
-                : undefined
-            }
-            initialWorkView={query.get('view') === 'scheduled' ? 'scheduled' : 'work'}
+            settingsRequestKey={roleLocation?.settings ? settingsRequest : undefined}
+            initialWorkView={scheduled ? 'scheduled' : 'work'}
             onSelectLocation={workspaceSource.selectLocation}
             api={api}
             projects={projects}

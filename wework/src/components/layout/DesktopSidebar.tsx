@@ -182,10 +182,11 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
         isWindowsDesktop && !(background.imagePath && background.inSidebar) ? 'false' : undefined
       }
       aria-hidden={collapsed}
+      inert={collapsed}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'group/sidebar relative h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
+        'group/sidebar relative h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] max-md:max-w-[calc(100dvw-3rem)]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
@@ -197,7 +198,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
       <div className="h-full overflow-hidden">
         <div
           className={cn(
-            'relative flex h-full flex-col px-1.5',
+            'relative flex h-full flex-col px-1.5 max-md:max-w-[calc(100dvw-3rem)]',
             usesOverlayTitlebar ? 'pt-[44px]' : 'pt-1.5'
           )}
           style={{ width: sidebarWidth }}

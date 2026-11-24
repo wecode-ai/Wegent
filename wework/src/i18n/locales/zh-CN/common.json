@@ -5741,6 +5741,9 @@
     "connect": "连接云端后查看通知"
   },
   "standIn": {
+    "preference_loading": "正在读取助理偏好…",
+    "preference_error": "无法读取助理偏好",
+    "preference_retry": "重试",
     "native_input_pending": "请先通过当前问题或权限确认卡片完成确认，再发送新消息。",
     "desktop_notifications": {
       "title": "开启桌面助理通知",

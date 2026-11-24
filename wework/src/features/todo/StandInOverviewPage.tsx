@@ -98,7 +98,8 @@ export function StandInOverviewPage({
     props.services,
     props.userId,
     props.initialDeviceId,
-    localDeviceId
+    localDeviceId,
+    { active }
   )
   const { saved, setDraft, reload } = state
   const [overview] = useState(() =>

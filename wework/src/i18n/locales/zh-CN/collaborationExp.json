@@ -5,13 +5,7 @@
   "unavailable": "此任务暂不可用，请检查连接与访问权限后重试。",
   "shell": {
     "back": "返回",
-    "navigation": "协作导航",
-    "resize": "调整相邻分栏宽度",
-    "assistant": "助理",
-    "tasks": "任务",
-    "projects": "项目",
-    "account": "用户菜单",
-    "settings": "设置"
+    "resize": "调整相邻分栏宽度"
   },
   "tasks": {
     "rhythm": {
@@ -178,6 +172,21 @@
     "continueDiscussion": "继续讨论"
   },
   "assistant": {
+    "entry": {
+      "back": "返回我的助理",
+      "linkTitle": "无法打开这个助理链接",
+      "loadTitle": "助理加载失败",
+      "loadFailed": "请重试加载助理。",
+      "errors": {
+        "missing_identity": "这个链接没有指定助理。",
+        "conflict": "链接中的助理和设备没有指向同一个助理。",
+        "not_found": "链接中的助理当前不可用。",
+        "forbidden": "你无权访问链接中的助理或设备。",
+        "ambiguous": "这个链接匹配到多个助理。",
+        "lookup_failed": "暂时无法验证链接中的助理。请重试。",
+        "unsupported": "当前助理页面无法打开这个讨论或页面。"
+      }
+    },
     "availability": {
       "online": "在线",
       "offline": "离线",
