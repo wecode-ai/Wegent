@@ -39,6 +39,7 @@ async fn run() -> Result<(), wegent_backend_rs::BoxError> {
     if !command.is_empty() {
         return database_command(&command).await;
     }
+    wegent_backend_rs::config::InternalChatConfig::from_env().require_service_token()?;
     let config = HybridConfig::from_env()?;
     let (mysql, redis) = build_database_clients().await?;
     let database = wegent_backend_rs::config::DatabaseConfig::from_env()?;

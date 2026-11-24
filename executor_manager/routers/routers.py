@@ -72,7 +72,7 @@ def verify_internal_service_token(authorization: str = Header(default="")) -> No
     scheme, _, provided_token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not provided_token:
         raise HTTPException(status_code=401, detail="Missing authentication token")
-    if not hmac.compare_digest(provided_token, expected_token):
+    if not hmac.compare_digest(provided_token.encode(), expected_token.encode()):
         raise HTTPException(status_code=401, detail="Invalid authentication token")
 
 
@@ -267,19 +267,19 @@ async def log_requests(request: Request, call_next):
 
 def verify_executor_callback(event_data: dict, http_request: Request) -> None:
     """Require the task-scoped credential issued for this callback stream."""
-    task_id = event_data.get("task_id")
-    if not isinstance(task_id, int) or task_id <= 0:
-        raise HTTPException(status_code=401, detail="Executor callback task is invalid")
-
-    expected_token = get_sandbox_repository().load_executor_callback_token(task_id)
-    if not expected_token:
-        raise HTTPException(status_code=401, detail="Executor callback is not bound")
-
     authorization = http_request.headers.get("Authorization", "")
     scheme, _, provided_token = authorization.partition(" ")
     if scheme != BINDING_SCHEME or not provided_token:
         raise HTTPException(status_code=401, detail="Invalid authentication scheme")
-    if not hmac.compare_digest(provided_token, expected_token):
+
+    task_id = event_data.get("task_id")
+    if type(task_id) is not int or task_id <= 0:
+        raise HTTPException(status_code=401, detail="Executor callback task is invalid")
+
+    expected_token = get_sandbox_repository().load_executor_callback_token(task_id)
+    if not expected_token or not hmac.compare_digest(
+        provided_token.encode(), expected_token.encode()
+    ):
         raise HTTPException(status_code=401, detail="Invalid authentication token")
 
 

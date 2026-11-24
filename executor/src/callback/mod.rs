@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, error::Error, future::Future, pin::Pin, time::Duration};
+use std::{
+    env,
+    error::Error,
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+    time::Duration,
+};
 
 use reqwest::Client;
 use serde_json::{Map, Number, Value};
@@ -52,11 +59,11 @@ impl Default for CallbackRetryConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CallbackSink {
     callback_url: String,
     callback_token: Option<String>,
-    read_token_from_config: bool,
+    runtime_config_dir: Option<PathBuf>,
     client: Client,
     retry_config: CallbackRetryConfig,
 }
@@ -70,12 +77,10 @@ impl CallbackSink {
         callback_url: impl Into<String>,
         retry_config: CallbackRetryConfig,
     ) -> Result<Self, String> {
-        let callback_token = env_value("EXECUTOR_CALLBACK_TOKEN");
-        let read_token_from_config = callback_token.is_none();
         Self::new_with_credentials_and_reload(
             callback_url,
-            callback_token,
-            read_token_from_config,
+            env::var("EXECUTOR_CALLBACK_TOKEN").ok(),
+            Some(runtime_config_dir()),
             retry_config,
         )
     }
@@ -85,13 +90,13 @@ impl CallbackSink {
         callback_token: Option<String>,
         retry_config: CallbackRetryConfig,
     ) -> Result<Self, String> {
-        Self::new_with_credentials_and_reload(callback_url, callback_token, false, retry_config)
+        Self::new_with_credentials_and_reload(callback_url, callback_token, None, retry_config)
     }
 
     fn new_with_credentials_and_reload(
         callback_url: impl Into<String>,
         callback_token: Option<String>,
-        read_token_from_config: bool,
+        runtime_config_dir: Option<PathBuf>,
         retry_config: CallbackRetryConfig,
     ) -> Result<Self, String> {
         let client = Client::builder()
@@ -99,24 +104,33 @@ impl CallbackSink {
             .build()
             .map_err(|error| error.to_string())?;
         Ok(Self {
-            callback_url: callback_url.into(),
+            callback_url: callback_url.into().trim().to_owned(),
             callback_token: callback_token
                 .map(|token| token.trim().to_owned())
                 .filter(|token| !token.is_empty()),
-            read_token_from_config,
+            runtime_config_dir,
             client,
             retry_config,
         })
     }
 
+    fn callback_url(&self) -> String {
+        if self.callback_url.is_empty() {
+            return self
+                .runtime_config_dir
+                .as_deref()
+                .and_then(|dir| read_config_value(dir, "callback_url"))
+                .unwrap_or_default();
+        }
+        self.callback_url.clone()
+    }
+
     fn callback_token(&self) -> Option<String> {
-        if let Some(token) = &self.callback_token {
-            return Some(token.clone());
-        }
-        if self.read_token_from_config {
-            return env_value("EXECUTOR_CALLBACK_TOKEN");
-        }
-        None
+        self.callback_token.clone().or_else(|| {
+            self.runtime_config_dir
+                .as_deref()
+                .and_then(|dir| read_config_value(dir, "executor_callback_token"))
+        })
     }
 }
 
@@ -124,11 +138,9 @@ impl EventSink for CallbackSink {
     type SendFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 
     fn send(&self, event: EventEnvelope) -> Self::SendFuture {
-        let callback_url = self.callback_url.trim().to_owned();
-        let callback_token = self.callback_token();
-        let client = self.client.clone();
-        let retry_config = self.retry_config.clone();
+        let sink = self.clone();
         Box::pin(async move {
+            let callback_url = sink.callback_url();
             if callback_url.is_empty() {
                 log_executor_event(
                     "callback skipped because url is empty",
@@ -146,36 +158,20 @@ impl EventSink for CallbackSink {
                 log_executor_event("callback payload rejected", &failed_fields);
             })?;
 
-            send_callback_with_retries(
-                &client,
-                &callback_url,
-                callback_token,
-                &callback_payload,
-                fields,
-                log_success,
-                retry_config,
-            )
-            .await
+            send_callback_with_retries(&sink, &callback_url, &callback_payload, fields, log_success)
+                .await
         })
     }
 }
 
-fn self_initial_callback_token_missing(initial_token: Option<&str>) -> Option<String> {
-    if initial_token.is_some() {
-        return None;
-    }
-    env_value("EXECUTOR_CALLBACK_TOKEN")
-}
-
 async fn send_callback_with_retries(
-    client: &Client,
+    sink: &CallbackSink,
     callback_url: &str,
-    initial_callback_token: Option<String>,
     callback_payload: &Value,
     fields: Vec<(&'static str, String)>,
     log_success: bool,
-    retry_config: CallbackRetryConfig,
 ) -> Result<(), String> {
+    let retry_config = &sink.retry_config;
     let mut last_error = String::new();
     for attempt in 1..=retry_config.max_attempts {
         let attempt_fields = callback_attempt_fields(&fields, attempt, retry_config.max_attempts);
@@ -183,13 +179,11 @@ async fn send_callback_with_retries(
             log_executor_event("callback request started", &attempt_fields);
         }
 
-        let callback_token = initial_callback_token
-            .clone()
-            .or_else(|| self_initial_callback_token_missing(initial_callback_token.as_deref()));
+        let callback_token = sink.callback_token();
         let is_final_attempt = attempt == retry_config.max_attempts;
         let started = std::time::Instant::now();
         match send_callback_once(
-            client,
+            &sink.client,
             callback_url,
             callback_token.as_deref(),
             callback_payload,
@@ -280,20 +274,16 @@ fn should_log_successful_callback(event: &EventEnvelope) -> bool {
     )
 }
 
-fn env_value(key: &str) -> Option<String> {
-    if let Some(value) = env::var(key).ok().map(|value| value.trim().to_owned()) {
-        return Some(value);
-    }
-    read_config_value(&key.to_ascii_lowercase())
-}
-
-fn read_config_value(file_name: &str) -> Option<String> {
-    let config_dir = env::var("WEGENT_CONFIG_DIR")
+fn runtime_config_dir() -> PathBuf {
+    env::var("WEGENT_CONFIG_DIR")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "/root/.wegent/.config".to_owned());
-    let content =
-        std::fs::read_to_string(std::path::Path::new(&config_dir).join(file_name)).ok()?;
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/root/.wegent/.config"))
+}
+
+fn read_config_value(config_dir: &Path, file_name: &str) -> Option<String> {
+    let content = std::fs::read_to_string(config_dir.join(file_name)).ok()?;
     let content = content.trim();
     (!content.is_empty()).then(|| content.to_owned())
 }

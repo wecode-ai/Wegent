@@ -21,7 +21,6 @@ import httpx
 import requests
 
 from executor_manager.clients.executor_binding import (
-    BINDING_TOKEN,
     CALLBACK_TOKEN,
     ObsoleteExecutorDispatch,
     bind_executor_for_dispatch,
@@ -1134,9 +1133,7 @@ class DockerExecutor(Executor):
         callback_url = build_callback_url(task)
         if callback_url:
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
-        callback_token = get_metadata_field(
-            task, CALLBACK_TOKEN, get_metadata_field(task, BINDING_TOKEN)
-        )
+        callback_token = get_metadata_field(task, CALLBACK_TOKEN)
         if callback_token:
             cmd.extend(["-e", f"EXECUTOR_CALLBACK_TOKEN={callback_token}"])
 

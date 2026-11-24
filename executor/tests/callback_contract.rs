@@ -157,12 +157,12 @@ async fn callback_sink_reads_warm_pool_token_from_config_file() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    // SAFETY: the config directory is scoped to this test and restored after
-    // CallbackSink construction reads the callback credential.
+    // The sink captures the config directory and reads the mounted credential when sending.
     let _config_dir = EnvGuard::set(
         "WEGENT_CONFIG_DIR",
         temp_dir.path().to_str().expect("valid config path"),
     );
+    let _direct_token = EnvGuard::remove("EXECUTOR_CALLBACK_TOKEN");
     let sink = CallbackSink::new(url).expect("callback sink");
     drop(_config_dir);
     sink.send(sample_event()).await.unwrap();
@@ -178,7 +178,8 @@ async fn callback_sink_reads_warm_pool_token_from_config_file() {
 
 #[tokio::test]
 async fn callback_sink_skips_empty_url() {
-    let sink = CallbackSink::new("").unwrap();
+    let sink =
+        CallbackSink::new_with_credentials("", None, CallbackRetryConfig::default()).unwrap();
 
     sink.send(sample_event()).await.unwrap();
 }
@@ -203,7 +204,7 @@ async fn callback_sink_returns_status_and_url_for_non_success_response() {
 }
 
 #[tokio::test]
-async fn callback_sink_reads_token_config_after_sink_creation() {
+async fn callback_sink_reads_mounted_config_after_sink_creation() {
     let _config_env = CONFIG_ENV_LOCK.lock().await;
     let temp_dir = tempfile::tempdir().expect("temp config dir");
     let token_path = temp_dir.path().join("executor_callback_token");
@@ -235,13 +236,9 @@ async fn callback_sink_reads_token_config_after_sink_creation() {
         temp_dir.path().to_str().expect("valid config path"),
     );
     let _direct_token = EnvGuard::remove("EXECUTOR_CALLBACK_TOKEN");
-    let sink = CallbackSink::new(url).expect("callback sink");
-    std::fs::write(
-        &token_path,
-        "late-callback-token
-",
-    )
-    .expect("write callback token");
+    let sink = CallbackSink::new("").expect("callback sink");
+    std::fs::write(temp_dir.path().join("callback_url"), url).expect("write callback URL");
+    std::fs::write(&token_path, "late-callback-token\n").expect("write callback token");
     sink.send(sample_event()).await.unwrap();
 
     assert_eq!(
