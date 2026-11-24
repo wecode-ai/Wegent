@@ -76,9 +76,10 @@ export async function verifyStandInWorkspaceRecovery({
     'Startup rejection must send a desktop notification for the Issue'
   )
   const inbox = '[data-testid="wework-notifications-popover"]'
+  const collaboration = '[data-testid="wework-notifications-collaboration-list"]'
   if (Number(await control.command('getElementCount', inbox, { visible: true })) === 0)
     await openCollaborationNotifications(control)
-  else
+  else if (Number(await control.command('getElementCount', collaboration, { visible: true })) === 0)
     await control.command(
       'clickWhenEnabled',
       '[data-testid="wework-notifications-category-collaboration"]'

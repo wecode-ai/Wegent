@@ -158,7 +158,7 @@ async fn acknowledge_assignment(
     struct LockedRow {
         id: String,
         cloud_project_id: String,
-        title: String,
+        title: Option<String>,
     }
     let (written, notification) = mysql
         .with_transaction(async |tx| {
@@ -220,7 +220,7 @@ async fn acknowledge_assignment(
                     } else {
                         Some(wegent_project_notifications::stand_in_start_failure_on(
                             tx, i64::from(user.id), &locked.cloud_project_id, item_id,
-                            &locked.title, update.failure_code.as_deref()
+                            locked.title.as_deref().unwrap_or(item_id), update.failure_code.as_deref()
                         ).await?)
                     };
                     return Ok((true, notification));
