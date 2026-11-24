@@ -58,7 +58,7 @@ mod tests {
         }));
         started_rx.await.unwrap();
         tokio::time::pause();
-        tokio::time::advance(MARKETPLACE_MANIFEST_TIMEOUT).await;
+        tokio::time::advance(MARKETPLACE_MANIFEST_TIMEOUT + Duration::from_millis(1)).await;
         assert_eq!(
             first.await.unwrap().unwrap_err().code,
             "marketplace_manifest_timeout"
@@ -68,7 +68,7 @@ mod tests {
         let retry = read_with_slots(slots.clone(), || panic!("A blocked read was duplicated"));
         let mut retry = std::pin::pin!(retry);
         assert!(futures_util::poll!(&mut retry).is_pending());
-        tokio::time::advance(MARKETPLACE_MANIFEST_TIMEOUT).await;
+        tokio::time::advance(MARKETPLACE_MANIFEST_TIMEOUT + Duration::from_millis(1)).await;
         assert_eq!(
             retry.await.unwrap_err().code,
             "marketplace_manifest_timeout"
