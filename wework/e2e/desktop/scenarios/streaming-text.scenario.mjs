@@ -90,6 +90,7 @@ export function createDesktopScenario({
   const completion = createStreamingCompletionChecks({ resultDir, uiTimeoutMs })
   const commandCancellation = createStreamingCommandCancellationChecks({
     workspacePath,
+    resultDir,
     uiTimeoutMs,
   })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
