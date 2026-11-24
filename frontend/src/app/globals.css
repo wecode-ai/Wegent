@@ -367,6 +367,30 @@ button:focus-visible:not(:where(.collaboration-theme, .collaboration-theme *)) {
   }
 }
 
+/* Subtle timing-span highlight used while inspecting timeline intervals. */
+.timing-span-pulse {
+  transition: filter 160ms ease-out;
+}
+
+.timing-span-pulse:hover {
+  animation: timing-span-highlight 1.6s ease-in-out infinite;
+}
+
+.timing-tooltip {
+  border-radius: var(--radius);
+}
+
+@keyframes timing-span-highlight {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+
+  50% {
+    filter: brightness(1.14);
+  }
+}
+
 /* Image generation placeholder */
 .image-generation-placeholder {
   isolation: isolate;

@@ -5,12 +5,14 @@ import { AlertTriangle, BarChart3, Loader2, RotateCcw, Timer, X } from 'lucide-r
 import { taskApis, type TaskTimingResponse } from '@/apis/tasks'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   openTaskRightPanel,
   registerTaskRightPanel,
   type TaskRightPanelComponentProps,
 } from '@/features/tasks/components/right-panel'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { TimingSpan } from './timing-types'
 import type { TimelineBounds } from './timing-types'
 import {
   buildMarkdownReport,
@@ -416,101 +418,179 @@ function TimelineTrace({
   }
 
   return (
-    <div className="mt-2" data-testid="task-timing-timeline-details">
-      <div className="flex gap-2">
-        <span className="w-20 shrink-0" />
-        <div className="relative min-w-0 flex-1">
-          <div className="flex h-4 items-end border-b border-border text-[10px] text-text-muted">
-            {ticks.map(tick => (
-              <span key={tick} className="flex-1 tabular-nums">
-                {formatDuration(scale * tick)}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-1 space-y-0.5">
-        <div
-          className="flex items-center gap-2"
-          data-testid="task-timing-track"
-          data-kind="coverage"
-        >
-          <span
-            className="w-20 shrink-0 truncate text-xs text-text-secondary"
-            title={t('timing.categories.gap.description')}
-          >
-            {t('timing.timeline.coverage')}
-          </span>
-          <div className="relative h-4 min-w-0 flex-1 overflow-hidden rounded bg-surface dark:bg-white/5">
-            {gaps.map(gap => (
-              <span
-                key={`coverage-gap-${gap.start}-${gap.end}`}
-                className={`absolute inset-0 cursor-help ${unobservedBackground()}`}
-                style={intervalPosition(gap.start, gap.end, bounds)}
-                data-testid="task-timing-interior-gap"
-                title={t('timing.timeline.gap_meta', {
-                  start: formatTimestamp(gap.start),
-                  end: formatTimestamp(gap.end),
-                  duration: formatDuration(gap.end - gap.start),
-                })}
-                aria-label={t('timing.timeline.gap_meta', {
-                  start: formatTimestamp(gap.start),
-                  end: formatTimestamp(gap.end),
-                  duration: formatDuration(gap.end - gap.start),
-                })}
-              />
-            ))}
-          </div>
-        </div>
-
-        {tracks.map(track => (
-          <div
-            key={track.category}
-            className="flex items-center gap-2"
-            data-testid="task-timing-track"
-            data-kind={track.category}
-          >
-            <span
-              className="w-20 shrink-0 truncate text-xs text-text-secondary"
-              title={t(`timing.categories.${track.category}.description`, {
-                defaultValue: track.category,
-              })}
-            >
-              {t(`timing.summary.${track.category}`, { defaultValue: track.category })}
-            </span>
-            <div className="min-w-0 flex-1 space-y-1">
-              {track.lanes.map((lane, laneIndex) => (
-                <div
-                  key={`lane-${track.category}-${laneIndex}`}
-                  className="relative h-4 min-w-0 overflow-hidden rounded bg-surface dark:bg-white/5"
-                >
-                  {lane.map(span => {
-                    const interval = spanInterval(span, bounds)
-                    if (!interval) return null
-                    const duration = interval.end - interval.start
-                    const position = intervalPosition(interval.start, interval.end, bounds)
-                    return (
-                      <span
-                        key={span.id}
-                        className={`absolute inset-y-0.5 cursor-help rounded-sm ${categoryBackground(span.kind)}`}
-                        style={{
-                          ...position,
-                          minWidth: duration > 0 ? '2px' : '1px',
-                        }}
-                        title={spanTooltip(span, bounds, t)}
-                        aria-label={spanTooltip(span, bounds, t)}
-                        data-testid="task-timing-span-bar"
-                        data-kind={span.kind}
-                      />
-                    )
-                  })}
-                </div>
+    <TooltipProvider delayDuration={150}>
+      <div className="mt-2" data-testid="task-timing-timeline-details">
+        <div className="flex gap-2">
+          <span className="w-20 shrink-0" />
+          <div className="relative min-w-0 flex-1">
+            <div className="flex h-4 items-end border-b border-border text-[10px] text-text-muted">
+              {ticks.map(tick => (
+                <span key={tick} className="flex-1 tabular-nums">
+                  {formatDuration(scale * tick)}
+                </span>
               ))}
             </div>
           </div>
-        ))}
+        </div>
+
+        <div className="mt-1 space-y-0.5">
+          <div
+            className="flex items-center gap-2"
+            data-testid="task-timing-track"
+            data-kind="coverage"
+          >
+            <span
+              className="w-20 shrink-0 truncate text-xs text-text-secondary"
+              title={t('timing.categories.gap.description')}
+            >
+              {t('timing.timeline.coverage')}
+            </span>
+            <div className="relative h-4 min-w-0 flex-1 overflow-hidden rounded bg-surface dark:bg-white/5">
+              {gaps.map(gap => (
+                <Tooltip key={`coverage-gap-${gap.start}-${gap.end}`}>
+                  <TooltipTrigger asChild>
+                    <span
+                      className={`group absolute inset-0 cursor-default ${unobservedBackground()}`}
+                      style={intervalPosition(gap.start, gap.end, bounds)}
+                      data-testid="task-timing-interior-gap"
+                      aria-label={t('timing.timeline.gap_meta', {
+                        start: formatTimestamp(gap.start),
+                        end: formatTimestamp(gap.end),
+                        duration: formatDuration(gap.end - gap.start),
+                      })}
+                    />
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    className="timing-tooltip max-w-72 border-border bg-popover p-3 text-popover-foreground shadow-popover"
+                  >
+                    <TimingGapTooltip
+                      start={formatTimestamp(gap.start)}
+                      end={formatTimestamp(gap.end)}
+                      duration={formatDuration(gap.end - gap.start)}
+                    />
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+            </div>
+          </div>
+
+          {tracks.map(track => (
+            <div
+              className="flex items-center gap-2"
+              data-testid="task-timing-track"
+              data-kind={track.category}
+              key={track.category}
+            >
+              <span
+                className="w-20 shrink-0 truncate text-xs text-text-secondary"
+                title={t(`timing.categories.${track.category}.description`, {
+                  defaultValue: track.category,
+                })}
+              >
+                {t(`timing.summary.${track.category}`, { defaultValue: track.category })}
+              </span>
+              <div className="min-w-0 flex-1 space-y-1">
+                {track.lanes.map((lane, laneIndex) => (
+                  <div
+                    className="relative h-4 min-w-0 overflow-hidden rounded bg-surface dark:bg-white/5"
+                    key={`lane-${track.category}-${laneIndex}`}
+                  >
+                    {lane.map(span => {
+                      const interval = spanInterval(span, bounds)
+                      if (!interval) return null
+                      const duration = interval.end - interval.start
+                      const position = intervalPosition(interval.start, interval.end, bounds)
+                      return (
+                        <Tooltip key={span.id}>
+                          <TooltipTrigger asChild>
+                            <span
+                              className={`group absolute inset-y-0.5 cursor-default rounded-sm timing-span-pulse ${categoryBackground(span.kind)}`}
+                              style={{
+                                ...position,
+                                minWidth: duration > 0 ? '2px' : '1px',
+                              }}
+                              aria-label={spanTooltip(span, bounds, t)}
+                              data-testid="task-timing-span-bar"
+                              data-kind={span.kind}
+                            />
+                          </TooltipTrigger>
+                          <TooltipContent
+                            side="top"
+                            className="timing-tooltip max-w-72 border-border bg-popover p-3 text-popover-foreground shadow-popover"
+                          >
+                            <TimingSpanTooltip span={span} bounds={bounds} />
+                          </TooltipContent>
+                        </Tooltip>
+                      )
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
+    </TooltipProvider>
+  )
+}
+
+function TimingGapTooltip({
+  start,
+  end,
+  duration,
+}: {
+  start: string
+  end: string
+  duration: string
+}) {
+  const { t } = useTranslation('tasks')
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium text-popover-foreground">{t('timing.summary.gap')}</p>
+      <TimingTooltipRow label={t('timing.spans.duration')} value={duration} />
+      <TimingTooltipRow label={t('timing.spans.start')} value={start} />
+      <TimingTooltipRow label={t('timing.spans.end')} value={end} />
+    </div>
+  )
+}
+
+function TimingSpanTooltip({ span, bounds }: { span: TimingSpan; bounds: TimelineBounds }) {
+  const { t } = useTranslation('tasks')
+  const interval = spanInterval(span, bounds)
+  return (
+    <div className="space-y-1.5">
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium text-popover-foreground">
+          {span.actor_label || span.kind}
+        </p>
+        <p className="mt-0.5 text-[11px] text-popover-foreground/70">
+          {t(`timing.summary.${timelineCategory(span.kind)}`, { defaultValue: span.kind })}
+        </p>
+      </div>
+      <TimingTooltipRow
+        label={t('timing.spans.duration')}
+        value={isOpenSpan(span) ? t('timing.spans.running') : formatDuration(spanDuration(span))}
+      />
+      <TimingTooltipRow label={t('timing.spans.subtask')} value={span.subtask_id ?? '--'} />
+      {interval ? (
+        <TimingTooltipRow
+          label={t('timing.spans.interval')}
+          value={`${formatTimestamp(interval.start)} → ${formatTimestamp(interval.end)}`}
+        />
+      ) : null}
+      <TimingTooltipRow label="Span ID" value={span.span_id} />
+    </div>
+  )
+}
+
+function TimingTooltipRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <span className="shrink-0 text-[11px] text-popover-foreground/60">{label}</span>
+      <span className="min-w-0 break-all text-right font-mono text-[11px] text-popover-foreground">
+        {value}
+      </span>
     </div>
   )
 }
