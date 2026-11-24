@@ -19,7 +19,7 @@ export function StandInNavigationButton({
   )
 }
 
-export function StandInConversationHeading({ name, onBack }: { name: string; onBack(): void }) {
+function StandInConversationHeading({ name, onBack }: { name: string; onBack(): void }) {
   const { t } = useTranslation('common')
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -38,7 +38,18 @@ export function StandInConversationHeading({ name, onBack }: { name: string; onB
   )
 }
 
-export function StandInRoleSelector({
+export function StandInNavigation({
+  conversationName,
+  ...roles
+}: ComponentProps<typeof StandInRoleSelector> & { conversationName?: string }) {
+  return conversationName === undefined ? (
+    <StandInRoleSelector {...roles} />
+  ) : (
+    <StandInConversationHeading name={conversationName} onBack={() => roles.chooseRole()} />
+  )
+}
+
+function StandInRoleSelector({
   roles,
   projects,
   roleId,

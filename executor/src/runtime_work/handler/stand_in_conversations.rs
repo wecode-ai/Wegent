@@ -278,6 +278,7 @@ impl RuntimeWorkRpcHandler {
                 user,
                 payload["roleId"].as_str(),
                 payload["latestAppliedGhost"] == true,
+                payload["learningReport"] == true,
             )
         }
     }

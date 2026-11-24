@@ -43,12 +43,11 @@ import { standInProcessingFailure } from './standInProcessingFailure'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
-import { StandInConversationHeading, StandInRoleSelector } from './StandInRoleSelector'
+import { StandInNavigation } from './StandInRoleSelector'
 import type { StandInSettingsShortcut } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
-import { StandInShareControl } from './StandInShareDialog'
-import { StandInTeamControl } from './StandInTeamsDialog'
+import { StandInTeamAndShareControls } from './StandInTeamAndShareControls'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
 import { StandInWorkList } from './StandInWorkList'
 import { usePersonalStandIn } from './usePersonalStandIn'
@@ -146,7 +145,7 @@ export function StandInOverviewPage({
     resolveProposal,
     requestNavigation,
   } = overview
-  const [review, setReview] = useState<'proposal' | 'status' | 'work' | null>(null)
+  const [review, setReview] = useState<{ proposalId: string } | 'status' | 'work' | null>(null)
   const [guideOpen, setGuideOpen] = useState(false)
   const [imDialogOpen, setImDialogOpen] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
@@ -335,6 +334,15 @@ export function StandInOverviewPage({
       setProfile(null)
     })
   const currentProposal = proposal && (proposal.roleId ?? undefined) === roleId ? proposal : null
+  const viewedProposalId = typeof review === 'object' ? review?.proposalId : undefined
+  const closeReview = () => {
+    setReview(null)
+    detailsTrigger.current?.focus()
+  }
+  const openProposal = (proposalId: string) => {
+    setDetailsAnchor(null)
+    setReview({ proposalId })
+  }
   const proposalFailureMessage =
     (proposalSaveError?.id === currentProposal?.id ? proposalSaveError?.message : null) ||
     proposalError
@@ -420,22 +428,43 @@ export function StandInOverviewPage({
       description: t('standIn.memory.settings_help'),
       onClick: openMemory,
     })
-    if (
-      (roleId ? saved.roles.find(item => item.id === roleId) : saved.primary)
-        ?.selfLearningEnabled !== undefined
-    ) {
+    const savedRole = roleId ? saved.roles.find(item => item.id === roleId) : undefined
+    const savedIdentity = roleId ? savedRole : saved.primary
+    if (savedIdentity?.selfLearningEnabled !== undefined) {
+      const reportDeviceId = savedRole?.executionDeviceId || saved.executionDeviceId
       shortcuts.push({
         id: 'revision',
         testId: 'stand-in-ghost-revision-open',
-        label: t('standIn.workspace.ghost_revision'),
+        label: t('standIn.workspace.learning_report.title'),
         content: (
           <StandInGhostRevisionPanel
-            key={JSON.stringify([saved.userId, saved.executionDeviceId, saved.version, roleId])}
+            key={JSON.stringify([saved.userId, reportDeviceId, saved.version, roleId])}
             api={api}
             userId={saved.userId}
-            deviceId={saved.executionDeviceId}
+            deviceId={reportDeviceId}
             roleId={roleId}
+            identityName={
+              savedRole
+                ? standInRoleName(
+                    savedRole,
+                    saved.roles.indexOf(savedRole),
+                    t('standIn.personal.unnamed_assistant')
+                  )
+                : t('standIn.personal.default_role')
+            }
             requestLeave={leavePanel}
+            pendingProposal={
+              deviceId === reportDeviceId && currentProposal?.id.startsWith('ghost:')
+                ? {
+                    id: currentProposal.id,
+                    open: () =>
+                      leavePanel(() => {
+                        setProfile(null)
+                        openProposal(currentProposal.id)
+                      }),
+                  }
+                : undefined
+            }
           />
         ),
       })
@@ -506,12 +535,7 @@ export function StandInOverviewPage({
               setReview('status')
             }}
             onProposal={
-              currentProposal && state.saved
-                ? () => {
-                    setDetailsAnchor(null)
-                    setReview('proposal')
-                  }
-                : undefined
+              currentProposal && state.saved ? () => openProposal(currentProposal.id) : undefined
             }
             onOpenTask={onOpenTask}
           />
@@ -525,29 +549,23 @@ export function StandInOverviewPage({
     >
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2">
-          {team || shared ? (
-            <StandInConversationHeading
-              name={shared ? `${shared.name} · ${shared.owner_name}` : (team?.name ?? '')}
-              onBack={() => chooseRole()}
-            />
-          ) : (
-            <StandInRoleSelector
-              roles={roles}
-              projects={props.projects}
-              roleId={roleId}
-              deviceId={deviceId}
-              matchDevice={!!roleLocations}
-              chooseRole={chooseRole}
-              onCreate={trigger =>
-                leavePanel(() => {
-                  setCalendarRequest(0)
-                  openProfile('create', trigger)
-                })
-              }
-            />
-          )}
+          <StandInNavigation
+            conversationName={shared ? `${shared.name} · ${shared.owner_name}` : team?.name}
+            roles={roles}
+            projects={props.projects}
+            roleId={roleId}
+            deviceId={deviceId}
+            matchDevice={!!roleLocations}
+            chooseRole={chooseRole}
+            onCreate={trigger =>
+              leavePanel(() => {
+                setCalendarRequest(0)
+                openProfile('create', trigger)
+              })
+            }
+          />
           {api && saved && (
-            <StandInTeamControl
+            <StandInTeamAndShareControls
               key={teamOwner}
               active={active}
               api={api}
@@ -556,16 +574,6 @@ export function StandInOverviewPage({
               selected={team}
               beforeOpen={openAssistantDialog}
               onOpenTeam={openTeam}
-            />
-          )}
-          {api?.sharing && saved && props.userId > 0 && (
-            <StandInShareControl
-              key={teamOwner}
-              api={api.sharing}
-              settings={saved}
-              roles={roles}
-              active={active}
-              beforeOpen={openAssistantDialog}
               onOpenShare={entry => {
                 setSelectedTeam(null)
                 setSelectedShare({ owner: teamOwner, entry })
@@ -649,7 +657,7 @@ export function StandInOverviewPage({
                 }
                 renderDetails={team || shared ? undefined : renderDetails}
                 contentFooter={
-                  !team && !shared && review !== 'proposal' && (proposalCard || proposalFailure) ? (
+                  !team && !shared && !viewedProposalId && (proposalCard || proposalFailure) ? (
                     <>
                       {proposalCard}
                       {proposalFailure}
@@ -683,10 +691,7 @@ export function StandInOverviewPage({
           open={active && review === 'work'}
           title={t('standIn.workspace.details_activity')}
           testId="stand-in-work-dialog"
-          onClose={() => {
-            setReview(null)
-            detailsTrigger.current?.focus()
-          }}
+          onClose={closeReview}
         >
           <StandInWorkList
             active={active && review === 'work'}
@@ -711,26 +716,28 @@ export function StandInOverviewPage({
           />
         </StandInReviewDialog>
         <StandInReviewDialog
-          open={active && review === 'proposal' && !!currentProposal && !!state.saved}
+          open={active && !!viewedProposalId}
           title={t('standIn.workspace.pending_configuration')}
           testId="stand-in-proposal-dialog"
           busy={resolving}
-          onClose={() => {
-            setReview(null)
-            detailsTrigger.current?.focus()
-          }}
+          onClose={closeReview}
         >
-          {proposalCard}
-          {proposalFailure}
+          {currentProposal?.id === viewedProposalId && saved ? (
+            <>
+              {proposalCard}
+              {proposalFailure}
+            </>
+          ) : (
+            <p role="status" className="text-sm text-text-secondary">
+              {t('standIn.workspace.proposal_no_longer_pending')}
+            </p>
+          )}
         </StandInReviewDialog>
         <StandInReviewDialog
           open={active && review === 'status'}
           title={t('standIn.workspace.status_details')}
           testId="stand-in-status-dialog"
-          onClose={() => {
-            setReview(null)
-            detailsTrigger.current?.focus()
-          }}
+          onClose={closeReview}
         >
           {deviceId && processingError && (
             <StandInProcessingNotice
