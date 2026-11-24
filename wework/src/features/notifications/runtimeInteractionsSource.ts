@@ -92,6 +92,7 @@ export function createRuntimeInteractionsSource(
   const successfulReads = new Map<string, { signature: string; readAt: number }>()
   let successfulReadApi = context.source?.services?.runtimeWorkApi
   let fetching = false
+  let inventoryDiscovered = false
   let reportedOfflineDevices = new Set<string>()
   let loading = false
   let replyNotice: string | null = null
@@ -107,18 +108,28 @@ export function createRuntimeInteractionsSource(
   const active = () => listeners.size > 0
   const update = <T>(value: SetStateAction<T>, previous: T): T =>
     typeof value === 'function' ? (value as (previous: T) => T)(previous) : value
+  const sameFields = <T>(previous: Record<string, T>, next: Record<string, T>) => {
+    const keys = Object.keys(next)
+    return (
+      keys.length === Object.keys(previous).length &&
+      keys.every(key => Object.hasOwn(previous, key) && previous[key] === next[key])
+    )
+  }
   const setLoaded = (value: SetStateAction<typeof loaded>) => {
     const next = update(value, loaded)
+    if (next === loaded || sameFields(loaded, next)) return
     loaded = next
     publish()
   }
   const setInventory = (value: SetStateAction<typeof inventory>) => {
     const next = update(value, inventory)
+    if (!changed(inventory, next)) return
     inventory = next
     publish()
   }
   const setErrors = (value: SetStateAction<typeof errors>) => {
     const next = update(value, errors)
+    if (next === errors || sameFields(errors, next)) return
     errors = next
     publish()
   }
@@ -139,6 +150,7 @@ export function createRuntimeInteractionsSource(
   }
   const setProjectCount = (value: SetStateAction<typeof projectCount>) => {
     const next = update(value, projectCount)
+    if (next === projectCount) return
     projectCount = next
     publish()
   }
@@ -231,9 +243,12 @@ export function createRuntimeInteractionsSource(
     if (successfulReadApi !== api) {
       successfulReads.clear()
       successfulReadApi = api
+      inventoryDiscovered = false
     }
     fetching = true
-    setLoading(true)
+    // Keep the visible loading state for initial discovery and explicit refresh.
+    const showLoading = force || !inventoryDiscovered
+    if (showLoading) setLoading(true)
     let stage = 'inventory'
     const diagnosticTimer =
       import.meta.env.VITE_WEWORK_E2E === 'true'
@@ -252,6 +267,7 @@ export function createRuntimeInteractionsSource(
       if (force) await Promise.all(issueDiscovery.resolved.map(archiveResolved))
       const discovered = await readInteractionTaskInventory(current)
       if (!active() || context.source?.services?.runtimeWorkApi !== api) return
+      inventoryDiscovered = true
       if (force) await issueDiscovery.refresh()
       else await issueDiscovery.discover(discovered.localIssueQuestionsPending)
       const retained = inventory.filter(
@@ -424,7 +440,7 @@ export function createRuntimeInteractionsSource(
     } finally {
       window.clearTimeout(diagnosticTimer)
       fetching = false
-      if (active()) setLoading(false)
+      if (loading && active()) setLoading(false)
     }
   }
 
@@ -800,7 +816,8 @@ export function createRuntimeInteractionsSource(
     ]
     if (changed(pendingInputs, nextPendingInputs)) {
       pendingInputs = nextPendingInputs
-      pending = computePending()
+      const next = computePending()
+      if (changed(pending, next)) pending = next
     }
     const nextNativeInputs = [loaded, issueDiscovery.items]
     if (changed(nativeInputs, nextNativeInputs)) {
@@ -864,13 +881,18 @@ export function createRuntimeInteractionsSource(
     settle: settleFromConversation,
   })
   function publish() {
-    snapshot = buildSnapshot()
+    const next = buildSnapshot()
+    const snapshotChanged =
+      next.value !== snapshot.value ||
+      next.replyNotice !== snapshot.replyNotice ||
+      next.nativeItems !== snapshot.nativeItems
+    if (snapshotChanged) snapshot = next
     if (!active()) return
     if (persistedPending !== pending) {
       persistedPending = pending
       saveInteractionState(cacheKey, pendingInteractionCache(pending))
     }
-    listeners.forEach(listener => listener())
+    if (snapshotChanged) listeners.forEach(listener => listener())
     settlements.synchronize()
     nativeReplies.synchronize()
     if (lastResolved !== issueDiscovery.resolved) {

@@ -751,7 +751,23 @@ function getCommandExecutable(command?: string): string {
   return executable?.toLowerCase() ?? "";
 }
 
+const unwrappedCommands = new Map<string, string>();
+
 export function unwrapShellCommand(command: string): string {
+  const cached = unwrappedCommands.get(command);
+  if (cached !== undefined) return cached;
+  const unwrapped = parseShellCommand(command);
+  if (command.length <= 16_384) {
+    if (unwrappedCommands.size === 256) {
+      const oldest = unwrappedCommands.keys().next();
+      if (!oldest.done) unwrappedCommands.delete(oldest.value);
+    }
+    unwrappedCommands.set(command, unwrapped);
+  }
+  return unwrapped;
+}
+
+function parseShellCommand(command: string): string {
   let current = command.trim();
 
   for (let depth = 0; depth < 4; depth += 1) {

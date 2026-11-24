@@ -2,7 +2,11 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { useRuntimeTaskLifecycle, useRuntimeTaskLifecycleStore } from './context'
+import {
+  useRuntimeTaskLifecycle,
+  useRuntimeTaskLifecycleStore,
+  useRuntimeTaskLifecycleStoreSnapshot,
+} from './context'
 import { RuntimeTaskLifecycleProvider } from './RuntimeTaskLifecycleProvider'
 import {
   createRuntimeTaskLifecycleOwnershipView,
@@ -63,5 +67,27 @@ describe('RuntimeTaskLifecycleProvider', () => {
     )
 
     expect(screen.getByTestId('lifecycle-phase')).toHaveTextContent('idle')
+  })
+
+  test('an inactive task surface renders the current snapshot when opened', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.executorSettled(address)
+    function TaskSurface({ visible }: { visible: boolean }) {
+      const { runningTaskKeys } = useRuntimeTaskLifecycleStoreSnapshot(undefined, visible)
+      return <output>{runningTaskKeys.size}</output>
+    }
+    const surface = (visible: boolean) => (
+      <RuntimeTaskLifecycleProvider store={store}>
+        <TaskSurface visible={visible} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    const { rerender } = render(surface(false))
+    act(() => store.turnStarted(address, 'background-turn'))
+    expect(screen.getByRole('status')).toHaveTextContent('0')
+
+    rerender(surface(true))
+    expect(screen.getByRole('status')).toHaveTextContent('1')
+    act(() => store.executorSettled(address))
+    expect(screen.getByRole('status')).toHaveTextContent('0')
   })
 })

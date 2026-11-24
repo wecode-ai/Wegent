@@ -13,6 +13,7 @@ import type { ToolBlock } from './blocks/types'
 
 let container: HTMLDivElement
 let root: Root
+const translate = createCollaborationTranslator('en')
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -33,7 +34,7 @@ afterEach(() => {
 function render(children: ReactNode) {
   act(() =>
     root.render(
-      <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
+      <ConversationTranslationProvider translate={translate}>
         {children}
       </ConversationTranslationProvider>
     )
@@ -62,6 +63,50 @@ function tool(status: ToolBlock['status'] = 'done'): ToolBlock {
 }
 
 describe('processing clock render isolation', () => {
+  it('keeps completed tool rows stable while reasoning streams into the live preview', () => {
+    const label = vi.spyOn(labels, 'getBlockLabel')
+    const command = tool()
+    const reasoning = {
+      id: 'reasoning',
+      subtaskId: 1,
+      type: 'thinking' as const,
+      content: 'Checking the workspace',
+      status: 'streaming' as const,
+      createdAt: Date.now(),
+    }
+    render(
+      <ToolBlocksDisplay
+        blocks={[command, reasoning]}
+        isStreaming
+        showInterToolThinking
+        thinkingContent={reasoning.content}
+      />
+    )
+    const preview = container.querySelector('[data-testid="processing-live-preview"]')
+    const toggle = preview?.querySelector<HTMLButtonElement>('[data-tool-detail-toggle]')
+    expect(toggle).toBeTruthy()
+    act(() => toggle!.click())
+    expect(preview?.textContent).toContain('result')
+    label.mockClear()
+
+    const nextReasoning = { ...reasoning, content: 'Checking the workspace and tests' }
+    render(
+      <ToolBlocksDisplay
+        blocks={[command, nextReasoning]}
+        isStreaming
+        showInterToolThinking
+        thinkingContent={nextReasoning.content}
+      />
+    )
+
+    expect(label.mock.calls.filter(([block]) => block === command)).toHaveLength(0)
+    expect(preview?.querySelector('[data-tool-detail-toggle]')).toBe(toggle)
+    expect(preview?.textContent).toContain('result')
+    expect(preview?.querySelector('[data-testid="tool-thinking-indicator"]')?.textContent).toContain(
+      nextReasoning.content
+    )
+  })
+
   it('does no clock work for the hidden summary duration while waiting after a tool', () => {
     const classify = vi.spyOn(activity, 'countProcessingActivityKinds')
     const format = vi.spyOn(duration, 'getDurationText')

@@ -81,7 +81,7 @@ export async function startPerformanceRecording(
   client,
   directory,
   target,
-  { styleInvalidations = false } = {}
+  { styleInvalidations = false, samplingIntervalUs } = {}
 ) {
   const statePath = join(directory, `performance-${target}.json`)
   try {
@@ -99,6 +99,9 @@ export async function startPerformanceRecording(
       await command(`${domain}.enable`)
     }
     const baseline = await command('Performance.getMetrics')
+    if (samplingIntervalUs !== undefined) {
+      await command('Profiler.setSamplingInterval', { interval: samplingIntervalUs })
+    }
     await command('Profiler.start')
     profiling = true
     await command('Tracing.start', {

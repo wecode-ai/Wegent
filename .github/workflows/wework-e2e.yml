@@ -57,6 +57,7 @@ jobs:
       wework_desktop_other_e2e: ${{ steps.classify.outputs.wework_desktop_other_e2e }}
       wework_desktop_other_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_other_e2e_matrix }}
       wework_desktop_macos_inspector_e2e: ${{ steps.classify.outputs.wework_desktop_macos_inspector_e2e }}
+      wework_desktop_renderer_profile: ${{ steps.classify.outputs.renderer_profile == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
 
     steps:
       - name: Checkout code
@@ -74,11 +75,28 @@ jobs:
           FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
+            echo 'renderer_profile=true' >> "$GITHUB_OUTPUT"
             .github/scripts/classify-ci-changes.sh --all
             .github/scripts/classify-wework-desktop-e2e.sh --all
           else
             changed_files="$(mktemp)"
             git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$changed_files"
+            while IFS= read -r path; do
+              case "$path" in
+                wework/src/components/chat/*|wework/src/components/layout/*|\
+                wework/src/features/notifications/*|wework/src/features/workbench/*|\
+                wework/electron/*|wework/scripts/profile-renderer*|wework/scripts/ai-verify-devtools*|\
+                wework/e2e/desktop/modules/streaming-text-fixture.mjs|\
+                wework/e2e/desktop/modules/response-protocol.mjs|\
+                wework/e2e/desktop/modules/shell-command-response.mjs|\
+                packages/chat-core/*|packages/collaboration/src/conversation/*|\
+                executor/src/runtime_work/*|executor/src/agents/codex/*|\
+                .github/workflows/wework-e2e.yml)
+                  echo 'renderer_profile=true' >> "$GITHUB_OUTPUT"
+                  break
+                  ;;
+              esac
+            done < "$changed_files"
             .github/scripts/classify-ci-changes.sh < "$changed_files"
             if [[ "$GITHUB_EVENT_NAME" == "merge_group" ]]; then
               desktop_changed_files="$(mktemp)"
@@ -1270,7 +1288,7 @@ jobs:
           RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.windows_desktop_core_e2e == 'true' }}
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')))) }}
+          RUN_MACOS_INSPECTOR_E2E: ${{ needs.changes.outputs.wework_desktop_renderer_profile == 'true' || (github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-core-e2e.result }}
@@ -1377,7 +1395,7 @@ jobs:
   wework-desktop-memory-e2e:
     name: Wework Desktop macOS E2E
     needs: changes
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
+    if: needs.changes.outputs.wework_desktop_renderer_profile == 'true' || (github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')))))
     runs-on: macos-15
     timeout-minutes: 45
     permissions:
@@ -1385,7 +1403,7 @@ jobs:
       packages: write
     env:
       CI: true
-      MACOS_COMPLETE_BUILD: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+      MACOS_COMPLETE_BUILD: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
 
     steps:
       - name: Checkout code
@@ -1401,6 +1419,11 @@ jobs:
           publish: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           include-backend: ${{ env.MACOS_COMPLETE_BUILD }}
 
+      - name: Enforce renderer performance budgets
+        if: needs.changes.outputs.wework_desktop_renderer_profile == 'true'
+        timeout-minutes: 8
+        run: node wework/scripts/profile-renderer.mjs --check
+
       - name: Run Wework desktop memory E2E
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')
         env:
@@ -1412,7 +1435,7 @@ jobs:
           node wework/e2e/desktop/run-checkpoints.mjs --memory-only
 
       - name: Run Wework desktop macOS Inspector E2E
-        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))
         env:
           CI: true
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
@@ -1447,6 +1470,7 @@ jobs:
           name: wework-desktop-macos-inspector-failure-evidence
           path: |
             wework/test-results/desktop-e2e/*/failure.txt
+            wework/test-results/desktop-e2e/*/renderer-threshold-measurements.json
             wework/test-results/desktop-e2e/*/scenario-state.json
             wework/test-results/desktop-e2e/*/model-requests.json
             wework/test-results/desktop-e2e/*/*.log
