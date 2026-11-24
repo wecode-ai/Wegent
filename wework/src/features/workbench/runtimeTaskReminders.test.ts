@@ -7,6 +7,7 @@ import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
+import { createUnlistedStandInTasksSource } from '@/features/notifications/unlistedStandInTasksSource'
 import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
 import { createNotificationCenterSummary } from '@/features/notifications/notificationCenterSummary'
 import { readCachedRemoteRuntimeWork, writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
@@ -57,6 +58,27 @@ describe('runtime task reminders', () => {
     const rows = result.current
     rerender({ ...initial, version: 1, tasks: new Map([[unlisted.key, unlisted]]) })
     expect(result.current).toBe(rows)
+  })
+
+  test('discovers hidden stand-in work from task metadata without loading its transcript', async () => {
+    const hidden = reminderItem('hidden-stand-in')
+    const ordinary = reminderItem('hidden-ordinary')
+    const task = { ...hidden.task, runtimeHandle: { origin: { initiatedBy: 'stand_in' } } }
+    const readTask = vi.fn(async (_deviceId: string, taskId: string) => ({
+      success: true,
+      task: taskId === hidden.address.taskId ? task : ordinary.task,
+    }))
+    const source = createUnlistedStandInTasksSource({ readTask })
+    const stop = source.subscribe(vi.fn(), [
+      { key: hidden.key, address: hidden.address, signature: '1' },
+      { key: ordinary.key, address: ordinary.address, signature: '1' },
+    ])
+    try {
+      await waitFor(() => expect(source.getSnapshot().get(hidden.key)?.task).toBe(task))
+      expect(source.getSnapshot().has(ordinary.key)).toBe(false)
+    } finally {
+      stop()
+    }
   })
 
   test('discovers hidden pending work without adding it to visible unread badges', () => {

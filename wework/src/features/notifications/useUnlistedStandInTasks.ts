@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { createUnlistedStandInTasksSource } from './unlistedStandInTasksSource'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 
@@ -9,13 +8,9 @@ import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/run
 export function useUnlistedStandInTasks(
   items: RuntimeTaskReminderItem[],
   snapshot: RuntimeTaskLifecycleStoreSnapshot,
-  reader?: StandInExecutorApi,
-  runtimeApi?: WorkbenchServices['runtimeWorkApi']
+  reader?: StandInExecutorApi
 ): RuntimeTaskReminderItem[] {
-  const source = useMemo(
-    () => createUnlistedStandInTasksSource(reader, runtimeApi),
-    [reader, runtimeApi]
-  )
+  const source = useMemo(() => createUnlistedStandInTasksSource(reader), [reader])
   const visible = useMemo(() => new Set(items.map(item => item.key)), [items])
   const pending = useMemo(() => {
     return [...snapshot.tasks.values()]

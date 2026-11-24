@@ -125,12 +125,7 @@ export function useRuntimeTaskReminders({
   )
 
   const sidebarItems = useMemo(() => collectRuntimeTaskReminderItems(runtimeWork), [runtimeWork])
-  const listedItems = useUnlistedStandInTasks(
-    sidebarItems,
-    lifecycleSnapshot,
-    standInApi,
-    runtimeApi
-  )
+  const listedItems = useUnlistedStandInTasks(sidebarItems, lifecycleSnapshot, standInApi)
   const items = useMemo(() => {
     const visible = new Set(listedItems.map(item => item.key))
     const unlisted = [...lifecycleSnapshot.tasks.values()].flatMap(snapshot => {
