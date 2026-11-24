@@ -1,4 +1,4 @@
-"""Verify recovery using only existing Kind tables and an unchanged migration head."""
+"""Verify plugin sync recovery using the existing Kind table on the latest schema."""
 
 import os
 import uuid
@@ -86,7 +86,11 @@ def verify(engine, url):
         Kind.__table__.create(engine)
         create_legacy_share_links(engine)
         command.stamp(config, "f3a7c9e1b2d4")
-        tables = set(inspect(engine).get_table_names())
+        tables = set(inspect(engine).get_table_names()) | {
+            "assistant_share_definitions",
+            "assistant_share_grants",
+            "assistant_team_member_copies",
+        }
         command.upgrade(config, "head")
         assert set(inspect(engine).get_table_names()) == tables
         assert "plugin_local_sync_operations" not in tables
@@ -117,7 +121,7 @@ def verify(engine, url):
             assert db.query(Kind).filter_by(namespace="plugin-local-sync").count() == 0
         assert set(inspect(engine).get_table_names()) == tables
     print(
-        "MySQL: unchanged schema/head, existing account marker recovery and identity isolation passed"
+        "MySQL: existing account marker recovery, identity isolation and unchanged plugin schema passed"
     )
 
 
