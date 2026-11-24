@@ -910,12 +910,15 @@ export class RuntimeTaskLifecycleStore {
       unreadTaskKeys,
     }
     const sidebar = this.sidebarSnapshot
-    if (
-      !sameTaskKeys(sidebar.runningTaskKeys, runningTaskKeys) ||
-      !sameTaskKeys(sidebar.waitingTaskKeys, waitingTaskKeys) ||
-      !sameTaskKeys(sidebar.busyTaskKeys, busyTaskKeys)
-    ) {
-      this.sidebarSnapshot = { runningTaskKeys, waitingTaskKeys, busyTaskKeys }
+    const sameRunning = sameTaskKeys(sidebar.runningTaskKeys, runningTaskKeys)
+    const sameWaiting = sameTaskKeys(sidebar.waitingTaskKeys, waitingTaskKeys)
+    const sameBusy = sameTaskKeys(sidebar.busyTaskKeys, busyTaskKeys)
+    if (!sameRunning || !sameWaiting || !sameBusy) {
+      this.sidebarSnapshot = {
+        runningTaskKeys: sameRunning ? sidebar.runningTaskKeys : runningTaskKeys,
+        waitingTaskKeys: sameWaiting ? sidebar.waitingTaskKeys : waitingTaskKeys,
+        busyTaskKeys: sameBusy ? sidebar.busyTaskKeys : busyTaskKeys,
+      }
     }
     this.persistUnreadKeys()
     this.persistRunningKeys()

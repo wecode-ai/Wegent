@@ -330,6 +330,7 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     store.userInputRequested(address)
     expect(store.getSidebarSnapshot().waitingTaskKeys.has(key)).toBe(true)
+    expect(store.getSidebarSnapshot().busyTaskKeys).toBe(initial.busyTaskKeys)
   })
 
   test('keeps execution busy while replacing the running spinner with a waiting signal', () => {

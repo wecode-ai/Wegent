@@ -174,10 +174,6 @@ async function performDshExecutorRequest<T>(
       ...details,
     })
   }
-  console.debug('[Wework] Executor RPC request started', {
-    request_id: requestId,
-    method,
-  })
   const requestBody = JSON.stringify({ id: requestId, method, params })
   const bodyBytes = new TextEncoder().encode(requestBody).byteLength
   const timeoutFailure = (phase: string) => {
@@ -225,12 +221,6 @@ async function performDshExecutorRequest<T>(
     throw connectionError(error)
   }
   diagnostic('headers_received', { status: response.status })
-  console.debug('[Wework] Executor RPC response received', {
-    request_id: requestId,
-    method,
-    elapsed_ms: Date.now() - startedAt,
-    status: response.status,
-  })
   let parsedBody: unknown
   try {
     parsedBody = await response.json()
