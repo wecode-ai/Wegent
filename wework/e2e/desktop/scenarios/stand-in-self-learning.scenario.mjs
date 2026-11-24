@@ -44,6 +44,9 @@ async function verifyLearningReport(control, capture, stage, expected, options =
     const actual = await control.command('getText', testId('stand-in-learning-' + name))
     assert.equal(actual.trim(), value)
   }
+  for (const [axis, text] of Object.entries(expected.dimensions ?? {})) {
+    await control.command('waitFor', testId('stand-in-learning-dimension-' + axis), { text })
+  }
   await capture(control, `learning-report-${stage}.png`)
   if (options.keepOpen) return
   await control.command('clickWhenEnabled', testId('stand-in-close'))
@@ -288,11 +291,13 @@ export function createDesktopScenario(options) {
           '02-pending',
           {
             status: '改进建议待确认',
+            dimensions: { intent: '证据不足', verification: '0 → 100', clarity: '50 → 100' },
             metrics: {
               iterations: '1',
               current_score: '0',
               baseline_score: '0',
               candidate_score: '100',
+              'score-change': '+100 分',
             },
           },
           { refresh: true }
@@ -319,6 +324,7 @@ export function createDesktopScenario(options) {
         assert.deepEqual(applied.primary, optedIn.primary)
         await verifyLearningReport(control, options.captureScreenshot, '03-accepted', {
           status: '已采纳改进建议',
+          dimensions: { judgment: '证据不足', verification: '0 → 100' },
           metrics: {
             iterations: '1',
             current_score: '100',

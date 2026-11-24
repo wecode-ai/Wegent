@@ -6045,6 +6045,8 @@
       "ghost_revision": "最近采纳的助理职责",
       "learning_report": {
         "title": "自主学习报告",
+        "comparison": "最近一轮评测",
+        "score_change": "{{points}} 分",
         "refresh": "刷新报告",
         "iterations": "已完成迭代",
         "current_score": "当前职责评分",
@@ -6055,6 +6057,21 @@
         "empty": "还没有完成评测。自主学习开启且积累了足够的独立案例后，助理会在后台评测。",
         "no_score": "最近一轮没有可用的优化前后评分。",
         "score_help": "最近一轮使用了 {{count}} 个独立案例。每例胜出得 1 分，持平各得半分，折算为百分制的相对评分。优化后评分对应候选职责。",
+        "dimensions": {
+          "title": "能力复测",
+          "intent": "理解意图",
+          "verification": "核实信息",
+          "judgment": "判断准确",
+          "actionability": "建议可执行",
+          "clarity": "表达清晰",
+          "insufficient": "证据不足",
+          "not_applicable": "不适用",
+          "change": "{{before}} → {{after}}",
+          "before": "优化前",
+          "after": "优化后",
+          "scale": "0–100 分",
+          "coverage": "{{scored}}/{{total}} 例"
+        },
         "status": {
           "pending": "改进建议待确认",
           "accepted": "已采纳改进建议",

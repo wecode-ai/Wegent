@@ -143,6 +143,15 @@ export interface StandInGhostRevision {
   version: number
 }
 
+export interface StandInLearningDimension {
+  id: 'intent' | 'verification' | 'judgment' | 'actionability' | 'clarity'
+  baselineScore: number | null
+  candidateScore: number | null
+  sampleCount: number
+  insufficientCount: number
+  notApplicableCount: number
+}
+
 export interface StandInLearningReport {
   iterations: number
   latest: {
@@ -152,6 +161,7 @@ export interface StandInLearningReport {
     baselineScore: number | null
     candidateScore: number | null
     sampleCount: number | null
+    dimensions?: StandInLearningDimension[] | null
   } | null
   revision: StandInGhostRevision | null
 }

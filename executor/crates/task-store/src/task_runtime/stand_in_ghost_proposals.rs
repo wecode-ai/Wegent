@@ -97,6 +97,69 @@ fn previous_score(
         .optional()?)
 }
 
+pub const GHOST_LEARNING_AXES: [&str; 5] = [
+    "intent",
+    "verification",
+    "judgment",
+    "actionability",
+    "clarity",
+];
+
+fn compared_dimensions(rows: &[Value]) -> Option<Vec<Value>> {
+    // Keep historical rows and malformed auxiliary scores from affecting the verdict.
+    let distinct_rows = rows
+        .iter()
+        .filter(|row| row["baseline"] != row["candidate"]);
+    if !distinct_rows.clone().any(|row| {
+        row["dimensionRounds"].as_array().is_some_and(|rounds| {
+            rounds.len() == 2
+                && rounds
+                    .iter()
+                    .any(|round| round["baseline"].is_object() && round["candidate"].is_object())
+        })
+    }) {
+        return None;
+    }
+    Some(GHOST_LEARNING_AXES.iter().map(|axis| {
+        let (mut baseline_total, mut candidate_total) = (0, 0);
+        let (mut sample_count, mut insufficient_count, mut not_applicable_count) = (0, 0, 0);
+        for row in rows {
+            let Some(rounds) = row["dimensionRounds"].as_array() else {
+                insufficient_count += 1;
+                continue;
+            };
+            let identical = row["baseline"] == row["candidate"];
+            if rounds.len() != if identical { 1 } else { 2 } {
+                insufficient_count += 1;
+                continue;
+            }
+            let mut scores = rounds.iter().map(|round| (
+                &round["baseline"][axis]["score"], &round["candidate"][axis]["score"]
+            ));
+            if scores.clone().all(|(a,b)| a == "notApplicable" && b == "notApplicable") {
+                not_applicable_count += 1;
+                continue;
+            }
+            let totals = scores.try_fold((0,0), |(total_a,total_b),(a,b)| {
+                let a = a.as_u64().filter(|score| *score <= 2)?;
+                let b = b.as_u64().filter(|score| *score <= 2)?;
+                (!identical || a == b).then_some((total_a+a,total_b+b))
+            });
+            if let Some((baseline, candidate)) = totals {
+                baseline_total += baseline * 2 / rounds.len() as u64;
+                candidate_total += candidate * 2 / rounds.len() as u64;
+                sample_count += 1;
+            } else {
+                insufficient_count += 1;
+            }
+        }
+        let score = |sum| (sample_count != 0).then(|| 25.0 * sum as f64 / sample_count as f64);
+        json!({"id":axis,"baselineScore":score(baseline_total),"candidateScore":score(candidate_total),
+            "sampleCount":sample_count,"insufficientCount":insufficient_count,
+            "notApplicableCount":not_applicable_count})
+    }).collect())
+}
+
 fn comparison(rows: &[Value]) -> Option<Value> {
     let wins = rows.iter().try_fold(0, |wins, row| {
         row["candidateWon"]
@@ -105,7 +168,10 @@ fn comparison(rows: &[Value]) -> Option<Value> {
     })?;
     let samples = rows.len();
     let baseline = 50.0 * (samples - wins) as f64 / samples as f64;
-    Some(json!({"sampleCount":samples,"baselineScore":baseline,"candidateScore":100.0-baseline}))
+    Some(
+        json!({"sampleCount":samples,"baselineScore":baseline,"candidateScore":100.0-baseline,
+        "dimensions":compared_dimensions(rows)}),
+    )
 }
 
 fn evidence_refs(evidence: &Value) -> Result<BTreeMap<&str, i64>, TaskRuntimeError> {
@@ -451,7 +517,7 @@ impl LocalTaskStore {
             "iterations":iterations,"revision":revision,
             "latest":{"status":status,"evaluatedAt":row.evaluated_at,"currentScore":current_score,
                 "baselineScore":comparison["baselineScore"],"candidateScore":comparison["candidateScore"],
-                "sampleCount":comparison["sampleCount"]}
+                "sampleCount":comparison["sampleCount"],"dimensions":comparison["dimensions"]}
         }))
     }
 
@@ -674,8 +740,17 @@ mod tests {
         let extra = json!({"id":extra["id"],"version":extra["version"]});
         let get = || store.ghost_learning_report(7, "mac", None).unwrap();
         assert_eq!(get()["iterations"], 0);
+        let round = |clarity| {
+            json!({
+                "baseline":{"intent":{"score":"insufficient"},"verification":{"score":0},
+                    "actionability":{"score":"notApplicable"},"clarity":{"score":clarity}},
+                "candidate":{"intent":{"score":"insufficient"},"verification":{"score":2},
+                    "actionability":{"score":"notApplicable"},"clarity":{"score":2}}
+            })
+        };
         let comparisons = json!([
-            {"caseId":evidence[1]["id"],"baseline":"Infer","candidate":"Ask","reason":"Clarifies","candidateWon":true},
+            {"caseId":evidence[1]["id"],"baseline":"Infer","candidate":"Ask","reason":"Clarifies","candidateWon":true,
+                "dimensionRounds":[round(1),round(2)]},
             {"caseId":extra["id"],"baseline":"Confirm","candidate":"Confirm","reason":"Equivalent","candidateWon":false}
         ]);
         evidence.as_array_mut().unwrap().push(extra.clone());
@@ -693,12 +768,29 @@ mod tests {
             .unwrap();
         assert_eq!(get()["latest"]["currentScore"], 25.0);
         assert_eq!(get()["latest"]["candidateScore"], 75.0);
+        let dimensions = get()["latest"]["dimensions"].clone();
+        assert_eq!(
+            dimensions,
+            json!([
+                {"id":"intent","baselineScore":null,"candidateScore":null,
+                    "sampleCount":0,"insufficientCount":2,"notApplicableCount":0},
+                {"id":"verification","baselineScore":0.0,"candidateScore":100.0,
+                    "sampleCount":1,"insufficientCount":1,"notApplicableCount":0},
+                {"id":"judgment","baselineScore":null,"candidateScore":null,
+                    "sampleCount":0,"insufficientCount":2,"notApplicableCount":0},
+                {"id":"actionability","baselineScore":null,"candidateScore":null,
+                    "sampleCount":0,"insufficientCount":1,"notApplicableCount":1},
+                {"id":"clarity","baselineScore":75.0,"candidateScore":100.0,
+                    "sampleCount":1,"insufficientCount":1,"notApplicableCount":0}
+            ])
+        );
         let proposal = store.stand_in_proposal_for_device(7, "mac", None).unwrap();
         let id = proposal["id"].as_str().unwrap();
         let settings = store
             .resolve_stand_in_proposal(7, "mac", id, true, None)
             .unwrap();
         assert_eq!(get()["latest"]["currentScore"], 75.0);
+        assert_eq!(get()["latest"]["dimensions"], dimensions);
         store
             .record_ghost_evaluation_no_change(
                 7,
@@ -714,6 +806,7 @@ mod tests {
         assert_eq!(report["latest"]["status"], "unchanged");
         assert_eq!(report["latest"]["currentScore"], 75.0);
         assert!(report["latest"]["candidateScore"].is_null());
+        assert!(report["latest"]["dimensions"].is_null());
         store
             .undo_trained_ghost(
                 7,

@@ -6055,6 +6055,8 @@
       "ghost_revision": "Last accepted assistant instructions",
       "learning_report": {
         "title": "Assistant learning report",
+        "comparison": "Latest evaluation",
+        "score_change": "{{points}} pts",
         "refresh": "Refresh report",
         "iterations": "Completed iterations",
         "current_score": "Current instructions score",
@@ -6066,6 +6068,28 @@
         "no_score": "Before and after scores are unavailable for the latest iteration.",
         "score_help_one": "Comparison based on {{count}} independent case. A win earns one point and a tie earns half a point, scaled to 100. The after score is for this iteration’s candidate.",
         "score_help_other": "Comparison based on {{count}} independent cases. Each win earns one point and each tie earns half a point, scaled to 100. The after score is for this iteration’s candidate.",
+        "dimensions": {
+          "title": "Capability retest",
+          "axis": {
+            "intent": "Intent",
+            "verification": "Verification",
+            "judgment": "Judgment",
+            "actionability": "Actionability",
+            "clarity": "Clarity"
+          },
+          "intent": "Understanding intent",
+          "verification": "Verifying information",
+          "judgment": "Accuracy of judgment",
+          "actionability": "Actionability",
+          "clarity": "Clarity",
+          "insufficient": "Insufficient evidence",
+          "not_applicable": "Not applicable",
+          "change": "{{before}} → {{after}}",
+          "before": "Before",
+          "after": "After",
+          "scale": "0–100 points",
+          "coverage": "{{scored}}/{{total}} cases"
+        },
         "status": {
           "pending": "Improvement awaiting approval",
           "accepted": "Improvement accepted",
