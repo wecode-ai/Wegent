@@ -1,5 +1,6 @@
 import { roleIncludesProject, type PersonalStandInSettings } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { delegationResultLabel } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -272,6 +273,24 @@ export function StandInHomeWorkspace(props: Props) {
                               ? CircleAlert
                               : Circle
                       const work = inbox.items.find(work => work.taskId === item.task.taskId)
+                      const decisionLabel = delegationResultLabel(work?.delegationResult)
+                      if (work?.source.delegated && !work.task) {
+                        return (
+                          <div
+                            key={item.key}
+                            data-testid={`personal-home-delegated-work-${item.task.taskId}`}
+                            className="px-4 py-3 text-sm"
+                          >
+                            <p className="font-medium">{item.task.title}</p>
+                            {decisionLabel && <p>{t(decisionLabel)}</p>}
+                            {work.delegationResult?.reason && (
+                              <p className="break-words text-xs text-text-secondary">
+                                {work.delegationResult.reason}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      }
                       const status =
                         work && work.status !== 'sent'
                           ? t(`standIn.workspace.inbox_${work.status}`)

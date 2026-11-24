@@ -3,6 +3,9 @@ use super::personal_stand_in::{source_collection_namespace, source_namespace};
 use super::*;
 use sha2::{Digest, Sha256};
 
+#[path = "stand_in_dots_inbox.rs"]
+mod dots_inbox;
+
 enum MessageGrouping<'a> {
     Known(Option<&'a str>),
     Uncertain(Option<&'a str>),
@@ -237,8 +240,13 @@ fn find_message(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
          AND json_extract(metadata,'$.source.profile')=?3 AND json_extract(metadata,'$.source.kind')=?4
-         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8 AND (?9=0 OR json_type(metadata,'$.objectId') IS NULL) ORDER BY created_at DESC,id DESC LIMIT 1",
-        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source),immutable_only],
+         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6
+         AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8
+         AND (?9=0 OR json_type(metadata,'$.objectId') IS NULL)
+         AND COALESCE(json_extract(metadata,'$.source.delegated'),0)=?10
+         AND (?10=0 OR json_extract(metadata,'$.source.accountId') IS ?11)
+         ORDER BY created_at DESC,id DESC LIMIT 1",
+        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source),immutable_only,source["delegated"] == true,source["accountId"].as_str()],
         |row| row.get(0),
     ).optional()?;
     raw.map(|raw| {
@@ -269,8 +277,10 @@ fn find_event_message(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
          AND json_extract(metadata,'$.source.providerId')=?3 AND json_extract(metadata,'$.source.profile')=?4
-         AND json_extract(metadata,'$.objectId')=?5 AND json_extract(metadata,'$.version')=?6 LIMIT 1",
-        params![user,role,super::personal_stand_in::source_provider(source),source["profile"].as_str(),message["objectId"].as_str(),message["version"].as_str()], |row|row.get(0)
+         AND json_extract(metadata,'$.objectId')=?5 AND json_extract(metadata,'$.version')=?6
+         AND COALESCE(json_extract(metadata,'$.source.delegated'),0)=?7
+         AND (?7=0 OR json_extract(metadata,'$.source.accountId') IS ?8) LIMIT 1",
+        params![user,role,super::personal_stand_in::source_provider(source),source["profile"].as_str(),message["objectId"].as_str(),message["version"].as_str(),source["delegated"] == true,source["accountId"].as_str()], |row|row.get(0)
     ).optional()?;
     raw.map(|raw| {
         serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
@@ -292,6 +302,21 @@ fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRun
         .collect::<Result<Vec<_>, _>>()?;
     work["messageCount"] = json!(messages.len());
     work["latestMessage"] = messages.first().cloned().unwrap_or(Value::Null);
+    if work["source"]["delegated"] == true {
+        let outcomes = messages.iter().map(|row| &row["delegationResult"]);
+        work["delegationResult"] = outcomes
+            .clone()
+            .find(|result| matches!(result["action"].as_str(), Some("reply" | "needs_user")))
+            .or_else(|| {
+                outcomes
+                    .clone()
+                    .all(|result| result["action"] == "skip")
+                    .then(|| outcomes.clone().next())
+                    .flatten()
+            })
+            .cloned()
+            .unwrap_or(Value::Null);
+    }
     work["status"] = json!(["sending", "needs_grouping", "pending", "failed"]
         .into_iter()
         .find(|status| messages
@@ -629,7 +654,11 @@ impl LocalTaskStore {
                 user,
                 role,
                 super::personal_stand_in::source_provider(source),
-                source["profile"],
+                if source["delegated"] == true {
+                    source_namespace(source)
+                } else {
+                    source["profile"].clone()
+                },
                 message["objectId"],
                 message["version"]
             ])
@@ -656,7 +685,11 @@ impl LocalTaskStore {
         }
         let mut work = if let Some(id) = work_id {
             read_record(&connection, id, "stand_in_work")?
-                .filter(|work| work["userId"] == user && work["roleId"] == role)
+                .filter(|work| {
+                    work["userId"] == user
+                        && work["roleId"] == role
+                        && same_delegated_scope(&work["source"], source)
+                })
                 .ok_or(TaskRuntimeError::TaskNotFound)?
         } else {
             let id = format!("stand-in-work-{}", Uuid::new_v4());
@@ -766,6 +799,7 @@ impl LocalTaskStore {
                     row["userId"] == user
                         && row["roleId"] == source["roleId"]
                         && row["id"] != source["id"]
+                        && same_delegated_scope(&row["source"], &source["source"])
                 })
                 .ok_or(TaskRuntimeError::TaskNotFound)?
         } else {
@@ -804,6 +838,22 @@ impl LocalTaskStore {
         connection.commit()?;
         Ok(destination)
     }
+}
+
+fn same_delegated_scope(left: &Value, right: &Value) -> bool {
+    if left["delegated"] != true && right["delegated"] != true {
+        return true;
+    }
+    [
+        "delegated",
+        "providerId",
+        "profile",
+        "accountId",
+        "kind",
+        "id",
+    ]
+    .iter()
+    .all(|key| left[*key] == right[*key])
 }
 
 #[cfg(test)]

@@ -76,7 +76,12 @@ export function useStandInInbox(
   return {
     ...query.data,
     scope: query.data ? scope : undefined,
-    items: query.data?.items ?? [],
+    items:
+      query.data?.items.filter(
+        work =>
+          !work.source.delegated ||
+          (work.delegationResult && work.delegationResult.action !== 'skip')
+      ) ?? [],
     sourceErrors: query.data?.sourceErrors ?? [],
     error: query.status === 'error' ? getStandInErrorMessage(query.error) : null,
     refresh,

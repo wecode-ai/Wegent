@@ -56,13 +56,26 @@ export interface ConnectionProviderDescriptor {
     }
   >
   authTarget?: { pluginKey: string; connectorSlug: string }
-  availability: { status: string; code?: string }
+  availability: {
+    status: string
+    code?: string
+    profile?: string
+    accountId?: string
+    accountName?: string
+    organizationName?: string
+  }
   dependencies: Array<{
     alias: string
     status: string
     source?: { marketplaceId: string; pluginId: string }
     version?: string
   }>
+}
+
+export interface StandInDelegationResult {
+  action: 'reply' | 'needs_user' | 'skip'
+  status: 'complete' | 'submitting' | 'sent' | 'unknown'
+  reason: string
 }
 
 export interface StandInInboxMessage {
@@ -72,6 +85,7 @@ export interface StandInInboxMessage {
   senderId: string
   at: string
   source: StandInSourceConnection
+  delegationResult?: StandInDelegationResult
 }
 
 export interface StandInInboxWork {
@@ -84,6 +98,7 @@ export interface StandInInboxWork {
   updatedAt: string
   messageCount: number
   latestMessage: StandInInboxMessage | null
+  delegationResult?: StandInDelegationResult
   task?: RuntimeTaskSummary | null
   error?: string | null
 }
@@ -436,6 +451,7 @@ export interface StandInExecutorApi {
       | 'name'
       | 'kind'
       | 'profile'
+      | 'accountId'
       | 'providerId'
       | 'scope'
       | 'collectionKey'

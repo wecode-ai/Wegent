@@ -4,7 +4,8 @@ use super::stand_in::settings_error;
 use super::*;
 use crate::runtime_work::response::local_task_json;
 use crate::task_runtime::personal_stand_in::{
-    stand_in_collection_connection, stand_in_connection, stand_in_identities,
+    is_primary_dingtalk, matches_delegation_account, requires_dingtalk_delegation, source_provider,
+    stand_in_collection_connection, stand_in_connection, stand_in_identities, DINGTALK_PROVIDER,
 };
 use sha2::{Digest, Sha256};
 
@@ -30,6 +31,22 @@ impl RuntimeWorkRpcHandler {
         let current = store.stand_in_work(user, id).map_err(settings_error)?;
         if current["status"] != "sending" {
             *work = current;
+            return Ok(());
+        }
+        if current["source"]["delegated"] == true {
+            for message in store.stand_in_messages(user, id).map_err(settings_error)? {
+                if message["delegationResult"]["status"] == "submitting" {
+                    store
+                        .finish_delegated_submission(
+                            user,
+                            id,
+                            message["recordId"].as_str().unwrap_or_default(),
+                            None,
+                        )
+                        .map_err(settings_error)?;
+                }
+            }
+            *work = store.stand_in_work(user, id).map_err(settings_error)?;
             return Ok(());
         }
         let ids = store
@@ -260,6 +277,12 @@ impl RuntimeWorkRpcHandler {
             // The binding selects only records in this work; live settings, not
             // its captured source policy, determine the native reviewer.
             let source = stand_in_connection(role, &message["source"]).ok_or_else(unavailable)?;
+            if is_primary_dingtalk(role, source)
+                && (source["delegated"] == true
+                    || (!manual && requires_dingtalk_delegation(role, source)))
+            {
+                return Err(unavailable());
+            }
             if !manual && (role["enabled"] != true || source["policy"]["automatic"] != true) {
                 return Err(unavailable());
             }
@@ -273,9 +296,14 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let user = runtime_user(&payload)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
         let mut items = store
             .list_stand_in_work(user, payload["roleId"].as_str())
             .map_err(settings_error)?;
+        items
+            .retain(|work| matches_delegation_account(&settings, &work["roleId"], &work["source"]));
         for work in &mut items {
             self.reconcile_connection_dispatch(&store, user, work)?;
             work["task"] = self
@@ -284,18 +312,17 @@ impl RuntimeWorkRpcHandler {
                 .map(local_task_json)
                 .unwrap_or(Value::Null);
         }
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
         let identities = stand_in_identities(&settings);
         let errors = store
             .stand_in_source_errors(user)
             .map_err(settings_error)?
             .into_iter()
             .filter(|state| {
-                identities
-                    .iter()
-                    .any(|role| stand_in_collection_connection(role, &state["source"]).is_some())
+                identities.iter().any(|role| {
+                    (state["source"]["delegated"] != true || role["id"] == "@primary")
+                        && matches_delegation_account(&settings, &role["id"], &state["source"])
+                        && stand_in_collection_connection(role, &state["source"]).is_some()
+                })
             })
             .collect::<Vec<_>>();
         Ok(json!({"items":items,"sourceErrors":errors,"deviceId":self.device_id}))
@@ -309,6 +336,7 @@ impl RuntimeWorkRpcHandler {
         let work = string_field(&payload, "workId")
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        validate_work_accounts(&store, user, &self.device_id, &work, None)?;
         Ok(json!({"messages":store.stand_in_messages(user,&work).map_err(settings_error)?}))
     }
 
@@ -423,6 +451,14 @@ impl RuntimeWorkRpcHandler {
         let gate = self.task_send_gate(&format!("dingtalk-dispatch:{work_id}"));
         let _guard = gate.lock().await;
         let work = store.stand_in_work(user, work_id).map_err(settings_error)?;
+        if work["roleId"] == "@primary" && source_provider(&work["source"]) == DINGTALK_PROVIDER {
+            if work["source"]["delegated"] == true {
+                return self
+                    .dispatch_delegated_dingtalk(&store, user, &work, selected_records)
+                    .await;
+            }
+            validate_work_accounts(&store, user, &self.device_id, work_id, None)?;
+        }
         if !manual && work["status"] == "failed" {
             return Err(AppIpcError::new(
                 "stand_in_dispatch_failed",
@@ -457,6 +493,12 @@ impl RuntimeWorkRpcHandler {
             let source = stand_in_connection(&role, &message["source"]).ok_or_else(|| {
                 AppIpcError::new("source_removed", "The source connection was removed")
             })?;
+            if !manual && requires_dingtalk_delegation(&role, source) {
+                return Err(AppIpcError::new(
+                    "stand_in_delegation_required",
+                    "Enable delegation for the selected DingTalk conversation",
+                ));
+            }
             if !manual && (role["enabled"] != true || source["policy"]["automatic"] != true) {
                 return Ok(json!({"pending":true}));
             }
@@ -619,6 +661,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        validate_work_accounts(&store, user, &self.device_id, &work, target)?;
         store
             .organize_stand_in_messages(user, &work, &ids, target)
             .map_err(settings_error)
@@ -643,10 +686,33 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        validate_work_accounts(&store, user, &self.device_id, &work, target)?;
         store
             .adjust_stand_in_message(user, &work, &message, target)
             .map_err(settings_error)
     }
+}
+
+fn validate_work_accounts(
+    store: &LocalTaskStore,
+    user: i64,
+    device: &str,
+    work: &str,
+    target: Option<&str>,
+) -> Result<(), AppIpcError> {
+    let settings = store
+        .personal_stand_in(user, device)
+        .map_err(settings_error)?;
+    for id in std::iter::once(work).chain(target) {
+        let work = store.stand_in_work(user, id).map_err(settings_error)?;
+        if !matches_delegation_account(&settings, &work["roleId"], &work["source"]) {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "This work belongs to a different DingTalk account",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn selected_pending_connection_messages(

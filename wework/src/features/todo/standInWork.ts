@@ -1,5 +1,6 @@
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import type { StandInInboxWork } from '@/api/standIn'
+import { STAND_IN_DINGTALK_PROVIDER } from '@/api/personalStandIn'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { standInOrigin } from '@/features/notifications/standInNotifications'
 import { inboxRuntimeItem } from './useStandInInbox'
@@ -10,8 +11,17 @@ export function mergeStandInWorkItems(
   deviceId: string | undefined,
   projects: CollaborationProject[] = []
 ) {
+  const inboxTaskIds = new Set(inbox.map(work => work.taskId))
+  const visible = items.filter(item => {
+    const origin = item.task.runtimeHandle?.origin as Record<string, unknown> | undefined
+    const primaryDingTalk =
+      origin?.standInId === '@primary' &&
+      (origin.type === 'dingtalk_work' ||
+        (origin.type === 'connection_work' && origin.sourceProvider === STAND_IN_DINGTALK_PROVIDER))
+    return !primaryDingTalk || (item.address.deviceId === deviceId && inboxTaskIds.has(item.task.taskId))
+  })
   const merged = new Map(
-    items.map(item => {
+    visible.map(item => {
       const origin = standInOrigin(item)
       const project = projects.find(
         project =>

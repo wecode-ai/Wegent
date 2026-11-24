@@ -885,17 +885,20 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
         }
-        if event["kind"] == "connection"
-            && !stand_in_collection_connection(role, &event["source"])
-                .is_some_and(|source| source["policy"]["automatic"] == true)
-        {
-            return Err(AppIpcError::new(
-                "source_removed",
-                "Source is no longer automatic or connected",
-            ));
-        }
         if event["kind"] == "connection" {
-            let source = stand_in_collection_connection(role, &event["source"]).unwrap();
+            let source = stand_in_collection_connection(role, &event["source"])
+                .filter(|source| {
+                    source["policy"]["automatic"] == true
+                        && !crate::task_runtime::personal_stand_in::requires_dingtalk_delegation(
+                            role, source,
+                        )
+                })
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "source_removed",
+                        "Source is no longer automatic or connected",
+                    )
+                })?;
             if !super::stand_in_ingress::source_accepts_message(source, &event["message"]) {
                 return Err(AppIpcError::new(
                     "source_removed",

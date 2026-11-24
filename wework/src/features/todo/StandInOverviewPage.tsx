@@ -869,11 +869,13 @@ export function StandInOverviewPage({
                       setProfile(null)
                       if (initialPrimaryProfile) props.onCancel?.()
                     }}
-                    onSave={async value => {
-                      if (await state.save(value)) {
+                    onSave={async (value, stayOpen) => {
+                      const saved = await state.save(value)
+                      if (saved && !stayOpen) {
                         setProfile(null)
                         if (initialPrimaryProfile) props.onCancel?.()
                       }
+                      return saved ?? undefined
                     }}
                     error={state.error}
                     onReload={state.reload}

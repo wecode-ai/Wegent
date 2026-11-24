@@ -4,11 +4,17 @@ use sha2::{Digest, Sha256};
 
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
+#[path = "stand_in_dots_delegation.rs"]
+mod dots_delegation;
 use connections::validate_connections;
 pub use connections::{
     connection_memory_scope, issue_training_source, source_collection_namespace, source_namespace,
     source_provider, stand_in_collection_connection, stand_in_connection, training_memory_scope,
     training_source_granted,
+};
+pub use dots_delegation::{
+    active_delegated_source, is_primary_dingtalk, permits_delegated_message,
+    permits_delegated_reply, requires_dingtalk_delegation,
 };
 
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
@@ -33,6 +39,7 @@ pub(super) fn migrate_personal_settings(value: &mut Value) -> Result<bool, TaskR
     }
     if value["primary"].is_object() {
         changed |= normalize_stand_in_identity(&mut value["primary"], immediate)?;
+        changed |= dots_delegation::migrate_delegation_version(&mut value["primary"]);
     }
     changed |= value
         .as_object_mut()
@@ -472,6 +479,22 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
     identities
 }
 
+pub fn matches_delegation_account(settings: &Value, role: &Value, source: &Value) -> bool {
+    if role != "@primary" || source_provider(source) != DINGTALK_PROVIDER {
+        return source["delegated"] != true;
+    }
+    let policy = &settings["primary"]["delegation"];
+    if policy["accountInvalidated"] == true {
+        return false;
+    }
+    if source["delegated"] != true {
+        return policy["accountId"].is_null();
+    }
+    policy["accountId"].is_string()
+        && policy["accountId"] == source["accountId"]
+        && policy["profile"] == source["profile"]
+}
+
 pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
     role["collaboration"]["projectPolicies"]
         .as_array()
@@ -575,9 +598,45 @@ impl LocalTaskStore {
     ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let saved = self.save_personal_stand_in_on(&connection, user, device, value)?;
+        let saved = self.save_personal_stand_in_on(&connection, user, device, value, true)?;
         connection.commit()?;
         Ok(saved)
+    }
+
+    /// Revoke a verified connector identity change without retiring a newer selection.
+    pub fn invalidate_delegation_account(
+        &self,
+        user: i64,
+        device: &str,
+        source: &Value,
+        expected_version: &Value,
+    ) -> Result<bool, TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let previous = read_personal(&connection, user, device)?;
+        let mut settings = previous.clone();
+        if settings["executionDeviceId"] != device
+            || settings["version"] != *expected_version
+            || !dots_delegation::invalidate_account(&mut settings["primary"], source)?
+        {
+            return Ok(false);
+        }
+        settings["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
+        write_personal(&connection, &settings)?;
+        super::stand_in_ghost_proposals::retire_stale_candidates(
+            &connection,
+            user,
+            &settings["version"],
+        )?;
+        super::stand_in_processing::update_processing_configuration(
+            &connection,
+            user,
+            &previous,
+            &settings,
+        )?;
+        super::stand_in_telemetry::configuration_changes(&connection, user, &previous, &settings);
+        connection.commit()?;
+        Ok(true)
     }
 
     /// Update a routing reference without applying intake changes to local identities.
@@ -637,7 +696,7 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let result = self
-            .save_personal_stand_in_on(&transaction, user, device, value)
+            .save_personal_stand_in_on(&transaction, user, device, value, true)
             .map(|_| ());
         transaction.rollback()?;
         result
@@ -650,6 +709,7 @@ impl LocalTaskStore {
         user: i64,
         device: &str,
         mut value: Value,
+        direct_save: bool,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_personal_settings(&mut value)?;
         if let Some(object) = value.as_object_mut() {
@@ -700,9 +760,15 @@ impl LocalTaskStore {
         }
         if value["primary"].is_object() {
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
+            dots_delegation::save_delegation(
+                &mut value["primary"],
+                &previous["primary"],
+                direct_save,
+            )?;
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
         for role in value["roles"].as_array_mut().unwrap() {
+            dots_delegation::strip_source_markers(role);
             let before = previous["roles"]
                 .as_array()
                 .unwrap()
