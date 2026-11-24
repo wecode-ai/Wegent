@@ -69,6 +69,30 @@ describe('RuntimeTaskLifecycleProvider', () => {
     expect(screen.getByTestId('lifecycle-phase')).toHaveTextContent('idle')
   })
 
+  test('updates a task row only when its lifecycle changes', () => {
+    const store = new RuntimeTaskLifecycleStore('task-row')
+    store.executorSettled(address)
+    let renders = 0
+    function TaskRow() {
+      const task = useRuntimeTaskLifecycle(address)
+      renders++
+      return <output>{task?.execution.phase}</output>
+    }
+    render(
+      <RuntimeTaskLifecycleProvider store={store}>
+        <TaskRow />
+      </RuntimeTaskLifecycleProvider>
+    )
+    const initialRenders = renders
+
+    act(() => store.turnStarted({ ...address, taskId: 'other-task' }, 'other-turn'))
+    expect(renders).toBe(initialRenders)
+    expect(screen.getByRole('status')).toHaveTextContent('idle')
+
+    act(() => store.turnStarted(address, 'current-turn'))
+    expect(screen.getByRole('status')).toHaveTextContent('running')
+  })
+
   test('an inactive task surface renders the current snapshot when opened', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.executorSettled(address)
