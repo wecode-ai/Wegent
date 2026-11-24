@@ -4,11 +4,13 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 import '@/i18n'
 import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
-import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks, RuntimeTaskSummary } from '@/types/api'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Profiler } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { DesktopSidebar } from './DesktopSidebar'
+import { RuntimeTaskRow } from './DesktopSidebarTaskRow'
 
 function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -84,6 +86,47 @@ beforeEach(async () => {
 }, 60_000)
 
 describe('DesktopSidebar event waits', () => {
+  test('a new turn ID does not commit an already running row', () => {
+    const address = { deviceId: 'local-device', taskId: 'streaming-task' }
+    const task: RuntimeTaskSummary = {
+      taskId: address.taskId,
+      workspacePath: '/repo',
+      title: 'Streaming',
+      runtime: 'codex',
+      running: true,
+    }
+    const store = new RuntimeTaskLifecycleStore('desktop-sidebar-test')
+    store.turnStarted(address, 'first-turn')
+    const onRender = vi.fn()
+    render(
+      <RuntimeTaskLifecycleProvider store={store}>
+        <Profiler id="task-row" onRender={onRender}>
+          <RuntimeTaskRow
+            devices={[localDevice()]}
+            workspace={{
+              deviceId: address.deviceId,
+              available: true,
+              workspacePath: task.workspacePath,
+              tasks: [task],
+            }}
+            task={task}
+            selected={false}
+            showDeviceMarker={false}
+          />
+        </Profiler>
+      </RuntimeTaskLifecycleProvider>
+    )
+    expect(screen.getByTestId('runtime-local-task-running-streaming-task')).toBeVisible()
+    onRender.mockClear()
+
+    act(() => store.turnStarted(address, 'next-turn'))
+    expect(store.getTask(address)?.turn.id).toBe('next-turn')
+    expect(onRender).not.toHaveBeenCalled()
+
+    act(() => store.userInputRequested(address))
+    expect(screen.getByTestId('runtime-local-task-waiting-streaming-task')).toBeVisible()
+  })
+
   test.each([
     ['armed', false, '等待事件'],
     ['pending', false, '事件已到达，等待继续'],

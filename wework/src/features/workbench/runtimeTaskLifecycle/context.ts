@@ -1,4 +1,5 @@
 import { useCallback, useContext, useSyncExternalStore } from 'react'
+import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/with-selector'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import { RuntimeTaskLifecycleContext, RuntimeTaskLifecycleWriterContext } from './internalContext'
@@ -47,9 +48,7 @@ export function useRuntimeTaskLifecycleResolver(explicitStore?: RuntimeTaskLifec
   )
 }
 
-export function useRuntimeTaskLifecycle(
-  address: RuntimeTaskAddress | null | undefined
-): RuntimeTaskLifecycleSnapshot | null {
+function useRuntimeTaskSnapshotSource(address: RuntimeTaskAddress | null | undefined) {
   const store = useLifecycleReadStore()
   const taskId = address?.taskId
   const subscribe = useCallback(
@@ -60,7 +59,23 @@ export function useRuntimeTaskLifecycle(
     () => store.selectTask(store.getSnapshot(), address),
     [address, store]
   )
+  return { subscribe, getSnapshot }
+}
+
+export function useRuntimeTaskLifecycle(
+  address: RuntimeTaskAddress | null | undefined
+): RuntimeTaskLifecycleSnapshot | null {
+  const { subscribe, getSnapshot } = useRuntimeTaskSnapshotSource(address)
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+export function useRuntimeTaskLifecycleSelection<T>(
+  address: RuntimeTaskAddress | null | undefined,
+  select: (snapshot: RuntimeTaskLifecycleSnapshot | null) => T,
+  isEqual: (left: T, right: T) => boolean
+): T {
+  const { subscribe, getSnapshot } = useRuntimeTaskSnapshotSource(address)
+  return useSyncExternalStoreWithSelector(subscribe, getSnapshot, getSnapshot, select, isEqual)
 }
 
 export function useRuntimeTaskSummaryResolver(

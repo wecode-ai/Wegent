@@ -1,6 +1,3 @@
-import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
-import { preferredEventSubscription } from '@/lib/sidebar-event-state'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   dismissPendingRuntimeTaskArchiveNotice,
@@ -56,7 +53,6 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import {
   getRuntimeTaskLifecycleKey,
-  useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { useRuntimeTaskRateLimitWait } from '@/features/workbench/useRuntimeTaskRateLimitWait'
@@ -69,6 +65,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 
 import { cn } from '@/lib/utils'
 import { SidebarTaskTitle } from './SidebarTaskTitle'
+import { useRuntimeTaskSidebarRowStatus } from './useRuntimeTaskSidebarRowStatus'
 
 import type {
   DeviceInfo,
@@ -111,6 +108,7 @@ import {
 import type { ProjectCreateMenuPosition, RuntimeTaskPriorityReason } from './desktopSidebarTypes'
 import { ArchiveConversationsConfirmDialog } from './DesktopSidebarWidgets'
 import type { WorkbenchSplitGroupMembership } from './workbenchSplitGroups'
+
 export const RuntimeTaskRow = memo(function RuntimeTaskRow({
   nowMs,
   workspace,
@@ -238,29 +236,15 @@ export const RuntimeTaskRow = memo(function RuntimeTaskRow({
   const archiveNoticeOpen = pendingArchive?.noticeOpen === true
   const archiveDisabled =
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
-  const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
-  const eventTask = taskLifecycle?.task ?? task
-  const eventSubscriptions = eventTask.runtimeHandle?.connectionEventSubscriptions
-  const eventRunning = isRuntimeTaskExecutionRunning(eventTask)
-  const eventSubscription = useMemo(() => {
-    const subscriptions = connectionEventSubscriptions(eventSubscriptions)
-    return preferredEventSubscription(
-      eventRunning
-        ? subscriptions.filter(item => item.status === 'pending' || item.status === 'resuming_goal')
-        : subscriptions
-    )
-  }, [eventRunning, eventSubscriptions])
+  const { eventSubscription, hasActiveGoal, showRunning, showWaiting } =
+    useRuntimeTaskSidebarRowStatus(taskAddress, task)
   const rateLimitWaiting = useRuntimeTaskRateLimitWait(taskAddress)
-  const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
-  const showQueuePausedStatus =
-    queuePaused && !(queued && taskLifecycle?.derived.shouldShowSidebarRunning)
-  const showQueuedStatus = queued && !taskLifecycle?.derived.shouldShowSidebarRunning
+  const showQueuePausedStatus = queuePaused && !(queued && showRunning)
+  const showQueuedStatus = queued && !showRunning
   const showWaitingStatus =
-    !showQueuedStatus &&
-    !showQueuePausedStatus &&
-    (taskLifecycle?.derived.shouldShowSidebarWaiting || priorityReason === 'waiting')
+    !showQueuedStatus && !showQueuePausedStatus && (showWaiting || priorityReason === 'waiting')
   const queuePosition =
     queued && Number.isInteger(task.queuePosition) && Number(task.queuePosition) > 0
       ? Number(task.queuePosition)
@@ -596,7 +580,7 @@ export const RuntimeTaskRow = memo(function RuntimeTaskRow({
                     subscription={eventSubscription}
                     taskId={task.taskId}
                   />
-                ) : taskLifecycle?.derived.shouldShowSidebarRunning && rateLimitWaiting ? (
+                ) : showRunning && rateLimitWaiting ? (
                   <span
                     data-testid={`runtime-local-task-rate-limit-wait-${task.taskId}`}
                     role="status"
@@ -609,7 +593,7 @@ export const RuntimeTaskRow = memo(function RuntimeTaskRow({
                       aria-hidden="true"
                     />
                   </span>
-                ) : taskLifecycle?.derived.shouldShowSidebarRunning ? (
+                ) : showRunning ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
                     role="status"
