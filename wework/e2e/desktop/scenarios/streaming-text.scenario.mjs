@@ -123,6 +123,7 @@ export function createDesktopScenario({
   let resolveSubagentChildRequestStarted
   let resolveSubagentPartialWritten
   let targetRequest
+  let completionRequestHeaders
   const appendRelease = new Promise(resolve => {
     releaseAppend = resolve
   })
@@ -255,7 +256,10 @@ export function createDesktopScenario({
       if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
       if (await composerLayout.handleModelRequest(body, response, responseId)) return true
       if (await richTaskSwitch.handleModelRequest(body, response, responseId)) return true
-      if (await completion.handleModelRequest(body, response, responseId)) return true
+      if (await completion.handleModelRequest(body, response, responseId)) {
+        completionRequestHeaders = request.headers
+        return true
+      }
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       if (await guidanceOrder.handleModelRequest(body, response, responseId)) return true
       if (await interactiveVisualization.handleModelRequest(body, response, responseId)) return true
@@ -576,6 +580,19 @@ export function createDesktopScenario({
           'streaming-content',
           async control => {
             await completion.verify(control)
+            assert.match(
+              completionRequestHeaders?.['x-wework-version'] ?? '',
+              /^\d+\.\d+\.\d+(?:[-+][\w.+-]+)?$/,
+              'The upstream model request did not receive the Wework version'
+            )
+            assert.ok(
+              completionRequestHeaders['x-wework-platform'],
+              'The upstream model request did not receive the Wework platform'
+            )
+            assert.ok(
+              completionRequestHeaders['x-wework-arch'],
+              'The upstream model request did not receive the Wework architecture'
+            )
             await verifyContent(control)
             await interactiveVisualization.verify(control)
             await visualizationScroll.verify(control)

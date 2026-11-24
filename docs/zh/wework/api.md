@@ -50,12 +50,13 @@ PC、手机版和 API 启动的 Codex 会话，每轮都会通过 `additionalCon
 | `base_url` | 包含 `/api/v1` 的 HTTP API 地址；未配置后端时为 `null` |
 | `api_conversation_supported` | 当前会话是否支持 API；Codex 的独立对话、项目目录和 worktree 任务均支持，不代表设备在线或鉴权已通过 |
 | `conversation_id` | 当前会话的 `conv_...` ID，用于查询会话和追问 |
-| `response_id` | 当前用户轮次的 `resp_...` ID，用于查询、订阅和停止 |
 | `execution` | 新建请求所需的 `type: "wework"` 和当前 `device_id` |
 | `model` | 云端模型的完整 API ID，例如 `public:default:0:my-model` |
 | `model_name`、`model_type` | 当前选中的模型名称和来源 |
 
-这些是 HTTP API 的路由 ID，不是底层 Codex thread/turn ID。`conversation_id` 编码设备 ID 和 Runtime 本地任务 ID，项目目录和 worktree 任务可以直接使用这些 ID 查询和续聊。同一会话追问时 `conversation_id` 不变，`response_id` 随用户轮次更新，模型信息也随选择刷新。本地模型或缺少云端目录身份的模型，其 `model` 为 `null`；调用 API 时需从 `GET /models?execution=wework` 选择可用模型。
+`conversation_id` 编码设备 ID 和 Runtime 本地任务 ID，可用于查询和续聊项目目录及 worktree 任务。同一会话追问时 `conversation_id` 不变，模型信息随选择刷新。本地模型或缺少云端目录身份的模型，其 `model` 为 `null`；调用 API 时需从 `GET /models?execution=wework` 选择可用模型。
+
+轮次级的 `response_id` 由宿主和 HTTP API 管理。调用方可从响应对象的 `id` 获取它，用于查询、订阅或停止指定轮次。
 
 每轮上下文仅包含上述字段和简短使用说明；完整接口用法保留在本文，避免重复占用上下文。继续当前会话需要等待当前轮次结束，传 `conversation` 或 `previous_response_id` 二选一，不再传设备和标题。上下文不包含个人 API Key、登录令牌或模型密钥；实际 HTTP 调用仍需单独提供个人 API Key。
 

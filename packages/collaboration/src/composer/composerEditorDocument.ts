@@ -55,8 +55,9 @@ export function insertStructuredComposerText(view: EditorView, text: string): bo
   return true
 }
 
-export function defineComposerValueProperty(view: EditorView): void {
-  Object.defineProperty(view.dom, 'value', {
+export function defineComposerValueProperty(view: EditorView): () => void {
+  const element = view.dom
+  Object.defineProperty(element, 'value', {
     configurable: true,
     get: () => serializeComposerDocument(view.state.doc),
     set: nextValue => {
@@ -64,6 +65,10 @@ export function defineComposerValueProperty(view: EditorView): void {
       replaceComposerValue(view, value, value.length)
     },
   })
+  // DevTools can retain a detached node beyond the lifetime of the view.
+  return () => {
+    Reflect.deleteProperty(element, 'value')
+  }
 }
 
 export function readComposerSnapshot(state: EditorState): ComposerEditorSnapshot {

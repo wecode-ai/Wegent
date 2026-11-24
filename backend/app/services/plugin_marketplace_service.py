@@ -594,6 +594,7 @@ class PluginMarketplaceService:
         user_id: int,
         installed_id: int,
         release_id: int,
+        expected_current_release_id: int | None = None,
         commit: bool = True,
     ) -> InstalledPlugin:
         acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
@@ -605,6 +606,11 @@ class PluginMarketplaceService:
                 status_code=409, detail="Legacy plugin cannot use release update"
             )
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
+        if expected_current_release_id is not None and (
+            spec.get("releaseId") != expected_current_release_id
+            or release_id != plugin.latest_release_id
+        ):
+            raise HTTPException(409, "PLUGIN_UPDATE_RELEASE_CHANGED")
         release = self._installable_release(db, plugin, release_id)
         payload = self._installed_release_payload(
             installed, plugin=plugin, release=release

@@ -12,6 +12,10 @@ import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { isDetachedResponsesContext } from '../modules/model-tool-output.mjs'
 import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
 import {
+  ONBOARDING_FIRST_MESSAGE,
+  ONBOARDING_FOLLOWUP,
+} from './stand-in-onboarding-skip.scenario.mjs'
+import {
   assistantMessage,
   createSse,
   delegatedTaskResultEvents,
@@ -132,6 +136,10 @@ export function createDesktopScenario({
       let events = delegatedTaskResultEvents(body)
       if (events) {
         // A result wake is a new host turn, even when its history quotes the original request.
+      } else if (latestUserInput.includes(ONBOARDING_FIRST_MESSAGE)) {
+        events = [assistantMessage(`${ONBOARDING_FIRST_MESSAGE}_ANSWERED`)]
+      } else if (latestUserInput.includes(ONBOARDING_FOLLOWUP)) {
+        events = [assistantMessage(`${ONBOARDING_FOLLOWUP}_ANSWERED`)]
       } else if (input.includes('Review this silent intake batch')) {
         coordinatorCalls++
         const readId = `silent-read-${round}`

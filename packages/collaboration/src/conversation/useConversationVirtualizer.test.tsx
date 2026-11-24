@@ -7,7 +7,7 @@ import {
   type ConversationVirtualizer,
 } from './useConversationVirtualizer'
 
-it('preserves the visible anchor when a row resizes before an external scroll event arrives', async () => {
+it('keeps the visible anchor and scroll state in sync with native and programmatic scrolling', async () => {
   const observers = new Map<Element, ResizeObserverCallback>()
   vi.stubGlobal(
     'ResizeObserver',
@@ -20,7 +20,7 @@ it('preserves the visible anchor when a row resizes before an external scroll ev
         observers.delete(element)
       }
       disconnect() {}
-    },
+    }
   )
   const viewport = document.createElement('div')
   const list = document.createElement('div')
@@ -40,12 +40,10 @@ it('preserves the visible anchor when a row resizes before an external scroll ev
   }))
     Object.defineProperty(viewport, key, { configurable: true, value })
   viewport.getBoundingClientRect = () => new DOMRect(0, 0, 400, 300)
-  list.getBoundingClientRect = () =>
-    new DOMRect(0, -viewport.scrollTop, 400, 6000)
+  list.getBoundingClientRect = () => new DOMRect(0, -viewport.scrollTop, 400, 6000)
   row.getBoundingClientRect = () => new DOMRect(0, -viewport.scrollTop, 400, 80)
-  viewport.scrollTo = (options) => {
-    if (typeof options === 'object' && options.top !== undefined)
-      viewport.scrollTop = options.top
+  viewport.scrollTo = options => {
+    if (typeof options === 'object' && options.top !== undefined) viewport.scrollTop = options.top
   }
   let current!: ConversationVirtualizer
   function Harness() {
@@ -79,13 +77,29 @@ it('preserves the visible anchor when a row resizes before an external scroll ev
     await act(async () => {
       viewport.scrollTop = 1250
       onResize!(
-        [{ target: row, borderBoxSize: [{ inlineSize: 400, blockSize: 100 }] }] as ResizeObserverEntry[],
-        {} as ResizeObserver,
+        [
+          { target: row, borderBoxSize: [{ inlineSize: 400, blockSize: 100 }] },
+        ] as ResizeObserverEntry[],
+        {} as ResizeObserver
       )
       expect(viewport.scrollTop).toBe(1250)
       await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
     })
     expect(viewport.scrollTop).toBe(1270)
+
+    await act(async () => {
+      current.scrollToOffset(1400)
+      viewport.dispatchEvent(new Event('scroll'))
+    })
+    expect(current.scrollOffset).toBe(1400)
+    expect(current.isScrolling).toBe(false)
+
+    await act(async () => {
+      viewport.scrollTop = 1450
+      viewport.dispatchEvent(new Event('scroll'))
+    })
+    expect(current.scrollOffset).toBe(1450)
+    expect(current.isScrolling).toBe(true)
   } finally {
     await act(async () => root.unmount())
     viewport.remove()

@@ -3860,6 +3860,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
+      if (command.value === 'pane-activity') {
+        const { pane } = getWorkbenchDebugSnapshot()
+        return JSON.stringify({
+          taskId: pane?.currentRuntimeTask?.taskId,
+          isBusy: pane?.status.isBusy,
+        })
+      }
       if (command.value === 'state-only') return JSON.stringify(getWorkbenchDebugSnapshot())
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),

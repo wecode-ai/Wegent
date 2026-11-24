@@ -282,6 +282,23 @@ export function createDesktopScenario({
 
       // Exercise hit testing across the row after the duplicate inline form was retired.
       const row = `${selector(`notification-processing-${id}`)} [data-testid$="-container"]`
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
+        visible: false,
+      })
+      const detail = `${CONTENT} [data-testid="cloud-todo-detail"]`
+      const closeIssueDrawer = async () => {
+        await control.command(
+          'clickWhenEnabled',
+          `${CONTENT} [data-testid="cloud-todo-detail-close"]`
+        )
+        // A clipped exit frame is invisible before the modal releases its route and inert scope.
+        await control.command('waitFor', `${CONTENT}:not(:has([data-testid="cloud-todo-detail"]))`)
+      }
+      // Reload can restore the Issue opened for the follow-up. Its modal makes
+      // the notification popover inert until the Issue drawer releases the board.
+      if (Number(await control.command('getElementCount', detail))) await closeIssueDrawer()
+      await openCollaborationNotifications(control)
       await prepareNotificationHitTesting(control, CONTENT, issue.id, notificationRow)
       for (const target of ['icon', 'edge', 'bottom', 'processing-space']) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
@@ -331,12 +348,7 @@ export function createDesktopScenario({
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
           text: issue.id,
         })
-        await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
-        await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
-          visible: false,
-        })
-        // A clipped exit frame is invisible before the modal releases its route and inert scope.
-        await control.command('waitFor', `${CONTENT}:not(:has([data-testid="cloud-todo-detail"]))`)
+        await closeIssueDrawer()
       }
       await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {

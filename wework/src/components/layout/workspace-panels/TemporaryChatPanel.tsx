@@ -9,6 +9,8 @@ import type { TemporaryChatPanelProps } from './temporaryChatPanelTypes'
 import { createTemporaryChatSession } from './temporaryChatSession'
 import { useEditorFocusRequest } from '@wegent/collaboration/dom-events'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
+import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { conversationOutcomePresentation } from './conversationOutcomePresentation'
 import { selectPrivateHistory } from '@/features/collaboration-exp/private/privateConversationHistory'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
@@ -86,6 +88,11 @@ import type {
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 
+interface ConversationSessionConfirmation {
+  sessionKey: string | null
+  modelKey: string
+}
+
 export function TemporaryChatPanel({
   currentProject,
   source,
@@ -106,6 +113,7 @@ export function TemporaryChatPanel({
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
   showExecutionTools = true,
+  showModelSelector = true,
   hideProcessing = false,
   assistantMessageStyle,
   markReadWhenActive = false,
@@ -123,6 +131,7 @@ export function TemporaryChatPanel({
   projectWorkBarTrailingContext,
   composerHeader,
   contentFooter,
+  renderMessageGaps,
   onRestoreConversation,
   onFillSelectionToAnswer,
   initialScrollPosition = 'restore',
@@ -201,6 +210,7 @@ export function TemporaryChatPanel({
     provider: activeModelProvider,
     pending: activeProviderPending,
     failed: activeProviderFailed,
+    refreshing: activeProviderRefreshing,
     refresh: refreshActiveProvider,
   } = useStandInActiveModelProvider({
     enabled: Boolean(modelControls) && active && !supportsModelProviderSwitch,
@@ -214,35 +224,69 @@ export function TemporaryChatPanel({
     address && activeThreadId
       ? JSON.stringify([address.deviceId, address.taskId, activeThreadId])
       : null
-  const [confirmedSession, setConfirmedSession] = useState<{
-    sessionKey: string | null
-    modelKey: string
-  } | null>(null)
-  const clearConfirmationForDifferentModel = useCallback((model: UnifiedModel | null) => {
-    setConfirmedSession(current =>
-      model && current?.modelKey === modelSelectionKey(model) ? current : null
-    )
-  }, [])
+  const [confirmedSession, setConfirmedSession] = useState<ConversationSessionConfirmation | null>(
+    null
+  )
+  const [sessionConfirmation, setSessionConfirmation] =
+    useState<ConversationSessionConfirmation | null>(null)
+  const clearConfirmationForDifferentModel = useCallback(
+    (model: UnifiedModel | null) => {
+      setConfirmedSession(current =>
+        model && current?.modelKey === modelSelectionKey(model) ? current : null
+      )
+    },
+    [setConfirmedSession]
+  )
   const explicitNewSession = Boolean(
     activeSessionKey &&
     confirmedSession?.sessionKey === activeSessionKey &&
     modelControls?.selectedModel &&
     confirmedSession.modelKey === modelSelectionKey(modelControls.selectedModel)
   )
+  const requiresNewSession = Boolean(
+    modelControls &&
+    activeThreadId &&
+    requiresNewConversationForModelSwitch(
+      activeModel,
+      modelControls.selectedModel,
+      activeModelSelection,
+      activeModelProvider,
+      supportsModelProviderSwitch
+    )
+  )
+  const needsSessionConfirmation =
+    !showModelSelector && !explicitNewSession && (activeProviderFailed || requiresNewSession)
+  const recoveryModelKey = modelControls?.selectedModel
+    ? modelSelectionKey(modelControls.selectedModel)
+    : null
+  if (
+    !showModelSelector &&
+    confirmedSession &&
+    (!explicitNewSession || (!activeProviderPending && !requiresNewSession))
+  ) {
+    setConfirmedSession(null)
+  }
   const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
   const globalSelectedModelOptions =
     projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
   const taskModelIdentityPending = modelControls
     ? modelControls.loading ||
       Boolean(modelControls.unavailable) ||
+      needsSessionConfirmation ||
       (activeProviderPending && !explicitNewSession)
     : Boolean(address && !taskModelSelection?.selectionResolved)
   const modelError = modelControls?.unavailableReason
     ? t(`standIn.errors.${modelControls.unavailableReason}`)
     : (modelControls?.error ??
       (activeProviderFailed && !explicitNewSession
-        ? t('standIn.errors.conversation_provider_unavailable')
-        : null))
+        ? t(
+            showModelSelector
+              ? 'standIn.errors.conversation_provider_unavailable'
+              : 'standIn.errors.conversation_provider_read_failed'
+          )
+        : needsSessionConfirmation
+          ? t('standIn.errors.conversation_profile_provider_changed')
+          : null))
   const [trialGuide, setTrialGuide] = useState<PluginTrialGuide | null>(null)
   const sideChatProjectChat = useMemo(
     () => ({
@@ -323,6 +367,7 @@ export function TemporaryChatPanel({
       activeProviderPending,
       refreshActiveProvider,
       activeSessionKey,
+      setConfirmedSession,
       clearConfirmationForDifferentModel,
     ]
   )
@@ -476,30 +521,13 @@ export function TemporaryChatPanel({
     return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
   }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection, modelControls])
 
-  const sessionStartFields = useMemo(
-    () =>
-      modelControls &&
-      activeThreadId &&
-      (explicitNewSession ||
-        requiresNewConversationForModelSwitch(
-          activeModel,
-          modelControls.selectedModel,
-          activeModelSelection,
-          activeModelProvider,
-          supportsModelProviderSwitch
-        ))
-        ? { startNewSession: true, expectedThreadId: activeThreadId }
-        : {},
-    [
-      modelControls,
-      activeThreadId,
-      activeModel,
-      activeModelSelection,
-      activeModelProvider,
-      supportsModelProviderSwitch,
-      explicitNewSession,
-    ]
-  )
+  const sessionStartFields =
+    activeThreadId &&
+    (showModelSelector
+      ? explicitNewSession || requiresNewSession
+      : explicitNewSession && (activeProviderPending || requiresNewSession))
+      ? { startNewSession: true, expectedThreadId: activeThreadId }
+      : {}
   const canSendWithCurrentModel = () => {
     if (nativeConversation && taskLifecycle?.interactionStatus) {
       setError(t('standIn.native_input_pending'))
@@ -839,10 +867,32 @@ export function TemporaryChatPanel({
         ? focusedRequest
         : null
   const pendingRequestKey = pendingRequest && requestUserInputPayloadKey(pendingRequest)
+  const recoveryAvailable =
+    needsSessionConfirmation &&
+    !activeProviderRefreshing &&
+    !taskLifecycle?.interactionStatus &&
+    !busy &&
+    !modelControls?.loading &&
+    !modelControls?.unavailable
+  const recoveryTarget =
+    recoveryAvailable && activeSessionKey && recoveryModelKey
+      ? { sessionKey: activeSessionKey, modelKey: recoveryModelKey }
+      : null
+  if (
+    sessionConfirmation &&
+    (!active ||
+      readOnly ||
+      pendingRequest ||
+      sessionConfirmation.sessionKey !== recoveryTarget?.sessionKey ||
+      sessionConfirmation.modelKey !== recoveryTarget?.modelKey)
+  ) {
+    setSessionConfirmation(null)
+  }
   const pendingSubmission = inputSubmissions[submissionKey(pendingRequestKey)]
   const submittingInput =
     pendingRequest &&
     (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
+  const messageGaps = renderMessageGaps?.(presentation.messages)
   const layout = (
     <TemporaryConversationLayout
       messageCount={presentation.messages.length}
@@ -867,6 +917,52 @@ export function TemporaryChatPanel({
               <StandInNotificationPrompt scopeKey={lifecycleStore.notificationScope} />
             )}
             {!pendingRequest && composerHeader}
+            {!pendingRequest &&
+              !showModelSelector &&
+              activeProviderFailed &&
+              !explicitNewSession && (
+                <Button
+                  variant="ghost"
+                  type="button"
+                  className="min-h-11 self-start md:min-h-8"
+                  data-testid="stand-in-conversation-provider-retry"
+                  disabled={activeProviderRefreshing}
+                  aria-busy={activeProviderRefreshing}
+                  onClick={refreshActiveProvider}
+                >
+                  {t('standIn.reload')}
+                </Button>
+              )}
+            {!pendingRequest && recoveryTarget && (
+              <>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  className="min-h-11 self-start md:min-h-8"
+                  data-testid="stand-in-conversation-new-session"
+                  onClick={() => setSessionConfirmation(recoveryTarget)}
+                >
+                  {t('standIn.errors.conversation_new_session_action')}
+                </Button>
+                <ConfirmDialog
+                  open={
+                    sessionConfirmation?.sessionKey === recoveryTarget.sessionKey &&
+                    sessionConfirmation?.modelKey === recoveryTarget.modelKey
+                  }
+                  title={t('standIn.errors.conversation_new_session_title')}
+                  description={t('workbench.model_switch_new_session_effect')}
+                  confirmLabel={t('standIn.errors.conversation_new_session_action')}
+                  cancelLabel={t('workbench.cancel')}
+                  cancelTestId="stand-in-conversation-cancel-new-session"
+                  confirmTestId="stand-in-conversation-confirm-new-session"
+                  onClose={() => setSessionConfirmation(null)}
+                  onConfirm={() => {
+                    setConfirmedSession(recoveryTarget)
+                    setSessionConfirmation(null)
+                  }}
+                />
+              </>
+            )}
             {submittingInput ? (
               <div
                 data-testid="runtime-input-submitting"
@@ -923,7 +1019,7 @@ export function TemporaryChatPanel({
                   }
                   submitDisabled={taskModelIdentityPending}
                   showExecutionTools={showExecutionTools}
-                  showModelSelector
+                  showModelSelector={showModelSelector}
                   pluginPickerIconOnly
                   requireText={
                     goalDraftActive || !hasImageMarkupComments(sideChatProjectChat.attachments)
@@ -986,6 +1082,7 @@ export function TemporaryChatPanel({
         className="min-h-0 flex-1"
         contentClassName="min-h-full shrink-0"
         messageListClassName={`${DESKTOP_MESSAGE_LIST_CLASS} pb-4 pt-5`}
+        renderGapAfterMessage={messageGaps && (message => messageGaps.get(message.id))}
         contentFooter={contentFooter}
         contentFooterClassName={DESKTOP_MESSAGE_LIST_CLASS}
         scrollTestId="right-workspace-chat-scroll-area"

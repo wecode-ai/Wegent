@@ -98,9 +98,9 @@ export function deriveRuntimePaneStatus({
 export function findActiveAssistantMessage(
   messages: WorkbenchMessage[]
 ): WorkbenchMessage | undefined {
-  return [...messages]
-    .reverse()
-    .find(message => message.role === 'assistant' && message.status === 'streaming')
+  return messages.findLast(
+    message => message.role === 'assistant' && message.status === 'streaming'
+  )
 }
 
 export function hasSettledAssistantMessage(messages: WorkbenchMessage[]): boolean {

@@ -33,9 +33,16 @@ impl RuntimeWorkRpcHandler {
                     "Archived task identity is missing",
                 )
             })?;
-            if let Err(error) = Box::pin(
-                self.cleanup_worktrees_for_tasks(HashSet::from([task_id.to_owned()]), false),
-            )
+            let workspace_path = result["workspacePath"].as_str().ok_or_else(|| {
+                AppIpcError::new(
+                    "archive_task_path_missing",
+                    "Archived task workspace is missing",
+                )
+            })?;
+            if let Err(error) = Box::pin(self.cleanup_worktrees_for_tasks(
+                HashSet::from([task_id.to_owned()]),
+                Some(workspace_path),
+            ))
             .await
             {
                 result["cleanupError"] = json!(error.message);
