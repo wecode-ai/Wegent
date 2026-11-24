@@ -243,7 +243,10 @@ class RuntimeConversationQueueController {
   private useDependencies(dependencies: QueueDependencies): void {
     if (this.dependencies?.lifecycleStore !== dependencies.lifecycleStore) {
       this.unsubscribeLifecycle?.()
-      this.unsubscribeLifecycle = dependencies.lifecycleStore.subscribe(this.schedule)
+      this.unsubscribeLifecycle = dependencies.lifecycleStore.subscribeTask(
+        this.address,
+        this.schedule
+      )
     }
     this.dependencies = dependencies
   }

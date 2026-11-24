@@ -6,7 +6,7 @@ import { navigateTo } from '@/lib/navigation'
 import { StandInIcon } from '@wegent/collaboration'
 import { Button } from '@wegent/collaboration/markdown/Button'
 import { Check, CircleAlert, CircleDashed, CircleHelp, Clock3, Wrench } from 'lucide-react'
-import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { memo, useCallback, useMemo, useSyncExternalStore } from 'react'
 import type {
   IssueAssignmentReceiptObservation,
   IssueAssignmentReceiptState,
@@ -15,6 +15,8 @@ import type {
 import { createIssueAssignmentReceiptObservation } from './issueAssignmentReceiptObservation'
 import { sameIssueAssignment } from './issueAssignmentReceiptScope'
 export type { IssueAssignmentReceiptState } from './issueAssignmentReceiptObservation'
+
+const EMPTY_RECEIPTS: IssueAssignmentReceipt[] = []
 
 export function IssueAssignmentReceipts({
   api,
@@ -69,7 +71,7 @@ export function IssueAssignmentReceipts({
       aria-live="polite"
     >
       <IssueAssignmentReceiptStatus
-        rows={scopedState?.rows ?? []}
+        rows={scopedState?.rows ?? EMPTY_RECEIPTS}
         error={scopedState?.error ?? false}
         assigneeUserId={assigneeUserId}
         currentUserId={currentUserId}
@@ -78,7 +80,7 @@ export function IssueAssignmentReceipts({
   )
 }
 
-export function IssueAssignmentReceiptStatus({
+export const IssueAssignmentReceiptStatus = memo(function IssueAssignmentReceiptStatus({
   rows,
   error,
   assigneeUserId,
@@ -141,7 +143,7 @@ export function IssueAssignmentReceiptStatus({
         ))}
     </>
   )
-}
+})
 
 function DispatchReceipt({
   receipt,
@@ -180,7 +182,7 @@ function DispatchReceipt({
   )
 }
 
-function ReceiptIcon({
+const ReceiptIcon = memo(function ReceiptIcon({
   label,
   value,
   icon: Icon,
@@ -193,7 +195,8 @@ function ReceiptIcon({
   figure?: 'human' | 'stand-in'
   checked?: boolean
 }) {
-  const description = value ? `${label} · ${new Date(value).toLocaleString()}` : label
+  const date = value ? new Date(value) : null
+  const description = date ? `${label} · ${date.toLocaleString()}` : label
   return (
     <Tooltip label={description}>
       <span className="inline-flex shrink-0 items-center" title={description}>
@@ -212,13 +215,13 @@ function ReceiptIcon({
         </span>
         <span className="sr-only">
           {label}
-          {value ? (
+          {date ? (
             <time
               dateTime={value}
-            >{` · ${new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</time>
+            >{` · ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</time>
           ) : null}
         </span>
       </span>
     </Tooltip>
   )
-}
+})

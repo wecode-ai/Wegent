@@ -3,9 +3,12 @@ import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { WorkbenchSplitActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
+import { useRuntimeTaskLifecycle } from '@/features/workbench/runtimeTaskLifecycle'
+import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { DeviceInfo } from '@/types/api'
+import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import {
   Resizable,
   ResizableHandle,
@@ -64,7 +67,7 @@ interface SplitWorkbenchPaneStackProps {
   activeTestId: string | null
   workbenchVisible: boolean
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null
-  getPaneTitle: (pane: WorkbenchPaneIdentity) => string
+  runtimeWork: RuntimeWorkListResponse | null
   onPaneFocus: (pane: WorkbenchPaneIdentity) => void
   onLayoutFocus: (paneId: string) => void
   onLayoutClose: (paneId: string) => WorkbenchLayoutState
@@ -112,7 +115,7 @@ export function SplitWorkbenchPaneStack({
   activeTestId,
   workbenchVisible,
   resolvePane,
-  getPaneTitle,
+  runtimeWork,
   onPaneFocus,
   onLayoutFocus,
   onLayoutClose,
@@ -363,7 +366,7 @@ export function SplitWorkbenchPaneStack({
           dragged={draggedPaneKey !== null}
           dropTarget={dropTarget}
           resolvePane={resolveCachedPane}
-          getPaneTitle={getPaneTitle}
+          runtimeWork={runtimeWork}
           getPaneHost={getPaneHost}
           labels={labels}
           focusedViewPaneId={effectiveFocusedViewPaneId}
@@ -421,7 +424,7 @@ function WorkbenchLayoutRenderer({
   dragged,
   dropTarget,
   resolvePane,
-  getPaneTitle,
+  runtimeWork,
   getPaneHost,
   labels,
   focusedViewPaneId,
@@ -439,7 +442,7 @@ function WorkbenchLayoutRenderer({
   dragged: boolean
   dropTarget: DropTarget | null
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null
-  getPaneTitle: (pane: WorkbenchPaneIdentity) => string
+  runtimeWork: RuntimeWorkListResponse | null
   getPaneHost: (paneKey: string) => HTMLDivElement | null
   labels: LayoutLabels
   focusedViewPaneId: string | null
@@ -461,7 +464,7 @@ function WorkbenchLayoutRenderer({
         dragged={dragged}
         dropTarget={dropTarget}
         resolvePane={resolvePane}
-        getPaneTitle={getPaneTitle}
+        runtimeWork={runtimeWork}
         getPaneHost={getPaneHost}
         labels={labels}
         onFocus={onFocus}
@@ -498,7 +501,7 @@ function WorkbenchLayoutRenderer({
             dragged={dragged}
             dropTarget={dropTarget}
             resolvePane={resolvePane}
-            getPaneTitle={getPaneTitle}
+            runtimeWork={runtimeWork}
             getPaneHost={getPaneHost}
             labels={labels}
             focusedViewPaneId={focusedViewPaneId}
@@ -563,7 +566,7 @@ function WorkbenchPaneView({
   dragged,
   dropTarget,
   resolvePane,
-  getPaneTitle,
+  runtimeWork,
   getPaneHost,
   labels,
   onFocus,
@@ -580,7 +583,7 @@ function WorkbenchPaneView({
   dragged: boolean
   dropTarget: DropTarget | null
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null
-  getPaneTitle: (pane: WorkbenchPaneIdentity) => string
+  runtimeWork: RuntimeWorkListResponse | null
   getPaneHost: (paneKey: string) => HTMLDivElement | null
   labels: LayoutLabels
   onFocus: (paneId: string) => void
@@ -589,7 +592,6 @@ function WorkbenchPaneView({
   onToggleFocusedView: (paneId: string) => void
 }) {
   const identity = pane.paneKey ? resolvePane(pane.paneKey) : null
-  const title = identity ? getPaneTitle(identity) : labels.emptyTitle
   const host = pane.paneKey ? getPaneHost(pane.paneKey) : null
   return (
     <section
@@ -611,16 +613,13 @@ function WorkbenchPaneView({
             focused && 'shadow-[inset_0_2px_0_0_hsl(var(--primary)/0.65)]'
           )}
         >
-          <ControlButton
-            variant="unstyled"
-            type="button"
-            data-testid={`workbench-pane-title-${pane.id}`}
-            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
-            title={title}
-            onClick={() => onFocus(pane.id)}
-          >
-            {title}
-          </ControlButton>
+          <WorkbenchPaneTitle
+            paneId={pane.id}
+            identity={identity}
+            emptyTitle={labels.emptyTitle}
+            runtimeWork={runtimeWork}
+            onFocus={onFocus}
+          />
           <div
             id={`workbench-pane-header-actions-${pane.id}`}
             data-testid={`workbench-pane-header-actions-${pane.id}`}
@@ -847,5 +846,47 @@ function DropArea({
       <Icon className="h-4 w-4 shrink-0" />
       <span>{label}</span>
     </div>
+  )
+}
+
+function WorkbenchPaneTitle({
+  paneId,
+  identity,
+  emptyTitle,
+  runtimeWork,
+  onFocus,
+}: {
+  paneId: string
+  identity: WorkbenchPaneIdentity | null
+  emptyTitle: string
+  runtimeWork: RuntimeWorkListResponse | null
+  onFocus: (paneId: string) => void
+}) {
+  const { t } = useTranslation('common')
+  const address = identity?.currentRuntimeTask
+  const listedTask = findRuntimeTask(runtimeWork, address)
+  const lifecycle = useRuntimeTaskLifecycle(listedTask ? null : address)
+  let title = emptyTitle
+  if (address) {
+    title =
+      truncateRuntimeTaskTitle((listedTask ?? lifecycle?.task)?.title) ??
+      t('workbench.task_fallback_title', {
+        defaultValue: '任务 {{taskId}}',
+        taskId: address.taskId,
+      })
+  } else if (identity) {
+    title = identity.currentProject?.name ?? t('workbench.new_chat', '新任务')
+  }
+  return (
+    <ControlButton
+      variant="unstyled"
+      type="button"
+      data-testid={`workbench-pane-title-${paneId}`}
+      className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
+      title={title}
+      onClick={() => onFocus(paneId)}
+    >
+      {title}
+    </ControlButton>
   )
 }

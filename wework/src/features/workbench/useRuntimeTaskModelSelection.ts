@@ -66,22 +66,15 @@ export function useRuntimeTaskModelSelection({
     setSelectedModelOptionForScope,
     setSelectionForScope,
   } = modelStore
-  const resolveTaskModelConfig = useCallback(
-    (address: RuntimeTaskAddress) => {
-      const task = resolveTask(address)
-      const handleSelection = modelSelectionFromRuntimeHandle(address.runtimeHandle)
-      return {
-        // A loaded summary without a selection is authoritative: the
-        // conversation deliberately uses the runtime's native model.
-        selectionResolved: Boolean(task || handleSelection),
-        taskSelection: task ? (task.modelSelection ?? null) : (handleSelection ?? null),
-      }
-    },
-    [resolveTask]
-  )
   const resolveRuntimeTaskModelSelection = useCallback(
-    (address: RuntimeTaskAddress): RuntimeTaskModelSelectionControls => {
-      const { selectionResolved, taskSelection } = resolveTaskModelConfig(address)
+    (
+      address: RuntimeTaskAddress,
+      task = resolveTask(address)
+    ): RuntimeTaskModelSelectionControls => {
+      const handleSelection = modelSelectionFromRuntimeHandle(address.runtimeHandle)
+      const selectionResolved = Boolean(task || handleSelection)
+      // A loaded summary without a selection uses the runtime's native model.
+      const taskSelection = task ? (task.modelSelection ?? null) : (handleSelection ?? null)
       const catalogTaskModel = findModelForSelection(models, taskSelection)
       const taskModel = catalogTaskModel ?? modelFromTaskSnapshot(taskSelection)
       const scopeKey = runtimeTaskModelScopeKey(userId, address)
@@ -132,8 +125,7 @@ export function useRuntimeTaskModelSelection({
         selectionReady: activeTaskSelectionReady || (hasUsableSelection && selectedModelAvailable),
         taskSelection,
         activeModel: taskModel,
-        ...((resolveTask(address)?.runtimeHandle ?? address.runtimeHandle)?.modelProviderRouting ===
-        'thread'
+        ...((task?.runtimeHandle ?? address.runtimeHandle)?.modelProviderRouting === 'thread'
           ? { supportsModelProviderSwitch: true }
           : {}),
         selectedModel: effectiveModel,
@@ -153,7 +145,6 @@ export function useRuntimeTaskModelSelection({
       models,
       resolveActiveTaskSelectionReady,
       resolveTask,
-      resolveTaskModelConfig,
       userId,
     ]
   )

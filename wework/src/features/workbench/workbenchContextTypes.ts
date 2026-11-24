@@ -41,6 +41,7 @@ import type {
   RuntimeSendResponse,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeTranscriptSearchResponse,
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskCreateRequest,
@@ -264,7 +265,8 @@ export interface WorkbenchContextValue {
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
     resolveRuntimeTaskModelSelection: (
-      address: RuntimeTaskAddress
+      address: RuntimeTaskAddress,
+      task?: RuntimeTaskSummary | null
     ) => RuntimeTaskModelSelectionControls
     setRuntimeTaskSelectedModel: (address: RuntimeTaskAddress, model: UnifiedModel | null) => void
     setRuntimeTaskSelectedModelAndOptions: (
@@ -537,7 +539,7 @@ export type WorkbenchPaneState = Pick<
 
 export type WorkbenchPaneContextValue = Omit<
   WorkbenchContextValue,
-  'state' | 'cloudWorkStatus' | 'updateUserPreferences'
+  'state' | 'cloudWorkStatus' | 'runtimeTaskReminders' | 'updateUserPreferences'
 > & {
   state: WorkbenchPaneState
 }
