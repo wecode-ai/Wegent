@@ -520,7 +520,13 @@ impl<'a> TurnTranscriptProjector<'a> {
             self.assistant_status == "streaming"
                 || self
                     .unphased_progress_item_ids
-                    .contains(&item_id(item, "assistant-text")),
+                    .contains(&item_id(item, "assistant-text"))
+                || (!matches!(self.assistant_status, "failed" | "cancelled")
+                    && self
+                        .assistant
+                        .blocks
+                        .iter()
+                        .any(is_projected_guidance_block)),
             &mut self.assistant,
             self.options,
         );
@@ -1492,9 +1498,9 @@ mod message_projection;
 
 use message_projection::{
     assistant_message_phase_name, collect_assistant_message, file_changes_block, guidance_block,
-    is_internal_turn_abort_message, item_completed_at, item_timestamp, normalized_phase_or_status,
-    plan_block, push_accumulated_assistant, push_reasoning_block, push_user_message_once,
-    AssistantEmitContext, AssistantTurnAccumulation,
+    is_internal_turn_abort_message, is_projected_guidance_block, item_completed_at, item_timestamp,
+    normalized_phase_or_status, plan_block, push_accumulated_assistant, push_reasoning_block,
+    push_user_message_once, AssistantEmitContext, AssistantTurnAccumulation,
 };
 pub(crate) use message_projection::{
     normalized_user_request_content, visible_user_request_content,
