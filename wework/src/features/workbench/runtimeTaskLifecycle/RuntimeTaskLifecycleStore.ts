@@ -31,6 +31,11 @@ import type {
 } from './types'
 
 type Listener = () => void
+interface TaskListener {
+  address: RuntimeTaskAddress
+  key: string
+  notify: Listener
+}
 
 interface SyncTranscriptOptions {
   preserveActiveTurn?: boolean
@@ -58,6 +63,7 @@ function sameTaskKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): bo
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'getSidebarSnapshot',
   'subscribe',
+  'subscribeTask',
   'getSnapshot',
   'getCurrentTask',
   'getTask',
@@ -75,6 +81,9 @@ export class RuntimeTaskLifecycleStore {
   private readonly previousRunningTaskKeys: Set<string>
   private readonly deferredGoalUnreadTaskKeys = new Set<string>()
   private readonly listeners = new Set<Listener>()
+  private readonly taskListeners = new Map<string, Set<TaskListener>>()
+  private removedTaskKeys = new Set<string>()
+  private aliasesChanged = false
   private readonly unreadStorageKey: string
   private readonly runningStorageKey: string
   private currentTaskKey: string | null = null
@@ -111,6 +120,27 @@ export class RuntimeTaskLifecycleStore {
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  subscribeTask(address: RuntimeTaskAddress, notify: Listener): () => void {
+    const key = this.taskSubscriptionKey(address)
+    const entry = { address, key, notify }
+    this.addTaskListener(entry)
+    return () => {
+      const group = this.taskListeners.get(entry.key)
+      group?.delete(entry)
+      if (!group?.size) this.taskListeners.delete(entry.key)
+    }
+  }
+
+  private taskSubscriptionKey(address: RuntimeTaskAddress): string {
+    return getRuntimeTaskLifecycleKey(this.canonicalizeAddress(address))
+  }
+
+  private addTaskListener(entry: TaskListener): void {
+    const group = this.taskListeners.get(entry.key) ?? new Set<TaskListener>()
+    group.add(entry)
+    this.taskListeners.set(entry.key, group)
   }
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
@@ -213,7 +243,7 @@ export class RuntimeTaskLifecycleStore {
     const aliases = getUnambiguousWorkbenchDeviceAliases(devices)
     for (const [alias, canonicalDeviceId] of aliases) {
       if (alias !== canonicalDeviceId) continue
-      changed = this.deviceAliases.delete(alias) || changed
+      if (this.deviceAliases.delete(alias)) this.aliasesChanged = changed = true
     }
     for (const [alias, canonicalDeviceId] of aliases) {
       if (alias === canonicalDeviceId) continue
@@ -503,8 +533,10 @@ export class RuntimeTaskLifecycleStore {
   remove(address: RuntimeTaskAddress): void {
     const canonicalAddress = this.canonicalizeAddress(address)
     const key = getRuntimeTaskLifecycleKey(canonicalAddress)
+    const removed = this.machines.delete(key)
+    if (removed) this.removedTaskKeys.add(key)
     const changes = [
-      this.machines.delete(key),
+      removed,
       this.unreadStateByTask.delete(key),
       this.previousRunningTaskKeys.delete(key),
       this.deferredGoalUnreadTaskKeys.delete(key),
@@ -727,6 +759,7 @@ export class RuntimeTaskLifecycleStore {
     if (this.resolveDeviceId(alias) === canonical) return false
 
     this.deviceAliases.set(alias, canonical)
+    this.aliasesChanged = true
     const prefix = `${alias}\0`
     const storedKeys = new Set([
       ...this.unreadStateByTask.keys(),
@@ -781,6 +814,7 @@ export class RuntimeTaskLifecycleStore {
     this.restoreMachineUnread(nextKey, nextMachine)
     if (!nextMachine.getSnapshot().derived.isRunning) this.previousRunningTaskKeys.delete(nextKey)
     this.machines.delete(previousKey)
+    this.removedTaskKeys.add(previousKey)
     if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
   }
 
@@ -886,6 +920,9 @@ export class RuntimeTaskLifecycleStore {
       return
     }
     this.publishPending = false
+    const previousTasks = this.snapshot.tasks
+    const changedKeys = this.removedTaskKeys
+    this.removedTaskKeys = new Set()
     const tasks = new Map<string, RuntimeTaskLifecycleSnapshot>()
     const runningTaskKeys = new Set<string>()
     const queuedTaskKeys = new Set<string>()
@@ -895,6 +932,7 @@ export class RuntimeTaskLifecycleStore {
     for (const [key, machine] of this.machines) {
       const task = machine.getSnapshot()
       tasks.set(key, task)
+      if (this.taskListeners.has(key) && previousTasks.get(key) !== task) changedKeys.add(key)
       if (task.derived.isRunning) runningTaskKeys.add(key)
       if (task.derived.isQueued) queuedTaskKeys.add(key)
       if (task.derived.shouldShowUnread) unreadTaskKeys.add(key)
@@ -922,7 +960,30 @@ export class RuntimeTaskLifecycleStore {
     }
     this.persistUnreadKeys()
     this.persistRunningKeys()
+    const migratedListeners = this.reindexTaskListeners()
     this.listeners.forEach(listener => listener())
+    for (const key of changedKeys) {
+      this.taskListeners.get(key)?.forEach(entry => entry.notify())
+    }
+    for (const entry of migratedListeners) {
+      if (!changedKeys.has(entry.key) && this.taskListeners.get(entry.key)?.has(entry))
+        entry.notify()
+    }
+  }
+
+  private reindexTaskListeners(): TaskListener[] {
+    if (!this.aliasesChanged) return []
+    this.aliasesChanged = false
+    const entries = [...this.taskListeners.values()].flatMap(group => [...group])
+    const migrated: TaskListener[] = []
+    this.taskListeners.clear()
+    for (const entry of entries) {
+      const key = this.taskSubscriptionKey(entry.address)
+      if (key !== entry.key) migrated.push(entry)
+      entry.key = key
+      this.addTaskListener(entry)
+    }
+    return migrated
   }
 
   private persistUnreadKeys(): void {

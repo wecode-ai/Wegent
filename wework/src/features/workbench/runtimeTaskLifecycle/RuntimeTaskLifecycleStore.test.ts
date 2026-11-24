@@ -61,6 +61,41 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test('notifies only the changed task and follows its device alias', () => {
+    const store = new RuntimeTaskLifecycleStore('task-subscriptions')
+    const alias = { ...address, deviceId: 'app-record-70' }
+    const other = { ...address, deviceId: 'other-device' }
+    const onAlias = vi.fn()
+    const onCanonical = vi.fn()
+    const onOther = vi.fn()
+    const unsubscribe = store.subscribeTask(alias, onAlias)
+    store.subscribeTask(address, onCanonical)
+    store.subscribeTask(other, onOther)
+
+    store.turnStarted(other, 'other-turn')
+    expect(onOther).toHaveBeenCalledOnce()
+    expect(onAlias).not.toHaveBeenCalled()
+    expect(onCanonical).not.toHaveBeenCalled()
+    store.turnStarted(alias, 'alias-turn')
+    expect(onAlias).toHaveBeenCalledOnce()
+    expect(onCanonical).not.toHaveBeenCalled()
+
+    const work = runtimeWork(task({ running: true }))
+    work.projects[0].deviceWorkspaces[0].remoteHostId = alias.deviceId
+    store.syncRuntimeWork(work)
+    expect(onAlias).toHaveBeenCalledTimes(2)
+    expect(onCanonical).toHaveBeenCalledOnce()
+    store.remove(address)
+    expect(onAlias).toHaveBeenCalledTimes(3)
+    expect(onCanonical).toHaveBeenCalledTimes(2)
+
+    unsubscribe()
+    store.turnStarted(address, 'new-turn')
+    expect(onAlias).toHaveBeenCalledTimes(3)
+    expect(onCanonical).toHaveBeenCalledTimes(3)
+    expect(onOther).toHaveBeenCalledOnce()
+  })
+
   test.each(['done', 'failed', 'cancelled'])(
     'settles a recovered %s historical turn with the latest transcript outcome',
     historicalStatus => {

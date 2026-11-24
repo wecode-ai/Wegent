@@ -58,11 +58,12 @@ export function useRuntimeTaskLifecycle(
     () => store.selectTask(store.getSnapshot(), address),
     [address, store]
   )
-  return useSyncExternalStore(
-    address ? store.subscribe : subscribeIdleResource,
-    getSnapshot,
-    getSnapshot
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      address ? store.subscribeTask(address, listener) : subscribeIdleResource(),
+    [address, store]
   )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
 export function useRuntimeTaskSummaryResolver(
