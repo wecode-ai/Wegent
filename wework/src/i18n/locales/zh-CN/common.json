@@ -6223,9 +6223,11 @@
       "processing_collect": "先汇总新事项",
       "processing_edit": "配置",
       "processing_hide": "收起",
-      "project_connection_help": "从所选协作项目接收指派给你的事项。",
+      "project_connection_help": "从所选范围接收分配给你或在评论中 @ 你的事项。",
       "message_connection_help": "从所选群聊和联系人接收消息。",
       "receive_project_items": "接收协作事项",
+      "receive_participating_issues": "我参与的事项",
+      "receive_participating_issues_help": "覆盖参与人名单里有你的事项。",
       "receive_independent_issues": "分配给我的独立事项",
       "default_processing": "新项目默认",
       "role_help": "我的助理负责统筹工作；场景角色各自专注一类事务，可在上方切换。"

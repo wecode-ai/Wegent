@@ -6233,9 +6233,11 @@
       "processing_collect": "Collect new items first",
       "processing_edit": "Configure",
       "processing_hide": "Collapse",
-      "project_connection_help": "Receive items assigned to you from the selected projects.",
+      "project_connection_help": "Receive assignments and comment mentions from the selected scopes.",
       "message_connection_help": "Receive messages from the selected groups and contacts.",
       "receive_project_items": "Receive collaboration issues",
+      "receive_participating_issues": "Issues I participate in",
+      "receive_participating_issues_help": "Includes issues that list you as a participant.",
       "receive_independent_issues": "Independent issues assigned to me",
       "default_processing": "Default for new projects",
       "role_help": "My assistant coordinates your work. Switch above to a specialist role for a focused responsibility."
