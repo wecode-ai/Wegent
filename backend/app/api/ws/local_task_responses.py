@@ -294,8 +294,15 @@ class LocalTaskResponsesHandler:
         never reach the channel emitter that is awaiting them.
         """
 
-        source = payload.get("source")
-        if not isinstance(source, dict) or source.get("source") != "im":
+        sources = {}
+        guided_sources = payload.get("standInGuidanceSources")
+        candidates = guided_sources.values() if isinstance(guided_sources, dict) else ()
+        for source in (payload.get("source"), *candidates):
+            if isinstance(source, dict) and source.get("source") == "im":
+                callback = source.get("callback_id")
+                if callback is None or isinstance(callback, str):
+                    sources[callback] = source
+        if not sources:
             return
 
         local_task_id = str(payload.get("taskId") or "").strip()
@@ -319,12 +326,13 @@ class LocalTaskResponsesHandler:
         if event is None:
             return
 
-        await self.forward_channel_callbacks(
-            device_id=device_id,
-            local_task_id=local_task_id,
-            source=source,
-            event=event,
-        )
+        for source in sources.values():
+            await self.forward_channel_callbacks(
+                device_id=device_id,
+                local_task_id=local_task_id,
+                source=source,
+                event=event,
+            )
 
     async def forward_channel_callbacks(
         self,

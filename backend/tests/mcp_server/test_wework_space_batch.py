@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.mcp_server.auth import MCPAuthInfo
 from app.mcp_server.tools import wework_space
 from app.mcp_server.tools.wework_space_batch import dispatch
-from app.models.delivery import LoopItem, LoopNode
+from app.models.delivery import LoopItem, LoopItemCollaborator, LoopNode
 from app.models.user import User
 from app.services.board_tools.protocol import TOOLS, validate
 from tests.mcp_server.test_wework_space import _project, _SessionContext, _token
@@ -49,6 +49,34 @@ def add_items(db: Session, project, user: User, count: int) -> list[LoopItem]:
     db.add_all(items)
     db.commit()
     return items
+
+
+def test_participation_search_uses_the_issue_participant_list(
+    board, test_db, test_user
+):
+    first, token, space = board
+    second = _project(test_db, test_user, provider="local")
+    included, created_or_assigned = add_items(test_db, first, test_user, 2)
+    other = add_items(test_db, second, test_user, 1)[0]
+    for issue in (included, other):
+        test_db.add(
+            LoopItemCollaborator(
+                loop_item_id=issue.id, user_id=test_user.id, source="manual"
+            )
+        )
+    test_db.commit()
+
+    page = dispatch(
+        "search_board_items",
+        token,
+        {"scope": {"kind": "accessible"}, "participation": "mine"},
+    )
+    assert page["coverage"]["complete"]
+    assert {item["id"] for item in page["items"]} == {included.id, other.id}
+    assert created_or_assigned.id not in {item["id"] for item in page["items"]}
+    result = wework_space.list_board_items(token, space["space_id"], True)
+    assert result["participation"] == "mine"
+    assert [item["id"] for item in result["items"]] == [included.id]
 
 
 @pytest.mark.parametrize(

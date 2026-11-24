@@ -47,6 +47,10 @@ pub(super) fn normalize_stand_in_identity(
     let mut changed = migrate_agent_binding(identity)?;
     changed |= migrate_identity_connections(identity)?;
     changed |= migrate_connection_timing(identity, immediate);
+    changed |= identity
+        .get_mut("workspace")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|workspace| workspace.remove("workspacePath").is_some());
     Ok(changed)
 }
 
@@ -302,6 +306,11 @@ pub fn role_project_matches(role: &Value, project: &str, store: &str) -> bool {
                 .is_some_and(|rows| rows.iter().any(matches)))
 }
 
+pub fn role_receives_participating_issues(role: &Value) -> bool {
+    role["collaboration"]["enabled"] == true
+        && role["collaboration"]["includeParticipatingIssues"] == true
+}
+
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
     if let Some(fields) = config.as_object_mut() {
@@ -444,6 +453,9 @@ fn valid_collaboration(source: &Value) -> bool {
         && source["allProjects"].is_boolean()
         && source
             .get("includeIndependentIssues")
+            .map_or(true, Value::is_boolean)
+        && source
+            .get("includeParticipatingIssues")
             .map_or(true, Value::is_boolean)
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
@@ -779,6 +791,18 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"]
         && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"];
     let enabled_at = json!(now());
+    if identity["enabled"] == true && role_receives_participating_issues(identity) {
+        identity["participatingIssuesEnabledAfter"] = if preserve
+            && role_receives_participating_issues(previous)
+            && previous["participatingIssuesEnabledAfter"].is_string()
+        {
+            previous["participatingIssuesEnabledAfter"].clone()
+        } else {
+            enabled_at.clone()
+        };
+    } else if let Some(fields) = identity.as_object_mut() {
+        fields.remove("participatingIssuesEnabledAfter");
+    }
     if identity["enabled"] == true
         && identity["collaboration"]["enabled"] == true
         && identity["collaboration"]["includeIndependentIssues"] == true

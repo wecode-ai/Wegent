@@ -85,6 +85,7 @@ fn accept_activity(handler: &RuntimeWorkRpcHandler, command_id: &str) {
         owner_resolution: None,
         resource_event_keys: Vec::new(),
         native: None,
+        guidance_turn_id: None,
         turn: SpawnTurnRequest {
             task_kind: None,
             local_task_id: super::super::stand_in_conversations::conversation_task_id(7, None),

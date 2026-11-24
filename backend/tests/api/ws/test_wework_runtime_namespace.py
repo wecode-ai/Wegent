@@ -95,6 +95,37 @@ async def test_runtime_event_forwards_im_chunk_to_channel_callbacks(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_guided_im_message_gets_current_turn_output(monkeypatch):
+    namespace = DeviceNamespace()
+    forward = AsyncMock()
+    monkeypatch.setattr(
+        local_task_responses, "forward_event_to_channel_callbacks", forward
+    )
+    guided_source = {**_im_source(), "callback_id": "guided-message"}
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": "response.output_text.delta",
+            "taskId": "runtime-375023196",
+            "subtaskId": "active-turn",
+            "data": {"delta": "Hi!", "offset": 3},
+            "standInGuidanceSources": {"guided-message": guided_source},
+        },
+    )
+
+    assert result == {"success": True}
+    forward.assert_awaited_once()
+    assert forward.await_args.kwargs["event"].content == "Hi!"
+    assert forward.await_args.kwargs["task_id"] == (
+        local_task_responses.runtime_local_task_callback_key(
+            "local-device", "runtime-375023196", "guided-message"
+        )
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("event_type", "event_data", "expected_type"),
     [

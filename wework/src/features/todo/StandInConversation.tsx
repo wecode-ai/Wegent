@@ -274,6 +274,7 @@ export function StandInConversation({
         assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
+        allowMessagesDuringApproval
         modelControls={conversationModelControls}
         expanded
         active={active}
