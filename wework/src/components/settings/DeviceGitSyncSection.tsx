@@ -69,6 +69,19 @@ function syncApplyErrorMessage(t: ReturnType<typeof useTranslation>['t'], error:
         return t('workbench.git_device_sync_in_progress')
       case 'git_sync_result_unconfirmed':
         return t('workbench.git_device_sync_result_unconfirmed')
+      case 'credential_payload_missing':
+      case 'credential_payload_invalid':
+      case 'git_sync_device_unavailable':
+        return t('workbench.git_device_sync_delivery_error')
+      case 'credential_lock_failed':
+      case 'credential_lock_invalid':
+        return t('workbench.git_device_sync_lock_error')
+      case 'managed_git_config_invalid':
+        return t('workbench.git_device_sync_generated_config_error')
+      case 'credential_rollback_failed':
+        return t('workbench.git_device_sync_rollback_error')
+      case 'credential_stage_failed':
+      case 'credential_publish_failed':
       case 'credential_apply_failed':
         return t('workbench.git_device_sync_failed')
     }

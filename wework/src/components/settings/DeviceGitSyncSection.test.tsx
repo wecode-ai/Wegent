@@ -104,11 +104,11 @@ test('shows a localized device failure and keeps the selected device retryable',
   render(<DeviceGitSyncSection />)
   await select()
 
-  await userEvent.click(screen.getByTestId('git-device-sync-submit'))
+  fireEvent.click(screen.getByTestId('git-device-sync-submit'))
   expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
     i18n.t('workbench.git_device_sync_git_missing', { ns: 'common' })
   )
-  await userEvent.click(screen.getByTestId('git-device-sync-submit'))
+  fireEvent.click(screen.getByTestId('git-device-sync-submit'))
 
   expect(await screen.findByTestId('git-device-sync-result')).toBeInTheDocument()
   expect(screen.queryByTestId('git-device-sync-error')).not.toBeInTheDocument()

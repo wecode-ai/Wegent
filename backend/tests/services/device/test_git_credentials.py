@@ -526,6 +526,29 @@ def test_missing_git_is_reported_before_staging_credentials(tmp_path):
     assert not (home / ".wegent").exists()
 
 
+def test_failed_clear_restores_aliased_profile(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    initial_sync = _run_sync_command(home, [_synthetic_account()])
+    assert initial_sync.returncode == 0, initial_sync.stdout
+    root = home / ".wegent/workbench/git-auth"
+    revision = (root / "current").readlink()
+    profile = home / ".bash_profile"
+    original = b"# >>> Wegent managed Git authentication >>>\nexport GH_CONFIG_DIR=test\n# <<< Wegent managed Git authentication <<<\n"
+    profile.write_bytes(original)
+    alias = home / ".profile"
+    alias.symlink_to(profile.name)
+    (home / ".zshrc").write_bytes(b"\xff")
+
+    cleared = _run_sync_command(home, [])
+
+    assert cleared.returncode == 1
+    assert json.loads(cleared.stdout) == {"error": "profile_update_failed"}
+    assert alias.readlink() == Path(profile.name)
+    assert profile.read_bytes() == original
+    assert (root / "current").readlink() == revision
+
+
 def test_legacy_cli_preference_timeout_keeps_git_credentials_active(
     tmp_path, monkeypatch
 ):
@@ -533,7 +556,9 @@ def test_legacy_cli_preference_timeout_keeps_git_credentials_active(
     home.mkdir()
     command_path = _isolated_command_path(tmp_path, tool="glab")
     account = {**_synthetic_account(), "provider": "gitlab"}
-    script = GIT_CREDENTIAL_SYNC_SCRIPT.removesuffix("main()") + """
+    script = (
+        GIT_CREDENTIAL_SYNC_SCRIPT.removesuffix("main()")
+        + """
 original_run = subprocess.run
 
 def run_with_preference_timeout(command, *args, **kwargs):
@@ -544,6 +569,7 @@ def run_with_preference_timeout(command, *args, **kwargs):
 subprocess.run = run_with_preference_timeout
 main()
 """
+    )
     monkeypatch.setattr(
         sys.modules[__name__],
         "SYNC_GIT_CREDENTIALS_COMMAND",

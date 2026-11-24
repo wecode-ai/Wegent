@@ -10,7 +10,10 @@ from app.services.device.git_credential_paths import GIT_CREDENTIAL_PATHS_SCRIPT
 
 GIT_CREDENTIALS_SECRET_ENV = "WEGENT_SECRET_GIT_CREDENTIALS"
 
-GIT_CREDENTIAL_SYNC_SCRIPT = GIT_CREDENTIAL_PATHS_SCRIPT + "\n" + r'''
+GIT_CREDENTIAL_SYNC_SCRIPT = (
+    GIT_CREDENTIAL_PATHS_SCRIPT
+    + "\n"
+    + r'''
 from contextlib import ExitStack, contextmanager
 import fcntl
 import hashlib
@@ -356,16 +359,14 @@ def strip_managed_blocks(content):
 
 def update_profile(path, enabled, root, backups):
     with report_io_failure("profile_update_failed"):
-        saved = snapshot(path)
+        target = path.resolve()
+        saved = snapshot(target)
         original = saved[0].decode("utf-8") if saved else ""
         content = managed_profile_content(original, enabled, root)
         if content == original:
             return
-        backups[path] = saved
-        if content:
-            write_file(path, content, saved[1] if saved else 0o600)
-        else:
-            path.unlink(missing_ok=True)
+        backups.setdefault(target, saved)
+        write_file(target, content, saved[1] if saved else 0o600)
 
 
 def managed_profile_content(original, enabled, root):
@@ -511,6 +512,7 @@ def clear_managed_state(home, root, current, revisions, global_config, profile_p
             if removed_root and removed_root.exists() and not root.exists():
                 os.replace(removed_root, root)
         raise
+
 
 def stage_accounts(home, root, staging, accounts):
     tokens_dir = staging / "tokens"
@@ -786,6 +788,7 @@ def main():
 
 main()
 '''.strip()
+)
 
 
 SYNC_GIT_CREDENTIALS_COMMAND = f"python3 -c {shlex.quote(GIT_CREDENTIAL_SYNC_SCRIPT)}"
