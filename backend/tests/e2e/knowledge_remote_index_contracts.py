@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Real API coverage for sharing, transfer and personal-key MCP access."""
+
 from __future__ import annotations
 
 import json
@@ -185,6 +186,10 @@ def _rpc(
     )
     body = _success(response, f"MCP {method}")
     _check("error" not in body, f"MCP {method} returned a protocol error")
+    _check(
+        body.get("jsonrpc") == "2.0" and body.get("id") == 1,
+        f"MCP {method} returned an invalid JSON-RPC envelope",
+    )
     return body["result"]
 
 
@@ -193,11 +198,315 @@ def _tool(
 ) -> dict[str, Any]:
     result = _rpc(client, key, "tools/call", {"name": name, "arguments": arguments})
     _check(not result.get("isError"), f"MCP {name} returned a tool error")
-    texts = [
-        item["text"] for item in result.get("content", []) if item["type"] == "text"
-    ]
-    _check(len(texts) == 1, f"MCP {name} returned no JSON payload")
-    return json.loads(texts[0])
+    blocks = result.get("content", [])
+    _check(
+        len(blocks) == 1 and blocks[0].get("type") == "text",
+        f"MCP {name} must return one JSON text block",
+    )
+    text = blocks[0]["text"]
+    payload = json.loads(text)
+    _check(isinstance(payload, dict), f"MCP {name} returned double-encoded JSON")
+    structured = result.get("structuredContent")
+    if arguments.get("response_format") == "structured":
+        _check(
+            structured == payload, f"MCP {name} structured payload differs from text"
+        )
+    else:
+        _check(
+            structured == {"result": text},
+            f"MCP {name} changed the default legacy result envelope",
+        )
+    return payload
+
+
+def _mcp_search_document(
+    client: httpx.Client,
+    token: str,
+    kb_id: int,
+    cleanup: ExitStack,
+    query: str,
+    ranks: tuple[int, ...],
+    marker: str,
+) -> int:
+    # Separate Markdown sections create real chunks without overlap or merging.
+    content = "\n\n".join(
+        f"# Match {rank}\n\n{query} WEGENT-MCP-RANK-{rank} {marker}" for rank in ranks
+    )
+    attachment = _success(
+        client.post(
+            "/api/attachments/upload",
+            headers=_auth_headers(token),
+            files={"file": ("mcp-matches.md", content.encode(), "text/markdown")},
+        ),
+        "upload MCP matching sections",
+    )
+    document = _success(
+        client.post(
+            f"/api/knowledge-bases/{kb_id}/documents",
+            headers=_auth_headers(token),
+            json={
+                "attachment_id": int(attachment["id"]),
+                "name": "mcp-matches.md",
+                "file_extension": "md",
+                "splitter_config": {
+                    "chunk_strategy": "flat",
+                    "format_enhancement": "file_aware",
+                    "flat_config": {"chunk_size": 256, "chunk_overlap": 0},
+                    "markdown_enhancement": {"enabled": False},
+                },
+            },
+        ),
+        "create MCP matching document",
+    )
+    doc_id = int(document["id"])
+    cleanup.callback(_cleanup, client, token, f"/api/knowledge-documents/{doc_id}")
+    _wait_for_index_status(client, token, kb_id, doc_id, "success")
+    chunks = _document_chunks(client, token, doc_id)
+    _check(len(chunks) == len(ranks), f"MCP document {doc_id} chunk count mismatch")
+    for rank in ranks:
+        _check(
+            sum(
+                query in chunk["content"]
+                and f"WEGENT-MCP-RANK-{rank}" in chunk["content"]
+                and marker in chunk["content"]
+                for chunk in chunks
+            )
+            == 1,
+            f"MCP document {doc_id} lacks one distinct matching chunk for rank {rank}",
+        )
+    return doc_id
+
+
+def _mcp_search_base(client: httpx.Client, token: str, cleanup: ExitStack) -> int:
+    name = f"e2e-mcp-diversity-{uuid.uuid4().hex[:12]}"
+    _create_retrieval_resources(
+        client,
+        token,
+        name,
+        embedding_url=EMBEDDING_MODEL_URL,
+        embedding_model_id=name,
+        on_created=lambda path: cleanup.callback(_cleanup, client, token, path),
+    )
+    kb_id = int(_create_knowledge_base(client, token, name, name)["id"])
+    cleanup.callback(_delete_knowledge_base, client, token, kb_id)
+    _success(
+        client.put(
+            f"/api/knowledge-bases/{kb_id}",
+            headers=_auth_headers(token),
+            json={"retrieval_config": {"top_k": 10}},
+        ),
+        "set MCP candidate window",
+    )
+    return kb_id
+
+
+def _assert_mcp_search_counts(
+    payload: dict[str, Any],
+    *,
+    total: int,
+    returned: int,
+    documents: int,
+    deduplicate: bool,
+) -> None:
+    records = payload.get("records", [])
+    document_ids = {
+        (record["knowledge_base_id"], record["document_id"]) for record in records
+    }
+    _check(
+        payload.get("total") == total
+        and payload.get("total_returned") == returned == len(records),
+        "MCP candidate/returned record counts mismatch",
+    )
+    _check(
+        payload.get("returned_document_count") == documents == len(document_ids),
+        "MCP returned document count mismatch",
+    )
+    _check(
+        payload.get("deduplicate_by_document") is deduplicate,
+        "MCP document mode was not preserved",
+    )
+    scores = [record["score"] for record in records]
+    _check(
+        all(isinstance(score, (int, float)) for score in scores)
+        and scores == sorted(scores, reverse=True),
+        "MCP real hits are not ranked by score",
+    )
+
+
+def _assert_mcp_diversity(
+    client: httpx.Client,
+    key: str,
+    arguments: dict[str, Any],
+    doc_ids: list[int],
+) -> dict[str, Any]:
+    raw = _tool(client, key, "wegent_kb_search_content", arguments)
+    _assert_mcp_search_counts(raw, total=6, returned=6, documents=2, deduplicate=False)
+    _check(
+        raw.get("searched_knowledge_base_ids") == arguments["knowledge_base_ids"]
+        and raw.get("ignored_knowledge_base_ids") == []
+        and raw.get("warnings") == [],
+        "MCP accessible-only search scope mismatch",
+    )
+    best = []
+    for doc_id, rank in zip(doc_ids, (1, 4)):
+        hits = [record for record in raw["records"] if record["document_id"] == doc_id]
+        _check(len(hits) == 3, f"MCP document {doc_id} must have three real hits")
+        _check(
+            hits[0]["score"] > hits[1]["score"] > hits[2]["score"]
+            and f"WEGENT-MCP-RANK-{rank}" in hits[0]["content"],
+            f"MCP document {doc_id} highest-scoring chunk mismatch",
+        )
+        best.append(hits[0])
+    limited = _tool(
+        client, key, "wegent_kb_search_content", {**arguments, "max_results": 2}
+    )
+    _assert_mcp_search_counts(
+        limited, total=6, returned=2, documents=1, deduplicate=False
+    )
+    _check(limited["records"] == raw["records"][:2], "MCP chunk limit changed ranking")
+    document_arguments = {**arguments, "deduplicate_by_document": True}
+    for limit in (5, 2, 1):
+        distinct = _tool(
+            client,
+            key,
+            "wegent_kb_search_content",
+            {**document_arguments, "max_results": limit},
+        )
+        count = min(limit, len(doc_ids))
+        _assert_mcp_search_counts(
+            distinct, total=6, returned=count, documents=count, deduplicate=True
+        )
+        _check(
+            distinct["records"] == best[:limit],
+            "MCP must retain each document's highest score before applying max_results",
+        )
+    return raw
+
+
+def _assert_mcp_scope_rejected(
+    client: httpx.Client, key: str, arguments: dict[str, Any], private_kb: int
+) -> None:
+    for deduplicate in (False, True):
+        refused = _tool(
+            client,
+            key,
+            "wegent_kb_search_content",
+            {
+                **arguments,
+                "knowledge_base_ids": [private_kb],
+                "deduplicate_by_document": deduplicate,
+            },
+        )
+        _check(
+            refused
+            == {"code": "not_found", "error": "No accessible knowledge bases found"},
+            "MCP unauthorized-only scope must reject an existing private KB without data",
+        )
+
+
+def _assert_mcp_private_scope(
+    client: httpx.Client,
+    key: str,
+    arguments: dict[str, Any],
+    baseline: dict[str, Any],
+    private_kb: int,
+    private_doc: int,
+    private_marker: str,
+) -> None:
+    _assert_mcp_scope_rejected(client, key, arguments, private_kb)
+    for deduplicate, limit in ((False, 10), (True, 2)):
+        mixed = _tool(
+            client,
+            key,
+            "wegent_kb_search_content",
+            {
+                **arguments,
+                "knowledge_base_ids": [private_kb, *arguments["knowledge_base_ids"]],
+                "deduplicate_by_document": deduplicate,
+                "max_results": limit,
+            },
+        )
+        count = 2 if deduplicate else 6
+        _assert_mcp_search_counts(
+            mixed, total=6, returned=count, documents=2, deduplicate=deduplicate
+        )
+        highest_hits: dict[int, dict[str, Any]] = {}
+        for record in baseline["records"]:
+            highest_hits.setdefault(record["document_id"], record)
+        expected = list(highest_hits.values()) if deduplicate else baseline["records"]
+        _check(mixed["records"] == expected, "MCP mixed scope changed accessible hits")
+        _check(
+            mixed.get("searched_knowledge_base_ids") == arguments["knowledge_base_ids"]
+            and mixed.get("ignored_knowledge_base_ids") == [private_kb]
+            and mixed.get("warnings"),
+            "MCP mixed scope did not report the inaccessible KB as ignored",
+        )
+        _check(
+            all(
+                record["knowledge_base_id"] != private_kb
+                and record["document_id"] != private_doc
+                and private_marker not in record["content"]
+                for record in mixed["records"]
+            ),
+            "MCP mixed scope leaked private records",
+        )
+
+
+def _run_mcp_search_contracts(
+    client: httpx.Client, key: str, owner: str, reader: str, reader_id: int
+) -> None:
+    query = f"MCP-MATCH-{uuid.uuid4().hex[:12]}"
+    private_marker = f"PRIVATE-{uuid.uuid4().hex[:12]}"
+    with ExitStack() as cleanup:
+        accessible_kb = _mcp_search_base(client, owner, cleanup)
+        doc_ids = [
+            _mcp_search_document(
+                client, owner, accessible_kb, cleanup, query, ranks, "public-match"
+            )
+            for ranks in ((3, 2, 1), (6, 5, 4))
+        ]
+        private_kb = _mcp_search_base(client, reader, cleanup)
+        private_doc = _mcp_search_document(
+            client, reader, private_kb, cleanup, query, (7, 0), private_marker
+        )
+        _assert_denied(
+            client.get(
+                f"/api/knowledge-documents/{private_doc}/detail",
+                headers=_auth_headers(owner),
+            ),
+            "owner access to the other user's private fixture",
+        )
+        # Prove the excluded document actually matches in the real index.
+        private_hits = _success(
+            _internal_retrieve(
+                client, private_kb, private_doc, query, user_id=reader_id
+            ),
+            "private owner retrieval",
+        ).get("records", [])
+        _check(
+            len(private_hits) == 2
+            and all(private_marker in record["content"] for record in private_hits),
+            "private fixture must have two real matching chunks",
+        )
+        for response_format in (None, "structured"):
+            arguments: dict[str, Any] = {
+                "query": query,
+                "knowledge_base_ids": [accessible_kb],
+                "max_results": 10,
+            }
+            if response_format is not None:
+                arguments["response_format"] = response_format
+            baseline = _assert_mcp_diversity(client, key, arguments, doc_ids)
+            _assert_mcp_private_scope(
+                client,
+                key,
+                arguments,
+                baseline,
+                private_kb,
+                private_doc,
+                private_marker,
+            )
+    _log("MCP: real multi-chunk diversity, counts, envelopes and private scopes passed")
 
 
 def _run_mcp(
@@ -207,6 +516,8 @@ def _run_mcp(
     other_kb_id: int,
     doc_id: int,
     marker: str,
+    reader: str,
+    reader_id: int,
 ) -> None:
     created = _success(
         client.post(
@@ -298,6 +609,7 @@ def _run_mcp(
                 "MCP invalid scope did not return its specific error",
             )
             _check("records" not in refused, "MCP invalid scope returned document data")
+        _run_mcp_search_contracts(client, key, token, reader, reader_id)
     finally:
         _cleanup(client, token, f"/api/api-keys/{key_id}")
     revoked = client.post(
@@ -410,4 +722,6 @@ def run_contract_scenarios(
         _wait_for_index_status(client, token, source, doc_id, "success")
         _run_sharing(client, token, reader, reader_id, source, doc_id, marker)
         _run_transfer(client, token, source, target, doc_id, f"{marker}-edited", group)
-        _run_mcp(client, token, target, source, doc_id, f"{marker}-edited")
+        _run_mcp(
+            client, token, target, source, doc_id, f"{marker}-edited", reader, reader_id
+        )

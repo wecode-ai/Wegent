@@ -5511,6 +5511,7 @@
     "automation_cloud": "Cloud",
     "automation_cloud_requires_connection": "Connect Wegent to use cloud automations",
     "automation_select_device": "Select a device",
+    "automation_saved_project": "Saved project",
     "automation_this_computer": "This computer",
     "automation_target_required": "Select a device",
     "automation_target_task_required": "Select an available pinned task",

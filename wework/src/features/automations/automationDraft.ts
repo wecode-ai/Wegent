@@ -22,6 +22,8 @@ import type {
 export type ScheduleType = AutomationSchedule['type']
 export type CronPreset = 'weekdays' | 'daily' | 'weekly' | 'custom'
 export type CustomFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'cron'
+type AutomationProjectTarget = RuntimeTaskWorkspaceBinding &
+  Pick<RuntimeTaskCreateRequest, 'workspacePath'>
 
 export interface AutomationDraft {
   originalSchedule?: { schedule: AutomationSchedule; fields: string }
@@ -43,7 +45,7 @@ export interface AutomationDraft {
   executeAt: string
   timezone: string
   deviceId: string
-  workspacePath: string
+  projectTarget: AutomationProjectTarget | null
   conversationMode: AutomationConversationMode
   continuationAddress: RuntimeTaskAddress | null
   goalEnabled: boolean
@@ -59,7 +61,7 @@ export interface AutomationProjectOption {
   workspacePath: string
   workspaceKind: RuntimeProjectWork['deviceWorkspaces'][number]['workspaceKind']
   workspaceLabel: string | null
-  target: RuntimeTaskWorkspaceBinding
+  target: AutomationProjectTarget
 }
 
 export interface AutomationTaskOption {
@@ -112,26 +114,53 @@ export function buildAutomationProjectOptions(
   })
 }
 
+export function findAutomationProjectOption(
+  options: AutomationProjectOption[],
+  target: AutomationProjectTarget | null
+): AutomationProjectOption | undefined {
+  if (!target) return undefined
+  const workspacePath = normalizeRuntimeWorkspacePath(target.workspacePath ?? '')
+  return options.find(option => {
+    if (target.projectId != null && target.projectId !== option.target.projectId) return false
+    if (target.runtimeProjectKey && target.runtimeProjectKey !== option.target.runtimeProjectKey)
+      return false
+    if (target.deviceWorkspaceId != null)
+      return target.deviceWorkspaceId === option.target.deviceWorkspaceId
+    return !workspacePath || workspacePath === normalizeRuntimeWorkspacePath(option.workspacePath)
+  })
+}
+
+export function automationProjectTargetForPath(
+  projects: RuntimeProjectWork[],
+  deviceId: string,
+  workspacePath?: string | null
+): AutomationProjectTarget | null {
+  if (!workspacePath) return null
+  const options = buildAutomationProjectOptions(projects, deviceId)
+  return findAutomationProjectOption(options, { workspacePath })?.target ?? { workspacePath }
+}
+
 function automationProjectTarget(
   project: RuntimeProjectWork,
   workspace: RuntimeProjectWork['deviceWorkspaces'][number]
-): RuntimeTaskWorkspaceBinding {
+): AutomationProjectTarget {
   const isDeviceProject =
     project.project.source === 'local_project' || project.project.source === 'remote_project'
   const backendProjectId =
     workspace.projectId ?? (!isDeviceProject ? project.project.id : undefined)
+  const workspaceTarget =
+    workspace.id == null
+      ? { workspacePath: workspace.workspacePath }
+      : { deviceWorkspaceId: workspace.id }
   if (backendProjectId != null) {
-    return {
-      projectId: backendProjectId,
-      ...(workspace.id != null ? { deviceWorkspaceId: workspace.id } : {}),
-    }
+    return { projectId: backendProjectId, ...workspaceTarget }
   }
   return {
     deviceId:
       workspace.workspaceSource === 'remote' && workspace.remoteHostId
         ? workspace.remoteHostId
         : workspace.deviceId,
-    ...(workspace.id != null ? { deviceWorkspaceId: workspace.id } : {}),
+    ...workspaceTarget,
     runtimeProjectKey: project.project.key,
     runtimeProjectName: project.project.name,
     runtimeWorkspaceRoots: [
@@ -216,7 +245,7 @@ export function automationTaskKey(address: RuntimeTaskAddress | null | undefined
 export function emptyAutomationDraft(
   source: AutomationSource,
   deviceId = '',
-  workspacePath = '',
+  projectTarget: AutomationProjectTarget | null = null,
   selectedModel: UnifiedModel | null = null,
   selectedModelOptions: ModelOptions = {}
 ): AutomationDraft {
@@ -239,7 +268,7 @@ export function emptyAutomationDraft(
     executeAt: toDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)),
     timezone: getDeviceTimezone(),
     deviceId,
-    workspacePath,
+    projectTarget,
     conversationMode: 'independent',
     continuationAddress: null,
     goalEnabled: false,
@@ -261,12 +290,6 @@ export function automationModelFields(
     modelType: execution.modelType ?? '',
     modelOptions: execution.modelOptions ?? {},
   }
-}
-
-export function automationWorkspaceTarget(
-  target: RuntimeTaskWorkspaceBinding | null | undefined
-): RuntimeTaskWorkspaceBinding | Pick<RuntimeTaskCreateRequest, 'standaloneChatWorkspace'> {
-  return target ? { ...target } : { standaloneChatWorkspace: true }
 }
 
 export function toDateTimeLocal(date: Date): string {
@@ -314,23 +337,21 @@ function cronSchedule(draft: AutomationDraft, expression: string): AutomationSch
   return { type: 'cron', expression, ...(draft.workdayOnly ? { workdayOnly: true } : {}) }
 }
 
-export function automationDraftFromAutomation(
-  automation: Automation,
-  runtimeWork?: RuntimeWorkListResponse | null
-): AutomationDraft {
+export function automationDraftFromAutomation(automation: Automation): AutomationDraft {
   const payload = (automation.taskRequest ?? automation.taskPayload ?? {}) as unknown as Record<
     string,
     unknown
   >
   const deviceId = String(payload.deviceId ?? payload.device_id ?? '')
-  const workspacePath =
-    String(payload.workspacePath ?? payload.workspace_path ?? '') ||
-    workspacePathFromStableBinding(payload, runtimeWork)
   const modelOptions =
     payload.modelOptions && typeof payload.modelOptions === 'object'
       ? (payload.modelOptions as ModelOptions)
       : {}
-  const draft = emptyAutomationDraft(automation.source, deviceId, workspacePath)
+  const draft = emptyAutomationDraft(
+    automation.source,
+    deviceId,
+    automationProjectTargetFromPayload(payload)
+  )
   draft.calendarTemplate = automation.taskRequest?.standInCalendar?.template
   draft.name = automation.name
   draft.prompt = automation.prompt
@@ -385,33 +406,31 @@ function scheduleFields(draft: AutomationDraft): string {
   ])
 }
 
-function workspacePathFromStableBinding(
-  payload: Record<string, unknown>,
-  runtimeWork?: RuntimeWorkListResponse | null
-): string {
-  const projectId = Number(payload.projectId ?? payload.project_id)
-  const deviceWorkspaceId = Number(payload.deviceWorkspaceId ?? payload.device_workspace_id)
-  const deviceId = String(payload.deviceId ?? payload.device_id ?? '')
+function automationProjectTargetFromPayload(
+  payload: Record<string, unknown>
+): AutomationProjectTarget | null {
+  if ((payload.standaloneChatWorkspace ?? payload.standalone_chat_workspace) === true) return null
+  const projectId = Number(payload.projectId ?? payload.project_id ?? NaN)
+  const deviceWorkspaceId = Number(payload.deviceWorkspaceId ?? payload.device_workspace_id ?? NaN)
+  const hasProjectId = Number.isFinite(projectId)
+  const hasWorkspaceId = Number.isFinite(deviceWorkspaceId)
   const runtimeProjectKey = String(payload.runtimeProjectKey ?? payload.runtime_project_key ?? '')
-  for (const project of runtimeWork?.projects ?? []) {
-    if (
-      runtimeProjectKey &&
-      project.project.key === runtimeProjectKey &&
-      project.deviceWorkspaces.some(workspace => workspace.deviceId === deviceId)
-    ) {
-      return (
-        project.deviceWorkspaces.find(workspace => workspace.deviceId === deviceId)
-          ?.workspacePath ?? ''
-      )
-    }
-    const workspace = project.deviceWorkspaces.find(
-      candidate =>
-        (Number.isFinite(deviceWorkspaceId) && candidate.id === deviceWorkspaceId) ||
-        (Number.isFinite(projectId) && candidate.projectId === projectId)
-    )
-    if (workspace) return workspace.workspacePath
+  const workspacePath = String(payload.workspacePath ?? payload.workspace_path ?? '')
+  if (!hasProjectId && !hasWorkspaceId && !runtimeProjectKey && !workspacePath) return null
+  const runtimeProjectName = String(
+    payload.runtimeProjectName ?? payload.runtime_project_name ?? ''
+  )
+  const runtimeWorkspaceRoots = payload.runtimeWorkspaceRoots ?? payload.runtime_workspace_roots
+  return {
+    ...(hasProjectId ? { projectId } : {}),
+    ...(hasWorkspaceId ? { deviceWorkspaceId } : {}),
+    ...(runtimeProjectKey ? { runtimeProjectKey } : {}),
+    ...(runtimeProjectName ? { runtimeProjectName } : {}),
+    ...(Array.isArray(runtimeWorkspaceRoots)
+      ? { runtimeWorkspaceRoots: runtimeWorkspaceRoots.filter(root => typeof root === 'string') }
+      : {}),
+    ...(workspacePath ? { workspacePath } : {}),
   }
-  return ''
 }
 
 export function initialGoalFromAutomationDraft(

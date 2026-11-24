@@ -1,7 +1,6 @@
 import type { SetStateAction } from 'react'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { RuntimeWorkListResponse } from '@/types/api'
 import type { Automation, AutomationRun } from '@/types/automation'
 import { automationDraftFromAutomation, type AutomationDraft } from './automationDraft'
 
@@ -42,7 +41,6 @@ export function createAutomationPageSource(owner: Owner) {
   let generation = 0
   let navigationVersion = 0
   let initialResolved = false
-  let runtimeWork: RuntimeWorkListResponse | null = null
   const patch = (change: Partial<PageState>) => {
     const previous = state
     state = { ...state, ...change }
@@ -98,7 +96,7 @@ export function createAutomationPageSource(owner: Owner) {
           patch({
             selectedAutomationId: initial.id,
             editing: initial,
-            draft: automationDraftFromAutomation(initial, runtimeWork),
+            draft: automationDraftFromAutomation(initial),
             dirty: false,
           })
       },
@@ -194,8 +192,7 @@ export function createAutomationPageSource(owner: Owner) {
         })
       }
     },
-    subscribeCatalog(notify: () => void, work: RuntimeWorkListResponse | null) {
-      runtimeWork = work
+    subscribeCatalog(notify: () => void) {
       let active = true
       const stop = catalog.subscribe(() => {
         if (active) notify()

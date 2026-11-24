@@ -5502,6 +5502,7 @@
     "automation_cloud": "云端",
     "automation_cloud_requires_connection": "连接 Wegent 后可使用云端自动化",
     "automation_select_device": "选择设备",
+    "automation_saved_project": "已保存的项目",
     "automation_this_computer": "此电脑",
     "automation_target_required": "请选择设备",
     "automation_target_task_required": "请选择一个可用的已固定任务",

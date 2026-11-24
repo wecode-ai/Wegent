@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
     str::FromStr,
@@ -42,6 +42,10 @@ struct AutomationState {
     version: u64,
     automations: HashMap<String, Automation>,
     runs: Vec<AutomationRun>,
+    #[serde(skip)]
+    restored_active_run_ids: HashSet<String>,
+    #[serde(skip)]
+    interrupted_run_ids: HashSet<String>,
     stand_in_onboarding: HashMap<i64, Value>,
     stand_in_memory_initialized: std::collections::HashSet<i64>,
 }
@@ -130,6 +134,8 @@ pub struct AutomationRun {
     pub scheduled_for: DateTime<Utc>,
     pub trigger: String,
     pub status: AutomationRunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_mode: Option<ConversationMode>,
     #[serde(default)]
     pub task_id: Option<String>,
     #[serde(default)]
@@ -138,6 +144,38 @@ pub struct AutomationRun {
     pub updated_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordination: Option<ArrangementBinding>,
+}
+
+impl AutomationRun {
+    pub fn independent_task_id(&self, started_at: DateTime<Utc>) -> String {
+        format!(
+            "{}{}",
+            self.independent_task_prefix(),
+            started_at.timestamp_millis()
+        )
+    }
+
+    fn independent_task_prefix(&self) -> String {
+        let prefix = self.automation_id.chars().take(8).collect::<String>();
+        format!("automation-{prefix}-")
+    }
+
+    fn owns_task_for_goal_recovery(&self) -> bool {
+        if let Some(mode) = self.conversation_mode {
+            return matches!(mode, ConversationMode::Independent);
+        }
+        // Older records did not capture the mode. Earlier tasks with the same
+        // prefix could be targets of a later thread continuation.
+        let prefix = self.independent_task_prefix();
+        self.task_id
+            .as_deref()
+            .and_then(|task_id| task_id.strip_prefix(&prefix))
+            .and_then(|timestamp| timestamp.parse::<i64>().ok())
+            .is_some_and(|timestamp| {
+                (self.created_at.timestamp_millis()..=self.updated_at.timestamp_millis())
+                    .contains(&timestamp)
+            })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -302,6 +340,7 @@ impl AutomationStore {
 
     pub fn due(&self, now: DateTime<Utc>) -> Result<Vec<(Automation, AutomationRun)>, String> {
         let mut state = self.lock_state()?;
+        self.persist_interrupted_runs(&mut state)?;
         let mut due = Vec::new();
         let automation_ids = state.automations.keys().cloned().collect::<Vec<_>>();
         for automation_id in automation_ids {
@@ -370,6 +409,7 @@ impl AutomationStore {
                 scheduled_for,
                 trigger: "scheduled".to_owned(),
                 status,
+                conversation_mode: Some(automation.conversation_mode),
                 task_id: None,
                 error: if dispatch_error.is_some() {
                     dispatch_error
@@ -416,6 +456,7 @@ impl AutomationStore {
             .ok_or_else(|| "automation not found".to_owned())?;
         let now = Utc::now();
         let mut state = self.lock_state()?;
+        self.persist_interrupted_runs(&mut state)?;
         let active = state.runs.iter().any(|run| {
             run.automation_id == automation_id
                 && matches!(
@@ -435,6 +476,7 @@ impl AutomationStore {
             } else {
                 AutomationRunStatus::Pending
             },
+            conversation_mode: Some(automation.conversation_mode),
             task_id: None,
             error: active.then(|| "previous automation run is still active".to_owned()),
             created_at: now,
@@ -531,6 +573,66 @@ impl AutomationStore {
 
     pub fn list_runs(&self, automation_id: Option<&str>) -> Vec<AutomationRun> {
         self.list_matching_runs(|run| automation_id.map_or(true, |id| run.automation_id == id))
+    }
+
+    pub fn reconcile_interrupted_runs(
+        &self,
+        resumable_run_ids: &HashSet<&str>,
+        resumable_goal_task_ids: &HashSet<&str>,
+    ) -> Result<usize, String> {
+        let mut state = self.lock_state()?;
+        let restored = std::mem::take(&mut state.restored_active_run_ids);
+        if !restored.is_empty() {
+            state.interrupted_run_ids = state
+                .runs
+                .iter()
+                .filter(|run| {
+                    if !restored.contains(&run.id) || resumable_run_ids.contains(run.id.as_str()) {
+                        return false;
+                    }
+                    // Independent runs own a task. A Goal follow-up may replace the turn
+                    // that originally carried its automation metadata.
+                    !(run
+                        .task_id
+                        .as_deref()
+                        .is_some_and(|id| resumable_goal_task_ids.contains(id))
+                        && run.owns_task_for_goal_recovery())
+                })
+                .map(|run| run.id.clone())
+                .collect();
+        }
+        self.persist_interrupted_runs(&mut state)
+    }
+
+    fn persist_interrupted_runs(&self, state: &mut AutomationState) -> Result<usize, String> {
+        // Keep the startup classification until it is saved. Both scheduling
+        // paths retry it before testing whether a previous run is still active.
+        if state.interrupted_run_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut next = state.clone();
+        let now = Utc::now();
+        let mut reconciled = 0;
+        for run in &mut next.runs {
+            if next.interrupted_run_ids.contains(&run.id)
+                && matches!(
+                    run.status,
+                    AutomationRunStatus::Pending | AutomationRunStatus::Running
+                )
+            {
+                run.status = AutomationRunStatus::NeedsAttention;
+                run.error =
+                    Some("Executor restarted before the automation run could finish".into());
+                run.updated_at = now;
+                reconciled += 1;
+            }
+        }
+        if reconciled > 0 {
+            self.write_state(&next)?;
+        }
+        next.interrupted_run_ids.clear();
+        *state = next;
+        Ok(reconciled)
     }
 
     pub fn list_matching_runs(
@@ -859,6 +961,23 @@ fn read_state(path: &PathBuf) -> AutomationState {
     if migrate_automation_state(&mut state, Utc::now()) {
         let _ = write_state_file(path, &state);
     }
+    // Only runs read from disk can belong to a stopped Executor. Multiple
+    // handlers can share this store with a scheduler already running.
+    state.restored_active_run_ids = state
+        .runs
+        .iter()
+        .filter(|run| {
+            matches!(
+                run.status,
+                AutomationRunStatus::Pending | AutomationRunStatus::Running
+            ) && run.coordination.is_none()
+                && !state
+                    .automations
+                    .get(&run.automation_id)
+                    .is_some_and(|automation| automation.task_request["standInOwner"].is_object())
+        })
+        .map(|run| run.id.clone())
+        .collect();
     state
 }
 

@@ -139,6 +139,18 @@ set_external_knowledge_creator_resolver(enterprise_creator_resolver)
 
 ## 工具
 
+五个工具都支持可选参数 `response_format`，默认保留原有响应格式：
+
+| 名称 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `response_format` | `string` | `legacy` | `legacy` 保留 JSON 字符串包装；`structured` 直接返回业务对象 |
+
+省略该参数或传入 `legacy` 时，`structuredContent.result` 仍是业务 JSON 字符串，
+`content[].text` 保留相同的 JSON 文本。传入 `response_format="structured"` 时，
+`structuredContent` 直接包含业务对象，没有 `result` 包装；文本内容仍包含业务 JSON。
+成功响应和工具返回的业务错误都使用所选格式。MCP 框架的参数校验或执行错误会设置
+`isError=true`，可能没有 `structuredContent`，调用方应先检查 `isError`。
+
 ### `wegent_kb_list_knowledge_bases`
 
 返回当前认证用户可访问的知识库列表。
@@ -184,6 +196,8 @@ set_external_knowledge_creator_resolver(enterprise_creator_resolver)
 - `recursive` 和 `include_inactive` 必须是严格 boolean；字符串 `"false"` 不会被接受。
 - `include_inactive` 默认是 `true`，因此 inactive 文档会展示给业务方，与内部 MCP 保持一致。调用方可根据返回的 `index_status` 判断文档是否可用于搜索。
 - 文档节点会返回 `creator`；文件夹节点没有独立创建者信息，`creator` 为 `null`。
+- 文档节点返回已有的 `short_summary` 和 `summary_status`；尚无短摘要时，`short_summary`
+  为 `null`。目录请求不从附件正文派生预览，也不会实时生成摘要。文件夹字段为 `null`。
 - 非递归模式返回 `total_available` 和 `has_more`，调用方应使用 `limit`/`offset` 翻页。
 - `total_returned` 统计响应树中的全部节点，包括嵌套 children。
 - 根目录递归会先统计候选文件夹和文档数量，超过 `MAX_RECURSIVE_NODES` 时直接返回 `result_too_large`，避免先加载整棵大树。
@@ -205,6 +219,8 @@ set_external_knowledge_creator_resolver(enterprise_creator_resolver)
 行为：
 
 - 返回内容来自文档附件解析后的文本，不直接返回原始二进制文件。
+- 只读取文档所属用户的附件上下文。优先选择有效转换附件的正文，转换正文缺失、为空或
+  仅包含空白时使用原始附件正文；保留选中正文中的原始空白字符。
 - `content_available` 表示当前文档是否有可读解析文本。
 - `has_more` 表示后续还有更多文本，调用方应使用 `offset`/`limit` 分页读取。
 - 返回 `index_status`，调用方可据此判断文档索引状态。
@@ -252,15 +268,27 @@ flowchart TD
 | --- | --- | --- | --- |
 | `query` | `string` | required | 检索问题，最多 `2000` 个字符 |
 | `knowledge_base_ids` | `list[int]` | required | 指定知识库 ID 列表，去重后最多 `100` 个，必须非空 |
-| `max_results` | `int` | `10` | 返回结果数量，范围 `1..50` |
+| `max_results` | `int` | `10` | 两种搜索模式下均限制返回记录数，范围 `1..50` |
+| `deduplicate_by_document` | `bool` | `false` | 是否按知识库和文档 ID 去重，每篇已知文档只返回评分最高的一个片段 |
 
 行为：
 
 - `knowledge_base_ids` 必须显式传入，且不能为空。外部调用方应先调用 `wegent_kb_list_knowledge_bases`，再指定知识库搜索。
 - `knowledge_base_ids` 会先去重再校验数量上限，重复 ID 不会放大权限查询。
 - `max_results` 必须是严格整数，字符串 `"10"` 不会被接受。
+- `deduplicate_by_document` 必须是严格 boolean，仅接受 `true` 和 `false`；字符串 `"false"`、
+  整数 `1` 和 `null` 会在 MCP 边界被拒绝。默认按片段返回；开启时按知识库 ID 和文档 ID
+  去重，并在去重后应用 `max_results`。缺少文档 ID 的结果独立保留，也会占用记录名额，
+  因此文档模式不保证返回 `max_results` 篇已知文档。
+- 文档模式把候选 `top_k` 扩大到至少 `min(max_results * 4, 200)`，并保留已经配置的更大窗口。
+  有限候选池不保证覆盖全库所有相关文档。
+- `total` 表示层级父节点合并之后、文档去重和最终截断之前的候选记录数量，
+  不是原始子片段数量或全库匹配文档数量；`total_returned` 是实际返回记录数，
+  `returned_document_count` 是其中有明确 ID 的不同文档数；响应回显 `deduplicate_by_document`。
 - 不可访问的 `knowledge_base_ids` 会被忽略，并通过 `ignored_knowledge_base_ids` 和 `warnings` 返回；如果没有任何可访问知识库，返回 `not_found`。
 - 搜索结果优先读取顶层 `document_id`，如果不存在则兼容读取 `metadata.document_id`、顶层 `doc_ref` 或 `metadata.doc_ref`。
+- 文档模式要求 Knowledge Runtime 升级到支持 `deduplicate_by_document` 的版本。
+  默认片段模式不会向 Runtime 发送该新增字段，保留与旧版 Runtime 的请求兼容性。
 
 搜索只有一条执行路径：检索始终由 Knowledge Runtime 执行。外部搜索工具只发送知识库 ID 与本次获准使用的检索范围，
 不发送连接密钥或完整执行配置；Knowledge Runtime 按引用自行解析每个知识库的运行时配置：
@@ -285,7 +313,8 @@ Backend 内的 local 执行路径与 `RAG_RUNTIME_MODE` 开关已被移除。原
 
 ## 错误返回
 
-工具以 JSON 字符串返回错误：
+工具返回的业务错误对象如下。默认 `legacy` 模式把它序列化到 `structuredContent.result`
+和 `content[].text`；`structured` 模式直接把对象放在 `structuredContent` 中：
 
 ```json
 {
@@ -293,6 +322,9 @@ Backend 内的 local 执行路径与 `RAG_RUNTIME_MODE` 开关已被移除。原
   "code": "bad_request"
 }
 ```
+
+MCP 框架的参数校验或执行错误使用 `isError=true` 和文本错误内容，可能不包含
+`structuredContent`，也不保证具有下面的业务 `code` 字段。
 
 常见 `code`：
 
