@@ -4,26 +4,35 @@ import { useStandInComposerCatalog } from './useStandInComposerCatalog'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
+import { runtimeProjectKey } from '@/lib/runtime-project'
+import type { RuntimeWorkListResponse } from '@/types/api'
+import { standInProjectWorkspace } from './useStandInRuntimeWork'
 
 export function StandInRequirements({
   role,
+  runtimeWork,
   services,
   onChange,
   disabled,
   onSave,
 }: {
   role: StandInRole
+  runtimeWork?: RuntimeWorkListResponse | null
   services: WorkbenchServices
   onChange(update: (current: StandInRole) => StandInRole): void
   disabled: boolean
   onSave(): void
 }) {
   const { t } = useTranslation('common')
+  const project = runtimeWork?.projects.find(
+    row => runtimeProjectKey(row.project) === role.workspace?.projectKey
+  )
+  const workspace = project && standInProjectWorkspace(project, role.executionDeviceId)
   const catalog = useStandInComposerCatalog(
     {
       deviceId: role.executionDeviceId,
       scope: 'workspace',
-      workspacePath: role.workspace?.workspacePath ?? null,
+      workspacePath: workspace?.workspacePath ?? null,
     },
     services,
     t

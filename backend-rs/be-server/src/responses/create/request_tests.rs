@@ -128,7 +128,11 @@ fn skill_fixture(sql: &str, automatic: bool, preload: bool) -> (Row, Vec<Row>) {
             7,
             "Model",
             "test-model",
-            json!({"modelConfig": {"env": {"model": "openai", "model_id": "test"}}}),
+            json!({
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": "test", "api_key": "sk-test"}
+                }
+            }),
         ));
         row.insert(0, ("anon_1_name", SqlValue::Text("test-model".into())));
         return (row.clone(), vec![row]);
@@ -401,7 +405,7 @@ fn coordinate_fixture(sql: &str) -> (Row, Vec<Row>) {
             (4, "reviewer", "default")
         };
         let mut spec = json!({
-            "agent_config": {"env": {"model": "claude", "model_id": format!("{name}-model"), "api_key": "test-key"}},
+            "agent_config": {"env": {"model": "claude", "model_id": format!("{name}-model"), "api_key": "sk-test-key"}},
             "shellRef": {"name": "ClaudeCode", "namespace": "default"},
         });
         if name == "writer" {

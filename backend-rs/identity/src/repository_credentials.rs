@@ -81,6 +81,50 @@ pub fn decrypt_git_token(token: &str) -> Result<String, CryptoConfigurationError
     Ok(decrypt_sensitive_data(key.as_bytes(), iv.as_bytes(), token))
 }
 
+/// `decrypt_api_key` (`shared/utils/crypto.py`): model API keys use the same
+/// AES-CBC envelope as Git tokens, but common provider-key prefixes always
+/// identify plaintext and must not be treated as encrypted payloads.
+pub fn decrypt_model_api_key(key: &str) -> Result<String, CryptoConfigurationError> {
+    if !is_model_api_key_encrypted(key) {
+        return Ok(key.to_string());
+    }
+    let aes_key = crate::config::env_or_dotenv("GIT_TOKEN_AES_KEY")
+        .unwrap_or_else(|| DEFAULT_AES_KEY.to_string());
+    let aes_iv =
+        crate::config::env_or_dotenv("GIT_TOKEN_AES_IV").ok_or(CryptoConfigurationError)?;
+    if aes_iv.len() != BLOCK_SIZE {
+        return Err(CryptoConfigurationError);
+    }
+    decrypt_model_api_key_with(key, aes_key.as_bytes(), aes_iv.as_bytes())
+}
+
+/// `is_api_key_encrypted` plus the source's placeholder guard: common
+/// provider-key prefixes and unresolved placeholders are plaintext; every other
+/// base64 value decoding to a non-empty whole AES block is encrypted.
+pub fn is_model_api_key_encrypted(key: &str) -> bool {
+    if key.is_empty()
+        || key.contains("${")
+        || ["sk-", "sk_", "api-", "api_", "key-", "key_"]
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+    {
+        return false;
+    }
+    is_token_encrypted(key)
+}
+
+/// The shared AES-CBC step after key resolution.
+fn decrypt_model_api_key_with(
+    key: &str,
+    aes_key: &[u8],
+    aes_iv: &[u8],
+) -> Result<String, CryptoConfigurationError> {
+    if !is_model_api_key_encrypted(key) {
+        return Ok(key.to_string());
+    }
+    Ok(decrypt_sensitive_data(aes_key, aes_iv, key))
+}
+
 /// `decrypt_sensitive_data` after key resolution: `""`/`"***"` pass through,
 /// and any decode/decrypt/UTF-8 failure returns the original ciphertext.
 fn decrypt_sensitive_data(key: &[u8], iv: &[u8], text: &str) -> String {
@@ -132,6 +176,50 @@ mod tests {
         assert_eq!(
             decrypt_sensitive_data(key, iv, "AAAAAAAAAAAAAAAAAAAAAA=="),
             "AAAAAAAAAAAAAAAAAAAAAA=="
+        );
+    }
+
+    #[test]
+    fn model_api_key_detection_matches_the_source_prefixes() {
+        assert!(!is_model_api_key_encrypted("sk-test-key"));
+        assert!(!is_model_api_key_encrypted("sk_test-key"));
+        assert!(!is_model_api_key_encrypted("api-test-key"));
+        assert!(!is_model_api_key_encrypted("api_test-key"));
+        assert!(!is_model_api_key_encrypted("key-test-key"));
+        assert!(!is_model_api_key_encrypted("key_test-key"));
+        assert!(!is_model_api_key_encrypted(""));
+        assert!(!is_model_api_key_encrypted("***"));
+        assert!(!is_model_api_key_encrypted("plain"));
+        assert!(!is_model_api_key_encrypted("YQ=="));
+        assert!(!is_model_api_key_encrypted("${DEPLOYMENT_USER_API_KEY}"));
+    }
+
+    #[test]
+    fn model_api_keys_decrypt_with_the_source_vector() {
+        let encrypted = encrypt_cbc(
+            DEFAULT_AES_KEY.as_bytes(),
+            b"0123456789abcdef",
+            b"sk-model-key",
+        )
+        .expect("encrypts the test key");
+        let ciphertext = STANDARD.encode(encrypted);
+        assert_eq!(
+            decrypt_model_api_key_with(
+                &ciphertext,
+                DEFAULT_AES_KEY.as_bytes(),
+                b"0123456789abcdef"
+            )
+            .unwrap(),
+            "sk-model-key"
+        );
+        assert_eq!(
+            decrypt_model_api_key_with(
+                "sk-model-key",
+                DEFAULT_AES_KEY.as_bytes(),
+                b"0123456789abcdef"
+            )
+            .unwrap(),
+            "sk-model-key"
         );
     }
 }
