@@ -2020,6 +2020,17 @@ export function createHybridWorkbenchServices(
       async workMessages(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).workMessages(userId, deviceId, workId)
       },
+      async takeOverWork(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).takeOverWork(userId, deviceId, workId)
+      },
+      async verifyWorkDelivery(userId, deviceId, workId, recordId) {
+        return (await standInApiForDevice(deviceId)).verifyWorkDelivery(
+          userId,
+          deviceId,
+          workId,
+          recordId
+        )
+      },
       async runWork(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
       },

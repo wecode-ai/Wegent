@@ -3,6 +3,7 @@ import {
   activeAccountIdentity,
   boundAccount,
   delegatedMessageContext,
+  delegatedRecoveryEvents,
   exactConversation,
   validateDelegatedSource,
   verifiedProfile,
@@ -15,6 +16,9 @@ const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 const GROUP_CATCH_UP_WINDOW_MINUTES = 15
 const DELEGATION_CATCH_UP_MS = 30 * 60_000
 const DELEGATION_CATCH_UP_MESSAGES = 50
+// A durable checkpoint older than four normal 15s polls also detects a restart
+// or a missed poll when the process could not persist a transient error.
+const DELEGATION_MISSED_POLLS_MS = 60_000
 const MAX_DELEGATION_CATCH_UP_PAGES = 8
 const READINESS_ERRORS = new Map([
   ['connector_auth_required', 'auth_required'],
@@ -206,7 +210,7 @@ export function createProvider() {
       const start = checkpoint?.after ?? required(source, 'enabledAfter')
       const now = Date.now()
       if (account) {
-        const page = await collectDelegatedMessages(ctx, source, start, now, selfId)
+        const page = await collectDelegatedMessages(ctx, source, start, now, selfId, checkpoint)
         await boundAccount(ctx, source, readTool)
         return page
       }
@@ -240,7 +244,7 @@ export function createProvider() {
   }
 }
 
-async function collectDelegatedMessages(ctx, source, from, now, ownId) {
+async function collectDelegatedMessages(ctx, source, from, now, ownId, checkpoint) {
   const fromTime = Date.parse(from)
   if (!Number.isFinite(fromTime) || fromTime > now)
     throw invalid('Invalid DingTalk delegation checkpoint')
@@ -252,6 +256,21 @@ async function collectDelegatedMessages(ctx, source, from, now, ownId) {
     nextCheckpoint: { ...nextCheckpoint, delegationGap: { reason, from, until } },
   })
   if (now - fromTime > DELEGATION_CATCH_UP_MS) return gap('duration')
+  if (source.kind === 'direct' && source.id === ownId)
+    return { events: [], hasMore: false, nextCheckpoint }
+  if (
+    checkpoint?.recover === true ||
+    (fromTime !== Date.parse(source.enabledAfter) && now - fromTime > DELEGATION_MISSED_POLLS_MS)
+  ) {
+    const { events, reason } = await delegatedRecoveryEvents(
+      ctx,
+      source,
+      { start: from, end: until, after: fromTime, limit: DELEGATION_CATCH_UP_MESSAGES },
+      ownId,
+      { readTool, validateNativePage, normalizeMessages }
+    )
+    return reason ? gap(reason) : { events, hasMore: false, nextCheckpoint }
+  }
 
   const events = new Map()
   const cursors = new Set()
@@ -559,25 +578,30 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
   for (const conversation of conversations) {
     if (typeof conversation.singleChat !== 'boolean') throw invalid('Missing conversation kind')
     const direct = conversation.singleChat
-    if (direct !== (source.kind === 'direct')) continue
+    if (direct !== (source.kind === 'direct')) {
+      if (options.sourceEvents) throw invalid('Recovery events belong to another conversation kind')
+      continue
+    }
     const conversationId = required(conversation, 'openConversationId')
+    if (options.sourceEvents && conversationId !== options.conversationId)
+      throw invalid('Recovery events belong to another conversation')
     if (!direct && source.scope !== 'all' && conversationId !== source.id) continue
     if (options.conversationId && conversationId !== options.conversationId) continue
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       // Bot notifications can come from another account and feed our own task output back in.
-      if (message.sendType === 'robot' || message.messageAiSendFlag !== undefined) continue
+      const automated = message.sendType === 'robot' || message.messageAiSendFlag !== undefined
+      if (automated && !options.sourceEvents) continue
       const sender = required(message, 'senderOpenDingTalkId')
       const isOwn = sender === ownId
       const manualSelfMessage =
         message.sendType === 'user' &&
         (!direct ||
           (source.scope !== 'all' && source.id === ownId && conversationId === selfConversationId))
-      if (
+      const outsideIntake =
         (isOwn && (options.delegated ? !options.includeOwn : !manualSelfMessage)) ||
         (direct && source.scope !== 'all' && sender !== source.id && !(isOwn && options.includeOwn))
-      )
-        continue
+      if (outsideIntake && !options.sourceEvents) continue
       const at = messageSentAt(message)
       const text = options.delegated && typeof message.content !== 'string' ? '' : message.content
       events.push({
@@ -596,6 +620,7 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
           textMessage: Boolean(text.trim()) && isTextMessage(message),
           recalled: message.recalled === true || message.isRecalled === true,
         }),
+        ...(options.sourceEvents && { eligible: !automated && !isOwn && !outsideIntake }),
         ...(source.scope === 'all'
           ? {
               resource: {

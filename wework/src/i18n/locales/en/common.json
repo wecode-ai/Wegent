@@ -5817,7 +5817,13 @@
       "result_needs_user": "Needs your attention",
       "result_submitting": "Sending reply",
       "result_sent": "Automatic reply sent",
+      "result_failed": "Reply failed to send",
       "result_unknown": "Reply delivery unconfirmed",
+      "result_taken_over": "Taken over by you",
+      "result_receipt": "Delivery receipt",
+      "verify_delivery": "Verify sending status",
+      "verify_original_conversation": "Check the reply in the original DingTalk conversation.",
+      "take_over_work": "Take over",
       "dismiss_gap": "Dismiss",
       "onboarding": "Enable automatic replies separately in the default assistant's DingTalk settings."
     },

@@ -90,11 +90,23 @@ describe('DingTalk delegation settings', () => {
 describe('DingTalk delegation results', () => {
   it.each([
     ['reply', 'submitting', 'standIn.dingtalk_delegation.result_submitting'],
-    ['reply', 'sent', 'standIn.dingtalk_delegation.result_sent'],
+    ['reply', 'sent', 'standIn.dingtalk_delegation.result_unknown'],
     ['reply', 'unknown', 'standIn.dingtalk_delegation.result_unknown'],
+    ['reply', 'failed', 'standIn.dingtalk_delegation.result_failed'],
     ['needs_user', 'complete', 'standIn.dingtalk_delegation.result_needs_user'],
     ['skip', 'complete', undefined],
   ] as const)('shows the result for %s / %s', (action, status, label) => {
     expect(delegationResultLabel({ action, status, reason: 'Provider result' })).toBe(label)
+  })
+
+  it('reports a confirmed delivery only with a receipt', () => {
+    expect(
+      delegationResultLabel({
+        action: 'reply',
+        status: 'sent',
+        reason: 'Provider result',
+        receiptId: 'channel-receipt',
+      })
+    ).toBe('standIn.dingtalk_delegation.result_sent')
   })
 })

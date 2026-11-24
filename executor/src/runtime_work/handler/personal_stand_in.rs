@@ -43,7 +43,7 @@ fn needs_dingtalk_read_preflight(primary: &Value, previous: &Value) -> bool {
         })
 }
 
-fn verified_dingtalk_readiness<'a>(
+pub(super) fn verified_dingtalk_readiness<'a>(
     readiness: &'a Value,
     expected: &Value,
     read: bool,

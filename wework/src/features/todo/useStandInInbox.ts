@@ -80,7 +80,10 @@ export function useStandInInbox(
       query.data?.items.filter(
         work =>
           !work.source.delegated ||
-          (work.delegationResult && work.delegationResult.action !== 'skip')
+          !!work.takenOverAt ||
+          (work.delegationResult
+            ? work.delegationResult.action !== 'skip'
+            : work.status === 'pending')
       ) ?? [],
     sourceErrors: query.data?.sourceErrors ?? [],
     error: query.status === 'error' ? getStandInErrorMessage(query.error) : null,

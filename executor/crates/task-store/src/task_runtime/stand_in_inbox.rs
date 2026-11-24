@@ -315,26 +315,24 @@ fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRun
     work["messageCount"] = json!(messages.len());
     work["latestMessage"] = messages.first().cloned().unwrap_or(Value::Null);
     if work["source"]["delegated"] == true {
-        let outcomes = messages.iter().map(|row| &row["delegationResult"]);
-        work["delegationResult"] = outcomes
-            .clone()
-            .find(|result| matches!(result["action"].as_str(), Some("reply" | "needs_user")))
-            .or_else(|| {
-                outcomes
-                    .clone()
-                    .all(|result| result["action"] == "skip")
-                    .then(|| outcomes.clone().next())
-                    .flatten()
-            })
-            .cloned()
-            .unwrap_or(Value::Null);
+        work["delegationResult"] = dots_inbox::project_delegation_result(work, &messages);
     }
-    work["status"] = json!(["sending", "needs_grouping", "pending", "failed"]
+    let status = ["sending", "needs_grouping", "pending", "failed"]
         .into_iter()
-        .find(|status| messages
-            .iter()
-            .any(|message| message["dispatchStatus"] == *status))
-        .unwrap_or("sent"));
+        .find(|status| {
+            messages
+                .iter()
+                .any(|message| message["dispatchStatus"] == *status)
+        })
+        .unwrap_or("sent");
+    work["status"] = json!(if work["source"]["delegated"] == true
+        && !work["takenOverAt"].is_null()
+        && status != "sending"
+    {
+        "sent"
+    } else {
+        status
+    });
     work["updatedAt"] = json!(now());
     write_record(
         connection,
@@ -865,6 +863,11 @@ impl LocalTaskStore {
                 message["originalWorkId"] = source["id"].clone();
             }
             message["workId"] = destination["id"].clone();
+            if source["source"]["delegated"] == true && !source["takenOverAt"].is_null() {
+                message["takenOverAt"] = source["takenOverAt"].clone();
+                dots_inbox::mark_delegation_taken_over(&mut message["delegationResult"]);
+                message["dispatchStatus"] = json!("sent");
+            }
             // Organization never authorizes replay of completed effects.
             let failed = message["dispatchStatus"] == "failed";
             let failures = Self::stand_in_dispatch_failure_count(message, failed);

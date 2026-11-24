@@ -128,7 +128,12 @@ export function dingTalkDelegationModel(
 export function delegationResultLabel(result?: StandInDelegationResult) {
   if (result?.action === 'needs_user') return 'standIn.dingtalk_delegation.result_needs_user'
   if (result?.action !== 'reply') return undefined
-  if (result.status === 'sent') return 'standIn.dingtalk_delegation.result_sent'
+  if (delegationReceipt(result)) return 'standIn.dingtalk_delegation.result_sent'
+  if (result.status === 'failed') return 'standIn.dingtalk_delegation.result_failed'
   if (result.status === 'submitting') return 'standIn.dingtalk_delegation.result_submitting'
   return 'standIn.dingtalk_delegation.result_unknown'
+}
+
+export function delegationReceipt(result?: StandInDelegationResult) {
+  if (result?.action === 'reply' && result.status === 'sent') return result.receiptId?.trim()
 }

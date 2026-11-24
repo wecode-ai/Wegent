@@ -4,6 +4,45 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 const MAX_TOOL_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
+pub(crate) struct PreparedPluginTool {
+    command: Command,
+    tool: PathBuf,
+    plugin_key: String,
+    connector_slug: String,
+    dws: bool,
+}
+
+impl PreparedPluginTool {
+    pub(crate) async fn run(self, args: &[String]) -> Result<Value, AppIpcError> {
+        let mut result = run_tool_command(
+            self.command,
+            &self.tool,
+            args,
+            &self.plugin_key,
+            &self.connector_slug,
+        )
+        .await?;
+        if self.dws && args == ["version", "--format", "json"] {
+            let source = dws_component_source(
+                &self.tool,
+                env::var_os("DWS_BINARY_PATH").as_deref().map(Path::new),
+                env::var_os("WEWORK_COMPONENT_DWS_PATH")
+                    .as_deref()
+                    .map(Path::new),
+                env::var("WEWORK_COMPONENT_DWS_SOURCE").ok().as_deref(),
+            );
+            let fields = result.as_object_mut().ok_or_else(|| {
+                AppIpcError::new(
+                    "connection_cli_response_invalid",
+                    "DWS version must be a JSON object",
+                )
+            })?;
+            fields.insert("componentSource".to_owned(), json!(source));
+        }
+        Ok(result)
+    }
+}
+
 pub(crate) fn connection_auth_target(
     root: &Path,
     plugin_key: &str,
@@ -44,11 +83,21 @@ pub(crate) fn connection_auth_target(
 }
 
 // Replies retain the existing source-bound permission checks in the caller.
-pub(crate) fn run_declared_plugin_tool<'a>(
+pub(crate) async fn run_declared_plugin_tool(
+    plugin_key: &str,
+    tool_id: &str,
+    args: &[String],
+) -> Result<Value, AppIpcError> {
+    prepare_declared_plugin_tool(plugin_key, tool_id)
+        .await?
+        .run(args)
+        .await
+}
+
+pub(crate) fn prepare_declared_plugin_tool<'a>(
     plugin_key: &'a str,
     tool_id: &'a str,
-    args: &'a [String],
-) -> futures_util::future::BoxFuture<'a, Result<Value, AppIpcError>> {
+) -> futures_util::future::BoxFuture<'a, Result<PreparedPluginTool, AppIpcError>> {
     // Erase the MCP-handler/app-server startup future cycle without changing execution.
     Box::pin(async move {
         let client =
@@ -73,7 +122,7 @@ pub(crate) fn run_declared_plugin_tool<'a>(
         let connector_slug = target["connectorSlug"]
             .as_str()
             .ok_or_else(|| AppIpcError::new("local_auth_invalid", "Missing connector identity"))?;
-        run_connection_tool(&root, plugin_key, connector_slug, args).await
+        prepare_connection_tool(&root, plugin_key, connector_slug).await
     })
 }
 
@@ -83,6 +132,17 @@ pub(crate) async fn run_connection_tool(
     connector_slug: &str,
     args: &[String],
 ) -> Result<Value, AppIpcError> {
+    prepare_connection_tool(root, plugin_key, connector_slug)
+        .await?
+        .run(args)
+        .await
+}
+
+async fn prepare_connection_tool(
+    root: &Path,
+    plugin_key: &str,
+    connector_slug: &str,
+) -> Result<PreparedPluginTool, AppIpcError> {
     let manifest = read_plugin_manifest(root)?;
     if manifest["name"].as_str() != Some(plugin_key) {
         return Err(AppIpcError::new(
@@ -99,28 +159,14 @@ pub(crate) async fn run_connection_tool(
                 "The dependency must declare a localAuth tool",
             )
         })?;
-    let mut result = run_tool_json(root, &tool, args, plugin_key, connector_slug).await?;
-    if plugin_key == "dingtalk"
-        && spec.tool.as_ref().map(LocalAuthToolSpec::id) == Some("dws")
-        && args == ["version", "--format", "json"]
-    {
-        let source = dws_component_source(
-            &tool,
-            env::var_os("DWS_BINARY_PATH").as_deref().map(Path::new),
-            env::var_os("WEWORK_COMPONENT_DWS_PATH")
-                .as_deref()
-                .map(Path::new),
-            env::var("WEWORK_COMPONENT_DWS_SOURCE").ok().as_deref(),
-        );
-        let Some(fields) = result.as_object_mut() else {
-            return Err(AppIpcError::new(
-                "connection_cli_response_invalid",
-                "DWS version must be a JSON object",
-            ));
-        };
-        fields.insert("componentSource".to_owned(), json!(source));
-    }
-    Ok(result)
+    Ok(PreparedPluginTool {
+        command: prepare_tool_command(root, &tool).await?,
+        tool,
+        plugin_key: plugin_key.to_owned(),
+        connector_slug: connector_slug.to_owned(),
+        dws: plugin_key == "dingtalk"
+            && spec.tool.as_ref().map(LocalAuthToolSpec::id) == Some("dws"),
+    })
 }
 
 fn dws_component_source(
@@ -143,6 +189,7 @@ fn dws_component_source(
     }
 }
 
+#[cfg(test)]
 async fn run_tool_json(
     root: &Path,
     tool: &Path,
@@ -150,6 +197,11 @@ async fn run_tool_json(
     plugin_key: &str,
     connector_slug: &str,
 ) -> Result<Value, AppIpcError> {
+    let command = prepare_tool_command(root, tool).await?;
+    run_tool_command(command, tool, args, plugin_key, connector_slug).await
+}
+
+async fn prepare_tool_command(root: &Path, tool: &Path) -> Result<Command, AppIpcError> {
     let requires_python = tool
         .to_str()
         .is_some_and(crate::python_runtime::is_python_program);
@@ -180,7 +232,6 @@ async fn run_tool_json(
     }
     crate::process::hide_windows_console(&mut command);
     command
-        .args(args)
         .current_dir(root)
         .envs(crate::plugin_account_auth::broker::environment())
         .stdin(Stdio::null())
@@ -191,7 +242,17 @@ async fn run_tool_json(
         crate::python_runtime::isolate_python_environment(&mut command)
             .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
     }
-    let mut child = command.spawn().map_err(|_cause| {
+    Ok(command)
+}
+
+async fn run_tool_command(
+    mut command: Command,
+    tool: &Path,
+    args: &[String],
+    plugin_key: &str,
+    connector_slug: &str,
+) -> Result<Value, AppIpcError> {
+    let mut child = command.args(args).spawn().map_err(|_cause| {
         #[cfg(test)]
         eprintln!(
             "Connection tool spawn failed: kind={:?} os_error={:?}",

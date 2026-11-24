@@ -280,23 +280,3 @@ fn only_an_incoming_text_question_can_receive_a_delegated_reply() {
         );
     }
 }
-
-#[test]
-fn receipt_requires_a_channel_message_id() {
-    let original = json!({"id":"original"});
-    assert_eq!(receipt_id(&json!({"success":true}), &original), None);
-    assert_eq!(
-        receipt_id(
-            &json!({"success":true,"result":{"openMessageId":"original"}}),
-            &original
-        ),
-        None
-    );
-    assert_eq!(
-        receipt_id(
-            &json!({"success":true,"result":{"openMessageId":"sent"}}),
-            &original
-        ),
-        Some("sent")
-    );
-}

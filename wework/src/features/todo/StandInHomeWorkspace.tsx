@@ -279,6 +279,8 @@ export function StandInHomeWorkspace(props: Props) {
                       const work = inbox.items.find(work => work.taskId === item.task.taskId)
                       const decisionLabel = delegationResultLabel(work?.delegationResult)
                       if (work?.source.delegated && !work.task) {
+                        const takenOver = work.takenOverAt || work.delegationResult?.takenOver
+                        const ownerLabel = 'standIn.dingtalk_delegation.result_taken_over'
                         return (
                           <div
                             key={item.key}
@@ -286,7 +288,15 @@ export function StandInHomeWorkspace(props: Props) {
                             className="px-4 py-3 text-sm"
                           >
                             <p className="font-medium">{item.task.title}</p>
-                            {decisionLabel && <p>{t(decisionLabel)}</p>}
+                            <p>
+                              {t(
+                                decisionLabel ??
+                                  (takenOver
+                                    ? ownerLabel
+                                    : `standIn.workspace.inbox_${work.status}`)
+                              )}
+                            </p>
+                            {decisionLabel && takenOver && <p>{t(ownerLabel)}</p>}
                             {work.delegationResult?.reason && (
                               <p className="break-words text-xs text-text-secondary">
                                 {work.delegationResult.reason}

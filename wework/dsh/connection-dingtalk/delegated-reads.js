@@ -203,13 +203,90 @@ export async function delegatedMessageContext(ctx, source, trigger, ownId, provi
   }
 }
 
-async function contextPages(ctx, tool, query, normalize, readTool) {
+export async function delegatedRecoveryEvents(ctx, source, window, ownId, provider) {
+  const { readTool, validateNativePage, normalizeMessages } = provider
+  const { start, end, after, limit } = window
+  const gap = reason => ({ events: [], reason })
+  try {
+    const conversationId = await exactConversation(ctx, source, end, readTool, validateNativePage)
+    if (!conversationId) return { events: [] }
+    const normalize = (page, sourceEvents) =>
+      normalizeMessages(source, page, ownId, undefined, {
+        conversationId,
+        delegated: true,
+        includeOwn: sourceEvents,
+        sourceEvents,
+      })
+    const query = { profile: source.profile, start, end }
+    const until = Date.parse(end)
+    const records = await contextPages(
+      ctx,
+      'searchMessages',
+      { ...query, conversationIds: conversationId },
+      page =>
+        normalize(page, true).filter(({ at }) => {
+          const time = Date.parse(at)
+          return time > after && time <= until
+        }),
+      readTool,
+      { limit: limit + 1, maxItems: limit }
+    )
+    if (!records) return gap('volume')
+    const candidates = records.filter(row => row.eligible && row.textMessage && !row.recalled)
+    const events =
+      source.kind === 'group' && candidates.length
+        ? await verifiedRecoveredMentions(
+            ctx,
+            query,
+            conversationId,
+            candidates,
+            normalize,
+            readTool
+          )
+        : candidates
+    return {
+      events: events.map(({ eligible: _eligible, ...event }) => event),
+    }
+  } catch (error) {
+    if (error.code !== 'dingtalk_response_invalid') throw error
+    return gap('coverage')
+  }
+}
+
+async function verifiedRecoveredMentions(
+  ctx,
+  query,
+  conversationId,
+  candidates,
+  normalize,
+  readTool
+) {
+  const mentions = await contextPages(
+    ctx,
+    'listMentions',
+    { ...query, start: candidates[0].at, group: conversationId },
+    page => normalize(page, false),
+    readTool
+  )
+  const byId = new Map(mentions.map(row => [row.id, row]))
+  return candidates.filter(row => {
+    const mention = byId.get(row.id)
+    if (!mention || mention.recalled) return false
+    if (row.at !== mention.at || row.senderId !== mention.senderId || row.text !== mention.text)
+      throw invalid('DingTalk recovery mention changed during collection')
+    return true
+  })
+}
+
+async function contextPages(ctx, tool, query, normalize, readTool, { limit = 100, maxItems } = {}) {
   let cursor = '0'
   const seen = new Set([cursor])
   const items = new Map()
   let bytes = 0
   for (let index = 0; index < MAX_CONTEXT_PAGES; index += 1) {
-    const page = await readTool(ctx, tool, { ...query, limit: '100', cursor })
+    const page = await readTool(ctx, tool, { ...query, limit: String(limit), cursor })
+    if (page.partial === true || page.result?.partial === true)
+      throw invalid('DingTalk returned partial conversation history')
     for (const item of normalize(page)) {
       const previous = items.get(item.id)
       if (previous && JSON.stringify(previous) !== JSON.stringify(item))
@@ -218,6 +295,7 @@ async function contextPages(ctx, tool, query, normalize, readTool) {
       if (item.text.length > 20_000 || bytes > MAX_CONTEXT_BYTES)
         throw invalid('The bounded DingTalk context is too large')
       items.set(item.id, item)
+      if (maxItems !== undefined && items.size > maxItems) return null
     }
     if (page.result?.hasMore === false)
       return [...items.values()].sort(

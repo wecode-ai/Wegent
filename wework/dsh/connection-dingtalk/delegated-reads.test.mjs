@@ -290,14 +290,19 @@ test('delegated recovery checks the complete 50-message limit before releasing p
   const { registry, dispose, source } = await register(ctx)
   try {
     const direct = { ...source, kind: 'direct', id: 'peer' }
-    const events = Array.from({ length: 51 }, (_, index) => message(`ask-${index}`))
+    const events = Array.from({ length: 50 }, (_, index) => message(`ask-${index}`))
+    const ownEvent = message('owner-history', at, { senderOpenDingTalkId: 'self' })
     let overflow = false
-    state.search = ({ cursor, limit }) => {
+    state.search = ({ cursor, limit, conversationIds, senderIds }) => {
       assert.equal(limit, '51')
+      assert.equal(conversationIds, 'direct')
+      assert.equal(senderIds, undefined, 'The source-event limit must include the owner')
       if (cursor === '0')
         return searchPage('second', conversation('direct', events.slice(0, 25), true))
       assert.equal(cursor, 'second')
-      return searchResult(conversation('direct', events.slice(24, overflow ? 51 : 50), true))
+      const finalPage = events.slice(24)
+      if (overflow) finalPage.push(ownEvent)
+      return searchResult(conversation('direct', finalPage, true))
     }
     const checkpoint = { after: new Date(Date.now() - 30 * 60_000).toISOString(), cursor: '0' }
     const accepted = await registry.call(providerId, 'collect', { source: direct, checkpoint })
@@ -312,6 +317,68 @@ test('delegated recovery checks the complete 50-message limit before releasing p
       reason: 'volume',
       from: checkpoint.after,
       until: new Date(Date.parse(clock)).toISOString(),
+    })
+  } finally {
+    dispose()
+  }
+})
+
+test('short group recovery keeps the fixed window and only releases verified mentions', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, calls, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const after = '2026-11-24T00:09:00.000Z'
+    const until = new Date(Date.parse(clock)).toISOString()
+    const owner = message('owner', '2026-11-24T00:10:30Z', { senderOpenDingTalkId: 'self' })
+    const later = message('outside-fixed-window', '2026-11-24T00:11:02Z')
+    const ask = message('ask')
+    const rawPage = searchPage('later', conversation('group', [ask, message('nonmention')]))
+    state.search = ({ cursor, start, end }) => {
+      assert.equal(start, after)
+      assert.equal(end, until)
+      if (cursor === '0') {
+        t.mock.timers.tick(4000)
+        return rawPage
+      }
+      return searchResult(conversation('group', [owner, later]))
+    }
+    state.mentions = searchResult(conversation('group', [ask, owner, later]))
+    const result = await registry.call(providerId, 'collect', {
+      source,
+      checkpoint: { after, cursor: '0', recover: true },
+    })
+    assert.equal(result.nextCheckpoint.after, until)
+    assert.deepEqual(
+      result.events.map(row => row.id),
+      ['ask']
+    )
+    assert.equal(calls.find(row => row.tool === 'listMentions').arguments.end, until)
+  } finally {
+    dispose()
+  }
+})
+
+test('short recovery records a coverage gap without releasing a partial page', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const after = '2026-11-24T00:09:00.000Z'
+    const until = new Date(Date.parse(clock)).toISOString()
+    state.search = () => searchPage('repeating-cursor', conversation('group', [message('ask')]))
+    const result = await registry.call(providerId, 'collect', {
+      source,
+      checkpoint: { after, cursor: '0', recover: true },
+    })
+    assert.deepEqual(result, {
+      events: [],
+      hasMore: false,
+      nextCheckpoint: {
+        after: until,
+        cursor: '0',
+        delegationGap: { reason: 'coverage', from: after, until },
+      },
     })
   } finally {
     dispose()
