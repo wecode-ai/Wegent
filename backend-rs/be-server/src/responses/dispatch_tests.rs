@@ -443,6 +443,7 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
                     crate::executor_binding::DispatchRequest {
                         body: json!({}),
                         binding_token: "test-binding".into(),
+                        service_token: "test-service-token".into(),
                     },
                 )),
                 start: Some(start_event(redis.clone(), &execution_request(), None)),
@@ -684,6 +685,7 @@ async fn executor_transport_error_retains_its_connection_cause_without_binding_c
         &crate::executor_binding::DispatchRequest {
             body: json!({}),
             binding_token: "private-binding-token".into(),
+            service_token: "test-service-token".into(),
         },
     )
     .await
@@ -691,6 +693,7 @@ async fn executor_transport_error_retains_its_connection_cause_without_binding_c
     assert!(error.contains("source:"), "{error}");
     assert!(error.contains("ConnectionRefused"), "{error}");
     assert!(!error.contains("private-binding-token"));
+    assert!(!error.contains("test-service-token"));
 }
 
 #[tokio::test]
@@ -725,6 +728,7 @@ async fn executor_dispatch_does_not_reuse_a_closing_keepalive_socket() {
     let submission = crate::executor_binding::DispatchRequest {
         body: json!({}),
         binding_token: "test-binding".into(),
+        service_token: "test-service-token".into(),
     };
     send_executor(&http, &url, &submission).await.unwrap();
     send_executor(&http, &url, &submission).await.unwrap();

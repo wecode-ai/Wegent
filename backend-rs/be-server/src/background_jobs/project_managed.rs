@@ -418,6 +418,11 @@ async fn dispatch_inner(
                         .as_deref()
                         .context("Executor target is unavailable")?,
                     &payload,
+                    state
+                        .internal_chat
+                        .internal_service_token
+                        .as_deref()
+                        .context("Executor Manager service credential is not configured")?,
                 )
                 .await?;
         }

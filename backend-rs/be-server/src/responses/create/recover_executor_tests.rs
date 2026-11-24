@@ -324,6 +324,7 @@ async fn run_executor_recovery(
             let mut length = 0;
             let mut has_binding_credential = false;
             let mut has_service_credential = false;
+            let mut has_dispatch_service_credential = false;
             loop {
                 let mut header = String::new();
                 assert!(connection.read_line(&mut header).await.unwrap() > 0);
@@ -336,7 +337,10 @@ async fn run_executor_recovery(
                 let lowercase_header = header.to_ascii_lowercase();
                 has_binding_credential |=
                     lowercase_header.starts_with("authorization: wegentexecutorbinding ");
-                has_service_credential |= lowercase_header.starts_with("authorization: bearer ");
+                has_service_credential |=
+                    lowercase_header.trim_end() == "authorization: bearer test-service-token";
+                has_dispatch_service_credential |= lowercase_header.trim_end()
+                    == "x-wegent-internal-authorization: bearer test-service-token";
             }
             let (status, body) = if path.ends_with("/address") {
                 assert!(request_line.starts_with(&format!("GET {path}?")));
@@ -351,6 +355,7 @@ async fn run_executor_recovery(
                 connection.read_exact(&mut body).await.unwrap();
                 let body: Value = serde_json::from_slice(&body).unwrap();
                 if path.ends_with("/responses") {
+                    assert!(has_dispatch_service_credential);
                     assert!(has_binding_credential);
                     assert_eq!(
                         body["metadata"]["backend_url"],
@@ -361,6 +366,7 @@ async fn run_executor_recovery(
                     ("200 OK", json!({"id": "resp_100", "status": "queued"}))
                 } else {
                     assert!(has_service_credential);
+                    assert!(!has_binding_credential);
                     assert_eq!(body["task_id"], 100);
                     assert_eq!(body["subtask_id"], 101);
                     assert!(body["executor_name"].is_null());

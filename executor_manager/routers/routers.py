@@ -62,7 +62,7 @@ from shared.utils.ip_util import get_host_ip
 
 
 def verify_internal_service_token(authorization: str = Header(default="")) -> None:
-    """Require the shared service token for runtime provisioning endpoints."""
+    """Authenticate Backend requests before provisioning or queuing a runtime."""
     expected_token = (os.getenv("INTERNAL_SERVICE_TOKEN") or "").strip()
     if not expected_token:
         raise HTTPException(
@@ -74,6 +74,16 @@ def verify_internal_service_token(authorization: str = Header(default="")) -> No
         raise HTTPException(status_code=401, detail="Missing authentication token")
     if not hmac.compare_digest(provided_token.encode(), expected_token.encode()):
         raise HTTPException(status_code=401, detail="Invalid authentication token")
+
+
+def verify_executor_dispatch_service(
+    authorization: str = Header(default=""),
+    internal_authorization: str = Header(
+        default="", alias="X-Wegent-Internal-Authorization"
+    ),
+) -> None:
+    """Allow the dispatcher to keep its turn-binding grant in Authorization."""
+    verify_internal_service_token(internal_authorization or authorization)
 
 
 # Setup logger
@@ -1500,7 +1510,9 @@ async def _cleanup_task_heartbeat(task_id: int) -> None:
         logger.warning(f"[v1/cancel] Failed to clean up heartbeat data: {e}")
 
 
-@api_router.post("/v1/responses")
+@api_router.post(
+    "/v1/responses", dependencies=[Depends(verify_executor_dispatch_service)]
+)
 async def openai_responses(http_request: Request):
     """OpenAI Responses API endpoint - async queue mode.
 

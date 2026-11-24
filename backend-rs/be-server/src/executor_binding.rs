@@ -18,6 +18,7 @@ pub(crate) const AUTHORIZATION_SCHEME: &str = "WegentExecutorBinding";
 pub(crate) struct DispatchRequest {
     pub body: Value,
     pub binding_token: String,
+    pub service_token: String,
 }
 
 pub(crate) fn dispatch_request(
@@ -36,9 +37,15 @@ pub(crate) fn dispatch_request(
         .map_err(|_| "Could not sign executor binding credential".to_owned())?;
     let body = serde_json::to_value(payload)
         .map_err(|_| "Could not serialize executor dispatch request".to_owned())?;
+    let service_token = state
+        .internal_chat
+        .internal_service_token
+        .clone()
+        .ok_or_else(|| "Executor Manager service credential is not configured".to_owned())?;
     Ok(DispatchRequest {
         body,
         binding_token: token,
+        service_token,
     })
 }
 

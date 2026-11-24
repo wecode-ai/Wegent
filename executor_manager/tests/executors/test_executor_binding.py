@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
 
 from executor_manager.clients import executor_binding
 from executor_manager.executors.docker.executor import DockerExecutor
-from executor_manager.routers.routers import app, openai_responses
+from executor_manager.routers.routers import app
 
 TOKEN = "test-dispatch-credential"
 
@@ -79,17 +79,36 @@ def test_ready_container_requires_binding_before_dispatch(status):
 
 
 @pytest.mark.parametrize(
-    ("authorization", "expected"),
-    [(f"WegentExecutorBinding {TOKEN}", TOKEN), ("Bearer dummy", None)],
+    ("authorization", "internal_authorization", "expected_credential", "expected"),
+    [
+        (f"WegentExecutorBinding {TOKEN}", "Bearer service-token", TOKEN, 200),
+        ("Bearer service-token", None, None, 200),
+        (f"WegentExecutorBinding {TOKEN}", "Bearer wrong-token", None, 401),
+        (f"WegentExecutorBinding {TOKEN}", None, None, 401),
+        (None, None, None, 401),
+    ],
 )
 @pytest.mark.asyncio
-async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
-    authorization, expected
+async def test_enqueue_requires_service_auth_and_accepts_binding_only_from_dispatch_header(
+    authorization, internal_authorization, expected_credential, expected, monkeypatch
 ):
-    incoming = Mock(
-        body=AsyncMock(
-            return_value=json.dumps(
-                {
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "service-token")
+    headers = {}
+    if authorization:
+        headers["Authorization"] = authorization
+    if internal_authorization:
+        headers["X-Wegent-Internal-Authorization"] = internal_authorization
+
+    with patch(
+        "executor_manager.services.task_queue_service.TaskQueueService"
+    ) as queue:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://manager.example"
+        ) as client:
+            response = await client.post(
+                "/executor-manager/v1/responses",
+                headers=headers,
+                json={
                     "metadata": {
                         "task_id": 42,
                         "subtask_id": 43,
@@ -98,19 +117,15 @@ async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
                         "executor_callback_token": "body",
                         "callback_url": "https://callback.example/",
                     }
-                }
-            ).encode()
-        ),
-        headers={"Authorization": authorization},
-    )
+                },
+            )
 
-    with patch(
-        "executor_manager.services.task_queue_service.TaskQueueService"
-    ) as queue:
-        await openai_responses(incoming)
-
+    assert response.status_code == expected
+    if expected == 401:
+        queue.assert_not_called()
+        return
     queued = queue.return_value.enqueue_task.call_args.args[0]
-    assert queued["metadata"].get("executor_binding_token") == expected
+    assert queued["metadata"].get("executor_binding_token") == expected_credential
     assert queued["metadata"]["backend_url"] == "https://backend.example/api"
     assert "executor_callback_token" not in queued["metadata"]
     assert "callback_url" not in queued["metadata"]
@@ -129,8 +144,9 @@ async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
 )
 @pytest.mark.asyncio
 async def test_responses_preserve_optional_backend_context_for_each_queue(
-    request_id: str, backend_context: dict[str, object]
+    request_id: str, backend_context: dict[str, object], monkeypatch
 ) -> None:
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "service-token")
     metadata = {
         "task_id": 42,
         "subtask_id": 43,
@@ -145,6 +161,7 @@ async def test_responses_preserve_optional_backend_context_for_each_queue(
         ) as client:
             response = await client.post(
                 "/executor-manager/v1/responses",
+                headers={"Authorization": "Bearer service-token"},
                 json={"model": "test-model", "input": "hello", "metadata": metadata},
             )
 

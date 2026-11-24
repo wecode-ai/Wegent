@@ -728,6 +728,10 @@ fn executor_request(
                         crate::executor_binding::AUTHORIZATION_SCHEME,
                         dispatch.binding_token
                     ),
+                )
+                .header(
+                    "x-wegent-internal-authorization",
+                    format!("Bearer {}", dispatch.service_token),
                 ),
         )
         .json(&dispatch.body),
