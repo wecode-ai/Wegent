@@ -392,6 +392,69 @@ describe('async reply ownership', () => {
   })
 })
 
+test('uses block timing when an out-of-order question follows its reply', () => {
+  const base = assistantMessage(ASYNC_PAYLOAD)
+  const first = {
+    ...base,
+    id: 'assistant-first',
+    turnId: 'turn-1',
+    blocks: base.blocks?.map(block => ({ ...block, createdAt: 1_000 })),
+  }
+  const second = {
+    ...base,
+    id: 'assistant-second',
+    turnId: 'turn-1',
+    blocks: base.blocks?.map(block => ({ ...block, id: 'second-block', createdAt: 3_000 })),
+  }
+  const reply = { ...userMessage('Reading'), createdAt: '1970-01-01T00:00:02.000Z', turnId: 'turn-1', runtimeGuidance: true }
+  const messages = [first, second, reply]
+
+  const resolved = resolveAsyncRequestUserInputAnswers(messages)
+  expect(resolved[0].blocks?.[0].status).toBe('done')
+  expect(resolved[1].blocks?.[0].status).toBe('pending')
+})
+
+test('attributes a combined reply across turns with block timing', () => {
+  const firstPayload: RequestUserInputPayload = {
+    ...ASYNC_PAYLOAD,
+    questions: [{ id: 'q1', question: 'Audience?' }],
+  }
+  const secondPayload: RequestUserInputPayload = {
+    ...ASYNC_PAYLOAD,
+    itemId: 'second',
+    questions: [
+      { id: 'q2', question: 'Format?' },
+      { id: 'q3', question: 'Delivery?' },
+    ],
+  }
+  const first = {
+    ...assistantMessage(firstPayload),
+    turnId: 'turn-1',
+    blocks: assistantMessage(firstPayload).blocks?.map(block => ({ ...block, createdAt: 1_000 })),
+  }
+  const second = {
+    ...assistantMessage(secondPayload),
+    id: 'assistant-2',
+    turnId: 'turn-2',
+    blocks: assistantMessage(secondPayload).blocks?.map(block => ({
+      ...block,
+      id: 'second-block',
+      createdAt: 2_000,
+    })),
+  }
+  const reply = {
+    ...userMessage('STAFF\nPDF\nTomorrow'),
+    createdAt: '1970-01-01T00:00:03.000Z',
+    turnId: 'turn-3',
+  }
+
+  expect(resolveAsyncRequestUserInputReplies([first, second, reply]).get(reply.id)).toEqual([
+    { question: 'Audience?', answer: 'STAFF' },
+    { question: 'Format?', answer: 'PDF' },
+    { question: 'Delivery?', answer: 'Tomorrow' },
+  ])
+})
+
 describe('async reply client identity', () => {
   test('rejects the optimistic turn prompt without a turn id', () => {
     const question = {
@@ -407,10 +470,15 @@ describe('async reply client identity', () => {
   })
 
   test('rejects same-turn guidance that predates the question', () => {
+    const baseQuestion = assistantMessage(ASYNC_PAYLOAD)
     const question = {
-      ...assistantMessage(ASYNC_PAYLOAD),
+      ...baseQuestion,
       createdAt: '2026-09-29T03:05:02.000Z',
       turnId: 'turn-1',
+      blocks: baseQuestion.blocks?.map(block => ({
+        ...block,
+        createdAt: Date.parse('2026-09-29T03:05:02.000Z'),
+      })),
     }
     const guidance = {
       ...userMessage('Start this turn'),

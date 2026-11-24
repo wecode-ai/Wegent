@@ -161,7 +161,13 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
       ) {
         return block
       }
-      if (!asyncReplyCanAnswerTurn(reply, asyncQuestionTurn(message))) return block
+      if (
+        !asyncReplyCanAnswerTurn(reply, {
+          ...asyncQuestionTurn(message),
+          createdAtMs: block.createdAt,
+        })
+      )
+        return block
       if (!rows) return resolveAsyncBlock<TFileChanges>(block, [])
       const offset = offsetByReply.get(reply.id) ?? 0
       const count = block.renderPayload.questions?.length ?? 0
@@ -204,7 +210,7 @@ export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
       const eligible = questions.filter(question =>
         asyncReplyCanAnswerTurn(message, {
           clientUserMessageId: question.clientUserMessageId,
-          createdAt: question.createdAt,
+          createdAtMs: question.createdAtMs,
           turnId: question.turnId,
         })
       )
@@ -227,13 +233,13 @@ interface PendingAsyncQuestion {
   prompt: string
   turnId: string | null
   clientUserMessageId: string | null
-  createdAt: string | null
+  createdAtMs: number | null
 }
 
 function asyncQuestionPrompts<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>
 ): PendingAsyncQuestion[] {
-  const { clientUserMessageId, createdAt, turnId } = asyncQuestionTurn(message)
+  const { clientUserMessageId, turnId } = asyncQuestionTurn(message)
   return (message.blocks ?? []).flatMap(block => {
     if (block.type !== 'tool') return []
     const payload = block.renderPayload
@@ -249,7 +255,7 @@ function asyncQuestionPrompts<TAttachment, TFileChanges>(
         question.question?.trim() || question.id?.trim() || `question_${index + 1}`,
       turnId,
       clientUserMessageId,
-      createdAt,
+      createdAtMs: Number.isFinite(block.createdAt) ? block.createdAt : null,
     }))
   })
 }
@@ -318,7 +324,7 @@ type AsyncReplyMessage = Pick<WorkbenchMessage, 'createdAt' | 'id' | 'turnId'> &
 
 interface AsyncQuestionTurn {
   clientUserMessageId: string | null
-  createdAt: string | null
+  createdAtMs: number | null
   turnId: string | null
 }
 
@@ -329,7 +335,7 @@ function asyncQuestionTurn<TAttachment, TFileChanges>(
     clientUserMessageId:
       (message as WorkbenchMessage & { runtimeClientUserMessageId?: string | null })
         .runtimeClientUserMessageId?.trim() || null,
-    createdAt: message.createdAt?.trim() || null,
+    createdAtMs: null,
     turnId: message.turnId?.trim() || null,
   }
 }
@@ -338,8 +344,7 @@ function asyncQuestionTurn<TAttachment, TFileChanges>(
 function asyncReplyCanAnswerTurn(reply: AsyncReplyMessage, question: AsyncQuestionTurn): boolean {
   if (question.clientUserMessageId && reply.id === question.clientUserMessageId) return false
   const replyTime = Date.parse(reply.createdAt)
-  const questionTime = Date.parse(question.createdAt ?? '')
-  if (Number.isFinite(replyTime) && Number.isFinite(questionTime) && replyTime < questionTime)
+  if (Number.isFinite(replyTime) && question.createdAtMs != null && replyTime < question.createdAtMs)
     return false
   const replyTurnId = reply.turnId
   if (!question.turnId || !replyTurnId || question.turnId !== replyTurnId) return true
