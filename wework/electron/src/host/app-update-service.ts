@@ -68,6 +68,7 @@ export interface AppUpdateServiceOptions {
 export class AppUpdateService {
   private progress: WeworkUpdateDownloadProgress = { downloadedBytes: 0, totalBytes: null }
   private pending: UpgradeRelease | null = null
+  private archiveBases: UpgradeRelease[] = []
   private pendingUpdate: WeworkUpdateInfo | null = null
   private prepared: DesktopRelease | null = null
   private readyProgress: WeworkUpdateDownloadProgress | null = null
@@ -147,6 +148,7 @@ export class AppUpdateService {
       await this.options.store.rollbackHistory()
     )
     this.channel = channel
+    this.archiveBases = catalog.releases
     if (!plan) {
       this.pending = null
       this.pendingUpdate = null
@@ -329,9 +331,15 @@ export class AppUpdateService {
     await mkdir(slot, { recursive: true, mode: 0o700 })
     try {
       const archive = await step('download', () =>
-        releaseArchive(store.root, pending, this.fetch, received => {
-          this.progress = { ...this.progress, downloadedBytes: received }
-        })
+        releaseArchive(
+          store.root,
+          pending,
+          this.fetch,
+          (downloadedBytes, totalBytes) => {
+            this.progress = { ...this.progress, downloadedBytes, totalBytes }
+          },
+          this.archiveBases
+        )
       )
       if (archive.reused)
         this.log({
@@ -379,6 +387,8 @@ export class AppUpdateService {
       this.log({
         event: 'release-prepared',
         version: release.version,
+        packageBytes: pending.bytes,
+        downloadedBytes: this.progress.downloadedBytes,
         durationMs: Math.round(performance.now() - started),
       })
     } catch (error) {

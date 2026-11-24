@@ -181,14 +181,18 @@ version. A channel that has not published an Electron release may omit its YAML
 manifest; the client treats that state as no available update rather than a
 network failure. Other update-check failures remain visible.
 
-Wework disables `electron-updater` differential downloads and old ZIP caching.
-macOS and Windows clients download only the compressed full Host update,
-avoiding low-reuse Range request bursts, duplicate traffic, and extra disk
-usage. Component updates still reuse unchanged components by content hash.
-
-The release workflow emits only Electron YAML update manifests and component
-manifests. macOS and Windows use Electron's ZIP and NSIS update paths. Linux
-continues to use manual AppImage replacement.
+The macOS and Windows release-slot updater reuses compressed blocks from a
+verified local archive by hash and requests missing contiguous byte ranges.
+It verifies the assembled archive's size and SHA-256 against the release
+catalog, then checks the host signature after extraction. Block indexes ship as
+separate assets and are fetched only when a reusable archive is present. Bundled
+plugin archives separate file payloads in the compressed stream, and the host
+archive preserves those boundaries to avoid invalidating adjacent files.
+The updater uses the complete
+archive when there is no reusable local copy, the older archive lacks a block
+index, or the download server ignores range requests. Component updates still
+reuse unchanged components by content hash. Legacy `electron-updater` clients
+continue to use ZIP or NSIS. Linux continues to use manual AppImage replacement.
 
 ## Initial package and component updates
 
