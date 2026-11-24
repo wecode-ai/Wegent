@@ -517,16 +517,8 @@ impl<'a> TurnTranscriptProjector<'a> {
             item,
             self.created_at,
             self.fold_commentary,
-            self.assistant_status == "streaming"
-                || self
-                    .unphased_progress_item_ids
-                    .contains(&item_id(item, "assistant-text"))
-                || (!matches!(self.assistant_status, "failed" | "cancelled")
-                    && self
-                        .assistant
-                        .blocks
-                        .iter()
-                        .any(is_projected_guidance_block)),
+            self.unphased_progress_item_ids
+                .contains(&item_id(item, "assistant-text")),
             &mut self.assistant,
             self.options,
         );
@@ -1221,26 +1213,21 @@ fn turn_should_fold_commentary(turn: &Value) -> bool {
 
 fn unphased_progress_item_ids(items: &[Value], interrupted: bool) -> HashSet<String> {
     let mut progress_ids = HashSet::new();
-    let mut later_reply = interrupted;
-    let mut process_before_reply = false;
+    let mut reply_seen = interrupted;
     for item in items.iter().rev() {
         let kind = item_type(item);
         if kind == "usermessage"
             || (kind == "message"
                 && string_field(item, "role").is_some_and(|role| role.eq_ignore_ascii_case("user")))
         {
-            later_reply = interrupted;
-            process_before_reply = false;
+            reply_seen = interrupted;
         } else if is_final_assistant_message(item) {
-            // Preserve legacy progress across a process/reply boundary. A late
-            // tool snapshot without a later reply must not hide the final text.
-            // Interrupted turns retain their unfinished process text instead.
-            if process_before_reply && assistant_message_phase_name(item).is_none() {
+            // Unphased agent messages before the latest reply are legacy process
+            // output. The latest unphased message remains the reply.
+            if reply_seen && assistant_message_phase_name(item).is_none() {
                 progress_ids.insert(item_id(item, "assistant-text"));
             }
-            later_reply = true;
-        } else if later_reply && is_substantive_process_item(item) {
-            process_before_reply = true;
+            reply_seen = true;
         }
     }
     progress_ids
@@ -1498,7 +1485,7 @@ mod message_projection;
 
 use message_projection::{
     assistant_message_phase_name, collect_assistant_message, file_changes_block, guidance_block,
-    is_internal_turn_abort_message, is_projected_guidance_block, item_completed_at, item_timestamp,
+    is_internal_turn_abort_message, item_completed_at, item_timestamp,
     normalized_phase_or_status, plan_block, push_accumulated_assistant, push_reasoning_block,
     push_user_message_once, AssistantEmitContext, AssistantTurnAccumulation,
 };
