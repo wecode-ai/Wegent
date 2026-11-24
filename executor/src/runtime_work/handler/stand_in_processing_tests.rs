@@ -246,6 +246,7 @@ async fn a_waiting_assessment_retires_only_after_the_original_question_is_resolv
         owner_resolution: None,
         resource_event_keys: Vec::new(),
         native: None,
+        guidance_turn_id: None,
     };
     handler
         .command_journal

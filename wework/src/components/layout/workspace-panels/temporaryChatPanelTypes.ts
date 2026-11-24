@@ -53,6 +53,7 @@ export interface TemporaryChatPanelProps {
   assistantMessageStyle?: 'plain' | 'bubble'
   markReadWhenActive?: boolean
   nativeConversation?: boolean
+  allowMessagesDuringApproval?: boolean
   modelControls?: ConversationModelControls
   allowInitialGoal?: boolean
   expanded?: boolean

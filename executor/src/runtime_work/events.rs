@@ -171,6 +171,9 @@ pub(crate) fn emit_response_event(
             payload_object.insert("source".to_owned(), source.clone());
         }
     }
+    if let Some(sources) = request.extra.get("standInGuidanceSources") {
+        payload["payload"]["standInGuidanceSources"] = sources.clone();
+    }
     if terminal {
         if let Some(title) = runtime_task_title(request) {
             if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut)

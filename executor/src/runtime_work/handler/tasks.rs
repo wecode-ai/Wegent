@@ -1116,7 +1116,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
-        let gate = self.task_send_gate(&local_task_id);
+        let gate = self.task_send_gate(&self.canonical_local_task_id(&local_task_id));
         let _guard = gate.lock().await;
         self.send_message_with_activity_checks(payload, false, owner_input, from_event, None)
             .await
@@ -1280,15 +1280,6 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
-        if payload["automaticStandIn"] == true
-            && existing_link.as_ref().is_some_and(|link| {
-                link.interaction_status
-                    .as_deref()
-                    .is_some_and(|status| !status.is_empty())
-            })
-        {
-            return Ok(json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"}));
-        }
         let question_response = request_user_input_response(&payload);
         // The desktop delivers an async answer as the next ordinary user message.
         let owner_input = owner_input
@@ -1296,6 +1287,7 @@ impl RuntimeWorkRpcHandler {
             && !existing_link.as_ref().is_some_and(|link| {
                 link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
             });
+        let ordinary_input = question_response.is_none();
         if let Some(response) = question_response {
             if response["delivery"] == "async" {
                 self.prepare_async_question_reply(&local_task_id, &response, &mut payload)
@@ -1343,7 +1335,36 @@ impl RuntimeWorkRpcHandler {
                 turn.local_task_id == local_task_id
                     && turn.request.extra.contains_key(quota_recovery::MARKER)
             });
-        if was_busy && !queue_if_busy && !completed_native_turn && !replacing_quota_wait {
+        let steer_stand_in = ordinary_input
+            && !activity
+            && existing_link.as_ref().is_some_and(|link| {
+                match link.runtime_handle["origin"]["type"].as_str() {
+                    Some("stand_in_identity") => owner_input,
+                    Some("connection_work" | "dingtalk_work") => from_event,
+                    _ => false,
+                }
+            });
+        let active_stand_in = steer_stand_in
+            && was_busy
+            && !start_new_session
+            && existing_link.as_ref().is_some_and(|link| {
+                is_codex_runtime(&link.runtime) && stand_in_guidance_during_interaction(link)
+            });
+        let automatic_stand_in_waiting = payload["automaticStandIn"] == true
+            && existing_link.as_ref().is_some_and(|link| {
+                link.interaction_status
+                    .as_deref()
+                    .is_some_and(|status| !status.is_empty())
+            });
+        if automatic_stand_in_waiting && !active_stand_in {
+            return Ok(stand_in_waiting_for_user());
+        }
+        if was_busy
+            && !queue_if_busy
+            && !steer_stand_in
+            && !completed_native_turn
+            && !replacing_quota_wait
+        {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -1494,6 +1515,19 @@ impl RuntimeWorkRpcHandler {
             .map(|link| link.runtime.clone())
             .or_else(|| string_field(&payload, "runtime"))
             .unwrap_or_else(|| "codex".to_owned());
+        if active_stand_in && !start_fresh_native_session {
+            if let Some(link) = existing_link.as_ref() {
+                if let Some(receipt) = self
+                    .guide_stand_in_input(link, &payload, &request, owner_input)
+                    .await?
+                {
+                    return Ok(receipt);
+                }
+            }
+        }
+        if automatic_stand_in_waiting {
+            return Ok(stand_in_waiting_for_user());
+        }
         if is_claude_runtime(&runtime) {
             ensure_claude_execution_identity(&local_task_id, &mut request);
             if let Some(session) = existing_link
@@ -2141,6 +2175,126 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    async fn guide_stand_in_input(
+        &self,
+        link: &RuntimeTaskLink,
+        payload: &Value,
+        request: &ExecutionRequest,
+        owner_input: bool,
+    ) -> Result<Option<Value>, AppIpcError> {
+        use super::command_journal::{CommandState, RuntimeCommand};
+
+        let task = &link.local_task_id;
+        // Turn permissions are fixed at launch. A stricter input needs its own turn.
+        if (payload["origin"]["askBeforeAct"] == true
+            || request
+                .extra
+                .get("origin")
+                .is_some_and(|origin| origin["askBeforeAct"] == true))
+            && link.runtime_handle["executionRequest"]["origin"]["askBeforeAct"] != true
+            && link.runtime_handle["executionRequest"]["runtime_permission_profile"]
+                != CODEX_READ_ONLY_PERMISSION_PROFILE
+        {
+            return Ok(None);
+        }
+        if self.wait_for_guidance_turn(task).await.is_none() {
+            return Ok(None);
+        }
+        let input = crate::agents::codex_guidance_input(request.clone()).await;
+        if input.is_empty() {
+            return Ok(None);
+        }
+        let mut presentation = user_message_presentation(payload);
+        let id = request
+            .extra
+            .get("client_user_message_id")
+            .cloned()
+            .unwrap_or_else(|| json!(uuid::Uuid::new_v4().to_string()));
+        let mut context = request
+            .extra
+            .get("additionalContext")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        if let Some(source) = payload.get("source").filter(|source| source.is_object()) {
+            context["wework.message-source"] = json!({"kind":"untrusted","value":json!({"source":source["source"],"channel":source["channel_type"],"sender":source["sender_id"]}).to_string()});
+        }
+        let mut guidance = json!({"taskId":task,"clientGuidanceId":id,"additionalContext":context});
+        if let Some(context) = payload.get("conversationContext") {
+            guidance["conversationContext"] = context.clone();
+        }
+        let command = RuntimeCommand::from_turn(
+            &SpawnTurnRequest {
+                task_kind: None,
+                local_task_id: task.clone(),
+                runtime: "codex".into(),
+                request: request.clone(),
+                send_payload: None,
+                direct_thread_id: None,
+                fork_thread_id: None,
+                fork_thread_path: None,
+                resume_thread_id: None,
+                initial_thread_goal: None,
+            },
+            CommandState::RecoveryRequired,
+        )?;
+        if let Some(command) = &command {
+            self.persist_guidance_command(&command.key(), Some(command.clone()))
+                .await?;
+        }
+        if let Some(display) = presentation.as_mut() {
+            display["guidance"] = json!(true);
+            display["ensureVisible"] = json!(false);
+            self.store.update_task_without_snapshot(task, |link| {
+                append_runtime_handle_user_message_presentation(
+                    &mut link.runtime_handle,
+                    display.clone(),
+                );
+            });
+        }
+        let mut result = self
+            .deliver_guidance(guidance, None, owner_input, true, input)
+            .await?;
+        match result["code"].as_str() {
+            Some("no_active_turn" | "user_input_pending" | "conversation_context_mismatch") => {
+                if presentation.is_some() {
+                    self.store.update_task_without_snapshot(task, |link| {
+                        if let Some(messages) = link.runtime_handle["userMessagePresentations"].as_array_mut() {
+                            messages.retain(|message| message["clientUserMessageId"] != id);
+                        }
+                    });
+                }
+                if let Some(command) = command {
+                    self.persist_guidance_command(&command.key(), None).await?;
+                }
+                if result["code"] == "user_input_pending" && payload["automaticStandIn"] == true {
+                    return Ok(Some(stand_in_waiting_for_user()));
+                }
+                Ok(None)
+            }
+            _ if result["accepted"] == true => {
+                if let Some(mut presentation) = presentation {
+                    presentation["turnId"] = result["turnId"].clone();
+                    self.store.update_task_without_snapshot(task, |link| {
+                        retain_stand_in_guidance_source(link, &result["turnId"], &presentation);
+                        append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
+                    });
+                    emit_runtime_work_changed(&self.event_tx, &self.device_id, task);
+                }
+                if let Some(command) = command {
+                    let key = command.key();
+                    self.persist_guidance_command(&key, Some(command.settle_guidance(string_field(&result, "turnId")))).await?;
+                }
+                result["guided"] = json!(true);
+                Ok(Some(result))
+            }
+            _ if command.is_some() => Err(AppIpcError::new(
+                "command_recovery_required",
+                "The current turn could not confirm delivery. Review the conversation before retrying.",
+            )),
+            _ => Ok(Some(result)),
+        }
+    }
+
     pub(super) async fn send_guidance(&self, payload: Value) -> Result<Value, AppIpcError> {
         self.send_guidance_with_context(payload, None, false).await
     }
@@ -2173,6 +2327,20 @@ impl RuntimeWorkRpcHandler {
             "runtime guidance requested",
             &[("local_task_id", local_task_id.clone())],
         );
+        self.deliver_guidance(payload, event_operation, owner_input, false, steer_input)
+            .await
+    }
+
+    pub(super) async fn deliver_guidance(
+        &self,
+        payload: Value,
+        event_operation: Option<&str>,
+        owner_input: bool,
+        preserve_interaction: bool,
+        steer_input: Vec<Value>,
+    ) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let Some((thread_id, mut turn_id)) = self.wait_for_guidance_turn(&local_task_id).await
         else {
             log_executor_event(
@@ -2199,6 +2367,13 @@ impl RuntimeWorkRpcHandler {
         if let Some(failure) = self.guidance_conversation_context_failure(&local_task_id, &payload)
         {
             return Ok(failure);
+        }
+        if preserve_interaction
+            && self.store.read_task(&local_task_id, |link| {
+                !stand_in_guidance_during_interaction(link)
+            }) == Some(true)
+        {
+            return Ok(json!({"accepted":false,"code":"user_input_pending"}));
         }
         self.validate_event_guidance(&local_task_id, &thread_id, event_operation)?;
         let guidance_id = string_field(&payload, "client_guidance_id")
@@ -2264,6 +2439,13 @@ impl RuntimeWorkRpcHandler {
                 {
                     return Ok(failure);
                 }
+                if preserve_interaction
+                    && self.store.read_task(&local_task_id, |link| {
+                        !stand_in_guidance_during_interaction(link)
+                    }) == Some(true)
+                {
+                    return Ok(json!({"accepted":false,"code":"user_input_pending"}));
+                }
                 self.validate_event_guidance(&local_task_id, &thread_id, event_operation)?;
                 log_executor_event(
                     "runtime guidance active turn corrected",
@@ -2297,7 +2479,14 @@ impl RuntimeWorkRpcHandler {
         };
         match steer_result {
             Ok(turn_id) => {
-                if event_operation.is_none() && issue_comment.is_none() {
+                if !preserve_interaction
+                    && event_operation.is_none()
+                    && issue_comment.is_none()
+                    && self.store.read_task(&local_task_id, |link| {
+                        link.interaction_status.as_deref()
+                            == Some(INTERACTION_WAITING_FOR_USER_INPUT)
+                    }) != Some(true)
+                {
                     self.set_interaction_status(&local_task_id, None);
                 }
                 if owner_input {
@@ -3773,4 +3962,15 @@ mod tests {
         );
         assert!(link.runtime_handle.get("queuePosition").is_none());
     }
+}
+
+fn stand_in_waiting_for_user() -> Value {
+    json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"})
+}
+
+fn stand_in_guidance_during_interaction(link: &RuntimeTaskLink) -> bool {
+    matches!(
+        link.interaction_status.as_deref(),
+        None | Some(INTERACTION_WAITING_FOR_USER_INPUT)
+    )
 }

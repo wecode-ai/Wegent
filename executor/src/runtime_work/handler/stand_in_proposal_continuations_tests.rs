@@ -94,6 +94,94 @@ async fn im_followup_queues_while_the_initial_identity_session_is_not_ready() {
 }
 
 #[tokio::test]
+async fn active_identity_steers_once_and_retains_the_im_source() {
+    use super::super::tests::install_native_history;
+
+    let _activation = crate::services::capability_activation::begin_execution().await;
+    let (root, mut handler, identity) = fixture();
+    let task = &identity.task_id;
+    install_native_history(&mut handler, root.path(), vec![], None);
+    handler
+        .codex_app_server
+        .request("thread/read", json!({"threadId":"native-thread"}))
+        .await
+        .unwrap();
+    fs::write(
+        root.path().join("turn_steer.json"),
+        r#"{"turnId":"active-turn"}"#,
+    )
+    .unwrap();
+    let (cancel, _cancelled) = oneshot::channel();
+    let (_stopped, stopped) = oneshot::channel();
+    let execution = handler.start_local_task_execution(task.clone(), cancel, stopped);
+    let mut payload = im_followup_payload(&handler, task, "new-callback");
+    payload["source"]["channel_type"] = json!("dingtalk");
+    payload["additionalContext"] =
+        json!({"quoted":{"kind":"untrusted","value":"Previous message"}});
+    let request = execution_request(&payload).unwrap();
+    handler.bind_native_turn_start(task, &request, execution, "native-thread", "active-turn");
+    for _ in 0..2 {
+        let result = handler
+            .dispatch_stand_in_conversation(payload.clone(), false)
+            .await
+            .unwrap();
+        assert_eq!(result["guided"], true, "{result}");
+        assert_eq!(result["turnId"], "active-turn");
+    }
+    handler.set_interaction_status(task, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    let waiting = handler
+        .dispatch_stand_in_conversation(
+            im_followup_payload(&handler, task, "while-approval-pending"),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(waiting["guided"], true);
+    assert_eq!(waiting["turnId"], "active-turn");
+    assert_eq!(
+        handler
+            .local_task_link(task)
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_WAITING_FOR_USER_INPUT)
+    );
+    let requests = fs::read_to_string(root.path().join("requests.jsonl")).unwrap();
+    let mut steers = requests
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|request| request["method"] == "turn/steer");
+    let steer = steers.next().unwrap();
+    assert_eq!(
+        steers.next().unwrap()["params"]["input"][0]["text"],
+        "while-approval-pending"
+    );
+    assert!(steers.next().is_none());
+    assert_eq!(steer["params"]["expectedTurnId"], "active-turn");
+    assert_eq!(steer["params"]["input"][0]["text"], "new-callback");
+    assert_eq!(
+        steer["params"]["additionalContext"]["quoted"]["value"],
+        "Previous message"
+    );
+    assert!(handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .queued_turns
+        .is_empty());
+    let event = handler.request_for_codex_event(task, &request, Some("active-turn"));
+    assert_eq!(
+        event.extra["standInGuidanceSources"]["new-callback"],
+        payload["source"]
+    );
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn im_followup_rejects_an_idle_identity_with_a_missing_session() {
     let (_root, handler, identity) = fixture();
     handler
