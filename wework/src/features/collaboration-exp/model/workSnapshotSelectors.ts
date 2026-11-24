@@ -22,6 +22,12 @@ function roleIdentity(id: string | null): string | null {
 }
 
 function workState(item: RuntimeTaskReminderItem): ExperienceWorkState {
+  const workOrigin = item.task.runtimeHandle?.origin as Record<string, unknown> | undefined
+  const delivery = workOrigin?.inboxReplyDeliveryStatus
+  if (delivery === 'confirmed_sent') return 'completed'
+  if (delivery === 'processing') return 'running'
+  if (delivery === 'needs_user') return 'waiting'
+  if (delivery) return 'idle'
   const task = item.lifecycle?.task ?? item.task
   const origin = task.runtimeHandle?.origin as Record<string, unknown> | undefined
   if (task.status === 'archived') return 'completed'
@@ -54,14 +60,18 @@ function workItems(input: ExperienceWorkSnapshotInput): ExperienceWorkSnapshotIt
     if (!previous || shouldReplaceRuntimeTaskProjection(previous.task, item.task))
       unique.set(key, item)
   }
-  const items: ExperienceWorkSnapshotItem[] = [...unique].map(([key, item]) => ({
-    key,
-    title: item.task.title,
-    state: workState(item),
-    roleIds: [roleIdentity(standInWorkRole(item))],
-    updatedAt: new Date(timestamp(item.task.updatedAt ?? item.task.completedAt)).toISOString(),
-    address: { ...item.address },
-  }))
+  const items: ExperienceWorkSnapshotItem[] = [...unique].map(([key, item]) => {
+    const origin = item.task.runtimeHandle?.origin as Record<string, unknown> | undefined
+    const hasTask = !origin?.inboxReplyDeliveryStatus || !origin.inboxStatus
+    return {
+      key,
+      title: item.task.title,
+      state: workState(item),
+      roleIds: [roleIdentity(standInWorkRole(item))],
+      updatedAt: new Date(timestamp(item.task.updatedAt ?? item.task.completedAt)).toISOString(),
+      address: hasTask ? { ...item.address } : undefined,
+    }
+  })
   const decisions = new Map((input.pendingDecisions ?? []).map(item => [item.id, item]))
   for (const decision of decisions.values())
     items.push({

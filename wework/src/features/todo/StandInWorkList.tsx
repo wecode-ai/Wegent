@@ -10,15 +10,39 @@ import {
   CollapsibleRoot,
   CollapsibleTrigger,
 } from '@wegent/collaboration/controls/Collapsible'
+import { useEscapeKey, useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowUpRight, ChevronRight, GripVertical, Layers, Split, X } from 'lucide-react'
-import { useCallback, useState, useSyncExternalStore } from 'react'
+import { useCallback, useRef, useState, useSyncExternalStore } from 'react'
+import { StandInReplyDeliveryDetails } from './StandInReplyDeliveryDetails'
+import {
+  replyDeliveryOwnerLabel,
+  replyDeliveryStatus,
+  standInWorkDelivery,
+} from './standInReplyDelivery'
 import { StandInWorkMessages } from './StandInWorkMessages'
 import { createStandInWorkSelectionSource } from './standInWorkSelectionSource'
 import { inboxRuntimeItem } from './useStandInInbox'
 import { useStandInWorkOrganization } from './useStandInWorkOrganization'
 
-type WorkFilter = 'all' | 'running' | 'completed'
+type WorkFilter =
+  | 'all'
+  | 'running'
+  | 'completed'
+  | 'replied'
+  | 'exceptions'
+  | 'needs_user'
+  | 'skipped'
+
+const deliveryFilters = {
+  processing: 'running',
+  confirmed_sent: 'replied',
+  definite_failure: 'exceptions',
+  unknown: 'exceptions',
+  blocked: 'exceptions',
+  needs_user: 'needs_user',
+  skipped: 'skipped',
+} as const
 
 export function StandInWorkList({
   items,
@@ -70,23 +94,57 @@ export function StandInWorkList({
     },
   })
   const selected = items.find(item => item.key === selectedKey)
+  const previewRef = useRef<HTMLElement>(null)
+  const previewClose = useRef<HTMLButtonElement>(null)
+  useEscapeKey(() => setSelectedKey(null), active && !!selected, previewRef)
+  useFocusRequest(previewClose, selected?.key, {
+    enabled: active && !!selected,
+    restoreFocus: true,
+  })
   const selectedState = selected && standInState(selected)
   const selectedWork = inbox.find(work => work.taskId === selected?.task.taskId)
+  const selectedDelivery = standInWorkDelivery(selectedWork)
+  const selectedMessage = selectedWork?.latestMessage
+  const selectedReplyRecordId =
+    selectedDelivery?.recordId ??
+    (selectedDelivery?.messageId === selectedMessage?.id ? selectedMessage?.recordId : undefined)
+  const summary =
+    selectedDelivery && selectedReplyRecordId && selectedReplyRecordId !== selectedMessage?.recordId
+      ? null
+      : (selectedDelivery && selectedMessage?.text) ||
+        selectedState?.summary ||
+        selectedMessage?.text ||
+        t('standIn.workspace.preview_no_summary')
   const needsRestore = selected?.task.status === 'archived'
   const needsStart =
+    !selectedDelivery &&
     !needsRestore &&
     selectedWork &&
     selectedState?.status !== 'waiting' &&
     ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
+  const canTakeOver =
+    selectedWork &&
+    !selectedDelivery?.takenOver &&
+    (selectedDelivery
+      ? !['confirmed_sent', 'skipped'].includes(replyDeliveryStatus(selectedDelivery))
+      : selectedWork.source.policy.autonomousReply === true)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
-    if (item.task.status === 'archived') return t('workbench.settings_category_archived')
     const work = inbox.find(value => value.taskId === item.task.taskId)
+    const delivery = standInWorkDelivery(work)
+    if (delivery) {
+      const label = t(`standIn.workspace.reply_delivery_${replyDeliveryStatus(delivery)}`)
+      const ownerLabel = replyDeliveryOwnerLabel(delivery)
+      return ownerLabel ? `${label} · ${t(ownerLabel)}` : label
+    }
+    if (item.task.status === 'archived') return t('workbench.settings_category_archived')
     return work && work.status !== 'sent'
       ? t(`standIn.workspace.inbox_${work.status}`)
       : t(`standIn.personal.activity_${standInState(item).status}`)
   }
   const filterStatus = (item: RuntimeTaskReminderItem) => {
     const work = inbox.find(value => value.taskId === item.task.taskId)
+    const delivery = standInWorkDelivery(work)
+    if (delivery) return deliveryFilters[replyDeliveryStatus(delivery)]
     return work && ['pending', 'needs_grouping'].includes(work.status)
       ? 'waiting'
       : standInState(item).status
@@ -97,12 +155,18 @@ export function StandInWorkList({
   const history = items.filter(item =>
     inbox.some(work => work.taskId === item.task.taskId && work.messageCount === 0 && !!work.task)
   )
-  const visible = available.filter(item => filter === 'all' || filterStatus(item) === filter)
+  const filters: WorkFilter[] = ['all', 'running', 'completed']
+  if (inbox.some(work => standInWorkDelivery(work))) {
+    filters.push('replied', 'exceptions', 'needs_user', 'skipped')
+  }
+  const visible = available.filter(item =>
+    filter === 'all' ? filterStatus(item) !== 'skipped' : filterStatus(item) === filter
+  )
   return (
-    <div className="flex min-h-0 flex-1" data-testid="stand-in-activity">
+    <div className="relative flex min-h-0 flex-1" data-testid="stand-in-activity">
       <div className="min-w-0 flex-1 overflow-y-auto p-5">
         <nav aria-label={t('standIn.workspace.work_filters')} className="mb-4 flex flex-wrap gap-1">
-          {(['all', 'running', 'completed'] as const).map(value => (
+          {filters.map(value => (
             <ControlButton
               variant="unstyled"
               key={value}
@@ -112,7 +176,11 @@ export function StandInWorkList({
               onClick={() => setFilter(value)}
               className={`min-h-11 md:min-h-8 rounded-md px-3 text-sm ${filter === value ? 'bg-muted font-medium' : 'text-text-muted hover:bg-muted'}`}
             >
-              {t(`standIn.workspace.filter_${value}`)}
+              {t(
+                value === 'needs_user'
+                  ? 'standIn.workspace.reply_delivery_needs_user'
+                  : `standIn.workspace.filter_${value}`
+              )}
             </ControlButton>
           ))}
         </nav>
@@ -272,7 +340,9 @@ export function StandInWorkList({
                     </span>
                   )}
                 </span>
-                <span className="text-sm text-text-secondary">{statusLabel(item)}</span>
+                <span className="max-w-[45%] shrink-0 break-words text-sm text-text-secondary">
+                  {statusLabel(item)}
+                </span>
                 <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
               </ControlButton>
             )
@@ -340,6 +410,7 @@ export function StandInWorkList({
       </div>
       {selected && selectedState && (
         <aside
+          ref={previewRef}
           aria-label={t('standIn.workspace.work_preview')}
           data-testid="stand-in-work-preview"
           className={`absolute inset-0 z-10 ${organization.choosing ? 'hidden md:flex' : 'flex'} flex-col overflow-y-auto border-l border-border bg-background p-5 md:relative md:inset-auto md:w-96 md:shrink-0`}
@@ -351,6 +422,7 @@ export function StandInWorkList({
               type="button"
               data-testid="stand-in-preview-close"
               aria-label={t('standIn.close')}
+              ref={previewClose}
               onClick={() => setSelectedKey(null)}
               className="flex h-11 w-11 md:h-8 md:w-8 items-center justify-center rounded-md hover:bg-muted"
             >
@@ -358,12 +430,32 @@ export function StandInWorkList({
             </ControlButton>
           </header>
           <p className="mt-3 text-xs text-text-muted">{selected.projectName}</p>
-          <p className="mt-5 whitespace-pre-wrap text-sm" data-testid="stand-in-preview-summary">
-            {selectedState.summary ||
-              selectedWork?.latestMessage?.text ||
-              t('standIn.workspace.preview_no_summary')}
-          </p>
-          <p className="mt-4 text-sm text-text-secondary">{statusLabel(selected)}</p>
+          {summary && (
+            <p className="mt-5 whitespace-pre-wrap text-sm" data-testid="stand-in-preview-summary">
+              {summary}
+            </p>
+          )}
+          {selectedDelivery ? (
+            <StandInReplyDeliveryDetails
+              key={selectedReplyRecordId ?? selectedWork?.id}
+              delivery={selectedDelivery}
+              onVerify={
+                selectedReplyRecordId && selectedWork && api && userId !== undefined && deviceId
+                  ? async () => {
+                      await api.verifyDelivery(
+                        userId,
+                        deviceId,
+                        selectedWork.id,
+                        selectedReplyRecordId
+                      )
+                      onRefresh?.()
+                    }
+                  : undefined
+              }
+            />
+          ) : (
+            <p className="mt-4 text-sm text-text-secondary">{statusLabel(selected)}</p>
+          )}
           {selectedWork && selectedWork.messageCount > 0 && api && (
             <div className="mt-4 flex flex-wrap gap-2">
               {inbox.some(
@@ -411,7 +503,7 @@ export function StandInWorkList({
               )}
             </div>
           )}
-          {selectedState.status === 'waiting' && interactions && (
+          {!selectedDelivery && selectedState.status === 'waiting' && interactions && (
             <ControlButton
               variant="primary"
               size="sm"
@@ -445,6 +537,7 @@ export function StandInWorkList({
               }
               expanded={expandedWorkId === selectedWork.id}
               onExpandedChange={open => setExpandedWorkId(open ? selectedWork.id : null)}
+              onRefresh={onRefresh}
               draggedMessageId={
                 organization.choosing ? undefined : organization.drag?.messageIds?.[0]
               }
@@ -462,8 +555,34 @@ export function StandInWorkList({
               {error}
             </p>
           )}
-          <div className="mt-auto pt-6">
-            <p className="mb-3 text-xs text-text-muted">{t('standIn.workspace.preview_help')}</p>
+          <div className="mt-auto space-y-3 pt-6">
+            {!selectedDelivery && (
+              <p className="text-xs text-text-muted">{t('standIn.workspace.preview_help')}</p>
+            )}
+            {canTakeOver && api && deviceId && userId !== undefined && (
+              <ControlButton
+                variant="outline"
+                size="sm"
+                type="button"
+                data-testid="stand-in-reply-takeover"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true)
+                  setError(null)
+                  try {
+                    await api.takeOverWork(userId, deviceId, selectedWork.id)
+                    onRefresh?.()
+                  } catch (cause) {
+                    setError(getStandInErrorMessage(cause))
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+                className="min-h-11 w-full rounded-lg border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-9"
+              >
+                {t('standIn.workspace.reply_delivery_takeover')}
+              </ControlButton>
+            )}
             <ControlButton
               variant="primary"
               size="sm"
@@ -508,7 +627,8 @@ export function StandInWorkList({
               )}
               <ArrowUpRight className="h-4 w-4" />
             </ControlButton>
-            {selectedWork?.task &&
+            {!selectedDelivery &&
+              selectedWork?.task &&
               ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status) &&
               selectedState.status !== 'running' &&
               selectedState.status !== 'waiting' &&

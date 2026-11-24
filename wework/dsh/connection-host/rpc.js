@@ -79,9 +79,10 @@ export async function handleConnectionRpc(req, res, token, request) {
     if (controller.signal.aborted || res.writableEnded || res.destroyed) return
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
     collection = body.method === 'collectObservation'
+    const cancellable = collection || body.method === 'inspectConversation'
     response = {
       ok: true,
-      result: await request(body, collection ? controller.signal : undefined),
+      result: await request(body, cancellable ? controller.signal : undefined),
     }
   } catch (error) {
     if (status === 200) status = error.code === 'request_too_large' ? 413 : 400

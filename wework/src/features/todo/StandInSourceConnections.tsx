@@ -118,10 +118,8 @@ function StandInSourceConnectionsContent({
     provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required'
   const allRows = role.connections ?? []
   const rows = allRows.filter(row => row.providerId === provider.id)
-  const prefix =
-    provider.id === '@wegent/dsh-connection-dingtalk/dingtalk'
-      ? 'stand-in-dingtalk'
-      : 'stand-in-connection-' + provider.id
+  const dingTalk = provider.id === '@wegent/dsh-connection-dingtalk/dingtalk'
+  const prefix = dingTalk ? 'stand-in-dingtalk' : 'stand-in-connection-' + provider.id
   const updateRows = (next: StandInSourceConnection[]) =>
     onChange({
       ...role,
@@ -151,50 +149,50 @@ function StandInSourceConnectionsContent({
               {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
             </p>
           </div>
-          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
-            row.kind === 'group' &&
-            row.scope !== 'all' && (
-              <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
-                {t('standIn.workspace.group_message_scope')}
-                <SelectRoot
-                  value={normalizeSelectValue(row.collectionKey ?? 'mentions')}
-                  disabled={disabled}
-                  onValueChange={selectedValue => {
-                    if (selectedValue === null) return
-                    const allMessages = selectedValue === 'all-messages'
-                    updateRows(
-                      rows.map(value => {
-                        if (value !== row) return value
-                        const next = { ...value }
-                        if (allMessages) next.collectionKey = 'all-messages'
-                        else delete next.collectionKey
-                        next.configurationSummary = t(
-                          allMessages
-                            ? 'standIn.workspace.group_all_messages'
-                            : 'standIn.workspace.group_mentions'
-                        )
-                        return next
-                      })
-                    )
-                  }}
-                >
-                  <SelectTrigger
-                    density="compact"
-                    data-testid={`${prefix}-message-scope-${row.id}`}
-                    aria-label={t('standIn.workspace.group_message_scope_for', { name: row.name })}
-                    className="[&>option]:bg-background [&>option]:text-text-primary"
-                  />
-                  <SelectContent>
-                    <SelectItem value="mentions">
-                      {t('standIn.workspace.group_mentions')}
-                    </SelectItem>
-                    <SelectItem value="all-messages">
-                      {t('standIn.workspace.group_all_messages')}
-                    </SelectItem>
-                  </SelectContent>
-                </SelectRoot>
-              </label>
-            )}
+          {dingTalk && row.kind === 'group' && row.scope !== 'all' && (
+            <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
+              {t('standIn.workspace.group_message_scope')}
+              <SelectRoot
+                value={normalizeSelectValue(row.collectionKey ?? 'mentions')}
+                disabled={disabled}
+                onValueChange={selectedValue => {
+                  if (selectedValue === null) return
+                  const allMessages = selectedValue === 'all-messages'
+                  updateRows(
+                    rows.map(value => {
+                      if (value !== row) return value
+                      const next = { ...value }
+                      if (allMessages) {
+                        next.collectionKey = 'all-messages'
+                        if (next.policy.autonomousReply) {
+                          next.policy = { ...next.policy, autonomousReply: false }
+                        }
+                      } else delete next.collectionKey
+                      next.configurationSummary = t(
+                        allMessages
+                          ? 'standIn.workspace.group_all_messages'
+                          : 'standIn.workspace.group_mentions'
+                      )
+                      return next
+                    })
+                  )
+                }}
+              >
+                <SelectTrigger
+                  density="compact"
+                  data-testid={`${prefix}-message-scope-${row.id}`}
+                  aria-label={t('standIn.workspace.group_message_scope_for', { name: row.name })}
+                  className="[&>option]:bg-background [&>option]:text-text-primary"
+                />
+                <SelectContent>
+                  <SelectItem value="mentions">{t('standIn.workspace.group_mentions')}</SelectItem>
+                  <SelectItem value="all-messages">
+                    {t('standIn.workspace.group_all_messages')}
+                  </SelectItem>
+                </SelectContent>
+              </SelectRoot>
+            </label>
+          )}
           <ControlButton
             variant="unstyled"
             type="button"
@@ -594,7 +592,12 @@ function StandInSourceConnectionsContent({
                 key: identity(row),
                 name: row.name,
                 policy: row.policy,
-                outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
+                outbound: dingTalk,
+                supportsAutonomousReply:
+                  dingTalk &&
+                  row.scope !== 'all' &&
+                  (row.kind === 'direct' ||
+                    (row.kind === 'group' && row.collectionKey !== 'all-messages')),
                 testId: `${prefix}-policy-${row.id}`,
                 onChange: policy =>
                   updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),
@@ -604,7 +607,7 @@ function StandInSourceConnectionsContent({
                   key: 'new',
                   name: provider.displayName,
                   policy: newPolicy,
-                  outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
+                  outbound: dingTalk,
                   testId: `${prefix}-new-policy`,
                   onChange: policy =>
                     setNewPolicy({ ...policy, immediate: policy.immediate ?? false }),

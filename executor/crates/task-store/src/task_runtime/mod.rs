@@ -13,7 +13,9 @@ pub use store::milestones::MilestoneInput;
 pub use store::personal_stand_in;
 pub use store::project_router_store;
 pub use store::stand_in_telemetry;
-pub use store::{IssueHumanRequestScope, LocalTaskStore, TaskRuntimeError};
+pub use store::{
+    IssueHumanRequestScope, LocalTaskStore, StandInDeliveryTransaction, TaskRuntimeError,
+};
 
 const COLLABORATION_MEMBER_RESULT_INSTRUCTIONS: &str = "\
 The Executor records this run in the current Issue activity. Include the results, evidence, \

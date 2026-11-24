@@ -68,6 +68,7 @@
               "allResourceLabel": "All messages"
             }
           },
+          "inspectConversation": true,
           "cliReadTools": {
             "dingtalk": {
               "outputArgs": [

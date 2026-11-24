@@ -1,6 +1,8 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
+import type { StandInHandlingPolicy } from '@/api/personalStandIn'
 import '@/i18n'
 import { StandInReplyAuthorization } from './StandInReplyAuthorization'
 
@@ -72,5 +74,51 @@ describe('source reply authorization', () => {
     await user.click(toggle)
     expect(onChange).not.toHaveBeenCalled()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('requires separate autonomous reply opt-in and retains template selections on revocation', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    function Settings() {
+      const [policy, setPolicy] = useState<StandInHandlingPolicy>({
+        automatic: true,
+        askBeforeAct: false,
+      })
+      return (
+        <StandInReplyAuthorization
+          name="产品研发群"
+          policy={policy}
+          disabled={false}
+          testId="source-reply-policy"
+          supportsAutonomousReply
+          onChange={next => {
+            onChange(next)
+            setPolicy(next)
+          }}
+        />
+      )
+    }
+    render(<Settings />)
+    const optIn = screen.getByTestId('source-reply-policy-autonomous-reply')
+    expect(optIn).toHaveAttribute('aria-checked', 'false')
+    expect(onChange).not.toHaveBeenCalled()
+    await user.click(optIn)
+    expect(onChange).toHaveBeenLastCalledWith({
+      automatic: true,
+      askBeforeAct: false,
+      autonomousReply: true,
+    })
+    const template = screen.getByTestId('source-reply-policy-reply-template-document_entry')
+    expect(template).toBeChecked()
+    await user.click(template)
+    expect(template).not.toBeChecked()
+    await user.click(screen.getByTestId('source-reply-policy-confirm-replies'))
+    expect(onChange).toHaveBeenLastCalledWith({
+      automatic: true,
+      askBeforeAct: true,
+      autonomousReply: false,
+      replyTemplates: ['confirmed_time_place', 'standard_process'],
+    })
+    expect(screen.queryByTestId('source-reply-policy-autonomous-reply')).not.toBeInTheDocument()
   })
 })

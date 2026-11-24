@@ -72,6 +72,7 @@ pub(super) fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError>
                             })
                             && valid_exclusions(row)
                             && validate_policy(&row["policy"])
+                            && valid_reply_policy(row)
                             && (!source_provider(row).starts_with("@wegent/dsh-connection-git/")
                                 || row["policy"]["askBeforeAct"] == true)
                             && ids.insert((
@@ -143,8 +144,52 @@ pub fn source_provider(source: &Value) -> &str {
     source["providerId"].as_str().unwrap_or(DINGTALK_PROVIDER)
 }
 
+fn valid_reply_policy(source: &Value) -> bool {
+    let policy = &source["policy"];
+    policy
+        .get("autonomousReply")
+        .map_or(true, Value::is_boolean)
+        && policy.get("replyTemplates").map_or(true, |templates| {
+            templates.as_array().is_some_and(|templates| {
+                templates.len() <= 3
+                    && templates.iter().all(|name| {
+                        matches!(
+                            name.as_str(),
+                            Some("document_entry" | "confirmed_time_place" | "standard_process")
+                        )
+                    })
+            })
+        })
+        && (policy["autonomousReply"] != true || selected_dingtalk_source(source))
+}
+
+fn selected_dingtalk_source(source: &Value) -> bool {
+    source_provider(source) == DINGTALK_PROVIDER
+        && matches!(source["kind"].as_str(), Some("direct" | "group"))
+        && source["scope"] != "all"
+        && source["collectionKey"] != "all-messages"
+        && source["id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty() && id != "*")
+}
+
+/// Autonomous replies require an explicitly selected DingTalk conversation.
+pub fn autonomous_dingtalk_reply(source: &Value) -> bool {
+    selected_dingtalk_source(source)
+        && source["policy"]["automatic"] == true
+        && source["policy"]["askBeforeAct"] == false
+        && source["policy"]["autonomousReply"] == true
+}
+
 pub fn source_namespace(source: &Value) -> Value {
     if source_provider(source) == DINGTALK_PROVIDER {
+        if source["replyIdentity"].is_object() {
+            return json!({
+                "profile": source["profile"],
+                "accountId": source["replyIdentity"]["accountId"],
+                "organizationId": source["replyIdentity"]["organizationId"],
+            });
+        }
         source["profile"].clone()
     } else {
         let mut namespace =

@@ -1,5 +1,7 @@
 //! Durable source cursors, message deduplication and role-owned work associations.
-use super::personal_stand_in::{source_collection_namespace, source_namespace};
+use super::personal_stand_in::{
+    autonomous_dingtalk_reply, source_collection_namespace, source_namespace,
+};
 use super::*;
 use sha2::{Digest, Sha256};
 
@@ -215,6 +217,21 @@ fn read_record(
     Ok(get_item_from(connection, id, kind)?.map(|row| row.metadata))
 }
 
+pub(super) fn stand_in_reply_target(
+    connection: &Connection,
+    user: i64,
+    work_id: &str,
+    record_id: &str,
+) -> Result<(Value, Value), TaskRuntimeError> {
+    let work = read_record(connection, work_id, "stand_in_work")?
+        .filter(|work| work["userId"] == user)
+        .ok_or(TaskRuntimeError::TaskNotFound)?;
+    let message = read_record(connection, record_id, "stand_in_message")?
+        .filter(|message| message["userId"] == user && message["workId"] == work["id"])
+        .ok_or(TaskRuntimeError::TaskNotFound)?;
+    Ok((work, message))
+}
+
 fn write_record(
     connection: &Connection,
     id: &str,
@@ -237,8 +254,14 @@ fn find_message(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
          AND json_extract(metadata,'$.source.profile')=?3 AND json_extract(metadata,'$.source.kind')=?4
-         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8 AND (?9=0 OR json_type(metadata,'$.objectId') IS NULL) ORDER BY created_at DESC,id DESC LIMIT 1",
-        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source),immutable_only],
+         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6
+         AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8
+         AND (?9=0 OR json_type(metadata,'$.objectId') IS NULL)
+         AND json_extract(metadata,'$.source.replyIdentity.accountId') IS ?10
+         AND json_extract(metadata,'$.source.replyIdentity.organizationId') IS ?11
+         ORDER BY created_at DESC,id DESC LIMIT 1",
+        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source), immutable_only,
+            source["replyIdentity"]["accountId"].as_str(), source["replyIdentity"]["organizationId"].as_str()],
         |row| row.get(0),
     ).optional()?;
     raw.map(|raw| {
@@ -269,8 +292,11 @@ fn find_event_message(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
          AND json_extract(metadata,'$.source.providerId')=?3 AND json_extract(metadata,'$.source.profile')=?4
-         AND json_extract(metadata,'$.objectId')=?5 AND json_extract(metadata,'$.version')=?6 LIMIT 1",
-        params![user,role,super::personal_stand_in::source_provider(source),source["profile"].as_str(),message["objectId"].as_str(),message["version"].as_str()], |row|row.get(0)
+         AND json_extract(metadata,'$.objectId')=?5 AND json_extract(metadata,'$.version')=?6
+         AND json_extract(metadata,'$.source.replyIdentity.accountId') IS ?7
+         AND json_extract(metadata,'$.source.replyIdentity.organizationId') IS ?8 LIMIT 1",
+        params![user, role, super::personal_stand_in::source_provider(source), source["profile"].as_str(), message["objectId"].as_str(), message["version"].as_str(),
+            source["replyIdentity"]["accountId"].as_str(), source["replyIdentity"]["organizationId"].as_str()], |row|row.get(0)
     ).optional()?;
     raw.map(|raw| {
         serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
@@ -474,6 +500,65 @@ impl LocalTaskStore {
         Ok(found)
     }
 
+    pub fn dingtalk_active_identity(&self, user: i64) -> Result<Option<Value>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        read_record(
+            &connection,
+            &format!("dingtalk-active:{user}"),
+            "dingtalk_active_identity",
+        )
+    }
+
+    pub fn save_dingtalk_active_identity(
+        &self,
+        user: i64,
+        identity: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let connection = self.connection()?;
+        write_record(
+            &connection,
+            &format!("dingtalk-active:{user}"),
+            "dingtalk_active_identity",
+            identity,
+        )
+    }
+
+    pub fn finish_stand_in_reply(
+        &self,
+        user: i64,
+        work_id: &str,
+        record_id: &str,
+        result: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (mut work, mut message) = stand_in_reply_target(&connection, user, work_id, record_id)?;
+        message["replyDelivery"] = result.clone();
+        message["dispatchStatus"] = json!("sent");
+        write_record(&connection, record_id, "stand_in_message", &message)?;
+        refresh_work(&connection, &mut work)?;
+        connection.commit()?;
+        Ok(())
+    }
+
+    pub fn take_over_stand_in_work(
+        &self,
+        user: i64,
+        work_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut work = read_record(&connection, work_id, "stand_in_work")?
+            .filter(|work| work["userId"] == user)
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        if work["takenOverAt"].is_null() {
+            work["takenOverAt"] = json!(now());
+            write_record(&connection, work_id, "stand_in_work", &work)?;
+        }
+        connection.commit()?;
+        Ok(())
+    }
+
     pub fn stand_in_source_errors(&self, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement=connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_source' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.error') IS NOT NULL ORDER BY updated_at DESC")?;
@@ -629,7 +714,11 @@ impl LocalTaskStore {
                 user,
                 role,
                 super::personal_stand_in::source_provider(source),
-                source["profile"],
+                if source["replyIdentity"].is_object() {
+                    source_namespace(source)
+                } else {
+                    source["profile"].clone()
+                },
                 message["objectId"],
                 message["version"]
             ])
@@ -656,7 +745,11 @@ impl LocalTaskStore {
         }
         let mut work = if let Some(id) = work_id {
             read_record(&connection, id, "stand_in_work")?
-                .filter(|work| work["userId"] == user && work["roleId"] == role)
+                .filter(|work| {
+                    work["userId"] == user
+                        && work["roleId"] == role
+                        && work["source"]["replyIdentity"] == source["replyIdentity"]
+                })
                 .ok_or(TaskRuntimeError::TaskNotFound)?
         } else {
             let id = format!("stand-in-work-{}", Uuid::new_v4());
@@ -778,9 +871,21 @@ impl LocalTaskStore {
                 "Wait for active work to finish before organizing messages".into(),
             ));
         }
+        if messages.iter().any(|message| {
+            message["source"]["replyIdentity"] != destination["source"]["replyIdentity"]
+                || autonomous_dingtalk_reply(&message["source"])
+                    != autonomous_dingtalk_reply(&destination["source"])
+        }) {
+            return Err(TaskRuntimeError::Invalid(
+                "DingTalk messages must retain their account and automatic reply scope".into(),
+            ));
+        }
         for (id, message) in ids.iter().zip(messages.iter_mut()) {
             if message.get("originalWorkId").is_none() {
                 message["originalWorkId"] = source["id"].clone();
+            }
+            if !source["takenOverAt"].is_null() {
+                message["takenOverAt"] = source["takenOverAt"].clone();
             }
             message["workId"] = destination["id"].clone();
             // Organization never authorizes replay of completed effects.
@@ -809,6 +914,51 @@ impl LocalTaskStore {
 #[cfg(test)]
 mod organization_tests {
     use super::*;
+
+    #[test]
+    fn reply_sources_keep_account_history_and_recovery_cursors_separate() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = |account| {
+            json!({"id":"group","profile":"owner","kind":"group",
+            "replyIdentity":{"accountId":account,"organizationId":"org","openId":account}})
+        };
+        let first = source("owner-a");
+        let second = source("owner-b");
+        let event = json!({"id":"same-source-event","text":"Question"});
+        store
+            .save_stand_in_source(7, &first, &json!({"cursor":"a"}))
+            .unwrap();
+        assert!(store.stand_in_source(7, &second).unwrap().is_null());
+        let work = store
+            .ingest_stand_in_message(7, "review", &first, &event, None)
+            .unwrap();
+        assert!(store
+            .known_stand_in_event_message(7, "review", &second, &event)
+            .unwrap()
+            .is_none());
+        let other = store
+            .ingest_stand_in_message(7, "review", &second, &event, None)
+            .unwrap();
+        assert_ne!(work["id"], other["id"]);
+        assert_eq!(
+            store
+                .ingest_stand_in_message(7, "review", &first, &event, None)
+                .unwrap()["id"],
+            work["id"]
+        );
+        let work_id = work["id"].as_str().unwrap();
+        let message = store.stand_in_messages(7, work_id).unwrap().remove(0);
+        let record_id = message["recordId"].as_str().unwrap();
+        store.take_over_stand_in_work(7, work_id).unwrap();
+        store
+            .finish_stand_in_reply(7, work_id, record_id, &json!({"status":"unknown"}))
+            .unwrap();
+        let (work, message) = store.stand_in_reply_target(7, work_id, record_id).unwrap();
+        assert!(work["takenOverAt"].is_string());
+        assert_eq!(message["replyDelivery"]["status"], "unknown");
+        assert!(store.stand_in_reply_target(8, work_id, record_id).is_err());
+    }
 
     #[test]
     fn dispatch_failures_survive_reopening_and_regrouping() {

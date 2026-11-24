@@ -235,6 +235,12 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.work.run" => {
                 boxed_rpc(move || async move { self.run_connection_stand_in_work(payload).await })
             }
+            "runtime.stand_in.work.takeover" => {
+                boxed_rpc(move || async move { self.take_over_connection_stand_in_work(payload) })
+            }
+            "runtime.stand_in.work.verify_delivery" => {
+                boxed_rpc(move || async move { self.verify_dingtalk_delivery(payload).await })
+            }
             "runtime.stand_in.work.adjust" => {
                 boxed_rpc(move || async move { self.adjust_connection_stand_in_work(payload) })
             }

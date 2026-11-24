@@ -23,6 +23,25 @@ test('preserves the durable-only provider contract unless staged collection is d
   assert.equal(result.hasMore, true)
 })
 
+test('preserves a provider recovery window and its explicit gap through the collector', async () => {
+  const start = '2026-11-24T10:00:00Z'
+  const end = '2026-11-24T10:30:00Z'
+  const recovery = { start, end, cursor: end, complete: false }
+  const gap = { start, end, code: 'event_limit' }
+  const collected = await collectObservation(
+    {
+      call: async (_id, _method, input) => {
+        assert.equal(input.recover, true)
+        return { events: [], nextCheckpoint: { after: end }, hasMore: false, recovery, gap }
+      },
+    },
+    'dingtalk',
+    { source: {}, checkpoint: {}, recover: true }
+  )
+  assert.deepEqual(collected.recovery, recovery)
+  assert.deepEqual(collected.gap, gap)
+})
+
 test('drains a provider cycle with one canonical resource snapshot and checkpoint', async () => {
   const calls = []
   const registry = {

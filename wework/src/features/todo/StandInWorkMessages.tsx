@@ -10,6 +10,7 @@ import {
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowRight, GripVertical, Split } from 'lucide-react'
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { StandInReplyDeliveryDetails } from './StandInReplyDeliveryDetails'
 import type { StandInWorkDrag } from './useStandInWorkOrganization'
 
 export function StandInWorkMessages({
@@ -22,6 +23,7 @@ export function StandInWorkMessages({
   expanded = false,
   draggedMessageId,
   onExpandedChange,
+  onRefresh,
   onDrag,
   onDragEnd,
   onChooseTarget,
@@ -36,6 +38,7 @@ export function StandInWorkMessages({
   expanded?: boolean
   draggedMessageId?: string
   onExpandedChange(open: boolean): void
+  onRefresh?(): void
   onDrag(value: StandInWorkDrag): void
   onDragEnd(): void
   onChooseTarget(value: StandInWorkDrag): void
@@ -52,8 +55,9 @@ export function StandInWorkMessages({
     [api, userId, deviceId, roleId, workId]
   )
   const subscribe = useCallback(
-    (listener: () => void) => resource.subscribe(listener, messageCount),
-    [resource, messageCount]
+    (listener: () => void) =>
+      resource.subscribe(listener, JSON.stringify([messageCount, work.replyDelivery?.updatedAt])),
+    [resource, messageCount, work.replyDelivery?.updatedAt]
   )
   const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
   const messages = snapshot.data?.messages ?? []
@@ -132,6 +136,16 @@ export function StandInWorkMessages({
                   <p className="mt-1 whitespace-pre-wrap break-words text-sm">{message.text}</p>
                 </div>
               </div>
+              {messageCount > 1 && message.replyDelivery && (
+                <StandInReplyDeliveryDetails
+                  delivery={message.replyDelivery}
+                  onVerify={async () => {
+                    await api.verifyDelivery(userId, deviceId, workId, message.recordId)
+                    await resource.reload()
+                    onRefresh?.()
+                  }}
+                />
+              )}
               {(canSplit || canMove) && (
                 <div className="mt-2 flex flex-wrap justify-end gap-1">
                   {canMove && (

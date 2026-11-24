@@ -1,5 +1,7 @@
 import type { WorkspaceStandInSettings } from '@wegent/collaboration'
 
+export type StandInReplyTemplate = 'document_entry' | 'confirmed_time_place' | 'standard_process'
+
 export interface StandInProjectRef {
   id: string
   store: 'local' | 'cloud'
@@ -10,6 +12,8 @@ export interface StandInHandlingPolicy {
   askBeforeAct: boolean
   immediate?: boolean
   sessionStrategy?: 'independent' | 'reuse'
+  autonomousReply?: boolean
+  replyTemplates?: StandInReplyTemplate[]
 }
 
 export interface StandInSourceConnection {

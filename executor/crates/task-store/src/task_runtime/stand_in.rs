@@ -106,6 +106,10 @@ impl LocalTaskStore {
         value["name"] = value.get("name").cloned().unwrap_or_else(|| json!(""));
         value["collaboration"] = source;
         super::personal_stand_in::normalize_stand_in_identity(&mut value, true)?;
+        super::personal_stand_in::preserve_reply_bindings(
+            &mut value,
+            before.unwrap_or(&Value::Null),
+        )?;
         super::personal_stand_in::stamp_stand_in_connections(
             &mut value,
             before.unwrap_or(&Value::Null),

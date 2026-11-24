@@ -67,6 +67,7 @@ export function createDesktopScenario(options) {
         item => item.id === '@wegent/dsh-connection-dingtalk/dingtalk'
       )
       assert.ok(provider)
+      assert.equal(provider.inspectConversation, true)
       const declaration = provider.cliReadTools.dingtalk
       assert.deepEqual(Object.keys(declaration.operations).sort(), [
         'authStatus',

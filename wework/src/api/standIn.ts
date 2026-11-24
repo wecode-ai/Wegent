@@ -72,6 +72,30 @@ export interface StandInInboxMessage {
   senderId: string
   at: string
   source: StandInSourceConnection
+  replyDelivery?: StandInReplyDelivery | null
+}
+
+export interface StandInReplyDelivery {
+  status:
+    | 'processing'
+    | 'confirmed_sent'
+    | 'definite_failure'
+    | 'unknown'
+    | 'blocked'
+    | 'needs_user'
+    | 'skipped'
+  attemptId?: string
+  messageId?: string
+  recordId?: string
+  channelTaskId?: string
+  receipt?: { messageId: string } | null
+  reason?: string | null
+  reasonCode?: string
+  submittedAt?: string
+  updatedAt?: string
+  takenOver?: boolean
+  replyText?: string
+  evidence?: { messageIds: string[] }
 }
 
 export interface StandInInboxWork {
@@ -84,6 +108,7 @@ export interface StandInInboxWork {
   updatedAt: string
   messageCount: number
   latestMessage: StandInInboxMessage | null
+  replyDelivery?: StandInReplyDelivery | null
   task?: RuntimeTaskSummary | null
   error?: string | null
 }
@@ -414,6 +439,13 @@ export interface StandInExecutorApi {
     workId: string,
     options?: { confirmThisRun?: boolean }
   ): Promise<WorkspaceRuntimeTaskAddress>
+  takeOverWork(userId: number, deviceId: string, workId: string): Promise<{ success: true }>
+  verifyDelivery(
+    userId: number,
+    deviceId: string,
+    workId: string,
+    recordId: string
+  ): Promise<{ replyDelivery: StandInReplyDelivery }>
   adjustMessage(
     userId: number,
     deviceId: string,
@@ -698,6 +730,10 @@ export function createStandInExecutorApi(
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
     runWork: (userId, deviceId, workId, options) =>
       request('runtime.stand_in.work.run', { userId, workId, ...options }, deviceId),
+    takeOverWork: (userId, deviceId, workId) =>
+      request('runtime.stand_in.work.takeover', { userId, workId }, deviceId),
+    verifyDelivery: (userId, deviceId, workId, recordId) =>
+      request('runtime.stand_in.work.verify_delivery', { userId, workId, recordId }, deviceId),
     organizeWork: (userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) =>
       request(
         'runtime.stand_in.work.organize',

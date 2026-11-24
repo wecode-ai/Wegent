@@ -186,13 +186,25 @@ impl RuntimeWorkRpcHandler {
                 .map_err(settings_error)?;
             let mut settings = payload["settings"].clone();
             store
-                .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
+                .validate_stand_in_connection_settings_draft(
+                    user,
+                    &self.device_id,
+                    settings.clone(),
+                )
                 .map_err(settings_error)?;
             self.preflight_git_connections(&settings, &previous).await?;
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
+            self.prepare_dingtalk_reply_bindings(user, &mut settings, &previous)
+                .await?;
+            let cloud_route = self.cloud_device_id().ok();
             let saved = store
-                .save_personal_stand_in(user, &self.device_id, settings)
+                .save_verified_personal_stand_in(
+                    user,
+                    &self.device_id,
+                    cloud_route.as_deref(),
+                    settings,
+                )
                 .map_err(settings_error)?;
             Ok(saved)
         } else {

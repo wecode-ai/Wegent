@@ -101,8 +101,11 @@ mod stand_in_memory_progress;
 
 #[path = "stand_in_collected_observations.rs"]
 mod stand_in_collected_observations;
+#[path = "stand_in_delivery.rs"]
+mod stand_in_delivery;
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
+pub use stand_in_delivery::StandInDeliveryTransaction;
 #[path = "stand_in_rework.rs"]
 mod stand_in_rework;
 #[path = "stand_in_rework_verification.rs"]

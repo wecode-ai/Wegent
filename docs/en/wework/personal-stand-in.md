@@ -234,6 +234,12 @@ Each DingTalk message received automatically or read from history carries its or
 
 Choose manual delegation, approval before operations, or automatic handling independently for each source. New DingTalk sources default to approval before operations. The selected execution device uses its installed DingTalk plugin and account. Complete any requested authentication through the existing connector flow.
 
+<a id="dingtalk-autonomous-replies"></a>
+
+For a selected direct conversation or a selected group that receives only mentions of you, open **Handling settings**, choose automatic handling, and turn off **Confirm each send**. Explicitly allow automatic replies as your DingTalk account and save. Each source can enable templates for document links, confirmed dates and locations, and established procedures. The stand-in uses current evidence already shared in the original conversation and rechecks the message, account, and authorization before sending.
+
+Open the work details to see the sending status, evidence, and receipt. When the result is unknown, check the original DingTalk conversation or choose **Verify sending status** if a channel task is available. Choose **Take over** to stop a reply that has yet to be submitted. Submitted attempts continue to reflect the actual channel receipt. After a short disconnection, each source checks at most 50 events from the last 30 minutes and shows any gaps it cannot verify.
+
 Screenshots in a connected conversation are downloaded through its read-only source query into host-generated temporary files, without another operation approval for viewing images. Missing account authentication or revoked source access still requires restoring that connection. To mention a colleague in a group, the stand-in must obtain their real person ID and pass the reply tool's mention parameter; typing “@Name” in the body produces text only. Reply sending still follows the source's confirmation settings, and message acceptance does not prove that the recipient received a mention notification.
 
 Open **My stand-in → Stand-in details → Manage stand-in → Connections → source details → Processing**. The Processing entry shows the current policy summary. Select **Configure** anywhere on the row to reveal its settings, or **Collapse** to hide them. The three controls use matching switches; save the stand-in settings to apply changes:

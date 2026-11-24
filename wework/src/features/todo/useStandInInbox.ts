@@ -7,12 +7,14 @@ import {
 } from '@wegent/chat-core/async-resource'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { replyDeliveryStatus, standInWorkDelivery } from './standInReplyDelivery'
 
 export function inboxRuntimeItem(
   work: StandInInboxWork,
   deviceId: string,
   runtimeItem?: RuntimeTaskReminderItem
 ): RuntimeTaskReminderItem {
+  const delivery = standInWorkDelivery(work)
   // Archived inbox state must not be overwritten by a stale active-work snapshot.
   const task = (work.task?.status === 'archived' ? work.task : runtimeItem?.task) ??
     work.task ?? {
@@ -30,6 +32,7 @@ export function inboxRuntimeItem(
     standInId: work.roleId,
     inboxWorkId: work.id,
     inboxStatus: work.task ? undefined : work.status,
+    inboxReplyDeliveryStatus: delivery && replyDeliveryStatus(delivery),
     previewText: work.latestMessage?.text ?? '',
     messageCount: work.messageCount,
   }

@@ -68,6 +68,7 @@ export function createConnectionRuntime({ dependencies, request, satisfies, befo
         source: input.source,
         checkpoint: input.checkpoint ?? null,
         force: input.force === true,
+        ...(input.recover === true ? { recover: true } : {}),
       }
       return events.request(providerId, query, signal)
     },

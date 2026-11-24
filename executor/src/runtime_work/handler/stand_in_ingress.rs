@@ -2,13 +2,14 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    source_collection_namespace, source_provider, stand_in_collection_connection,
-    stand_in_identities,
+    autonomous_dingtalk_reply, source_collection_namespace, source_provider,
+    stand_in_collection_connection, stand_in_identities,
 };
 
 #[derive(Clone, Copy)]
 enum ConnectionSubscriber {
     Assistant,
+    DingTalkReplies,
     Conversation,
     Observations,
     SidebarLease,
@@ -18,7 +19,7 @@ enum ConnectionSubscriber {
 #[derive(Default)]
 pub(super) struct ConnectionSubscribers {
     maintenance_at: i64,
-    jobs: [Option<tokio::task::JoinHandle<()>>; 5],
+    jobs: [Option<tokio::task::JoinHandle<()>>; 6],
 }
 
 impl RuntimeWorkRpcHandler {
@@ -58,6 +59,7 @@ impl RuntimeWorkRpcHandler {
         let maintenance = Self::connection_maintenance_due(&mut subscribers.maintenance_at, now);
         for (kind, enabled) in [
             (ConnectionSubscriber::Assistant, maintenance),
+            (ConnectionSubscriber::DingTalkReplies, maintenance),
             (ConnectionSubscriber::Conversation, true),
             (ConnectionSubscriber::Observations, true),
             (ConnectionSubscriber::SidebarLease, maintenance),
@@ -75,6 +77,7 @@ impl RuntimeWorkRpcHandler {
             subscribers.jobs[index] = Some(runtime.spawn(async move {
                 let result = match kind {
                     ConnectionSubscriber::Assistant => handler.poll_connection_stand_ins().await,
+                    ConnectionSubscriber::DingTalkReplies => handler.poll_dingtalk_replies().await,
                     ConnectionSubscriber::Conversation => {
                         handler
                             .dispatch_conversation_connection_events(maintenance, true)
@@ -131,7 +134,18 @@ impl RuntimeWorkRpcHandler {
                 .cloned()
                 .collect();
             let sources = collection_sources(&receiving);
-            if !sources.is_empty() {
+            let active_reply_account = store
+                .dingtalk_active_identity(user)
+                .map_err(settings_error)?;
+            let track_reply_account = active_reply_account.is_some()
+                || receiving.iter().any(|role| {
+                    role["connections"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|source| source["replyIdentity"].is_object())
+                });
+            if !sources.is_empty() || track_reply_account {
                 if let Err(error) = self.verify_local_stand_in_owner(user) {
                     log_executor_event(
                         "Stand-in owner verification deferred",
@@ -139,6 +153,10 @@ impl RuntimeWorkRpcHandler {
                     );
                     continue;
                 }
+            }
+            if track_reply_account {
+                self.refresh_dingtalk_reply_account(&store, user, active_reply_account.as_ref())
+                    .await?;
             }
             let store_ref = &store;
             let version = &settings["version"];
@@ -160,6 +178,9 @@ impl RuntimeWorkRpcHandler {
                 .list_stand_in_work(user, None)
                 .map_err(settings_error)?
             {
+                if autonomous_dingtalk_reply(&work["source"]) {
+                    continue;
+                }
                 self.reconcile_connection_dispatch(&store, user, &mut work)?;
                 if work["status"] != "pending" {
                     continue;
@@ -261,7 +282,7 @@ impl RuntimeWorkRpcHandler {
                 json!({"source":source,"checkpoint":checkpoint}),
             )
             .await?;
-        let messages = page["events"]
+        let mut messages = page["events"]
             .as_array()
             .ok_or_else(|| {
                 AppIpcError::new("connection_response_invalid", "Missing connection events")
@@ -275,7 +296,16 @@ impl RuntimeWorkRpcHandler {
         })?;
         validate_collection_version(store, user, &self.device_id, settings_version)?;
         let event_count = messages.len();
-        let page = (messages, json!({"checkpoint":checkpoint}));
+        let mut next_checkpoint = json!({"checkpoint":checkpoint});
+        if autonomous_dingtalk_reply(source) || source["requireReplyIdentity"] == true {
+            super::stand_in_reply::save_reply_recovery(
+                &mut messages,
+                &mut next_checkpoint,
+                &page,
+                state,
+            );
+        }
+        let page = (messages, next_checkpoint);
         let next = self
             .collect_connection_page(store, user, source, roles, page)
             .await?;
@@ -337,6 +367,27 @@ impl RuntimeWorkRpcHandler {
                     // A shared poll starts at the earliest activation. Dispatch and
                     // later receipt matching use this recipient's concrete grant.
                     let scoped = concrete_role_grant(grant, source);
+                    if autonomous_dingtalk_reply(&scoped) {
+                        if message["identity"] == scoped["replyIdentity"]
+                            && message["identity"].is_object()
+                        {
+                            store
+                                .ingest_stand_in_message(
+                                    user,
+                                    role.as_str().unwrap_or_default(),
+                                    &scoped,
+                                    &message,
+                                    None,
+                                )
+                                .map_err(settings_error)?;
+                        } else {
+                            failure.get_or_insert_with(|| AppIpcError::new(
+                                "dingtalk_identity_changed",
+                                "Select this source again and explicitly enable replies for the connected DingTalk account",
+                            ));
+                        }
+                        continue;
+                    }
                     let event = json!({"kind":"connection","source":scoped,"message":message,"roleIds":[role],
                         "roleScoped":true,"roleEnabledAfter":grant["enabledAfter"]});
                     let event_identity = LocalTaskStore::canonical_connection_event_identity(
@@ -444,8 +495,13 @@ fn collection_sources(
             let entry = sources
                 .entry(key)
                 .or_insert_with(|| (source.clone(), Vec::new()));
+            let require_identity =
+                entry.0["requireReplyIdentity"] == true || autonomous_dingtalk_reply(source);
             if source["enabledAfter"].as_str() < entry.0["enabledAfter"].as_str() {
                 entry.0 = source.clone();
+            }
+            if require_identity {
+                entry.0["requireReplyIdentity"] = json!(true);
             }
             entry.1.push(identity.clone());
         }

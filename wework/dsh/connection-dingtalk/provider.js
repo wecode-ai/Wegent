@@ -1,5 +1,15 @@
 import { createReadCursor } from './read-cursor.js'
 import { readImages } from './read-images.js'
+import {
+  assertReplySource,
+  inspectReplyHistory,
+  isPlainReplyText,
+  isReplySource,
+  recoverReplies,
+  replyAuthor,
+  replyObservation,
+  shouldRecoverReplies,
+} from './autonomous-reply.js'
 
 const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 const GROUP_CATCH_UP_WINDOW_MINUTES = 15
@@ -13,8 +23,12 @@ export function createProvider() {
       try {
         authTarget = await ctx.cli.describe('dingtalk')
         await requireAuthentication(ctx)
-        await activeProfile(ctx)
-        return { status: 'ready', authTarget }
+        const profiles = await readTool(ctx, 'listProfiles')
+        const profile = activeProfile(profiles)
+        const identity = await currentReplyIdentity(ctx, profile, identities, profiles).catch(
+          () => null
+        )
+        return { status: 'ready', authTarget, ...(identity ? { identity } : {}) }
       } catch (error) {
         return {
           status: error.code === 'connector_auth_required' ? 'auth_required' : 'error',
@@ -24,7 +38,7 @@ export function createProvider() {
       }
     },
     async listResources(ctx, input) {
-      const profile = await activeProfile(ctx)
+      const profile = activeProfile(await readTool(ctx, 'listProfiles'))
       await requireAuthentication(ctx)
       const kind = input.kind
       if (!['group', 'direct'].includes(kind)) throw invalid('Invalid conversation kind')
@@ -86,6 +100,13 @@ export function createProvider() {
       const profile = required(input, 'profile')
       if (!['group', 'direct'].includes(input.kind)) throw invalid('Invalid conversation kind')
       validateCollection(input)
+      if (isReplySource(input)) {
+        assertReplySource(input)
+        await requireAuthentication(ctx)
+        const identity = await verifyReplyIdentity(ctx, input, identities)
+        assertReplySource(input, identity)
+        return { ...input, identity }
+      }
       await ownIdentity(ctx, profile, identities)
       return input
     },
@@ -147,11 +168,35 @@ export function createProvider() {
         readOnly: true,
       }
     },
-    async collect(ctx, { source, checkpoint }) {
+    async inspectConversation(ctx, { source, conversationId, start, end, limit }) {
+      assertReplySource(source)
+      const identity = await verifyReplyIdentity(ctx, source, identities)
+      const history = await inspectReplyHistory(ctx, readTool, source, identity, {
+        conversationId,
+        start,
+        end,
+        limit,
+      })
+      await verifyReplyIdentity(ctx, source, identities, identity)
+      return history
+    },
+    async collect(ctx, { source, checkpoint, recover }) {
       validateCollection(source)
-      const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
+      const strict = isReplySource(source)
+      if (strict) assertReplySource(source)
+      const identity = strict
+        ? await verifyReplyIdentity(ctx, source, identities, checkpoint?.identity)
+        : null
+      if (identity) assertReplySource(source, identity)
+      const selfId =
+        identity?.openId ?? (await ownIdentity(ctx, required(source, 'profile'), identities))
       const start = checkpoint?.after ?? required(source, 'enabledAfter')
       const now = Date.now()
+      if (identity && shouldRecoverReplies(checkpoint?.until ?? start, now, recover)) {
+        const page = await recoverReplies(ctx, readTool, source, identity, start, now)
+        await verifyReplyIdentity(ctx, source, identities, identity)
+        return page
+      }
       const boundedGroup = source.collectionKey === 'all-messages'
       const windowMinutes = boundedGroup ? checkpoint?.windowMinutes : undefined
       const windowEnd = boundedGroup
@@ -173,8 +218,12 @@ export function createProvider() {
         : { after: until, cursor: '0' }
       if (windowMinutes !== undefined && (hasMore || catchingUp))
         nextCheckpoint.windowMinutes = windowMinutes
+      if (identity) {
+        await verifyReplyIdentity(ctx, source, identities, identity)
+        nextCheckpoint.identity = identity
+      }
       return {
-        events,
+        events: identity ? events.map(event => replyObservation(event, identity)) : events,
         nextCheckpoint,
         hasMore: hasMore || catchingUp,
       }
@@ -461,6 +510,13 @@ export function normalizeMessages(source, response, ownId, selfConversationId) {
         conversationId,
         quotedMessageId: message.quotedMessage?.openMessageId ?? null,
         topicId: message.openConvThreadId ?? null,
+        ...(isReplySource(source)
+          ? {
+              author: replyAuthor(message, sender === ownId),
+              plainText: isPlainReplyText(message),
+              mentionedSelf: !direct && sender !== ownId,
+            }
+          : {}),
         ...(source.scope === 'all'
           ? {
               resource: {
@@ -476,14 +532,54 @@ export function normalizeMessages(source, response, ownId, selfConversationId) {
   return events
 }
 
-async function activeProfile(ctx) {
-  const response = await readTool(ctx, 'listProfiles')
+function activeProfile(response) {
   if (typeof response.currentProfile !== 'string' || !response.currentProfile) {
     throw Object.assign(new Error('Authorize the account'), {
       code: 'connector_auth_required',
     })
   }
-  return response.currentProfile
+  const current = response.currentProfile
+  const profiles = Array.isArray(response.profiles) ? response.profiles : []
+  const matches = profiles.filter(row => row.profile === current || row.corpId === current)
+  if (matches.length === 1 && canonicalProfile(matches[0]) === matches[0].profile)
+    return matches[0].profile
+  return current
+}
+
+function canonicalProfile(profile) {
+  return nonempty(profile?.corpId) && nonempty(profile?.userId)
+    ? `${profile.corpId}:${profile.userId}`
+    : undefined
+}
+
+async function currentReplyIdentity(ctx, selected, cache, profiles) {
+  if (activeProfile(profiles) !== selected) return null
+  const matches = profiles.profiles?.filter(row => row.profile === selected)
+  if (matches?.length !== 1 || canonicalProfile(matches[0]) !== selected) return null
+  const account = matches[0]
+  const openId = await ownIdentity(ctx, selected, cache, { account, strict: true })
+  return { accountId: account.userId, organizationId: account.corpId, openId }
+}
+
+async function verifyReplyIdentity(ctx, source, cache, before) {
+  const identity = await currentReplyIdentity(
+    ctx,
+    source.profile,
+    cache,
+    await readTool(ctx, 'listProfiles')
+  )
+  if (
+    !identity ||
+    [source.replyIdentity, before].some(
+      expected =>
+        expected &&
+        ['accountId', 'organizationId', 'openId'].some(key => expected[key] !== identity[key])
+    )
+  )
+    throw Object.assign(new Error('DingTalk account or organization could not be verified'), {
+      code: 'dingtalk_identity_changed',
+    })
+  return identity
 }
 
 async function requireAuthentication(ctx) {
@@ -495,11 +591,19 @@ async function requireAuthentication(ctx) {
   return response
 }
 
-async function ownIdentity(ctx, profile, cache) {
+async function ownIdentity(ctx, profile, cache, { account, strict } = {}) {
   const cached = cache.get(profile)
-  if (cached && cached.expiresAt > Date.now()) return cached.id
-  const response = await readTool(ctx, 'listProfiles')
-  const account = response.profiles?.find(row => row.profile === profile)
+  if (
+    cached &&
+    cached.expiresAt > Date.now() &&
+    (!strict ||
+      (cached.strict && cached.userId === account.userId && cached.corpId === account.corpId))
+  )
+    return cached.id
+  if (!account) {
+    const response = await readTool(ctx, 'listProfiles')
+    account = response.profiles?.find(row => row.profile === profile)
+  }
   if (!account)
     throw Object.assign(new Error('Authorize the account'), {
       code: 'connector_auth_required',
@@ -508,15 +612,26 @@ async function ownIdentity(ctx, profile, cache) {
     query: required(account, 'userName'),
     profile,
   })
-  const user = users.result?.find(row => row.userId === account.userId)
+  const matches = users.result?.filter(row => row.userId === account.userId)
+  const user = !strict || matches?.length === 1 ? matches?.[0] : null
   const id = required(user, 'openDingTalkId')
-  cache.set(profile, { id, expiresAt: Date.now() + 60_000 })
+  cache.set(profile, {
+    id,
+    userId: account.userId,
+    corpId: account.corpId,
+    strict,
+    expiresAt: Date.now() + 60_000,
+  })
   return id
 }
 
 function required(value, key) {
   if (typeof value?.[key] !== 'string' || !value[key].trim()) throw invalid(`Missing ${key}`)
   return value[key]
+}
+
+function nonempty(value) {
+  return typeof value === 'string' && Boolean(value.trim())
 }
 
 function invalid(message) {

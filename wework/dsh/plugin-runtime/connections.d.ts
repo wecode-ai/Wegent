@@ -32,6 +32,8 @@ export interface ConnectionDescriptor {
   versionedEventTypes: string[]
   /** Native, attributed evidence exposed through readSource for these exact resource kinds. */
   reviewHistory?: { resourceKinds: string[] }
+  /** Exact-conversation context used by the host's autonomous reply guard. */
+  inspectConversation?: true
   /** Ordinary source reads use provider-specific business schemas. */
   read?: {
     inputSchema: Record<string, unknown>
@@ -99,7 +101,12 @@ export interface ConnectionResource {
 export interface ConnectionSource extends ConnectionResource {
   boundary?: { partition: string; sequence: number }
   enabledAfter: string
-  policy: { automatic: boolean; askBeforeAct: boolean; immediate?: boolean }
+  policy: {
+    automatic: boolean
+    askBeforeAct: boolean
+    immediate?: boolean
+    autonomousReply?: boolean
+  }
 }
 
 export interface ConnectionResourceQuery {
@@ -142,6 +149,8 @@ export interface ConnectionPage {
   events: ConnectionEvent[]
   nextCheckpoint: ConnectionCheckpoint
   hasMore: boolean
+  gap?: { code: string; start: string; end: string } | null
+  recovery?: { start: string; end: string; cursor: string; complete: boolean }
   /** Complete current projection; omitted when this page has no projection update. */
   resourceStates?: Array<{
     kind: string
@@ -157,6 +166,13 @@ export interface ConnectionAvailability {
   status: 'ready' | 'auth_required' | 'error'
   code?: string
   authTarget?: { pluginKey: string; connectorSlug: string; instance?: string }
+  identity?: ConnectionIdentity
+}
+
+export interface ConnectionIdentity {
+  accountId: string
+  organizationId: string
+  openId: string
 }
 
 export interface ConnectionContext {
@@ -243,6 +259,22 @@ export interface ConnectionProvider {
     reviewUseCollectedEvents?: true
     [key: string]: unknown
   }>
+  inspectConversation?(
+    context: ConnectionContext,
+    input: {
+      source: ConnectionSource
+      conversationId?: string
+      start: string
+      end: string
+      limit: number
+    }
+  ): Promise<{
+    identity: ConnectionIdentity
+    conversationId: string | null
+    events: Array<{ id: string; [key: string]: unknown }>
+    complete: boolean
+    gap?: ConnectionPage['gap']
+  }>
   collect(
     context: ConnectionContext,
     input: {
@@ -250,6 +282,7 @@ export interface ConnectionProvider {
       checkpoint: ConnectionCheckpoint
       committedCheckpoint?: ConnectionCheckpoint
       force?: boolean
+      recover?: boolean
     }
   ): Promise<ConnectionPage>
 }

@@ -25,6 +25,7 @@ export async function collectObservation(registry, providerId, input, { signal }
   const events = []
   let checkpoint = input.checkpoint
   let resourceStates
+  let recoveryDetails = {}
   const maxPages =
     registry.entries?.get(providerId)?.provider.collectionPagination === 'staged' ? 8 : 1
   for (let page = 0; page < maxPages; page++) {
@@ -39,6 +40,7 @@ export async function collectObservation(registry, providerId, input, { signal }
           checkpoint: structuredClone(checkpoint),
           committedCheckpoint: structuredClone(input.checkpoint),
           force: input.force === true,
+          ...(input.recover === true && page === 0 ? { recover: true } : {}),
         },
         { signal }
       )
@@ -50,24 +52,33 @@ export async function collectObservation(registry, providerId, input, { signal }
         nextCheckpoint: checkpoint,
         hasMore: true,
         resourceStates,
+        ...recoveryDetails,
         errorCode: error.code ?? 'connection_collect_failed',
         ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
       }
     }
     signal?.throwIfAborted()
     if (events.length && events.length + result.events.length > 1000)
-      return { events, nextCheckpoint: checkpoint, hasMore: true, resourceStates }
+      return {
+        events,
+        nextCheckpoint: checkpoint,
+        hasMore: true,
+        resourceStates,
+        ...recoveryDetails,
+      }
     events.push(...result.events)
     checkpoint = result.nextCheckpoint
     resourceStates = result.resourceStates ?? resourceStates
+    if (result.recovery) recoveryDetails = { recovery: result.recovery, gap: result.gap ?? null }
     if (!result.hasMore || events.length >= 1000)
       return {
         events,
         nextCheckpoint: checkpoint,
         hasMore: result.hasMore,
         resourceStates,
+        ...recoveryDetails,
         ...(Number.isSafeInteger(result.nextPollAt) ? { nextPollAt: result.nextPollAt } : {}),
       }
   }
-  return { events, nextCheckpoint: checkpoint, hasMore: true, resourceStates }
+  return { events, nextCheckpoint: checkpoint, hasMore: true, resourceStates, ...recoveryDetails }
 }

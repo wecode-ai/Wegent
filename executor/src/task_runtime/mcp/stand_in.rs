@@ -797,6 +797,11 @@ async fn reply_to_work(
         {
             return Err("This connection does not support the DingTalk reply operation".into());
         }
+        if crate::task_runtime::personal_stand_in::autonomous_dingtalk_reply(source)
+            || crate::task_runtime::personal_stand_in::autonomous_dingtalk_reply(&message["source"])
+        {
+            return Err("Read this message's automatic reply status in the work list".into());
+        }
         if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
             return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
         }

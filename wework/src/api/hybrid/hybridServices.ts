@@ -2023,6 +2023,17 @@ export function createHybridWorkbenchServices(
       async runWork(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
       },
+      async takeOverWork(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).takeOverWork(userId, deviceId, workId)
+      },
+      async verifyDelivery(userId, deviceId, workId, recordId) {
+        return (await standInApiForDevice(deviceId)).verifyDelivery(
+          userId,
+          deviceId,
+          workId,
+          recordId
+        )
+      },
       async organizeWork(userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) {
         return (await standInApiForDevice(deviceId)).organizeWork(
           userId,

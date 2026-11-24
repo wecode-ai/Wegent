@@ -18,6 +18,7 @@ export function StandInProcessingSettings({
     testId: string
     policy: StandInHandlingPolicy
     outbound?: boolean
+    supportsAutonomousReply?: boolean
     onChange(policy: StandInHandlingPolicy): void
   }[]
   disabled: boolean
@@ -117,6 +118,7 @@ export function StandInProcessingSettings({
                 <StandInReplyAuthorization
                   name={row.name}
                   policy={row.policy}
+                  supportsAutonomousReply={row.supportsAutonomousReply}
                   disabled={disabled}
                   testId={row.testId}
                   onChange={row.onChange}

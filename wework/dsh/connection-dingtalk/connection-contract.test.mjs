@@ -23,6 +23,7 @@ test('DingTalk declares its bounded read operations against its exact dependency
   const { readFile } = await import('node:fs/promises')
   const manifest = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
   const parsed = parseConnections(manifest)
+  assert.equal(parsed.providers[0].inspectConversation, true)
   const declaration = parsed.providers[0].cliReadTools.dingtalk
   assert.deepEqual(Object.keys(declaration.operations).sort(), [
     'authStatus',

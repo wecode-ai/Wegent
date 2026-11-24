@@ -1,10 +1,14 @@
 //! Work execution and correction reuse ordinary Runtime tasks, streams and approvals.
 use super::runtime_owner::runtime_user;
 use super::stand_in::settings_error;
+use super::stand_in_reply::{
+    ensure_reply_work_visible, project_reply_delivery, reply_history_visible,
+};
 use super::*;
 use crate::runtime_work::response::local_task_json;
 use crate::task_runtime::personal_stand_in::{
-    stand_in_collection_connection, stand_in_connection, stand_in_identities,
+    autonomous_dingtalk_reply, stand_in_collection_connection, stand_in_connection,
+    stand_in_identities,
 };
 use sha2::{Digest, Sha256};
 
@@ -273,21 +277,28 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let user = runtime_user(&payload)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let identities = stand_in_identities(&settings);
+        let account = store
+            .dingtalk_active_identity(user)
+            .map_err(settings_error)?;
         let mut items = store
             .list_stand_in_work(user, payload["roleId"].as_str())
             .map_err(settings_error)?;
+        items.retain(|work| reply_history_visible(work, &identities, account.as_ref()));
         for work in &mut items {
             self.reconcile_connection_dispatch(&store, user, work)?;
+            if autonomous_dingtalk_reply(&work["source"]) {
+                project_work_replies(&store, user, work, &identities)?;
+            }
             work["task"] = self
                 .store
                 .get_task_summary(work["taskId"].as_str().unwrap_or_default())
                 .map(local_task_json)
                 .unwrap_or(Value::Null);
         }
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
-        let identities = stand_in_identities(&settings);
         let errors = store
             .stand_in_source_errors(user)
             .map_err(settings_error)?
@@ -309,7 +320,51 @@ impl RuntimeWorkRpcHandler {
         let work = string_field(&payload, "workId")
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        Ok(json!({"messages":store.stand_in_messages(user,&work).map_err(settings_error)?}))
+        let roles = stand_in_identities(
+            &store
+                .personal_stand_in(user, &self.device_id)
+                .map_err(settings_error)?,
+        );
+        let record = store.stand_in_work(user, &work).map_err(settings_error)?;
+        let account = store
+            .dingtalk_active_identity(user)
+            .map_err(settings_error)?;
+        if !reply_history_visible(&record, &roles, account.as_ref()) {
+            return Err(AppIpcError::new(
+                "identity_changed",
+                "This work belongs to another DingTalk account",
+            ));
+        }
+        let mut messages = store
+            .stand_in_messages(user, &work)
+            .map_err(settings_error)?;
+        for message in &mut messages {
+            project_reply_delivery(&store, user, &record, message, &roles)?;
+        }
+        Ok(json!({"messages":messages}))
+    }
+
+    pub(super) fn take_over_connection_stand_in_work(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let user = runtime_user(&payload)?;
+        self.verify_local_stand_in_owner(user)?;
+        let work = string_field(&payload, "workId")
+            .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let record = store.stand_in_work(user, &work).map_err(settings_error)?;
+        if !autonomous_dingtalk_reply(&record["source"]) {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "This work has no automatic reply",
+            ));
+        }
+        ensure_reply_work_visible(&store, user, &self.device_id, &record)?;
+        store
+            .take_over_stand_in_work(user, &work)
+            .map_err(settings_error)?;
+        Ok(json!({"success":true}))
     }
 
     pub(super) async fn run_connection_stand_in_work(
@@ -423,6 +478,12 @@ impl RuntimeWorkRpcHandler {
         let gate = self.task_send_gate(&format!("dingtalk-dispatch:{work_id}"));
         let _guard = gate.lock().await;
         let work = store.stand_in_work(user, work_id).map_err(settings_error)?;
+        if autonomous_dingtalk_reply(&work["source"]) {
+            return Err(AppIpcError::new(
+                "stand_in_automatic_reply",
+                "Review this automatic reply in the work list",
+            ));
+        }
         if !manual && work["status"] == "failed" {
             return Err(AppIpcError::new(
                 "stand_in_dispatch_failed",
@@ -610,6 +671,7 @@ impl RuntimeWorkRpcHandler {
                     .ok_or_else(|| AppIpcError::new("bad_request", "Message ids must be strings"))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         for id in std::iter::once(work.as_str()).chain(target) {
             if self.is_busy_local_task(id) {
                 return Err(AppIpcError::new(
@@ -617,8 +679,9 @@ impl RuntimeWorkRpcHandler {
                     "Wait for active work to finish before organizing messages",
                 ));
             }
+            let record = store.stand_in_work(user, id).map_err(settings_error)?;
+            ensure_reply_work_visible(&store, user, &self.device_id, &record)?;
         }
-        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         store
             .organize_stand_in_messages(user, &work, &ids, target)
             .map_err(settings_error)
@@ -634,6 +697,7 @@ impl RuntimeWorkRpcHandler {
         let message = string_field(&payload, "messageId")
             .ok_or_else(|| AppIpcError::new("bad_request", "messageId is required"))?;
         let target = payload["targetWorkId"].as_str();
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         for id in std::iter::once(work.as_str()).chain(target) {
             if self.is_busy_local_task(id) {
                 return Err(AppIpcError::new(
@@ -641,8 +705,9 @@ impl RuntimeWorkRpcHandler {
                     "Stop the running work before changing message associations",
                 ));
             }
+            let record = store.stand_in_work(user, id).map_err(settings_error)?;
+            ensure_reply_work_visible(&store, user, &self.device_id, &record)?;
         }
-        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         store
             .adjust_stand_in_message(user, &work, &message, target)
             .map_err(settings_error)
@@ -717,6 +782,48 @@ fn dingtalk_client_id(work: &str, ids: &[String]) -> String {
         "dingtalk:{:x}",
         Sha256::digest(json!([work, ids]).to_string().as_bytes())
     )
+}
+
+fn project_work_replies(
+    store: &LocalTaskStore,
+    user: i64,
+    work: &mut Value,
+    roles: &[Value],
+) -> Result<(), AppIpcError> {
+    let mut latest = work["latestMessage"].take();
+    if latest.is_object() {
+        project_reply_delivery(store, user, work, &mut latest, roles)?;
+        if latest["replyDelivery"].is_object() {
+            work["replyDelivery"] = latest["replyDelivery"].clone();
+        }
+    }
+    work["latestMessage"] = latest;
+    if work["messageCount"].as_u64().unwrap_or(0) > 1 {
+        let mut messages = store
+            .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
+            .map_err(settings_error)?;
+        for message in messages.iter_mut().rev() {
+            project_reply_delivery(store, user, work, message, roles)?;
+            let result = &message["replyDelivery"];
+            if reply_priority(result) > reply_priority(&work["replyDelivery"]) {
+                work["replyDelivery"] = result.clone();
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reply_priority(result: &Value) -> u8 {
+    match result["status"].as_str() {
+        Some("unknown") => 7,
+        Some("definite_failure") => 6,
+        Some("blocked") => 5,
+        Some("needs_user") => 4,
+        Some("processing") => 3,
+        Some("confirmed_sent") => 2,
+        Some("skipped") => 1,
+        _ => 0,
+    }
 }
 
 fn connection_source_identity(source: &Value) -> Value {

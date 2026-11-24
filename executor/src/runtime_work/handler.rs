@@ -204,6 +204,8 @@ mod stand_in_personal_issues;
 mod stand_in_processing;
 mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
+mod stand_in_reply;
+mod stand_in_reply_policy;
 mod stand_in_review;
 mod stand_in_role_cancellation;
 mod stand_in_role_delegation;

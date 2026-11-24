@@ -4,7 +4,8 @@ import { boundedJson, compileSchema, validateSchema } from './connection-schema.
 
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
 const METHODS = ['check', 'listResources', 'validate', 'initialize', 'collect']
-const OPTIONAL_METHODS = ['readSource', 'executeAction']
+const OPTIONAL_METHODS = ['readSource', 'executeAction', 'inspectConversation']
+const SOURCE_METHODS = ['collect', 'readSource', 'executeAction', 'inspectConversation']
 
 const reviewQuerySchema = {
   type: 'object',
@@ -179,6 +180,10 @@ export function parseConnections(manifest) {
       'Invalid collection pagination contract'
     )
     requireValue(provider.readPagination === undefined, 'Use the read capability declaration')
+    requireValue(
+      provider.inspectConversation === undefined || provider.inspectConversation === true,
+      'Invalid conversation inspection capability'
+    )
     if (provider.read !== undefined) {
       requireValue(
         record(provider.read) && ['cursor', 'none'].includes(provider.read.pagination),
@@ -385,6 +390,11 @@ export class ConnectionRegistry {
         Boolean(provider.read) === (typeof implementation.readSource === 'function'),
         `Source read declaration and implementation must match: ${id}`
       )
+      requireValue(
+        Boolean(provider.inspectConversation) ===
+          (typeof implementation.inspectConversation === 'function'),
+        `Conversation inspection declaration and implementation must match: ${id}`
+      )
       return { id, definition, provider, implementation, controller: new AbortController() }
     })
     for (const entry of entries) this.entries.set(entry.id, entry)
@@ -452,6 +462,9 @@ export class ConnectionRegistry {
           availability: {
             status: availability.status,
             ...(availability.code ? { code: availability.code } : {}),
+            ...(entry.provider.inspectConversation && validConnectionIdentity(availability.identity)
+              ? { identity: availability.identity }
+              : {}),
           },
         }
       })
@@ -496,6 +509,8 @@ export class ConnectionRegistry {
     context.signal.throwIfAborted()
     boundedJson(input, 1024 * 1024, 'Connection input exceeds the JSON budget')
     const params = structuredClone(input)
+    if (method === 'inspectConversation')
+      requireValue(entry.provider.inspectConversation, 'Conversation inspection is not declared')
     if (method === 'readSource' && params.cursor !== undefined) {
       if (entry.provider.read?.pagination !== 'cursor')
         throw new ConnectionError(
@@ -529,7 +544,7 @@ export class ConnectionRegistry {
         'Unsupported all-resource scope'
       )
     }
-    const source = ['collect', 'readSource', 'executeAction'].includes(method)
+    const source = SOURCE_METHODS.includes(method)
       ? params.source
       : method === 'validate'
         ? params
@@ -544,8 +559,15 @@ export class ConnectionRegistry {
     } else if (source) {
       requireValue(source.scope === undefined && source.id !== '*', 'Invalid resource scope')
     }
-    if (['collect', 'readSource', 'executeAction'].includes(method)) {
+    if (SOURCE_METHODS.includes(method)) {
       requireValue(params.source?.providerId === id, 'Source belongs to another provider')
+      if (method === 'inspectConversation')
+        requireValue(
+          source.scope === undefined &&
+            source.id !== '*' &&
+            entry.provider.resourceKinds.includes(source.kind),
+          'Conversation inspection requires an exact resource'
+        )
       if (method === 'executeAction') {
         requireValue(
           source.scope === undefined &&
@@ -562,7 +584,8 @@ export class ConnectionRegistry {
         const { source: _source, action: _action, ...values } = params
         validateSchema(declaration.inputSchema, values, 'Invalid connection action input')
       }
-      await entry.implementation.validate(context, params.source)
+      if (method !== 'inspectConversation')
+        await entry.implementation.validate(context, params.source)
       if (method === 'collect' && (params.checkpoint === null || params.checkpoint === undefined)) {
         params.checkpoint = await entry.implementation.initialize(context, params.source)
       }
@@ -625,6 +648,15 @@ export class ConnectionRegistry {
 }
 
 function validateProviderResult(provider, method, result, input) {
+  if (method === 'inspectConversation')
+    requireValue(
+      record(result) &&
+        validConnectionIdentity(result.identity) &&
+        typeof result.complete === 'boolean' &&
+        Array.isArray(result.events) &&
+        result.events.length <= 50,
+      'Invalid conversation inspection result'
+    )
   boundedJson(result, 8 * 1024 * 1024, 'Connection result exceeds the JSON budget')
   if (method === 'executeAction')
     validateSchema(
@@ -826,6 +858,16 @@ function validEventVersion(provider, event) {
 
 function requireValue(condition, message) {
   if (!condition) throw new ConnectionError('invalid_connection', message)
+}
+
+function validConnectionIdentity(value) {
+  return (
+    record(value) &&
+    Object.keys(value).length === 3 &&
+    ['accountId', 'organizationId', 'openId'].every(
+      key => typeof value[key] === 'string' && value[key].length <= 512 && value[key].trim()
+    )
+  )
 }
 
 function record(value) {

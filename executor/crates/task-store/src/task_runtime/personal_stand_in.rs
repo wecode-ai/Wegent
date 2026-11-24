@@ -6,14 +6,35 @@ use sha2::{Digest, Sha256};
 mod connections;
 use connections::validate_connections;
 pub use connections::{
-    connection_memory_scope, issue_training_source, source_collection_namespace, source_namespace,
-    source_provider, stand_in_collection_connection, stand_in_connection, training_memory_scope,
-    training_source_granted,
+    autonomous_dingtalk_reply, connection_memory_scope, issue_training_source,
+    source_collection_namespace, source_namespace, source_provider, stand_in_collection_connection,
+    stand_in_connection, training_memory_scope, training_source_granted,
 };
 
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
 pub const EMAIL_PROVIDER: &str = "@wegent/dsh-connection-runtime/email";
 pub const ISSUE_COMMENTS_PROVIDER: &str = "wework/issue-comments";
+
+#[derive(Clone, Copy)]
+enum ReplyBindingSave<'a> {
+    Preserve,
+    Draft,
+    Verified { cloud_route: Option<&'a str> },
+}
+
+impl ReplyBindingSave<'_> {
+    fn for_identity(self, identity: &Value, profile_device: &str) -> Self {
+        if let Self::Verified { cloud_route } = self {
+            let device = identity["executionDeviceId"]
+                .as_str()
+                .unwrap_or(profile_device);
+            if device != profile_device && cloud_route != Some(device) {
+                return Self::Preserve;
+            }
+        }
+        self
+    }
+}
 
 fn implicit_primary() -> Value {
     json!({"enabled":true,"prompt":"","preferences":""})
@@ -381,6 +402,48 @@ mod session_policy_tests {
     use super::*;
 
     #[test]
+    fn autonomous_dingtalk_policy_requires_verified_desktop_save() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut draft = store.personal_stand_in(7, "mac").unwrap();
+        draft["primary"] = implicit_primary();
+        draft["primary"]["connections"] = json!([{
+            "id":"group", "name":"Group", "profile":"owner", "kind":"group",
+            "providerId":DINGTALK_PROVIDER,
+            "policy":{"automatic":true,"askBeforeAct":false,"autonomousReply":true}
+        }]);
+        store
+            .validate_stand_in_connection_settings_draft(7, "mac", draft.clone())
+            .unwrap();
+        assert!(store
+            .save_personal_stand_in(7, "mac", draft.clone())
+            .is_err());
+        assert!(store
+            .save_verified_personal_stand_in(7, "mac", None, draft.clone())
+            .is_err());
+        assert!(store.personal_stand_in(7, "mac").unwrap()["primary"].is_null());
+
+        let binding = json!({"accountId":"account","organizationId":"org","openId":"owner"});
+        draft["primary"]["connections"][0]["replyIdentity"] = binding.clone();
+        let mut remote = draft.clone();
+        remote["primary"]["executionDeviceId"] = json!("remote");
+        assert!(store
+            .save_verified_personal_stand_in(7, "mac", None, remote)
+            .is_err());
+        let mut saved = store
+            .save_verified_personal_stand_in(7, "mac", None, draft)
+            .unwrap();
+        saved["primary"]["connections"][0]["replyIdentity"]["accountId"] = json!("injected");
+        let saved = store.save_personal_stand_in(7, "mac", saved).unwrap();
+        assert_eq!(saved["primary"]["connections"][0]["replyIdentity"], binding);
+        let mut unsupported = saved;
+        unsupported["primary"]["connections"][0]["collectionKey"] = json!("all-messages");
+        assert!(store
+            .validate_stand_in_connection_settings_draft(7, "mac", unsupported)
+            .is_err());
+    }
+
+    #[test]
     fn role_devices_survive_profile_reads_and_primary_identity_changes() {
         let mut settings = empty_personal(7, "mac");
         settings["roles"] = json!([empty_role("default", "mac")]);
@@ -634,13 +697,54 @@ impl LocalTaskStore {
         device: &str,
         value: Value,
     ) -> Result<(), TaskRuntimeError> {
+        self.validate_personal_settings_draft(user, device, value, ReplyBindingSave::Preserve)
+    }
+
+    /// Validate a desktop draft before fetching the account binding for a new delegation.
+    pub fn validate_stand_in_connection_settings_draft(
+        &self,
+        user: i64,
+        device: &str,
+        value: Value,
+    ) -> Result<(), TaskRuntimeError> {
+        self.validate_personal_settings_draft(user, device, value, ReplyBindingSave::Draft)
+    }
+
+    fn validate_personal_settings_draft(
+        &self,
+        user: i64,
+        device: &str,
+        value: Value,
+        bindings: ReplyBindingSave<'_>,
+    ) -> Result<(), TaskRuntimeError> {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let result = self
-            .save_personal_stand_in_on(&transaction, user, device, value)
+            .save_personal_stand_in_settings_on(&transaction, user, device, value, bindings)
             .map(|_| ());
         transaction.rollback()?;
         result
+    }
+
+    /// Apply a desktop-settings save after the host has verified DingTalk account bindings.
+    pub fn save_verified_personal_stand_in(
+        &self,
+        user: i64,
+        device: &str,
+        cloud_route: Option<&str>,
+        value: Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let saved = self.save_personal_stand_in_settings_on(
+            &connection,
+            user,
+            device,
+            value,
+            ReplyBindingSave::Verified { cloud_route },
+        )?;
+        connection.commit()?;
+        Ok(saved)
     }
 
     /// Normalize and atomically save an account draft with version, connection and intake checks.
@@ -649,7 +753,24 @@ impl LocalTaskStore {
         connection: &Connection,
         user: i64,
         device: &str,
+        value: Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.save_personal_stand_in_settings_on(
+            connection,
+            user,
+            device,
+            value,
+            ReplyBindingSave::Preserve,
+        )
+    }
+
+    fn save_personal_stand_in_settings_on(
+        &self,
+        connection: &Connection,
+        user: i64,
+        device: &str,
         mut value: Value,
+        bindings: ReplyBindingSave<'_>,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_personal_settings(&mut value)?;
         if let Some(object) = value.as_object_mut() {
@@ -699,6 +820,12 @@ impl LocalTaskStore {
             fields.remove("delegationRoutes");
         }
         if value["primary"].is_object() {
+            let primary_bindings = bindings.for_identity(&value["primary"], device);
+            apply_reply_bindings(
+                &mut value["primary"],
+                &previous["primary"],
+                primary_bindings,
+            )?;
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
@@ -711,6 +838,8 @@ impl LocalTaskStore {
             let version = before
                 .and_then(|before| before["version"].as_i64())
                 .unwrap_or(0);
+            let role_bindings = bindings.for_identity(role, device);
+            apply_reply_bindings(role, before.unwrap_or(&Value::Null), role_bindings)?;
             stamp_stand_in_connections(role, before.unwrap_or(&Value::Null));
             role["version"] = json!(version + 1);
             stamp_project_enabled(role, before.unwrap_or(&Value::Null));
@@ -747,6 +876,92 @@ impl LocalTaskStore {
     }
 }
 
+fn apply_reply_bindings(
+    identity: &mut Value,
+    previous: &Value,
+    mode: ReplyBindingSave<'_>,
+) -> Result<(), TaskRuntimeError> {
+    if matches!(mode, ReplyBindingSave::Preserve) {
+        return preserve_reply_bindings(identity, previous);
+    }
+    let enabled = identity["enabled"] == true;
+    for source in identity
+        .get_mut("connections")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if matches!(mode, ReplyBindingSave::Draft) {
+            source.as_object_mut().unwrap().remove("replyIdentity");
+        } else if enabled && autonomous_dingtalk_reply(source) {
+            let identity = &source["replyIdentity"];
+            if !["accountId", "organizationId", "openId"]
+                .iter()
+                .all(|field| {
+                    identity[*field]
+                        .as_str()
+                        .is_some_and(|value| !value.trim().is_empty())
+                })
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "DingTalk account and organization could not be verified".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Other settings paths may keep an existing delegation but cannot grant a new one.
+pub(super) fn preserve_reply_bindings(
+    identity: &mut Value,
+    previous: &Value,
+) -> Result<(), TaskRuntimeError> {
+    let enabling = identity["enabled"] == true;
+    let same_device = identity["executionDeviceId"] == previous["executionDeviceId"];
+    for source in identity
+        .get_mut("connections")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(fields) = source.as_object_mut() {
+            fields.remove("replyIdentity");
+        }
+        let before = matching_configured_connection(previous, source);
+        if enabling
+            && autonomous_dingtalk_reply(source)
+            && !before.is_some_and(|before| {
+                same_device
+                    && previous["enabled"] == true
+                    && autonomous_dingtalk_reply(before)
+                    && before["replyIdentity"].is_object()
+            })
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Enable automatic DingTalk replies in the connected source settings".into(),
+            ));
+        }
+        if let Some(binding) = before.and_then(|before| before.get("replyIdentity")) {
+            source["replyIdentity"] = binding.clone();
+        }
+    }
+    Ok(())
+}
+
+fn matching_configured_connection<'a>(previous: &'a Value, source: &Value) -> Option<&'a Value> {
+    previous["connections"].as_array()?.iter().find(|row| {
+        row["id"] == source["id"]
+            && source_provider(row) == source_provider(source)
+            && row["kind"] == source["kind"]
+            && row["profile"] == source["profile"]
+            && row["generation"] == source["generation"]
+            && row["subscriptionId"] == source["subscriptionId"]
+            && row["transport"] == source["transport"]
+            && row.get("collectionKey") == source.get("collectionKey")
+    })
+}
+
 pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"];
     for source in identity
@@ -755,20 +970,12 @@ pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value)
         .into_iter()
         .flatten()
     {
-        let before = previous["connections"].as_array().and_then(|rows| {
-            rows.iter().find(|row| {
-                row["id"] == source["id"]
-                    && source_provider(row) == source_provider(source)
-                    && row["kind"] == source["kind"]
-                    && row["profile"] == source["profile"]
-                    && row["generation"] == source["generation"]
-                    && row["subscriptionId"] == source["subscriptionId"]
-                    && row["transport"] == source["transport"]
-                    && row.get("collectionKey") == source.get("collectionKey")
+        source["enabledAfter"] = matching_configured_connection(previous, source)
+            .filter(|before| {
+                preserve
+                    && autonomous_dingtalk_reply(before) == autonomous_dingtalk_reply(source)
+                    && before["replyIdentity"] == source["replyIdentity"]
             })
-        });
-        source["enabledAfter"] = before
-            .filter(|_| preserve)
             .and_then(|source| source.get("enabledAfter"))
             .cloned()
             .unwrap_or_else(|| json!(now()));
