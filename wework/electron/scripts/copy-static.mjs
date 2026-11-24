@@ -29,6 +29,10 @@ await cp(
   resolve(root, 'dist/runtime/upgrade-policy.mjs')
 )
 await cp(
+  resolve(root, 'src/runtime/release-block-map.mjs'),
+  resolve(root, 'dist/runtime/release-block-map.mjs')
+)
+await cp(
   resolve(root, 'src/runtime/release-preparation-progress.mjs'),
   resolve(root, 'dist/runtime/release-preparation-progress.mjs')
 )
