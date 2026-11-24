@@ -178,6 +178,8 @@ Every request has a `requestId`. In the desktop client, this value is sent to th
 
 ## Getting help
 
+If Wework displays a page error or startup error screen, select **Copy debug info** to copy the current error and any available stack traces to the clipboard. Save this information before refreshing, then review it before pasting it into a problem report. If copying fails, select the button again to retry.
+
 Select **Report a problem** in the upper-right corner of any Wework desktop page, including tasks, new conversations, Plugins, My Stand-in, Scheduled and Settings. Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
 
 Optional information behaves as follows:
