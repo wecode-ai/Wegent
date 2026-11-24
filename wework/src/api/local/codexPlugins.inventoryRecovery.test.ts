@@ -12,8 +12,6 @@ vi.mock('@/api/local/runtimeAuthStatus', () => ({
   getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
 }))
 
-vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }))
-
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
   isElectronRuntime: () => true,

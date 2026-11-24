@@ -1556,7 +1556,6 @@ export interface InstalledPluginUpdateRequest {
   displayName?: string
   description?: string
   releaseId?: number
-  expectedCurrentReleaseId?: number
   updatePolicy?: 'manual' | 'auto'
 }
 

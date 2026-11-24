@@ -1011,40 +1011,6 @@ def test_manual_release_update_preserves_manual_policy(test_db, test_user):
     assert updated.spec.updatePolicy == "manual"
 
 
-def test_marketplace_update_rejects_stale_confirmation(test_db, test_user):
-    service = PluginMarketplaceService()
-    installed, _, current, latest = _create_marketplace_update_install(
-        test_db, user_id=test_user.id, index=1
-    )
-    test_db.commit()
-
-    # Another device has already installed the current catalog release.
-    updated = service.update_release(
-        test_db,
-        user_id=test_user.id,
-        installed_id=installed.id,
-        release_id=latest.id,
-        expected_current_release_id=current.id,
-    )
-    assert updated.spec.releaseId == latest.id
-    revision = installed.json["spec"]["revision"]
-
-    for target, expected in ((latest.id, current.id), (current.id, latest.id)):
-        with pytest.raises(HTTPException) as failure:
-            service.update_release(
-                test_db,
-                user_id=test_user.id,
-                installed_id=installed.id,
-                release_id=target,
-                expected_current_release_id=expected,
-            )
-        assert failure.value.status_code == 409
-        assert failure.value.detail == "PLUGIN_UPDATE_RELEASE_CHANGED"
-        test_db.rollback()
-        assert installed.json["spec"]["releaseId"] == latest.id
-        assert installed.json["spec"]["revision"] == revision
-
-
 def test_installed_plugin_update_policy_requires_explicit_opt_in(test_db, test_user):
     installed, _, _, _ = _create_marketplace_update_install(
         test_db,

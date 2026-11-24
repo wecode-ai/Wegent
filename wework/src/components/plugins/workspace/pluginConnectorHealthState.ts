@@ -15,8 +15,6 @@ import {
 } from '@/api/local/localConnectorAuth'
 import { getErrorMessage } from '@/lib/error-message'
 import type { InstalledPluginItem } from '../PluginManagementRows'
-import { isCloudManagedInstalledPlugin, isWegentManagedStorePlugin } from '../installedPluginMerge'
-import { installedPluginMarketplaceId } from '../pluginDistribution'
 import type { PluginCatalogInput } from './pluginCatalogState'
 
 interface HealthInput {
@@ -69,16 +67,12 @@ export function createPluginConnectorHealthState(key: string) {
     if (!latest || !observers.size) return Promise.resolve(null)
     const read = ++request
     if (latest.busy) return Promise.resolve(null)
-    const plugin = latest.detail?.raw
-    const marketplaceId = plugin ? (installedPluginMarketplaceId(plugin) ?? '') : ''
-    const connectors = (plugin?.spec.components.connectors ?? []).flatMap(connector => {
-      if (!plugin) return []
-      const target = pluginLocalConnectorAuthTarget(
-        plugin.spec.source.pluginKey,
-        marketplaceId,
-        connector,
-        isCloudManagedInstalledPlugin(plugin) || isWegentManagedStorePlugin(plugin)
-      )
+    const detail = latest.detail
+    const pluginKey = detail?.raw.spec.source.pluginKey ?? ''
+    const marketplaceId =
+      detail?.raw.spec.source.marketplace || String(detail?.raw.metadata.namespace ?? '')
+    const connectors = (detail?.raw.spec.components.connectors ?? []).flatMap(connector => {
+      const target = pluginLocalConnectorAuthTarget(pluginKey, marketplaceId, connector)
       return target ? [{ connector, target }] : []
     })
     if (!connectors.length) {

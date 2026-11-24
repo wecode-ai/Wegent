@@ -1,7 +1,6 @@
 """Opt-in account writes do not enumerate or wait for registered Devices."""
 
 from contextlib import contextmanager
-from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
@@ -9,7 +8,6 @@ from fastapi import HTTPException
 from sqlalchemy import event
 
 from app.models.kind import Kind
-from app.models.plugin_marketplace import Plugin
 from app.services import plugin_device_sync
 from app.services.plugin_local_sync import _lookup_operation as lookup_operation
 
@@ -567,67 +565,6 @@ def test_missing_catalog_is_explicitly_rejected_without_accepting_work(local_con
     assert response.headers["X-Plugin-Intent-Order"] == "1"
     with c.sessions() as db:
         assert len(markers(db, c.user_id)) == 0
-
-
-@pytest.mark.parametrize("later_order_on_other_plugin", [False, True])
-def test_stale_release_confirmation_is_a_terminal_local_rejection(
-    local_context, later_order_on_other_plugin
-):
-    c = local_context
-    initial = install(c)
-    installed_id = int(initial.json()["plugin"]["metadata"]["labels"]["id"])
-    with c.sessions.begin() as db:
-        db.get(Plugin, c.plugin_id).latest_release_id = c.upgraded_release_id
-    path = f"/plugins/installed/{installed_id}"
-    upgraded = c.client.put(path, json={"releaseId": c.upgraded_release_id})
-    assert upgraded.status_code == 200
-
-    if later_order_on_other_plugin:
-        with c.sessions.begin() as db:
-            original = db.get(Kind, installed_id)
-            document = deepcopy(original.json)
-            document["metadata"]["name"] = "other-plugin"
-            document["spec"]["pluginId"] = None
-            document["spec"]["source"]["pluginKey"] = "other-plugin"
-            other = Kind(
-                user_id=c.user_id,
-                kind=original.kind,
-                namespace=original.namespace,
-                name="other-plugin",
-                json=document,
-                is_active=True,
-            )
-            db.add(other)
-            db.flush()
-            other_id = other.id
-        later = c.client.put(
-            f"/plugins/installed/{other_id}",
-            params=query("other:update", 3),
-            json={"enabled": False},
-        )
-        assert later.status_code == 200, later.text
-        assert later.json()["spec"]["enabled"] is False
-
-    response = c.client.put(
-        path,
-        params=query("stale:update", 2),
-        json={
-            "releaseId": c.release_id,
-            "expectedCurrentReleaseId": c.upgraded_release_id,
-        },
-    )
-
-    assert response.status_code == 409
-    assert response.json()["detail"] == "PLUGIN_UPDATE_RELEASE_CHANGED"
-    assert response.headers["X-Plugin-Operation-State"] == "rejected"
-    assert response.headers["X-Plugin-Operation-Id"] == "stale:update"
-    assert response.headers["X-Plugin-Intent-Order"] == "2"
-    with c.sessions() as db:
-        assert (
-            db.get(Kind, installed_id).json["spec"]["releaseId"]
-            == c.upgraded_release_id
-        )
-        assert lookup_operation(db, c.user_id, "local:one", "stale:update") is None
 
 
 @pytest.mark.parametrize(

@@ -172,21 +172,6 @@ describe('localConnectorAuthHealth cache', () => {
     ).rejects.toThrow('python_runtime_unavailable')
   })
 
-  test('keeps a same-name connector scoped to its market for auth and health', async () => {
-    const connector = { slug: 'wiki', localAuth: GITHUB_CLI_TARGET.localAuth }
-    const first = pluginLocalConnectorAuthTarget('wiki', 'market-a', connector)!
-    const second = pluginLocalConnectorAuthTarget('wiki', 'market-b', connector)!
-
-    await localConnectorAuthHealth(first)
-    mocks.requestLocalExecutor.mockResolvedValueOnce({ status: 'need_login' })
-    await expect(localConnectorAuthHealth(second)).resolves.toEqual({ status: 'need_login' })
-    await localConnectorAuthStart(second)
-    expect(mocks.requestLocalExecutor).toHaveBeenLastCalledWith(
-      'runtime.local_connector_auth.start',
-      expect.objectContaining({ marketplaceId: 'market-b', pluginKey: 'wiki' })
-    )
-  })
-
   test('gh login is owned by the CLI, so every health check reads the actual executor state', async () => {
     await expect(localConnectorAuthHealth(GITHUB_CLI_TARGET)).resolves.toEqual({ status: 'ok' })
     mocks.requestLocalExecutor.mockResolvedValueOnce({ status: 'need_login' })

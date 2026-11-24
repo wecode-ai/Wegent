@@ -5,7 +5,7 @@
 use std::{
     collections::HashSet,
     env, fs,
-    io::{BufReader, Read},
+    io::Read,
     path::{Component, Path, PathBuf},
 };
 
@@ -23,26 +23,6 @@ const PLUGIN_EXAMPLE_DIRECTORY: &str = "wework-plugin-example";
 const MAX_PLUGIN_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_PLUGIN_EXPANDED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_PLUGIN_MANIFEST_BYTES: u64 = 1024 * 1024;
-
-pub fn read_marketplace_manifest_name(path: &Path) -> Result<String, String> {
-    #[derive(Deserialize)]
-    struct MarketplaceIdentity {
-        name: String,
-    }
-
-    let path = path
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve marketplace manifest: {error}"))?;
-    let (file, _) = open_regular_json_file(&path)?;
-    // Codex accepts marketplace catalogs larger than an individual plugin manifest.
-    let manifest: MarketplaceIdentity = serde_json::from_reader(BufReader::new(file))
-        .map_err(|error| format!("Invalid JSON {}: {error}", path.display()))?;
-    let name = manifest.name.trim();
-    if name.is_empty() {
-        return Err("The marketplace manifest has no name".to_owned());
-    }
-    Ok(name.to_owned())
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -724,31 +704,13 @@ fn write_atomic_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 pub(super) fn read_json_file(path: &Path, max_bytes: u64) -> Result<Value, String> {
-    let (file, metadata) = open_regular_json_file(path)?;
-    if metadata.len() > max_bytes {
+    reject_symbolic_link(path, "JSON file")?;
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;
+    if !metadata.is_file() || metadata.len() > max_bytes {
         return Err(format!(
             "JSON file exceeds {} bytes: {}",
             max_bytes,
-            path.display()
-        ));
-    }
-    let mut content = String::new();
-    file.take(max_bytes.saturating_add(1))
-        .read_to_string(&mut content)
-        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
-    if content.len() as u64 > max_bytes {
-        return Err("JSON file exceeds its size limit".into());
-    }
-    serde_json::from_str(&content)
-        .map_err(|error| format!("Invalid JSON {}: {error}", path.display()))
-}
-
-fn open_regular_json_file(path: &Path) -> Result<(fs::File, fs::Metadata), String> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;
-    if !metadata.is_file() {
-        return Err(format!(
-            "JSON file is not a regular file: {}",
             path.display()
         ));
     }
@@ -765,13 +727,18 @@ fn open_regular_json_file(path: &Path) -> Result<(fs::File, fs::Metadata), Strin
     let metadata = file
         .metadata()
         .map_err(|error| format!("Failed to inspect JSON file: {error}"))?;
-    if !metadata.is_file() {
-        return Err(format!(
-            "JSON file is not a regular file: {}",
-            path.display()
-        ));
+    if !metadata.is_file() || metadata.len() > max_bytes {
+        return Err("JSON file is not a regular bounded file".into());
     }
-    Ok((file, metadata))
+    let mut content = String::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_string(&mut content)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    if content.len() as u64 > max_bytes {
+        return Err("JSON file exceeds its size limit".into());
+    }
+    serde_json::from_str(&content)
+        .map_err(|error| format!("Invalid JSON {}: {error}", path.display()))
 }
 
 fn reject_symbolic_link(path: &Path, label: &str) -> Result<(), String> {

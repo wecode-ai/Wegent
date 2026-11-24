@@ -4,9 +4,6 @@
 //! Keep the selected version in Codex's native cache without discarding history.
 
 use super::*;
-use crate::local::plugin_cache::{
-    native_cache_segment as native_version, preferred_native_version as preferred,
-};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 
@@ -46,6 +43,30 @@ fn journal_path(store: &GlobalCapabilityStore, key: &str) -> PathBuf {
 
 pub(super) fn pending(store: &GlobalCapabilityStore, key: &str) -> bool {
     exists(&journal_path(store, key))
+}
+
+fn native_version(value: &str) -> bool {
+    !value.is_empty()
+        && !matches!(value, "." | "..")
+        && value
+            .bytes()
+            .all(|ch| ch.is_ascii_alphanumeric() || b"-_.+".contains(&ch))
+}
+
+fn preferred(candidate: &str, selected: &str) -> bool {
+    if candidate == selected || selected == "local" {
+        return false;
+    }
+    if candidate == "local" {
+        return true;
+    }
+    match (
+        semver::Version::parse(candidate),
+        semver::Version::parse(selected),
+    ) {
+        (Ok(candidate), Ok(selected)) => candidate > selected,
+        _ => candidate > selected,
+    }
 }
 
 fn conflicts(

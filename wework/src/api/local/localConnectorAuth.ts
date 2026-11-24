@@ -1,10 +1,7 @@
 import { observeOperation } from '@/telemetry/observeOperation'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import type { InstalledPluginComponents, PluginLocalAuthDefinition } from '@/types/api'
-import {
-  isOpenAiOfficialMarketplaceId,
-  isWegentCloudMarketplaceId,
-} from '@/features/plugins/marketplaceIdentity'
+import { isOpenAiOfficialMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { GITHUB_CLI_TARGET, isGithubCliTarget } from './githubCli'
 import { notifyLocalConnectorAuthChanged } from './localConnectorAuthEvents'
 
@@ -59,7 +56,6 @@ export interface LocalConnectorAuthTarget {
   instance?: string
   pluginKey: string
   connectorSlug: string
-  marketplaceId?: string
   localAuth?: PluginLocalAuthDefinition | null
   pluginRoot?: string | null
 }
@@ -77,8 +73,7 @@ export interface LocalConnectorAuthTransport {
 export function pluginLocalConnectorAuthTarget(
   pluginKey: string,
   marketplaceId: string,
-  connector: NonNullable<InstalledPluginComponents['connectors']>[number],
-  managedStore = false
+  connector: NonNullable<InstalledPluginComponents['connectors']>[number]
 ): LocalConnectorAuthTarget | null {
   if (
     isOpenAiOfficialMarketplaceId(marketplaceId) &&
@@ -88,14 +83,7 @@ export function pluginLocalConnectorAuthTarget(
     return GITHUB_CLI_TARGET
   }
   return isLocalConnector(connector)
-    ? {
-        pluginKey,
-        connectorSlug: connector.slug,
-        localAuth: connector.localAuth ?? null,
-        ...(!managedStore && marketplaceId && !isWegentCloudMarketplaceId(marketplaceId)
-          ? { marketplaceId }
-          : {}),
-      }
+    ? { pluginKey, connectorSlug: connector.slug, localAuth: connector.localAuth ?? null }
     : null
 }
 
@@ -125,11 +113,7 @@ const okHealthCache = new Map<string, number>()
 let healthCacheRevision = 0
 
 function healthCacheKey(target: LocalConnectorAuthTarget): string {
-  return JSON.stringify([
-    target.marketplaceId ?? null,
-    target.pluginKey.trim().toLowerCase(),
-    target.connectorSlug.trim().toLowerCase(),
-  ])
+  return `${target.pluginKey.trim().toLowerCase()}::${target.connectorSlug.trim().toLowerCase()}`
 }
 
 export function clearLocalConnectorAuthHealthCache(): void {
@@ -150,7 +134,6 @@ async function callLocalConnectorAuth(
     {
       pluginKey: target.pluginKey,
       connectorSlug: target.connectorSlug,
-      ...(target.marketplaceId ? { marketplaceId: target.marketplaceId } : {}),
       pluginRoot: target.pluginRoot ?? undefined,
       sessionId: sessionId ?? undefined,
       ...(prepareRuntime ? { prepareRuntime: true } : {}),

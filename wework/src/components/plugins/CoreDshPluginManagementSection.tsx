@@ -28,7 +28,7 @@ import { Field, FieldLabel } from '@wegent/collaboration/controls/Field'
 import { IconButton } from '@wegent/collaboration/controls/IconButton'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, X } from 'lucide-react'
+import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, RotateCw, X } from 'lucide-react'
 import { type FormEvent, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { MarketplaceSearchInput } from './MarketplaceSearchInput'
 
@@ -517,7 +517,10 @@ function PluginRow({
   onUninstall?: () => void
 }) {
   const { t } = useTranslation('common')
-  const updating = operation === `update:${plugin.name}`
+  const busy =
+    operation === `toggle:${plugin.name}` ||
+    operation === `update:${plugin.name}` ||
+    operation === `uninstall:${plugin.name}`
   const source = plugin.repository || plugin.homepage || plugin.requestedSpec
   const modeManaged =
     plugin.name === MODE_MANAGED_GIT_PLUGIN || MODE_MANAGED_HOME_PLUGINS.has(plugin.name)
@@ -556,9 +559,7 @@ function PluginRow({
       </div>
       {!plugin.immutable && !modeManaged ? (
         <div className="flex items-center gap-2">
-          <ControlButton
-            variant="outline"
-            size="sm"
+          <IconButton
             type="button"
             aria-label={t('workbench.core_dsh_plugins_update_named', '更新 {{name}}', {
               name: plugin.displayName,
@@ -567,9 +568,8 @@ function PluginRow({
             disabled={operation !== null || !plugin.canUpdate}
             onClick={onUpdate}
           >
-            {updating && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />}
-            {t('workbench.plugins_update', '更新')}
-          </ControlButton>
+            <RotateCw aria-hidden="true" className={busy ? 'animate-spin' : undefined} />
+          </IconButton>
           <ControlButton
             variant="outline"
             size="sm"

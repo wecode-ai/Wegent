@@ -77,8 +77,6 @@ pub(super) async fn start(payload: &Value) -> Result<Value, AppIpcError> {
         BrowserAuthSession {
             plugin_key: "gitlab".into(),
             connector_slug: connector,
-            marketplace_id: None,
-            plugin_root: None,
             state,
             task,
         },

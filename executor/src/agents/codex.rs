@@ -137,7 +137,6 @@ mod auth_mode;
 mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
-mod marketplace_catalog;
 mod memory_review;
 mod native_provider;
 mod plugin_cache;

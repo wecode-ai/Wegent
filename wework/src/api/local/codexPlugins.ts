@@ -187,20 +187,6 @@ export interface LocalCodexMarketplace {
   path: string
 }
 
-export interface CodexMarketplacePluginVersion {
-  pluginName: string
-  installedVersion: string | null
-  version: string | null
-}
-
-export interface ConfiguredCodexMarketplace extends Pick<LocalCodexMarketplace, 'id' | 'name'> {
-  sourceType: 'git' | 'local'
-  gitRef: string | null
-  sourceRevision: string
-  installationsRevision: string | null
-  installed: { id: string; name: string; version: string | null }[] | null
-}
-
 export interface LocalPluginCopyImportResult {
   pluginName: string
   displayName: string
@@ -366,17 +352,8 @@ export interface LocalCodexPluginApi {
     plugin: InstalledPlugin,
     options?: PluginDetailReadOptions
   ): Promise<InstalledPlugin>
-  listConfiguredMarketplaces(): Promise<ConfiguredCodexMarketplace[]>
-  checkGitMarketplaceVersions(
-    id: string,
-    sourceRevision: string
-  ): Promise<CodexMarketplacePluginVersion[]>
-  deleteMarketplace(
-    id: string,
-    sourceRevision: string,
-    installationsRevision: string,
-    confirmedPluginIds: string[]
-  ): Promise<void>
+  deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
+  reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
   installAvailablePlugin(
     item: PluginMarketplaceItem,
@@ -505,16 +482,11 @@ function invalidateReadState(deviceId: string | null = null): void {
   didHydrateReadStateSession = false
   warmupReadStatePromise = null
   if (typeof window !== 'undefined') {
-    try {
-      window.localStorage.removeItem(READ_STATE_LOCAL_STORAGE_KEY)
-      window.sessionStorage.removeItem(READ_STATE_SESSION_STORAGE_KEY)
-      for (const legacyKey of READ_STATE_LEGACY_STORAGE_KEYS) {
-        window.localStorage.removeItem(legacyKey)
-        window.sessionStorage.removeItem(legacyKey)
-      }
-    } catch {
-      didHydrateReadStateSession = true
-      console.warn('[Wework plugins] Failed to clear persisted catalog cache')
+    window.localStorage.removeItem(READ_STATE_LOCAL_STORAGE_KEY)
+    window.sessionStorage.removeItem(READ_STATE_SESSION_STORAGE_KEY)
+    for (const legacyKey of READ_STATE_LEGACY_STORAGE_KEYS) {
+      window.localStorage.removeItem(legacyKey)
+      window.sessionStorage.removeItem(legacyKey)
     }
   }
 }
@@ -3578,51 +3550,16 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
       return readDetailForInstalledPlugin(installed)
     },
-    async listConfiguredMarketplaces() {
-      const accountEpoch = getPluginMarketplaceAccountEpoch()
-      const scope = await ensureLocalExecutorStarted()
-      const configured = await requestLocalExecutor<Omit<ConfiguredCodexMarketplace, 'name'>[]>(
-        'runtime.codex.marketplace.list_configured',
-        {}
-      )
-      const current = await ensureLocalExecutorStarted()
-      if (
-        accountEpoch !== getPluginMarketplaceAccountEpoch() ||
-        current.deviceId !== scope.deviceId ||
-        current.runtimeInstanceId !== scope.runtimeInstanceId
-      )
-        throw new ExpiredPluginInventoryRequest()
-      if (!Array.isArray(configured)) throw new Error('Invalid configured marketplaces')
-      const names = new Map(cachedState?.marketplaces.map(market => [market.id, market.name]))
-      return configured.map(source => ({ ...source, name: names.get(source.id) ?? source.id }))
+    async deleteMarketplace(id) {
+      await codexAppServerRequest('marketplace/remove', {
+        marketplaceName: id,
+      })
+      if (selectedMarketplaceId() === id) rememberSelectedMarketplaceId('')
+      clearLocalCodexPluginsReadStateCache()
+      return readState({ refresh: true })
     },
-    async checkGitMarketplaceVersions(id, sourceRevision) {
-      const executor = await ensureLocalExecutorStarted()
-      const result = await requestLocalExecutor<{ versions: CodexMarketplacePluginVersion[] }>(
-        'runtime.codex.marketplace.check_updates',
-        { marketplaceName: id, sourceRevision }
-      )
-      if ((await ensureLocalExecutorStarted()).runtimeInstanceId !== executor.runtimeInstanceId)
-        throw new ExpiredPluginInventoryRequest()
-      if (!Array.isArray(result.versions)) throw new Error('Invalid marketplace versions')
-      return result.versions
-    },
-    async deleteMarketplace(id, sourceRevision, installationsRevision, confirmedPluginIds) {
-      try {
-        await codexAppServerRequest('marketplace/remove', {
-          marketplaceName: id,
-          sourceRevision,
-          installationsRevision,
-          confirmedPluginIds,
-        })
-        try {
-          if (selectedMarketplaceId() === id) rememberSelectedMarketplaceId('')
-        } catch {
-          console.warn('[Wework plugins] Failed to clear removed marketplace selection')
-        }
-      } finally {
-        clearLocalCodexPluginsReadStateCache()
-      }
+    async reorderMarketplaces() {
+      return readState()
     },
     async upsertMarketplace(data) {
       const source = normalizeMarketplaceSource(data.path)

@@ -502,7 +502,6 @@ mod tests {
                 "retry429" => (429, "Throttled"),
                 "server500" => (500, "Unavailable"),
                 "conflict" => (409, "IDEMPOTENCY_CONFLICT"),
-                "changed-release" => (409, "PLUGIN_UPDATE_RELEASE_CHANGED"),
                 _ => (409, "INTENT_SUPERSEDED"),
             };
             let mut response = (
@@ -538,9 +537,7 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(
                 listener,
-                Router::new()
-                    .route("/api/plugins/marketplace/7/install", post(respond))
-                    .route("/api/plugins/installed/7", axum::routing::put(respond)),
+                Router::new().route("/api/plugins/marketplace/7/install", post(respond)),
             )
             .await
             .unwrap();
@@ -554,15 +551,9 @@ mod tests {
             ("retry429", false),
             ("server500", false),
             ("conflict", false),
-            ("changed-release", true),
         ] {
-            let action = if operation == "changed-release" {
-                "update"
-            } else {
-                "install"
-            };
             let request =
-                json!({"action":action,"targetId":7,"operationId":operation,"intentOrder":7});
+                json!({"action":"install","targetId":7,"operationId":operation,"intentOrder":7});
             let outcome = submit(&connection, "native", &request, "").await;
             assert_eq!(
                 matches!(outcome, Ok(SubmitOutcome::Rejected { .. })),
