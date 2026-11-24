@@ -300,6 +300,11 @@ describe('async request user input', () => {
       const messages = [assistantMessage(payload), userMessage('晴天')]
 
       expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
+      const block = resolveAsyncRequestUserInputAnswers(messages)[0].blocks?.[0]
+      expect(block?.status).toBe('done')
+      expect(block && 'renderPayload' in block && block.renderPayload).toMatchObject({
+        response: { answers: { q1: { answers: [] }, q2: { answers: [] } } },
+      })
     })
 
     test('ignores unanswered and blocking questions', () => {

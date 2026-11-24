@@ -145,14 +145,13 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
   messages: WorkbenchMessage<TAttachment, TFileChanges>[]
 ): WorkbenchMessage<TAttachment, TFileChanges>[] {
   const rowsByReply = resolveAsyncRequestUserInputReplies(messages)
-  const replyByIndex = asyncReplyByMessageIndex(messages, rowsByReply)
+  const replyByIndex = asyncReplyByMessageIndex(messages)
   const offsetByReply = new Map<string, number>()
   let changed = false
   const resolved = messages.map((message, index) => {
     const reply = replyByIndex[index]
     if (!reply) return message
     const rows = rowsByReply.get(reply.id)
-    if (!rows) return message
     const blocks = message.blocks?.map(block => {
       if (
         block.type !== 'tool' ||
@@ -162,10 +161,11 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
       ) {
         return block
       }
-      if (!asyncReplyCanAnswerTurn(reply, message)) return block
+      if (!asyncReplyCanAnswerTurn(reply, asyncQuestionTurn(message))) return block
+      if (!rows) return resolveAsyncBlock<TFileChanges>(block, [])
       const offset = offsetByReply.get(reply.id) ?? 0
       const count = block.renderPayload.questions?.length ?? 0
-      if (rows.length < offset + count) return block
+      if (rows.length < offset + count) return resolveAsyncBlock<TFileChanges>(block, [])
       offsetByReply.set(reply.id, offset + count)
       return resolveAsyncBlock<TFileChanges>(block, rows.slice(offset, offset + count))
     })
@@ -231,10 +231,7 @@ interface PendingAsyncQuestion {
 function asyncQuestionPrompts<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>
 ): PendingAsyncQuestion[] {
-  const turnId = message.turnId?.trim() || null
-  const clientUserMessageId =
-    (message as WorkbenchMessage & { runtimeClientUserMessageId?: string | null })
-      .runtimeClientUserMessageId?.trim() || null
+  const { clientUserMessageId, turnId } = asyncQuestionTurn(message)
   return (message.blocks ?? []).flatMap(block => {
     if (block.type !== 'tool') return []
     const payload = block.renderPayload
@@ -296,18 +293,17 @@ function resolveAsyncBlock<TFileChanges>(
 }
 
 function asyncReplyByMessageIndex<TAttachment, TFileChanges>(
-  messages: WorkbenchMessage<TAttachment, TFileChanges>[],
-  rowsByReply: ReadonlyMap<string, AsyncRequestUserInputReply[]>
+  messages: WorkbenchMessage<TAttachment, TFileChanges>[]
 ): (WorkbenchMessage<TAttachment, TFileChanges> | null)[] {
   const replies: (WorkbenchMessage<TAttachment, TFileChanges> | null)[] = new Array(
     messages.length
   ).fill(null)
   let reply: WorkbenchMessage<TAttachment, TFileChanges> | null = null
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    replies[index] = reply && asyncReplyCanAnswerTurn(reply, messages[index]) ? reply : null
-    if (isDeliveredRequestUserInputReply(messages[index]) && rowsByReply.has(messages[index].id)) {
-      reply = messages[index]
-    }
+    replies[index] = reply && asyncReplyCanAnswerTurn(reply, asyncQuestionTurn(messages[index]))
+      ? reply
+      : null
+    if (isDeliveredRequestUserInputReply(messages[index])) reply = messages[index]
   }
   return replies
 }
@@ -318,8 +314,19 @@ type AsyncReplyMessage = Pick<WorkbenchMessage, 'id' | 'turnId'> & {
 }
 
 interface AsyncQuestionTurn {
-  clientUserMessageId?: string | null
-  turnId?: string | null
+  clientUserMessageId: string | null
+  turnId: string | null
+}
+
+function asyncQuestionTurn<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>
+): AsyncQuestionTurn {
+  return {
+    clientUserMessageId:
+      (message as WorkbenchMessage & { runtimeClientUserMessageId?: string | null })
+        .runtimeClientUserMessageId?.trim() || null,
+    turnId: message.turnId?.trim() || null,
+  }
 }
 
 /** A turn prompt introduces its questions; only later turns or guidance can answer them. */
@@ -347,7 +354,7 @@ function asyncRequestUserInputResponse(
     answers: Object.fromEntries(
       (payload.questions ?? []).map((question, index) => [
         question.id?.trim() || `question_${index + 1}`,
-        { answers: [rows[index].answer] },
+        { answers: rows[index] ? [rows[index].answer] : [] },
       ])
     ),
   }
