@@ -1271,6 +1271,8 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
         let preparation = async {
+            self.refresh_shared_conversation_request(&mut turn.request)
+                .await?;
             self.prepare_project_environment(&mut turn).await?;
             self.prepare_deferred_worktree(&mut turn).await?;
             self.prepare_creation_branch(&mut turn.request).await?;

@@ -255,6 +255,12 @@ pub async fn call(
                 &route.logical_device_id,
             ))
         })?;
+    if grant == TaskGrant::AssistantShareDefinition && payload["userId"].as_i64() != Some(user_id) {
+        return Err(CallFailure::Rpc(rpc_error(
+            "permission_denied",
+            "The requested assistant owner must match the connected account",
+        )));
+    }
     if grant == TaskGrant::StandInRole
         && let Some(source_route) = role_task_source(method, user_id, &payload)
             .map_err(|message| CallFailure::Rpc(rpc_error("permission_denied", message)))?
@@ -299,6 +305,9 @@ pub async fn call(
     match grant {
         TaskGrant::ProjectRead => request["appTaskAccessScope"] = json!("project-session"),
         TaskGrant::StandInRole => request["appTaskAccessScope"] = json!("stand-in-role-task"),
+        TaskGrant::AssistantShareDefinition => {
+            request["appTaskAccessScope"] = json!("assistant-share-definition")
+        }
         TaskGrant::Unscoped => {}
     }
     let ack = call_runtime_method_envelope(

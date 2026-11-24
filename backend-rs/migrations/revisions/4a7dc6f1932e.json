@@ -1,0 +1,33 @@
+{
+  "revision": "4a7dc6f1932e",
+  "parents": [
+    "b1c2d3e4f5a6"
+  ],
+  "source": "Wework assistant share definitions and recipient grants",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE TABLE IF NOT EXISTS assistant_share_definitions (\n    owner_user_id INT NOT NULL,\n    resource_kind ENUM('assistant','team') NOT NULL,\n    source_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,\n    definition JSON NOT NULL,\n    revision BIGINT UNSIGNED NOT NULL DEFAULT 1,\n    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),\n    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),\n    PRIMARY KEY (owner_user_id, resource_kind, source_id)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE IF NOT EXISTS assistant_share_grants (\n    owner_user_id INT NOT NULL,\n    resource_kind ENUM('assistant','team') NOT NULL,\n    source_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,\n    recipient_user_id INT NOT NULL,\n    allow_copy BOOLEAN NOT NULL,\n    direct_enabled BOOLEAN NOT NULL DEFAULT FALSE,\n    copied_revision BIGINT UNSIGNED NULL,\n    revoked_at DATETIME(6) NULL,\n    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),\n    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),\n    PRIMARY KEY (owner_user_id, resource_kind, source_id, recipient_user_id),\n    KEY assistant_share_recipient (recipient_user_id, revoked_at, owner_user_id, resource_kind, source_id)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE TABLE IF NOT EXISTS assistant_team_member_copies (\n    owner_user_id INT NOT NULL,\n    source_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,\n    recipient_user_id INT NOT NULL,\n    copied_revision BIGINT UNSIGNED NOT NULL,\n    PRIMARY KEY (owner_user_id, source_id, recipient_user_id),\n    KEY assistant_member_copy_recipient (recipient_user_id, owner_user_id, source_id)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP TABLE IF EXISTS assistant_team_member_copies",
+        "DROP TABLE IF EXISTS assistant_share_grants",
+        "DROP TABLE IF EXISTS assistant_share_definitions"
+      ]
+    }
+  ]
+}
