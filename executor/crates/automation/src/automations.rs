@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
     str::FromStr,
@@ -42,6 +42,8 @@ struct AutomationState {
     version: u64,
     automations: HashMap<String, Automation>,
     runs: Vec<AutomationRun>,
+    #[serde(skip)]
+    restored_active_run_ids: HashSet<String>,
     stand_in_onboarding: HashMap<i64, Value>,
     stand_in_memory_initialized: std::collections::HashSet<i64>,
 }
@@ -533,6 +535,40 @@ impl AutomationStore {
         self.list_matching_runs(|run| automation_id.map_or(true, |id| run.automation_id == id))
     }
 
+    pub fn reconcile_interrupted_runs(
+        &self,
+        resumable_run_ids: &HashSet<&str>,
+    ) -> Result<usize, String> {
+        let mut state = self.lock_state()?;
+        if state.restored_active_run_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut next = state.clone();
+        let now = Utc::now();
+        let mut reconciled = 0;
+        for run in &mut next.runs {
+            if next.restored_active_run_ids.contains(&run.id)
+                && !resumable_run_ids.contains(run.id.as_str())
+                && matches!(
+                    run.status,
+                    AutomationRunStatus::Pending | AutomationRunStatus::Running
+                )
+            {
+                run.status = AutomationRunStatus::NeedsAttention;
+                run.error =
+                    Some("Executor restarted before the automation run could finish".into());
+                run.updated_at = now;
+                reconciled += 1;
+            }
+        }
+        if reconciled > 0 {
+            self.write_state(&next)?;
+        }
+        next.restored_active_run_ids.clear();
+        *state = next;
+        Ok(reconciled)
+    }
+
     pub fn list_matching_runs(
         &self,
         matches_run: impl Fn(&AutomationRun) -> bool,
@@ -859,6 +895,23 @@ fn read_state(path: &PathBuf) -> AutomationState {
     if migrate_automation_state(&mut state, Utc::now()) {
         let _ = write_state_file(path, &state);
     }
+    // Only runs read from disk can belong to a stopped Executor. Multiple
+    // handlers can share this store with a scheduler already running.
+    state.restored_active_run_ids = state
+        .runs
+        .iter()
+        .filter(|run| {
+            matches!(
+                run.status,
+                AutomationRunStatus::Pending | AutomationRunStatus::Running
+            ) && run.coordination.is_none()
+                && !state
+                    .automations
+                    .get(&run.automation_id)
+                    .is_some_and(|automation| automation.task_request["standInOwner"].is_object())
+        })
+        .map(|run| run.id.clone())
+        .collect();
     state
 }
 

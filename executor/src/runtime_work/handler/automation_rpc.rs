@@ -9,6 +9,28 @@ use crate::runtime_work::automations::{Automation, ConversationMode};
 
 const AUTOMATION_SCHEDULER_INTERVAL_SECONDS: u64 = 30;
 
+pub(super) fn reconcile_interrupted_runs(
+    store: &AutomationStore,
+    queued_turns: &VecDeque<SpawnTurnRequest>,
+    active_goal_turns: &HashMap<String, SpawnTurnRequest>,
+) {
+    let resumable_run_ids = queued_turns
+        .iter()
+        .chain(active_goal_turns.values())
+        .filter_map(|turn| turn.request.extra.get("automation_info")?["runId"].as_str())
+        .collect::<HashSet<_>>();
+    match store.reconcile_interrupted_runs(&resumable_run_ids) {
+        Ok(0) => {}
+        Ok(count) => log_executor_event(
+            "interrupted automation runs reconciled",
+            &[("count", count.to_string())],
+        ),
+        Err(error) => {
+            log_executor_event("automation run reconciliation failed", &[("error", error)])
+        }
+    }
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn list_automations(&self) -> Result<Value, AppIpcError> {
         Ok(json!({"items": self.automation_store.list()}))
@@ -408,6 +430,86 @@ pub(super) fn add_automation_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_releases_interrupted_automation_runs_and_preserves_recoverable_turns() {
+        let _lock = crate::test_env::lock();
+        let directory = tempfile::tempdir().unwrap();
+        let _home = super::super::tests::ScalarEnv::set(
+            "WEGENT_EXECUTOR_HOME",
+            directory.path().to_str().unwrap(),
+        );
+        let (interrupted, queued, goal, coordinated) = {
+            let store =
+                AutomationStore::new(directory.path().join("runtime-work/automations.json"));
+            let start = |id, task_id, task_request: Value| {
+                let automation = serde_json::from_value(json!({
+                    "id": id, "name": id, "prompt": "Work on schedule",
+                    "version": 0, "schedule": {"type":"interval", "value":1, "unit":"hours"},
+                    "taskPayload": {},
+                    "taskRequest": task_request
+                }))
+                .unwrap();
+                let automation = store.create(automation).unwrap();
+                let (_, run) = store.start_manual_run(&automation.id).unwrap();
+                store.mark_running(&run.id, task_id).unwrap();
+                store.get_run(&run.id).unwrap()
+            };
+            (
+                start("interrupted", "shared-task".into(), json!({})),
+                start("queued", "shared-task".into(), json!({})),
+                start("goal", "goal-task".into(), json!({})),
+                start(
+                    "coordinated",
+                    "stand-in-task".into(),
+                    json!({
+                        "standInOwner": {"userId": 7, "roleId": "@primary"},
+                        "standInCalendar": {},
+                    }),
+                ),
+            )
+        };
+        let restore_turn = |run: &crate::runtime_work::automations::AutomationRun| {
+            serde_json::from_value::<SpawnTurnRequest>(json!({
+                "localTaskId": run.task_id,
+                "request": { "automation_info": {"automationId": run.automation_id, "runId": run.id} },
+            }))
+            .unwrap()
+        };
+        turns::write_runtime_turn_state(
+            &turns::runtime_turn_queue_path(),
+            &VecDeque::from([restore_turn(&queued)]),
+            &HashMap::from([("goal-task".to_owned(), restore_turn(&goal))]),
+            &Default::default(),
+        )
+        .unwrap();
+
+        let handler = RuntimeWorkRpcHandler::new("scheduler-device", "/bin/false");
+        let store = &handler.automation_store;
+        let reconciled = store.get_run(&interrupted.id).unwrap();
+        assert_eq!(reconciled.status, AutomationRunStatus::NeedsAttention);
+        assert_eq!(reconciled.task_id, interrupted.task_id);
+        for run in [queued, goal, coordinated] {
+            assert_eq!(
+                store.get_run(&run.id).unwrap().status,
+                AutomationRunStatus::Running
+            );
+            assert_eq!(
+                store.start_manual_run(&run.automation_id).unwrap().1.status,
+                AutomationRunStatus::Skipped,
+            );
+        }
+        let (automation, next) = store.start_manual_run(&interrupted.automation_id).unwrap();
+        assert_eq!(next.status, AutomationRunStatus::Pending);
+        assert!(automation.enabled);
+
+        // Reopening a live shared store must leave runs created in this process alone.
+        let second = RuntimeWorkRpcHandler::new("second-handler", "/bin/false");
+        assert_eq!(
+            second.automation_store.get_run(&next.id).unwrap().status,
+            AutomationRunStatus::Pending
+        );
+    }
 
     #[test]
     fn scheduler_uses_the_bound_connection_and_observes_credential_rotation() {

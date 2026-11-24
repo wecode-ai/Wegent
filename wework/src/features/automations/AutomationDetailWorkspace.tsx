@@ -11,7 +11,7 @@ import {
   isRemoteDevice,
   WEWORK_MIN_EXECUTOR_VERSION,
 } from '@/lib/device-capabilities'
-import { findWorkbenchDevice } from '@/lib/workbench-device'
+import { findWorkbenchDevice, resolveWorkbenchDeviceId } from '@/lib/workbench-device'
 import type {
   DeviceInfo,
   RuntimeProjectWork,
@@ -34,9 +34,11 @@ import { WorkdayOnlyField } from '@wegent/collaboration/project-manage'
 import { CirclePause, CirclePlay, Info, Loader2, Play, Settings, Trash2, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import {
+  automationProjectTargetForPath,
   automationTaskKey,
   buildAutomationProjectOptions,
   buildAutomationTaskOptions,
+  findAutomationProjectOption,
   scheduleFromAutomationDraft,
   type AutomationDraft,
   type CronPreset,
@@ -172,15 +174,40 @@ export function AutomationDetailWorkspace({
       label: selectedModel.displayName ?? selectedModel.name,
     })
   }
-  const projectOptions = buildAutomationProjectOptions(projects, draft.deviceId)
-  const selectedProject =
-    projectOptions.find(option => option.workspacePath === draft.workspacePath) ?? null
+  const selectedDeviceId = resolveWorkbenchDeviceId(devices, draft.deviceId) ?? ''
+  const projectOptions = buildAutomationProjectOptions(projects, selectedDeviceId)
+  const selectedProject = findAutomationProjectOption(projectOptions, draft.projectTarget)
+  const savedProjectOption =
+    draft.projectTarget && !selectedProject
+      ? {
+          value: 'saved-project',
+          label:
+            draft.projectTarget.runtimeProjectName ??
+            draft.projectTarget.workspacePath ??
+            t('todo.automation_saved_project', '已保存的项目'),
+          disabled: true,
+        }
+      : null
   const projectOptionLabel = (option: (typeof projectOptions)[number]) => {
     if (option.workspaceKind !== 'worktree') return option.name
     const worktreeLabel = t('workbench.project_workspace_kind_worktree', 'Worktree')
     return option.workspaceLabel && option.workspaceLabel !== option.name
       ? `${option.name} · ${worktreeLabel} · ${option.workspaceLabel}`
       : `${option.name} · ${worktreeLabel}`
+  }
+  const selectContinuation = (address: RuntimeTaskAddress | null) => {
+    onChange('continuationAddress', address)
+    if (!address) return
+    onChange('source', localDeviceIdSet.has(address.deviceId) ? 'local' : 'cloud')
+    onChange('deviceId', address.deviceId)
+    onChange(
+      'projectTarget',
+      automationProjectTargetForPath(
+        projects,
+        resolveWorkbenchDeviceId(devices, address.deviceId) ?? address.deviceId,
+        address.workspacePath
+      )
+    )
   }
 
   return (
@@ -335,15 +362,7 @@ export function AutomationDetailWorkspace({
                         taskOptions.find(option => option.key === currentKey && !option.disabled) ??
                         taskOptions.find(option => !option.disabled) ??
                         null
-                      onChange('continuationAddress', target?.address ?? null)
-                      if (target) {
-                        onChange(
-                          'source',
-                          localDeviceIdSet.has(target.address.deviceId) ? 'local' : 'cloud'
-                        )
-                        onChange('deviceId', target.address.deviceId)
-                        onChange('workspacePath', target.address.workspacePath ?? '')
-                      }
+                      selectContinuation(target?.address ?? null)
                     }
                   }}
                   options={[
@@ -366,15 +385,7 @@ export function AutomationDetailWorkspace({
                       const target = taskOptions.find(
                         option => option.key === value && !option.disabled
                       )
-                      onChange('continuationAddress', target?.address ?? null)
-                      if (target) {
-                        onChange(
-                          'source',
-                          localDeviceIdSet.has(target.address.deviceId) ? 'local' : 'cloud'
-                        )
-                        onChange('deviceId', target.address.deviceId)
-                        onChange('workspacePath', target.address.workspacePath ?? '')
-                      }
+                      selectContinuation(target?.address ?? null)
                     }}
                     options={taskOptions}
                   />
@@ -406,14 +417,18 @@ export function AutomationDetailWorkspace({
                     <InlineSelect
                       dataTestId="automation-device-select"
                       accessibleLabel={t('workbench.device', '设备')}
-                      value={draft.deviceId}
+                      value={selectedDeviceId}
                       onChange={value => {
                         onChange('deviceId', value)
                         onChange(
-                          'workspacePath',
+                          'projectTarget',
                           currentRuntimeTask?.deviceId === value
-                            ? (currentRuntimeTask.workspacePath ?? '')
-                            : ''
+                            ? automationProjectTargetForPath(
+                                projects,
+                                value,
+                                currentRuntimeTask.workspacePath
+                              )
+                            : null
                         )
                         if (currentRuntimeTask?.deviceId !== value) {
                           onChange('conversationMode', 'independent')
@@ -436,13 +451,18 @@ export function AutomationDetailWorkspace({
                     <InlineSelect
                       dataTestId="automation-project-select"
                       accessibleLabel={t('workbench.project', '项目')}
-                      value={selectedProject?.key ?? ''}
+                      value={selectedProject?.key ?? savedProjectOption?.value ?? ''}
                       onChange={value => {
+                        if (!value) {
+                          onChange('projectTarget', null)
+                          return
+                        }
                         const project = projectOptions.find(option => option.key === value)
-                        onChange('workspacePath', project?.workspacePath ?? '')
+                        if (project) onChange('projectTarget', project.target)
                       }}
                       options={[
                         { value: '', label: t('todo.none', '无') },
+                        ...(savedProjectOption ? [savedProjectOption] : []),
                         ...projectOptions.map(project => ({
                           value: project.key,
                           label: projectOptionLabel(project),

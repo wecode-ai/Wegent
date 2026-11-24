@@ -289,9 +289,7 @@ fn migration_recalculates_existing_cron_next_run() {
     let mut state = AutomationState {
         version: 1,
         automations: HashMap::from([(automation.id.clone(), automation)]),
-        runs: Vec::new(),
-        stand_in_onboarding: HashMap::new(),
-        stand_in_memory_initialized: Default::default(),
+        ..AutomationState::default()
     };
 
     assert!(migrate_automation_state(&mut state, now));
@@ -311,10 +309,7 @@ fn loading_old_state_persists_migration() {
         &path,
         serde_json::to_vec_pretty(&AutomationState {
             version: 1,
-            automations: HashMap::new(),
-            runs: Vec::new(),
-            stand_in_onboarding: HashMap::new(),
-            stand_in_memory_initialized: Default::default(),
+            ..AutomationState::default()
         })
         .unwrap(),
     )

@@ -119,8 +119,12 @@ pub(super) fn read_runtime_turn_queue(
 }
 
 pub(super) fn read_runtime_turn_state(queue_path: &Path) -> Result<RuntimeTurnQueueState, String> {
-    let Ok(envelope_bytes) = fs::read(queue_path) else {
-        return Ok(RuntimeTurnQueueState::default());
+    let envelope_bytes = match fs::read(queue_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RuntimeTurnQueueState::default());
+        }
+        Err(error) => return Err(format!("Failed to read {}: {error}", queue_path.display())),
     };
     let envelope = serde_json::from_slice::<EncryptedRuntimeTurnQueue>(&envelope_bytes)
         .map_err(|error| format!("Failed to parse {}: {error}", queue_path.display()))?;
@@ -174,7 +178,7 @@ pub(super) fn write_runtime_turn_queue(
     write_runtime_turn_state(queue_path, turns, &HashMap::new(), &Default::default())
 }
 
-fn write_runtime_turn_state(
+pub(super) fn write_runtime_turn_state(
     queue_path: &Path,
     turns: &VecDeque<SpawnTurnRequest>,
     active_goal_turns: &HashMap<String, SpawnTurnRequest>,
