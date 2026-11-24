@@ -260,6 +260,7 @@ test('Inspector failures archive bounded evidence before cleanup can stall', () 
   )
   assert.deepEqual(paths, [
     'wework/test-results/desktop-e2e/*/failure.txt',
+    'wework/test-results/desktop-e2e/*/renderer-threshold-measurements.json',
     'wework/test-results/desktop-e2e/*/scenario-state.json',
     'wework/test-results/desktop-e2e/*/model-requests.json',
     'wework/test-results/desktop-e2e/*/*.log',

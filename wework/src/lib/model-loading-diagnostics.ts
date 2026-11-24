@@ -51,36 +51,33 @@ export function logModelLoading(
 }
 
 export function observeModelLoadingMainThread(traceId: string): () => void {
+  if (
+    typeof PerformanceObserver === 'undefined' ||
+    !PerformanceObserver.supportedEntryTypes?.includes('longtask')
+  )
+    return () => {}
   const started = performance.now()
-  let expectedAt = started + 100
-  let maxLagMs = 0
-  let delayedSamples = 0
-  const timer = setInterval(() => {
-    const now = performance.now()
-    const lagMs = Math.max(0, now - expectedAt)
-    expectedAt = now + 100
-    maxLagMs = Math.max(maxLagMs, lagMs)
-    if (lagMs < 100) return
-    delayedSamples += 1
-    logModelLoading(traceId, 'renderer.event_loop_delay', {
-      lagMs: Math.round(lagMs),
-      hidden: document.hidden,
-    })
-  }, 100)
-  let stopped = false
-  const stop = () => {
-    if (stopped) return
-    stopped = true
-    clearInterval(timer)
-    clearTimeout(deadline)
-    logModelLoading(traceId, 'renderer.observation_finished', {
-      elapsedMs: Math.round(performance.now() - started),
-      maxLagMs: Math.round(maxLagMs),
-      delayedSamples,
-    })
+  const report = (entries: PerformanceEntry[]) => {
+    for (const entry of entries) {
+      if (entry.duration < 100) continue
+      logModelLoading(traceId, 'renderer.long_task', {
+        durationMs: Math.round(entry.duration),
+        elapsedMs: Math.round(entry.startTime - started),
+        hidden: document.hidden,
+      })
+    }
   }
-  const deadline = setTimeout(stop, 30_000)
-  return stop
+  const observer = new PerformanceObserver(list => report(list.getEntries()))
+  observer.observe({ type: 'longtask' })
+  const disconnect = () => {
+    report(observer.takeRecords())
+    observer.disconnect()
+  }
+  const deadline = setTimeout(disconnect, 30_000)
+  return () => {
+    clearTimeout(deadline)
+    disconnect()
+  }
 }
 
 export async function traceModelLoading<T>(

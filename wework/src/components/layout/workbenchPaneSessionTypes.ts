@@ -14,6 +14,7 @@ import type {
 export interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
   debugSnapshotEnabled?: boolean
+  presentationActive?: boolean
   separateTranscript?: boolean
 }
 

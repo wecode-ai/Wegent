@@ -64,12 +64,14 @@ export function RuntimeInteractionsProvider({
     observation.getSnapshot,
     observation.getSnapshot
   )
+  const value = useMemo(
+    () => ({ ...snapshot.value, drafts, replyDrafts, setDraft, discardDraft }),
+    [snapshot.value, drafts, replyDrafts, setDraft, discardDraft]
+  )
   useDOMEvent<StorageEvent>('window', 'storage', store.handleStorage)
   useDOMEvent('window', NOTIFICATION_PREFERENCES_CHANGED_EVENT, store.refreshPreferences)
   return (
-    <RuntimeInteractionsContext.Provider
-      value={{ ...snapshot.value, drafts, replyDrafts, setDraft, discardDraft }}
-    >
+    <RuntimeInteractionsContext.Provider value={value}>
       <QuestionDiscussionProvider accountKey={accountKey}>{children}</QuestionDiscussionProvider>
       <TransientNotice
         message={snapshot.replyNotice}

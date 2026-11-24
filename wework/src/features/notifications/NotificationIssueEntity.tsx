@@ -9,11 +9,17 @@ import {
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import { memo, useCallback, useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 
 class UnavailableNotificationEntity extends Error {}
+
+const IssuePreview = memo(WorkItemContextPanel)
+
+function openRuntimeTask(task: RuntimeTaskAddress) {
+  openWeworkScheme(weworkTaskScheme(task))
+}
 
 /** Load the destination's real records into the existing Issue detail surface. */
 export function NotificationIssueEntity({
@@ -39,6 +45,11 @@ export function NotificationIssueEntity({
   const { t } = useTranslation('common')
   const api = services.projectSpaceApis?.[store === 'local' ? 'local' : 'cloud']
   const userId = state.user?.id
+  const deviceNamesById = useMemo(() => getWorkbenchDeviceNamesById(state.devices), [state.devices])
+  const openChildTask = useCallback(
+    (item: { id: string }) => openWeworkScheme(weworkIssueScheme(projectId, item.id, store)),
+    [projectId, store]
+  )
   const resource = useMemo(
     () =>
       api
@@ -104,7 +115,7 @@ export function NotificationIssueEntity({
       </>
     )
   return (
-    <WorkItemContextPanel
+    <IssuePreview
       readFirst
       headerActions={headerActions}
       key={url}
@@ -115,18 +126,12 @@ export function NotificationIssueEntity({
       currentTask={address}
       currentUserId={userId}
       localProjects={state.projects}
-      deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
+      deviceNamesById={deviceNamesById}
       focusedCommentId={commentId}
       focusedCommentRequestKey={url}
-      onOpenChildTask={item => {
-        openWeworkScheme(weworkIssueScheme(projectId, item.id, store))
-      }}
-      onOpenRuntimeTask={task => {
-        openWeworkScheme(weworkTaskScheme(task))
-      }}
-      onOpenTask={task => {
-        openWeworkScheme(weworkTaskScheme(task))
-      }}
+      onOpenChildTask={openChildTask}
+      onOpenRuntimeTask={openRuntimeTask}
+      onOpenTask={openRuntimeTask}
     />
   )
 }
