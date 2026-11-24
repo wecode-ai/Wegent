@@ -8,20 +8,23 @@ from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.schemas.knowledge_external import (
     ExternalKnowledgeNode,
     ExternalKnowledgeNodeType,
 )
-from app.services.knowledge.external_creator import resolve_external_knowledge_creators
-from app.services.knowledge.external_document_access import (
-    build_document_capabilities,
-    load_attachment_map,
+from app.services.knowledge.document_text_sources import (
+    DocumentTextSources,
+    load_document_text_sources,
 )
+from app.services.knowledge.external_creator import resolve_external_knowledge_creators
+from app.services.knowledge.external_document_access import build_document_capabilities
 
 MAX_RECURSIVE_NODES = 5000
 MAX_RECURSIVE_DEPTH = 100
+MAX_NODE_SUMMARY_LENGTH = 300
 
 
 class ExternalKnowledgeInputError(ValueError):
@@ -113,7 +116,7 @@ def list_direct_nodes(
         folder_ids=[folder.id for folder in child_folders],
         include_inactive=include_inactive,
     )
-    attachment_map = load_attachment_map(db, child_documents)
+    attachment_map = _load_node_attachment_map(db, child_documents)
     creator_map = resolve_external_knowledge_creators(
         db,
         [document.user_id for document in child_documents],
@@ -125,7 +128,7 @@ def list_direct_nodes(
     nodes.extend(
         _build_document_node(
             document,
-            attachment=attachment_map.get(document.attachment_id),
+            text_sources=attachment_map[document.id],
             creator=creator_map.get(document.user_id),
             original_download_allowed=original_download_allowed,
         )
@@ -176,7 +179,7 @@ def list_recursive_nodes(
         .filter(*_document_filters(knowledge_base_id, include_inactive))
         .all()
     )
-    attachment_map = load_attachment_map(db, documents)
+    attachment_map = _load_node_attachment_map(db, documents)
 
     folder_by_id = {folder.id: folder for folder in folders}
     folders_by_parent: dict[int, list[KnowledgeFolder]] = {}
@@ -219,7 +222,7 @@ def list_recursive_nodes(
         nodes.extend(
             _build_document_node(
                 document,
-                attachment=attachment_map.get(document.attachment_id),
+                text_sources=attachment_map[document.id],
                 creator=creator_map.get(document.user_id),
                 original_download_allowed=original_download_allowed,
             )
@@ -274,7 +277,7 @@ def list_recursive_nodes(
             orphan_nodes.append(
                 _build_document_node(
                     document,
-                    attachment=attachment_map.get(document.attachment_id),
+                    text_sources=attachment_map[document.id],
                     creator=creator_map.get(document.user_id),
                     orphan=True,
                     original_download_allowed=original_download_allowed,
@@ -349,7 +352,7 @@ def _list_recursive_subtree_nodes(
     all_documents = [
         document for documents in documents_by_folder.values() for document in documents
     ]
-    attachment_map = load_attachment_map(db, all_documents)
+    attachment_map = _load_node_attachment_map(db, all_documents)
     creator_map = resolve_external_knowledge_creators(
         db,
         [document.user_id for document in all_documents],
@@ -369,7 +372,7 @@ def _list_recursive_subtree_nodes(
         nodes.extend(
             _build_document_node(
                 document,
-                attachment=attachment_map.get(document.attachment_id),
+                text_sources=attachment_map[document.id],
                 creator=creator_map.get(document.user_id),
                 original_download_allowed=original_download_allowed,
             )
@@ -388,6 +391,28 @@ def _document_index_status(document: KnowledgeDocument) -> Optional[str]:
         if hasattr(document.index_status, "value")
         else str(document.index_status)
     )
+
+
+def _load_node_attachment_map(
+    db: Session, documents: list[KnowledgeDocument]
+) -> dict[int, DocumentTextSources]:
+    """Batch metadata and readability flags without loading attachment bodies."""
+    return load_document_text_sources(db, documents, include_text=False)
+
+
+def _document_summary_fields(
+    document: KnowledgeDocument,
+) -> tuple[Optional[str], Optional[str]]:
+    summary = document.summary if isinstance(document.summary, dict) else {}
+    short_summary = summary.get("short_summary")
+    short_summary = (
+        short_summary.strip()[:MAX_NODE_SUMMARY_LENGTH].rstrip() or None
+        if isinstance(short_summary, str)
+        else None
+    )
+    status = summary.get("status")
+    status = status.strip() or None if isinstance(status, str) else None
+    return short_summary, status
 
 
 def _build_folder_node(
@@ -412,16 +437,18 @@ def _build_folder_node(
 
 def _build_document_node(
     document: KnowledgeDocument,
-    attachment=None,
+    text_sources: DocumentTextSources,
     creator=None,
     orphan: bool = False,
     original_download_allowed: bool = True,
 ) -> ExternalKnowledgeNode:
     capabilities = build_document_capabilities(
         document,
-        attachment,
+        text_sources.original,
         original_download_allowed=original_download_allowed,
+        text_sources=text_sources,
     )
+    short_summary, summary_status = _document_summary_fields(document)
     return ExternalKnowledgeNode(
         node_id=f"document:{document.id}",
         raw_id=document.id,
@@ -430,6 +457,8 @@ def _build_document_node(
         parent_id=document.folder_id or 0,
         source_type=document.source_type,
         index_status=_document_index_status(document),
+        short_summary=short_summary,
+        summary_status=summary_status,
         file_extension=capabilities.file_extension,
         content_readable=capabilities.content_readable,
         downloadable=capabilities.downloadable,

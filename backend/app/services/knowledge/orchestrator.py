@@ -2136,6 +2136,10 @@ class KnowledgeOrchestrator:
         from app.services.knowledge.indexing import get_rag_indexing_skip_reason
         from app.services.knowledge.multimodal_pipeline import resolve_dispatch_or_none
 
+        # Conversion refs are assigned by the trusted converter, never by uploaders.
+        source_config = dict(data.source_config or {})
+        source_config.pop("converted_attachment_id", None)
+        data = data.model_copy(update={"source_config": source_config})
         attachment_id = data.attachment_id
         attachment_owner_id = user.id
         try:
@@ -3252,6 +3256,12 @@ class KnowledgeOrchestrator:
         if document.attachment_id:
             # Try to overwrite existing attachment
             try:
+                # A legacy reference does not authorize modifying another owner's body.
+                context_service.get_context(
+                    db=db,
+                    context_id=document.attachment_id,
+                    user_id=document.user_id,
+                )
                 attachment, _ = context_service.overwrite_attachment_internal(
                     db=db,
                     context_id=document.attachment_id,
@@ -3270,7 +3280,7 @@ class KnowledgeOrchestrator:
                 # Create new attachment if overwrite fails
                 attachment, _ = context_service.upload_attachment(
                     db=db,
-                    user_id=user.id,
+                    user_id=document.user_id,
                     filename=document.name,
                     binary_data=content_bytes,
                     subtask_id=0,
@@ -3283,7 +3293,7 @@ class KnowledgeOrchestrator:
             # Create new attachment if no attachment_id exists
             attachment, _ = context_service.upload_attachment(
                 db=db,
-                user_id=user.id,
+                user_id=document.user_id,
                 filename=document.name,
                 binary_data=content_bytes,
                 subtask_id=0,

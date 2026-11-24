@@ -88,12 +88,19 @@ class RemoteRagGateway:
             if timeout is not None
             else self._timeout
         )
+        request_payload = payload.model_dump(mode="json", exclude_none=True)
+        if (
+            isinstance(payload, RemoteQueryRequest)
+            and not payload.deduplicate_by_document
+        ):
+            # Default searches retain the wire contract of the previous Runtime.
+            request_payload.pop("deduplicate_by_document", None)
 
         try:
             async with httpx.AsyncClient(timeout=effective_timeout) as client:
                 response = await client.post(
                     f"{self._base_url}{path}",
-                    json=payload.model_dump(mode="json", exclude_none=True),
+                    json=request_payload,
                     headers=headers,
                 )
         except httpx.RequestError as exc:
@@ -169,6 +176,7 @@ class RemoteRagGateway:
             query=spec.query,
             search_hints=spec.search_hints,
             max_results=spec.max_results,
+            deduplicate_by_document=spec.deduplicate_by_document,
             authorized_resources=spec.authorized_resources or None,
             knowledge_base_retrieval_overrides=(
                 spec.knowledge_base_retrieval_overrides or None
