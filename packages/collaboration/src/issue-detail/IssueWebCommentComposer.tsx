@@ -7,7 +7,7 @@ import type { SharedWorkspaceAttachmentsApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationAgent, CollaborationComment, CollaborationMember } from '../types'
 import type { AttachmentImageServices } from './AttachmentImageView'
 import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
-import { IssueMainCommentComposer } from './IssueMainCommentComposer'
+import { IssueMainCommentComposer, type IssueMainCommentTestIds } from './IssueMainCommentComposer'
 import type { IssueMentionOption } from './issueCommentMentions'
 import {
   issueCommentBody,
@@ -48,6 +48,8 @@ export function IssueWebCommentComposer({
   onSent,
   onError,
   settings,
+  testIds,
+  sendKey,
 }: {
   issueActions?: import('./issueCommentActions').CommentIssueActions
   assignment?: import('./useCommentAssignment').CommentAssignment
@@ -63,6 +65,8 @@ export function IssueWebCommentComposer({
   onSent(comment: CollaborationComment): void
   onError(): void
   settings?: ComponentProps<typeof IssueMainCommentComposer>['settings']
+  testIds?: IssueMainCommentTestIds
+  sendKey?: ComponentProps<typeof IssueMainCommentComposer>['sendKey']
 }) {
   const [owner, setOwner] = useState(() => ({
     issueId,
@@ -146,9 +150,10 @@ export function IssueWebCommentComposer({
         />
       }
       settings={settings}
+      sendKey={sendKey}
       mentionCandidates={mentionCandidates}
       translate={translate}
-      testIds={{
+      testIds={testIds ?? {
         form: 'collaboration-issue-comment-form',
         input: 'collaboration-issue-comment',
         send: 'collaboration-issue-comment-submit',

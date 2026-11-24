@@ -70,11 +70,11 @@ pub struct ItemMetadata {
     pub external_shadow: Option<serde_json::Value>,
 }
 
-/// `LoopItemComment.metadata_json` assignment-event fields
-/// (`app.services.issue_assignments.ASSIGNMENT_EVENT_TYPE`).
+/// `LoopItemComment.metadata_json` fields read by activity and assignment queries.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct AssignmentMetadata {
+    pub assistant_name: Option<serde_json::Value>,
     pub automation: Option<serde_json::Value>,
     pub event_type: Option<String>,
     pub action: Option<String>,
@@ -109,7 +109,7 @@ pub struct BindingRow {
     #[mysql(rename = "loop_items_id")]
     pub id: String,
     #[mysql(rename = "loop_items_cloud_project_id")]
-    pub cloud_project_id: String,
+    pub cloud_project_id: Option<String>,
     #[mysql(rename = "loop_items_loop_item_id")]
     pub loop_item_id: Option<String>,
     #[mysql(rename = "loop_items_task_user_id")]

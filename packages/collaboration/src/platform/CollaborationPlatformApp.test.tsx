@@ -6206,7 +6206,7 @@ describe('CollaborationPlatformApp real component flow', () => {
     expect(api.comments.create).toHaveBeenCalledWith(issue.id, '请先确认接口契约')
   })
 
-  it('mentions and assigns a project member with collaboration groups listed first', async () => {
+  it('mentions and assigns the signed-in project member with collaboration groups listed first', async () => {
     const api = await renderIssueWithCollaborationGroup()
     const comment = byTestId('collaboration-issue-comment') as HTMLTextAreaElement
     await change(comment, '@')
@@ -6227,17 +6227,16 @@ describe('CollaborationPlatformApp real component flow', () => {
     ).toBeTruthy()
     await click(memberOption)
     expect(container.querySelector('[data-testid="wework-assignment-notify-confirm"]')).toBeNull()
-    expect(api.issues.assign).toHaveBeenLastCalledWith(project.id, issue.id, {
+    expect(api.issues.update).toHaveBeenLastCalledWith(issue.id, {
       version: issue.version,
-      assigneeType: 'user',
-      assigneeId: String(member.user_id),
-      notifyAssignee: true,
+      assigneeUserId: member.user_id,
+      notifyAssignee: false,
     })
   })
 
   it('clears the assignment draft after the persisted Issue replaces its source', async () => {
     const api = await renderIssueWithCollaborationGroup()
-    vi.mocked(api.issues.assign).mockResolvedValue({
+    vi.mocked(api.issues.update).mockResolvedValue({
       ...issue,
       version: issue.version + 1,
       assignee_user_id: member.user_id,
@@ -6260,10 +6259,9 @@ describe('CollaborationPlatformApp real component flow', () => {
     expect(api.comments.create).toHaveBeenLastCalledWith(issue.id, `@${agent.name} 请开始实现`)
     await click(byTestId('cloud-todo-detail-assignee'))
     await click(portalByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`))
-    expect(api.issues.assign).toHaveBeenLastCalledWith(project.id, issue.id, {
+    expect(api.issues.update).toHaveBeenLastCalledWith(issue.id, {
       version: issue.version,
-      assigneeType: 'agent',
-      assigneeId: agent.id,
+      assigneeAgentId: agent.id,
     })
   })
 

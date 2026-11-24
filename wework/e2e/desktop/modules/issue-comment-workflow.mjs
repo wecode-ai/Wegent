@@ -47,6 +47,117 @@ export async function verifyComposerLayout(control, form, send, sendMenu) {
   )
 }
 
+/** Choosing the send mode must leave the Issue and discussion unchanged until submission. */
+export async function verifyIssueSendModes(control, { scope, load, capture, name }) {
+  const form = `${scope} [data-testid="task-comment-form"]`
+  const group = `${form} [data-composer-send-group]`
+  const primary = `${group} [data-composer-primary-action]`
+  const menu = `${group} [data-testid="task-comment-form-send-actions"]`
+  const editor = `${form} [contenteditable="true"]`
+  const fill = async value => {
+    await control.command('waitFor', editor, { visible: true, timeoutMs: 5000 })
+    await control.command('fill', editor, { value })
+  }
+  const choose = async id => {
+    await control.command('clickWhenEnabled', menu, { timeoutMs: 5000 })
+    await control.command('clickWhenEnabled', `[data-testid="${id}"]`, { timeoutMs: 5000 })
+  }
+  const initial = await load()
+  await fill('Comment without closing')
+  await control.command('clickWhenEnabled', menu, { timeoutMs: 5000 })
+  await control.command('waitFor', '[data-testid="task-comment-form-close"]', {
+    visible: true,
+    timeoutMs: 5000,
+  })
+  await capture(control, `${name}-comment-menu.png`)
+  await control.command('clickWhenEnabled', '[data-testid="task-comment-form-close"]', {
+    timeoutMs: 5000,
+  })
+  await control.command(
+    'waitFor',
+    `${group}[data-selected="true"] [data-composer-primary-action] svg.lucide-circle-check`,
+    { timeoutMs: 5000 }
+  )
+  assert.deepEqual(await load(), initial, 'Selecting comment and close must not submit')
+  await capture(control, `${name}-comment-and-close.png`)
+  await choose('task-comment-form-send-option')
+  await control.command(
+    'waitFor',
+    `${group}:not([data-selected]) [data-composer-primary-action] svg.lucide-arrow-up`,
+    { timeoutMs: 5000 }
+  )
+  assert.deepEqual(await load(), initial, 'Selecting comment must not submit')
+  const primaryLabel = await control.command('getAttribute', primary, { value: 'aria-label' })
+  const [buttonBounds] = JSON.parse(await control.command('getElementMetrics', primary))
+  const [menuBounds] = JSON.parse(await control.command('getElementMetrics', menu))
+  assert.ok(
+    Math.abs(menuBounds.left - buttonBounds.right) <= 1 && menuBounds.top === buttonBounds.top,
+    'The dropdown must touch the right edge of the send button'
+  )
+  await capture(control, `${name}-comment.png`)
+  await control.command('clickWhenEnabled', primary, { timeoutMs: 5000 })
+  await waitForBoardValue(
+    load,
+    { status: initial.status, comments: initial.comments + 1 },
+    'Comment must be persisted without closing the Issue',
+    8000
+  )
+  await fill('Comment and close the Issue')
+  await choose('task-comment-form-close')
+  assert.notEqual(
+    await control.command('getAttribute', primary, { value: 'aria-label' }),
+    primaryLabel
+  )
+  assert.deepEqual(await load(), { status: initial.status, comments: initial.comments + 1 })
+  await control.command('clickWhenEnabled', primary, { timeoutMs: 5000 })
+  await waitForBoardValue(
+    load,
+    { status: 'completed', comments: initial.comments + 2 },
+    'Comment and close must persist one comment and complete the Issue',
+    8000
+  )
+}
+
+/** The same mode control stages and creates a child of the Issue open in the drawer. */
+export async function verifyIssueChildMode(control, { scope, issueId, children, capture, name }) {
+  const form = `${scope} [data-testid="task-comment-form"]`
+  const mode = `${form} [data-testid="task-comment-form-assignment-mode"]`
+  const title = 'Child created from Issue discussion'
+  const matching = async () =>
+    (await children()).filter(item => item.title === title).map(item => String(item.parent_id))
+  assert.deepEqual(await matching(), [])
+  await control.command('waitFor', `${mode}[data-assignment-mode="current"] svg.lucide-list-todo`, {
+    timeoutMs: 5000,
+  })
+  await control.command('clickWhenEnabled', mode, { timeoutMs: 5000 })
+  await control.command('clickWhenEnabled', '[data-testid="task-comment-form-create-child"]', {
+    timeoutMs: 5000,
+  })
+  await control.command('waitFor', `${mode}[data-assignment-mode="child"] svg.lucide-git-branch`, {
+    timeoutMs: 5000,
+  })
+  await control.command('fill', `${form} [contenteditable="true"]`, { value: title })
+  assert.deepEqual(await matching(), [], 'Selecting child mode must not create an Issue')
+  await capture(control, `${name}-child-mode.png`)
+  await control.command('clickWhenEnabled', `${form} [data-composer-primary-action]`, {
+    timeoutMs: 5000,
+  })
+  await waitForBoardValue(
+    matching,
+    [String(issueId)],
+    'Exactly one child must be linked to the open Issue',
+    8000
+  )
+  await control.command('clickWhenEnabled', mode, { timeoutMs: 5000 })
+  await control.command('clickElementWithText', '[role="option"]', {
+    text: '分派当前事项',
+    visible: true,
+    timeoutMs: 5000,
+  })
+  await control.command('waitFor', `${mode}[data-assignment-mode="current"]`, { timeoutMs: 5000 })
+  return (await children()).find(item => item.title === title)
+}
+
 /** Real comment, assignment, tag movement and lifecycle persistence in one detail page. */
 export async function verifyIssueCommentWorkflow(
   control,
@@ -129,19 +240,26 @@ export async function verifyIssueCommentWorkflow(
       comments.filter(comment => comment.body.includes('确认修复，交接验收并移动泳道')).length,
       1
     )
+    const editor = `${form} [data-testid="cloud-task-activity-composer"][contenteditable="true"]`
+    await control.command('waitFor', editor, { visible: true, timeoutMs: 5000 })
+    await control.command('fill', editor, { value: '验收通过，关闭事项' })
     await control.command('clickWhenEnabled', sendMenu)
     await control.command('clickWhenEnabled', close)
+    assert.equal((await get()).status, 'in_progress', 'Selecting a mode must leave the Issue open')
+    assert.equal((await request(commentPath)).length, comments.length)
+    await control.command('clickWhenEnabled', send)
     await wait(
-      async () => (await get()).status,
-      'completed',
-      'Close must persist the completed state'
+      async () => [(await get()).status, (await request(commentPath)).length],
+      ['completed', comments.length + 1],
+      'Submitting comment and close must persist both changes'
     )
     await control.command(
       'waitFor',
       `${content} [data-testid="cloud-todo-state-summary"][data-status="completed"]`
     )
-    await control.command('clickWhenEnabled', sendMenu)
-    await control.command('clickWhenEnabled', close)
+    await control.command('select', `${content} [data-testid="cloud-todo-detail-status"]`, {
+      value: 'in_progress',
+    })
     await wait(
       async () => (await get()).status,
       'in_progress',
@@ -149,8 +267,8 @@ export async function verifyIssueCommentWorkflow(
     )
     assert.equal(
       (await request(commentPath)).length,
-      comments.length,
-      'Empty close and reopen must not add comments'
+      comments.length + 1,
+      'Changing the status back must leave the discussion unchanged'
     )
   } finally {
     const current = await request(`/api/v1/cloud-projects/${project.id}`)

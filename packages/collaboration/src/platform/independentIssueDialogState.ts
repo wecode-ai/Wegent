@@ -1,25 +1,69 @@
 import {
-  independentIssueInput,
-  resolveMovedPersonalIssue,
+  detailProjectId,
+  unlinkedIssueFromDetail,
   type IndependentIssue,
-  type IndependentIssueComment,
   type IndependentIssueInput,
   type IssueCreationInput,
   type PersonalIssuesApi,
   type SharedIssueTarget,
 } from './personalIssuesApi'
-import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { ProjectChatMessage } from '@wegent/chat-core'
+import type { SharedIssueDetailUpdateInput } from '../issue-detail/createSharedIssueDetailPort'
+import { participantKey } from './issueParticipants'
+
+function sameSelection<T>(current: T[], next: T[]) {
+  const currentSelection = new Set(current)
+  const nextSelection = new Set(next)
+  return (
+    currentSelection.size === nextSelection.size &&
+    [...nextSelection].every(choice => currentSelection.has(choice))
+  )
+}
+
+function updateIssueDraft(
+  api: PersonalIssuesApi,
+  issue: IndependentIssue,
+  input: IndependentIssueInput
+) {
+  const metadata = issue.metadata
+  const currentPeople = (metadata.direct_participants ?? metadata.participants).filter(
+    participant => participant !== issue.creator_id
+  )
+  const currentResources = (metadata.resource_participants ?? []).map(participantKey)
+  const nextResources = (input.resource_participants ?? []).map(participantKey)
+  if (
+    !sameSelection(currentPeople, input.participants) ||
+    !sameSelection(currentResources, nextResources)
+  ) {
+    return api.updateWithParticipants(issue.id, { ...input, version: issue.version })
+  }
+
+  const fields: Parameters<PersonalIssuesApi['updateDetail']>[1] = { version: issue.version }
+  if (issue.title !== input.title) fields.title = input.title
+  if (issue.description !== input.description) fields.description = input.description
+  if (issue.status !== input.status) fields.status = input.status
+  if (issue.priority !== input.priority) fields.priority = input.priority
+  if (metadata.due_at !== input.due_at) fields.due_at = input.due_at
+  if (metadata.archived !== input.archived) fields.archived = input.archived
+  const from = metadata.assignee_resource
+  const to = input.assignee_resource
+  if (issue.assignee_id !== input.assignee_id || from?.kind !== to?.kind || from?.id !== to?.id) {
+    fields.assignee_user_id = input.assignee_id
+    if (to?.kind === 'group') fields.assignee_group_id = String(to.id)
+    if (to?.kind === 'agent') fields.assignee_agent_id = String(to.id)
+  }
+  return api.updateDetail(issue.id, fields)
+}
 
 interface DialogSnapshot {
   issue: IndependentIssue | null
-  comments: IndependentIssueComment[]
+  comments: ProjectChatMessage[]
   loading: boolean
   error: string
-  errorKind: 'default' | 'conflict' | 'unconfirmed'
+  errorKind: 'default' | 'conflict' | 'unconfirmed' | 'saved-detail'
   commentError: string
   editing: boolean
   busy: boolean
-  body: string
   associationPending: boolean
 }
 type CreatedProjectIssue = { project_id: string; issue_id: string; restricted?: boolean }
@@ -51,8 +95,7 @@ const denied = (reason: unknown) => [403, 404].includes(apiStatus(reason))
 export function createIndependentIssueDialogState(
   api: PersonalIssuesApi,
   userId: number,
-  issueId: string | null,
-  projectIssues?: SharedWorkspaceApi['issues']
+  issueId: string | null
 ) {
   const key = `${userId}:${issueId ?? 'new'}:${++nextDialogScope}`
   const observers = new Set<Observer>()
@@ -65,16 +108,17 @@ export function createIndependentIssueDialogState(
     commentError: '',
     editing: !issueId,
     busy: false,
-    body: '',
     associationPending: false,
   }
   let loadId = issueId
+  let savedIssueToOpen: string | null = null
   let started = false
   let lifetime = 0
   let issueReadVersion = 0
   let commentReadVersion = 0
   let accessVersion = 0
   const owned = (generation = lifetime) => generation === lifetime && observers.size > 0
+  const readUnlinkedIssue = (id: string) => api.issueDetail(id).then(unlinkedIssueFromDetail)
   function publish(change: Partial<DialogSnapshot>) {
     if (
       Object.entries(change).every(
@@ -100,7 +144,6 @@ export function createIndependentIssueDialogState(
       busy: false,
       issue: null,
       comments: [],
-      body: '',
       editing: false,
       loading: false,
       error: message(reason),
@@ -112,19 +155,26 @@ export function createIndependentIssueDialogState(
   async function readIssue(id: string, current: () => boolean) {
     if (!current()) return
     try {
-      const row = await api.get(id)
-      if (current()) publish({ issue: row, error: '', errorKind: 'default' })
+      const detail = await api.issueDetail(id)
+      if (!current()) return
+      const projectId = detailProjectId(detail)
+      if (projectId && [...observers].some(observer => observer.onMovedToProject)) {
+        commentReadVersion += 1
+        publish({ issue: null, comments: [], editing: false })
+        notify(observer => observer.onMovedToProject?.(projectId, id))
+        return
+      }
+      const row = unlinkedIssueFromDetail(detail)
+      publish({ issue: row, error: '', errorKind: 'default' })
+      if (savedIssueToOpen === id) {
+        savedIssueToOpen = null
+        notify(observer => observer.onSaved(row))
+      }
+      return row
     } catch (reason) {
       if (!current()) return
-      if (projectIssues && apiStatus(reason) === 404) {
-        const projectId = await resolveMovedPersonalIssue(reason, () => projectIssues.get(id))
-        if (!current()) return
-        if (projectId) {
-          notify(observer => observer.onMovedToProject?.(projectId, id))
-          return
-        }
-      }
-      if (denied(reason)) clearDenied(reason)
+      if (savedIssueToOpen === id) publish({ error: message(reason), errorKind: 'saved-detail' })
+      else if (denied(reason)) clearDenied(reason)
       else publish({ error: message(reason) })
     } finally {
       if (current()) publish({ loading: false })
@@ -138,7 +188,11 @@ export function createIndependentIssueDialogState(
     } catch (reason) {
       if (!current()) return
       // The detail read owns navigation when an old standalone link has moved.
-      if (denied(reason) && !(projectIssues && snapshot.loading && apiStatus(reason) === 404))
+      if (
+        savedIssueToOpen !== id &&
+        denied(reason) &&
+        !(snapshot.loading && apiStatus(reason) === 404)
+      )
         clearDenied(reason, true)
       else publish({ commentError: message(reason) })
     }
@@ -166,9 +220,7 @@ export function createIndependentIssueDialogState(
       return current()
     } catch (reason) {
       if (!current()) return false
-      const unconfirmed =
-        wasEditing &&
-        (reason instanceof TypeError || apiStatus(reason) >= 500)
+      const unconfirmed = wasEditing && (reason instanceof TypeError || apiStatus(reason) >= 500)
       publish({
         error: message(reason),
         errorKind: unconfirmed
@@ -195,6 +247,26 @@ export function createIndependentIssueDialogState(
       const row = snapshot.issue
       notify(observer => observer.onSaved(row))
     }
+  }
+  async function saveIssueUpdate<Result>(
+    id: string,
+    update: (issue: IndependentIssue) => Promise<Result>,
+    savedIssue: (result: Result) => IndependentIssue | Promise<IndependentIssue>
+  ) {
+    const issue = snapshot.issue
+    if (!owned() || issue?.id !== id) throw new Error('Issue detail scope changed')
+    const owner = lifetime
+    const access = accessVersion
+    const isCurrent = () => owned(owner) && access === accessVersion
+    const result = await update(issue)
+    if (!isCurrent()) throw new Error('Issue detail scope changed')
+    const row = await savedIssue(result)
+    if (!isCurrent()) throw new Error('Issue detail scope changed')
+    if (snapshot.issue && row.version < snapshot.issue.version) return result
+    issueReadVersion += 1
+    publish({ issue: row })
+    notify(observer => observer.onSaved(row))
+    return result
   }
   return {
     key,
@@ -234,16 +306,11 @@ export function createIndependentIssueDialogState(
     cancelEdit() {
       if (owned()) publish({ editing: false })
     },
-    editComment(body: string) {
-      if (owned()) publish({ body })
-    },
-    reportTaskError(error: string) {
-      if (owned()) publish({ error })
-    },
     clearActionError() {
       if (owned()) publish({ error: '' })
     },
     save(values: IssueCreationInput, createShared?: CreateSharedIssue) {
+      if (savedIssueToOpen) return Promise.resolve()
       const { project_id, project_status, ...input } = values
       return run(async current => {
         if (createShared) {
@@ -260,16 +327,14 @@ export function createIndependentIssueDialogState(
             )
             return
           }
-          const row = await api.get(target.id)
-          if (!current()) return
-          issueReadVersion += 1
-          publish({ issue: row, loading: false, editing: false })
-          notify(observer => observer.onSaved(row))
+          loadId = savedIssueToOpen = target.id
+          publish({ loading: true, editing: false })
+          await readIssue(target.id, current)
           return
         }
         const existing = snapshot.issue
         const row = existing
-          ? await api.update(existing.id, { ...input, version: existing.version })
+          ? await updateIssueDraft(api, existing, input)
           : await api.create(input)
         if (!current()) return
         // Retain the successfully created row before starting the separate association transaction.
@@ -283,32 +348,62 @@ export function createIndependentIssueDialogState(
           return
         }
         publish({ editing: false })
-        notify(observer => observer.onSaved(row))
+        loadId = row.id
+        if (!row.detail) {
+          if (!existing) savedIssueToOpen = row.id
+          publish({ loading: true })
+          const refreshed = await readIssue(row.id, current)
+          if (existing && current() && snapshot.issue?.id === row.id)
+            notify(observer => observer.onSaved(refreshed ?? row))
+        } else {
+          notify(observer => observer.onSaved(row))
+        }
       }).then(() => undefined)
     },
-    sendComment() {
+    updateDetail(id: string, input: SharedIssueDetailUpdateInput) {
+      return saveIssueUpdate(
+        id,
+        () =>
+          api.updateDetail(id, {
+            version: input.version,
+            title: input.title,
+            description: input.description,
+            due_at: input.due_at,
+            priority: input.priority,
+            status: input.status,
+            assignee_user_id: input.assignee_user_id,
+            assignee_agent_id: input.assignee_agent_id,
+            assignee_group_id: input.assignee_group_id,
+            assignee_team_id: input.assignee_team_id,
+            notify_assignee: input.notify_assignee,
+          }),
+        row => row
+      )
+    },
+    addParticipant(id: string, person: number) {
+      return saveIssueUpdate(
+        id,
+        () => api.addCollaborator(id, person),
+        () => readUnlinkedIssue(id)
+      )
+    },
+    removeParticipant(id: string, person: number) {
+      return saveIssueUpdate(
+        id,
+        () => api.removeCollaborator(id, person),
+        () => readUnlinkedIssue(id)
+      )
+    },
+    sendComment(value: string, mentionedUsers: number[] = []) {
       const issue = snapshot.issue
-      const body = snapshot.body.trim()
+      const body = value.trim()
       if (!issue || !body) return Promise.resolve(false)
       return run(async current => {
-        await api.comment(issue.id, body)
+        await api.comment(issue.id, body, mentionedUsers)
         if (!current()) return
-        publish({ body: '' })
-        let row: IndependentIssue
-        try {
-          row = await api.get(issue.id)
-        } catch (reason) {
-          if (!current()) return
-          if (denied(reason)) {
-            clearDenied(reason)
-            return
-          }
-          throw reason
-        }
-        if (!current()) return
-        issueReadVersion += 1
-        publish({ issue: row, loading: false })
-        notify(observer => observer.onSaved(row))
+        const issueVersion = ++issueReadVersion
+        const row = await readIssue(issue.id, () => current() && issueVersion === issueReadVersion)
+        if (row && current()) notify(observer => observer.onSaved(row))
         if (current()) {
           const version = ++commentReadVersion
           await readComments(issue.id, () => current() && version === commentReadVersion)
@@ -319,8 +414,8 @@ export function createIndependentIssueDialogState(
       const issue = snapshot.issue
       if (!issue) return Promise.resolve(false)
       return run(async current => {
-        const row = await api.update(issue.id, {
-          ...independentIssueInput(issue),
+        const row = await api.updateDetail(issue.id, {
+          version: issue.version,
           archived: !issue.metadata.archived,
         })
         if (!current()) return
@@ -362,7 +457,6 @@ export function createIndependentIssueDialogState(
         publish({
           issue: null,
           comments: [],
-          body: '',
           editing: false,
           loading: false,
           associationPending: false,

@@ -298,13 +298,13 @@ pub(super) async fn enqueue_root(
             runtime_task_id: &execution.runtime_task_id,
             runtime_activity_key: "", status: "pending",
         };
-        let row = tx.execute(messages::INSERT_MESSAGE_SQL, messages::insert_message_args(&message)).await?;
+        let row_id = messages::insert_message_on(tx, &message).await?;
         if let Some(metadata) = human_update {
             tx.execute("UPDATE loop_items SET metadata=?, version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
                 (brz_mysql::Json(metadata), issue.id.as_str())).await?;
         }
         new_response = true;
-        Ok(Ok(Some(row.last_insert_id as i64)))
+        Ok(Ok(Some(row_id)))
     }).await.map_err(|error| {
         tracing::error!(%error, "project comment admission failed");
         execution_failed()
@@ -420,13 +420,8 @@ async fn guide_active_comment(
         runtime_activity_key: "",
         status: "streaming",
     };
-    let row = tx
-        .execute(
-            messages::INSERT_MESSAGE_SQL,
-            messages::insert_message_args(&message),
-        )
-        .await?;
-    Ok(Ok(Some(row.last_insert_id as i64)))
+    let row_id = messages::insert_message_on(tx, &message).await?;
+    Ok(Ok(Some(row_id)))
 }
 
 async fn published_comment_activity(

@@ -2,6 +2,7 @@ import { SelectField } from '../controls/SelectField'
 import { Button as ControlButton } from '../markdown/Button'
 import { Textarea as ControlTextarea } from '../controls/Textarea'
 import { Tooltip } from '../controls/Tooltip'
+import { CollapsiblePanel, CollapsibleRoot, CollapsibleTrigger } from '../controls/Collapsible'
 import { persistIssueDetailFields } from './persistIssueDetailFields'
 import { runnerEnvironmentError } from '../execution-environment/runnerEnvironmentError'
 import { IssueHierarchySummary } from './IssueHierarchySummary'
@@ -27,7 +28,7 @@ import { ExecutionConfigurationNotice } from '../runtime-profile/ExecutionConfig
 import { IssueLinkedTasks, IssueDeliveries } from './IssueExecutionLists'
 import { taskDeviceLabel } from './taskBindingPresentation'
 import { cn, columnDotClasses, memberNameById } from './issueEditorSupport'
-import { TodoAttachmentSection } from './IssueEditorControls'
+import { IssueTitleField, TodoAttachmentSection } from './IssueEditorControls'
 import type { IssueDetailViewModel } from './IssueDetailMainView'
 export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel }) {
   const {
@@ -144,13 +145,18 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
     personalTaskAction,
     milestonePicker,
   } = model
+  const draftForm = props.mode === 'create' ? props.draftForm : undefined
   return (
     <div
       ref={twoColumn ? detailScrollRef : undefined}
       data-testid={twoColumn ? 'cloud-todo-detail-scroll' : undefined}
       className={cn(
         'pb-6 pt-2.5',
-        twoColumn ? 'task-detail-left md:min-h-0' : 'px-14',
+        twoColumn
+          ? 'task-detail-left md:min-h-0'
+          : draftForm?.renderParticipants
+            ? 'min-w-0'
+            : 'px-14',
         workspacePanel && 'task-detail-workspace-panel'
       )}
     >
@@ -185,11 +191,13 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
           data-testid="issue-title-properties"
         >
           <div className="min-w-0 flex-1">
-            <ControlTextarea
+            <IssueTitleField
               ref={titleRef}
-              data-testid={isCreate ? 'cloud-todo-title' : 'cloud-todo-detail-title'}
+              data-testid={
+                draftForm?.titleTestId ??
+                (isCreate ? 'cloud-todo-title' : 'cloud-todo-detail-title')
+              }
               aria-label={t('todo.issue_title', '任务标题')}
-              aria-required="true"
               aria-invalid={titleInvalid || undefined}
               aria-describedby={titleInvalid ? titleErrorId : undefined}
               autoFocus={isCreate}
@@ -204,15 +212,13 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                   event.keyCode !== 229
                 ) {
                   event.preventDefault()
-                  void saveTitle()
+                  if (draftForm) void model.submitCreate()
+                  else void saveTitle()
                 }
               }}
               readOnly={!editable}
-              rows={1}
-              maxLength={255}
               placeholder={t('todo.issue_title_placeholder', '目标或事项标题')}
               className={cn(
-                'block w-full resize-none overflow-hidden border-0 bg-transparent font-medium tracking-tight text-text-primary outline-none placeholder:text-text-secondary',
                 twoColumn ? 'task-detail-title' : 'py-1.5 text-heading-lg',
                 readFirst && !editingContent && 'task-detail-content-readonly',
                 readFirst && editable && !editingContent && 'task-detail-content-clickable'
@@ -285,9 +291,11 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                 </div>
               </dl>
               <div className="task-detail-primary-metadata" data-testid="issue-primary-metadata">
-                <RailProp label={t('todo.project_tags', '标签')} clickable={false} wrapValue>
-                  <span className="task-detail-workspace-tags w-full">{tagControls}</span>
-                </RailProp>
+                {item.cloud_project_id ? (
+                  <RailProp label={t('todo.project_tags', '标签')} clickable={false} wrapValue>
+                    <span className="task-detail-workspace-tags w-full">{tagControls}</span>
+                  </RailProp>
+                ) : null}
                 {railProps}
               </div>
               <div className="task-detail-expanded-properties">
@@ -399,7 +407,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
             <div>{milestonePicker}</div>
           )}
         </div>
-        {!workspacePanel ? (
+        {!workspacePanel && !draftForm?.propertiesDisclosure ? (
           <div
             className={cn(
               'flex flex-wrap items-center gap-2',
@@ -420,7 +428,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
           </div>
         ) : null}
 
-        {!twoColumn ? (
+        {!twoColumn && (!draftForm || project) ? (
           <div className="mt-2.5 flex items-center gap-2">
             <span className="flex shrink-0 select-none items-center gap-1.5 text-xs text-text-secondary">
               <Tag className="h-3.5 w-3.5" />
@@ -457,6 +465,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
           </div>
         ) : null}
 
+        {draftForm?.beforeDescription}
+        {props.detailActions}
         {!isAITableEdit ? (
           <div
             onClick={event => {
@@ -483,6 +493,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
               )}
             >
               {extensions?.renderDescriptionEditor?.({
+                testId: draftForm?.descriptionTestId,
                 value: description,
                 editable: editable && (!readFirst || editingContent),
                 placeholder: t(
@@ -495,7 +506,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                   setInlinePreviewAttachmentIds(new Set(attachmentIds)),
               }) ?? (
                 <ControlTextarea
-                  data-testid="cloud-todo-detail-description"
+                  data-testid={draftForm?.descriptionTestId ?? 'cloud-todo-detail-description'}
                   aria-label={t('todo.issue_description', '任务描述')}
                   value={description}
                   placeholder={t(
@@ -504,7 +515,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                   onChange={event => setDescription(event.target.value)}
                   readOnly={!editable || (readFirst && !editingContent)}
                   onPaste={event => {
-                    if (!editable) return
+                    if (!editable || draftForm) return
                     const files = Array.from(event.clipboardData.files)
                     if (files.length === 0) return
                     const pastedText = stripLocalFileUrlsFromClipboardText(
@@ -524,7 +535,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                     void pasteAttachments(files)
                   }}
                   className={cn(
-                    'min-h-[240px] w-full resize-y rounded-lg border border-border bg-transparent p-3 text-sm text-text-primary outline-none focus:border-text-muted',
+                    'w-full resize-y rounded-lg border border-border bg-transparent p-3 text-sm text-text-primary outline-none focus:border-text-muted',
+                    draftForm ? 'min-h-20' : 'min-h-[240px]',
                     readFirst && !editingContent && 'task-detail-description-readonly'
                   )}
                 />
@@ -611,6 +623,20 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
             ) : null}
           </div>
         ) : null}
+        {draftForm?.propertiesDisclosure ? (
+          <CollapsibleRoot className="min-w-0">
+            <CollapsibleTrigger
+              data-testid={draftForm.propertiesDisclosure.testId}
+              className="flex min-h-11 items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary md:min-h-8"
+            >
+              {draftForm.propertiesDisclosure.label}
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              <div className="flex flex-wrap items-center gap-2 py-2">{propChips}</div>
+            </CollapsiblePanel>
+          </CollapsibleRoot>
+        ) : null}
+        {draftForm?.afterDescription}
         {item && props.onOpenRelatedIssue ? (
           <IssueHierarchySummary
             item={item}
@@ -649,17 +675,32 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
         )}
         {workspacePanel && item ? (
           <>
-            {visibleAttachments.length > 0 || editingContent ? (
+            {visibleAttachments.length > 0 ||
+            (editingContent && editorPort.attachments.canUpload !== false) ? (
               <section
                 className="task-detail-context-attachments"
-                data-testid="cloud-todo-attachment-footer"
+                data-testid={
+                  item.cloud_project_id
+                    ? 'cloud-todo-attachment-footer'
+                    : 'independent-issue-attachments'
+                }
               >
                 <TodoAttachmentSection
                   attachments={visibleAttachments}
                   busy={attachmentBusy}
                   error={attachmentError}
-                  editable={editable && editingContent}
+                  editable={
+                    editable && editingContent && editorPort.attachments.canUpload !== false
+                  }
                   compactRail
+                  openTestId={
+                    item.cloud_project_id ? undefined : id => `independent-issue-attachment-${id}`
+                  }
+                  openLabel={
+                    extensions?.openAttachment
+                      ? undefined
+                      : name => t('todo.download_name', '下载 {{name}}', { name })
+                  }
                   totalCount={visibleAttachments.length}
                   downloadingId={downloadingAttachmentId}
                   onAdd={addAttachments}
@@ -723,7 +764,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                       ? props.onCreateTask
                       : undefined
                   }
-                  linkedTaskAction={props.linkedTaskAction}
+                  linkedTaskAction={props.linkedTaskAction?.(effectiveTasks)}
                   onOpenTaskConversation={props.onOpenTaskConversation}
                   onOpenChildTask={props.onOpenChildTask}
                   translate={t}
@@ -788,7 +829,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
             }) ?? null)
           : null}
 
-        {!twoColumn ? (
+        {!twoColumn && !draftForm ? (
           <div className="mt-5">
             <TodoAttachmentSection
               attachments={isCreate ? pendingAttachmentRows : visibleAttachments}

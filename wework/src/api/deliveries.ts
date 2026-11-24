@@ -1045,6 +1045,7 @@ export function createDeliveryApi(client: HttpClient) {
       > & {
         version: number
         automation_rule_id?: string | null
+        notify_assignee?: boolean
         position?: { beforeItemId: string | null }
       }
     ): Promise<CloudLoopItem> {

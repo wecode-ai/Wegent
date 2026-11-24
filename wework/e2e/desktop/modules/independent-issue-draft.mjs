@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { until } from './plugin-regression-fixture.mjs'
 import { waitForAttribute } from './workspace-flows.mjs'
 
 const testId = id => `[data-testid="${id}"]`
@@ -100,6 +101,8 @@ export async function verifyEnglishLinkedIssueLayout(
 
 /** Exercise the shared searchable property picker with real keyboard input. */
 export async function chooseIssueProperty(control, id, value, query = '') {
+  // Activating an unfocused window after opening the popup can dismiss the input.
+  await control.command('focusMainWindow', 'body')
   await control.command('clickWhenEnabled', testId(id))
   const search = testId(`${id}-search`)
   await control.command('waitFor', search, { visible: true })
@@ -128,11 +131,12 @@ export async function verifyIssueConflictRecovery(control, { request, reopen, ca
   await reopen()
   await control.command('fill', testId('independent-issue-title'), { value: title })
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
-  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  await control.command('waitFor', testId('independent-issue-actions'), { visible: true })
   const row = (await request('/api/v1/personal-issues?scope=created')).items.find(
     item => item.title === title
   )
   assert.ok(row)
+  await control.command('clickWhenEnabled', testId('independent-issue-actions'))
   await control.command('clickWhenEnabled', testId('independent-issue-edit'))
   await control.command('fill', testId('independent-issue-description'), {
     value: 'Local unsaved draft',
@@ -163,7 +167,8 @@ export async function verifyIssueConflictRecovery(control, { request, reopen, ca
   )
   await control.command('clickWhenEnabled', testId('independent-issue-reload'))
   await control.command('clickWhenEnabled', testId('independent-issue-discard-confirm'))
-  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  await control.command('waitFor', testId('independent-issue-actions'), { visible: true })
+  await control.command('clickWhenEnabled', testId('independent-issue-actions'))
   await control.command('clickWhenEnabled', testId('independent-issue-edit'))
   assert.equal(
     await control.command('getValue', testId('independent-issue-description')),
@@ -173,7 +178,7 @@ export async function verifyIssueConflictRecovery(control, { request, reopen, ca
     value: 'Explicitly revised after reload',
   })
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
-  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  await control.command('waitFor', testId('independent-issue-actions'), { visible: true })
   const resolved = await request(`/api/v1/personal-issues/${row.id}`)
   assert.equal(resolved.description, 'Explicitly revised after reload')
   assert.ok(resolved.version > concurrent.version)
@@ -285,7 +290,7 @@ export async function verifyIssueAssociationRecovery(control, { request, reopen 
   await chooseIssueProperty(control, 'independent-issue-project', '')
   await control.command('fill', testId('independent-issue-title'), { value: `${title} recovered` })
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
-  await control.command('waitFor', testId('independent-issue-edit'), { visible: true })
+  await control.command('waitFor', testId('independent-issue-actions'), { visible: true })
   const recovered = await request(`/api/v1/personal-issues/${saved[0].id}`)
   assert.equal(recovered.title, `${title} recovered`)
   assert.ok(recovered.version > saved[0].version, 'Recovery must update the saved version')
@@ -340,7 +345,7 @@ export async function verifyIndependentIssueDraft(
       key: 'Enter',
     })
     const submitted = JSON.parse(
-      await control.command('sampleElementPresence', testId('independent-issue-edit'), {
+      await control.command('sampleElementPresence', testId('independent-issue-actions'), {
         value: '300',
       })
     )
@@ -366,15 +371,17 @@ export async function verifyIndependentIssueDraft(
       'Create must remain reachable after returning to the draft'
     )
     await captureScreenshot(control, 'new-issue-protected-draft-short-window.png')
+    await control.command('focusMainWindow', 'body')
     await control.command('clickWhenEnabled', testId('independent-issue-editor-cancel'))
     await control.command('waitFor', testId('independent-issue-discard-dialog'), { visible: true })
     await control.command('clickWhenEnabled', testId('independent-issue-discard-confirm'))
     await control.command('waitFor', testId('independent-issue-dialog'), { visible: false })
-    await control.command('waitFor', `${opener}:focus`, { visible: true })
-    assert.equal(
-      await control.command('getActiveElementTestId', 'body'),
-      'collaboration-primary-create-issue',
-      'Discarding the draft must return keyboard focus to the opener'
+    // The document can restore its active element while the native window is in the background.
+    await until(
+      () => control.command('getActiveElementTestId', 'body'),
+      activeId => activeId === 'collaboration-primary-create-issue',
+      `Discarding the draft must return keyboard focus to ${opener}`,
+      5_000
     )
     const after = await request('/api/v1/personal-issues?scope=created')
     assert.deepEqual(

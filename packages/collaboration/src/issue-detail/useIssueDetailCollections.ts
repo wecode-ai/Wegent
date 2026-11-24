@@ -125,23 +125,25 @@ function createCollections(
       )
   }
   const refresh = () => {
-    if (!projectId) return
     if (issueId) {
-      void refreshTasks()
       void refreshAttachments()
-      void refreshDeliveries()
       void load(
         'collaborators',
         () => port.collaborators.list(issueId),
         rows => update('collaborators', rows)
       )
     }
+    void refreshTasks()
+    if (!observation.invitedOnly && (projectId || issueId)) {
+      void load(
+        'projectMembers',
+        () => port.members.list(projectId ?? ''),
+        rows => update('projectMembers', rows)
+      )
+    }
+    if (!projectId) return
+    void refreshDeliveries()
     if (observation.invitedOnly) return
-    void load(
-      'projectMembers',
-      () => port.members.list(projectId),
-      rows => update('projectMembers', rows)
-    )
     void load(
       'projectAgents',
       () => port.agents.list(projectId),

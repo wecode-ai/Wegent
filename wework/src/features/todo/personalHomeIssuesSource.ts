@@ -1,3 +1,4 @@
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { createPersonalHomeIssuesSource as sharedSource } from '@wegent/collaboration/platform'
 import {
   subscribeProjectSpaceTaskBindingChanged,
@@ -19,9 +20,9 @@ export function subscribePersonalIssueChanges(reload: () => void) {
 }
 
 export function createPersonalHomeIssuesSource(
-  sources: Parameters<typeof sharedSource>[0],
+  sources: SharedWorkspaceApi[],
   query: Parameters<typeof sharedSource>[1],
-  initial?: Parameters<typeof sharedSource>[2]
+  initial?: Parameters<typeof sharedSource<SharedWorkspaceApi>>[2]
 ) {
   return sharedSource(sources, query, initial, subscribePersonalIssueChanges)
 }

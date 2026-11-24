@@ -362,6 +362,9 @@ path = "/api/attachments/task/:task_id/all"
 methods = ["GET"]
 path = "/api/v1/loop-items/:item_id/tasks"
 [[routes]]
+methods = ["DELETE"]
+path = "/api/v1/loop-items/:item_id/collaborators/:collaborator_user_id"
+[[routes]]
 methods = ["GET"]
 path = "/api/v1/loop-items/:item_id/assistant-participations"
 [[routes]]

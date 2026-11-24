@@ -16,6 +16,7 @@ import type {
   CollaborationOwnedAgent,
 } from "../types";
 import type { ExecutionDisplayStatus } from "./executionStatus";
+import { createIssueAttachmentPort } from "./createIssueAttachmentPort";
 import {
   createIssueAssigneeResources,
   type IssueAssigneeResourceProject,
@@ -113,6 +114,8 @@ export interface SharedIssueDetailCreateInput {
   local_project_id?: number | null;
   local_project_name?: string | null;
   assignee_user_id?: number | null;
+  assignee_agent_id?: string | null;
+  assignee_group_id?: string | null;
   notify_assignee?: boolean;
   creator_name?: string;
 }
@@ -130,16 +133,10 @@ export interface SharedIssueDetailUpdateInput {
   assignee_agent_id?: string | null;
   assignee_team_id?: number | null;
   assignee_group_id?: string | null;
+  notify_assignee?: boolean;
   start_at?: string | null;
   due_at?: string | null;
   tags?: string[];
-}
-
-export interface SharedIssueDetailAssignmentInput {
-  version: number;
-  assigneeType: "user" | "agent" | "team";
-  assigneeId: string;
-  notifyAssignee?: boolean;
 }
 
 export interface SharedIssueDetailPort {
@@ -154,13 +151,9 @@ export interface SharedIssueDetailPort {
       issueId: string,
       input: SharedIssueDetailUpdateInput,
     ): Promise<CollaborationIssue>;
-    assign(
-      projectId: string,
-      issueId: string,
-      input: SharedIssueDetailAssignmentInput,
-    ): Promise<CollaborationIssue>;
   };
   attachments: {
+    canUpload?: boolean;
     list(issueId: string): Promise<CollaborationAttachment[]>;
     upload(issueId: string, file: File): Promise<CollaborationAttachment>;
     read(attachmentId: string): Promise<Blob>;
@@ -169,6 +162,8 @@ export interface SharedIssueDetailPort {
   };
   collaborators: {
     editingSupported?: boolean;
+    canEdit?: boolean;
+    searchUsers?: SharedWorkspaceApi["members"]["searchUsers"];
     list(issueId: string): Promise<SharedIssueDetailCollaborator[]>;
     add(
       issueId: string,
@@ -398,42 +393,19 @@ export function createSharedIssueDetailPort(
           ...(input.assignee_group_id !== undefined
             ? { assigneeGroupId: input.assignee_group_id }
             : {}),
+          ...(input.notify_assignee !== undefined
+            ? { notifyAssignee: input.notify_assignee }
+            : {}),
           ...(input.start_at !== undefined ? { startAt: input.start_at } : {}),
           ...(input.due_at !== undefined ? { dueAt: input.due_at } : {}),
           ...(input.tags !== undefined ? { tags: input.tags } : {}),
         }),
-      assign: api.issues.assign,
     },
-    attachments: {
-      list: api.attachments.list,
-      upload: api.attachments.upload,
-      read: (attachmentId) =>
-        attachmentContext
-          ? api.attachments.read(attachmentId, attachmentContext)
-          : api.attachments.read(attachmentId),
-      async download(attachmentId, filename) {
-        if (api.attachments.download) {
-          await (attachmentContext
-            ? api.attachments.download(
-                attachmentId,
-                filename,
-                attachmentContext,
-              )
-            : api.attachments.download(attachmentId, filename));
-          return;
-        }
-        await saveFile(
-          await (attachmentContext
-            ? api.attachments.read(attachmentId, attachmentContext)
-            : api.attachments.read(attachmentId)),
-          filename,
-        );
-      },
-      remove: (attachmentId) =>
-        attachmentContext
-          ? api.attachments.remove(attachmentId, attachmentContext)
-          : api.attachments.remove(attachmentId),
-    },
+    attachments: createIssueAttachmentPort({
+      api: api.attachments,
+      context: attachmentContext,
+      saveFile,
+    }),
     collaborators: {
       list: (issueId) =>
         api.collaborators
