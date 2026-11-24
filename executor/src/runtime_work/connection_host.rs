@@ -199,13 +199,12 @@ pub(crate) async fn call(
     let response = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(
-            if method == "collectCloudObservation" {
-                420
-            } else {
-                60
-            },
-        ))
+        .timeout(Duration::from_secs(match method {
+            "trialWebConnection" => 300,
+            "installWebConnection" => 16 * 60,
+            "collectCloudObservation" => 420,
+            _ => 60,
+        }))
         .build()
         .map_err(|_| unavailable())?
         .post(host["url"].as_str().unwrap())

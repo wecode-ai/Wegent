@@ -13,6 +13,7 @@ const RUNTIME_PREPARATION_CAPABILITIES = new Set([
   'runtime.updateCoreDshPlugin',
   'runtime.setCoreDshPluginEnabled',
   'runtime.uninstallCoreDshPlugin',
+  'webConnections.install',
 ])
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
 

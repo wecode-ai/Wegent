@@ -47,6 +47,7 @@ export function StandInConnectionSettings({
   onScheduleDirtyChange,
   tagDraft,
   initialCalendar = false,
+  initialProvider,
   onCalendarViewChange,
   onDetailViewChange,
   onDetailTitleChange,
@@ -68,6 +69,7 @@ export function StandInConnectionSettings({
   onScheduleDirtyChange?(dirty: boolean): void
   tagDraft?: TagDraftStore
   initialCalendar?: boolean
+  initialProvider?: string
   onCalendarViewChange?(open: boolean): void
   onDetailViewChange?(open: boolean): void
   onDetailTitleChange?(title: string | null): void
@@ -113,7 +115,9 @@ export function StandInConnectionSettings({
       onDetailTitleChange,
     ]
   )
-  const [model] = useState(() => createConnectionSettingsModel(input, initialCalendar))
+  const [model] = useState(() =>
+    createConnectionSettingsModel(input, initialCalendar ? 'time' : (initialProvider ?? null))
+  )
   const subscribe = useCallback(
     (listener: () => void) => model.subscribe(listener, input),
     [model, input]

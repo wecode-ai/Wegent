@@ -10,7 +10,9 @@ for (const language of ['en', 'zh-CN']) {
     await readFile(resolve(root, `../src/i18n/locales/${language}/common.json`), 'utf8')
   )
   const copy = Object.fromEntries(
-    Object.entries(workbench).filter(([key]) => key.startsWith('core_dsh_plugins_'))
+    Object.entries(workbench).filter(
+      ([key]) => key.startsWith('core_dsh_plugins_') || key.startsWith('web_connection_native_')
+    )
   )
   await mkdir(resolve(root, 'dist/locales'), { recursive: true })
   await writeFile(resolve(root, `dist/locales/${language}.json`), JSON.stringify(copy))

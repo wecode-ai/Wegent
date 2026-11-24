@@ -5,8 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { satisfies } from 'semver'
-import { ConnectionRegistry, dependencyPlan, parseConnections } from './connections.js'
+import {
+  ConnectionRegistry,
+  connectionWebsiteFilter,
+  dependencyPlan,
+  parseConnections,
+} from './connections.js'
 import { ConnectionDependencies } from './connection-dependencies.js'
+import { createConnectionHttp } from './connection-http.js'
 
 const declaration = () => ({
   name: '@test/mail',
@@ -80,6 +86,76 @@ test('declares public resource query parameters without inventing an instance de
     manifest.wework.connections.providers[0].resourceQuerySchema = invalid
     assert.throws(() => parseConnections(manifest), { code: 'invalid_connection' })
   }
+})
+
+test('website matching is scoped to the declared origin and path segments', () => {
+  const manifest = declaration()
+  const provider = manifest.wework.connections.providers[0]
+  const origin = 'https://analytics.example.test:9443'
+  provider.webMatch = [{ origin, pathPrefix: '/project/12' }]
+  const [parsed] = parseConnections(manifest).providers
+  for (const path of ['/project/12', '/project/12/insights?range=week#chart']) {
+    assert.equal(connectionWebsiteFilter(origin + path)(parsed), true)
+  }
+  for (const url of [
+    origin + '/project/123',
+    origin + '/project/12/../13',
+    'https://analytics.example.test/project/12',
+    'https://analytics.example.test.evil.test:9443/project/12',
+  ]) {
+    assert.equal(connectionWebsiteFilter(url)(parsed), false)
+  }
+  for (const rule of [
+    { origin: origin + '/' },
+    { origin: 'https://*.example.test' },
+    { origin, pathPrefix: '/project/12?filter=1' },
+    { origin, pathPrefix: '/project/12/../13' },
+  ]) {
+    provider.webMatch = [rule]
+    assert.throws(() => parseConnections(manifest), { code: 'invalid_connection' })
+  }
+  assert.throws(() => connectionWebsiteFilter('file:///tmp/report'), {
+    code: 'invalid_connection',
+  })
+})
+
+test('HTTP SDK binds typed parameters inside approved operations only', async () => {
+  const operations = {
+    runs: {
+      method: 'POST',
+      path: '/project/12/query',
+      inputSchema: {
+        type: 'object',
+        properties: { from: { type: 'string' }, limit: { type: 'integer', maximum: 100 } },
+        required: ['from', 'limit'],
+        additionalProperties: false,
+      },
+      query: { limit: { $parameter: 'limit' } },
+      json: { report: 'runs', filters: { from: { $parameter: 'from' } } },
+    },
+  }
+  const observed = []
+  const http = createConnectionHttp(operations, async request => {
+    observed.push(request)
+    return { rows: [] }
+  })
+  operations.runs.path = '/project/13/query'
+  assert.deepEqual(await http.read('runs', { from: '2026-11-25', limit: 20 }), { rows: [] })
+  await assert.rejects(http.read('other', {}), { code: 'invalid_connection_http' })
+  await assert.rejects(http.read('runs', { from: '2026-11-25', limit: 101 }), {
+    code: 'invalid_connection_http',
+  })
+  await assert.rejects(http.read('runs', { from: '2026-11-25', limit: 20, path: '/different' }), {
+    code: 'invalid_connection_http',
+  })
+  assert.deepEqual(observed, [
+    {
+      method: 'POST',
+      path: '/project/12/query',
+      query: { limit: 20 },
+      json: { report: 'runs', filters: { from: '2026-11-25' } },
+    },
+  ])
 })
 
 test('declares mutable event types only from the provider event contract', () => {

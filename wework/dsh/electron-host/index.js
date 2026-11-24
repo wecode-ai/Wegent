@@ -75,9 +75,7 @@ async function describe(req, res, client) {
     200,
     {
       ...description,
-      capabilities: description.capabilities.filter(
-        capability => !capability.startsWith('secureStorage.')
-      ),
+      capabilities: description.capabilities.filter(capability => !privateCapability(capability)),
     },
     req.method === 'HEAD'
   )
@@ -94,9 +92,11 @@ async function invoke(req, res, client) {
     if (!isRecord(body) || typeof body.capability !== 'string' || !isRecord(body.params)) {
       throw new ElectronHostError('invalid_params', 'Request must contain capability and params')
     }
-    // Secret operations are available only to trusted DSH services over the private host pipe.
-    if (body.capability.startsWith('secureStorage.')) {
-      throw new ElectronHostError('capability_denied', 'Secret storage is not available over HTTP')
+    if (privateCapability(body.capability)) {
+      throw new ElectronHostError(
+        'capability_denied',
+        'This operation requires the private host pipe'
+      )
     }
     const result = await client.invoke(body.capability, body.params)
     sendJson(res, 200, { ok: true, result: result ?? null })
@@ -119,6 +119,10 @@ async function invoke(req, res, client) {
       },
     })
   }
+}
+
+function privateCapability(capability) {
+  return capability.startsWith('secureStorage.') || capability.startsWith('webConnections.')
 }
 
 async function readJsonBody(req) {

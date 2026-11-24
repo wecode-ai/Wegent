@@ -18,10 +18,10 @@ export interface ConnectionSettingsInput {
 /** Own the selected connection editor and its scoped provider catalog. */
 export function createConnectionSettingsModel(
   initial: ConnectionSettingsInput,
-  initialCalendar: boolean
+  initialView: string | null
 ) {
   let input = initial
-  let view: string | null = initialCalendar ? 'time' : null
+  let view = initialView
   let scheduleDirty = false
   let emailDirty = false
   let installing = false

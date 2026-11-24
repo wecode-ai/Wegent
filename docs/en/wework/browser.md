@@ -14,6 +14,14 @@ Background page-state synchronization does not overwrite the address while you a
 
 If a Wework dialog, menu, or overlay intersects the right browser area, the browser temporarily hides so the native page cannot cover the main interface. It returns automatically when the overlay closes or moves away.
 
+<a id="connect-to-assistant"></a>
+
+## Connect to assistant
+
+Sign in to the website in the Wework desktop browser, then choose **… → Connect to assistant** from the page toolbar. If Wework finds a connector, choose **Use this connection**, select the resource, and save the assistant settings.
+
+When there is no match, describe what you want to look up or follow. Choose **Record example**, run a search or open a report, and choose **Finish recording** once the results appear. The assistant uses the recorded request structure to create a connection. Approve the site and requests for the trial, check the preview, then choose **Install connection**. Choose **Add to my assistant** and save the assistant settings. The trial requires the page to provide the requested data. The saved connection can use the signed-in website session on the same device after the setup panel closes.
+
 ## HTTP and certificate warnings
 
 The built-in browser can open `http` addresses for local development services and trusted internal systems. HTTP traffic is not encrypted, so do not enter passwords, tokens, or other sensitive information on these pages.

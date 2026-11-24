@@ -4,6 +4,22 @@ sidebar_position: 8
 
 # 在隔离 Wework 实例中开发 Core DSH 插件
 
+## 网页连接器
+
+浏览器使用 `package.json` 中 `wework.connections.providers[].webMatch` 查找连接器。
+每条规则含精确的 `origin` 和可选的 `pathPrefix`，路径前缀按完整路径段匹配。匹配只用于发现连接器，资源授权仍在助理设置中生效。
+
+Wework 生成的网页连接器含 `package.json`、`cordis.patch.yml`、固定的 `index.js` 和
+`connection.json`。连接定义中的 `operations` 保存试跑过的 HTTP 方法、路径、输入
+JSON Schema 和请求模板。连接器使用 HTTP SDK 的 `read(operationId, parameters)`，
+由 Electron 在原设备的浏览器会话中发送请求。录制时，如果查询型 POST 的 CSRF 请求头
+与同站 Cookie 匹配，宿主会在执行时用当前 Cookie 构造该请求头。`read` 描述结果和读续页，
+`poll` 描述事件字段、增量时间窗口和可选阈值，`check` 绑定登录账号。
+
+生成入口先按同一连接定义试跑查询和关注，再将试跑版本交给 Core DSH 安装。安装后的
+注册入口校验定义与清单，通过连接宿主提供查询和轮询。新账号、站点请求变化或定义变更
+需要重新验证。
+
 Wework 内置的“Wework 插件开发”是一个 Wework 插件。它可以携带一个符合 Codex
 官方格式的内嵌 Codex 插件，并使用两个完整的 Electron 进程完成 Core DSH 插件开发：
 

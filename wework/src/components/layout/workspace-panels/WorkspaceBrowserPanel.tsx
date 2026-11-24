@@ -19,6 +19,8 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { deviceSurfaceExtension } from '@extensions/device-surface'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { useContext, useState } from 'react'
 import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
@@ -42,6 +44,7 @@ import {
 import { BrowserFindBar } from './browser-find/BrowserFindBar'
 import { BrowserDeviceToolbar } from './BrowserDeviceToolbar'
 import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
+import { WebsiteConnectionPanel } from './WebsiteConnectionPanel'
 import { useWorkspaceBrowserPanelSession } from './useWorkspaceBrowserPanelSession'
 import {
   BrowserToolbarButton,
@@ -92,6 +95,8 @@ function WorkspaceBrowserSession({
   onUrlChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
+  const workbench = useContext(WorkbenchContext)
+  const [connectionPage, setConnectionPage] = useState<string | null>(null)
   const { state, source, browserPanelRef, bindPanel, bindHost, bindAddressInput } =
     useWorkspaceBrowserPanelSession({
       active,
@@ -213,6 +218,10 @@ function WorkspaceBrowserSession({
   const hasQueuedTweaks = annotations.some(annotation => annotation.designChanges.length > 0)
   const originalViewEnabled = annotationMode && hasQueuedTweaks && originalViewHeld
   const canUsePageFind = Boolean(activePageUrl) && !internalExtensionPage
+  const connectablePage =
+    activePageUrl && /^https?:\/\//i.test(activePageUrl) && !internalExtensionPage
+      ? activePageUrl
+      : null
   return (
     <div
       ref={bindPanel}
@@ -400,6 +409,16 @@ function WorkspaceBrowserSession({
                   disabled: !canUsePageFind,
                   onSelect: openFindBar,
                 },
+                ...(electronRuntime && workbench?.services.standInApi
+                  ? [
+                      {
+                        label: t('workbench.web_connection_title'),
+                        testId: 'workspace-browser-connect-assistant',
+                        disabled: !connectablePage || status === 'loading',
+                        onSelect: () => setConnectionPage(connectablePage),
+                      },
+                    ]
+                  : []),
                 {
                   label: '',
                   testId: 'workspace-browser-more-separator-find',
@@ -456,6 +475,15 @@ function WorkspaceBrowserSession({
             />
           ) : null}
         </div>
+      )}
+      {connectionPage && workbench && (
+        <WebsiteConnectionPanel
+          key={connectionPage}
+          label={label}
+          url={connectionPage}
+          services={workbench.services}
+          onClose={() => setConnectionPage(null)}
+        />
       )}
       {findOpen && (!annotationMode || internalExtensionPage) ? (
         <BrowserFindBar

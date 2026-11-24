@@ -64,6 +64,7 @@ export function StandInOverviewPage({
   onOpenTask,
   initialPrimaryProfile = false,
   initialWorkView = 'work',
+  initialConnectionProvider,
   settingsRequestKey,
   active = true,
   ref,
@@ -80,6 +81,7 @@ export function StandInOverviewPage({
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   initialPrimaryProfile?: boolean
   initialWorkView?: 'work' | 'scheduled'
+  initialConnectionProvider?: string
   settingsRequestKey?: string
   active?: boolean
   ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
@@ -851,8 +853,9 @@ export function StandInOverviewPage({
                     footerLeading={
                       !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
                     }
-                    key={`${state.draft.executionDeviceId}:${calendarRequest}`}
+                    key={`${state.draft.executionDeviceId}:${calendarRequest}:${initialConnectionProvider ?? ''}`}
                     initialCalendar={calendarRequest > 0}
+                    initialConnectionProvider={initialConnectionProvider}
                     settings={state.draft}
                     saving={state.saving}
                     loading={state.loading}

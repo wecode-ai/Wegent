@@ -98,6 +98,8 @@ import {
   EmbeddedBrowserManager,
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
+import { WebConnectionGrants } from './host/web-connection-grants.js'
+import { confirmWebConnectionTrial } from './host/web-connection-approval.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
 import { completeE2ERuntimeControl } from './host/e2e-runtime-request.js'
 import {
@@ -2508,6 +2510,16 @@ async function configureDesktopRuntime(): Promise<void> {
     openSchemeInMainWindow,
     desktopDownloadPolicy
   )
+  const browser = embeddedBrowser
+  const webConnections = new WebConnectionGrants(
+    join(app.getPath('userData'), 'web-connections'),
+    label => {
+      const state = browser.state(label)
+      return state.isLoading || state.navigationError ? null : state.url
+    },
+    scope => confirmWebConnectionTrial(scope, mainWindow, nativeDialogLanguage),
+    (origin, operation, csrf) => browser.fetchConnectionJson(origin, operation, csrf)
+  )
   browserAnnotations = new BrowserAnnotationController({
     browser: embeddedBrowser,
     publish: state => {
@@ -2699,6 +2711,7 @@ async function configureDesktopRuntime(): Promise<void> {
               : null,
           appUpdates,
           browserAnnotations,
+          webConnections,
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,

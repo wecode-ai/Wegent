@@ -1,0 +1,12 @@
+{
+  "order": 206000,
+  "scenario": "./scenarios/website-connection.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 152000,
+      "shard": 3,
+      "position": 13100
+    }
+  }
+}

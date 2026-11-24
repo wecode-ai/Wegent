@@ -53,6 +53,14 @@ export function createWeworkDesktopService(client) {
       set: (key, value) => invoke('secureStorage.set', { key, value }),
       delete: key => invoke('secureStorage.delete', { key }),
     }),
+    webConnections: Object.freeze({
+      approveTrial: (label, captureId, binding, scope) =>
+        invoke('webConnections.approveTrial', { label, captureId, binding, scope }),
+      read: (binding, operation, trialId) =>
+        invoke('webConnections.read', { binding, operation, trialId }),
+      install: (binding, trialId, files) =>
+        invoke('webConnections.install', { binding, trialId, files }),
+    }),
     preferences: Object.freeze({
       get: () => invoke('preferences.get'),
       update: patch => invoke('preferences.update', { patch }),

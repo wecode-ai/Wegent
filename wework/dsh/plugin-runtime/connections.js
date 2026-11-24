@@ -63,6 +63,40 @@ export class ConnectionError extends Error {
   }
 }
 
+function websiteUrl(value) {
+  const url = typeof value === 'string' && value.length <= 8192 ? URL.parse(value) : null
+  return url && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
+    ? url
+    : null
+}
+
+function validWebsiteRule(rule) {
+  if (!record(rule) || Object.keys(rule).some(key => !['origin', 'pathPrefix'].includes(key)))
+    return false
+  const origin = websiteUrl(rule.origin)
+  if (!origin || origin.origin !== rule.origin || origin.hostname.includes('*')) return false
+  if (rule.pathPrefix === undefined) return true
+  const { pathPrefix } = rule
+  if (typeof pathPrefix !== 'string' || !pathPrefix.startsWith('/') || pathPrefix.endsWith('/'))
+    return false
+  const parsed = websiteUrl(origin.origin + pathPrefix)
+  return parsed?.pathname === pathPrefix && !parsed.search && !parsed.hash
+}
+
+export function connectionWebsiteFilter(value) {
+  const url = websiteUrl(value)
+  requireValue(url, 'Expected an HTTP or HTTPS page URL')
+  return provider =>
+    (provider.webMatch ?? []).some(({ origin, pathPrefix }) => {
+      if (url.origin !== origin) return false
+      return (
+        pathPrefix === undefined ||
+        url.pathname === pathPrefix ||
+        url.pathname.startsWith(pathPrefix + '/')
+      )
+    })
+}
+
 export function parseConnections(manifest) {
   requireValue(record(manifest), 'Plugin manifest must be an object')
   const value = manifest.wework?.connections
@@ -113,6 +147,22 @@ export function parseConnections(manifest) {
       typeof provider.displayName === 'string' && provider.displayName.trim(),
       'Missing provider name'
     )
+    if (provider.webMatch !== undefined) {
+      requireValue(
+        Array.isArray(provider.webMatch) &&
+          provider.webMatch.length > 0 &&
+          provider.webMatch.length <= 32 &&
+          provider.webMatch.every(validWebsiteRule),
+        'Invalid website match rules'
+      )
+    }
+    if (provider.singleResource !== undefined)
+      requireValue(
+        provider.singleResource === true &&
+          provider.resourceKinds?.length === 1 &&
+          provider.allResourceKinds === undefined,
+        'A single-resource connection must declare one resource kind'
+      )
     requireValue(
       Array.isArray(provider.uses) &&
         provider.uses.every(alias => Object.hasOwn(dependencies, alias)),
@@ -403,10 +453,11 @@ export class ConnectionRegistry {
     return dispose
   }
 
-  async catalog() {
+  async catalog(matches = () => true) {
+    const entries = [...this.entries.values()].filter(entry => matches(entry.provider))
     let inventory = []
     let inventoryError = false
-    if ([...this.entries.values()].some(entry => entry.provider.uses.length)) {
+    if (entries.some(entry => entry.provider.uses.length)) {
       try {
         inventory = await this.inventory()
       } catch {
@@ -414,7 +465,7 @@ export class ConnectionRegistry {
       }
     }
     return Promise.all(
-      [...this.entries.values()].map(async entry => {
+      entries.map(async entry => {
         if (inventoryError && entry.provider.uses.length) {
           return {
             ...entry.provider,

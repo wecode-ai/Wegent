@@ -13,6 +13,7 @@ import { setReducedMotion } from './e2e-media-preferences.js'
 import { blurE2EWindow, focusE2EWindow } from './e2e-window-focus.js'
 import { setE2EWindowSize } from './e2e-window-size.js'
 import { withDebuggerSession } from './debugger-session.js'
+import type { WebConnectionGrants } from './web-connection-grants.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
 import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
 import {
@@ -164,6 +165,7 @@ export interface ElectronDesktopServices {
   processExplorer: ProcessExplorerHostService
   appUpdates?: AppUpdateController
   browserAnnotations?: BrowserAnnotationController
+  webConnections?: WebConnectionGrants
   applicationMenu?: () => ApplicationMenu | null
   updateApplicationMenuCapabilities?: (
     label: string,
@@ -440,6 +442,39 @@ export function createElectronCapabilityRouter(
   }
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
+  const webConnections = desktopServices.webConnections
+  if (webConnections) {
+    router.register('webConnections.approveTrial', params => {
+      const label = stringParam(params, 'label')
+      const scope = params.scope as Parameters<WebConnectionGrants['approveTrial']>[2]
+      const operations = browser.validateWebConnectionRequests(
+        label,
+        stringParam(params, 'captureId'),
+        scope.origin,
+        scope.operations
+      )
+      return webConnections.approveTrial(
+        label,
+        params.binding as Parameters<WebConnectionGrants['approveTrial']>[1],
+        { ...scope, operations }
+      )
+    })
+    router.register('webConnections.read', params =>
+      webConnections.read(
+        params.binding as Parameters<WebConnectionGrants['read']>[0],
+        params.operation as Parameters<WebConnectionGrants['read']>[1],
+        typeof params.trialId === 'string' ? params.trialId : undefined
+      )
+    )
+    router.register('webConnections.install', params =>
+      webConnections.install(
+        params.binding as Parameters<WebConnectionGrants['install']>[0],
+        stringParam(params, 'trialId'),
+        stringRecordParam(params, 'files'),
+        spec => requiredCoreDshPluginService(desktopServices).installCoreDshPlugin(spec)
+      )
+    )
+  }
   const attachments = new LocalAttachmentStore(
     join(desktopServices.executorHome, 'workspace', 'attachments', 'draft')
   )
@@ -652,6 +687,23 @@ export function createElectronCapabilityRouter(
   )
   router.register('browser.closeBackgroundPage', params =>
     browser.closeBackgroundPage(stringParam(params, 'id'))
+  )
+  router.register('browser.connectionCapture.start', params =>
+    browser.startWebConnectionCapture(stringParam(params, 'label'))
+  )
+  router.register('browser.connectionCapture.finish', params =>
+    browser.finishWebConnectionCapture(stringParam(params, 'label'), stringParam(params, 'id'))
+  )
+  router.register('browser.connectionCapture.account', params =>
+    browser.webConnectionAccount(
+      stringParam(params, 'label'),
+      stringParam(params, 'id'),
+      Number(params.requestIndex),
+      stringArrayParam(params, 'path') ?? []
+    )
+  )
+  router.register('browser.connectionCapture.cancel', params =>
+    browser.cancelWebConnectionCapture(stringParam(params, 'label'), stringParam(params, 'id'))
   )
   router.register('secureStorage.get', params =>
     desktopServices.secureStorage.get(stringParam(params, 'key'))

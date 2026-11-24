@@ -23,6 +23,11 @@
           "id": "github",
           "collectionPagination": "staged",
           "displayName": "GitHub",
+          "webMatch": [
+            {
+              "origin": "https://github.com"
+            }
+          ],
           "uses": [],
           "collectionModes": [
             "poll"
@@ -291,6 +296,11 @@
           "id": "gitlab",
           "collectionPagination": "staged",
           "displayName": "GitLab",
+          "webMatch": [
+            {
+              "origin": "https://gitlab.com"
+            }
+          ],
           "uses": [],
           "collectionModes": [
             "poll"

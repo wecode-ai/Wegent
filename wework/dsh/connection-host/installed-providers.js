@@ -2,7 +2,12 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 // Read metadata only. Disabled plugins are never imported or executed for discovery.
-export async function installedProviders(profileRoot, activeItems, parseConnections) {
+export async function installedProviders(
+  profileRoot,
+  activeItems,
+  parseConnections,
+  matches = () => true
+) {
   if (!profileRoot) throw new Error('Connection profile root is required')
   const profile = join(profileRoot, 'package.json')
   let manifest
@@ -34,7 +39,7 @@ export async function installedProviders(profileRoot, activeItems, parseConnecti
       throw new Error('Installed plugin identity does not match its manifest')
     const definition = parseConnections(declaration)
     if (!definition) continue
-    for (const provider of definition.providers) {
+    for (const provider of definition.providers.filter(matches)) {
       items.push({
         ...provider,
         id: `${packageName}/${provider.id}`,

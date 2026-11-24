@@ -9,11 +9,16 @@ import {
 } from '@wegent/dsh-plugin-runtime/cloud-observations'
 import { satisfies } from 'semver'
 import { ExecutorRuntimeClient } from '@wegent/dsh-executor-runtime/client'
-import { ConnectionError, parseConnections } from '@wegent/dsh-plugin-runtime/connections'
+import {
+  ConnectionError,
+  connectionWebsiteFilter,
+  parseConnections,
+} from '@wegent/dsh-plugin-runtime/connections'
 import { ConnectionDependencies } from '@wegent/dsh-plugin-runtime/connection-dependencies'
+import { createWebAuthoring } from './web-authoring.js'
 
 export const name = 'wework-connection-host'
-export const inject = ['webServer', 'profileContext']
+export const inject = ['webServer', 'profileContext', 'weworkDesktop']
 export const BASE_PATH = '/wework/connections/v1/rpc'
 
 export async function apply(ctx) {
@@ -39,6 +44,7 @@ export async function apply(ctx) {
     beforeRequest: () => publishHost(),
   })
   const { registry } = runtime
+  const webAuthoring = createWebAuthoring(registry, () => ctx.weworkDesktop)
   const publishHost = async (poll = false, signal) => {
     const port = ctx.webServer.port
     if (port)
@@ -58,20 +64,31 @@ export async function apply(ctx) {
   ctx.effect(() => {
     const unprovide = ctx.reflect.provide(
       'weworkConnections',
-      Object.freeze({ register: registry.register.bind(registry) })
+      Object.freeze({
+        register: registry.register.bind(registry),
+        registerWeb: webAuthoring.register,
+      })
     )
     const unregister = ctx.webServer.register({
       kind: 'exact',
       path: BASE_PATH,
       handler: (req, res) =>
         handleConnectionRpc(req, res, token, async (body, signal) => {
+          if (body.method === 'trialWebConnection')
+            return webAuthoring.trial(body.input ?? {}, signal)
+          if (body.method === 'installWebConnection') return webAuthoring.install(body.input ?? {})
           if (body.method === 'catalog') {
+            const matches =
+              body.input?.websiteUrl === undefined
+                ? undefined
+                : connectionWebsiteFilter(body.input.websiteUrl)
             await publishHost()
             return {
               items: await installedProviders(
                 ctx.profileContext.dir,
-                await registry.catalog(),
-                parseConnections
+                await registry.catalog(matches),
+                parseConnections,
+                matches
               ),
             }
           }

@@ -255,6 +255,8 @@ export class ExecutorRuntimeClient {
 }
 
 export function executorRequestTimeoutMs(method, defaultTimeoutMs) {
+  if (method === 'runtime.connections.web.trial') return 315_000
+  if (method === 'runtime.connections.web.install') return 16 * 60_000 + 15_000
   const preparesPython =
     method === 'executor.plugin_auth.migrate' ||
     method === 'executor.plugin_auth.run' ||
