@@ -1011,7 +1011,11 @@ describe('TemporaryChatPanel', () => {
     view.rerender(panel(false))
     expect(mocks.focusListener).toBeUndefined()
   })
-  beforeEach(() => {
+  let pendingModelBody: Promise<void> | undefined
+
+  beforeEach(async () => {
+    // A timed-out finish hook must not let the next case reset state or mount.
+    await pendingModelBody
     mocks.markRead.mockClear()
     mocks.windowFocused = true
     mocks.cancelRuntimePaneTask.mockClear()
@@ -2182,6 +2186,7 @@ describe('TemporaryChatPanel', () => {
       const bodyFinished = new Promise<void>(resolve => {
         completeBody = resolve
       })
+      pendingModelBody = bodyFinished
       // A timeout does not cancel user-event. Join the body before the next case mounts.
       onTestFinished(() => bodyFinished)
       let view: ReturnType<typeof render> | undefined
@@ -2469,6 +2474,7 @@ describe('TemporaryChatPanel', () => {
           await act(async () => providerReads.forEach(release => release()))
         } finally {
           completeBody()
+          pendingModelBody = undefined
         }
       }
     }
