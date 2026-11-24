@@ -564,7 +564,7 @@ function StandInSettingsEditor({
                       : standInRoleName(
                           role,
                           draft.roles.indexOf(role),
-                          t('standIn.personal.default_role')
+                          t('standIn.personal.unnamed_assistant')
                         )
                   }
                 />
@@ -801,7 +801,7 @@ function StandInSettingsEditor({
                       ? 'standIn.personal.disable_project'
                       : 'standIn.personal.enable_and_use'
                     : view === 'create' && !initialProject
-                      ? 'standIn.personal.create_role'
+                      ? 'standIn.personal.create_title'
                       : view === 'connections'
                         ? 'standIn.personal.save_connections'
                         : 'standIn.save'
@@ -837,7 +837,7 @@ function StandInSettingsEditor({
             >
               <p className="text-sm">
                 {t('standIn.personal.delete_role_help', {
-                  name: role.name || t('standIn.personal.default_role'),
+                  name: role.name || t('standIn.personal.unnamed_assistant'),
                 })}
               </p>
               <div className="mt-3 flex justify-end gap-2">

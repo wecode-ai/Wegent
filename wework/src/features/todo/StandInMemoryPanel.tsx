@@ -89,7 +89,7 @@ function StandInMemoryPanelContent({
         ...settings.roles.map((role, index) => ({
           scope: { kind: 'role' as const, roleId: role.id },
           label: t('standIn.memory.role', {
-            name: standInRoleName(role, index, t('standIn.personal.default_role')),
+            name: standInRoleName(role, index, t('standIn.personal.unnamed_assistant')),
           }),
         })),
       ]
@@ -272,7 +272,7 @@ function StandInMemoryPanelContent({
               ? standInRoleName(
                   reviewRole,
                   settings.roles.indexOf(reviewRole),
-                  t('standIn.personal.default_role')
+                  t('standIn.personal.unnamed_assistant')
                 )
               : t('standIn.memory.review_primary')
           }

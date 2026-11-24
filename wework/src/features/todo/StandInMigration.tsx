@@ -83,7 +83,7 @@ export function StandInMigration({
           className="max-w-full"
         />
         <SelectContent>
-          <SelectItem value="@primary">{t('standIn.title')}</SelectItem>
+          <SelectItem value="@primary">{t('standIn.personal.default_role')}</SelectItem>
           {roles.map(role => (
             <SelectItem key={role.id} value={String(role.id)}>
               {role.name || role.id}
