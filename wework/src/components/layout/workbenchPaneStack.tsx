@@ -203,11 +203,38 @@ export function SplitWorkbenchPaneStack({
   const panes = collectWorkbenchPanes(layout.root)
   const splitMode = panes.length > 1
   const layoutPaneKeys = collectWorkbenchPaneKeys(layout.root)
+  const singlePaneKey = layout.root.type === 'pane' ? layout.root.paneKey : null
+  const [lastSinglePane, setLastSinglePane] = useState({
+    current: singlePaneKey,
+    previous: null as string | null,
+  })
+  let previousPaneKey = lastSinglePane.previous
+  if (lastSinglePane.current !== singlePaneKey) {
+    const previousKey = lastSinglePane.current
+    const previousPane = previousKey ? paneResources.panes.get(previousKey) : undefined
+    const nextPane = singlePaneKey ? resolveCachedPane(singlePaneKey) : null
+    // Keep one recent task mounted across single-pane navigation. Alias changes
+    // must still let the existing host migrate to the new address.
+    previousPaneKey =
+      singlePaneKey &&
+      previousPane?.currentRuntimeTask &&
+      !(nextPane && workbenchPanesShareTask(previousPane, nextPane, devices))
+        ? previousKey
+        : null
+    setLastSinglePane({ current: singlePaneKey, previous: previousPaneKey })
+  }
   const retainedPaneKeys = retainedResourceKeys.filter(
     key =>
       !layoutPaneKeys.includes(key) &&
       (!key.startsWith('runtime:') || validRuntimeKeys.includes(key))
   )
+  if (
+    previousPaneKey &&
+    paneResources.hosts.has(previousPaneKey) &&
+    validRuntimeKeys.includes(previousPaneKey) &&
+    !retainedPaneKeys.includes(previousPaneKey)
+  )
+    retainedPaneKeys.push(previousPaneKey)
   const mountedPaneKeys = [...layoutPaneKeys, ...retainedPaneKeys]
   const mountedPaneKeySignature = mountedPaneKeys.join('\u0000')
   const focusedViewPane =

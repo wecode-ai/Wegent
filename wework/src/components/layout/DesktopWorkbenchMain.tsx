@@ -316,6 +316,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   )
   const paneStack = splitGroups ? (
     <SplitWorkbenchPaneStack
+      key={state.user?.id}
       devices={state.devices}
       activePane={props.activePane}
       layout={splitGroups.activeLayout}
