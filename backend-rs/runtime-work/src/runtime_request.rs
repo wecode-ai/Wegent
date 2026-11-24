@@ -200,9 +200,7 @@ pub async fn handle(
             project_transcript,
             identity
                 .credential_expires_at
-                .filter(|expires_at| *expires_at > chrono::Utc::now().timestamp())
-                .map(|_| identity.user_name.trim())
-                .filter(|name| !name.is_empty()),
+                .map(|expires_at| (identity.user_name.trim(), expires_at)),
         )
         .await;
         if let Some((retain, instance)) = owned_app {

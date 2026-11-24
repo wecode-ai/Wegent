@@ -237,7 +237,7 @@ pub async fn call(
     payload: Value,
     timeout_seconds: i64,
     allow_app_device_task_reading: bool,
-    authenticated_user_name: Option<&str>,
+    authenticated_login: Option<(&str, i64)>,
 ) -> Result<Value, CallFailure> {
     let normalized_timeout = normalize_timeout(timeout_seconds);
     let route = resolve_route(app, user_id, submitted_device_id).await?;
@@ -290,8 +290,10 @@ pub async fn call(
             })
         })?;
 
-    let personal_runtime_token = if let Some(user_name) = authenticated_user_name
+    let personal_runtime_token = if let Some((user_name, expires_at)) = authenticated_login
+        && !user_name.is_empty()
         && can_issue_personal_runtime_token(route.device_type, method, &payload)
+        && expires_at > chrono::Utc::now().timestamp()
     {
         Some(
             wegent_identity::task_token::create_personal_runtime_token(
