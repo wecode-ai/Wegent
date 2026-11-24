@@ -1,6 +1,7 @@
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { Button } from '@/components/ui/button'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -220,6 +221,19 @@ export function StandInConversation({
         sendEphemeral={false}
         showExecutionTools={false}
         showModelSelector={showModelSelector}
+        composerHeader={
+          !showModelSelector && modelControls.unavailable && !modelControls.loading ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 self-start md:min-h-8"
+              data-testid="stand-in-conversation-model-retry"
+              onClick={modelControls.refreshModelCatalog}
+            >
+              {t('standIn.errors.reload_conversation_models')}
+            </Button>
+          ) : null
+        }
         hideProcessing
         assistantMessageStyle="bubble"
         markReadWhenActive

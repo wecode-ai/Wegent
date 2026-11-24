@@ -183,6 +183,9 @@ Open **left sidebar → My Stand-in → Stand-in details → Manage stand-in →
 | Forget          | Choose Forget on the record and confirm; cancel preserves it. Forgetting is not conversation archival or deletion of source messages/projects                                  |
 | Recover         | Inspect errors and retry. Restore a disconnected source/role or choose a valid scope; the panel does not silently save an invalid scope as personal memory                     |
 
+<a id="stand-in-model-selection"></a>
+
+
 ## Model selection
 
 Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. Concrete work created by a stand-in uses the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
@@ -192,6 +195,8 @@ In **My Stand-in → select the primary stand-in or role → Stand-in details �
 In **Collaboration → My work → Stand-in**, select **Chat** and use the composer’s model selector to switch models temporarily. Before the first message, the selection applies directly. Execution devices that support thread-based routing switch providers in the original session, preserving its identity, history and draft. Older devices may show a compatibility prompt and start a new session on the next message. Finish the active turn before switching. Temporary selections apply only to that chat.
 
 Stand-in chats currently require the Codex runtime for operation approvals. If the profile uses a Claude Code model, select an available Codex model in the execution settings and save before continuing the chat.
+
+If the current model is unavailable, select **Reload models** in the chat. When an older session’s provider cannot be read or is incompatible with the profile model, select **Continue in a new session**. After confirmation, your next message starts a new session in the same stand-in chat and preserves its history and draft.
 
 <a id="stand-in-source-session-policy"></a>
 

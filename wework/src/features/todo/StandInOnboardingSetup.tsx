@@ -93,10 +93,21 @@ export function StandInOnboardingSetup({
     busy,
     () => setDiscard(true)
   )
+  const discardConnections = () => {
+    if (!initialRole) return
+    setRole(
+      current =>
+        current && {
+          ...current,
+          connections: initialRole.connections,
+          collaboration: initialRole.collaboration,
+        }
+    )
+  }
   const requestLeave = (action: () => void) => {
     const leave = (discarded?: boolean) => {
       if (discarded) {
-        setRole(initialRole)
+        discardConnections()
         action()
       } else navigation.requestLeave(action)
     }
@@ -391,7 +402,7 @@ export function StandInOnboardingSetup({
         }}
         onConfirm={() => {
           setDiscard(false)
-          setRole(initialRole)
+          discardConnections()
           navigation.confirmLeave(() => {})
         }}
       />
