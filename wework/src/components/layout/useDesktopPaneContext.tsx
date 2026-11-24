@@ -120,6 +120,7 @@ export function useDesktopPaneContext({
   const paneSession = useWorkbenchPaneSession({
     currentRuntimeTask,
     separateTranscript: true,
+    presentationActive: paneVisible && workbenchVisible,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
   const startupSurfaceReady =

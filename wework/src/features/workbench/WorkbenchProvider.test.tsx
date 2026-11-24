@@ -1908,12 +1908,13 @@ function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
 }
 
 function RuntimePaneSessionIdentityProbe() {
+  const [presentationActive, setPresentationActive] = useState(true)
   const [address, setAddress] = useState<RuntimeTaskAddress>({
     deviceId: 'device-1',
     workspacePath: '/workspace/project-alpha',
     taskId: 'runtime-a',
   })
-  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address })
+  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address, presentationActive })
 
   return (
     <div>
@@ -1931,6 +1932,9 @@ function RuntimePaneSessionIdentityProbe() {
           .join('|')}
       </span>
       <span data-testid="runtime-session-error">{paneSession.error}</span>
+      <button type="button" onClick={() => setPresentationActive(active => !active)}>
+        toggle pane presentation
+      </button>
       <button type="button" onClick={() => paneSession.setError('local pane event')}>
         publish a pane error
       </button>
@@ -13465,6 +13469,51 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     expect(globalSubscribeCount()).toBe(1)
     expect(paneSubscribeCount()).toBe(0)
+  })
+
+  test('presents a finished conversation when an inactive pane becomes visible again', async () => {
+    const address = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    }
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'loaded transcript' }],
+      } satisfies RuntimeTranscriptResponse),
+    })
+    renderWorkbench(
+      <RuntimePaneSessionIdentityProbe />,
+      createWorkbenchServices({ runtimeWorkApi })
+    )
+    const messages = screen.getByTestId('runtime-session-messages')
+    await waitFor(() => expect(messages).toHaveTextContent('loaded transcript'))
+    const toggle = screen.getByRole('button', { name: 'toggle pane presentation' })
+    await userEvent.click(toggle)
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        taskId: address.taskId,
+        subtaskId: 'background-turn',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_done',
+        subtaskId: 'background-turn',
+        itemId: 'background-content',
+        content: 'finished in another tab',
+      })
+    })
+    expect(
+      getRuntimeConversationMessages(address).some(
+        message => message.content === 'finished in another tab'
+      )
+    ).toBe(true)
+    expect(messages).not.toHaveTextContent('finished in another tab')
+    await userEvent.click(toggle)
+    expect(messages).toHaveTextContent('finished in another tab')
   })
 
   test('defers hidden stream text while publishing interaction requests and completed turns', async () => {

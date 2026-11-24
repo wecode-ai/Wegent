@@ -53,6 +53,7 @@ export interface PaneSessionExternal {
   draftEditVersions: Map<string, number>
   currentRuntimeTask: RuntimeTaskAddress | null
   debugSnapshotEnabled: boolean
+  presentationActive: boolean
   queueDiagnosticSessionId: string
   workbench: ReturnType<typeof useWorkbenchPaneContext>
   lifecycleStore: ReturnType<typeof useRuntimeTaskLifecycleStore>

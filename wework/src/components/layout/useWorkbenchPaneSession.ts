@@ -20,6 +20,7 @@ export {
 export function useWorkbenchPaneSession({
   currentRuntimeTask,
   debugSnapshotEnabled = true,
+  presentationActive = true,
   separateTranscript = false,
 }: WorkbenchPaneSessionOptions) {
   const queueDiagnosticSessionId = useId()
@@ -38,6 +39,7 @@ export function useWorkbenchPaneSession({
       draftEditVersions,
       currentRuntimeTask,
       debugSnapshotEnabled,
+      presentationActive,
       queueDiagnosticSessionId,
       workbench,
       lifecycleStore,
@@ -48,6 +50,7 @@ export function useWorkbenchPaneSession({
       draftEditVersions,
       currentRuntimeTask,
       debugSnapshotEnabled,
+      presentationActive,
       queueDiagnosticSessionId,
       workbench,
       lifecycleStore,
