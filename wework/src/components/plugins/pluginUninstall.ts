@@ -1,6 +1,10 @@
 import type { InstalledPlugin, InstalledPluginListResponse } from '@/types/api'
 import { isLocalPluginUninstallCleanupError } from '@/api/local/pluginUninstallError'
 import {
+  cancelPersonalPluginCloudInstall,
+  isLocalPersonalPlugin,
+} from './workspace/personalPluginCloudInstall'
+import {
   isCloudManagedInstalledPlugin,
   isIndependentPublishedSource,
   isWegentManagedStorePlugin,
@@ -9,6 +13,7 @@ import {
 } from './installedPluginMerge'
 
 interface PluginUninstallOperations {
+  personalSourceKey?: string
   readLocalInstalled(): Promise<InstalledPluginListResponse>
   readCloudInstalled(): Promise<InstalledPluginListResponse>
   isCurrent(): boolean
@@ -19,7 +24,7 @@ interface PluginUninstallOperations {
 
 type AccountUninstallOperations = Pick<
   PluginUninstallOperations,
-  'readCloudInstalled' | 'isCurrent' | 'uninstallCloud'
+  'personalSourceKey' | 'readCloudInstalled' | 'isCurrent' | 'uninstallCloud'
 >
 
 export interface PluginUninstallOutcome {
@@ -118,6 +123,8 @@ export async function uninstallAccountPlugin(
   deviceId: string | undefined,
   operations: AccountUninstallOperations
 ): Promise<void> {
+  if (operations.personalSourceKey)
+    await cancelPersonalPluginCloudInstall(operations.personalSourceKey)
   assertCurrent(operations)
   const pluginId =
     typeof cloudPluginId === 'string' && /^[1-9]\d*$/.test(cloudPluginId)
@@ -203,6 +210,11 @@ export async function uninstallPluginIdentities(
   deviceId: string | undefined,
   operations: PluginUninstallOperations
 ): Promise<PluginUninstallOutcome> {
+  const sourceKey =
+    plugin && isLocalPersonalPlugin(plugin)
+      ? plugin.spec.source.pluginKey
+      : operations.personalSourceKey
+  if (sourceKey) await cancelPersonalPluginCloudInstall(sourceKey)
   assertCurrent(operations)
   if (
     !plugin ||

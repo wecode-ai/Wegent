@@ -36,7 +36,12 @@ struct Channels {
 fn channels(preferences: &Value, kind: &str) -> Channels {
     let collaboration = matches!(
         kind,
-        "assignment" | "mention" | "execution" | "issue_dispatch_assignment" | "issue_shared"
+        "assignment"
+            | "mention"
+            | "execution"
+            | "issue_dispatch_assignment"
+            | "issue_shared"
+            | "issue_participation"
     );
     let category = if collaboration {
         "collaboration"
@@ -44,9 +49,10 @@ fn channels(preferences: &Value, kind: &str) -> Channels {
         "general"
     };
     let selected = &preferences["wework_notification_preferences"][category];
+    let im_only = kind == "issue_participation";
     Channels {
-        in_app: selected["in_app"].as_bool().unwrap_or(true),
-        system: if collaboration {
+        in_app: !im_only && selected["in_app"].as_bool().unwrap_or(true),
+        system: if collaboration && !im_only {
             selected["system"].as_bool().unwrap_or(true)
         } else {
             false
@@ -468,6 +474,18 @@ fn push_facts(payload: &Value) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issue_participation_uses_only_the_collaboration_im_channel() {
+        let default = channels(&Value::Null, "issue_participation");
+        assert!(!default.in_app && !default.system && default.im);
+        let disabled = channels(
+            &json!({"wework_notification_preferences":{"collaboration":{"im":false},"general":{"im":true}}}),
+            "issue_participation",
+        );
+        assert!(!disabled.in_app && !disabled.system && !disabled.im);
+    }
+
     #[test]
     fn disabled_inbox_does_not_disable_other_channels() {
         let selected = channels(

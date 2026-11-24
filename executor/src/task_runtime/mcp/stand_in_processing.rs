@@ -390,6 +390,7 @@ mod intake_payload_tests {
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
         let source = json!({"providerId":"third-party/events","profile":"account","kind":"resource","id":"selected","name":"Selected resource","policy":{"automatic":true,"askBeforeAct":true}});
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         settings["roles"][0]["enabled"] = json!(true);
         settings["roles"][0]["connections"] = json!([source]);
         let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();

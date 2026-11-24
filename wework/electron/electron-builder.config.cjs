@@ -81,6 +81,7 @@ module.exports = {
     entitlementsInherit: path.resolve(__dirname, 'entitlements.mac.plist'),
     extendInfo: {
       ...macosAppIcon.extendInfo,
+      NSDownloadsFolderUsageDescription: `${identity.productName} needs access to your Downloads folder to save downloaded files.`,
       NSMicrophoneUsageDescription: `${identity.productName} uses the microphone to record audio when you use voice features.`,
     },
     ...(useCustomMacosNotarization ? { notarize: false } : {}),

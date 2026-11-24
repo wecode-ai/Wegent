@@ -1,6 +1,8 @@
 import { createDesktopWorkbenchPaneChrome } from './desktopWorkbenchPaneChrome'
 import { DesktopWorkbenchConversationView } from './DesktopWorkbenchConversationView'
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
+import { ImageEditProvider } from '@/components/chat/image-preview/ImageEditContext'
+import { useImageEditSubmission } from './useImageEditSubmission'
 import { memo, useCallback } from 'react'
 import {
   SubagentConversationPanel,
@@ -79,6 +81,16 @@ export function DesktopWorkbenchPaneView({
   model: ReturnType<typeof useDesktopWorkbenchPaneModel>
 }) {
   const model = { ...baseModel, ...createDesktopWorkbenchPaneChrome(baseModel) }
+  const imageEditSubmission = useImageEditSubmission({
+    enabled: model.paneVisible && !model.issueExecutionReadOnly && !model.composerDisabled,
+    scope: model.paneSession.scopeKey,
+    upload: model.services.attachmentApi?.uploadAttachment,
+    submit: model.submitPaneInput,
+    replaceImageAttachment: model.projectChat.replaceImageAttachmentForScope,
+    releaseDraftAttachment: model.projectChat.releaseAttachmentForScope,
+    getDraftAttachment: attachmentId =>
+      model.projectChat.getAttachmentForScope(model.paneSession.scopeKey, attachmentId),
+  })
   const {
     workbenchVisible,
     sidebarCollapsed,
@@ -585,7 +597,7 @@ export function DesktopWorkbenchPaneView({
         openRightPanelTab('files')
       }}
     >
-      {content}
+      <ImageEditProvider actions={imageEditSubmission}>{content}</ImageEditProvider>
       {model.panelActionDialogs}
     </AttachmentPreviewContext.Provider>
   )

@@ -80,6 +80,7 @@ export function renderPluginWorkspaceDialogs({
   setShowPluginImportDialog,
   setMarketplaceSourceFilterKey,
   setQuery,
+  syncPersonalPluginInBackground,
   refreshLocalMarketplace,
 }: PluginsWorkspaceController) {
   const pluginShareDialog = pluginShareState ? (
@@ -321,6 +322,7 @@ export function renderPluginWorkspaceDialogs({
               },
             })
             refreshLocalMarketplace()
+            syncPersonalPluginInBackground?.(imported)
           }}
         />
       ) : null}

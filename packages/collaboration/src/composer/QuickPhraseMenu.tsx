@@ -148,6 +148,7 @@ export function QuickPhraseMenu({
     <SearchableSelect
       density="dense"
       appearance="plain"
+      contentClassName="w-80"
       value=""
       disabled={disabled}
       open={open}

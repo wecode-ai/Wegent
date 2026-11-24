@@ -41,6 +41,41 @@ import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './wor
 const TERMINAL_DRAG_TEXT = 'WEWORK_TERMINAL_DRAG_E2E'
 const SELECTED_TEXT_FILE_NAME = 'selected-text-drag.ts'
 const SELECTED_TEXT_FILE_CONTENT = 'export const selectedTextDrag = true\n'
+const MARKUP_INSTRUCTIONS = 'Compare the highlighted regions before editing'
+const ORIGINAL_IMAGE_BYTES = Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
+const PNG_SIGNATURE_HEX = '89504e470d0a1a0a'
+const ORIGINAL_IMAGE_SIZE = {
+  width: ORIGINAL_IMAGE_BYTES.readUInt32BE(16),
+  height: ORIGINAL_IMAGE_BYTES.readUInt32BE(20),
+}
+
+function lastUserMessageParts(body) {
+  const turn = body.input?.findLast?.(item => item.role === 'user')
+  return Array.isArray(turn?.content) ? turn.content : []
+}
+
+function readModelImages(body, label) {
+  const images = lastUserMessageParts(body).filter(part => part.type === 'input_image')
+  assert.ok(images.length > 0, `${label}: the model request did not contain an image`)
+  const prefix = 'data:image/png;base64,'
+  return images.map(image => {
+    const dataUrl = image.image_url ?? ''
+    assert.ok(dataUrl.startsWith(prefix), `${label}: the image was not forwarded as PNG data`)
+    const bytes = Buffer.from(dataUrl.slice(prefix.length), 'base64')
+    assert.equal(
+      bytes.subarray(0, 8).toString('hex'),
+      PNG_SIGNATURE_HEX,
+      `${label}: the forwarded image is not a PNG`
+    )
+    return { bytes, width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+  })
+}
+
+function readSingleModelImage(body, label) {
+  const images = readModelImages(body, label)
+  assert.equal(images.length, 1, `${label}: the model request must contain exactly one image`)
+  return images[0]
+}
 
 async function waitForSystemDragPanelVisibility(control, expected, message) {
   const expectedValue = String(expected)
@@ -214,6 +249,30 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
   await control.command('waitFor', '[data-testid="attachment-image-lightbox"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  for (const tool of ['markup', 'comment', 'background', 'erase', 'resize']) {
+    await control.command('waitFor', `[data-testid="attachment-image-tool-${tool}"]`, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+  await control.command('click', '[data-testid="attachment-image-tool-markup"]')
+  await control.command('waitFor', '[data-testid="attachment-image-markup-shapes"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('select', '[data-testid="attachment-image-markup-shapes"]', {
+    value: 'rectangle',
+  })
+  await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="attachment-image-edit-cancel"]')
+  await control.command('click', '[data-testid="attachment-image-tool-erase"]')
+  await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="attachment-image-edit-cancel"]')
   await control.command('click', '[data-testid="attachment-image-lightbox-close"]')
   await verifyComposerEditorScroll({ composerSelector, control })
   await control.command('hover', imageTileSelector)
@@ -233,6 +292,302 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'pasted-zip-attachment.png')
+  await verifyImageEditSubmissions(control, composerSelector)
+}
+
+async function verifyImageEditSubmissions(control, composerSelector) {
+  const draft = 'Preserve this unsent image-edit draft'
+  control.setScenario('image_preview_resize')
+  await control.command('fill', composerSelector, { value: draft })
+  await control.command('pasteFile', composerSelector, {
+    filename: 'test-image.png',
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  const thumbnail = '[data-testid="attachment-image-preview-button"]'
+  await control.command('waitFor', thumbnail, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-tool-resize"]')
+  await control.command('click', '[data-testid="attachment-image-resize-16:9"]')
+  const resizeRequest = await control.awaitScenarioRequestCount('image_preview_resize', 1)
+  assert.equal(
+    readSingleModelImage(resizeRequest.body, 'Image resize control').bytes.equals(
+      ORIGINAL_IMAGE_BYTES
+    ),
+    true,
+    'The image model request must forward the original attachment bytes unchanged'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'Image resize received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  await control.command('waitFor', thumbnail, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  control.setScenario('image_erase')
+  const eraseRequest = control.awaitNextScenarioRequest('image_erase')
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-tool-erase"]')
+  await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('dragBy', '[data-testid="attachment-image-edit-surface"]', {
+    value: JSON.stringify({ x: 24, y: 12 }),
+  })
+  await control.command('waitFor', '[data-testid="attachment-image-edit-undo"]', {
+    enabled: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="attachment-image-edit-send"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const eraseImages = readModelImages((await eraseRequest).body, 'Image erase')
+  assert.equal(eraseImages.length, 2, 'Image erase must forward the original and selection mask')
+  assert.equal(
+    eraseImages[0].bytes.equals(ORIGINAL_IMAGE_BYTES),
+    true,
+    'Image erase must forward the original image unchanged'
+  )
+  assert.equal(
+    eraseImages[1].bytes.equals(ORIGINAL_IMAGE_BYTES),
+    false,
+    'Image erase must forward a generated selection mask'
+  )
+  assert.deepEqual(
+    eraseImages.map(image => ({ width: image.width, height: image.height })),
+    [ORIGINAL_IMAGE_SIZE, ORIGINAL_IMAGE_SIZE],
+    'Image erase must preserve both source dimensions'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'Image erase received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  await control.command('waitFor', thumbnail, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-open-in-panel"]')
+  await control.command('waitFor', '[data-testid="composer-attachment-preview-panel"]', {
+    text: 'test-image.png',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  control.setScenario('image_preview_comment')
+  const panel = '[data-testid="attachment-image-side-viewer"]'
+  const commentTool = `${panel} [data-testid="attachment-image-tool-comment"]`
+  await control.command('waitFor', commentTool, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', commentTool)
+  await control.command('waitFor', `${panel} button[data-testid="attachment-image-edit-surface"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `${panel} button[data-testid="attachment-image-edit-surface"]`)
+  await control.command('waitFor', `${panel} [data-testid="attachment-image-comment-draft-pin"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', `${panel} [data-testid="attachment-image-comment-input"]`, {
+    value: 'Inspect this area',
+  })
+  await control.command('click', `${panel} [data-testid="attachment-image-comment-save"]`)
+  await control.command('waitFor', `${panel} [data-testid="attachment-image-comment-pin"]`, {
+    text: '1',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    draft,
+    'Saving an image comment must leave the conversation draft untouched'
+  )
+  const commentRequest = control.awaitNextScenarioRequest('image_preview_comment')
+  await control.command('click', `${panel} [data-testid="attachment-image-edit-send"]`)
+  await commentRequest
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'Image comment received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const transcriptText = await control.command('waitFor', '[data-testid="user-message-content"]', {
+    text: 'Inspect this area',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    transcriptText,
+    /[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Inspect this area/,
+    'The user message did not display the saved image comment with its coordinates'
+  )
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  await control.command('waitFor', panel, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', commentTool, {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+  await control.command('waitFor', thumbnail, {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('pasteFile', composerSelector, {
+    filename: 'test-image.png',
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  await control.command('waitFor', thumbnail, { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await verifyComposerMarkupSave(control, composerSelector, draft)
+}
+
+async function verifyComposerMarkupSave(control, composerSelector, draft) {
+  const thumbnail = '[data-testid="attachment-image-preview-button"]'
+  const viewer = '[data-testid="attachment-image-lightbox"]'
+  const markupSave = '[data-testid="attachment-image-edit-save"]'
+  const userMessages = '[data-testid="user-message-content"]'
+  const beforeSave = await control.command('getElementCount', userMessages)
+  control.setScenario('image_preview_markup_save')
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-tool-markup"]')
+  await control.command('click', '[data-testid="attachment-image-markup-pen"]')
+  await control.command('dragBy', '[data-testid="attachment-image-edit-surface"]', {
+    value: JSON.stringify({ x: 32, y: 18 }),
+  })
+  await control.command('waitFor', '[data-testid="attachment-image-edit-undo"]', {
+    enabled: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="attachment-image-markup-text"]')
+  await control.command('dragBy', '[data-testid="attachment-image-edit-surface"]', {
+    value: JSON.stringify({ x: 0, y: 0 }),
+  })
+  await control.command('fill', '[data-testid="attachment-image-markup-text-input"]', {
+    value: 'Focus here',
+  })
+  await control.command('click', '[data-testid="attachment-image-markup-save-text"]')
+  await control.command('waitFor', '[data-testid="attachment-image-edit-surface"]', {
+    text: 'Focus here',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command(
+      'getElementCount',
+      '[data-testid="attachment-image-markup-instructions"]'
+    ),
+    '0'
+  )
+  await control.command('click', '[data-testid="attachment-image-markup-comment"]')
+  await control.command('waitFor', 'button[data-testid="attachment-image-edit-surface"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', 'button[data-testid="attachment-image-edit-surface"]')
+  await control.command('fill', '[data-testid="attachment-image-comment-input"]', {
+    value: 'Review the saved mark',
+  })
+  await control.command('click', '[data-testid="attachment-image-comment-save"]')
+  await control.command('waitFor', '[data-testid="attachment-image-comment-pin"]', {
+    text: '1',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  assert.equal(await control.command('getElementCount', userMessages), beforeSave)
+  await control.command('click', markupSave)
+  await control.command('waitFor', viewer, { visible: false, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('waitFor', thumbnail, { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await control.command('click', thumbnail)
+  await control.command('click', '[data-testid="attachment-image-open-in-panel"]')
+  const panel = '[data-testid="attachment-image-side-viewer"]'
+  const panelMarkupTool = `${panel} [data-testid="attachment-image-tool-markup"]`
+  await control.command('waitFor', panelMarkupTool, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', panelMarkupTool)
+  await control.command('click', `${panel} [data-testid="attachment-image-markup-comment"]`)
+  await control.command('waitFor', `${panel} button[data-testid="attachment-image-edit-surface"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `${panel} button[data-testid="attachment-image-edit-surface"]`)
+  await control.command('fill', `${panel} [data-testid="attachment-image-comment-input"]`, {
+    value: 'Review the mark saved in Files',
+  })
+  await control.command('click', `${panel} ${markupSave}`)
+  await control.command('waitFor', panelMarkupTool, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+  assert.equal(await control.command('getElementCount', thumbnail), '1')
+  assert.equal(await control.command('getElementCount', userMessages), beforeSave)
+  assert.equal(await control.command('getValue', composerSelector), draft)
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const savedMarkupRequest = await control.awaitScenarioRequestCount('image_preview_markup_save', 1)
+  const savedMarkupImage = readSingleModelImage(savedMarkupRequest.body, 'Saved markup')
+  assert.equal(
+    savedMarkupImage.bytes.equals(ORIGINAL_IMAGE_BYTES),
+    false,
+    'Saving markup must replace the draft attachment with edited image bytes'
+  )
+  assert.deepEqual(
+    { width: savedMarkupImage.width, height: savedMarkupImage.height },
+    ORIGINAL_IMAGE_SIZE,
+    'Saving markup must preserve the draft attachment dimensions'
+  )
+  await control.command('waitFor', userMessages, {
+    text: 'Review the saved mark',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'Saved markup received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
+async function verifyMarkupInstructionsSubmission(control, sideChatSelector) {
+  const messageImage = `${sideChatSelector} [data-testid="message-image-preview-button"]`
+  const chatScroll = `${sideChatSelector} [data-testid="right-workspace-chat-scroll-area"]`
+  control.setScenario('image_preview_markup_instructions')
+  await control.command('scrollToRatioAsUser', chatScroll, { value: '0' })
+  await control.command('waitFor', messageImage, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', messageImage)
+  await control.command('click', '[data-testid="attachment-image-tool-markup"]')
+  await control.command('waitFor', '[data-testid="attachment-image-markup-instructions"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="attachment-image-markup-instructions"]', {
+    value: MARKUP_INSTRUCTIONS,
+  })
+  const request = control.awaitNextScenarioRequest('image_preview_markup_instructions')
+  await control.command('clickWhenEnabled', '[data-testid="attachment-image-edit-send"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const instructionsRequest = await request
+  await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
+    text: 'Markup instructions received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const modelText = lastUserMessageParts(instructionsRequest.body)
+    .filter(part => part.type === 'input_text')
+    .map(part => part.text)
+    .join('\n')
+  assert.ok(
+    modelText.split('## My request for Codex:').at(-1)?.trim().startsWith(MARKUP_INSTRUCTIONS),
+    'The instructions-only markup did not forward its instructions'
+  )
+  const sentImage = readSingleModelImage(instructionsRequest.body, 'Instructions-only markup')
+  assert.deepEqual(
+    { width: sentImage.width, height: sentImage.height },
+    ORIGINAL_IMAGE_SIZE,
+    'Instructions-only markup must forward the original image dimensions'
+  )
 }
 
 async function verifySystemDragPanelLayout(control) {
@@ -1160,6 +1515,85 @@ async function verifySideChatAttachmentIsolation({
     'Restoring the split view did not restore the two independent composers'
   )
   await captureVerificationScreenshot(control, '07-side-chat-restored-two-composers.png')
+  await verifyMarkupInstructionsSubmission(control, sideChatSelector)
+  await control.command(
+    'scrollToRatioAsUser',
+    `${sideChatSelector} [data-testid="right-workspace-chat-scroll-area"]`,
+    { value: '0' }
+  )
+  const sideChatImage = `${sideChatSelector} [data-testid="message-image-preview-button"]`
+  await control.command('waitFor', sideChatImage, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', sideChatImage)
+  await control.command('click', '[data-testid="attachment-image-tool-resize"]')
+  control.setScenario('side_chat_image_preview_resize')
+  await Promise.all([
+    control.awaitNextScenarioRequest('side_chat_image_preview_resize'),
+    control.command('click', '[data-testid="attachment-image-resize-16:9"]'),
+  ])
+  await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
+    text: 'Image resize received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('pasteFile', sideComposerSelector, {
+    filename: 'comment-only.png',
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  const draftImage = `${sideChatSelector} [data-testid="attachment-image-preview-button"]`
+  await control.command('waitFor', draftImage, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', draftImage)
+  await control.command('click', '[data-testid="attachment-image-open-in-panel"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="attachment-image-side-viewer"] [data-testid="attachment-image-tool-comment"]',
+    { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+  await control.command('waitFor', draftImage, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const sideDraft = 'Keep this unsent side-chat draft'
+  await control.command('fill', sideComposerSelector, { value: sideDraft })
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    sideDraft,
+    'The side-chat draft was not in place before sending the image comment'
+  )
+  await control.command('click', draftImage)
+  await control.command('click', '[data-testid="attachment-image-tool-comment"]')
+  await control.command('waitFor', 'button[data-testid="attachment-image-edit-surface"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', 'button[data-testid="attachment-image-edit-surface"]')
+  await control.command('fill', '[data-testid="attachment-image-comment-input"]', {
+    value: 'Inspect this area',
+  })
+  await control.command('click', '[data-testid="attachment-image-comment-save"]')
+  await control.command('waitFor', '[data-testid="attachment-image-comment-pin"]', {
+    text: '1',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  control.setScenario('image_preview_comment')
+  const commentRequest = control.awaitNextScenarioRequest('image_preview_comment')
+  await control.command('click', '[data-testid="attachment-image-edit-send"]')
+  await commentRequest
+  await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
+    text: 'Image comment received',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    sideDraft,
+    'Sending an image comment must leave the unsent side-chat draft unchanged'
+  )
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
 
   const requests = control.scenarioRequests.get('side_chat_attachment') ?? []

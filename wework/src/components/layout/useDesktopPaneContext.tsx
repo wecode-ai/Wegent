@@ -132,7 +132,7 @@ export function useDesktopPaneContext({
     project: currentProject,
   })
   const sendPaneInput = paneSession.send
-  const paneInput = paneSession.input
+  const getPaneInput = paneSession.getInput
   const setPaneInput = paneSession.setInput
   const replacePaneInput = paneSession.replaceInput
   const getDraftEditVersion = paneSession.getDraftEditVersion
@@ -401,7 +401,7 @@ export function useDesktopPaneContext({
     startupSurfaceSource,
     refinePluginTrialPrompt,
     sendPaneInput,
-    paneInput,
+    getPaneInput,
     setPaneInput,
     replacePaneInput,
     getDraftEditVersion,

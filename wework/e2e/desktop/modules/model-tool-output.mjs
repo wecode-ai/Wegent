@@ -1,6 +1,15 @@
 const TIMING_HEADER = /^Wall time: \d+(?:\.\d+)? seconds\nOutput:(?:\n|$)/
 const CODE_MODE_HEADER = /^Script completed[\s\S]*\nOutput:\n$/
 
+export function isDetachedResponsesContext(item) {
+  return (
+    item?.type === 'message' &&
+    item.role === 'user' &&
+    item.content?.[0]?.type === 'input_text' &&
+    item.content[0].text === '[tool_result without a matching tool_call]'
+  )
+}
+
 export function modelToolOutputText(output) {
   if (typeof output === 'string')
     return output

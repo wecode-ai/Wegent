@@ -93,6 +93,35 @@ describe('useRuntimeTaskRouteRestoration', () => {
     )
   })
 
+  test('restores a listed native thread from a project-bound task URL', async () => {
+    const address = { deviceId: 'local-device', taskId: 'native-history' }
+    const issueExecution = { projectId: 'project-1', issueId: 'issue-1' }
+    lifecycleStore.syncRuntimeTask(address, {
+      taskId: address.taskId,
+      title: 'Native history',
+      runtime: 'codex',
+      workspacePath: '/known',
+      threadId: 'native-thread',
+    })
+    window.history.replaceState(
+      {},
+      '',
+      '/runtime-tasks?deviceId=local-device&taskId=native-history&issueProjectId=project-1&issueId=issue-1&projectSession=1'
+    )
+
+    renderRoute()
+
+    await waitFor(() =>
+      expect(openRuntimeTaskMock).toHaveBeenCalledExactlyOnceWith({
+        ...address,
+        issueExecution,
+        projectSession: issueExecution,
+        workspacePath: '/known',
+        threadId: 'native-thread',
+      })
+    )
+  })
+
   test('does not restore a task from a stale render after navigation has already changed', () => {
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-b')
     renderRoute({

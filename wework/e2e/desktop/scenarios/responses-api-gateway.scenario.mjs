@@ -13,6 +13,12 @@ import {
 const TEAM = 'responses-gateway-chat'
 const CHAT_PROMPT = `RESPONSES_GATEWAY_CHAT_${process.pid}`
 const CHAT_RESULT = `CHAT_DISPATCH_PERSISTED_${process.pid}`
+const CONNECTOR_PROMPT = `RESPONSES_GATEWAY_FOLLOW_UP_${process.pid}`
+const CONNECTOR_RESULT = `CONNECTOR_GUIDANCE_COMPLETED_${process.pid}`
+const CONNECTOR_SLUG = `responses-guidance-${process.pid}`
+const CONNECTOR_GUIDANCE = '<wegent_connector_apps>'
+const CURRENT_TIME_REMINDER =
+  /^<system-reminder><CurrentTime>\d{4}-\d{2}-\d{2} \d{2}:\d{2}<\/CurrentTime><\/system-reminder>$/
 const RUNTIME_PROMPT = `RESPONSES_GATEWAY_RUNTIME_${process.pid}`
 const RUNTIME_RESULT = `NATIVE_RUNTIME_COMPLETED_${process.pid}`
 
@@ -40,13 +46,13 @@ export function createDesktopScenario({
     return text ? JSON.parse(text) : null
   }
 
-  async function until(load, accept, message) {
+  async function until(load, accept, message, intervalMs = 200) {
     const deadline = Date.now() + modelResponseTimeoutMs
     let latest
     while (Date.now() < deadline) {
       latest = await load()
       if (accept(latest)) return latest
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => setTimeout(resolve, intervalMs))
     }
     assert.fail(`${message}: ${JSON.stringify(latest)}`)
   }
@@ -159,6 +165,80 @@ export function createDesktopScenario({
     assert.equal(outputText(retrieved), CHAT_RESULT)
     evidence.chat = { response: retrieved, tasks, subtasks }
     return created.id
+  }
+
+  async function verifyStaticConnectorGuidance(previousResponseId) {
+    const app = await request('/admin/connector-apps', {
+      slug: CONNECTOR_SLUG,
+      name: 'Responses guidance fixture',
+      transport: 'http',
+      mcp_url: cloud.backendUrl,
+      tool_loading_mode: 'static',
+      http_tools: [{ name: 'health', method: 'GET', path: '/api/health' }],
+    })
+    try {
+      const created = await request(
+        '/v1/responses',
+        {
+          model: `default#${TEAM}`,
+          input: CONNECTOR_PROMPT,
+          stream: false,
+          background: true,
+          previous_response_id: previousResponseId,
+          tools: [{ type: 'wegent_chat_bot' }],
+        },
+        apiKey
+      )
+      assert.equal(created.status, 'queued', JSON.stringify(created))
+      const result = await until(
+        () => request(`/v1/responses/${created.id}`, null, apiKey),
+        response => {
+          assert.notEqual(response.status, 'failed', JSON.stringify(response))
+          return response.status === 'completed' && outputText(response).endsWith(CONNECTOR_RESULT)
+        },
+        'Responses continuation with a static connector did not complete',
+        1000
+      )
+      assert.equal(result.id, previousResponseId)
+      const messages = await cloud.queryDatabase(
+        "SELECT prompt FROM subtasks WHERE task_id = %s AND user_id = %s AND role = 'USER' ORDER BY id",
+        [Number(result.id.slice(5)), user.id]
+      )
+      assert.deepEqual(
+        messages.map(message => message.prompt),
+        [CHAT_PROMPT, CONNECTOR_PROMPT],
+        'The stored user history must contain only the submitted prompts'
+      )
+      const recorded = modelRequests.find(row => row.kind === 'connector-chat')
+      assert.ok(recorded, 'Chat Shell did not send the connector turn to the model')
+      assert.equal(
+        recorded.guidanceInInstructions,
+        true,
+        'Connector guidance was not sent as instructions'
+      )
+      assert.equal(
+        recorded.guidanceInUserMessages,
+        false,
+        'Connector guidance was sent as user content'
+      )
+      assert.deepEqual(
+        recorded.userPrompts,
+        [[CHAT_PROMPT], [CONNECTOR_PROMPT]],
+        'The model did not receive the previous and current user prompts in order'
+      )
+      assert.equal(
+        recorded.staticToolAvailable,
+        true,
+        'Static connector tool was not offered to the model'
+      )
+    } finally {
+      const response = await fetch(`${cloud.backendUrl}/api/admin/connector-apps/${app.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${cloud.authToken}` },
+        signal: AbortSignal.timeout(uiTimeoutMs),
+      })
+      assert.equal(response.status, 204, 'Could not delete the connector fixture')
+    }
   }
 
   async function verifyRuntime(deviceId, model) {
@@ -305,11 +385,37 @@ export function createDesktopScenario({
         return false
       const body = await readRequestBody(req)
       const input = JSON.stringify(body)
-      const chat = url.pathname.endsWith('/chat/completions') && input.includes(CHAT_PROMPT)
+      const chatEndpoint = url.pathname.endsWith('/chat/completions')
+      const connectorChat = chatEndpoint && input.includes(CONNECTOR_PROMPT)
+      const chat = chatEndpoint && (connectorChat || input.includes(CHAT_PROMPT))
       const runtime = !chat && input.includes(RUNTIME_PROMPT)
       if (!chat && !runtime) return false
       const id = `responses-gateway-model-${modelRequests.length}`
-      modelRequests.push({ kind: chat ? 'chat' : 'runtime', path: url.pathname, model: body.model })
+      const chatResult = connectorChat ? CONNECTOR_RESULT : CHAT_RESULT
+      const recorded = { kind: chat ? 'chat' : 'runtime', path: url.pathname, model: body.model }
+      if (connectorChat) {
+        recorded.kind = 'connector-chat'
+        recorded.guidanceInInstructions = body.messages.some(
+          message =>
+            ['system', 'developer'].includes(message.role) &&
+            JSON.stringify(message.content).includes(CONNECTOR_GUIDANCE)
+        )
+        const userMessages = body.messages.filter(message => message.role === 'user')
+        recorded.userPrompts = userMessages.map(({ content }) =>
+          typeof content === 'string'
+            ? [content]
+            : content
+                .filter(part => part.type === 'text' && !CURRENT_TIME_REMINDER.test(part.text))
+                .map(part => part.text)
+        )
+        recorded.guidanceInUserMessages = userMessages.some(({ content }) =>
+          JSON.stringify(content).includes(CONNECTOR_GUIDANCE)
+        )
+        recorded.staticToolAvailable = body.tools?.some(tool =>
+          tool.function?.name?.endsWith(`${CONNECTOR_SLUG}__health`)
+        )
+      }
+      modelRequests.push(recorded)
       if (chat && !body.stream) {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(
@@ -321,7 +427,7 @@ export function createDesktopScenario({
             choices: [
               {
                 index: 0,
-                message: { role: 'assistant', content: CHAT_RESULT },
+                message: { role: 'assistant', content: chatResult },
                 finish_reason: 'stop',
               },
             ],
@@ -340,9 +446,7 @@ export function createDesktopScenario({
             choices: [{ index: 0, delta, finish_reason: finishReason }],
           })}\n\n`
         response.end(
-          chunk({ role: 'assistant', content: CHAT_RESULT }) +
-            chunk({}, 'stop') +
-            'data: [DONE]\n\n'
+          chunk({ role: 'assistant', content: chatResult }) + chunk({}, 'stop') + 'data: [DONE]\n\n'
         )
       } else {
         response.end(
@@ -369,6 +473,7 @@ export function createDesktopScenario({
         const responseId = await verifyChat()
         await verifyRuntime(device.device_id, model.id)
         await verifyRouting(responseId)
+        await verifyStaticConnectorGuidance(responseId)
       } finally {
         evidence.durationMs = Date.now() - started
         evidence.modelRequests = modelRequests

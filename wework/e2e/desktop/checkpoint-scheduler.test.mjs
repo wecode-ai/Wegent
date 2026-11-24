@@ -173,6 +173,30 @@ test('keeps the strict runtime load budget isolated from other Electron workload
   assert.deepEqual(overlaps, [])
 })
 
+test('isolates the idle and stream recovery CPU benchmarks on Linux Core only', async () => {
+  const benchmarks = ['idle-executor-requests', 'executor-stream-recovery']
+  const peers = ['collaboration-milestones', 'streaming-conversation-switching']
+  const completed = []
+  const active = new Set()
+
+  await runWithCheckpointResources({
+    checkpoints: [...peers, ...benchmarks],
+    workerCount: 4,
+    resourceFor: linuxCoreCheckpointResources,
+    exclusiveFor: checkpoint => isResourceExclusiveCheckpoint(checkpoint, true),
+    run: async checkpoint => {
+      active.add(checkpoint)
+      if (benchmarks.includes(checkpoint)) assert.deepEqual([...active], [checkpoint])
+      else assert.deepEqual(completed.slice(0, benchmarks.length), benchmarks)
+      await new Promise(resolve => setImmediate(resolve))
+      active.delete(checkpoint)
+      completed.push(checkpoint)
+    },
+  })
+
+  for (const checkpoint of benchmarks) assert.equal(isResourceExclusiveCheckpoint(checkpoint), false)
+})
+
 for (const checkpoint of ['python-runtime', 'plugin-development']) {
   test(`separates Linux Core ${checkpoint} from the competing checkpoints`, async () => {
     const peers = [

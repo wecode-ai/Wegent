@@ -28,12 +28,12 @@ export function StandInProjectSetup({
   saving: boolean
   creating: boolean
   onChoose(value: string): void
-  role: StandInRole
+  role?: StandInRole
   onOpenSettings?(): void
 }) {
   const { t } = useTranslation('common')
   const enabled =
-    role.enabled &&
+    role?.enabled &&
     roleIncludesProject(role, {
       id: project.id,
       store: project.project_store === 'local' ? 'local' : 'cloud',
@@ -74,7 +74,7 @@ export function StandInProjectSetup({
           />
         </div>
       </label>
-      {!creating && projectRoleId && (
+      {!creating && projectRoleId && role && (
         <>
           <div className="py-1" data-testid="stand-in-project-summary">
             <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">

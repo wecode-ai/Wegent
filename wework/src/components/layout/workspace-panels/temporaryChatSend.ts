@@ -1,7 +1,13 @@
 import { type PluginTrialGuide } from '@wegent/chat-core/composer-plugin-trial'
+import { includeDraftAttachmentGroup } from '@wegent/collaboration/composer'
 import type { runtimePaneQueue } from './runtimePaneQueues'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
+import {
+  composeImageMarkupMessage,
+  hasImageMarkupComments,
+} from '@/components/chat/image-preview/imageEdit'
+import type { RuntimePaneSendOptions } from '../workbenchPaneSessionTypes'
 import type { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { isRuntimeTaskBusyError } from '@/features/workbench/runtimePaneStatus'
@@ -90,7 +96,8 @@ interface TemporaryChatSendContext extends Pick<
 export async function sendTemporaryChatMessage(
   context: TemporaryChatSendContext,
   valueOverride?: string,
-  options: ChatSubmitOptions = {}
+  options: ChatSubmitOptions &
+    Pick<RuntimePaneSendOptions, 'standaloneAttachments' | 'draftAttachmentSourceId'> = {}
 ): Promise<boolean> {
   const {
     address,
@@ -148,31 +155,61 @@ export async function sendTemporaryChatMessage(
   }
   if (!active || readOnly || !sessionCommands.isCurrent()) return false
   const draftValue = valueOverride ?? input
-  const message = draftValue.trim()
-  if (!message) return false
+  const draftText = draftValue.trim()
+  const standalone = options.standaloneAttachments !== undefined
+  if (
+    !draftText &&
+    !options.standaloneAttachments?.length &&
+    (goalDraftActive || !hasImageMarkupComments(sideChatProjectChat.attachments))
+  )
+    return false
   if (historySource && !scopedHistory.available) return false
   if (nativeConversation && sessionCommands.nativeSubmissionPending()) return false
   if (!canSendWithCurrentModel()) return false
   setError(null)
-  const transactionalDraft = nativeConversation && address ? draft?.beginSubmission : undefined
-  if (!transactionalDraft) setInput('')
-  setTrialGuide(null)
+  const transactionalDraft =
+    !standalone && nativeConversation && address ? draft?.beginSubmission : undefined
+  if (!standalone && !transactionalDraft) setInput('')
+  if (!standalone) setTrialGuide(null)
 
-  const currentAttachments = captureAttachmentsForScope(instanceId)
-  sideChatProjectChat.resetAttachments()
-  const initialGoal = goalDraftActive
-    ? runtimeGoalCreateInput({
-        objective: message,
-        status: 'active',
-        tokenBudget: null,
+  const currentAttachments = options.standaloneAttachments
+    ? includeDraftAttachmentGroup({
+        submittedAttachments: options.standaloneAttachments,
+        draftAttachments: sideChatProjectChat.attachments,
+        sourceAttachmentId: options.draftAttachmentSourceId,
       })
-    : undefined
+    : captureAttachmentsForScope(instanceId)
+  const { content: message, attachments: messageAttachments } = composeImageMarkupMessage(
+    draftText,
+    currentAttachments
+  )
+  const resetAttachments = () => {
+    if (!standalone) sideChatProjectChat.resetAttachments()
+  }
+  const restoreAttachments = () => {
+    if (!standalone) currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
+  }
+  const submittedDraftEditVersion = sessionCommands.getDraftEditVersion()
+  const restoreInput = () => {
+    if (standalone || sessionCommands.getDraftEditVersion() !== submittedDraftEditVersion) return
+    setInput(draftValue)
+  }
+  resetAttachments()
+  const initialGoal =
+    !standalone && goalDraftActive
+      ? runtimeGoalCreateInput({
+          objective: draftText,
+          status: 'active',
+          tokenBudget: null,
+        })
+      : undefined
   const queuedMessage: RuntimePaneQueuedMessage = {
     id: `queued-side-chat-${crypto.randomUUID()}`,
     content: message,
     status: 'queued',
     createdAt: new Date().toISOString(),
     attachments: persistAttachmentReferences(currentAttachments),
+    ...(hasImageMarkupComments(currentAttachments) ? { imageMarkupDraftText: draftText } : {}),
     ...selectedModelFields,
     ...sessionStartFields,
     ...runtimeContext,
@@ -200,8 +237,8 @@ export async function sendTemporaryChatMessage(
       const pending = conversationQueue.getSnapshot().find(item => item.id === queuedMessage.id)
       if (!sent && pending?.status !== 'queued') {
         setError(pending?.error || t('workbench.project_chat_send_failed'))
-        if (!transactionalDraft) setInput(current => current || message)
-        currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
+        if (!transactionalDraft) restoreInput()
+        restoreAttachments()
         return false
       }
       submission?.clearIfUnchanged()
@@ -210,8 +247,8 @@ export async function sendTemporaryChatMessage(
       return true
     } catch (cause) {
       setError(getErrorMessage(cause, t('workbench.project_chat_send_failed')))
-      if (!transactionalDraft) setInput(current => current || message)
-      currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
+      if (!transactionalDraft) restoreInput()
+      restoreAttachments()
       return false
     } finally {
       submission?.release()
@@ -228,8 +265,8 @@ export async function sendTemporaryChatMessage(
   }
 
   setSending(true)
-  const attachmentIds = remoteAttachmentIds(currentAttachments)
-  const attachments = localRuntimeAttachments(currentAttachments)
+  const attachmentIds = remoteAttachmentIds(messageAttachments)
+  const attachments = localRuntimeAttachments(messageAttachments)
   const handleError = (errorMessage: string) => {
     setError(errorMessage)
     setSending(false)
@@ -239,7 +276,7 @@ export async function sendTemporaryChatMessage(
   let optimisticAddress: RuntimeTaskAddress | null = null
   if (targetAddress && !sessionCommands.isCurrent()) return true
   if (!targetAddress) {
-    const optimisticUserMessage = createRuntimeUserMessage(message, currentAttachments, {
+    const optimisticUserMessage = createRuntimeUserMessage(message, messageAttachments, {
       id: queuedMessage.id,
     })
     setMessages(current => [...current, optimisticUserMessage])
@@ -252,7 +289,7 @@ export async function sendTemporaryChatMessage(
     }
     targetAddress = createTask
       ? await createTask(message, {
-          attachments: currentAttachments,
+          attachments: messageAttachments,
           initialGoal,
           executionModel: selectedModelFields,
           optimisticUserMessage,
@@ -262,7 +299,7 @@ export async function sendTemporaryChatMessage(
       : await createTemporaryRuntimeTask(message, {
           project: currentProject,
           source,
-          attachments: currentAttachments,
+          attachments: messageAttachments,
           optimisticUserMessage,
           onError: handleError,
           onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
@@ -278,16 +315,16 @@ export async function sendTemporaryChatMessage(
         : current => current.filter(currentMessage => currentMessage.id !== queuedMessage.id)
     )
     updateAddress(null)
-    if (nativeConversation) setInput(current => current || message)
+    if (nativeConversation) restoreInput()
     setSending(false)
-    currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
+    restoreAttachments()
     return false
   }
   if (!address) {
     if (!sessionCommands.isCurrent()) return true
     setMessages(getRuntimeConversationMessages(targetAddress))
     updateAddress(targetAddress)
-    setGoalDraftActive(false)
+    if (!standalone) setGoalDraftActive(false)
     setSending(false)
     return true
   }
@@ -300,7 +337,7 @@ export async function sendTemporaryChatMessage(
     setMessages(
       applyRuntimeConversationAction(targetAddress, {
         type: 'user_added',
-        message: createRuntimeUserMessage(message, currentAttachments, {
+        message: createRuntimeUserMessage(message, messageAttachments, {
           id: queuedMessage.id,
         }),
       })
@@ -336,13 +373,12 @@ export async function sendTemporaryChatMessage(
       setMessages(
         appendAcceptedRuntimeConversationMessage(
           targetAddress,
-          createRuntimeUserMessage(message, currentAttachments, { id: queuedMessage.id }),
+          createRuntimeUserMessage(message, messageAttachments, { id: queuedMessage.id }),
           lifecycleStore.getTask(targetAddress)?.turn.id ?? null,
           turnIdsBeforeSend
         )
       )
     }
-    if (sessionCommands.isCurrent()) sideChatProjectChat.resetAttachments()
     setSending(false)
     return true
   }
@@ -357,14 +393,13 @@ export async function sendTemporaryChatMessage(
     conversationQueue.enqueue(queuedMessage, {
       value: lifecycleBeforeSend,
     })
-    sideChatProjectChat.resetAttachments()
     if (options.guideWhenBusy) {
       setSending(false)
       return sendQueuedMessageAsGuidance(queuedMessage, true)
     }
   } else {
     handleError(sendError || '发送失败')
-    currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
+    restoreAttachments()
     return false
   }
   setSending(false)

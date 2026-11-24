@@ -503,6 +503,7 @@ async def install_marketplace_plugin(
     local_instance_id: str | None = None,
     local_intent_order: int | None = None,
     operation_id: str | None = None,
+    restore_deleted: bool = False,
     response: Response = None,
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
@@ -521,7 +522,10 @@ async def install_marketplace_plugin(
             source_device_id=source_device_id,
             action="install",
             target_id=marketplace_id,
-            payload={"releaseId": release_id},
+            payload={
+                "releaseId": release_id,
+                **({"restoreDeleted": True} if restore_deleted else {}),
+            },
         )
         background_tasks.add_task(
             sync_cloud_plugins_after_local_change,
@@ -543,6 +547,7 @@ async def install_marketplace_plugin(
         user_id=user_id,
         plugin_id=marketplace_id,
         release_id=release_id,
+        restore_deleted=restore_deleted,
     )
     sync = await sync_plugin_after_change(
         db,
@@ -840,6 +845,7 @@ async def uninstall_installed_plugin(
 @router.post(
     "/submissions/init",
     response_model=PluginSubmissionInitResponse,
+    response_model_exclude_none=True,
     status_code=status.HTTP_201_CREATED,
 )
 def init_plugin_submission(

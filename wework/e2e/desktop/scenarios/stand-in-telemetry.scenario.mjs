@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -50,7 +51,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         assert.deepEqual(disconnected, { configured: false, connected: false })
         await rpc('runtime.stand_in.telemetry.configure', { userId: OFFLINE_USER, enabled: true })
         const offline = await rpc('runtime.stand_in.personal.get', { userId: OFFLINE_USER })
-        offline.roles[0].prompt = MARKER
+        offline.roles = [{ ...standInRoleFixture(offline.executionDeviceId), prompt: MARKER }]
         await rpc('runtime.stand_in.personal.save', { userId: OFFLINE_USER, settings: offline })
         await rpc('runtime.stand_in.conversation', {
           userId: OFFLINE_USER,

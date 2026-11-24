@@ -731,6 +731,7 @@ def prepare_execution_request(
     generation_params: Any = None,
     include_wework_space_mcp: bool = False,
     web_runtime_guidance: Optional[bool] = None,
+    allow_new_session_fallback: bool = False,
 ) -> "ExecutionRequest":
     """Resolve models and build the request with a worker-owned session.
 
@@ -907,6 +908,7 @@ def prepare_execution_request(
             runtime_model_config=runtime_model_config,
             include_wework_space_mcp=include_wework_space_mcp,
             user_generation=user_generation,
+            allow_new_session_fallback=allow_new_session_fallback,
         )
         request.device_id = device_id or request.device_id
 

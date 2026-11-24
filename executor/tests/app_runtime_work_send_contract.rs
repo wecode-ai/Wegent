@@ -645,6 +645,14 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         "concise"
     );
     assert_eq!(resume["params"]["config"]["service_tier"], "priority");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/start")
+            .count(),
+        1,
+        "only the initial create may start a thread"
+    );
 
     let last_turn_start = calls
         .iter()

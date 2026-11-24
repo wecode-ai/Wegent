@@ -231,6 +231,7 @@ export function createBufferedComposerModel(initial: BufferedComposerInput) {
     const publications = publishedDraftsRef.current.get(scopeKey) ?? []
     const replacingDraft = lastReplaceDraftKeyRef.current !== replaceDraftKey
     const changingScope = committedScopeKeyRef.current !== scopeKey
+    if (replacingDraft || changingScope) draftEditVersionRef.current += 1
     lastReplaceDraftKeyRef.current = replaceDraftKey
     committedScopeKeyRef.current = scopeKey
     const acknowledgedPublicationIndex = publications.findLastIndex(

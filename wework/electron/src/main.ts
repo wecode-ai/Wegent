@@ -76,6 +76,7 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
+import { DownloadTargetPolicy } from './host/download-target-policy.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
 import { DesktopAppearanceController } from './host/appearance-theme.js'
@@ -165,11 +166,7 @@ import { CloudCredentialError, CloudCredentialService } from './host/cloud-crede
 import { PluginNativeAuthorization } from './host/plugin-native-authorization.js'
 import { cloudFetch } from './host/cloud-http.js'
 import { installE2eDshReleaseRedirect } from './host/e2e-dsh-release-redirect.js'
-import {
-  cleanupStaleTemporaryImages,
-  createNativeContextMenuActions,
-  installContextMenu,
-} from './host/image-context-actions.js'
+import { cleanupStaleTemporaryImages, installContextMenu } from './host/image-context-actions.js'
 import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
@@ -382,6 +379,13 @@ let processExplorerWindow: BrowserWindow | null = null
 const desktopAppearance = new DesktopAppearanceController({
   nativeTheme,
   windows: () => [mainWindow, processExplorerWindow, ...workspaceWindows.values()],
+})
+const desktopDownloadPolicy = new DownloadTargetPolicy({
+  defaultDownloadsDirectory: () => downloadsDirectory(),
+  onDownloadCompleted: savePath => {
+    if (process.platform === 'darwin') app.dock?.downloadFinished(savePath)
+  },
+  onDirectoryWarning: (message, error) => console.warn(message, error),
 })
 let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
@@ -893,14 +897,6 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       ownerId: contents.id,
     })
     embeddedBrowser.attach(pending.label, guestContents)
-    const browserManager = embeddedBrowser
-    installContextMenu(
-      guestContents,
-      'browser',
-      createNativeContextMenuActions(guestContents, url =>
-        browserManager.requestPopupTab(pending.label, url)
-      )
-    )
   })
   contents.once('destroyed', () => pendingEmbeddedBrowserAttachments.delete(contents.id))
 }
@@ -1011,6 +1007,10 @@ function installDshWindowLabelHeaders(): void {
       ),
     })
   })
+  session.defaultSession.on('will-download', (_event, item, webContents) => {
+    desktopDownloadPolicy.apply(item, webContents)
+  })
+  void desktopDownloadPolicy.prepare()
 }
 
 function layoutPrimaryView(): void {
@@ -1523,6 +1523,21 @@ async function togglePopoutWindow(): Promise<void> {
   await showPopoutWindow()
 }
 
+async function waitWithBudget(task: Promise<void>, budgetMs: number): Promise<void> {
+  const safeTask = task.catch(() => {})
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      safeTask,
+      new Promise<void>(resolve => {
+        timer = setTimeout(resolve, budgetMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 async function updateDesktopPreferences(
   patch: Record<string, unknown>,
   expectedTelemetryConsentRevision?: number
@@ -1536,6 +1551,13 @@ async function updateDesktopPreferences(
   const updated = await desktopPreferences.update(patch, expectedTelemetryConsentRevision)
   if (Object.hasOwn(patch, 'appearanceMode') || Object.hasOwn(patch, 'appearanceThemeSnapshot')) {
     desktopAppearance.update(updated)
+  }
+  if (
+    Object.hasOwn(patch, 'browserDownloadDirectory') ||
+    Object.hasOwn(patch, 'browserAskBeforeDownload')
+  ) {
+    // Bound the wait so an unresponsive network share cannot stall preference saves.
+    await waitWithBudget(desktopDownloadPolicy.update(updated), 200)
   }
   return updated
 }
@@ -2050,7 +2072,10 @@ function installIpc(): void {
   })
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
     const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
-    if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
+    if (downloadsPath) {
+      app.setPath('downloads', resolve(downloadsPath))
+      void desktopDownloadPolicy.prepare()
+    }
     ipcMain.handle('e2e:runtime-request', (event, input) => {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')
@@ -2423,6 +2448,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('runtime-preferences-read', 'started')
   const { preferences: codexSubscriptionPreferences, readable: codexPreferenceReadable } =
     await preferences.readSnapshot()
+  if (codexPreferenceReadable) void desktopDownloadPolicy.update(codexSubscriptionPreferences)
   logStartupStep('runtime-preferences-read', 'completed')
   // The Electron PreferencesStore returns raw JSON without normalization, so an
   // absent field (e.g. a fresh install or a user who never toggled it) must fall
@@ -2479,7 +2505,8 @@ async function configureDesktopRuntime(): Promise<void> {
     event => {
       desktopHostEvents.publish('browser.event', { ...event })
     },
-    openSchemeInMainWindow
+    openSchemeInMainWindow,
+    desktopDownloadPolicy
   )
   browserAnnotations = new BrowserAnnotationController({
     browser: embeddedBrowser,
@@ -3204,6 +3231,7 @@ if (hasSingleInstanceLock) {
         const settings = await preferenceStore.read()
         if (quitting) return
         desktopAppearance.update(settings)
+        void desktopDownloadPolicy.update(settings)
         nativeTheme.on('updated', () => desktopAppearance.update())
         logStartupStep('startup-preferences-read', 'completed')
         const saved = settings.mainWindowState
