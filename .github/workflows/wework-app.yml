@@ -611,6 +611,7 @@ jobs:
           name: wework-upgrade-input-${{ needs.prepare-release.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             ${{ runner.temp }}/wework-release-assets/WeWorkRelease_*.tar.gz
+            ${{ runner.temp }}/wework-release-assets/WeWorkRelease_*.tar.gz.blocks
             ${{ runner.temp }}/wework-release-assets/release-*.json
             ${{ runner.temp }}/wework-upgrade-client/*.cjs
           if-no-files-found: error
