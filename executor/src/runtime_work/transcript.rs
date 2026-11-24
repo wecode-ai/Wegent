@@ -230,6 +230,7 @@ fn project_transcript_checked(
             "status": turn_assistant_status(turn),
             "startedAt": turn_started_at(turn),
             "completedAt": turn_completed_at(turn, turn_started_at(turn)),
+            "durationMs": integer_field(turn, "durationMs").or_else(|| integer_field(turn, "duration_ms")),
             "error": turn_error_message(turn),
             "errorType": error_type,
             "position": turn.get("position"),
@@ -245,7 +246,6 @@ fn project_transcript_checked(
                 "memoryCitations",
                 "stoppedNotice",
                 "errorType",
-                "durationMs",
             ] {
                 if let Some(value) = message.get(key) {
                     normalized[key] = if key == "fileChanges" {
