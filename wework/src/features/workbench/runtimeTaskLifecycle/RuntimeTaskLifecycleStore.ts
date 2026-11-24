@@ -139,19 +139,33 @@ export class RuntimeTaskLifecycleStore {
     return snapshot.tasks.get(getRuntimeTaskLifecycleKey(canonicalAddress)) ?? null
   }
 
-  syncRuntimeWork(runtimeWork: RuntimeWorkListResponse | null | undefined): void {
+  syncRuntimeWork(
+    runtimeWork: RuntimeWorkListResponse | null | undefined,
+    updatedAddress?: RuntimeTaskAddress
+  ): void {
     if (!runtimeWork) return
 
-    let changed = this.registerRuntimeWorkAliases(runtimeWork)
-    for (const { workspace, task } of collectRuntimeTasks(runtimeWork)) {
-      const address = getRuntimeTaskAddress(workspace, task)
-      const normalizedTask = normalizeRuntimeTaskSummary(task)
-      changed =
-        this.reduceMachine(address, {
-          type: 'executor_snapshot_received',
-          address,
-          task: normalizedTask,
-        }) || changed
+    // A point update patches tasks in existing workspaces and leaves their aliases intact.
+    let changed = !updatedAddress && this.registerRuntimeWorkAliases(runtimeWork)
+    for (const workspace of collectRuntimeWorkspaces(runtimeWork)) {
+      if (
+        updatedAddress &&
+        workspace.deviceId !== updatedAddress.deviceId &&
+        workspace.remoteHostId !== updatedAddress.deviceId
+      )
+        continue
+      const tasks = updatedAddress
+        ? workspace.tasks.filter(task => task.taskId === updatedAddress.taskId)
+        : workspace.tasks
+      for (const task of tasks) {
+        const address = getRuntimeTaskAddress(workspace, task)
+        changed =
+          this.reduceMachine(address, {
+            type: 'executor_snapshot_received',
+            address,
+            task: normalizeRuntimeTaskSummary(task),
+          }) || changed
+      }
     }
     if (changed) this.publish()
   }
@@ -640,8 +654,7 @@ export class RuntimeTaskLifecycleStore {
     return changed
   }
 
-  private ensureMachine(address: RuntimeTaskAddress): RuntimeTaskMachine {
-    const canonicalAddress = this.canonicalizeAddress(address)
+  private ensureMachine(canonicalAddress: RuntimeTaskAddress): RuntimeTaskMachine {
     const key = getRuntimeTaskLifecycleKey(canonicalAddress)
     const existing = this.machines.get(key)
     if (existing) return existing
@@ -660,6 +673,7 @@ export class RuntimeTaskLifecycleStore {
   }
 
   private resolveDeviceId(deviceId: string): string {
+    if (!this.deviceAliases.has(deviceId)) return deviceId
     let current = deviceId
     const visited = new Set<string>()
     while (!visited.has(current)) {
@@ -996,14 +1010,6 @@ function terminalTurnOutcome(
     return 'cancelled'
   }
   return 'succeeded'
-}
-
-function collectRuntimeTasks(
-  runtimeWork: RuntimeWorkListResponse
-): Array<{ workspace: RuntimeDeviceWorkspace; task: RuntimeTaskSummary }> {
-  return collectRuntimeWorkspaces(runtimeWork).flatMap(workspace =>
-    workspace.tasks.map(task => ({ workspace, task }))
-  )
 }
 
 function collectRuntimeWorkspaces(runtimeWork: RuntimeWorkListResponse): RuntimeDeviceWorkspace[] {

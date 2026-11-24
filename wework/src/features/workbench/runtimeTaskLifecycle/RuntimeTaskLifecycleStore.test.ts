@@ -234,9 +234,10 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
 
     const first = store.getTask(address)
-    const equivalent = store.getTask(address)
+    const equivalent = structuredClone(first)
 
     expect(first).not.toBe(equivalent)
+    expect(store.getTask(address)).toBe(first)
     expect(runtimeTaskLifecycleTransitionChanged(first, equivalent)).toBe(false)
     expect(runtimeTaskLifecycleTransitionChanged(null, null)).toBe(false)
     expect(runtimeTaskLifecycleTransitionChanged(null, first)).toBe(true)
@@ -475,6 +476,24 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getSnapshot()).toBe(snapshot)
     expect(listener).not.toHaveBeenCalled()
     unsubscribe()
+  })
+
+  test('applies a point update without replaying an unrelated list entry', () => {
+    const store = new RuntimeTaskLifecycleStore('point-executor-work-test')
+    const other = { ...address, taskId: 'task-2' }
+    const work = runtimeWork(task())
+    const workspace = work.projects[0].deviceWorkspaces[0]
+    workspace.tasks.push(task({ taskId: other.taskId }))
+    store.syncRuntimeWork(work)
+    store.syncRuntimeTask(other, task({ taskId: other.taskId, title: 'Newer title' }))
+    const otherSnapshot = store.getTask(other)
+    workspace.tasks[0] = task({ title: 'Updated title' })
+
+    store.syncRuntimeWork(work, address)
+
+    expect(store.getTask(address)?.task?.title).toBe('Updated title')
+    expect(store.getTask(other)?.task?.title).toBe('Newer title')
+    expect(store.getTask(other)).toBe(otherSnapshot)
   })
 
   test('uses one lifecycle machine for canonical workspace and remote host addresses', () => {
@@ -1165,7 +1184,9 @@ describe('RuntimeTaskLifecycleStore', () => {
     const expectedSnapshot = store.getTask(address)
 
     store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'active', optimistic: true })))
-    expect(store.getTask(address)).not.toBe(expectedSnapshot)
+    expect(runtimeTaskLifecycleTransitionChanged(expectedSnapshot, store.getTask(address))).toBe(
+      false
+    )
 
     const accepted = store.syncRuntimeTask(
       address,
