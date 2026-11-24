@@ -3702,6 +3702,17 @@ pub(super) fn retry_source_turn_id(payload: &Value) -> Option<String> {
         .filter(|turn_id| !turn_id.trim().is_empty())
 }
 
+fn stand_in_waiting_for_user() -> Value {
+    json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"})
+}
+
+fn stand_in_guidance_during_interaction(link: &RuntimeTaskLink) -> bool {
+    matches!(
+        link.interaction_status.as_deref(),
+        None | Some(INTERACTION_WAITING_FOR_USER_INPUT)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -3962,15 +3973,4 @@ mod tests {
         );
         assert!(link.runtime_handle.get("queuePosition").is_none());
     }
-}
-
-fn stand_in_waiting_for_user() -> Value {
-    json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"})
-}
-
-fn stand_in_guidance_during_interaction(link: &RuntimeTaskLink) -> bool {
-    matches!(
-        link.interaction_status.as_deref(),
-        None | Some(INTERACTION_WAITING_FOR_USER_INPUT)
-    )
 }
