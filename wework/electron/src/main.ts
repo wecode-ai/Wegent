@@ -2643,7 +2643,7 @@ async function configureDesktopRuntime(): Promise<void> {
     confirmPluginInstall: request =>
       confirmCoreDshPluginInstall(request, mainWindow, nativeDialogLanguage),
     modelConfiguration,
-    environment,
+    environment: { ...environment, WEWORK_APP_VERSION: app.getVersion() },
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
     onStartupStep: logStartupStep,
