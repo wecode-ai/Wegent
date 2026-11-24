@@ -16,6 +16,155 @@ import {
 } from '../e2e/desktop/modules/shared.mjs'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs'
 import { createDesktopScenario as createActionScenario } from '../e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs'
+import { verifyEmbeddedBrowserClickCursor } from '../e2e/desktop/modules/embedded-browser-visibility.mjs'
+import { createEmbeddedBrowserCursorObservation } from '../src/e2e/embedded-browser-cursor-observation.ts'
+
+async function cursorProtocol(t, { hideMs = 4_000, cursorPresent = true } = {}) {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 })
+  let visible = false
+  let eventListener
+  let domListener
+  let observation
+  let readAt
+  const emit = (type, payload) =>
+    eventListener?.({
+      type: 'browser.event',
+      payload: { type, payload: { label: 'browser', createdAtUnixMs: Date.now(), ...payload } },
+    })
+  const control = {
+    async command(action, selector, options = {}) {
+      if (action === 'startBrowserCursorObservation') {
+        observation = createEmbeddedBrowserCursorObservation(options.value, options.timeoutMs, {
+          subscribe: listener => {
+            eventListener = listener
+            return () => {
+              eventListener = undefined
+            }
+          },
+          observeDom: listener => {
+            domListener = listener
+            return () => {
+              domListener = undefined
+            }
+          },
+          readSnapshot: () => ({
+            cursorPresent,
+            visible: cursorPresent ? String(visible) : null,
+            style: cursorPresent ? 'transform: translate3d(117px, 77px, 0)' : '',
+            tabIconCount: visible ? 1 : 0,
+          }),
+        })
+        return 'cursor-observation'
+      }
+      if (action === 'finishBrowserCursorObservation') {
+        // Delay only remote command delivery; the pre-registered renderer observer keeps running.
+        return new Promise((resolve, reject) =>
+          setTimeout(() => {
+            readAt = Date.now()
+            observation.result.then(resolve, reject)
+          }, 4_500)
+        )
+      }
+      if (action === 'cancelBrowserCursorObservation') {
+        observation.cancel()
+        return ''
+      }
+      if (action === 'getAttribute' && options.value === 'data-visible') {
+        // The evidenced read was queued within the visibility window but executed after it.
+        t.mock.timers.tick(3_500)
+      }
+      if (!visible && selector.includes('[data-visible="true"]')) {
+        throw new Error(`Unable to find selector "${selector}"`)
+      }
+      return options.value === 'style' ? 'transform: translate3d(117px, 77px, 0)' : 'true'
+    },
+  }
+  const bridgeCall = async () => {
+    emit('agent-state', { action: 'click', status: 'running' })
+    visible = true
+    emit('agent-cursor', { moveSequence: 3, visible: true, x: 120, y: 80 })
+    domListener?.()
+    emit('agent-state', { action: 'click', status: 'idle' })
+    setTimeout(() => {
+      emit('agent-cursor', { moveSequence: 3, visible: false, x: 120, y: 80 })
+      visible = false
+      domListener?.()
+    }, hideMs)
+    return { ok: true, effect: { domChanged: true } }
+  }
+  const outcome = verifyEmbeddedBrowserClickCursor(
+    control,
+    bridgeCall,
+    'browser',
+    'button',
+    10_000
+  ).then(
+    evidence => ({ evidence }),
+    error => ({ error })
+  )
+  for (let step = 0; step < 12; step += 1) await Promise.resolve()
+  t.mock.timers.tick(1_000)
+  for (let step = 0; step < 12; step += 1) await Promise.resolve()
+  t.mock.timers.tick(3_500)
+  const result = await outcome
+  assert.equal(eventListener, undefined, 'The bounded probe must release its event subscription')
+  assert.equal(domListener, undefined, 'The bounded probe must release its DOM observation')
+  if (result.error) throw result.error
+  return { evidence: result.evidence, readAt, visible }
+}
+
+test('retains the one-second cursor observation when its control read arrives after idle hide', async t => {
+  const { evidence, readAt, visible } = await cursorProtocol(t)
+  assert.equal(readAt, 4_500)
+  assert.equal(visible, false, 'The delayed reader must arrive after the real hide transition')
+  assert.equal(evidence.afterClick.elapsedMs, 1_000)
+  assert.equal(evidence.afterClick.visible, 'true')
+  assert.equal(evidence.hidden.visible, 'false')
+  assert.equal(evidence.moveSequence, 3)
+})
+
+test('does not accept an early cursor hide or a missing production overlay', async t => {
+  await t.test('early hide', async child => {
+    await assert.rejects(
+      cursorProtocol(child, { hideMs: 500 }),
+      /disappeared before the one-second/
+    )
+  })
+  await t.test('missing overlay', async child => {
+    await assert.rejects(cursorProtocol(child, { cursorPresent: false }), /not visible one second/)
+  })
+})
+
+test('bounds cursor observation when only another browser emits events', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 })
+  let events
+  let stopCount = 0
+  const observation = createEmbeddedBrowserCursorObservation('expected', 10_000, {
+    subscribe: listener => {
+      events = listener
+      return () => {
+        stopCount += 1
+      }
+    },
+    observeDom: () => () => {
+      stopCount += 1
+    },
+    readSnapshot: () => {
+      throw new Error('Another browser must not be sampled')
+    },
+  })
+  const rejection = assert.rejects(observation.result, /Timed out observing/)
+  events({
+    type: 'browser.event',
+    payload: {
+      type: 'agent-state',
+      payload: { label: 'other', action: 'click', status: 'running' },
+    },
+  })
+  t.mock.timers.tick(10_000)
+  await rejection
+  assert.equal(stopCount, 2)
+})
 
 for (const [encoding, compress] of [
   ['identity', value => value],

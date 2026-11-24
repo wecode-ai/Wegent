@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { executeVerificationControlCommand } from './verification-control'
 import { loadDesktopE2ERuntimeConfig, setDesktopE2ECloudSessionToken } from './runtime-config'
+import * as desktopHost from '@/api/dsh/desktopHost'
+import * as embeddedBrowser from '@/lib/embedded-browser'
+import { createBrowserAgentCursorPort } from '@/components/layout/workspace-panels/browserAgentCursorPort'
 
 const { request, applyConnection, prepareCatalog } = vi.hoisted(() => ({
   request: vi.fn(),
@@ -183,5 +186,109 @@ test('background catalog preparation leaves control available during an injected
     )
   } finally {
     warning.mockRestore()
+  }
+})
+
+test('cursor commands retain the production port DOM after a late finish request', async () => {
+  vi.useFakeTimers()
+  let receive!: (event: desktopHost.DesktopHostEvent) => void
+  const stopEvents = vi.fn()
+  const subscribe = vi
+    .spyOn(desktopHost, 'subscribeDesktopHostEvents')
+    .mockImplementation(listener => {
+      receive = listener
+      return stopEvents
+    })
+  const acknowledge = vi
+    .spyOn(embeddedBrowser, 'notifyEmbeddedBrowserAgentCursorArrived')
+    .mockResolvedValue(undefined)
+  const label = 'cursor-protocol-browser'
+  const host = document.createElement('div')
+  host.dataset.weworkBrowserWebview = label
+  const cursor = document.createElement('div')
+  cursor.dataset.testid = 'workspace-browser-agent-cursor'
+  cursor.append(document.createElement('div'))
+  host.append(cursor)
+  const tab = document.createElement('button')
+  tab.dataset.testid = 'right-workspace-browser-tab-protocol'
+  tab.setAttribute('aria-selected', 'true')
+  const icon = document.createElement('span')
+  icon.dataset.testid = 'protocol-agent-icon'
+  document.body.append(host, tab)
+  const port = createBrowserAgentCursorPort()
+  const ownership = Symbol('real-cursor-port')
+  const execute = (action: string, value: string, id = 'cursor-protocol') =>
+    executeVerificationControlCommand(
+      { id, action, value, selector: 'body', timeoutMs: 10_000 },
+      { elementEnabled: () => true }
+    )
+  const emit = (type: string, payload: Record<string, unknown>) =>
+    receive({
+      sequence: 1,
+      type: 'browser.event',
+      payload: { type, payload: { label, createdAtUnixMs: Date.now(), ...payload } },
+    })
+  let unbind = () => {}
+  try {
+    await expect(execute('startBrowserCursorObservation', label)).resolves.toEqual({
+      handled: true,
+      value: 'cursor-protocol',
+    })
+    emit('agent-state', { status: 'running', action: 'click' })
+    const movement = {
+      label,
+      visible: true,
+      x: 120,
+      y: 80,
+      animateMovement: true,
+      moveSequence: 3,
+      createdAtUnixMs: Date.now(),
+    }
+    emit('agent-cursor', movement)
+    unbind = port.bind(cursor, movement, label, 1, () => ownership)!
+    tab.append(icon)
+    await vi.advanceTimersByTimeAsync(180)
+    emit('agent-state', { status: 'idle', action: 'click' })
+    await vi.advanceTimersByTimeAsync(1_000)
+    await vi.advanceTimersByTimeAsync(3_000)
+    const hidden = {
+      ...movement,
+      visible: false,
+      animateMovement: false,
+      createdAtUnixMs: Date.now(),
+    }
+    emit('agent-cursor', hidden)
+    unbind()
+    unbind = port.bind(cursor, hidden, label, 1, () => ownership)!
+    icon.remove()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(500)
+    const result = await execute('finishBrowserCursorObservation', 'cursor-protocol')
+    expect(result.handled).toBe(true)
+    if (!result.handled) throw new Error('Cursor observation command was not handled')
+    const evidence = JSON.parse(result.value)
+    expect(cursor).toHaveAttribute('data-visible', 'false')
+    expect(evidence.afterClick).toMatchObject({
+      cursorPresent: true,
+      visible: 'true',
+      elapsedMs: 1_000,
+      tabIconCount: 1,
+    })
+    expect(evidence.firstVisible.style).toContain('translate3d(117px, 77px, 0)')
+    expect(evidence.hidden).toMatchObject({
+      cursorPresent: true,
+      visible: 'false',
+      tabIconCount: 0,
+    })
+    expect(evidence.cursorHiddenAtUnixMs - evidence.clickFinishedAtUnixMs).toBe(4_000)
+    expect(stopEvents).toHaveBeenCalledOnce()
+  } finally {
+    await execute('cancelBrowserCursorObservation', 'cursor-protocol').catch(() => {})
+    unbind()
+    host.remove()
+    tab.remove()
+    subscribe.mockRestore()
+    acknowledge.mockRestore()
+    vi.useRealTimers()
   }
 })
