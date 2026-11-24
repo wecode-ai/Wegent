@@ -67,6 +67,7 @@ export function createParticipatingIssuesStory({ uiTimeoutMs, modelResponseTimeo
         )
       )
       let settings = await rpc('runtime.stand_in.personal.get', { userId: user.id })
+      const originalPrimary = settings.primary
       const catalog = await rpc('runtime.runner.catalog', {})
       const model = catalog.models.find(item => item.runtime === 'codex' && item.is_default)
       assert.ok(model, 'Use the configured native E2E model')
@@ -75,6 +76,12 @@ export function createParticipatingIssuesStory({ uiTimeoutMs, modelResponseTimeo
           userId: user.id,
           settings: {
             ...settings,
+            primary: {
+              ...settings.primary,
+              enabled: true,
+              prompt: settings.primary?.prompt ?? '',
+              preferences: settings.primary?.preferences ?? '',
+            },
             roles: [
               ...settings.roles.filter(existing => existing.id !== ROLE),
               {
@@ -136,7 +143,14 @@ export function createParticipatingIssuesStory({ uiTimeoutMs, modelResponseTimeo
         )
         await storyUntil(
           () => rpc('runtime.tasks.get', { taskId: binding.task_id }),
-          value => value.task?.status === 'done',
+          value => {
+            assert.notEqual(
+              value.task?.status,
+              'failed',
+              JSON.stringify(value.task?.runtimeHandle?.startupFailure)
+            )
+            return value.task?.status === 'done'
+          },
           modelResponseTimeoutMs,
           `Assistant task for ${issue.id} must finish`
         )
@@ -178,7 +192,14 @@ export function createParticipatingIssuesStory({ uiTimeoutMs, modelResponseTimeo
       })
       await waitForProcessed(assigned)
       assert.equal(modelTurns, 3, 'An assignment matching both scopes must run once')
-      await save({ ...settings.roles.find(existing => existing.id === ROLE), enabled: false }, [])
+      await rpc('runtime.stand_in.personal.save', {
+        userId: user.id,
+        settings: {
+          ...settings,
+          primary: originalPrimary,
+          roles: settings.roles.filter(role => role.id !== ROLE),
+        },
+      })
     },
   }
 }
