@@ -12,7 +12,7 @@ import { useStandInConversationModel } from '@/features/todo/useStandInConversat
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { WorkspaceStandInSettings } from '@wegent/collaboration'
 import { I18nextProvider } from 'react-i18next'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import {
@@ -1925,6 +1925,14 @@ describe('TemporaryChatPanel', () => {
       hideProcessing: true,
     },
     { existing: true, target: 'official', role: 'primary', providerFailure: true },
+    {
+      existing: true,
+      target: 'official',
+      role: 'primary',
+      providerFailure: true,
+      profileModelOnly: true,
+    },
+    { existing: true, target: 'custom', role: 'primary', profileModelOnly: true },
     { existing: true, target: 'official', role: 'primary', providerPending: true },
     { existing: true, target: 'cloud', role: 'primary', revertBeforeSend: true },
     {
@@ -1935,7 +1943,7 @@ describe('TemporaryChatPanel', () => {
       changeTargetRoundtrip: true,
     },
   ])(
-    'sends the $role chat with a temporary $target model across providers (existing=$existing, busy=$busy, empty=$globalCatalogEmpty, removed=$oldModelRemoved, catalogFailed=$localCatalogFailed, legacy=$legacyProvider, retry=$retry, processingHidden=$hideProcessing, pending=$providerPending, reverted=$revertBeforeSend, roundtrip=$changeTargetRoundtrip)',
+    'sends the $role chat with a $target model across providers (profileOnly=$profileModelOnly, existing=$existing, busy=$busy, empty=$globalCatalogEmpty, removed=$oldModelRemoved, catalogFailed=$localCatalogFailed, legacy=$legacyProvider, retry=$retry, processingHidden=$hideProcessing, pending=$providerPending, reverted=$revertBeforeSend, roundtrip=$changeTargetRoundtrip)',
     async ({
       existing,
       target,
@@ -1949,12 +1957,33 @@ describe('TemporaryChatPanel', () => {
       retry = false,
       hideProcessing = false,
       providerFailure = false,
+      profileModelOnly = false,
       providerPending = false,
       revertBeforeSend = false,
       changeTargetRoundtrip = false,
       assistantTransport = false,
     }) => {
       const user = userEvent.setup({ skipHover: true })
+      // Follow-up text is fixture data; preserve typing's insertion into the current draft.
+      async function fillFollowupDraft(text: string) {
+        const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+        await user.click(editor)
+        const previousValue = editor.value
+        const selection = editor.ownerDocument.getSelection()
+        const range = selection?.getRangeAt(0)
+        expect(range).toBeDefined()
+        const prefix = range!.cloneRange()
+        prefix.selectNodeContents(editor)
+        prefix.setEnd(range!.startContainer, range!.startOffset)
+        const start = prefix.toString().length
+        prefix.setEnd(range!.endContainer, range!.endOffset)
+        const end = prefix.toString().length
+        const expectedValue = previousValue.slice(0, start) + text + previousValue.slice(end)
+        await user.paste(text)
+        expect(editor, JSON.stringify({ previousValue, start, end, text })).toHaveValue(
+          expectedValue
+        )
+      }
       const assistantSend = vi.fn(async () => ({ sent: true }))
       mocks.realComposer = true
       mocks.busy = busy
@@ -1993,7 +2022,10 @@ describe('TemporaryChatPanel', () => {
         enabled: true,
         prompt: '',
         version: 1,
-        model: native,
+        model:
+          profileModelOnly && target === 'custom'
+            ? { ...native, provider: 'company', model_id: 'company-codex' }
+            : native,
         modelOptions: { reasoning: 'high' },
       }
       const before = structuredClone(profile)
@@ -2118,12 +2150,6 @@ describe('TemporaryChatPanel', () => {
         ]
       mocks.createTask.mockResolvedValue(taskAddress)
       const i18n = createInstance()
-      await i18n.init({
-        lng: 'en',
-        resources: { en: { common: enCommon } },
-        defaultNS: 'common',
-        interpolation: { escapeValue: false },
-      })
       function Conversation() {
         const controls = useStandInConversationModel(services, profile)
         return (
@@ -2139,6 +2165,7 @@ describe('TemporaryChatPanel', () => {
                 nativeConversation
                 assistantSend={assistantTransport ? assistantSend : undefined}
                 hideProcessing={hideProcessing}
+                showModelSelector={!profileModelOnly}
                 currentProject={null}
                 source={null}
                 instanceId={`switch-${role}-${existing}`}
@@ -2151,9 +2178,45 @@ describe('TemporaryChatPanel', () => {
           </I18nextProvider>
         )
       }
+      let completeBody!: () => void
+      const bodyFinished = new Promise<void>(resolve => {
+        completeBody = resolve
+      })
+      // A timeout does not cancel user-event. Join the body before the next case mounts.
+      onTestFinished(() => bodyFinished)
+      let view: ReturnType<typeof render> | undefined
       try {
-        const view = render(<Conversation />)
+        await i18n.init({
+          lng: 'en',
+          resources: { en: { common: enCommon } },
+          defaultNS: 'common',
+          interpolation: { escapeValue: false },
+        })
+        view = render(<Conversation />)
         await waitFor(() => expect(services.standInApi.catalog).toHaveBeenCalled())
+        if (profileModelOnly) {
+          const recover = await screen.findByTestId('stand-in-conversation-new-session')
+          expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
+          expect(screen.getByTestId('send-message-button')).toBeDisabled()
+          await user.click(recover)
+          await user.click(screen.getByTestId('stand-in-conversation-cancel-new-session'))
+          expect(screen.getByTestId('send-message-button')).toBeDisabled()
+          expect(screen.getByTestId('chat-message-input')).toHaveTextContent(
+            'Keep this stand-in draft'
+          )
+          await user.click(recover)
+          await user.click(screen.getByTestId('stand-in-conversation-confirm-new-session'))
+          expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+          await user.click(screen.getByTestId('send-message-button'))
+          await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+          expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).toEqual(
+            expect.objectContaining({
+              startNewSession: true,
+              expectedThreadId: taskAddress.threadId,
+            })
+          )
+          return
+        }
         if (oldModelRemoved || localCatalogFailed || providerFailure || providerPending) {
           await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeDisabled())
           expect(screen.getByTestId('model-selector-button')).toBeEnabled()
@@ -2319,7 +2382,7 @@ describe('TemporaryChatPanel', () => {
             derived: { isRunning: false, isTurnActive: false },
           }
           view.rerender(<Conversation />)
-          await user.type(screen.getByTestId('chat-message-input'), 'Continue recovered session')
+          await fillFollowupDraft('Continue recovered session')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
@@ -2365,7 +2428,7 @@ describe('TemporaryChatPanel', () => {
             derived: { isRunning: false, isTurnActive: false },
           }
           view.rerender(<Conversation />)
-          await user.type(screen.getByTestId('chat-message-input'), 'Continue here')
+          await fillFollowupDraft('Continue here')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
@@ -2376,7 +2439,7 @@ describe('TemporaryChatPanel', () => {
           if (advanced) await user.click(advanced)
           await user.click(await screen.findByTestId(`model-option-${official.name}`))
           await user.click(screen.getByTestId('model-switch-warning-confirm-button'))
-          await user.type(screen.getByTestId('chat-message-input'), 'Use ChatGPT again')
+          await fillFollowupDraft('Use ChatGPT again')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(3))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).toMatchObject({
@@ -2400,9 +2463,13 @@ describe('TemporaryChatPanel', () => {
           expect(mocks.continueInNewConversation).not.toHaveBeenCalled()
           expect(mocks.setGlobalModel).not.toHaveBeenCalled()
         }
-        view.unmount()
       } finally {
-        await act(async () => providerReads.forEach(release => release()))
+        try {
+          view?.unmount()
+          await act(async () => providerReads.forEach(release => release()))
+        } finally {
+          completeBody()
+        }
       }
     }
   )

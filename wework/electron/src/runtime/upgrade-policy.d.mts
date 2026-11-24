@@ -1,3 +1,5 @@
+import type { ReleaseBlockMap } from './release-block-map.mjs'
+
 export interface UpgradeRelease {
   version: string
   minSourceVersion: string
@@ -5,6 +7,7 @@ export interface UpgradeRelease {
   sha256: string
   sourceSha: string
   bytes: number
+  blockMap?: ReleaseBlockMap
   dataSchema: number
   readableDataSchemas: number[]
   revoked: boolean

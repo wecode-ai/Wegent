@@ -1,3 +1,5 @@
+import { validReleaseBlockMap } from './release-block-map.mjs'
+
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.([1-9]\d*))?$/
 const HASH = /^[a-f0-9]{64}$/
 const REVISION = /^[a-f0-9]{40,64}$/
@@ -39,6 +41,7 @@ export function validateUpgradeCatalog(input) {
       !REVISION.test(release.sourceSha) ||
       !Number.isSafeInteger(release.bytes) ||
       release.bytes <= 0 ||
+      (release.blockMap !== undefined && !validReleaseBlockMap(release.blockMap)) ||
       !Number.isSafeInteger(release.dataSchema) ||
       release.dataSchema < 1 ||
       !Array.isArray(release.readableDataSchemas) ||

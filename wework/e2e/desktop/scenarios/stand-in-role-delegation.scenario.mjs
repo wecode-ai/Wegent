@@ -28,6 +28,13 @@ const EDITOR = `${CHAT} [data-testid="chat-message-input"][contenteditable="true
 const CARD = `${CHAT} [data-testid="stand-in-delegated-work"]`
 const TOGGLE = `${CARD} [data-testid="stand-in-delegated-work-toggle"]`
 const ROW = `${CARD} [data-testid="stand-in-delegated-work-open"]`
+const DETAILS = '[data-testid="stand-in-details-open"]'
+const POPOVER = '[data-testid="stand-in-details-popover"]'
+const ACTIVE = `${POPOVER} [data-testid="stand-in-details-active-delegations"]`
+const PANEL_TOGGLE = '[data-testid="stand-in-delegation-panel-toggle"]'
+const PANEL = '[data-testid="stand-in-delegation-panel"]'
+const ORDINARY_TASK = '核对发布日历'
+const ORDINARY_RESULT = '发布日历已核对。'
 const REQUEST = '请准备周五的发布方案，核实迁移风险，并交给公告编辑起草公告。'
 const AMBIGUOUS = '这次发布有些风险，找合适的角色帮我看看。'
 const CLARIFICATION = '整体发布风险由发布工程核对，迁移和回滚由数据库角色核对。你希望先查哪一块？'
@@ -315,6 +322,10 @@ export function createDesktopScenario({
         }
         return true
       }
+      if (latest.includes(ORDINARY_TASK)) {
+        reply(response, [assistantMessage(ORDINARY_RESULT)])
+        return true
+      }
       if (latest.includes(FOLLOW_UP)) {
         reply(response, [assistantMessage(FOLLOW_UP_REPLY)])
         return true
@@ -404,6 +415,38 @@ export function createDesktopScenario({
       try {
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', CHAT)
+        const ordinaryTaskId = 'stand-in-delegation-story-ordinary-task'
+        const origin = {
+          type: 'stand_in_task',
+          initiatedBy: 'stand_in',
+          standInId: '@primary',
+          userId: USER,
+          deviceId: before.executionDeviceId,
+        }
+        const ordinaryTask = await rpc('runtime.tasks.create', {
+          taskId: ordinaryTaskId,
+          title: ORDINARY_TASK,
+          runtime: 'codex',
+          workspacePath,
+          message: ORDINARY_TASK,
+          origin,
+          executionRequest: {
+            task_id: ordinaryTaskId,
+            subtask_id: ordinaryTaskId,
+            user_id: USER,
+            prompt: ORDINARY_TASK,
+            new_session: true,
+            bot: [{ shell_type: 'Codex', name: 'Calendar verification' }],
+            model_config: { model_id: model.model_id, model_provider: model.provider },
+            origin,
+          },
+          modelSelection: {
+            modelName: model.model_id,
+            modelType: 'runtime',
+            options: { runnerModelProvider: model.provider },
+          },
+        })
+        assert.equal(ordinaryTask.accepted, true)
         const send = async text => {
           await control.command('fill', EDITOR, { value: text })
           await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
@@ -413,14 +456,34 @@ export function createDesktopScenario({
             text,
             timeoutMs: modelResponseTimeoutMs,
           })
+        let card = CARD
+        let toggle = TOGGLE
+        let row = ROW
+        const readBranches = () =>
+          rpc('runtime.stand_in.role_task.branches', {
+            userId: USER,
+            taskId: 'stand-in-chat-9001-primary',
+          })
+        const selectDelegation = async taskId => {
+          const { items } = await storyUntil(
+            readBranches,
+            ({ items }) => items.some(branch => branch.taskId === taskId),
+            uiTimeoutMs,
+            `Delegation group should contain ${taskId}`
+          )
+          const root = items.find(branch => branch.taskId === taskId).root
+          card = `${CARD}[data-delegation-root="${root}"]`
+          toggle = `${card} [data-testid="stand-in-delegated-work-toggle"]`
+          row = `${card} [data-testid="stand-in-delegated-work-open"]`
+        }
         const expandDelegation = async () => {
           if (
-            Number(await control.command('getElementCount', `${TOGGLE}[aria-expanded="true"]`)) ===
+            Number(await control.command('getElementCount', `${toggle}[aria-expanded="true"]`)) ===
             0
           ) {
-            await control.command('clickWhenEnabled', TOGGLE)
+            await control.command('clickWhenEnabled', toggle)
           }
-          await control.command('waitFor', `${TOGGLE}[aria-expanded="true"]`, {
+          await control.command('waitFor', `${toggle}[aria-expanded="true"]`, {
             visible: true,
             timeoutMs: uiTimeoutMs,
           })
@@ -428,20 +491,26 @@ export function createDesktopScenario({
         await send(AMBIGUOUS)
         await waitForReply(CLARIFICATION)
         assert.equal(taskIds.size, 0)
-        assert.equal(Number(await control.command('getElementCount', CARD)), 0)
+        assert.equal(Number(await control.command('getElementCount', card)), 0)
         await captureScreenshot(control, '01-role-clarification.png', ROOT)
         await send(REQUEST)
-        await control.command('waitFor', CARD, { timeoutMs: modelResponseTimeoutMs })
+        await control.command('waitFor', card, { timeoutMs: modelResponseTimeoutMs })
         await expandDelegation()
         for (const role of roles) {
-          await control.command('waitFor', ROW, {
+          await control.command('waitFor', row, {
             text: role.name,
             timeoutMs: modelResponseTimeoutMs,
           })
         }
-        assert.equal(Number(await control.command('getElementCount', ROW)), 3)
-        await control.command('waitFor', TOGGLE, { text: '进行中' })
+        assert.equal(Number(await control.command('getElementCount', row)), 3)
+        await control.command('waitFor', toggle, { text: '进行中' })
         await captureScreenshot(control, '02-specialist-branches.png', ROOT)
+        await control.command('clickWhenEnabled', DETAILS)
+        await control.command('waitFor', ACTIVE, { text: '起草公告', visible: true })
+        await control.command('waitFor', ACTIVE, { text: '等待子任务', visible: true })
+        await captureScreenshot(control, '02a-active-delegations-in-details.png')
+        await control.command('press', POPOVER, { key: 'Escape' })
+        await control.command('waitFor', POPOVER, { visible: false })
         await storyUntil(
           () => Promise.resolve(waitingModels.has(1) && waitingModels.has(2)),
           Boolean,
@@ -451,6 +520,22 @@ export function createDesktopScenario({
         await send(FOLLOW_UP)
         await waitForReply(FOLLOW_UP_REPLY)
         await captureScreenshot(control, '03-conversation-remains-available.png', ROOT)
+        const timeline = JSON.parse(
+          await control.command(
+            'getElementMetrics',
+            `${CHAT} [data-testid="user-message-content"], ${card}`,
+            { value: 'includeText' }
+          )
+        )
+        const requestIndex = timeline.findIndex(element => element.text === REQUEST)
+        const followUpIndex = timeline.findIndex(element => element.text === FOLLOW_UP)
+        const cardIndex = timeline.findIndex(
+          element => element.testId === 'stand-in-delegated-work'
+        )
+        assert.ok(
+          requestIndex >= 0 && requestIndex < cardIndex && cardIndex < followUpIndex,
+          `The delegation stays between request and follow-up: request=${requestIndex}, card=${cardIndex}, follow-up=${followUpIndex}`
+        )
         reply(waitingModels.get(2).response, [assistantMessage('数据库迁移支持回滚。')])
         const writing = waitingModels.get(1)
         reply(
@@ -472,29 +557,68 @@ export function createDesktopScenario({
             })
           )
         )
-        await control.command('waitFor', CARD, {
+        await control.command('waitFor', card, {
           text: AUDIENCE_QUESTION,
           timeoutMs: modelResponseTimeoutMs,
         })
         await control.command(
           'clickWhenEnabled',
-          `${CARD} [data-testid="stand-in-delegated-work-reply"]`
+          `${card} [data-testid="stand-in-delegated-work-reply"]`
         )
         await captureScreenshot(control, '04-specialist-question-inline.png', ROOT)
-        await control.command('clickWhenEnabled', `${CARD} [data-testid="interaction-answer-0"]`)
+        await control.command('clickWhenEnabled', `${card} [data-testid="interaction-answer-0"]`)
         await waitForReply(FINAL)
-        await control.command('waitFor', TOGGLE, {
+        await control.command('waitFor', toggle, {
           text: '已完成 3/3',
           timeoutMs: uiTimeoutMs,
         })
         await captureScreenshot(control, '05-result-in-original-chat.png', ROOT)
+        await control.command('clickWhenEnabled', DETAILS)
+        await control.command('waitFor', POPOVER, { visible: true })
+        assert.equal(Number(await control.command('getElementCount', ACTIVE)), 0)
+        await captureScreenshot(control, '05a-completed-delegation-out-of-details.png')
+        await control.command('press', POPOVER, { key: 'Escape' })
+        await control.command('waitFor', POPOVER, { visible: false })
+        await control.command('clickWhenEnabled', PANEL_TOGGLE)
+        await control.command('waitFor', PANEL, { text: '已完成 3/3', visible: true })
+        await control.command('waitFor', `${PANEL} [data-testid="stand-in-sidebar-task"]`, {
+          text: ORDINARY_TASK,
+          visible: true,
+        })
+        const activityList = `${PANEL} [data-testid="stand-in-sidebar-activity-list"]`
+        await control.command(
+          'waitFor',
+          `${activityList} > li > [data-testid="stand-in-delegated-work"]`,
+          {
+            visible: true,
+          }
+        )
+        await control.command(
+          'waitFor',
+          `${activityList} > li > [data-testid="stand-in-sidebar-task"]`,
+          {
+            text: ORDINARY_TASK,
+            visible: true,
+          }
+        )
+        await captureScreenshot(control, '05b-delegation-and-tasks-panel.png', ROOT)
+        await control.command('clickWhenEnabled', PANEL_TOGGLE)
+        await control.command('waitFor', PANEL, { visible: false })
         assert.equal(reported.size, 2)
         for (const [index, role] of roles.entries()) {
           const { task } = await rpc('runtime.tasks.get', { taskId: taskIds.get(role.id) })
           assert.equal(task.runtimeHandle.origin.standInId, role.id)
           assert.equal(await realpath(task.workspacePath), workspaces[index])
         }
-        await control.command('clickElementWithText', ROW, {
+        // A compact viewport can unmount the original request after the result and panel visit.
+        await control.command(
+          'scrollToRatioAsUser',
+          `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
+          {
+            value: '0',
+          }
+        )
+        await control.command('clickElementWithText', row, {
           text: '核实迁移回滚',
           visible: true,
           timeoutMs: uiTimeoutMs,
@@ -515,8 +639,9 @@ export function createDesktopScenario({
           modelResponseTimeoutMs,
           'Both specialist executions should start before cancellation'
         )
+        await selectDelegation(cancellationTasks.get(0))
         await expandDelegation()
-        const branchButton = `${CARD} [data-testid="stand-in-delegated-work-cancel-branch"][aria-label="取消「核对下次发布窗口」"]`
+        const branchButton = `${card} [data-testid="stand-in-delegated-work-cancel-branch"][aria-label="取消「核对下次发布窗口」"]`
         const confirm = '[data-testid="stand-in-delegated-work-confirm-cancel"]'
         await control.command('clickWhenEnabled', branchButton, { timeoutMs: uiTimeoutMs })
         await control.command('waitFor', confirm, { visible: true, timeoutMs: uiTimeoutMs })
@@ -531,11 +656,11 @@ export function createDesktopScenario({
           'The selected branch should stop'
         )
         assert.equal((await readTask(1)).task.running, true, 'The sibling should keep executing')
-        await control.command('waitFor', ROW, { text: '已取消', timeoutMs: uiTimeoutMs })
+        await control.command('waitFor', row, { text: '已取消', timeoutMs: uiTimeoutMs })
         await captureScreenshot(control, '08-cancel-one-branch.png', ROOT)
         await control.command(
           'clickWhenEnabled',
-          `${CARD} [data-testid="stand-in-delegated-work-cancel-all"]`
+          `${card} [data-testid="stand-in-delegated-work-cancel-all"]`
         )
         await control.command('clickWhenEnabled', confirm, { timeoutMs: uiTimeoutMs })
         await storyUntil(
@@ -544,7 +669,7 @@ export function createDesktopScenario({
           uiTimeoutMs,
           'Cancel delegation should stop its remaining branch'
         )
-        await control.command('waitFor', TOGGLE, {
+        await control.command('waitFor', toggle, {
           text: '委派已取消',
           timeoutMs: uiTimeoutMs,
         })
@@ -552,13 +677,14 @@ export function createDesktopScenario({
 
         await send(DEPENDENCY_REQUEST)
         await waitForReply('通知会等待核验结果。')
+        await selectDelegation(dependencyTasks.get(0))
         await expandDelegation()
-        await control.command('waitFor', ROW, {
+        await control.command('waitFor', row, {
           text: '等待前置任务',
           visible: true,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', `${CARD} li`, {
+        await control.command('waitFor', `${card} li`, {
           text: '依赖 核对维护时间',
           visible: true,
           timeoutMs: uiTimeoutMs,
@@ -575,7 +701,7 @@ export function createDesktopScenario({
         reply(waitingModels.get('prerequisite').response, [assistantMessage(PREREQUISITE_RESULT)])
         await waitForReply(DEPENDENCY_FINAL)
         assert.equal(dependentStarted, true)
-        await control.command('waitFor', TOGGLE, {
+        await control.command('waitFor', toggle, {
           text: '已完成 2/2',
           timeoutMs: uiTimeoutMs,
         })
@@ -583,14 +709,15 @@ export function createDesktopScenario({
         await captureScreenshot(control, '11-dependency-completed.png', ROOT)
         await send(RETRY_REQUEST)
         await waitForReply('已分派两项核验。')
-        await control.command('waitFor', TOGGLE, {
+        await selectDelegation(retryTasks.get(0))
+        await control.command('waitFor', toggle, {
           text: '失败',
           timeoutMs: modelResponseTimeoutMs,
         })
         await expandDelegation()
-        const retry = `${CARD} [data-testid="stand-in-delegated-work-retry"]`
+        const retry = `${card} [data-testid="stand-in-delegated-work-retry"]`
         await control.command('waitFor', retry, { text: '重试', timeoutMs: uiTimeoutMs })
-        await control.command('waitFor', ROW, {
+        await control.command('waitFor', row, {
           text: '查看详情',
           visible: true,
           timeoutMs: uiTimeoutMs,
@@ -604,10 +731,7 @@ export function createDesktopScenario({
           modelResponseTimeoutMs,
           'The failed specialist should start again'
         )
-        const branches = await rpc('runtime.stand_in.role_task.branches', {
-          userId: USER,
-          taskId: 'stand-in-chat-9001-primary',
-        })
+        const branches = await readBranches()
         const retried = branches.items.find(branch => branch.taskId === retryTasks.get(0))
         assert.equal(retried.attempt, 1)
         assert.equal(retried.taskAddress.taskId, retryTasks.get(0))
@@ -618,28 +742,42 @@ export function createDesktopScenario({
         await captureScreenshot(control, '13-retrying-same-task.png', ROOT)
         reply(waitingModels.get('retry').response, [assistantMessage('备用环境已就绪。')])
         await waitForReply(RETRY_FINAL)
-        await control.command('waitFor', TOGGLE, {
+        await control.command('waitFor', toggle, {
           text: '已完成 2/2',
           timeoutMs: uiTimeoutMs,
         })
         await expandDelegation()
         await captureScreenshot(control, '14-retry-result.png', ROOT)
         const earlier = branches.items.find(branch => branch.taskId === dependencyTasks.get(0))
+        const earlierCard = `${PANEL} [data-testid="stand-in-delegated-work"][data-delegation-root="${earlier.root}"]`
+        await control.command('clickWhenEnabled', PANEL_TOGGLE)
+        const earlierToggle = `${earlierCard} [data-testid="stand-in-delegated-work-toggle"]`
+        await control.command('waitFor', earlierToggle, { text: '已完成 2/2', visible: true })
+        await control.command('clickWhenEnabled', earlierToggle)
         await control.command(
-          'clickWhenEnabled',
-          `${CARD} [data-testid="stand-in-delegated-work-select"]`
+          'waitFor',
+          `${earlierCard} [data-testid="stand-in-delegated-work-open"]`,
+          {
+            text: '起草维护通知',
+            visible: true,
+            timeoutMs: uiTimeoutMs,
+          }
         )
+        await captureScreenshot(control, '15-open-earlier-delegation.png', ROOT)
         await control.command(
-          'clickWhenEnabled',
-          `[data-testid="stand-in-delegated-work-select-option-${earlier.root}"]`
+          'clickElementWithText',
+          `${PANEL} [data-testid="stand-in-sidebar-task"]`,
+          {
+            text: ORDINARY_TASK,
+            visible: true,
+            timeoutMs: uiTimeoutMs,
+          }
         )
-        await control.command('waitFor', ROW, {
-          text: '起草维护通知',
-          visible: true,
+        await control.command('waitFor', '[data-testid="assistant-message-content"]', {
+          text: ORDINARY_RESULT,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', TOGGLE, { text: '历史委派', timeoutMs: uiTimeoutMs })
-        await captureScreenshot(control, '15-open-earlier-delegation.png', ROOT)
+        await captureScreenshot(control, '16-ordinary-task-open.png')
       } finally {
         for (const { response } of waitingModels.values()) {
           if (!response.writableEnded) response.end()
