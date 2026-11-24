@@ -231,7 +231,7 @@ function StandInSettingsEditor({
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
     executionDeviceId,
-    view === 'advanced'
+    view === 'advanced' || ((view === 'main' || view === 'create') && Boolean(role?.workspace))
   )
 
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
@@ -588,6 +588,7 @@ function StandInSettingsEditor({
                 <StandInRequirements
                   key={role.id}
                   role={role}
+                  runtimeWork={runtimeWork}
                   services={services}
                   onChange={update => updateRole(role.id, update)}
                   disabled={saving}
