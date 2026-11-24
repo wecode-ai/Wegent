@@ -342,3 +342,47 @@ test('attributes a combined reply across consecutive async calls, including repe
     0
   )
 })
+
+describe('async reply ownership', () => {
+  test('does not settle a question from the prompt that introduced its turn', () => {
+    const question = { ...assistantMessage(ASYNC_PAYLOAD), turnId: 'turn-1' }
+    const turnPrompt = { ...userMessage('Start the review'), turnId: 'turn-1' }
+    const messages = [question, turnPrompt]
+
+    expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+    expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
+  })
+
+  test('settles a question from same-turn guidance sent after it', () => {
+    const question = { ...assistantMessage(ASYNC_PAYLOAD), turnId: 'turn-1' }
+    const guidance = {
+      ...userMessage('Use the compatibility-safe path'),
+      turnId: 'turn-1',
+      runtimeGuidance: true,
+    }
+    const messages = [question, guidance]
+
+    const resolved = resolveAsyncRequestUserInputAnswers(messages)
+    const block = resolved[0].blocks?.[0]
+
+    expect(block?.status).toBe('done')
+    expect(block && 'renderPayload' in block && block.renderPayload).toMatchObject({
+      response: {
+        answers: { question_1: { answers: ['Use the compatibility-safe path'] } },
+      },
+    })
+  })
+
+  test('settles a question from a later turn', () => {
+    const question = { ...assistantMessage(ASYNC_PAYLOAD), turnId: 'turn-1' }
+    const answer = { ...userMessage('Reading'), turnId: 'turn-2' }
+
+    const resolved = resolveAsyncRequestUserInputAnswers([question, answer])
+    const block = resolved[0].blocks?.[0]
+
+    expect(block?.status).toBe('done')
+    expect(block && 'renderPayload' in block && block.renderPayload).toMatchObject({
+      response: { answers: { question_1: { answers: ['Reading'] } } },
+    })
+  })
+})
