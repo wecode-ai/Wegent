@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { runInNewContext } from 'node:vm'
 import { expect, test } from 'vitest'
 import { installTurnUpdateProbe, peakTenSecondCpu } from './profile-renderer.mjs'

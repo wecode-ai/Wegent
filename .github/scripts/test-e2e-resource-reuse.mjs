@@ -432,7 +432,7 @@ test("the macOS runner exports complete runtimes after checkpoints on complete b
   assert(describe);
   assert.equal(
     job.env.MACOS_COMPLETE_BUILD,
-    "${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}",
+    "${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all')) }}",
   );
   const build = job.steps.find(
     (step) => step.uses === "./.github/actions/build-wework-macos-e2e",
@@ -441,6 +441,17 @@ test("the macOS runner exports complete runtimes after checkpoints on complete b
     build.with["include-backend"],
     "${{ env.MACOS_COMPLETE_BUILD }}",
   );
+  const rendererGate = job.steps.find(
+    (step) => step.name === "Enforce renderer performance budgets",
+  );
+  assert(rendererGate);
+  assert.equal(
+    rendererGate.if,
+    "needs.changes.outputs.wework_desktop_renderer_profile == 'true'",
+  );
+  assert.equal(rendererGate.run, "node wework/scripts/profile-renderer.mjs --check");
+  assert.equal(rendererGate["continue-on-error"], undefined);
+  assert(job.steps.indexOf(build) < job.steps.indexOf(rendererGate));
   assert.equal(describe.if, "env.MACOS_COMPLETE_BUILD == 'true'");
   assert.equal(describe["continue-on-error"], undefined);
   assert.equal(describe.env.RUNTIME_TARGET, "darwin-arm64");
@@ -451,6 +462,7 @@ test("the macOS runner exports complete runtimes after checkpoints on complete b
   for (const name of [
     "Run Wework desktop memory E2E",
     "Run Wework desktop macOS Inspector E2E",
+    "Enforce renderer performance budgets",
   ])
     assert(
       job.steps.findIndex((step) => step.name === name) <
