@@ -4,9 +4,37 @@ import {
   createConversationScrollState,
   type ConversationScrollInput,
 } from './conversationScrollState'
+import { cacheConversationScrollSnapshot, evictConversationViewport } from './conversationViewportCache'
 import type { ConversationVirtualizer } from './useConversationVirtualizer'
 
 afterEach(() => vi.unstubAllGlobals())
+
+it('offers to jump to latest after restoring a reading position without a native scroll event', () => {
+  const key = 'restore-reading'
+  cacheConversationScrollSnapshot(key, { pinnedToBottom: false, distanceFromBottomPx: 600 })
+  const viewport = document.createElement('div')
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 400 },
+    scrollHeight: { value: 1600 },
+  })
+  const input: ConversationScrollInput = {
+    messages: [{ id: 'reply', role: 'assistant', content: 'Done', status: 'done', createdAt: '' }],
+    scrollRef: { current: viewport },
+  }
+  const state = createConversationScrollState(key, input)
+  const dispose = state.subscribe(() => {})
+  state.update(input, {
+    scrollRef: input.scrollRef,
+    externalScrollInteractionRef: undefined,
+    contentRef: { current: null },
+    virtualizerRef: { current: null },
+    owner: { lease: null },
+  })
+  expect(viewport.scrollTop).toBe(600)
+  expect(state.getSnapshot().showScrollButton).toBe(true)
+  dispose()
+  evictConversationViewport(key)
+})
 
 it('follows the measured transcript end without scrolling into temporary Markdown overflow', () => {
   const viewport = document.createElement('div')

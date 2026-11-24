@@ -115,8 +115,7 @@ export function createConversationScrollState(
   }
   function publish(change: Partial<ScrollSnapshot> = {}) {
     const next = { ...state, ...change }
-    // A streaming viewport already disables TanStack follow. Starting and
-    // stopping spring frames inside that period does not change React's policy.
+    // A streaming viewport already disables TanStack follow during native animation.
     next.virtualAnchorToEnd =
       next.mode === 'follow' && !streaming && !autoScrollSuspended && nativeFollow === null
     if (
@@ -248,6 +247,10 @@ export function createConversationScrollState(
     }
     readerState.lastScrollPosition = viewport.scrollTop
   }
+  const publishScrollButton = (distanceFromBottom: number) => {
+    const showScrollButton = distanceFromBottom > BOTTOM_THRESHOLD
+    if (state.showScrollButton !== showScrollButton) publish({ showScrollButton })
+  }
   const save = (measuredDistanceFromBottomPx?: number) => {
     if (!owned()) return
     const viewport = scrollRef.current
@@ -269,11 +272,7 @@ export function createConversationScrollState(
     }
     lastSnapshot = { key: currentScrollKey, snapshot }
     if (currentScrollKey) setConversationScrollSnapshot(currentScrollKey, snapshot)
-    // Follow steps already measured the range and read back their applied offset.
-    publish({
-      showScrollButton:
-        (measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport)) > BOTTOM_THRESHOLD,
-    })
+    publishScrollButton(measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport))
   }
   const followEnd = (viewport: HTMLDivElement) => {
     const nativeHeight = viewport.scrollHeight
@@ -347,6 +346,7 @@ export function createConversationScrollState(
       restoreConversationAnchor(viewport, snapshot)
     } else if (state.mode === 'read') restoreReaderPositionFromLayout()
     else follow()
+    if (state.mode === 'read') publishScrollButton(getDistanceFromBottom(viewport))
     traceHistoryLayout('layout')
   }
   const handleVirtualLayoutChange = () => {
