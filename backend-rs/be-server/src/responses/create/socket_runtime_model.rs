@@ -112,15 +112,16 @@ fn apply_crd(
     spec: &Value,
     name: &str,
 ) -> Result<(), FastApiError> {
-    let full = extract_model_config(spec).map_err(|error| match error {
-        ModelConfigError::NoEnv => FastApiError::internal(),
-        ModelConfigError::MaskedApiKey | ModelConfigError::CryptoConfiguration => {
-            FastApiError::detail(
+    let full = match extract_model_config(spec) {
+        Ok(full) => full,
+        Err(ModelConfigError::NoEnv) => return Ok(()),
+        Err(ModelConfigError::MaskedApiKey | ModelConfigError::CryptoConfiguration) => {
+            return Err(FastApiError::detail(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Cloud model credentials are unavailable; check the encryption configuration",
-            )
+            ));
         }
-    })?;
+    };
     let full = Value::Object(full);
     config.insert(
         "model_id".into(),
