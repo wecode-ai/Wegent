@@ -1,6 +1,7 @@
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { Button } from '@/components/ui/button'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -86,6 +87,15 @@ export function StandInConversation({
     },
     active
   )
+  const showModelSelector = scope === 'collaboration'
+  const conversationModelControls =
+    !showModelSelector && modelControls.unavailable
+      ? {
+          ...modelControls,
+          unavailableReason: undefined,
+          error: t('standIn.errors.conversation_profile_model_unavailable'),
+        }
+      : modelControls
   const aliases = getUnambiguousWorkbenchDeviceAliases(workbench?.state.devices ?? [])
   const persistedTaskExists = Boolean(
     workbench?.runtimeTaskReminders.items.some(
@@ -210,11 +220,25 @@ export function StandInConversation({
         onAddressChange={setAddress}
         sendEphemeral={false}
         showExecutionTools={false}
+        showModelSelector={showModelSelector}
+        composerHeader={
+          !showModelSelector && modelControls.unavailable && !modelControls.loading ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 self-start md:min-h-8"
+              data-testid="stand-in-conversation-model-retry"
+              onClick={modelControls.refreshModelCatalog}
+            >
+              {t('standIn.errors.reload_conversation_models')}
+            </Button>
+          ) : null
+        }
         hideProcessing
         assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
-        modelControls={modelControls}
+        modelControls={conversationModelControls}
         expanded
         active={active}
         placeholder={t(

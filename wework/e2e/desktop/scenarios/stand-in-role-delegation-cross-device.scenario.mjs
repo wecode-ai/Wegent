@@ -3,12 +3,7 @@ import { dirname, join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
-import {
-  CLOUD_DEVICE_ID,
-  fetchJson,
-  selectE2EModel,
-  waitForLogPattern,
-} from '../modules/shared.mjs'
+import { CLOUD_DEVICE_ID, fetchJson, waitForLogPattern } from '../modules/shared.mjs'
 import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 import {
   assistantMessage,
@@ -295,7 +290,6 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
-      await selectE2EModel(control, undefined, undefined, CHAT)
       await cloud.restartCloudExecutor({
         async beforeSpawn() {
           await control.command('fill', input, { value: REQUEST })

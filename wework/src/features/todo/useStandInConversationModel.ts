@@ -16,7 +16,7 @@ export function useStandInConversationModel(
   services: WorkbenchServices | undefined,
   settings: WorkspaceStandInSettings,
   active = true
-): ConversationModelControls {
+): ConversationModelControls & { refreshModelCatalog(): void } {
   // Stand-in conversations require the Codex approval path. Other profile uses
   // retain their saved runtime catalog through useStandInModels's default.
   const catalog = useStandInModels(services, settings, 'codex', active)
@@ -59,6 +59,7 @@ export function useStandInConversationModel(
     loading,
     unavailable: unsupported || (!loading && !selectedIdentity),
     error: catalog.error,
+    refreshModelCatalog: catalog.refresh,
     unavailableReason: unsupported ? 'conversation_runtime_unsupported' : undefined,
     onModelSelectorOpenChange: open => {
       if (open) catalog.refresh()

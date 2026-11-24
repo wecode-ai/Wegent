@@ -26,7 +26,7 @@ Stand-in replies on an Issue show the owning user followed by the role in parent
 
 ## Stand-in chat and desktop notifications
 
-From **Collaboration → My work**, the right-hand **Stand-in** tab lists work by role. Select work to continue its original task conversation inline. The home only lists Issue-related work and exposes **Assistant settings**; general chat remains in **My assistant**. Board connection guidance remains until an enabled identity connects an accessible board. The home keeps the assistant tab and one Issue detail tab; opening another Issue replaces the current detail, while reopening preserves drafts and private chat is not automatically published to Issues.
+From **Collaboration → My work**, the right-hand **Stand-in** tab lists work by role. Select work to continue its original task conversation inline. The home only lists Issue-related work and exposes **Assistant settings**. Select **Chat** to talk with the stand-in about collaboration. Board connection guidance remains until an enabled identity connects an accessible board. The home keeps the assistant tab and one Issue detail tab; opening another Issue replaces the current detail, while reopening preserves drafts and private chat is not automatically published to Issues.
 
 Keep sending requests when the previous reply ends or a background result starts another reply. Messages are delivered into the original conversation according to the current turn state.
 
@@ -183,15 +183,20 @@ Open **left sidebar → My Stand-in → Stand-in details → Manage stand-in →
 | Forget          | Choose Forget on the record and confirm; cancel preserves it. Forgetting is not conversation archival or deletion of source messages/projects                                  |
 | Recover         | Inspect errors and retry. Restore a disconnected source/role or choose a valid scope; the panel does not silently save an invalid scope as personal memory                     |
 
+<a id="stand-in-model-selection"></a>
+
+
 ## Model selection
 
 Stand-in profiles support cloud models and custom models configured on the execution device. Cloud models use that device's connected Wework cloud account; local custom models use its provider configuration and authentication. Concrete work created by a stand-in uses the saved model selection. After switching execution devices, confirm that the selected device has the required model configuration and access.
 
-Stand-in chats inherit the profile's saved model and reasoning effort by default, with temporary choices available inside each chat. When a later save actually changes the model or effort, existing chats inherit the new settings from the next message; the current turn is not restarted. Profile changes do not alter existing work tasks' working directories or sessions.
+In **My Stand-in → select the primary stand-in or role → Stand-in details → Manage stand-in → Execution environment**, open the execution settings, choose a model and reasoning effort, and save. My Stand-in chats use the updated profile settings from the next message. The current turn continues, and existing work tasks keep their working directories and sessions.
 
-To switch models temporarily, use the model selector in the primary or role chat composer. Before the first message, the selection applies directly. Execution devices that support thread-based routing switch providers in the original session, preserving its identity, history and draft. Ordinary conversations and the stand-in use the same Codex route, so switching models in the current version does not require a new session or a reference to the old conversation. Only older execution-device versions may show a compatibility prompt; finish the active turn before switching. Temporary selections do not change the saved profile or ordinary chats.
+In **Collaboration → My work → Stand-in**, select **Chat** and use the composer’s model selector to switch models temporarily. Before the first message, the selection applies directly. Execution devices that support thread-based routing switch providers in the original session, preserving its identity, history and draft. Older devices may show a compatibility prompt and start a new session on the next message. Finish the active turn before switching. Temporary selections apply only to that chat.
 
-Stand-in chats currently require the Codex runtime for operation approvals; the Claude Code runtime is not yet supported. Saved Claude Code models are retained without automatic replacement. To continue chatting, manually select an available Codex model using the chat composer's model selector. Claude Code behavior in ordinary work tasks remains unchanged.
+Stand-in chats currently require the Codex runtime for operation approvals. If the profile uses a Claude Code model, select an available Codex model in the execution settings and save before continuing the chat.
+
+If the current model is unavailable, select **Reload models** in the chat. When an older session’s provider cannot be read or is incompatible with the profile model, select **Continue in a new session**. After confirmation, your next message starts a new session in the same stand-in chat and preserves its history and draft.
 
 <a id="stand-in-source-session-policy"></a>
 
@@ -361,7 +366,7 @@ Roles can receive personal events or all subscribable repository events. The plu
 
 ## Set up your stand-in
 
-On first use, select **Chat now, connect later** to enter the conversation directly. The completed guide is remembered without saving or enabling unconfirmed source settings. Edited connection drafts require confirmation before discarding. If recording completion fails, the guide remains available for retry. **Leave assistant** closes the current page without completing the guide.
+On first use, choose a model in the setup guide. You can change it later under **Stand-in details → Manage stand-in → Execution environment**. Select **Chat now, connect later** to enter the conversation directly. This saves the selected model and records setup completion. Unconfirmed source settings are discarded. Edited connection drafts require confirmation before discarding. If recording completion fails, the guide remains available for retry. **Leave assistant** closes the current page without completing the guide.
 
 Alternatively, connect the apps you use, select **Continue**, review the scope, then confirm **Get started**. The connection step reuses the project, DingTalk, email, and other connections from stand-in settings, including their authorization and scope controls.
 

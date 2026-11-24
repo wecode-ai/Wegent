@@ -894,6 +894,7 @@ export function StandInOverviewPage({
         projects: props.projects,
         localDeviceId: state.currentDeviceId,
         devices: props.devices,
+        services: props.services,
         onSelectDevice: primaryDeviceId
           ? undefined
           : device => {
