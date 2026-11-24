@@ -139,7 +139,7 @@ export function AssistantMessage({
     () => getFileEditDurationsBySourceBlock(displayBlocks),
     [displayBlocks]
   )
-  const processingSegments = splitProcessingBlocks(displayBlocks)
+  const processingSegments = useMemo(() => splitProcessingBlocks(displayBlocks), [displayBlocks])
   const hasBlocks = displayBlocks.length > 0
   const hasProcessingActivity =
     hasBlocks || message.blocks?.some(block => block.type === 'thinking')
@@ -168,6 +168,15 @@ export function AssistantMessage({
   )
   const orderedRuntimeSegments = renderProjection.segments
   const hasProcessingAfterContent = renderProjection.interleaved
+  const orderedProcessingSegments = useMemo(
+    () =>
+      hasProcessingAfterContent
+        ? orderedRuntimeSegments.map(segment =>
+            segment.kind === 'content' ? [] : splitProcessingBlocks(segment.blocks)
+          )
+        : [],
+    [hasProcessingAfterContent, orderedRuntimeSegments]
+  )
   const expandedToolDetailStateKeys = displayBlocks.map(block =>
     getProcessingDetailStateKey(processingItemScopeKey, block.id)
   )
@@ -215,7 +224,11 @@ export function AssistantMessage({
     [renderVisualization, message]
   )
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
-  const processingTimeline = shouldShowProcessingSummary
+  const showProcessingTimeline =
+    shouldShowProcessingSummary &&
+    !hasProcessingAfterContent &&
+    (!usesFinalProcessingShell || isFinalProcessingExpanded)
+  const processingTimeline = showProcessingTimeline
     ? processingSegments.map((segment, index) => (
         <ToolBlocksDisplay
           key={`${segment.kind}:${segment.blocks[0]?.id}`}
@@ -277,7 +290,7 @@ export function AssistantMessage({
           )
         }
 
-        const segments = splitProcessingBlocks(segment.blocks)
+        const segments = orderedProcessingSegments[segmentIndex]
         return (
           <Fragment key={`processing:${segment.id}`}>
             {segments.map((processingSegment, processingIndex) => (

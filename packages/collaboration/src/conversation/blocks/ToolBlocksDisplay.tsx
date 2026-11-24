@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, memo, useMemo, useState } from 'react'
 import { useConversationTranslation } from '../ConversationTranslation'
 import { useToolInteractionServices } from '../ToolInteractionServices'
 import {
@@ -88,7 +88,7 @@ interface ToolBlocksDisplayProps {
   onOpenSubagent?: (block: SubagentBlock) => void
 }
 
-export function ToolBlocksDisplay({
+export const ToolBlocksDisplay = memo(function ToolBlocksDisplay({
   blocks,
   fileEditDurationsBySourceBlock,
   isStreaming,
@@ -112,17 +112,22 @@ export function ToolBlocksDisplay({
   const { t } = useConversationTranslation()
   const renderUserInput =
     useToolInteractionServices().renderRequestUserInput ?? renderDefaultUserInput
-  const retryBlock =
-    blocks.find(isRuntimeRateLimitWaitBlock) ??
-    blocks.find(
-      block =>
-        isRuntimeRetryWaitBlock(block) &&
-        block.type === 'tool' &&
-        block.toolInput?.retry_reason === 'overload'
-    ) ??
-    blocks.find(isRuntimeRetryWaitBlock)
+  const { retryBlock, hasRunningBlock } = useMemo(
+    () => ({
+      retryBlock:
+        blocks.find(isRuntimeRateLimitWaitBlock) ??
+        blocks.find(
+          block =>
+            isRuntimeRetryWaitBlock(block) &&
+            block.type === 'tool' &&
+            block.toolInput?.retry_reason === 'overload'
+        ) ??
+        blocks.find(isRuntimeRetryWaitBlock),
+      hasRunningBlock: blocks.some(block => block.status !== 'done' && block.status !== 'error'),
+    }),
+    [blocks]
+  )
   const retryWaiting = Boolean(retryBlock)
-  const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const isRunning =
     (isStreaming && (processingPhase === 'live' || showInterToolThinking)) || hasRunningBlock
   const groupExpansionKeys = useMemo(
@@ -442,4 +447,4 @@ export function ToolBlocksDisplay({
     </>
   )
   return <div className="mb-3 min-w-0 w-full">{processingBody}</div>
-}
+})
