@@ -300,6 +300,23 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
   })
 
+  test('publishes the task snapshot and start transition together', () => {
+    const store = new RuntimeTaskLifecycleStore('batched-turn')
+    store.syncRuntimeWork(runtimeWork(task()))
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    store.batch(() => {
+      store.syncRuntimeTask(address, task({ running: true }))
+      store.turnStarted(address, 'turn-1')
+    })
+
+    expect(listener).toHaveBeenCalledOnce()
+    const observed = store.selectTask(store.getSnapshot(), address)
+    expect(observed?.execution.running).toBe(true)
+    expect(observed?.turn.id).toBe('turn-1')
+  })
+
   test('keeps execution busy while replacing the running spinner with a waiting signal', () => {
     const store = new RuntimeTaskLifecycleStore('waiting-input-snapshot-test')
     store.syncRuntimeWork(

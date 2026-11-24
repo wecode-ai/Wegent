@@ -348,13 +348,15 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
         terminalTurnId !== currentTurnId &&
         store.isPriorTurn(address, terminalTurnId)
       )
-      if (payload.task && !terminalTurnIsPrior) store.syncRuntimeTask(address, payload.task)
-      const activeTurnId = store.getTask(address)?.turn.id
-      if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
-        return { address, settled: false, terminalTurnId }
-      }
-      store.turnSettled(address, terminalTurnId, outcome)
-      return { address, settled: true, terminalTurnId }
+      return store.batch(() => {
+        if (payload.task && !terminalTurnIsPrior) store.syncRuntimeTask(address, payload.task)
+        const activeTurnId = store.getTask(address)?.turn.id
+        if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
+          return { address, settled: false, terminalTurnId }
+        }
+        store.turnSettled(address, terminalTurnId, outcome)
+        return { address, settled: true, terminalTurnId }
+      })
     }
 
     const reconcileTerminalTranscript = async (
@@ -519,8 +521,10 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
       onChatStart: payload => {
         const address = matchingLifecycleAddress(store, payload)
         if (!address) return
-        if (payload.task) store.syncRuntimeTask(address, payload.task)
-        store.turnStarted(address, payload.subtaskId?.trim() || null)
+        store.batch(() => {
+          if (payload.task) store.syncRuntimeTask(address, payload.task)
+          store.turnStarted(address, payload.subtaskId?.trim() || null)
+        })
         watchActiveTurnSettlement(address)
       },
       onBlockCreated: payload => {

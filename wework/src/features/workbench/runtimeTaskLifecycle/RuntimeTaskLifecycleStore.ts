@@ -77,6 +77,8 @@ export class RuntimeTaskLifecycleStore {
   private unreadRevision = 0
   private version = 0
   private snapshot = EMPTY_STORE_SNAPSHOT
+  private batchDepth = 0
+  private publishPending = false
 
   constructor(userId: number | string | null | undefined) {
     const storageScope = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}`
@@ -100,6 +102,16 @@ export class RuntimeTaskLifecycleStore {
   }
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
+
+  batch<T>(update: () => T): T {
+    this.batchDepth++
+    try {
+      return update()
+    } finally {
+      this.batchDepth--
+      if (this.batchDepth === 0 && this.publishPending) this.publish()
+    }
+  }
 
   isNewlyUnread(key: string): boolean {
     const state = this.unreadStateByTask.get(key)
@@ -855,6 +867,11 @@ export class RuntimeTaskLifecycleStore {
   }
 
   private publish(): void {
+    if (this.batchDepth > 0) {
+      this.publishPending = true
+      return
+    }
+    this.publishPending = false
     const tasks = new Map<string, RuntimeTaskLifecycleSnapshot>()
     const runningTaskKeys = new Set<string>()
     const queuedTaskKeys = new Set<string>()

@@ -75,6 +75,11 @@ export function installTurnUpdateProbe() {
   const longTasks = []
   const observer = new PerformanceObserver(list => longTasks.push(...list.getEntries()))
   observer.observe({ type: 'longtask' })
+  const longFrames = []
+  const frameObserver = PerformanceObserver.supportedEntryTypes?.includes('long-animation-frame')
+    ? new PerformanceObserver(list => longFrames.push(...list.getEntries()))
+    : null
+  frameObserver?.observe({ type: 'long-animation-frame' })
   const settled = new Set()
   let onSettled
   const listener = ({ event, payload }) => {
@@ -109,6 +114,10 @@ export function installTurnUpdateProbe() {
       listeners.delete(listener)
       longTasks.push(...observer.takeRecords())
       observer.disconnect()
+      if (frameObserver) {
+        longFrames.push(...frameObserver.takeRecords())
+        frameObserver.disconnect()
+      }
       delete window.__weworkProfileTurnUpdates
       let index = 0
       return updates
@@ -121,10 +130,28 @@ export function installTurnUpdateProbe() {
             index++
           }
           const task = longTasks[index]
+          const frame = longFrames.find(
+            entry => entry.startTime <= observedAt && observedAt < entry.startTime + entry.duration
+          )
           return {
             status,
             observedAt,
             longTaskMs: task && task.startTime <= observedAt ? task.duration : 0,
+            ...(frame && {
+              frame: {
+                durationMs: frame.duration,
+                scripts: frame.scripts
+                  .map(script => ({
+                    source: script.sourceURL,
+                    functionName: script.sourceFunctionName,
+                    position: script.sourceCharPosition,
+                    durationMs: script.duration,
+                    forcedLayoutMs: script.forcedStyleAndLayoutDuration,
+                  }))
+                  .sort((left, right) => right.durationMs - left.durationMs)
+                  .slice(0, 5),
+              },
+            }),
           }
         })
     },
@@ -656,6 +683,13 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
+      const sidebar = '[data-testid="desktop-sidebar"]'
+      if ((await control.command('getAttribute', sidebar, { value: 'aria-hidden' })) === 'true') {
+        await control.command('clickWhenEnabled', '[data-testid="expand-sidebar-button"]', {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+      }
       await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]', {
         visible: true,
         timeoutMs: uiTimeoutMs,
