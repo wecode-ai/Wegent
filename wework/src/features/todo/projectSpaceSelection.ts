@@ -144,7 +144,7 @@ export async function findProjectSpaceContextForTaskInStores<
   if (store && apis.length === 0) throw new ProjectSpaceTaskContextUnavailableError(store)
   let context: Awaited<ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']>>
   try {
-    context = await findProjectSpaceContextForTask(apis, task)
+    context = await findProjectSpaceContextForTask(apis, task, 5_000, { waitForLateResult: false })
   } catch (error) {
     if (
       !expected ||
@@ -154,7 +154,9 @@ export async function findProjectSpaceContextForTaskInStores<
       throw error
     return findProjectSpaceContextForTask(
       projectSpaceTaskContextApisForTask(null, local, backend),
-      task
+      task,
+      5_000,
+      { waitForLateResult: false }
     )
   }
   if (
@@ -165,7 +167,9 @@ export async function findProjectSpaceContextForTaskInStores<
     return context
   return findProjectSpaceContextForTask(
     projectSpaceTaskContextApisForTask(null, local, backend),
-    task
+    task,
+    5_000,
+    { waitForLateResult: false }
   )
 }
 
@@ -282,7 +286,8 @@ export function projectSupportsRobotAutomation(project: CloudProject): boolean {
 export async function findProjectSpaceContextSourceForTask<TApi extends ProjectSpaceTaskContextApi>(
   apis: TApi[],
   task: RuntimeTaskAddress,
-  timeoutMs = 5_000
+  timeoutMs = 5_000,
+  { waitForLateResult = true }: { waitForLateResult?: boolean } = {}
 ): Promise<ProjectSpaceTaskContextSource<TApi>> {
   type TaskContextSource = ProjectSpaceTaskContextSource<TApi>
   const results: Array<PromiseSettledResult<TaskContextSource> | undefined> = new Array(apis.length)
@@ -314,10 +319,9 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
     }).then(() => ({ kind: 'timeout' as const })),
   ])
   if (timeoutId !== undefined) clearTimeout(timeoutId)
-  // The selection window limits waiting for a better match when a usable
-  // context exists. An unanswered request cannot establish an absent binding.
-  if (outcome.kind === 'timeout' && !results.some(result => result?.status === 'fulfilled'))
-    outcome = await lookup
+  // A timeout without a usable result remains a transient lookup failure. The
+  // caller retries it instead of treating the task as permanently unbound.
+  if (outcome.kind === 'timeout' && waitForLateResult) outcome = await lookup
   if (outcome.kind === 'user-context') return outcome.context
   const settledResults = results.filter(result => result !== undefined)
   const sources = settledResults.flatMap(result =>
@@ -338,9 +342,10 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
 export async function findProjectSpaceContextForTask(
   apis: ProjectSpaceTaskContextApi[],
   task: RuntimeTaskAddress,
-  timeoutMs = 5_000
+  timeoutMs = 5_000,
+  options?: { waitForLateResult?: boolean }
 ): ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']> {
-  return (await findProjectSpaceContextSourceForTask(apis, task, timeoutMs)).context
+  return (await findProjectSpaceContextSourceForTask(apis, task, timeoutMs, options)).context
 }
 
 export async function loadProjectSpaceOptions(
