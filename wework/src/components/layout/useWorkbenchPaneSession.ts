@@ -4,7 +4,7 @@ import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { WorkbenchOwnerLeaseContext } from '@/features/workbench/workbenchContexts'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useCallback, useContext, useId, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import { createWorkbenchPaneSessionSource } from './workbenchPaneSessionSource'
 import type { WorkbenchPaneSessionOptions } from './workbenchPaneSessionTypes'
 
@@ -23,7 +23,6 @@ export function useWorkbenchPaneSession({
   presentationActive = true,
   separateTranscript = false,
 }: WorkbenchPaneSessionOptions) {
-  const queueDiagnosticSessionId = useId()
   const { t } = useTranslation('common')
   const [draftEditVersions] = useState(() => new Map<string, number>())
   const workbench = useWorkbenchPaneContext()
@@ -40,7 +39,6 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask,
       debugSnapshotEnabled,
       presentationActive,
-      queueDiagnosticSessionId,
       workbench,
       lifecycleStore,
       attachmentState,
@@ -51,7 +49,6 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask,
       debugSnapshotEnabled,
       presentationActive,
-      queueDiagnosticSessionId,
       workbench,
       lifecycleStore,
       attachmentState,
