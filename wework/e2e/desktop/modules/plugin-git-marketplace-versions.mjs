@@ -353,7 +353,6 @@ export async function verifyGitMarketplaceVersions({ codexHome, control, executo
       '.codex-plugin/plugin.json'
     )
     await access(otherPackage)
-    await access(join(executorHome, otherMarker))
 
     const openRemoval = async installedMarket => {
       const activeCatalog = join(installedMarket.installedRoot, '.agents/plugins/marketplace.json')
@@ -534,6 +533,7 @@ export async function verifyGitMarketplaceVersions({ codexHome, control, executo
     await assert.rejects(access(installedRoot), { code: 'ENOENT' })
     await assert.rejects(access(authMarker), { code: 'ENOENT' })
     await access(otherPackage)
+    await access(join(executorHome, otherMarker))
     await request('plugin/uninstall', { pluginId: otherCandidateId })
     await request('plugin/uninstall', { pluginId: otherId })
     await request('marketplace/remove', { marketplaceName: otherMarketplace })
