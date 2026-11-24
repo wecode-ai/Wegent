@@ -24,3 +24,8 @@ Disconnect releases the Engine.IO client and generator even after namespace
 rejection or failed close sends. Failed/cancelled setup and disconnect use a
 bounded cleanup guard. The vendor's test_async_lifetime suite uses local
 WebSockets, including a peer that ignores Engine.IO Close, without external services.
+
+Reader registration is atomic with cancellation. Manual disconnect bounds both
+namespace and Engine.IO Close sends and releases local transport on timeout.
+Clearing the stream wakes each pending reader to EOF without retaining stale
+wakers; generator regressions also cover lock contention and changed wakers.

@@ -15,14 +15,14 @@ use tf_rust_engineio::header::{HeaderMap, HeaderValue};
 use tokio::{
     sync::RwLock,
     task::JoinHandle,
-    time::{sleep, Duration, Instant},
+    time::{sleep, timeout, Duration, Instant},
 };
 
 use super::{
     ack::Ack,
     builder::ClientBuilder,
     callback::{Callback, DynAsyncCallback},
-    lifetime::{ClientLifetime, TransportCleanup},
+    lifetime::{ClientLifetime, TransportCleanup, CLEANUP_TIMEOUT},
 };
 use crate::{
     asynchronous::socket::Socket as InnerSocket,
@@ -290,6 +290,8 @@ impl Client {
 
         let mut client_clone = self.background_clone();
 
+        // Cancellation must wait until a concurrently started reader is registered.
+        let mut poll_task = self.lifetime.as_ref().unwrap().poll_task.lock().unwrap();
         let handle = tokio::runtime::Handle::current().spawn(async move {
             let _cleanup = TransportCleanup::for_reader(
                 client_clone.socket.clone(),
@@ -385,7 +387,7 @@ impl Client {
                 }
             }
         });
-        *self.lifetime.as_ref().unwrap().poll_task.lock().unwrap() = Some(handle);
+        *poll_task = Some(handle);
 
         Ok(())
     }
@@ -559,18 +561,32 @@ impl Client {
         let disconnect_packet =
             Packet::new(PacketId::Disconnect, self.nsp.clone(), None, None, 0, None);
 
-        let send_result = {
-            let socket = self.socket.read().await;
-            if socket.is_connected() {
-                match socket.send(disconnect_packet).await {
-                    Err(Error::IllegalActionBeforeOpen()) => Ok(()),
-                    result => result,
+        let result = match timeout(CLEANUP_TIMEOUT, async {
+            let send_result = {
+                let socket = self.socket.read().await;
+                if socket.is_connected() {
+                    match socket.send(disconnect_packet).await {
+                        Err(Error::IllegalActionBeforeOpen()) => Ok(()),
+                        result => result,
+                    }
+                } else {
+                    Ok(())
                 }
-            } else {
-                Ok(())
+            };
+            let close_result = self.socket.read().await.disconnect().await;
+            send_result.and(close_result)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                self.socket.read().await.release_transport().await;
+                Err(Error::IncompleteIo(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Socket.IO disconnect timed out",
+                )))
             }
         };
-        let close_result = self.socket.read().await.disconnect().await;
         cleanup.disarm();
 
         // Abort all in-flight dispatch tasks (including terminal ones) after
@@ -582,7 +598,7 @@ impl Client {
         // possible; the ordering above makes it unnecessary.)
         self.abort_dispatch(true);
 
-        send_result.and(close_result)
+        result
     }
 
     /// Sends a message to the server but `alloc`s an `ack` to check whether the

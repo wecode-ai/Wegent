@@ -182,6 +182,13 @@ async fn connected_disconnect_releases_websocket_while_client_is_retained() {
     let packets = server.assert_released().await;
     assert!(packets.iter().any(|packet| packet == "41/local-executor,"));
     assert!(packets.iter().any(|packet| packet == "1"));
+    assert!(
+        packets
+            .iter()
+            .position(|packet| packet == "41/local-executor,")
+            < packets.iter().position(|packet| packet == "1"),
+        "namespace Disconnect must precede Engine.IO Close"
+    );
     assert!(client.emit("late", json!(null)).await.is_err());
     client
         .disconnect()
@@ -239,7 +246,7 @@ async fn last_client_drop_aborts_pending_error_callback() {
     assert_callbacks_released(weak).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn error_callback_can_disconnect_its_own_client() {
     let mut server = Server::rejecting().await;
     let (tx, mut disconnected) = mpsc::unbounded_channel();
@@ -523,10 +530,18 @@ async fn engineio_disconnect_retains_websocket_until_engine_client_is_dropped() 
     server.assert_released().await;
 }
 
+#[derive(Clone, Copy)]
+enum PollingBehavior {
+    ReconnectAfterProtocolError,
+    FailConnectSend,
+    RejectNamespace,
+    StallNamespaceDisconnect,
+}
+
 struct PollingState {
     next_session: AtomicUsize,
     reconnected_poll: AtomicBool,
-    fail_connect_send: bool,
+    behavior: PollingBehavior,
     close_received: mpsc::UnboundedSender<()>,
     close_cancelled: mpsc::UnboundedSender<()>,
 }
@@ -536,10 +551,11 @@ struct PollingServer {
     task: JoinHandle<()>,
     close_received: mpsc::UnboundedReceiver<()>,
     close_cancelled: mpsc::UnboundedReceiver<()>,
+    request_failed: Arc<AtomicBool>,
 }
 
 impl PollingServer {
-    async fn start(fail_connect_send: bool) -> Self {
+    async fn start(behavior: PollingBehavior) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/", listener.local_addr().unwrap());
         let (received_tx, close_received) = mpsc::unbounded_channel();
@@ -547,17 +563,28 @@ impl PollingServer {
         let state = Arc::new(PollingState {
             next_session: AtomicUsize::new(1),
             reconnected_poll: AtomicBool::new(false),
-            fail_connect_send,
+            behavior,
             close_received: received_tx,
             close_cancelled: cancelled_tx,
         });
+        let request_failed = Arc::new(AtomicBool::new(false));
+        let failed = request_failed.clone();
         let task = tokio::spawn(async move {
             let mut requests = JoinSet::new();
             loop {
                 tokio::select! {
                     accepted = listener.accept() => {
                         let (stream, _) = accepted.unwrap();
-                        requests.spawn(serve_polling_request(stream, state.clone()));
+                        let state = state.clone();
+                        let failed = failed.clone();
+                        requests.spawn(async move {
+                            if let Err(error) = std::panic::AssertUnwindSafe(
+                                serve_polling_request(stream, state)
+                            ).catch_unwind().await {
+                                failed.store(true, Ordering::SeqCst);
+                                std::panic::resume_unwind(error);
+                            }
+                        });
                     }
                     result = requests.join_next(), if !requests.is_empty() => {
                         result.unwrap().unwrap();
@@ -570,6 +597,7 @@ impl PollingServer {
             task,
             close_received,
             close_cancelled,
+            request_failed,
         }
     }
 }
@@ -577,14 +605,23 @@ impl PollingServer {
 impl Drop for PollingServer {
     fn drop(&mut self) {
         self.task.abort();
+        if !std::thread::panicking() {
+            assert!(
+                !self.request_failed.load(Ordering::SeqCst),
+                "polling protocol worker panicked"
+            );
+        }
     }
 }
 
-async fn read_polling_request(stream: &mut TcpStream) -> (String, url::Url, String) {
+async fn read_polling_request(stream: &mut TcpStream) -> Option<(String, url::Url, String)> {
     let mut request = Vec::new();
     let mut buffer = [0; 1024];
     let header_end = loop {
         let count = stream.read(&mut buffer).await.unwrap();
+        if count == 0 && request.is_empty() {
+            return None;
+        }
         assert_ne!(count, 0, "polling request ended before its headers");
         request.extend_from_slice(&buffer[..count]);
         if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
@@ -609,11 +646,13 @@ async fn read_polling_request(stream: &mut TcpStream) -> (String, url::Url, Stri
     let body = std::str::from_utf8(&request[header_end..header_end + length])
         .unwrap()
         .to_owned();
-    (method, url, body)
+    Some((method, url, body))
 }
 
 async fn serve_polling_request(mut stream: TcpStream, state: Arc<PollingState>) {
-    let (method, url, body) = read_polling_request(&mut stream).await;
+    let Some((method, url, body)) = read_polling_request(&mut stream).await else {
+        return;
+    };
     let query = url
         .query_pairs()
         .collect::<std::collections::HashMap<_, _>>();
@@ -623,7 +662,7 @@ async fn serve_polling_request(mut stream: TcpStream, state: Arc<PollingState>) 
     );
     assert_eq!(query.get("EIO").map(|value| value.as_ref()), Some("4"));
     let session = query.get("sid").map(|value| value.as_ref());
-    if state.fail_connect_send
+    if matches!(state.behavior, PollingBehavior::FailConnectSend)
         && method == "POST"
         && session == Some("polling-1")
         && body.starts_with("40/local-executor,")
@@ -631,7 +670,12 @@ async fn serve_polling_request(mut stream: TcpStream, state: Arc<PollingState>) 
         // Close without a response so the initial namespace send fails.
         return;
     }
-    if method == "POST" && session == Some("polling-1") && body == "1" {
+    if method == "POST"
+        && session == Some("polling-1")
+        && (body == "1"
+            || (matches!(state.behavior, PollingBehavior::StallNamespaceDisconnect)
+                && body == "41/local-executor,"))
+    {
         state.close_received.send(()).unwrap();
         // Never answer this Close POST. Only cancellation can finish it.
         assert_eq!(stream.read(&mut [0]).await.unwrap(), 0);
@@ -644,6 +688,16 @@ async fn serve_polling_request(mut stream: TcpStream, state: Arc<PollingState>) 
             format!(
                 r#"0{{"sid":"polling-{id}","upgrades":[],"pingInterval":100000,"pingTimeout":100000}}"#
             )
+        }
+        ("GET", Some("polling-1"))
+            if matches!(state.behavior, PollingBehavior::RejectNamespace) =>
+        {
+            r#"44/local-executor,{"message":"invalid token"}"#.to_owned()
+        }
+        ("GET", Some("polling-1"))
+            if matches!(state.behavior, PollingBehavior::StallNamespaceDisconnect) =>
+        {
+            r#"40/local-executor,{"sid":"namespace-1"}"#.to_owned()
         }
         ("GET", Some("polling-1")) => {
             "40/local-executor,{\"sid\":\"namespace-1\"}\u{1e}4invalid-socketio-packet".to_owned()
@@ -669,7 +723,7 @@ async fn serve_polling_request(mut stream: TcpStream, state: Arc<PollingState>) 
 
 #[tokio::test]
 async fn hanging_polling_close_does_not_block_terminal_callback_or_reconnect() {
-    let mut server = PollingServer::start(false).await;
+    let mut server = PollingServer::start(PollingBehavior::ReconnectAfterProtocolError).await;
     let (connect_tx, mut connected) = mpsc::unbounded_channel();
     let (error_tx, mut errors) = mpsc::unbounded_channel();
     let (close_tx, mut closed) = mpsc::unbounded_channel();
@@ -739,7 +793,7 @@ async fn hanging_polling_close_does_not_block_terminal_callback_or_reconnect() {
 
 #[tokio::test]
 async fn failed_polling_connect_does_not_wait_for_an_unresponsive_close_request() {
-    let mut server = PollingServer::start(true).await;
+    let mut server = PollingServer::start(PollingBehavior::FailConnectSend).await;
     let url = server.url.clone();
     let mut connecting = tokio::spawn(async move {
         ClientBuilder::new(url)
@@ -762,4 +816,64 @@ async fn failed_polling_connect_does_not_wait_for_an_unresponsive_close_request(
         .await
         .expect("failed setup cleanup must cancel the unresponsive Close POST")
         .unwrap();
+}
+
+#[tokio::test]
+async fn manual_disconnect_bounds_polling_close_and_releases_pending_dispatch() {
+    for behavior in [
+        PollingBehavior::RejectNamespace,
+        PollingBehavior::StallNamespaceDisconnect,
+    ] {
+        assert_manual_disconnect_releases_polling(behavior).await;
+    }
+}
+
+async fn assert_manual_disconnect_releases_polling(behavior: PollingBehavior) {
+    let mut server = PollingServer::start(behavior).await;
+    let (tx, mut started) = mpsc::unbounded_channel();
+    let client = ClientBuilder::new(&server.url)
+        .namespace("/local-executor")
+        .transport_type(TransportType::Polling)
+        .reconnect(false)
+        .on(
+            if matches!(behavior, PollingBehavior::RejectNamespace) {
+                crate::Event::Error
+            } else {
+                crate::Event::Connect
+            },
+            move |_, socket| {
+                let tx = tx.clone();
+                async move {
+                    let capture = Arc::new(());
+                    tx.send(Arc::downgrade(&capture)).unwrap();
+                    let _capture = capture;
+                    let _socket = socket;
+                    std::future::pending::<()>().await;
+                }
+                .boxed()
+            },
+        )
+        .connect()
+        .await
+        .unwrap();
+    let weak = tokio::time::timeout(DEADLINE, started.recv())
+        .await
+        .expect("namespace response must reach the pending callback")
+        .unwrap();
+    let result = tokio::time::timeout(DEADLINE, client.disconnect())
+        .await
+        .expect("manual disconnect must bound an unanswered polling Close POST");
+    assert!(matches!(result, Err(crate::Error::IncompleteIo(error))
+        if error.kind() == std::io::ErrorKind::TimedOut));
+    tokio::time::timeout(DEADLINE, server.close_received.recv())
+        .await
+        .expect("manual disconnect must reach the stalled Close send")
+        .unwrap();
+    tokio::time::timeout(DEADLINE, server.close_cancelled.recv())
+        .await
+        .expect("manual disconnect must release the unanswered HTTP connection")
+        .unwrap();
+    assert_callbacks_released(weak).await;
+    assert!(client.emit("late", json!(null)).await.is_err());
+    client.disconnect().await.unwrap();
 }

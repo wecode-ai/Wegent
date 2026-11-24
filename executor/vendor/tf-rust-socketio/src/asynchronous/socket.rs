@@ -50,16 +50,25 @@ impl Socket {
         Ok(())
     }
 
-    /// Disconnects from the server by sending a socket.io `Disconnect` packet. This results
-    /// in the underlying engine.io transport to get closed as well.
-    pub async fn disconnect(&self) -> Result<()> {
+    /// Detach transport references before awaiting network shutdown.
+    async fn detach_transport(&self) -> Option<EngineClient> {
         self.connected.store(false, Ordering::Release);
         let engine_client = self.engine_client.lock().unwrap().take();
         // Engine.IO 0.9.2 only sends Close; it does not release its transport.
         // Remove both references before sending, so failure/cancellation also
         // drops the WebSocket instead of leaving it in this socket's stream.
         self.generator.clear().await;
-        if let Some(client) = engine_client {
+        engine_client
+    }
+
+    /// Release local transport references without waiting for a remote Close.
+    pub(crate) async fn release_transport(&self) {
+        drop(self.detach_transport().await);
+    }
+
+    /// Send Engine.IO Close after releasing this socket's transport references.
+    pub async fn disconnect(&self) -> Result<()> {
+        if let Some(client) = self.detach_transport().await {
             if client.is_connected() {
                 client.disconnect().await?;
             }

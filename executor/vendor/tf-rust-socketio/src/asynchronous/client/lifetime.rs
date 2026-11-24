@@ -13,7 +13,7 @@ use tokio::{
 use super::client::DispatchTask;
 use crate::asynchronous::socket::Socket;
 
-const CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
+pub(super) const CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Cleanup remains armed across awaits, including failed/cancelled setup.
 pub(super) struct TransportCleanup {
