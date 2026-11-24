@@ -378,7 +378,8 @@ describe('unified human response', () => {
       expect(await context!.respond(context!.pending[0], 'Allow')).toBe(false)
     })
     expect(harness.send).not.toHaveBeenCalled()
-    expect(screen.getByTestId('original-notification-entity')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('interaction-show-context'))
+    expect(await screen.findByTestId('original-notification-entity')).toBeInTheDocument()
     expect(canReplyToInteraction(context!.pending[0])).toBe(false)
   })
 

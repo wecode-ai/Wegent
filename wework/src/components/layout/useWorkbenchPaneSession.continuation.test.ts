@@ -14,6 +14,7 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { createScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { RuntimeConversationTurn } from '@/types/workbench'
@@ -64,7 +65,14 @@ const address = {
 } satisfies RuntimeTaskAddress
 const scopeKey = getRuntimeTaskChatScopeKey(address)
 const draft = 'Unsent follow-up question'
-const attachment = { id: 42, name: 'unsent.txt', url: '/unsent.txt', mimeType: 'text/plain' }
+const attachment = {
+  id: 42,
+  filename: 'unsent.txt',
+  mime_type: 'text/plain',
+  file_extension: '.txt',
+  local_path: '/unsent.txt',
+  status: 'ready' as const,
+}
 const codeComment = {
   id: 'draft-comment',
   filePath: '/workspace/original/app.ts',
@@ -272,11 +280,10 @@ beforeEach(() => {
     running: false,
     continuable: true,
   })
-  const sharedRevisions = new Map<string, number>()
+  const draftStore = createScopedDraftStore()
+  draftStore.write(scopeKey, draft)
   mocks.setInput.mockImplementation((scope: string, value: string) => {
-    const context = mocks.context.projectChat as { inputByScope: Record<string, string> }
-    context.inputByScope = { ...context.inputByScope, [scope]: value }
-    sharedRevisions.set(scope, (sharedRevisions.get(scope) ?? 0) + 1)
+    draftStore.write(scope, value)
   })
   mocks.context = {
     state: {
@@ -307,8 +314,10 @@ beforeEach(() => {
       setRuntimeTaskSelectedModelAndOptions: vi.fn(),
       setRuntimeTaskSelectedModelOption: vi.fn(),
       models: [],
+      draftStore,
       setInputForScope: mocks.setInput,
-      getInputRevisionForScope: (scope: string) => sharedRevisions.get(scope) ?? 0,
+      replaceInputForScope: draftStore.replace,
+      getInputRevisionForScope: (scope: string) => draftStore.read(scope).revision,
       captureAttachmentsForScope: (scope: string) => {
         const projectChat = mocks.context.projectChat as {
           attachmentStateByScope: Record<string, { attachments: Array<typeof attachment> }>
@@ -354,7 +363,7 @@ async function renderSession(currentRuntimeTask: RuntimeTaskAddress | null = add
 }
 
 function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession>) {
-  expect(session.input).toBe(draft)
+  expect(session.getInput()).toBe(draft)
   expect(session.attachments).toEqual([attachment])
   expect(session.codeCommentContexts).toEqual([codeComment])
   expect(mocks.setInput).not.toHaveBeenCalled()
