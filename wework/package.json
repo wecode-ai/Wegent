@@ -118,6 +118,7 @@
     "semver": "7.8.5",
     "tailwind-merge": "^3.6.0",
     "unified": "^11.0.5",
+    "use-sync-external-store": "1.6.0",
     "ws": "8.23.0",
     "yauzl": "3.4.0"
   },
@@ -137,6 +138,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/semver": "7.8.0",
+    "@types/use-sync-external-store": "1.5.0",
     "@types/yauzl": "3.4.0",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-istanbul": "^4.1.8",

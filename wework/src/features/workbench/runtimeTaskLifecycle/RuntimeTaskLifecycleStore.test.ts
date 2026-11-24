@@ -234,7 +234,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
 
     const first = store.getTask(address)
-    const equivalent = store.getTask(address)
+    const equivalent = first && { ...first }
 
     expect(first).not.toBe(equivalent)
     expect(runtimeTaskLifecycleTransitionChanged(first, equivalent)).toBe(false)
@@ -1164,8 +1164,19 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.turnSettled(address, 'turn-1', 'succeeded')
     const expectedSnapshot = store.getTask(address)
 
-    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'active', optimistic: true })))
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'active',
+          optimistic: true,
+          snapshotRevision: '1',
+          title: 'Updated title',
+        })
+      )
+    )
     expect(store.getTask(address)).not.toBe(expectedSnapshot)
+    expect(store.getTask(address)?.task?.title).toBe('Updated title')
 
     const accepted = store.syncRuntimeTask(
       address,

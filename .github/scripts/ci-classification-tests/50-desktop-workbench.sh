@@ -34,7 +34,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "turn lifecycle changes select supervisor, resilience and sidebar coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"resilience"},{"id":"core-6","name":"Core / shard 6","segments":"runtime-task-queue"},{"id":"core-7","name":"Core / shard 7","segments":"supervisor-lifecycle"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"streaming-conversation-switching"},{"id":"core-2","name":"Core / shard 2","segments":"resilience"},{"id":"core-6","name":"Core / shard 6","segments":"runtime-task-queue"},{"id":"core-7","name":"Core / shard 7","segments":"supervisor-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/workbench/runtimeTaskLifecycle/reducer.ts"

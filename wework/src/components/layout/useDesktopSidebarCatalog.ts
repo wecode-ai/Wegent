@@ -13,7 +13,7 @@ import {
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import {
   getRuntimeTaskLifecycleKey,
-  useRuntimeTaskLifecycleStoreSnapshot,
+  type RuntimeTaskSidebarStatus,
 } from '@/features/workbench/runtimeTaskLifecycle'
 
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
@@ -53,7 +53,7 @@ type SidebarCatalogInput = Pick<
   showOfflineDeviceItems: boolean
   expandedProjectIds: Set<number>
   visibleUnreadRuntimeTaskKeys: ReadonlySet<string>
-  lifecycleSnapshot: ReturnType<typeof useRuntimeTaskLifecycleStoreSnapshot>
+  sidebarStatus: Pick<RuntimeTaskSidebarStatus, 'busyTaskKeys' | 'waitingTaskKeys'>
   storageScope: string
 }
 export function useDesktopSidebarCatalog({
@@ -68,7 +68,7 @@ export function useDesktopSidebarCatalog({
   localHarnessSessions,
   visibleUnreadRuntimeTaskKeys,
   currentRuntimeTask,
-  lifecycleSnapshot,
+  sidebarStatus: { busyTaskKeys, waitingTaskKeys },
   storageScope,
 }: SidebarCatalogInput) {
   const sidebarStateDeviceId = getLocalRuntimeStateDeviceId(devices)
@@ -266,13 +266,11 @@ export function useDesktopSidebarCatalog({
     ]
     for (const { workspace, task } of items) {
       const key = getRuntimeTaskReminderItemKey(workspace, task)
-      const lifecycle = lifecycleSnapshot.tasks.get(
-        getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
-      )
+      const lifecycleKey = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
       collapsibleTaskKeys.add(key)
       if (
-        lifecycle?.derived.isBusy ||
-        lifecycle?.derived.shouldShowSidebarWaiting ||
+        busyTaskKeys.has(lifecycleKey) ||
+        waitingTaskKeys.has(lifecycleKey) ||
         isRuntimeTaskWaiting(task)
       ) {
         keepVisibleTaskKeys.add(key)
@@ -283,7 +281,8 @@ export function useDesktopSidebarCatalog({
     allSidebarRuntimeProjects,
     chatTaskItems,
     currentRuntimeTask,
-    lifecycleSnapshot.tasks,
+    busyTaskKeys,
+    waitingTaskKeys,
     visibleUnreadRuntimeTaskKeys,
   ])
   const { collapsedReadTaskKeys, collapseReadConversations, expandReadConversations } =

@@ -20,7 +20,7 @@ import {
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import {
   useRuntimeTaskLifecycleStore,
-  useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSidebarStatus,
 } from '@/features/workbench/runtimeTaskLifecycle'
 
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
@@ -261,16 +261,8 @@ export function useDesktopSidebarModel({
     preserveLockedScrollPosition,
   } = useSidebarPaneDragScrollLock()
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? EMPTY_RUNTIME_TASK_KEYS
-  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
-  const waitingTaskKeys = useMemo(
-    () =>
-      new Set(
-        [...lifecycleSnapshot.tasks.entries()]
-          .filter(([, lifecycle]) => lifecycle.derived.shouldShowSidebarWaiting)
-          .map(([key]) => key)
-      ),
-    [lifecycleSnapshot.tasks]
-  )
+  const sidebarStatus = useRuntimeTaskSidebarStatus()
+  const { runningTaskKeys, waitingTaskKeys } = sidebarStatus
   const {
     sidebarStateDeviceId,
     sidebarRuntimeProjectSource,
@@ -303,7 +295,7 @@ export function useDesktopSidebarModel({
     localHarnessSessions,
     visibleUnreadRuntimeTaskKeys,
     currentRuntimeTask,
-    lifecycleSnapshot,
+    sidebarStatus,
     storageScope,
   })
   const allPriorityViewTaskItems = useMemo<RuntimePriorityTaskItem[]>(() => {
@@ -318,7 +310,7 @@ export function useDesktopSidebarModel({
           workspace,
           task,
           visibleUnreadRuntimeTaskKeys,
-          lifecycleSnapshot.runningTaskKeys,
+          runningTaskKeys,
           waitingTaskKeys
         ),
       }))
@@ -333,7 +325,7 @@ export function useDesktopSidebarModel({
         workspace,
         task,
         visibleUnreadRuntimeTaskKeys,
-        lifecycleSnapshot.runningTaskKeys,
+        runningTaskKeys,
         waitingTaskKeys
       ),
     }))
@@ -341,7 +333,7 @@ export function useDesktopSidebarModel({
     return [...projectTasks, ...standaloneChatTasks]
   }, [
     chatTaskItemsWithPinState,
-    lifecycleSnapshot.runningTaskKeys,
+    runningTaskKeys,
     sidebarRuntimeProjects,
     visibleUnreadRuntimeTaskKeys,
     waitingTaskKeys,

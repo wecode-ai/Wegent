@@ -110,3 +110,9 @@ export interface RuntimeTaskLifecycleStoreSnapshot {
   queuedTaskKeys: ReadonlySet<string>
   unreadTaskKeys: ReadonlySet<string>
 }
+
+export interface RuntimeTaskSidebarStatus {
+  runningTaskKeys: ReadonlySet<string>
+  waitingTaskKeys: ReadonlySet<string>
+  busyTaskKeys: ReadonlySet<string>
+}

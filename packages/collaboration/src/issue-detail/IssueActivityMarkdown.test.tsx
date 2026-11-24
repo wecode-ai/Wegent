@@ -82,6 +82,30 @@ it("uses the desktop code, table, heading and numbered-list renderers in Web act
   expect(copyText).toHaveBeenCalledExactlyOnceWith(table);
 });
 
+it("shares syntax theme styles across code blocks and content remounts", async () => {
+  const content = [
+    "~~~ts",
+    "const one = 1",
+    "~~~",
+    "",
+    "~~~ts",
+    "const two = 2",
+    "~~~",
+  ].join("\n");
+  const stylesheet = 'style[data-href="wegent-markdown-code-theme"]';
+  await act(async () => root.render(<IssueActivityMarkdown content={content} />));
+  expect(container.querySelectorAll('[data-testid="markdown-code-block"]')).toHaveLength(2);
+  expect(container.querySelector("style")).toBeNull();
+  expect(document.head.querySelectorAll(stylesheet)).toHaveLength(1);
+  const theme = document.head.querySelector(stylesheet);
+  expect(theme?.textContent).toContain("--hls-foreground");
+
+  await act(async () => root.render(<IssueActivityMarkdown content="Done" />));
+  await act(async () => root.render(<IssueActivityMarkdown content={content} />));
+  expect(document.head.querySelectorAll(stylesheet)).toHaveLength(1);
+  expect(document.head.querySelector(stylesheet)).toBe(theme);
+});
+
 it("loads authenticated Web images with the attachment service and releases replaced previews", async () => {
   const read = vi
     .fn()

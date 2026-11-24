@@ -190,6 +190,12 @@ E2E tests use real backend requests. Do not skip, silently fail, or replace a fa
 - In virtualized content, do not rely on test-added DOM attributes across scrolling or rendering updates. Locate the element with stable product selectors and text first, wait for layout to settle, then add any temporary marker needed by later assertions.
 - E2E coverage complements, but never replaces, verification in the real Electron application.
 
+### Mandatory conversation-switch performance gate
+
+- Keep the `streaming-conversation-switching` performance gate active in Linux desktop CI. Never delete, skip, disable, or turn it into a warning. Both `rich-bottom` and `rich-reading` must pass every budget independently. A missing required measurement fails the checkpoint.
+- Preserve the real Electron workload, trusted input, observation windows, and every metric. Never raise a budget, reduce coverage or sampling, or average away per-interaction spikes. Investigate failures using the recorded measurements and fix the regression. Support any tighter budget with comparable evidence from the same CI environment.
+- See the [performance diagnostics guide](../docs/en/wework/developer-guide/wework-performance-diagnostics.md#desktop-conversation-switch-performance-gate) for the budgets, failure evidence, and reproduction command.
+
 ## Upgrade and rollback maintenance contract
 
 - Release-gate exception: macOS x64 adopts successful macOS arm64 paths and minimum source versions instead of running release-pair E2E. Preserve x64 package identities, require matching source revisions at both ends, and record arm64 hashes under `verification.kind=architecture-equivalence`. Keep independent Windows x64 release verification. Ordinary PRs do not run packaged upgrade E2E.

@@ -6,6 +6,27 @@ sidebar_position: 33
 
 Wework includes an opt-in frontend performance diagnostics switch for investigating release builds that become slow after running for a while. The diagnostics code only runs after it is explicitly enabled; when disabled, the app does not install React Profiler and does not collect interval samples.
 
+## Desktop Conversation Switch Performance Gate
+
+The Linux desktop CI checkpoint `streaming-conversation-switching` uses isolated Electron, the real task runtime, and a model fixture stream. It seeds two long Markdown turns with tables and code, then verifies switches while following streaming output at the bottom and while reading history as output arrives in the background. The hard limits apply independently to each scenario alongside the existing scroll position, bottom pinning, and layout assertions.
+
+| Metric | Limit per scenario |
+| --- | ---: |
+| Trusted click to the frame callback following the next rendering opportunity | 200 ms |
+| Each switch until the new composer or restored reading anchor is visible | 500 ms |
+| Longest main-thread task / longest animation frame | 100 ms / 150 ms |
+| Sum of time in long tasks beyond 50 ms per task | 150 ms |
+| Main-thread task CPU time / style recalculation and layout CPU time | 350 ms / 120 ms |
+| Observed JS heap ceiling / growth from start | 512 MiB / 64 MiB |
+| Observed DOM node ceiling / growth from start | 25,000 / 5,000 |
+| Observed JS event listener ceiling / growth from start | 25,000 / 2,000 |
+
+Each measurement covers both switches and the existing one-second stability observation. The frame latency estimate runs from the Chromium trusted click timestamp to the second animation-frame callback. Switch readiness includes local E2E control round trips. Resource counts sampled before switching, at both readiness points, and at the end of observation provide the observed peaks and growth for the scenario.
+
+Exceeding a limit or missing a required sample fails the checkpoint. CI retains `renderer-performance-rich-bottom.json` and `renderer-performance-rich-reading.json` with available measurements, limits, and failures. Never relax a budget or remove the gate. Support any tighter budget with comparable evidence from the same CI environment. This gate covers the conversation operations above. Release resident memory and system CPU have their own diagnostics.
+
+Reproduce with `pnpm --filter wework e2e:desktop --segment streaming-conversation-switching`.
+
 ## Debugging Multiple Instances
 
 For everyday development, `pnpm --filter wework dev:mac` shares development history under `~/.wegent/development/workbench` across worktrees, separately from release data. Window state, logs, device identity, and IPC remain separate per worktree. The retained `--executor-isolation` argument is accepted; development data isolation is always enabled.

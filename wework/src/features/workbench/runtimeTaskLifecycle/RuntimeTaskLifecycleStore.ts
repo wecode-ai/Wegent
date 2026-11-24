@@ -20,8 +20,10 @@ import {
   normalizeRuntimeTaskSummary,
   mergeRuntimeTaskSnapshotMetadata,
   shouldReplaceRuntimeTaskProjection,
+  runtimeTaskLifecycleTransitionChanged,
   summarizeRuntimeTaskExecution,
 } from './projection'
+import { RuntimeTaskLifecyclePublication } from './RuntimeTaskLifecyclePublication'
 import { RuntimeTaskMachine, getRuntimeTaskLifecycleKey } from './RuntimeTaskMachine'
 import type {
   RuntimeTaskLifecycleEvent,
@@ -30,7 +32,10 @@ import type {
   RuntimeTaskLifecycleStoreSnapshot,
 } from './types'
 
-type Listener = () => void
+export {
+  consumeRuntimeTaskLifecycleBlock,
+  runtimeTaskLifecycleTransitionChanged,
+} from './projection'
 
 interface SyncTranscriptOptions {
   preserveActiveTurn?: boolean
@@ -41,17 +46,11 @@ interface TaskUnreadState {
   revision: number
 }
 
-const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
-  version: 0,
-  tasks: new Map(),
-  runningTaskKeys: new Set(),
-  queuedTaskKeys: new Set(),
-  unreadTaskKeys: new Set(),
-}
-
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'subscribe',
+  'subscribeTask',
   'getSnapshot',
+  'getSidebarStatus',
   'getCurrentTask',
   'getTask',
   'getTaskRevision',
@@ -62,12 +61,13 @@ const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
 export class RuntimeTaskLifecycleStore {
   readonly messageReceipts: RuntimeMessageReceipts
   readonly notificationScope: string
+  private readonly publication = new RuntimeTaskLifecyclePublication()
   private readonly machines = new Map<string, RuntimeTaskMachine>()
+  private readonly dirtyTaskIdsByKey = new Map<string, string>()
   private readonly deviceAliases = new Map<string, string>()
   private readonly unreadStateByTask: Map<string, TaskUnreadState>
   private readonly previousRunningTaskKeys: Set<string>
   private readonly deferredGoalUnreadTaskKeys = new Set<string>()
-  private readonly listeners = new Set<Listener>()
   private readonly unreadStorageKey: string
   private readonly runningStorageKey: string
   private currentTaskKey: string | null = null
@@ -75,8 +75,6 @@ export class RuntimeTaskLifecycleStore {
   private persistedUnreadSerialized: string | null = null
   private persistedRunningSerialized: string | null = null
   private unreadRevision = 0
-  private version = 0
-  private snapshot = EMPTY_STORE_SNAPSHOT
 
   constructor(userId: number | string | null | undefined) {
     const storageScope = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}`
@@ -94,12 +92,10 @@ export class RuntimeTaskLifecycleStore {
     this.persistedRunningSerialized = serializeTaskKeys(this.previousRunningTaskKeys)
   }
 
-  subscribe = (listener: Listener): (() => void) => {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
-  }
-
-  getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
+  subscribe = this.publication.subscribe
+  subscribeTask = this.publication.subscribeTask
+  getSnapshot = this.publication.getSnapshot
+  getSidebarStatus = this.publication.getSidebarStatus
 
   isNewlyUnread(key: string): boolean {
     const state = this.unreadStateByTask.get(key)
@@ -108,7 +104,7 @@ export class RuntimeTaskLifecycleStore {
 
   getCurrentTask(): RuntimeTaskLifecycleSnapshot | null {
     if (!this.currentTaskKey) return null
-    return this.snapshot.tasks.get(this.currentTaskKey) ?? null
+    return this.getSnapshot().tasks.get(this.currentTaskKey) ?? null
   }
 
   getTask(address: RuntimeTaskAddress | null | undefined): RuntimeTaskLifecycleSnapshot | null {
@@ -142,7 +138,8 @@ export class RuntimeTaskLifecycleStore {
   syncRuntimeWork(runtimeWork: RuntimeWorkListResponse | null | undefined): void {
     if (!runtimeWork) return
 
-    let changed = this.registerRuntimeWorkAliases(runtimeWork)
+    const aliasesChanged = this.registerRuntimeWorkAliases(runtimeWork)
+    let changed = aliasesChanged
     for (const { workspace, task } of collectRuntimeTasks(runtimeWork)) {
       const address = getRuntimeTaskAddress(workspace, task)
       const normalizedTask = normalizeRuntimeTaskSummary(task)
@@ -153,7 +150,7 @@ export class RuntimeTaskLifecycleStore {
           task: normalizedTask,
         }) || changed
     }
-    if (changed) this.publish()
+    if (changed) this.publish(aliasesChanged)
   }
 
   invalidateNativeExecutions(): RuntimeTaskAddress[] {
@@ -180,7 +177,7 @@ export class RuntimeTaskLifecycleStore {
       if (alias === canonicalDeviceId) continue
       changed = this.registerDeviceAlias(alias, canonicalDeviceId) || changed
     }
-    if (changed) this.publish()
+    if (changed) this.publish(true)
   }
 
   syncRuntimeTask(
@@ -465,7 +462,7 @@ export class RuntimeTaskLifecycleStore {
     const canonicalAddress = this.canonicalizeAddress(address)
     const key = getRuntimeTaskLifecycleKey(canonicalAddress)
     const changes = [
-      this.machines.delete(key),
+      this.removeMachine(key, canonicalAddress.taskId),
       this.unreadStateByTask.delete(key),
       this.previousRunningTaskKeys.delete(key),
       this.deferredGoalUnreadTaskKeys.delete(key),
@@ -648,10 +645,18 @@ export class RuntimeTaskLifecycleStore {
 
     const machine = new RuntimeTaskMachine(
       canonicalAddress,
-      this.unreadStateByTask.get(key)?.unread ?? false
+      this.unreadStateByTask.get(key)?.unread ?? false,
+      () => this.dirtyTaskIdsByKey.set(key, canonicalAddress.taskId)
     )
     this.machines.set(key, machine)
+    this.dirtyTaskIdsByKey.set(key, canonicalAddress.taskId)
     return machine
+  }
+
+  private removeMachine(key: string, taskId: string): boolean {
+    if (!this.machines.delete(key)) return false
+    this.dirtyTaskIdsByKey.set(key, taskId)
+    return true
   }
 
   private canonicalizeAddress(address: RuntimeTaskAddress): RuntimeTaskAddress {
@@ -660,6 +665,7 @@ export class RuntimeTaskLifecycleStore {
   }
 
   private resolveDeviceId(deviceId: string): string {
+    if (!this.deviceAliases.has(deviceId)) return deviceId
     let current = deviceId
     const visited = new Set<string>()
     while (!visited.has(current)) {
@@ -740,7 +746,7 @@ export class RuntimeTaskLifecycleStore {
     }
     this.restoreMachineUnread(nextKey, nextMachine)
     if (!nextMachine.getSnapshot().derived.isRunning) this.previousRunningTaskKeys.delete(nextKey)
-    this.machines.delete(previousKey)
+    this.removeMachine(previousKey, previousState.address.taskId)
     if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
   }
 
@@ -840,38 +846,29 @@ export class RuntimeTaskLifecycleStore {
     }
   }
 
-  private publish(): void {
-    const tasks = new Map<string, RuntimeTaskLifecycleSnapshot>()
-    const runningTaskKeys = new Set<string>()
-    const queuedTaskKeys = new Set<string>()
-    const unreadTaskKeys = new Set<string>()
-    for (const [key, machine] of this.machines) {
-      const task = machine.getSnapshot()
-      tasks.set(key, task)
-      if (task.derived.isRunning) runningTaskKeys.add(key)
-      if (task.derived.isQueued) queuedTaskKeys.add(key)
-      if (task.derived.shouldShowUnread) unreadTaskKeys.add(key)
+  private publish(aliasesChanged = false): void {
+    const updatedTasks = new Map<string, RuntimeTaskLifecycleSnapshot | undefined>()
+    const updatedTaskIds = new Set<string>()
+    for (const [key, taskId] of this.dirtyTaskIdsByKey) {
+      updatedTasks.set(key, this.machines.get(key)?.getSnapshot())
+      updatedTaskIds.add(taskId)
     }
-    this.version += 1
-    this.snapshot = {
-      version: this.version,
-      tasks,
-      runningTaskKeys,
-      queuedTaskKeys,
-      unreadTaskKeys,
-    }
+    this.dirtyTaskIdsByKey.clear()
+
+    this.publication.commit(updatedTasks)
     this.persistUnreadKeys()
     this.persistRunningKeys()
-    this.listeners.forEach(listener => listener())
+    this.publication.notify(updatedTaskIds, aliasesChanged)
   }
 
   private persistUnreadKeys(): void {
     if (typeof window === 'undefined') return
-    const keys = new Set(
-      [...this.unreadStateByTask].filter(([, state]) => state.unread).map(([key]) => key)
-    )
-    for (const [key, machine] of this.machines) {
-      if (!machine.getSnapshot().derived.shouldShowUnread) keys.delete(key)
+    const { tasks, unreadTaskKeys } = this.getSnapshot()
+    const keys = new Set<string>()
+    for (const [key, state] of this.unreadStateByTask) {
+      if (state.unread && (!tasks.has(key) || unreadTaskKeys.has(key))) {
+        keys.add(key)
+      }
     }
     const serialized = serializeTaskKeys(keys)
     if (serialized === this.persistedUnreadSerialized) return
@@ -929,22 +926,6 @@ export function createRuntimeTaskLifecycleOwnershipView(
   })
 }
 
-export function runtimeTaskLifecycleTransitionChanged(
-  expected: RuntimeTaskLifecycleSnapshot | null,
-  current: RuntimeTaskLifecycleSnapshot | null
-): boolean {
-  if (!expected || !current) return expected !== current
-  return (
-    expected.execution.phase !== current.execution.phase ||
-    expected.turn.phase !== current.turn.phase ||
-    expected.turn.id !== current.turn.id ||
-    expected.turn.latestId !== current.turn.latestId ||
-    expected.turn.outcome !== current.turn.outcome ||
-    expected.goalStatus !== current.goalStatus ||
-    expected.continuable !== current.continuable
-  )
-}
-
 function shouldIgnoreStaleRunningTranscript(current: RuntimeTaskLifecycleSnapshot | null): boolean {
   return Boolean(
     current &&
@@ -955,18 +936,6 @@ function shouldIgnoreStaleRunningTranscript(current: RuntimeTaskLifecycleSnapsho
         current.task !== null &&
         isRuntimeTaskAuthoritativeCompletion(current.task)))
   )
-}
-
-export function consumeRuntimeTaskLifecycleBlock(
-  blockedSnapshots: Map<string, RuntimeTaskLifecycleSnapshot | null>,
-  key: string,
-  current: RuntimeTaskLifecycleSnapshot | null
-): boolean {
-  if (!blockedSnapshots.has(key)) return true
-  const blocked = blockedSnapshots.get(key) ?? null
-  if (!runtimeTaskLifecycleTransitionChanged(blocked, current)) return false
-  blockedSnapshots.delete(key)
-  return true
 }
 
 function isTerminalTurnStatus(status: string | null | undefined): boolean {
