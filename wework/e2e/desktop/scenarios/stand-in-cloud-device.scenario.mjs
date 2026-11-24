@@ -17,12 +17,7 @@ import {
 import { findRuntimeWorkTask } from '../modules/runtime-task-evidence.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
-import {
-  CLOUD_DEVICE_ID,
-  REMOTE_DOCKER_DEVICE_ID,
-  fetchJson,
-  selectE2EModel,
-} from '../modules/shared.mjs'
+import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID, fetchJson } from '../modules/shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -155,7 +150,6 @@ export function createDesktopScenario({
     return selector
   }
   async function sendChat(control, selector, message) {
-    await selectE2EModel(control, undefined, undefined, selector)
     await control.command('fill', `${selector} [data-testid="chat-message-input"]`, {
       value: message,
     })

@@ -57,6 +57,7 @@ async fn responses_bridge_restores_code_mode_exec_from_data_event_types() {
         for phase in ["response.output_item.added", "response.output_item.done"] {
             let call = &values.iter().find(|event| event["type"] == phase).unwrap()["item"];
             assert_eq!(call["type"], "custom_tool_call", "header={event_header:?}");
+            assert_eq!(call["id"], "ctc_exec");
             assert_eq!(call["name"], "exec");
             assert_eq!(call["call_id"], "call_exec");
             assert!(call.get("arguments").is_none());
@@ -69,6 +70,7 @@ async fn responses_bridge_restores_code_mode_exec_from_data_event_types() {
             .find(|event| event["type"] == "response.custom_tool_call_input.done")
             .unwrap();
         assert_eq!(done["input"], script);
+        assert_eq!(done["item_id"], "ctc_exec");
         assert!(!values
             .iter()
             .any(|event| event["type"] == "response.function_call_arguments.delta"));
@@ -81,6 +83,7 @@ async fn responses_bridge_restores_code_mode_exec_from_data_event_types() {
             "custom_tool_call"
         );
         assert_eq!(completed["response"]["output"][0]["input"], script);
+        assert_eq!(completed["response"]["output"][0]["id"], "ctc_exec");
     }
 }
 

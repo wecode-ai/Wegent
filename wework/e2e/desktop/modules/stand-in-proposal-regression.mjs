@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
-import { selectE2EModel } from './shared.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import {
   assistantMessage,
@@ -88,8 +87,8 @@ export function createStandInProposalRegression({
             : role
         ),
       }
-      await selectE2EModel(control, undefined, undefined, CHAT)
       await control.command('fill', INPUT, { value: MARKER })
+      await control.command('waitFor', `${CHAT} [data-testid="send-message-button"]:enabled`)
       await control.command('press', INPUT, { key: 'Enter' })
       await control.command('waitFor', `${CHAT} [data-testid="stand-in-proposal"]`, {
         text: '平台管理组',

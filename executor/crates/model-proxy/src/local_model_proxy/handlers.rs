@@ -333,7 +333,7 @@ impl AuthorizedRequest {
             && !request_identity::request_contains_model_switch_marker(body)
         {
             return Ok(request_policy::PreparedRequest {
-                body: body.to_vec(),
+                body: request_policy::strip_incompatible_responses_item_ids(body)?.into_owned(),
                 conversion: None,
                 expanded_browser_tools: HashSet::new(),
                 stripped_encrypted_content: 0,
