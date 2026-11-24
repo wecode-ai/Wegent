@@ -18,6 +18,7 @@ fn prompt_digest(prompt: &Value) -> String {
 }
 
 struct EvaluationRow {
+    id: String,
     iteration: Option<i64>,
     status: String,
     evaluated_at: String,
@@ -30,11 +31,12 @@ fn latest_evaluation(
 ) -> Result<Option<EvaluationRow>, TaskRuntimeError> {
     Ok(db
         .query_row(
-            "SELECT sequence_number,status,created_at,metadata FROM loop_items
+            "SELECT sequence_number,status,created_at,metadata,id FROM loop_items
          WHERE resource_type='ghost_evaluation' AND name=?1 ORDER BY rowid DESC LIMIT 1",
             [owner],
             |row| {
                 Ok(EvaluationRow {
+                    id: row.get(4)?,
                     iteration: row.get(0)?,
                     status: row.get(1)?,
                     evaluated_at: row.get(2)?,
@@ -516,6 +518,7 @@ impl LocalTaskStore {
         Ok(json!({
             "iterations":iterations,"revision":revision,
             "latest":{"status":status,"evaluatedAt":row.evaluated_at,"currentScore":current_score,
+                "pendingProposalId":(status == "pending").then_some(row.id),
                 "baselineScore":comparison["baselineScore"],"candidateScore":comparison["candidateScore"],
                 "sampleCount":comparison["sampleCount"],"dimensions":comparison["dimensions"]}
         }))
@@ -786,6 +789,7 @@ mod tests {
         );
         let proposal = store.stand_in_proposal_for_device(7, "mac", None).unwrap();
         let id = proposal["id"].as_str().unwrap();
+        assert_eq!(get()["latest"]["pendingProposalId"], id);
         let settings = store
             .resolve_stand_in_proposal(7, "mac", id, true, None)
             .unwrap();
@@ -896,6 +900,8 @@ mod tests {
             store.stand_in_proposal_for_device(7, "mac", None).unwrap()["id"],
             manual["id"]
         );
+        let report = store.ghost_learning_report(7, "mac", None).unwrap();
+        assert_eq!(report["latest"]["pendingProposalId"], ghost["id"]);
         assert!(store
             .resolve_stand_in_proposal(7, "mac", ghost["id"].as_str().unwrap(), true, None)
             .is_err());

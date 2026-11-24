@@ -162,6 +162,7 @@ export interface StandInLearningReport {
     candidateScore: number | null
     sampleCount: number | null
     dimensions?: StandInLearningDimension[] | null
+    pendingProposalId?: string | null
   } | null
   revision: StandInGhostRevision | null
 }

@@ -12,10 +12,12 @@ function LearningSummary({
   report,
   identityName,
   refresh,
+  onViewProposal,
 }: {
   report: StandInLearningReport
   identityName: string
   refresh: ReactNode
+  onViewProposal?: () => void
 }) {
   const { t, i18n } = useTranslation('common')
   const language = i18n.resolvedLanguage
@@ -117,6 +119,23 @@ function LearningSummary({
             </time>
           </p>
         )}
+        {latest?.status === 'pending' && onViewProposal && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="min-h-11 md:min-h-8"
+            data-testid="stand-in-learning-view-proposal"
+            onClick={onViewProposal}
+          >
+            {t('standIn.workspace.learning_report.view_proposal')}
+          </Button>
+        )}
+        {latest?.status === 'pending' && !onViewProposal && (
+          <p className="text-xs text-text-secondary">
+            {t('standIn.workspace.learning_report.pending_configuration_help')}
+          </p>
+        )}
         {!!latest?.dimensions?.length && <StandInLearningDimensions axes={latest.dimensions} />}
       </div>
       <dl className="grid grid-cols-2 gap-3 border-b border-border pb-4">
@@ -163,6 +182,7 @@ export function StandInGhostRevisionPanel({
   roleId,
   identityName,
   requestLeave,
+  pendingProposal,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -170,6 +190,7 @@ export function StandInGhostRevisionPanel({
   roleId?: string
   identityName: string
   requestLeave(action: () => void): void
+  pendingProposal?: { id: string; open(): void }
 }) {
   const { t } = useTranslation('common')
   const resource = useMemo(
@@ -215,6 +236,11 @@ export function StandInGhostRevisionPanel({
         <LearningSummary
           report={report}
           identityName={identityName}
+          onViewProposal={
+            status === 'ready' && pendingProposal?.id === report.latest?.pendingProposalId
+              ? pendingProposal?.open
+              : undefined
+          }
           refresh={
             status !== 'error' && (
               <Button

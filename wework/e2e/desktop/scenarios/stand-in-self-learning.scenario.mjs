@@ -300,8 +300,19 @@ export function createDesktopScenario(options) {
               'score-change': '+100 分',
             },
           },
-          { refresh: true }
+          { refresh: true, keepOpen: true }
         )
+        const reportProposal = testId('stand-in-learning-view-proposal')
+        await control.command('clickWhenEnabled', reportProposal, { timeoutMs: 10_000 })
+        const proposalDialog = testId('stand-in-proposal-dialog')
+        await control.command('waitFor', proposalDialog, { text: REVISED, timeoutMs: 5000 })
+        await control.command('waitFor', testId('stand-in-profile-panel'), {
+          visible: false,
+          timeoutMs: 5000,
+        })
+        await options.captureScreenshot(control, 'learning-report-02a-review-from-report.png')
+        await control.command('clickWhenEnabled', testId('stand-in-proposal-dialog-close'))
+        await control.command('waitFor', proposalDialog, { visible: false, timeoutMs: 5000 })
         await openStandInDetails(control)
         await control.command('clickWhenEnabled', testId('stand-in-proposal-open'))
         const card = testId('stand-in-proposal')

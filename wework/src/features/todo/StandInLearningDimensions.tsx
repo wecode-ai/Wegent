@@ -40,6 +40,7 @@ function Radar({ axes, format }: { axes: ScoredAxis[]; format: Intl.NumberFormat
     const radius = 18 + (score * 51) / 100
     return { x: 180 + Math.cos(angle) * radius, y: 111 + Math.sin(angle) * radius }
   }
+  const zeroTick = point(0, 0)
   const outline = (values: number[]) =>
     values
       .map((value, index) => {
@@ -89,9 +90,8 @@ function Radar({ axes, format }: { axes: ScoredAxis[]; format: Intl.NumberFormat
         strokeDasharray="3 3"
       />
       <text
-        x={180}
-        y={111}
-        textAnchor="middle"
+        x={zeroTick.x + 9}
+        y={zeroTick.y}
         dominantBaseline="central"
         className="fill-text-secondary text-xs"
       >
