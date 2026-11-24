@@ -1,6 +1,30 @@
 use super::*;
 
 impl LocalTaskStore {
+    pub fn participating_issue_ids(
+        &self,
+        project_id: &str,
+        viewer_ids: &[i64],
+    ) -> Result<HashSet<String>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT participant.loop_item_id
+             FROM loop_items participant
+             JOIN loop_items issue ON issue.id=participant.loop_item_id
+             WHERE participant.resource_type='collaborator'
+               AND participant.deleted_at IS NULL
+               AND participant.user_id IN (SELECT value FROM json_each(?2))
+               AND issue.resource_type='task' AND issue.deleted_at IS NULL
+               AND issue.cloud_project_id=?1",
+        )?;
+        let ids = statement
+            .query_map(params![project_id, json!(viewer_ids).to_string()], |row| {
+                row.get(0)
+            })?
+            .collect::<Result<_, _>>()?;
+        Ok(ids)
+    }
+
     /// Page across local projects in one query, with batched task bindings.
     pub fn my_work_page(
         &self,
