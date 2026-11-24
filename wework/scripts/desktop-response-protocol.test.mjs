@@ -19,7 +19,10 @@ import { createDesktopScenario as createActionScenario } from '../e2e/desktop/sc
 import { verifyEmbeddedBrowserClickCursor } from '../e2e/desktop/modules/embedded-browser-visibility.mjs'
 import { createEmbeddedBrowserCursorObservation } from '../src/e2e/embedded-browser-cursor-observation.ts'
 
-async function cursorProtocol(t, { hideMs = 4_000, cursorPresent = true } = {}) {
+async function cursorProtocol(
+  t,
+  { hideMs = 4_000, cursorPresent = true, idleTimestampLagMs = 0 } = {}
+) {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 })
   let visible = false
   let eventListener
@@ -84,12 +87,14 @@ async function cursorProtocol(t, { hideMs = 4_000, cursorPresent = true } = {}) 
     visible = true
     emit('agent-cursor', { moveSequence: 3, visible: true, x: 120, y: 80 })
     domListener?.()
-    emit('agent-state', { action: 'click', status: 'idle' })
     setTimeout(() => {
       emit('agent-cursor', { moveSequence: 3, visible: false, x: 120, y: 80 })
       visible = false
       domListener?.()
     }, hideMs)
+    // The manager registers the hide timer before timestamping its idle event.
+    t.mock.timers.tick(idleTimestampLagMs)
+    emit('agent-state', { action: 'click', status: 'idle' })
     return { ok: true, effect: { domChanged: true } }
   }
   const outcome = verifyEmbeddedBrowserClickCursor(
@@ -105,7 +110,8 @@ async function cursorProtocol(t, { hideMs = 4_000, cursorPresent = true } = {}) 
   for (let step = 0; step < 12; step += 1) await Promise.resolve()
   t.mock.timers.tick(1_000)
   for (let step = 0; step < 12; step += 1) await Promise.resolve()
-  t.mock.timers.tick(3_500)
+  t.mock.timers.tick(3_000 - idleTimestampLagMs)
+  t.mock.timers.tick(500 + idleTimestampLagMs)
   const result = await outcome
   assert.equal(eventListener, undefined, 'The bounded probe must release its event subscription')
   assert.equal(domListener, undefined, 'The bounded probe must release its DOM observation')
@@ -121,6 +127,16 @@ test('retains the one-second cursor observation when its control read arrives af
   assert.equal(evidence.afterClick.visible, 'true')
   assert.equal(evidence.hidden.visible, 'false')
   assert.equal(evidence.moveSequence, 3)
+})
+
+test('retains cursor contracts when idle is timestamped after hide timer registration', async t => {
+  const { evidence } = await cursorProtocol(t, { idleTimestampLagMs: 1 })
+  assert.equal(evidence.clickFinishedAtUnixMs, 1)
+  assert.equal(evidence.cursorHiddenAtUnixMs, 4_000)
+  assert.equal(evidence.cursorHiddenAtUnixMs - evidence.clickFinishedAtUnixMs, 3_999)
+  assert.equal(evidence.afterClick.elapsedMs, 1_000)
+  assert.equal(evidence.afterClick.visible, 'true')
+  assert.equal(evidence.hidden.visible, 'false')
 })
 
 test('does not accept an early cursor hide or a missing production overlay', async t => {

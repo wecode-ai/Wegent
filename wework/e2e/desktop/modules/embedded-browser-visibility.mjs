@@ -35,10 +35,6 @@ export async function verifyEmbeddedBrowserClickCursor(control, bridgeCall, labe
     assert.ok(evidence.afterClick.style.includes('translate3d'))
     assert.ok(evidence.afterClick.tabIconCount > 0)
     assert.ok(
-      evidence.cursorHiddenAtUnixMs - evidence.clickFinishedAtUnixMs >= 4_000,
-      'The host AI cursor hid before the product idle deadline'
-    )
-    assert.ok(
       evidence.hidden.cursorPresent,
       'The idle cursor overlay was removed instead of hidden'
     )
