@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { access, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { createDesktopScenario as createSessions } from './stand-in-sessions.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
@@ -33,6 +35,7 @@ const CHAT =
 /** Extend the CI-owned session checkpoint without another app or Backend lifecycle. */
 export function createDesktopScenario(options) {
   const sessions = createSessions(options)
+  const approvalFile = join(options.workspacePath, 'stand-in-guidance-approval.tmp')
   let active = false
   let spawned = false
   let followedUp = false
@@ -70,10 +73,16 @@ export function createDesktopScenario(options) {
           approvalRequested = true
           reply(
             response,
-            shellCommandResponse(body, 'stand-in-guidance-approval', 'pwd', options.workspacePath, {
-              sandbox_permissions: 'require_escalated',
-              justification: '验证单次审批仍由用户决定。',
-            })
+            shellCommandResponse(
+              body,
+              'stand-in-guidance-approval',
+              `rm '${approvalFile.replaceAll("'", "'\\''")}'`,
+              options.workspacePath,
+              {
+                sandbox_permissions: 'require_escalated',
+                justification: '验证单次审批仍由用户决定。',
+              }
+            )
           )
         } else if (input.includes(APPROVAL_GUIDANCE)) {
           reply(response, [assistantMessage(APPROVAL_RESULT)])
@@ -296,6 +305,7 @@ export function createDesktopScenario(options) {
         )
         await control.command('focusMainWindow', 'body')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await writeFile(approvalFile, 'Awaiting explicit approval')
         await send(APPROVAL)
         const approvalCard = `${CHAT} [data-testid="request-user-input-card"]`
         await control.command('waitFor', approvalCard, {
@@ -305,6 +315,7 @@ export function createDesktopScenario(options) {
         await control.command('waitFor', approvalCard)
         const waiting = await rpc('runtime.tasks.get', { taskId: primary.task.taskId })
         assert.equal(waiting.task.interactionStatus, 'waitingForUserInput')
+        await access(approvalFile)
         await control.command(
           'clickWhenEnabled',
           `${approvalCard} [data-testid="request-user-input-option-__codex_approval-0"]`
@@ -313,6 +324,7 @@ export function createDesktopScenario(options) {
           text: APPROVAL_RESULT,
           timeoutMs: options.modelResponseTimeoutMs,
         })
+        await assert.rejects(access(approvalFile), { code: 'ENOENT' })
       } finally {
         releaseChild()
         if (notificationResponse && !notificationResponse.writableEnded) notificationResponse.end()
