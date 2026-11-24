@@ -86,6 +86,15 @@ export function StandInConversation({
     },
     active
   )
+  const showModelSelector = scope === 'collaboration'
+  const conversationModelControls =
+    !showModelSelector && modelControls.unavailable
+      ? {
+          ...modelControls,
+          unavailableReason: undefined,
+          error: t('standIn.errors.conversation_profile_model_unavailable'),
+        }
+      : modelControls
   const aliases = getUnambiguousWorkbenchDeviceAliases(workbench?.state.devices ?? [])
   const persistedTaskExists = Boolean(
     workbench?.runtimeTaskReminders.items.some(
@@ -210,11 +219,12 @@ export function StandInConversation({
         onAddressChange={setAddress}
         sendEphemeral={false}
         showExecutionTools={false}
+        showModelSelector={showModelSelector}
         hideProcessing
         assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
-        modelControls={modelControls}
+        modelControls={conversationModelControls}
         expanded
         active={active}
         placeholder={t(

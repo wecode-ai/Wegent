@@ -47,6 +47,7 @@ export interface TemporaryChatPanelProps {
   emptyStateText?: string
   placeholder?: string
   showExecutionTools?: boolean
+  showModelSelector?: boolean
   hideProcessing?: boolean
   assistantMessageStyle?: 'plain' | 'bubble'
   markReadWhenActive?: boolean

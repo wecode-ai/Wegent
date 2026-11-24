@@ -9,6 +9,7 @@ import type { TemporaryChatPanelProps } from './temporaryChatPanelTypes'
 import { createTemporaryChatSession } from './temporaryChatSession'
 import { useEditorFocusRequest } from '@wegent/collaboration/dom-events'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
+import { Button } from '@/components/ui/button'
 import { conversationOutcomePresentation } from './conversationOutcomePresentation'
 import { selectPrivateHistory } from '@/features/collaboration-exp/private/privateConversationHistory'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
@@ -106,6 +107,7 @@ export function TemporaryChatPanel({
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
   showExecutionTools = true,
+  showModelSelector = true,
   hideProcessing = false,
   assistantMessageStyle,
   markReadWhenActive = false,
@@ -241,7 +243,11 @@ export function TemporaryChatPanel({
     ? t(`standIn.errors.${modelControls.unavailableReason}`)
     : (modelControls?.error ??
       (activeProviderFailed && !explicitNewSession
-        ? t('standIn.errors.conversation_provider_unavailable')
+        ? t(
+            showModelSelector
+              ? 'standIn.errors.conversation_provider_unavailable'
+              : 'standIn.errors.conversation_provider_read_failed'
+          )
         : null))
   const [trialGuide, setTrialGuide] = useState<PluginTrialGuide | null>(null)
   const sideChatProjectChat = useMemo(
@@ -867,6 +873,17 @@ export function TemporaryChatPanel({
               <StandInNotificationPrompt scopeKey={lifecycleStore.notificationScope} />
             )}
             {!pendingRequest && composerHeader}
+            {!pendingRequest && !showModelSelector && activeProviderFailed && (
+              <Button
+                variant="ghost"
+                type="button"
+                className="min-h-11 self-start md:min-h-8"
+                data-testid="stand-in-conversation-provider-retry"
+                onClick={refreshActiveProvider}
+              >
+                {t('standIn.reload')}
+              </Button>
+            )}
             {submittingInput ? (
               <div
                 data-testid="runtime-input-submitting"
@@ -923,7 +940,7 @@ export function TemporaryChatPanel({
                   }
                   submitDisabled={taskModelIdentityPending}
                   showExecutionTools={showExecutionTools}
-                  showModelSelector
+                  showModelSelector={showModelSelector}
                   pluginPickerIconOnly
                   requireText={
                     goalDraftActive || !hasImageMarkupComments(sideChatProjectChat.attachments)
