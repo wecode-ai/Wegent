@@ -19,6 +19,7 @@ export interface SourceConnectionsInput {
   provider: ConnectionProviderDescriptor
   api: StandInExecutorApi
   deviceId: string
+  lockedProfile?: string
   disabled: boolean
   onChange(role: StandInRole): void
   onReady?(): void
@@ -46,9 +47,11 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
   let state: State = {
     adding: false,
     excluding: null,
-    newPolicy: { automatic: true, askBeforeAct: true, immediate: initial.role.id !== '@primary' },
+    newPolicy: initial.lockedProfile
+      ? { automatic: false, askBeforeAct: true, immediate: false }
+      : { automatic: true, askBeforeAct: true, immediate: initial.role.id !== '@primary' },
     kind: initial.provider.resourceKinds[0] ?? '',
-    scope: initial.provider.allResourceKinds?.length ? 'all' : 'selected',
+    scope: !initial.lockedProfile && initial.provider.allResourceKinds?.length ? 'all' : 'selected',
     selection: [],
     query: '',
     results: [],
@@ -122,18 +125,27 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     setError(null)
     setSearched(false)
     try {
-      const result = await input.api.searchConnectionResources(
+      const request = [
         input.deviceId,
         input.provider.id,
         state.kind,
         state.query.trim(),
-        cursor
-      )
+        cursor,
+      ] as const
+      const result = input.lockedProfile
+        ? await input.api.searchConnectionResources(...request, undefined, input.lockedProfile)
+        : await input.api.searchConnectionResources(...request)
       if (!isCurrent(sequence)) return
       const items = result.items.filter(
         row =>
-          !state.excluding ||
-          (row.profile === state.excluding.profile && row.kind === state.excluding.kind)
+          (!input.lockedProfile ||
+            (row.providerId === input.provider.id &&
+              row.profile === input.lockedProfile &&
+              row.kind === state.kind &&
+              row.id !== '*' &&
+              row.scope !== 'all')) &&
+          (!state.excluding ||
+            (row.profile === state.excluding.profile && row.kind === state.excluding.kind))
       )
       setResults(previous => {
         const merged = new Map<string, Connection>()
@@ -236,7 +248,7 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     setAdding(false)
   }
   const addAll = async () => {
-    if (!listeners.size || state.busy || input.disabled) return
+    if (!listeners.size || state.busy || input.disabled || input.lockedProfile) return
     const sequence = ++searchSequence
     setBusy(true)
     setError(null)

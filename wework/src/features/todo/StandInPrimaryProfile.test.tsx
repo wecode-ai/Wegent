@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { runnerModelKey, type RunnerModel } from '@wegent/collaboration'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import type { DingTalkDelegation } from '@/api/personalStandIn'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -9,6 +10,9 @@ import { personalStandInFixture } from './personalStandInSettings.testFixtures'
 import { standInOverviewFixture } from './StandInOverviewPage.testFixtures'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { StandInImConnections } from './StandInImConnections'
+import { StandInDingTalkDelegation } from './StandInDingTalkDelegation'
+import { DINGTALK_PROVIDER } from './standInDingTalk'
+import { useState } from 'react'
 
 function openPrimaryProfile(
   selfLearningEnabled?: boolean,
@@ -80,6 +84,100 @@ function openPrimaryProfile(
     },
   }
 }
+
+test('selected DingTalk intake requires a saved scope and verified read access', async () => {
+  const { services } = standInOverviewFixture().props
+  const api = services.standInApi!
+  const identity = {
+    profile: 'org:alice',
+    accountId: 'alice',
+    accountName: 'Alice',
+    organizationId: 'org',
+    organizationName: 'Studio',
+  }
+  let permissionsGranted = false
+  api.connectionReadiness = async (_device, _provider, _profile, sources) => ({
+    status: sources && !permissionsGranted ? 'permissions_required' : 'ready',
+    identity,
+    permissions: {
+      read: sources && permissionsGranted ? 'verified' : 'unchecked',
+      reply: 'unverified',
+    },
+  })
+  api.searchConnectionResources = async () => ({
+    items: [
+      {
+        providerId: DINGTALK_PROVIDER,
+        id: 'friend',
+        kind: 'direct',
+        profile: identity.profile,
+        name: 'Friend',
+      },
+      {
+        providerId: DINGTALK_PROVIDER,
+        id: 'other',
+        kind: 'direct',
+        profile: 'other:account',
+        name: 'Other',
+      },
+    ],
+  })
+  const save = vi.fn()
+  const model = { runtime: 'codex' as const, provider: 'test', model_id: 'model' }
+  function TestSetup() {
+    const [delegation, setDelegation] = useState<DingTalkDelegation>()
+    return (
+      <StandInDingTalkDelegation
+        settings={{
+          delegation,
+          model,
+          modelSelection: { identity: model },
+          primaryAvailable: true,
+          async onSave(next) {
+            save(next)
+            setDelegation(next)
+            return true
+          },
+        }}
+        api={api}
+        provider={{
+          id: DINGTALK_PROVIDER,
+          displayName: 'DingTalk',
+          resourceKinds: ['direct', 'group'],
+          availability: { status: 'ready' },
+          dependencies: [],
+        }}
+        deviceId="device"
+        localDeviceId="device"
+        disabled={false}
+      />
+    )
+  }
+  render(<TestSetup />)
+  expect(await screen.findByText('Alice · Studio')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-dingtalk-enable')).not.toBeInTheDocument()
+  const query = await screen.findByTestId('stand-in-dingtalk-query')
+  fireEvent.change(query, { target: { value: 'Friend' } })
+  fireEvent.click(screen.getByTestId('stand-in-dingtalk-search'))
+  fireEvent.click(await screen.findByTestId('stand-in-dingtalk-result-friend'))
+  expect(screen.queryByTestId('stand-in-dingtalk-result-other')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('stand-in-dingtalk-add-selected'))
+  fireEvent.click(screen.getByTestId('stand-in-dingtalk-save-scope'))
+  expect(await screen.findByTestId('stand-in-dingtalk-enable')).toBeEnabled()
+  expect(save).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      enabled: false,
+      sources: [expect.objectContaining({ id: 'friend', profile: identity.profile })],
+    })
+  )
+  fireEvent.click(screen.getByTestId('stand-in-dingtalk-enable'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('所选会话缺少读取权限')
+  expect(save).toHaveBeenCalledTimes(1)
+  permissionsGranted = true
+  fireEvent.click(screen.getByTestId('stand-in-dingtalk-enable'))
+  expect(await screen.findByTestId('stand-in-dingtalk-pause')).toBeEnabled()
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }))
+})
 
 test('a model change keeps the unified instructions for a profile without learning', async () => {
   const { model, save } = openPrimaryProfile()

@@ -2,7 +2,8 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    project_role, role_project_matches, stand_in_identities,
+    dingtalk_delegation_account_matches, project_role, role_project_matches, stand_in_identities,
+    DINGTALK_PROVIDER,
 };
 
 impl RuntimeWorkRpcHandler {
@@ -188,6 +189,16 @@ impl RuntimeWorkRpcHandler {
             store
                 .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
                 .map_err(settings_error)?;
+            let primary = &settings["primary"];
+            if primary["dingtalkDelegation"] != previous["primary"]["dingtalkDelegation"] {
+                self.verify_local_stand_in_owner(user)?;
+            }
+            if primary["enabled"] == true
+                && primary["dingtalkDelegation"]["enabled"] == true
+                && previous["primary"]["dingtalkDelegation"]["enabled"] != true
+            {
+                self.preflight_dingtalk_delegation(primary).await?;
+            }
             self.preflight_git_connections(&settings, &previous).await?;
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
@@ -200,6 +211,68 @@ impl RuntimeWorkRpcHandler {
                 .read_personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)
         }
+    }
+
+    async fn preflight_dingtalk_delegation(&self, primary: &Value) -> Result<(), AppIpcError> {
+        if !self.stand_in_role_runs_here(primary) {
+            return Err(AppIpcError::new(
+                "dingtalk_device_mismatch",
+                "Select the local executor to enable DingTalk delegation",
+            ));
+        }
+        let delegation = &primary["dingtalkDelegation"];
+        let account = &delegation["account"];
+        // The settings writer just validated the same saved scope and its version.
+        let sources: Vec<Value> = delegation["sources"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|source| json!({"id": source["id"], "kind": source["kind"]}))
+            .collect();
+        let readiness = self
+            .connection_call(
+                "check",
+                Some(DINGTALK_PROVIDER),
+                json!({"readiness": true, "profile": account["profile"], "sources": sources}),
+            )
+            .await?;
+        if readiness["status"] != "ready" || readiness["permissions"]["read"] != "verified" {
+            return Err(AppIpcError::new(
+                "dingtalk_not_ready",
+                "Check the DingTalk authorization and message permissions before enabling",
+            ));
+        }
+        let identity = &readiness["identity"];
+        if !dingtalk_delegation_account_matches(account, identity)
+            || identity["profile"] != account["profile"]
+        {
+            return Err(AppIpcError::new(
+                "dingtalk_identity_changed",
+                "DingTalk account or organization changed",
+            ));
+        }
+        self.preflight_dingtalk_model(&primary["model"]).await
+    }
+
+    async fn preflight_dingtalk_model(&self, model: &Value) -> Result<(), AppIpcError> {
+        let environment = json!({"mode": "fixed", "environment_id": self.device_id});
+        let model_policy = json!({"mode": "fixed", "model": model});
+        let catalog = self.runner_catalog().await?;
+        let mut routing = json!({"runnerPolicy": {
+            "runtime": model["runtime"], "execution_policy": environment, "model_policy": model_policy,
+        }});
+        crate::task_runtime::runner_routing::validate_policies(
+            Some(&environment),
+            Some(&model_policy),
+        )
+        .map_err(settings_error)?;
+        crate::task_runtime::runner_routing::resolve_pending(
+            &mut routing,
+            Some(&catalog),
+            &self.device_id,
+        )
+        .map_err(settings_error)?;
+        self.materialize_runner_cloud_models(&mut routing).await
     }
 
     pub(super) async fn prepare_connection_boundaries(

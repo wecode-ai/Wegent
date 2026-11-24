@@ -126,6 +126,28 @@ export function createDesktopScenario(options) {
         await control.command('waitFor', '[data-testid="stand-in-add-dingtalk-connection"]')
         await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
         await control.command('waitFor', '[data-testid="stand-in-dingtalk-connections"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-dingtalk-setup-selected"]'
+        )
+        await control.command('waitFor', '[data-testid="stand-in-dingtalk-delegation"]')
+        assert.equal(
+          await control.command(
+            'getElementCount',
+            '[data-testid="stand-in-dingtalk-enable"]:enabled'
+          ),
+          '0',
+          'Opening scoped setup must not enable intake before a scope has been confirmed'
+        )
+        await control.command('click', '[data-testid="stand-in-dingtalk-setup-back"]')
+        await control.command('waitFor', '[data-testid="stand-in-dingtalk-connections"]')
+        const afterScopedSetup = await requestExecutor(
+          control,
+          'runtime.stand_in.personal.get',
+          { userId: USER },
+          uiTimeoutMs
+        )
+        assert.deepEqual(afterScopedSetup.primary, loaded.primary)
         await verifyStandInSessionSettings(control, uiTimeoutMs)
         await verifyStandInGroupMessageScope(control, uiTimeoutMs)
         await control.command('click', '[data-testid="stand-in-primary-cancel"]')

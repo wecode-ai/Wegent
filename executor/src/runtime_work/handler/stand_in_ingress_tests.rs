@@ -1,5 +1,84 @@
 use super::*;
 
+#[tokio::test]
+async fn dingtalk_delegation_accepts_only_new_events_and_keeps_work_bound_to_current_account() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let legacy = json!({
+        "providerId": crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,
+        "profile": "org:user", "id": "*", "kind": "group", "name": "All groups", "scope": "all",
+        "collectionKey": "all-messages", "policy": {"automatic": true, "askBeforeAct": false},
+    });
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["primary"] = json!({
+        "enabled": true, "prompt": "", "preferences": "", "connections": [legacy],
+        "model": {"runtime": "codex", "provider": "openai", "model_id": "configured"},
+        "dingtalkDelegation": {
+            "enabled": true,
+            "account": {"profile": "org:user", "accountId": "user", "organizationId": "org"},
+            "sources": [{
+                "id": "group", "name": "Group", "kind": "group", "profile": "org:user",
+                "providerId": crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,
+            }],
+            "templates": {"documentLink": true, "timeLocation": true, "standardProcess": true},
+        },
+    });
+    assert!(store
+        .save_personal_stand_in(7, "mac", settings.clone())
+        .is_err());
+    settings["primary"]["dingtalkDelegation"]["enabled"] = json!(false);
+    let mut draft = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    assert!(collection_sources(&stand_in_identities(&draft)).is_empty());
+    assert_eq!(draft["primary"]["connections"][0]["scope"], "all");
+
+    draft["primary"]["dingtalkDelegation"]["enabled"] = json!(true);
+    draft["primary"]["dingtalkDelegation"]["enabledAfter"] = json!("2000-01-01T00:00:00Z");
+    let enabled = store.save_personal_stand_in(7, "mac", draft).unwrap();
+    let roles = stand_in_identities(&enabled);
+    let source = &roles[0]["connections"][0];
+    assert_eq!(source["id"], "group");
+    assert_eq!(source["policy"]["automatic"], false);
+    assert_ne!(source["enabledAfter"], "2000-01-01T00:00:00Z");
+    let boundary =
+        chrono::DateTime::parse_from_rfc3339(source["enabledAfter"].as_str().unwrap()).unwrap();
+    let messages = [-1, 0, 1].map(|seconds| {
+        let at = boundary + chrono::TimeDelta::seconds(seconds);
+        json!({"id": seconds.to_string(), "text": "Source event", "at": at.to_rfc3339()})
+    });
+    handler
+        .collect_connection_page(&store, 7, source, &roles, (messages.to_vec(), json!({})))
+        .await
+        .unwrap();
+    assert!(store.stand_in_events(7).unwrap().is_empty());
+    let items = store.list_stand_in_work(7, Some("@primary")).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["latestMessage"]["id"], "1");
+    let work = items[0]["id"].as_str().unwrap();
+    let error = handler
+        .dispatch_connection_work(7, work, true, None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "dingtalk_scoped_reply_unavailable");
+
+    store
+        .pause_dingtalk_delegation(7, "mac", &enabled["version"])
+        .unwrap();
+    assert!(matches!(
+        store.ingest_stand_in_message(7, "@primary", source, &messages[2], None),
+        Err(crate::task_runtime::TaskRuntimeError::VersionConflict)
+    ));
+    let mut switched = store.personal_stand_in(7, "mac").unwrap();
+    switched["primary"]["dingtalkDelegation"]["account"]["organizationId"] = json!("other-org");
+    store.save_personal_stand_in(7, "mac", switched).unwrap();
+    assert!(store
+        .list_stand_in_work(7, Some("@primary"))
+        .unwrap()
+        .is_empty());
+    assert!(store.stand_in_messages(7, work).is_err());
+}
+
 #[test]
 fn every_collection_failure_resumes_without_editing_settings_or_discarding_progress() {
     let root = tempfile::tempdir().unwrap();

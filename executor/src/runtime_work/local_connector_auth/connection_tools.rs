@@ -99,7 +99,48 @@ pub(crate) async fn run_connection_tool(
                 "The dependency must declare a localAuth tool",
             )
         })?;
-    run_tool_json(root, &tool, args, plugin_key, connector_slug).await
+    let mut result = run_tool_json(root, &tool, args, plugin_key, connector_slug).await?;
+    if plugin_key == "dingtalk"
+        && spec.tool.as_ref().map(LocalAuthToolSpec::id) == Some("dws")
+        && args == ["version", "--format", "json"]
+    {
+        let source = dws_component_source(
+            &tool,
+            env::var_os("DWS_BINARY_PATH").as_deref().map(Path::new),
+            env::var_os("WEWORK_COMPONENT_DWS_PATH")
+                .as_deref()
+                .map(Path::new),
+            env::var("WEWORK_COMPONENT_DWS_SOURCE").ok().as_deref(),
+        );
+        let Some(fields) = result.as_object_mut() else {
+            return Err(AppIpcError::new(
+                "connection_cli_response_invalid",
+                "DWS version must be a JSON object",
+            ));
+        };
+        fields.insert("componentSource".to_owned(), json!(source));
+    }
+    Ok(result)
+}
+
+fn dws_component_source(
+    actual: &Path,
+    configured: Option<&Path>,
+    component: Option<&Path>,
+    component_source: Option<&str>,
+) -> &'static str {
+    if component == Some(actual) {
+        match component_source {
+            Some("managed") => return "managed",
+            Some("bundled") => return "bundled",
+            _ => {}
+        }
+    }
+    if configured == Some(actual) {
+        "external"
+    } else {
+        "bundled"
+    }
 }
 
 async fn run_tool_json(
@@ -254,6 +295,16 @@ fn parse_connection_tool_streams(
     let use_stderr = !success
         && !stdout_value.as_ref().is_some_and(declared_tool_failure)
         && stderr_value.as_ref().is_some_and(declared_tool_failure);
+    if plugin_key == "dingtalk"
+        && !success
+        && stderr_value.is_none()
+        && !stdout_value.as_ref().is_some_and(declared_tool_failure)
+        && stderr.split(|byte| *byte == b'\n').any(|line| {
+            serde_json::from_slice::<Value>(line).is_ok_and(|value| dws_permission_missing(&value))
+        })
+    {
+        return Err(dws_permission_error());
+    }
     parse_connection_tool_output(
         if use_stderr { stderr } else { stdout },
         success,
@@ -274,6 +325,19 @@ fn declared_tool_failure(value: &Value) -> bool {
         || value["ok"] == false
         || value["error"].is_object()
         || tool_error_code(value).is_some()
+}
+
+fn dws_permission_missing(value: &Value) -> bool {
+    value["success"] == false
+        && value["code"] == "PAT_SCOPE_AUTH_REQUIRED"
+        && value["data"]["errorType"] == "missing_scope"
+}
+
+fn dws_permission_error() -> AppIpcError {
+    AppIpcError::new(
+        "dingtalk_permissions_required",
+        "DingTalk requires additional permission for this action",
+    )
 }
 
 // Only structural metadata may leave the CLI boundary; never include output or arguments.
@@ -350,6 +414,9 @@ fn parse_connection_tool_output(
         )
     })?;
     if !success || value["success"] == false || value["ok"] == false || value["error"].is_object() {
+        if plugin_key == "dingtalk" && dws_permission_missing(&value) {
+            return Err(dws_permission_error());
+        }
         let code = tool_error_code(&value).unwrap_or("request_failed");
         if matches!(
             code,
@@ -399,6 +466,48 @@ fn retryable_tool_request(code: &str) -> bool {
 #[cfg(test)]
 mod connection_tool_tests {
     use super::*;
+
+    #[test]
+    fn reports_the_component_source_of_the_selected_binary() {
+        let managed = Path::new("components/managed/dws");
+        let standalone = Path::new("tools/dws");
+        assert_eq!(
+            dws_component_source(managed, Some(managed), Some(managed), Some("managed")),
+            "managed"
+        );
+        assert_eq!(
+            dws_component_source(standalone, Some(standalone), Some(managed), Some("managed")),
+            "external"
+        );
+        assert_eq!(
+            dws_component_source(Path::new("bin/dws"), Some(standalone), None, None),
+            "bundled"
+        );
+    }
+
+    #[test]
+    fn distinguishes_missing_dingtalk_permission_from_expired_authentication() {
+        let permission = br#"{"success":false,"code":"PAT_SCOPE_AUTH_REQUIRED","data":{"errorType":"missing_scope"}}"#;
+        assert_eq!(
+            parse_connection_tool_streams(b"", permission, false, "dingtalk", "dingtalk")
+                .unwrap_err()
+                .code,
+            "dingtalk_permissions_required"
+        );
+        let noisy = [b"warning\n", permission.as_slice()].concat();
+        assert_eq!(
+            parse_connection_tool_streams(b"", &noisy, false, "dingtalk", "dingtalk")
+                .unwrap_err()
+                .code,
+            "dingtalk_permissions_required"
+        );
+        assert_ne!(
+            parse_connection_tool_streams(b"", b"403 Forbidden", false, "dingtalk", "dingtalk")
+                .unwrap_err()
+                .code,
+            "dingtalk_permissions_required"
+        );
+    }
 
     #[cfg(unix)]
     fn tool_fixture(root: &Path, name: &str) -> PathBuf {

@@ -308,6 +308,157 @@ test('discovers authorization identity from the exact installed dependency', asy
   assert.deepEqual(status.authTarget, target)
 })
 
+const boundAccount = {
+  profile: 'team-a:member-a',
+  accountId: 'member-a',
+  accountName: 'Member A',
+  organizationId: 'team-a',
+  organizationName: 'Team A',
+}
+
+function readinessFixture({ ambiguous = false, token = {}, respond } = {}) {
+  const calls = []
+  const authTarget = { pluginKey: 'dingtalk', connectorSlug: 'native' }
+  return {
+    calls,
+    authTarget,
+    ctx: {
+      cli: {
+        describe: async () => authTarget,
+        async callTool(_alias, { tool, arguments: args }) {
+          calls.push({ tool, args })
+          switch (tool) {
+            case 'componentInfo':
+              return { componentSource: 'managed', version: '1.0.58' }
+            case 'listProfiles':
+              return {
+                profiles: [
+                  {
+                    corpId: 'team-a',
+                    corpName: 'Team A',
+                    userId: 'member-a',
+                    userName: 'Member A',
+                    isCurrent: true,
+                    isOrgCurrent: !ambiguous,
+                    status: 'active',
+                  },
+                ],
+              }
+            case 'authStatus':
+              return {
+                authenticated: true,
+                token_valid: true,
+                user_id: 'member-a',
+                corp_id: 'team-a',
+                ...token,
+              }
+            case 'conversationInfo':
+              return { result: { openConversationId: 'direct-a' } }
+            case 'listMentions':
+            case 'searchMessages':
+              return (
+                respond?.(tool, args) ?? {
+                  success: true,
+                  result: { hasMore: false, nextCursor: '0' },
+                }
+              )
+            default:
+              assert.fail(`Unexpected operation: ${tool}`)
+          }
+        },
+      },
+    },
+  }
+}
+
+test('reuses an unambiguous authenticated account and preserves explicit organization selection', async () => {
+  const provider = createProvider()
+  const { ctx, calls, authTarget } = readinessFixture()
+  const ready = await provider.check(ctx, { readiness: true })
+  assert.equal(ready.status, 'ready')
+  assert.deepEqual(ready.identity, boundAccount)
+  assert.deepEqual(ready.component, { source: 'managed', version: '1.0.58' })
+  assert.deepEqual(ready.permissions, { read: 'unchecked', reply: 'unverified' })
+  assert.deepEqual(ready.authTarget, authTarget)
+  assert.deepEqual(calls.at(-1), { tool: 'authStatus', args: { profile: boundAccount.profile } })
+
+  const ambiguous = readinessFixture({ ambiguous: true })
+  const blocked = await provider.check(ambiguous.ctx, { readiness: true })
+  assert.equal(blocked.status, 'identity_required')
+  assert.deepEqual(blocked.candidates, [boundAccount])
+  assert.equal(
+    ambiguous.calls.some(call => call.tool === 'authStatus'),
+    false
+  )
+  assert.equal(
+    (await provider.check(ambiguous.ctx, { readiness: true, profile: boundAccount.profile }))
+      .status,
+    'ready'
+  )
+})
+
+test('preflights only selected direct conversations and group mentions on the bound account', async () => {
+  const { ctx, calls } = readinessFixture()
+  const request = {
+    readiness: true,
+    profile: boundAccount.profile,
+    sources: [
+      { kind: 'group', id: 'group-a' },
+      { kind: 'direct', id: 'peer-a' },
+    ],
+  }
+  const ready = await createProvider().check(ctx, request)
+  assert.deepEqual(ready.permissions, { read: 'verified', reply: 'unverified' })
+  assert.equal(calls.find(call => call.tool === 'listMentions').args.group, 'group-a')
+  assert.deepEqual(calls.find(call => call.tool === 'conversationInfo').args, {
+    peer: 'peer-a',
+    profile: boundAccount.profile,
+  })
+  const direct = calls.find(call => call.tool === 'searchMessages').args
+  assert.equal(direct.conversationIds, 'direct-a')
+  assert.equal(direct.senderIds, 'peer-a')
+  assert.equal(direct.profile, boundAccount.profile)
+
+  const missing = readinessFixture({
+    respond() {
+      throw Object.assign(new Error('Permission missing'), {
+        code: 'dingtalk_permissions_required',
+      })
+    },
+  })
+  assert.equal((await createProvider().check(missing.ctx, request)).status, 'permissions_required')
+})
+
+test('blocks scoped collection if the connected identity changed or delivery left the selected chat', async () => {
+  const { ctx, calls } = readinessFixture({ token: { corp_id: 'team-b' } })
+  const source = {
+    id: 'peer-a',
+    kind: 'direct',
+    profile: boundAccount.profile,
+    dingtalkAccount: boundAccount,
+  }
+  await assert.rejects(createProvider().collect(ctx, { source, checkpoint: {} }), {
+    code: 'dingtalk_identity_changed',
+  })
+  assert.deepEqual(
+    calls.map(call => call.tool),
+    ['listProfiles', 'authStatus']
+  )
+
+  const response = {
+    result: {
+      conversationMessagesList: [
+        conversation('other-direct', true, 'peer-a'),
+        conversation('direct-a', true, 'peer-a'),
+      ],
+    },
+  }
+  assert.deepEqual(
+    normalizeMessages(source, response, 'me', 'direct-a').map(event => event.conversationId),
+    ['direct-a']
+  )
+})
+
 test('requires reauthorization before contact search when the legacy token cannot refresh', async () => {
   const calls = []
   const target = { pluginKey: 'dingtalk', connectorSlug: 'dingtalk-local' }

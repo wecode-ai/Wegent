@@ -35,6 +35,28 @@ export interface StandInSourceConnection {
   resumePending?: boolean
   /** Draft-only takeover intent, consumed by the host during save. */
   pendingTakeover?: boolean
+  dingtalkAccount?: DingTalkDelegationAccount
+}
+
+export interface DingTalkDelegationAccount {
+  profile: string
+  accountId: string
+  accountName?: string
+  organizationId: string
+  organizationName?: string
+}
+
+export interface DingTalkDelegation {
+  account: DingTalkDelegationAccount
+  sources: StandInSourceConnection[]
+  templates: {
+    documentLink: boolean
+    timeLocation: boolean
+    standardProcess: boolean
+  }
+  enabled: boolean
+  version?: number
+  enabledAfter?: string | null
 }
 
 export interface StandInProjectPolicy extends StandInProjectRef {
@@ -50,6 +72,7 @@ export interface StandInIdentity extends Partial<
   preferences: string
   calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
+  dingtalkDelegation?: DingTalkDelegation
   collaboration?: StandInRole['collaboration']
 }
 

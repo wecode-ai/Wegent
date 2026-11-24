@@ -24,6 +24,7 @@ import type { DeviceInfo } from '@/types/api'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInSettingsError } from './StandInSettingsLayout'
 import { useStandInModels } from './useStandInModels'
+import { DINGTALK_PROVIDER, withDingTalkDelegation } from './standInDingTalk'
 
 export interface StandInOnboardingConfiguration {
   settings: PersonalStandInSettings | null
@@ -33,6 +34,7 @@ export interface StandInOnboardingConfiguration {
   localDeviceId: string
   devices?: DeviceInfo[]
   services?: WorkbenchServices
+  dingtalkSourceProblem?: string
   onSelectDevice?(deviceId: string): void
   onSave(value: PersonalStandInSettings): Promise<PersonalStandInSettings | null>
   onReload(): void
@@ -155,6 +157,10 @@ export function StandInOnboardingSetup({
   }
   const projectName = (value: { id: string; store: 'local' | 'cloud' }) =>
     findStandInProject(projects, value)?.name ?? value.id
+  const scopedDingTalk = baseline?.primary?.dingtalkDelegation
+  const displayedConnections = (role?.connections ?? []).filter(
+    source => !scopedDingTalk || source.providerId !== DINGTALK_PROVIDER
+  )
   return (
     <div className="space-y-5" data-testid="stand-in-onboarding-setup">
       {configuration.onSelectDevice && baseline && (
@@ -271,7 +277,7 @@ export function StandInOnboardingSetup({
                 )}
               </div>
             )}
-            {(role.connections ?? []).map(source => (
+            {displayedConnections.map(source => (
               <div
                 key={JSON.stringify([source.providerId, source.profile, source.kind, source.id])}
                 className="text-sm"
@@ -283,8 +289,20 @@ export function StandInOnboardingSetup({
                 </p>
               </div>
             ))}
-            {!role.collaboration.enabled && !role.connections?.length && (
+            {!role.collaboration.enabled && !displayedConnections.length && !scopedDingTalk && (
               <p className="text-sm text-text-secondary">{t('standIn.onboarding.no_apps')}</p>
+            )}
+            {scopedDingTalk && (
+              <div className="space-y-1 text-sm">
+                <p>{t('standIn.dingtalk_delegation.title')}</p>
+                <p className="text-text-secondary">
+                  {t(
+                    scopedDingTalk.enabled
+                      ? 'standIn.dingtalk_delegation.enabled'
+                      : 'standIn.dingtalk_delegation.paused'
+                  )}
+                </p>
+              </div>
             )}
             <p className="rounded-lg bg-muted p-3 text-sm text-text-secondary">
               {t('standIn.onboarding.attention_help')}
@@ -313,6 +331,37 @@ export function StandInOnboardingSetup({
               disabled={busy || loading}
               hideHeading
               onChange={setRole}
+              dingTalk={{
+                delegation: baseline.primary?.dingtalkDelegation,
+                model: baseline.primary?.model,
+                modelSelection: {
+                  identity: model,
+                  label: models.selectedModel?.displayName,
+                  options: role.modelOptions,
+                },
+                services: configuration.services,
+                devices: configuration.devices,
+                primaryAvailable: !baseline.lifecycle,
+                replacesLegacy: role.connections?.some(
+                  value => value.providerId === DINGTALK_PROVIDER
+                ),
+                sourceProblem: configuration.dingtalkSourceProblem,
+                onBusyChange(saving) {
+                  setBusy(saving)
+                  onBusyChange(saving)
+                },
+                async onSave(delegation, selectedModel, options) {
+                  const saved = await configuration.onSave(
+                    withDingTalkDelegation(baseline, delegation, selectedModel, options)
+                  )
+                  if (!saved) return false
+                  setBaseline(saved)
+                  setRole(
+                    current => current && { ...current, enabled: saved.primary?.enabled ?? false }
+                  )
+                  return true
+                },
+              }}
               onDetailViewChange={setDetail}
             />
           </>

@@ -3,12 +3,18 @@ import { readImages } from './read-images.js'
 
 const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 const GROUP_CATCH_UP_WINDOW_MINUTES = 15
+const READINESS_ERRORS = new Map([
+  ['connector_auth_required', 'auth_required'],
+  ['dingtalk_identity_changed', 'identity_required'],
+  ['dingtalk_permissions_required', 'permissions_required'],
+])
 
 export function createProvider() {
   const identities = new Map()
   const readCursors = createReadCursor()
   return {
-    async check(ctx) {
+    async check(ctx, input) {
+      if (input?.readiness === true) return connectionReadiness(ctx, input)
       let authTarget
       try {
         authTarget = await ctx.cli.describe('dingtalk')
@@ -24,8 +30,11 @@ export function createProvider() {
       }
     },
     async listResources(ctx, input) {
-      const profile = await activeProfile(ctx)
-      await requireAuthentication(ctx)
+      const selectedProfile = input.profile === undefined ? undefined : required(input, 'profile')
+      const profile = selectedProfile ?? (await activeProfile(ctx))
+      const authenticate = () =>
+        selectedProfile ? verifiedIdentity(ctx, selectedProfile) : requireAuthentication(ctx)
+      await authenticate()
       const kind = input.kind
       if (!['group', 'direct'].includes(kind)) throw invalid('Invalid conversation kind')
       if (input.scope === 'all') {
@@ -59,7 +68,7 @@ export function createProvider() {
           throw error
         // A token can expire between connection checks. Re-read auth state before
         // showing a generic provider failure.
-        await requireAuthentication(ctx)
+        await authenticate()
         throw error
       }
       const rows = kind === 'group' ? response.result?.groups : response.result
@@ -86,7 +95,7 @@ export function createProvider() {
       const profile = required(input, 'profile')
       if (!['group', 'direct'].includes(input.kind)) throw invalid('Invalid conversation kind')
       validateCollection(input)
-      await ownIdentity(ctx, profile, identities)
+      if (!input.dingtalkAccount) await ownIdentity(ctx, profile, identities)
       return input
     },
     async initialize(_ctx, input) {
@@ -106,7 +115,11 @@ export function createProvider() {
         input.cursor === undefined
           ? { ...readWindow(input.query ?? {}), issuedAt: Date.now() }
           : readCursors.decode(source, { ...input.query, cursor: input.cursor })
-      const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
+      const profile = required(source, 'profile')
+      const identity = source.dingtalkAccount
+        ? await verifiedIdentity(ctx, profile, source.dingtalkAccount)
+        : undefined
+      const selfId = await ownIdentity(ctx, profile, identities, identity)
       if (state.training) return trainingHistory(ctx, source, state, selfId, readCursors)
       const page = await readTool(
         ctx,
@@ -149,7 +162,11 @@ export function createProvider() {
     },
     async collect(ctx, { source, checkpoint }) {
       validateCollection(source)
-      const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
+      const profile = required(source, 'profile')
+      const identity = source.dingtalkAccount
+        ? await verifiedIdentity(ctx, profile, source.dingtalkAccount)
+        : undefined
+      const selfId = await ownIdentity(ctx, profile, identities, identity)
       const start = checkpoint?.after ?? required(source, 'enabledAfter')
       const now = Date.now()
       const boundedGroup = source.collectionKey === 'all-messages'
@@ -354,6 +371,10 @@ async function trainingHistory(ctx, source, state, ownId, readCursors) {
 }
 
 async function readMessagePage(ctx, source, window, ownId) {
+  if (source.dingtalkAccount) {
+    const { response, conversationId } = await readSelectedConversation(ctx, source, window)
+    return messagePage(source, response, ownId, window.cursor, conversationId)
+  }
   let selfConversationId
   if (source.kind === 'direct' && source.scope !== 'all' && source.id === ownId) {
     const page = await readTool(ctx, 'listDirectConversation', {
@@ -385,6 +406,7 @@ async function readMessagePage(ctx, source, window, ownId) {
 }
 
 function validateCollection(source) {
+  if (source.dingtalkAccount) selectedConversation(source)
   if (source.collectionKey === undefined) return
   if (
     source.collectionKey !== 'all-messages' ||
@@ -435,12 +457,14 @@ export function normalizeMessages(source, response, ownId, selfConversationId) {
     if (direct !== (source.kind === 'direct')) continue
     const conversationId = required(conversation, 'openConversationId')
     if (!direct && source.scope !== 'all' && conversationId !== source.id) continue
+    if (source.dingtalkAccount && direct && conversationId !== selfConversationId) continue
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       // Bot notifications can come from another account and feed our own task output back in.
       if (message.sendType === 'robot' || message.messageAiSendFlag !== undefined) continue
       const sender = required(message, 'senderOpenDingTalkId')
       const manualSelfMessage =
+        !source.dingtalkAccount &&
         message.sendType === 'user' &&
         (!direct ||
           (source.scope !== 'all' && source.id === ownId && conversationId === selfConversationId))
@@ -479,9 +503,7 @@ export function normalizeMessages(source, response, ownId, selfConversationId) {
 async function activeProfile(ctx) {
   const response = await readTool(ctx, 'listProfiles')
   if (typeof response.currentProfile !== 'string' || !response.currentProfile) {
-    throw Object.assign(new Error('Authorize the account'), {
-      code: 'connector_auth_required',
-    })
+    throw authenticationRequired()
   }
   return response.currentProfile
 }
@@ -489,29 +511,210 @@ async function activeProfile(ctx) {
 async function requireAuthentication(ctx) {
   const response = await readTool(ctx, 'authStatus')
   if (response.authenticated !== true || response.token_valid === false)
-    throw Object.assign(new Error('Authorize the account'), {
-      code: 'connector_auth_required',
-    })
+    throw authenticationRequired()
   return response
 }
 
-async function ownIdentity(ctx, profile, cache) {
+async function ownIdentity(ctx, profile, cache, identity) {
   const cached = cache.get(profile)
   if (cached && cached.expiresAt > Date.now()) return cached.id
-  const response = await readTool(ctx, 'listProfiles')
-  const account = response.profiles?.find(row => row.profile === profile)
-  if (!account)
-    throw Object.assign(new Error('Authorize the account'), {
-      code: 'connector_auth_required',
-    })
+  if (!identity) {
+    const response = await readTool(ctx, 'listProfiles')
+    const account = response.profiles?.find(row => row.profile === profile)
+    if (!account) throw authenticationRequired()
+    identity = {
+      accountId: required(account, 'userId'),
+      accountName: required(account, 'userName'),
+    }
+  }
   const users = await readTool(ctx, 'searchUsers', {
-    query: required(account, 'userName'),
+    query: identity.accountName,
     profile,
   })
-  const user = users.result?.find(row => row.userId === account.userId)
+  const user = users.result?.find(row => row.userId === identity.accountId)
   const id = required(user, 'openDingTalkId')
   cache.set(profile, { id, expiresAt: Date.now() + 60_000 })
   return id
+}
+
+async function connectionReadiness(ctx, { profile, sources }) {
+  const details = {}
+  try {
+    details.authTarget = await ctx.cli.describe('dingtalk')
+    const component = await readTool(ctx, 'componentInfo')
+    if (!['managed', 'bundled', 'external'].includes(component.componentSource))
+      throw invalid('Missing component source')
+    details.component = {
+      source: component.componentSource,
+      version: required(component, 'version'),
+    }
+
+    const rows = await accountProfiles(ctx)
+    const current = rows.filter(({ row }) => row.isCurrent === true)
+    details.candidates = rows
+      .filter(({ row }) => row.status === 'active')
+      .map(({ identity }) => identity)
+    const selected =
+      profile === undefined
+        ? current.length === 1 && current[0].row.isOrgCurrent === true
+          ? current[0]
+          : undefined
+        : rows.find(({ identity }) => identity.profile === profile)
+    if (!selected)
+      return {
+        ...details,
+        status: details.candidates.length ? 'identity_required' : 'auth_required',
+      }
+
+    details.identity = selected.identity
+    await checkToken(ctx, selected.identity)
+    const read = await verifyMessageRead(ctx, selected.identity.profile, sources)
+    return { ...details, status: 'ready', permissions: { read, reply: 'unverified' } }
+  } catch (error) {
+    const status = READINESS_ERRORS.get(error.code) ?? 'error'
+    return { ...details, status, code: error.code ?? 'dingtalk_response_invalid' }
+  }
+}
+
+async function accountProfiles(ctx) {
+  const response = await readTool(ctx, 'listProfiles')
+  if (!Array.isArray(response.profiles)) throw invalid('Missing account profiles')
+  const rows = new Map()
+  for (const row of response.profiles) {
+    if (!validProfilePart(row?.corpId) || !validProfilePart(row?.userId)) continue
+    const profile = `${row.corpId}:${row.userId}`
+    if (rows.has(profile)) throw invalid('Duplicate DingTalk account profile')
+    rows.set(profile, {
+      row,
+      identity: {
+        profile,
+        accountId: row.userId,
+        accountName: displayIdentityPart(row.userName, row.userId),
+        organizationId: row.corpId,
+        organizationName: displayIdentityPart(row.corpName, row.corpId),
+      },
+    })
+  }
+  return [...rows.values()]
+}
+
+async function verifiedIdentity(ctx, profile, expected) {
+  const identity = (await accountProfiles(ctx)).find(
+    row => row.identity.profile === profile
+  )?.identity
+  if (
+    !identity ||
+    (expected &&
+      (identity.accountId !== expected.accountId ||
+        identity.organizationId !== expected.organizationId ||
+        identity.profile !== expected.profile))
+  )
+    throw changedIdentity()
+  await checkToken(ctx, identity)
+  return identity
+}
+
+async function checkToken(ctx, identity) {
+  const status = await readTool(ctx, 'authStatus', { profile: identity.profile })
+  if (['ciphertext_key_mismatch', 'dek_missing', 'keychain_unavailable'].includes(status.reason))
+    throw Object.assign(new Error('DingTalk credentials could not be checked'), {
+      code: 'dingtalk_credentials_unavailable',
+    })
+  if (status.authenticated !== true || status.token_valid !== true) throw authenticationRequired()
+  if (identity.accountId !== status.user_id || identity.organizationId !== status.corp_id)
+    throw changedIdentity()
+}
+
+async function verifyMessageRead(ctx, profile, sources) {
+  if (sources === undefined) return 'unchecked'
+  if (!Array.isArray(sources) || !sources.length) throw invalid('Select a conversation')
+  const selected = sources.map(source => ({ ...selectedConversation(source), profile }))
+  const now = Date.now()
+  const window = {
+    start: new Date(now - 1000).toISOString(),
+    end: new Date(now).toISOString(),
+    limit: 1,
+    cursor: '0',
+  }
+  for (const source of selected) {
+    const { response, conversationId } = await readSelectedConversation(ctx, source, window)
+    const { hasMore, conversationMessagesList, nextCursor } = response.result ?? {}
+    if (
+      response.success === true &&
+      hasMore === false &&
+      conversationMessagesList === undefined &&
+      typeof nextCursor === 'string'
+    )
+      continue
+    if (
+      response.success !== true ||
+      typeof hasMore !== 'boolean' ||
+      !Array.isArray(conversationMessagesList) ||
+      conversationMessagesList.some(
+        conversation =>
+          conversation.openConversationId !== conversationId ||
+          conversation.singleChat !== (source.kind === 'direct') ||
+          !Array.isArray(conversation.messages)
+      )
+    )
+      throw invalid('Message read permission could not be verified')
+  }
+  return 'verified'
+}
+
+async function readSelectedConversation(ctx, source, window) {
+  const { id, kind } = selectedConversation(source)
+  const args = { ...window, limit: String(window.limit), profile: required(source, 'profile') }
+  if (kind === 'group')
+    return {
+      response: await readTool(ctx, 'listMentions', { ...args, group: id }),
+      conversationId: id,
+    }
+
+  const { result } = await readTool(ctx, 'conversationInfo', { peer: id, profile: args.profile })
+  const conversation = Array.isArray(result) && result.length === 1 ? result[0] : result
+  const conversationId = required(conversation, 'openConversationId')
+  if (!validResourceId(conversationId)) throw invalid('Invalid direct conversation ID')
+  const response = await readTool(ctx, 'searchMessages', {
+    ...args,
+    conversationIds: conversationId,
+    senderIds: id,
+  })
+  return { response, conversationId }
+}
+
+function selectedConversation(source) {
+  const id = required(source, 'id')
+  if (
+    !validResourceId(id) ||
+    !['group', 'direct'].includes(source.kind) ||
+    source.scope !== undefined ||
+    source.collectionKey !== undefined
+  )
+    throw invalid('Select an exact direct conversation or group mention source')
+  return { id, kind: source.kind }
+}
+
+function validResourceId(value) {
+  return typeof value === 'string' && value !== '*' && /^[^-\s,\u0000][^\s,\u0000]*$/.test(value)
+}
+
+function validProfilePart(value) {
+  return validResourceId(value) && !value.includes(':')
+}
+
+function displayIdentityPart(value, fallback) {
+  return (typeof value === 'string' && value.trim()) || fallback
+}
+
+function changedIdentity() {
+  return Object.assign(new Error('DingTalk account or organization changed'), {
+    code: 'dingtalk_identity_changed',
+  })
+}
+
+function authenticationRequired() {
+  return Object.assign(new Error('Authorize the account'), { code: 'connector_auth_required' })
 }
 
 function required(value, key) {
@@ -533,9 +736,7 @@ async function readTool(ctx, tool, args = {}) {
   ) {
     const code = response?.error?.code ?? response?.errorCode ?? response?.code
     if (['need_login', 'AUTH_REQUIRED', 'connector_auth_required', 'NOT_LOGGED_IN'].includes(code))
-      throw Object.assign(new Error('Authorize the account'), {
-        code: 'connector_auth_required',
-      })
+      throw authenticationRequired()
     throw invalid('DingTalk tool request failed')
   }
   return response

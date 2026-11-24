@@ -4,7 +4,8 @@ use super::stand_in::settings_error;
 use super::*;
 use crate::runtime_work::response::local_task_json;
 use crate::task_runtime::personal_stand_in::{
-    stand_in_collection_connection, stand_in_connection, stand_in_identities,
+    is_dingtalk_delegation_source, stand_in_collection_connection, stand_in_connection,
+    stand_in_identities,
 };
 use sha2::{Digest, Sha256};
 
@@ -221,6 +222,7 @@ impl RuntimeWorkRpcHandler {
         let role = role.ok_or_else(unavailable)?;
         let work_id = origin["workId"].as_str().ok_or_else(unavailable)?;
         let work = store.stand_in_work(user, work_id).map_err(settings_error)?;
+        ensure_actionable_connection_work(&work)?;
         let bindings = request
             .extra
             .get("standInSourceBindings")
@@ -293,9 +295,14 @@ impl RuntimeWorkRpcHandler {
             .map_err(settings_error)?
             .into_iter()
             .filter(|state| {
-                identities
-                    .iter()
-                    .any(|role| stand_in_collection_connection(role, &state["source"]).is_some())
+                let source = &state["source"];
+                identities.iter().any(|role| {
+                    if is_dingtalk_delegation_source(source) {
+                        stand_in_connection(role, source).is_some()
+                    } else {
+                        stand_in_collection_connection(role, source).is_some()
+                    }
+                })
             })
             .collect::<Vec<_>>();
         Ok(json!({"items":items,"sourceErrors":errors,"deviceId":self.device_id}))
@@ -333,6 +340,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let work = store.stand_in_work(user, work_id).map_err(settings_error)?;
+        ensure_actionable_connection_work(&work)?;
         let task_id = work["taskId"]
             .as_str()
             .ok_or_else(|| AppIpcError::new("bad_request", "Work task ID is missing"))?;
@@ -423,6 +431,7 @@ impl RuntimeWorkRpcHandler {
         let gate = self.task_send_gate(&format!("dingtalk-dispatch:{work_id}"));
         let _guard = gate.lock().await;
         let work = store.stand_in_work(user, work_id).map_err(settings_error)?;
+        ensure_actionable_connection_work(&work)?;
         if !manual && work["status"] == "failed" {
             return Err(AppIpcError::new(
                 "stand_in_dispatch_failed",
@@ -647,6 +656,16 @@ impl RuntimeWorkRpcHandler {
             .adjust_stand_in_message(user, &work, &message, target)
             .map_err(settings_error)
     }
+}
+
+fn ensure_actionable_connection_work(work: &Value) -> Result<(), AppIpcError> {
+    if is_dingtalk_delegation_source(&work["source"]) {
+        return Err(AppIpcError::new(
+            "dingtalk_scoped_reply_unavailable",
+            "Reply to this DingTalk message in its original conversation",
+        ));
+    }
+    Ok(())
 }
 
 fn selected_pending_connection_messages(

@@ -27,10 +27,17 @@ import { EMAIL_PROVIDER, StandInEmailConnections } from './StandInEmailConnectio
 import { GIT_CONNECTION_PREFIX, StandInGitConnections } from './StandInGitConnections'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { StandInSourceConnections } from './StandInSourceConnections'
+import {
+  StandInDingTalkDelegation,
+  type StandInDingTalkNavigation,
+  type StandInDingTalkSettings,
+} from './StandInDingTalkDelegation'
+import { DINGTALK_PROVIDER } from './standInDingTalk'
 
 export interface StandInConnectionNavigationHandle extends AutomationNavigationHandle {
   /** True means the source editor already confirmed discarding unsaved changes. */
   requestLeave(action: (discarded?: boolean) => void): void
+  requestLeaveScoped(action: () => void): void
   back(): void
 }
 
@@ -55,6 +62,7 @@ export function StandInConnectionSettings({
   projectScopeConfigured,
   ref,
   onNavigate,
+  dingTalk,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -76,6 +84,7 @@ export function StandInConnectionSettings({
   projectScopeConfigured?: boolean
   ref?: Ref<StandInConnectionNavigationHandle>
   onNavigate?(action: () => void): void
+  dingTalk?: StandInDingTalkSettings
 }) {
   const { t, i18n } = useTranslation('common')
   const pending = Boolean(
@@ -126,19 +135,29 @@ export function StandInConnectionSettings({
   const calendarRef = useRef<AutomationNavigationHandle>(null)
   const emailRef = useRef<AutomationNavigationHandle>(null)
   const projectRef = useRef<StandInProjectNavigationHandle>(null)
+  const dingTalkRef = useRef<StandInDingTalkNavigation>(null)
+  const [selectedDingTalk, setSelectedDingTalk] = useState(false)
   const requestLeave = (action: (discarded?: boolean) => void) => {
     const editor = calendarRef.current ?? emailRef.current
-    if (projectRef.current) projectRef.current.requestLeave(action)
+    if (dingTalkRef.current) dingTalkRef.current.requestLeave(() => action(false))
+    else if (projectRef.current) projectRef.current.requestLeave(action)
     else if (editor) editor.requestLeave(() => action(false))
     else action(false)
   }
   useImperativeHandle(ref, () => ({
     back() {
-      const back = () => setView(null)
+      const back = () => {
+        setSelectedDingTalk(false)
+        setView(null)
+      }
       requestLeave(back)
     },
     requestLeave(action) {
       requestLeave(action)
+    },
+    requestLeaveScoped(action) {
+      if (dingTalkRef.current) dingTalkRef.current.requestLeave(action)
+      else action()
     },
   }))
   const matches = state.api === api && state.deviceId === deviceId && state.locale === i18n.language
@@ -146,6 +165,8 @@ export function StandInConnectionSettings({
   const loading = view !== 'time' && (matches ? state.loading : Boolean(api))
   const visibleError = matches ? state.error : null
   const provider = providers.find(item => item.id === view)
+  const scopedDingTalk =
+    view === DINGTALK_PROVIDER && dingTalk && api?.connectionReadiness ? dingTalk : undefined
   const install = model.install
   return (
     <section
@@ -212,6 +233,18 @@ export function StandInConnectionSettings({
               disabled={disabled}
               onChange={onChange}
             />
+          ) : scopedDingTalk && api && (selectedDingTalk || scopedDingTalk.delegation) ? (
+            <StandInDingTalkDelegation
+              ref={dingTalkRef}
+              key={deviceId}
+              settings={scopedDingTalk}
+              api={api}
+              provider={provider}
+              deviceId={deviceId}
+              localDeviceId={localDeviceId}
+              disabled={disabled}
+              onBack={!scopedDingTalk.delegation ? () => setSelectedDingTalk(false) : undefined}
+            />
           ) : provider && api ? (
             <>
               {!['ready', 'auth_required'].includes(provider.availability.status) && (
@@ -226,6 +259,18 @@ export function StandInConnectionSettings({
                 disabled={disabled || loading}
                 onInstall={() => void install(provider)}
               />
+              {scopedDingTalk && (
+                <ControlButton
+                  variant="outline"
+                  type="button"
+                  data-testid="stand-in-dingtalk-setup-selected"
+                  disabled={disabled || loading}
+                  className="min-h-11 px-3 text-sm md:min-h-9"
+                  onClick={() => setSelectedDingTalk(true)}
+                >
+                  {t('standIn.dingtalk_delegation.setup')}
+                </ControlButton>
+              )}
               {provider.id === EMAIL_PROVIDER ? (
                 <StandInEmailConnections
                   ownerApi={api}
@@ -289,6 +334,7 @@ export function StandInConnectionSettings({
           {!hideHeading && <h3 className="font-medium">{t('standIn.workspace.connections')}</h3>}
           <StandInConnectionCatalog
             role={role}
+            dingTalk={dingTalk?.delegation}
             projectScopeConfigured={projectScopeConfigured}
             projects={projects}
             providers={providers}

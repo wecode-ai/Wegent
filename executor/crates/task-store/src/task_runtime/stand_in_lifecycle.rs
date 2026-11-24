@@ -1,6 +1,7 @@
 //! Instance binding and whole-profile lifecycle transitions are durable and versioned.
 use super::personal_stand_in::{
-    read_personal, stamp_project_enabled, stamp_stand_in_connections, write_personal,
+    dingtalk_delegation, read_personal, stamp_project_enabled, stamp_stand_in_connections,
+    write_personal,
 };
 use super::*;
 
@@ -190,6 +191,9 @@ impl LocalTaskStore {
             }
         }
         if settings != previous {
+            if settings["primary"].is_object() {
+                dingtalk_delegation::stamp(&mut settings["primary"], &previous["primary"])?;
+            }
             if operation == "start" {
                 stamp_stand_in_connections(&mut settings["primary"], &previous["primary"]);
                 stamp_project_enabled(&mut settings["primary"], &previous["primary"]);

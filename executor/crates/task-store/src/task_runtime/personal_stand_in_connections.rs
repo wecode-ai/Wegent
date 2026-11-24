@@ -51,6 +51,7 @@ pub(super) fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError>
                             && row["kind"]
                                 .as_str()
                                 .is_some_and(|kind| !kind.is_empty() && kind.len() <= 128)
+                            && row.get("dingtalkAccount").is_none()
                             && row.get("collectionKey").map_or(true, |key| {
                                 key.as_str().is_some_and(|key| {
                                     !key.is_empty() && key.trim() == key && key.len() <= 256
@@ -103,6 +104,7 @@ pub fn stand_in_connection<'a>(identity: &'a Value, source: &Value) -> Option<&'
             && row["profile"] == source["profile"]
             && row["kind"] == source["kind"]
             && row["transport"] == source["transport"]
+            && dingtalk_delegation::matching_source_accounts(row, source)
     })
 }
 
@@ -113,6 +115,8 @@ pub fn stand_in_collection_connection<'a>(
 ) -> Option<&'a Value> {
     stand_in_connection(identity, source).filter(|connection| {
         connection.get("collectionKey") == source.get("collectionKey")
+            && connection["dingtalkDelegationVersion"] == source["dingtalkDelegationVersion"]
+            && dingtalk_delegation_source_active(connection)
             && !connection["excludedResources"]
                 .as_array()
                 .is_some_and(|rows| rows.iter().any(|row| row["id"] == source["id"]))
@@ -144,7 +148,10 @@ pub fn source_provider(source: &Value) -> &str {
 }
 
 pub fn source_namespace(source: &Value) -> Value {
-    if source_provider(source) == DINGTALK_PROVIDER {
+    if is_dingtalk_delegation_source(source) {
+        let account = &source["dingtalkAccount"];
+        json!({"providerId":DINGTALK_PROVIDER,"accountId":account["accountId"],"organizationId":account["organizationId"]})
+    } else if source_provider(source) == DINGTALK_PROVIDER {
         source["profile"].clone()
     } else {
         let mut namespace =
@@ -196,6 +203,9 @@ pub fn issue_training_source(
 }
 
 pub fn training_source_granted(role: &Value, source: &Value) -> bool {
+    if is_dingtalk_delegation_source(source) {
+        return false;
+    }
     if source["providerId"] == ISSUE_COMMENTS_PROVIDER {
         return source["projectId"]
             .as_str()

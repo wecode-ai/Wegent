@@ -757,6 +757,9 @@ async fn reply_to_work(
     let source =
         crate::task_runtime::personal_stand_in::stand_in_connection(role, &message["source"])
             .ok_or("Source connection was removed; reply was not sent")?;
+    if crate::task_runtime::personal_stand_in::is_dingtalk_delegation_source(source) {
+        return Err("DingTalk delegation only admits messages for the owner".into());
+    }
     if !identity.ask_before_act
         && (role["enabled"] != true || source["policy"]["automatic"] != true)
     {

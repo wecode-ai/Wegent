@@ -15,6 +15,7 @@ import { StandInComposer } from './StandInComposer'
 import type { StandInConnectionNavigationHandle } from './StandInConnectionSettings'
 import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
+import { DINGTALK_PROVIDER, withDingTalkDelegation } from './standInDingTalk'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import {
   StandInSettingsActions,
@@ -36,6 +37,8 @@ export function StandInPrimaryProfile({
   loading = false,
   error,
   onSave,
+  onSaveDingTalk,
+  dingtalkSourceProblem,
   onClose,
   ref,
   api,
@@ -56,6 +59,8 @@ export function StandInPrimaryProfile({
   loading?: boolean
   error: string | null
   onSave(settings: PersonalStandInSettings): Promise<void>
+  onSaveDingTalk?(settings: PersonalStandInSettings): Promise<PersonalStandInSettings | null>
+  dingtalkSourceProblem?: string
   onClose(): void
   ref?: Ref<StandInSettingsHandle>
   api?: StandInExecutorApi
@@ -321,6 +326,37 @@ export function StandInPrimaryProfile({
             deviceId={settings.executionDeviceId}
             localDeviceId={localDeviceId}
             disabled={blocked}
+            dingTalk={
+              onSaveDingTalk
+                ? {
+                    delegation: saved.dingtalkDelegation,
+                    model: saved.model,
+                    modelOptions: saved.modelOptions,
+                    services,
+                    devices,
+                    primaryAvailable: saved.enabled && !settings.lifecycle,
+                    sourceProblem: dingtalkSourceProblem,
+                    replacesLegacy: original.connections.some(
+                      value => value.providerId === DINGTALK_PROVIDER
+                    ),
+                    async onSave(delegation, selectedModel, options) {
+                      const updated = await onSaveDingTalk(
+                        withDingTalkDelegation(settings, delegation, selectedModel, options)
+                      )
+                      if (!updated?.primary) return false
+                      const next = updated.primary
+                      setDraft(current => ({
+                        ...current,
+                        enabled: next.enabled,
+                        model: next.model,
+                        modelOptions: next.modelOptions,
+                        dingtalkDelegation: next.dingtalkDelegation,
+                      }))
+                      return true
+                    },
+                  }
+                : undefined
+            }
             onChange={value =>
               setDraft({
                 ...draft,
@@ -417,21 +453,24 @@ export function StandInPrimaryProfile({
           disabled={blocked}
           saveDisabled={blocked || !dirty || scheduleDirty || connectionDraftDirty}
           onCancel={close}
-          onSave={() =>
-            void onSave({
-              ...settings,
-              primary: {
-                ...draft,
-                ...(preserveLegacyInstructions
-                  ? { prompt: saved.prompt, preferences: saved.preferences }
-                  : {}),
-                collaboration:
-                  saved.collaboration || !dequal(draft.collaboration, original.collaboration)
-                    ? draft.collaboration
-                    : undefined,
-              },
-            })
-          }
+          onSave={() => {
+            const save = () =>
+              void onSave({
+                ...settings,
+                primary: {
+                  ...draft,
+                  ...(preserveLegacyInstructions
+                    ? { prompt: saved.prompt, preferences: saved.preferences }
+                    : {}),
+                  collaboration:
+                    saved.collaboration || !dequal(draft.collaboration, original.collaboration)
+                      ? draft.collaboration
+                      : undefined,
+                },
+              })
+            if (connectionRef.current) connectionRef.current.requestLeaveScoped(save)
+            else save()
+          }}
         >
           {error && (
             <div className="w-full">

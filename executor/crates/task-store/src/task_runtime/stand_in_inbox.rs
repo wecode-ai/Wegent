@@ -1,5 +1,9 @@
 //! Durable source cursors, message deduplication and role-owned work associations.
-use super::personal_stand_in::{source_collection_namespace, source_namespace};
+use super::personal_stand_in::{
+    after_dingtalk_delegation_boundary, dingtalk_delegation, is_dingtalk_delegation_source,
+    read_dingtalk_delegation, source_collection_namespace, source_namespace, source_provider,
+    DINGTALK_PROVIDER,
+};
 use super::*;
 use sha2::{Digest, Sha256};
 
@@ -236,9 +240,14 @@ fn find_message(
     let raw: Option<String> = connection.query_row(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
-         AND json_extract(metadata,'$.source.profile')=?3 AND json_extract(metadata,'$.source.kind')=?4
-         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8 AND (?9=0 OR json_type(metadata,'$.objectId') IS NULL) ORDER BY created_at DESC,id DESC LIMIT 1",
-        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source),immutable_only],
+         AND (?10 IS NOT NULL OR json_extract(metadata,'$.source.profile')=?3)
+         AND json_extract(metadata,'$.source.kind')=?4 AND json_extract(metadata,'$.source.id')=?5
+         AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8
+         AND (?9=0 OR json_type(metadata,'$.objectId') IS NULL)
+         AND json_extract(metadata,'$.source.dingtalkAccount.accountId') IS ?10
+         AND json_extract(metadata,'$.source.dingtalkAccount.organizationId') IS ?11
+         ORDER BY created_at DESC,id DESC LIMIT 1",
+        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source), immutable_only, source["dingtalkAccount"]["accountId"].as_str(), source["dingtalkAccount"]["organizationId"].as_str()],
         |row| row.get(0),
     ).optional()?;
     raw.map(|raw| {
@@ -265,13 +274,28 @@ fn find_event_message(
             true,
         );
     }
-    let raw: Option<String> = connection.query_row(
-        "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
+    let raw: Option<String> = connection
+        .query_row(
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
-         AND json_extract(metadata,'$.source.providerId')=?3 AND json_extract(metadata,'$.source.profile')=?4
-         AND json_extract(metadata,'$.objectId')=?5 AND json_extract(metadata,'$.version')=?6 LIMIT 1",
-        params![user,role,super::personal_stand_in::source_provider(source),source["profile"].as_str(),message["objectId"].as_str(),message["version"].as_str()], |row|row.get(0)
-    ).optional()?;
+         AND json_extract(metadata,'$.source.providerId')=?3
+         AND (?7 IS NOT NULL OR json_extract(metadata,'$.source.profile')=?4)
+         AND json_extract(metadata,'$.objectId')=?5 AND json_extract(metadata,'$.version')=?6
+         AND json_extract(metadata,'$.source.dingtalkAccount.accountId') IS ?7
+         AND json_extract(metadata,'$.source.dingtalkAccount.organizationId') IS ?8 LIMIT 1",
+            params![
+                user,
+                role,
+                super::personal_stand_in::source_provider(source),
+                source["profile"].as_str(),
+                message["objectId"].as_str(),
+                message["version"].as_str(),
+                source["dingtalkAccount"]["accountId"].as_str(),
+                source["dingtalkAccount"]["organizationId"].as_str()
+            ],
+            |row| row.get(0),
+        )
+        .optional()?;
     raw.map(|raw| {
         serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
     })
@@ -522,8 +546,11 @@ impl LocalTaskStore {
 
     pub fn stand_in_work(&self, user: i64, id: &str) -> Result<Value, TaskRuntimeError> {
         let connection = self.connection()?;
+        let delegation = read_dingtalk_delegation(&connection, user)?;
         read_record(&connection, id, "stand_in_work")?
-            .filter(|work| work["userId"] == user)
+            .filter(|work| {
+                work["userId"] == user && dingtalk_delegation::work_visible(&delegation, work)
+            })
             .ok_or(TaskRuntimeError::TaskNotFound)
     }
 
@@ -533,18 +560,29 @@ impl LocalTaskStore {
         role: Option<&str>,
     ) -> Result<Vec<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
+        let delegation = read_dingtalk_delegation(&connection, user)?;
         let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_work' AND json_extract(metadata,'$.userId')=?1 AND (?2 IS NULL OR json_extract(metadata,'$.roleId')=?2) ORDER BY updated_at DESC")?;
         let rows = statement.query_map(params![user, role], |row| row.get::<_, String>(0))?;
         rows.map(|raw| {
             serde_json::from_str(&raw?)
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
         })
+        .filter(|row| {
+            row.as_ref().map_or(true, |work| {
+                dingtalk_delegation::work_visible(&delegation, work)
+            })
+        })
         .collect()
     }
 
     pub fn stand_in_messages(&self, user: i64, work: &str) -> Result<Vec<Value>, TaskRuntimeError> {
-        self.stand_in_work(user, work)?;
         let connection = self.connection()?;
+        let delegation = read_dingtalk_delegation(&connection, user)?;
+        read_record(&connection, work, "stand_in_work")?
+            .filter(|work| {
+                work["userId"] == user && dingtalk_delegation::work_visible(&delegation, work)
+            })
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
         let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at,id")?;
         let rows = statement.query_map(params![user, work], |row| row.get::<_, String>(0))?;
         rows.map(|raw| {
@@ -624,12 +662,27 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         Self::validate_connection_message_version(message)?;
+        let scoped = is_dingtalk_delegation_source(source);
+        if scoped || (role == "@primary" && source_provider(source) == DINGTALK_PROVIDER) {
+            let delegation = read_dingtalk_delegation(&connection, user)?;
+            if (scoped || delegation.is_object())
+                && (!dingtalk_delegation::current_grant(&delegation, role, source)
+                    || !after_dingtalk_delegation_boundary(source, message))
+            {
+                return Err(TaskRuntimeError::VersionConflict);
+            }
+        }
         let identity = if message.get("objectId").is_some() {
+            let profile = if scoped {
+                source_namespace(source)
+            } else {
+                source["profile"].clone()
+            };
             json!([
                 user,
                 role,
                 super::personal_stand_in::source_provider(source),
-                source["profile"],
+                profile,
                 message["objectId"],
                 message["version"]
             ])
@@ -656,7 +709,11 @@ impl LocalTaskStore {
         }
         let mut work = if let Some(id) = work_id {
             read_record(&connection, id, "stand_in_work")?
-                .filter(|work| work["userId"] == user && work["roleId"] == role)
+                .filter(|work| {
+                    work["userId"] == user
+                        && work["roleId"] == role
+                        && dingtalk_delegation::matching_source_accounts(source, &work["source"])
+                })
                 .ok_or(TaskRuntimeError::TaskNotFound)?
         } else {
             let id = format!("stand-in-work-{}", Uuid::new_v4());
@@ -749,8 +806,11 @@ impl LocalTaskStore {
         }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let delegation = read_dingtalk_delegation(&connection, user)?;
         let mut source = read_record(&connection, work, "stand_in_work")?
-            .filter(|work| work["userId"] == user)
+            .filter(|work| {
+                work["userId"] == user && dingtalk_delegation::work_visible(&delegation, work)
+            })
             .ok_or(TaskRuntimeError::TaskNotFound)?;
         let mut messages = ids
             .iter()
@@ -766,6 +826,7 @@ impl LocalTaskStore {
                     row["userId"] == user
                         && row["roleId"] == source["roleId"]
                         && row["id"] != source["id"]
+                        && dingtalk_delegation::work_visible(&delegation, row)
                 })
                 .ok_or(TaskRuntimeError::TaskNotFound)?
         } else {
@@ -776,6 +837,16 @@ impl LocalTaskStore {
         if source["status"] == "sending" || destination["status"] == "sending" {
             return Err(TaskRuntimeError::Invalid(
                 "Wait for active work to finish before organizing messages".into(),
+            ));
+        }
+        if messages.iter().any(|message| {
+            !dingtalk_delegation::matching_source_accounts(
+                &message["source"],
+                &destination["source"],
+            )
+        }) {
+            return Err(TaskRuntimeError::Invalid(
+                "DingTalk work belongs to another account or organization".into(),
             ));
         }
         for (id, message) in ids.iter().zip(messages.iter_mut()) {

@@ -2,8 +2,9 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    source_collection_namespace, source_provider, stand_in_collection_connection,
-    stand_in_identities,
+    after_dingtalk_delegation_boundary, dingtalk_delegation_source_active,
+    is_dingtalk_delegation_source, source_collection_namespace, source_provider,
+    stand_in_collection_connection, stand_in_identities,
 };
 
 #[derive(Clone, Copy)]
@@ -228,6 +229,20 @@ impl RuntimeWorkRpcHandler {
         let outcome = self
             .collect_connection_source(store, user, source, roles, &state, version)
             .await;
+        if is_dingtalk_delegation_source(source)
+            && outcome.as_ref().is_err_and(|error| {
+                matches!(
+                    error.code.as_str(),
+                    "dingtalk_identity_changed"
+                        | "connector_auth_required"
+                        | "dingtalk_permissions_required"
+                )
+            })
+        {
+            store
+                .pause_dingtalk_delegation(user, &self.device_id, version)
+                .map_err(settings_error)?;
+        }
         save_collection_result(store, user, source, version, &state, outcome)
     }
 
@@ -394,10 +409,15 @@ impl RuntimeWorkRpcHandler {
         if git_message_is_echo(store, user, source, message)? {
             return Ok(());
         }
-        let target = self.connection_session_target(store, user, role, source, message)?;
         let connection = stand_in_collection_connection(role, source)
             .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
         let connection = concrete_role_grant(connection, source);
+        // Scoped delegation retains the event for the owner without creating a generic task.
+        let target = if is_dingtalk_delegation_source(&connection) {
+            None
+        } else {
+            self.connection_session_target(store, user, role, source, message)?
+        };
         if let Some(id) = &target {
             store
                 .ensure_coordinated_work(
@@ -434,7 +454,12 @@ fn collection_sources(
         .iter()
         .filter(|identity| identity["enabled"] == true)
     {
-        for source in identity["connections"].as_array().into_iter().flatten() {
+        for source in identity["connections"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|source| dingtalk_delegation_source_active(source))
+        {
             let key = json!([
                 source_collection_namespace(source),
                 source["kind"],
@@ -536,6 +561,12 @@ fn save_collection_result(
         Ok(next) => next,
         // Startup and host restarts must not latch a source error until settings change.
         Err(error) if error.code == "connection_host_unavailable" => return Ok(()),
+        Err(error)
+            if is_dingtalk_delegation_source(source)
+                && error.code == "connection_configuration_changed" =>
+        {
+            return Ok(());
+        }
         Err(error) => {
             let mut next = if state.is_object() {
                 state.clone()
@@ -631,6 +662,9 @@ pub(super) fn git_message_is_echo(
 
 // Keep existing intake policy separate from generic subscription initialization receipts.
 pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
+    if is_dingtalk_delegation_source(source) {
+        return after_dingtalk_delegation_boundary(source, message);
+    }
     if source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
         || (source_provider(source).starts_with(super::super::git_connections::PACKAGE)
             && super::super::git_connections::uses_webhook(source))

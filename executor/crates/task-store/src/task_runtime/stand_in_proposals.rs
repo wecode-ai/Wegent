@@ -48,6 +48,18 @@ fn preserve_learning_choices(before: &Value, draft: &mut Value) {
     }
 }
 
+fn verify_unchanged_dingtalk_delegation(
+    before: &Value,
+    draft: &Value,
+) -> Result<(), TaskRuntimeError> {
+    if before["primary"]["dingtalkDelegation"] != draft["primary"]["dingtalkDelegation"] {
+        return Err(TaskRuntimeError::Invalid(
+            "Configure DingTalk delegation from the assistant settings".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl LocalTaskStore {
     /// Read a pending proposal with legacy settings normalized for owner review.
     pub fn stand_in_proposal(
@@ -105,6 +117,7 @@ impl LocalTaskStore {
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let previous = read_personal(&connection, user, device)?;
         preserve_learning_choices(&previous, &mut settings);
+        verify_unchanged_dingtalk_delegation(&previous, &settings)?;
         if let Some(role) = role {
             let other_roles = |settings: &Value| {
                 settings["roles"].as_array().map(|rows| {
@@ -168,6 +181,7 @@ impl LocalTaskStore {
         let saved = if accept {
             let mut next = prepared.unwrap_or_else(|| proposal["settings"].clone());
             preserve_learning_choices(&previous, &mut next);
+            verify_unchanged_dingtalk_delegation(&previous, &next)?;
             self.save_personal_stand_in_on(&connection, user, device, next)?
         } else {
             previous

@@ -72,15 +72,18 @@ export function StandInWorkList({
   const selected = items.find(item => item.key === selectedKey)
   const selectedState = selected && standInState(selected)
   const selectedWork = inbox.find(work => work.taskId === selected?.task.taskId)
+  const intakeOnly = Boolean(selectedWork?.source.dingtalkAccount)
   const needsRestore = selected?.task.status === 'archived'
   const needsStart =
     !needsRestore &&
+    !intakeOnly &&
     selectedWork &&
     selectedState?.status !== 'waiting' &&
     ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
     if (item.task.status === 'archived') return t('workbench.settings_category_archived')
     const work = inbox.find(value => value.taskId === item.task.taskId)
+    if (work?.source.dingtalkAccount) return t('standIn.dingtalk_delegation.needs_attention')
     return work && work.status !== 'sent'
       ? t(`standIn.workspace.inbox_${work.status}`)
       : t(`standIn.personal.activity_${standInState(item).status}`)
@@ -463,52 +466,61 @@ export function StandInWorkList({
             </p>
           )}
           <div className="mt-auto pt-6">
-            <p className="mb-3 text-xs text-text-muted">{t('standIn.workspace.preview_help')}</p>
-            <ControlButton
-              variant="primary"
-              size="sm"
-              type="button"
-              data-testid="stand-in-preview-open"
-              disabled={
-                busy ||
-                (needsRestore
-                  ? !onRestoreTask
-                  : !needsStart && (!onOpenTask || (!!selectedWork && !selectedWork.task))) ||
-                (!!needsStart && !api)
-              }
-              onClick={async () => {
-                try {
-                  setBusy(true)
-                  setError(null)
-                  if (needsRestore) {
-                    await onRestoreTask?.(selected.address)
-                    onRefresh?.()
-                    return
-                  }
-                  const address =
-                    needsStart && api && userId !== undefined && deviceId
-                      ? await api.runWork(userId, deviceId, selectedWork.id)
-                      : selected.address
-                  onRefresh?.()
-                  await onOpenTask?.(address)
-                } catch (cause) {
-                  setError(getStandInErrorMessage(cause))
-                } finally {
-                  setBusy(false)
-                }
-              }}
-              className="inline-flex min-h-11 md:min-h-9 w-full items-center justify-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
-            >
+            <p className="mb-3 text-xs text-text-muted">
               {t(
-                needsRestore
-                  ? 'workbench.archived_unarchive'
-                  : needsStart
-                    ? 'standIn.workspace.start_work'
-                    : 'standIn.workspace.open_work'
+                intakeOnly
+                  ? 'standIn.dingtalk_delegation.review_in_dingtalk'
+                  : 'standIn.workspace.preview_help'
               )}
-              <ArrowUpRight className="h-4 w-4" />
-            </ControlButton>
-            {selectedWork?.task &&
+            </p>
+            {!intakeOnly && (
+              <ControlButton
+                variant="primary"
+                size="sm"
+                type="button"
+                data-testid="stand-in-preview-open"
+                disabled={
+                  busy ||
+                  (needsRestore
+                    ? !onRestoreTask
+                    : !needsStart && (!onOpenTask || (!!selectedWork && !selectedWork.task))) ||
+                  (!!needsStart && !api)
+                }
+                onClick={async () => {
+                  try {
+                    setBusy(true)
+                    setError(null)
+                    if (needsRestore) {
+                      await onRestoreTask?.(selected.address)
+                      onRefresh?.()
+                      return
+                    }
+                    const address =
+                      needsStart && api && userId !== undefined && deviceId
+                        ? await api.runWork(userId, deviceId, selectedWork.id)
+                        : selected.address
+                    onRefresh?.()
+                    await onOpenTask?.(address)
+                  } catch (cause) {
+                    setError(getStandInErrorMessage(cause))
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+                className="inline-flex min-h-11 md:min-h-9 w-full items-center justify-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
+              >
+                {t(
+                  needsRestore
+                    ? 'workbench.archived_unarchive'
+                    : needsStart
+                      ? 'standIn.workspace.start_work'
+                      : 'standIn.workspace.open_work'
+                )}
+                <ArrowUpRight className="h-4 w-4" />
+              </ControlButton>
+            )}
+            {!intakeOnly &&
+              selectedWork?.task &&
               ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status) &&
               selectedState.status !== 'running' &&
               selectedState.status !== 'waiting' &&

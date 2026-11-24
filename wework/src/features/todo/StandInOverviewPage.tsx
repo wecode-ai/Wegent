@@ -37,6 +37,7 @@ import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInOnboarding } from './StandInOnboarding'
+import { DINGTALK_PROVIDER } from './standInDingTalk'
 import { createStandInOverviewSource, standInOverviewSourceKey } from './standInOverviewSource'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { standInProcessingFailure } from './standInProcessingFailure'
@@ -162,7 +163,13 @@ export function StandInOverviewPage({
     deviceId ?? '',
     active && !!deviceId
   )
-  const inbox = useStandInInbox(api, props.userId, deviceId, active)
+  const dingTalkAccount = saved?.primary?.dingtalkDelegation?.account
+  const dingTalkScope = dingTalkAccount
+    ? JSON.stringify([dingTalkAccount.accountId, dingTalkAccount.organizationId])
+    : undefined
+  const inbox = useStandInInbox(api, props.userId, deviceId, active, dingTalkScope)
+  const dingtalkSourceProblem = inbox.sourceErrors.find(value => value.source.dingtalkAccount)
+    ?.error.code
   const observation = useMemo(
     () => ({
       api,
@@ -255,8 +262,23 @@ export function StandInOverviewPage({
     roleLocations?.find(entry => entry.role.id === roleId && entry.deviceId === deviceId)?.role ??
     state.draft?.roles.find(value => value.id === roleId)
   const visibleInbox = inbox.items.filter(work => work.messageCount > 0 || work.task)
+  const visibleTaskIds = new Set(visibleInbox.map(work => work.taskId))
+  const reminders = workbench?.runtimeTaskReminders.items ?? []
   const items = mergeStandInWorkItems(
-    workbench?.runtimeTaskReminders.items ?? [],
+    dingTalkAccount
+      ? reminders.filter(item => {
+          if (item.address.deviceId !== deviceId || standInWorkRole(item) !== '@primary')
+            return true
+          const origin = item.task.runtimeHandle?.origin as
+            | { type?: string; sourceProvider?: string }
+            | undefined
+          const mayBeDingTalk =
+            origin?.type === 'dingtalk_work' ||
+            (origin?.type === 'connection_work' &&
+              (!origin.sourceProvider || origin.sourceProvider === DINGTALK_PROVIDER))
+          return !mayBeDingTalk || visibleTaskIds.has(item.task.taskId)
+        })
+      : reminders,
     inbox.items,
     deviceId,
     props.projects
@@ -875,6 +897,8 @@ export function StandInOverviewPage({
                         if (initialPrimaryProfile) props.onCancel?.()
                       }
                     }}
+                    onSaveDingTalk={state.save}
+                    dingtalkSourceProblem={dingtalkSourceProblem}
                     error={state.error}
                     onReload={state.reload}
                     api={api}
@@ -938,6 +962,7 @@ export function StandInOverviewPage({
         localDeviceId: state.currentDeviceId,
         devices: props.devices,
         services: props.services,
+        dingtalkSourceProblem,
         onSelectDevice: primaryDeviceId
           ? undefined
           : device => {

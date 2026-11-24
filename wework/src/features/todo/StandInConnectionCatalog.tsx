@@ -1,4 +1,4 @@
-import type { StandInRole } from '@/api/personalStandIn'
+import type { DingTalkDelegation, StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
@@ -20,11 +20,11 @@ import { useState, type ReactNode } from 'react'
 import { EMAIL_PROVIDER } from './StandInEmailConnections'
 import { GIT_CONNECTION_PREFIX } from './StandInGitConnections'
 import { findStandInProject } from './standInProjects'
-
-const DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
+import { DINGTALK_PROVIDER } from './standInDingTalk'
 
 export function StandInConnectionCatalog({
   role,
+  dingTalk,
   projects,
   providers,
   loading,
@@ -34,6 +34,7 @@ export function StandInConnectionCatalog({
   onSelect,
 }: {
   role: StandInRole
+  dingTalk?: DingTalkDelegation
   projects: CollaborationProject[]
   providers: ConnectionProviderDescriptor[]
   loading: boolean
@@ -50,7 +51,11 @@ export function StandInConnectionCatalog({
     projectScopeConfigured && (source.allProjects || source.projects.length > 0)
   const connections = role.connections ?? []
   const providerIds = [
-    ...new Set([...providers.map(item => item.id), ...connections.map(row => row.providerId)]),
+    ...new Set([
+      ...providers.map(item => item.id),
+      ...connections.map(row => row.providerId),
+      ...(dingTalk ? [DINGTALK_PROVIDER] : []),
+    ]),
   ]
   const projectSummary = source.allProjects ? (
     <span data-testid="stand-in-connection-all-projects">
@@ -93,26 +98,33 @@ export function StandInConnectionCatalog({
     },
     ...providerIds.map(id => {
       const provider = providers.find(item => item.id === id)
-      const selected = connections.filter(row => row.providerId === id)
-      const configured = selected.length > 0
+      const delegation = id === DINGTALK_PROVIDER ? dingTalk : undefined
+      const selected = delegation?.sources ?? connections.filter(row => row.providerId === id)
+      const configured = !!delegation || selected.length > 0
       const prefix = id === DINGTALK_PROVIDER ? 'dingtalk' : id
       const availability = provider?.availability.status
       const ready = availability === 'ready'
       const status = loading
         ? t('standIn.loading')
-        : availability === 'auth_required'
-          ? t('standIn.workspace.connection_needs_auth')
-          : ready
-            ? t(
-                configured
-                  ? 'standIn.workspace.connection_configured'
-                  : 'standIn.workspace.connection_not_configured'
-              )
-            : provider?.availability.code
-              ? getStandInErrorMessage({ code: provider.availability.code })
-              : t('standIn.workspace.connection_status_' + availability, {
-                  defaultValue: t('standIn.workspace.connection_unavailable'),
-                })
+        : delegation
+          ? t(
+              delegation.enabled
+                ? 'standIn.dingtalk_delegation.enabled'
+                : 'standIn.dingtalk_delegation.paused'
+            )
+          : availability === 'auth_required'
+            ? t('standIn.workspace.connection_needs_auth')
+            : ready
+              ? t(
+                  configured
+                    ? 'standIn.workspace.connection_configured'
+                    : 'standIn.workspace.connection_not_configured'
+                )
+              : provider?.availability.code
+                ? getStandInErrorMessage({ code: provider.availability.code })
+                : t('standIn.workspace.connection_status_' + availability, {
+                    defaultValue: t('standIn.workspace.connection_unavailable'),
+                  })
       return {
         id,
         testId: `stand-in-add-${prefix}-connection`,
@@ -122,10 +134,16 @@ export function StandInConnectionCatalog({
             : id.startsWith(GIT_CONNECTION_PREFIX)
               ? GitBranch
               : MessageSquare,
-        name: provider?.displayName ?? t('standIn.workspace.connection_unknown_source'),
+        name:
+          provider?.displayName ??
+          t(
+            id === DINGTALK_PROVIDER
+              ? 'standIn.dingtalk_delegation.provider'
+              : 'standIn.workspace.connection_unknown_source'
+          ),
         configured,
-        active: configured && ready && !loading,
-        quietStatus: ready && !loading,
+        active: configured && ready && !loading && (!delegation || delegation.enabled),
+        quietStatus: ready && !loading && !delegation,
         summary: configured ? (
           <>
             {selected.map((row, index) => (

@@ -96,6 +96,74 @@ async fn reply_actions_select_exact_versions_without_bypassing_source_authority(
     }
 }
 
+#[tokio::test]
+async fn dingtalk_delegation_reply_remains_blocked_with_manual_confirmation() {
+    use crate::task_runtime::personal_stand_in::{stand_in_identities, DINGTALK_PROVIDER};
+
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["primary"] = json!({
+        "enabled": true, "prompt": "", "preferences": "",
+        "model": {"runtime": "codex", "provider": "openai", "model_id": "configured"},
+        "dingtalkDelegation": {
+            "enabled": false,
+            "account": {"profile": "org:user", "accountId": "user", "organizationId": "org"},
+            "sources": [{
+                "providerId": DINGTALK_PROVIDER, "profile": "org:user",
+                "kind": "group", "id": "group", "name": "Group",
+            }],
+            "templates": {"documentLink": true, "timeLocation": true, "standardProcess": true},
+        },
+    });
+    let mut draft = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    draft["primary"]["dingtalkDelegation"]["enabled"] = json!(true);
+    let enabled = store.save_personal_stand_in(7, "mac", draft).unwrap();
+    let identities = stand_in_identities(&enabled);
+    let source = &identities[0]["connections"][0];
+    let since =
+        chrono::DateTime::parse_from_rfc3339(source["enabledAfter"].as_str().unwrap()).unwrap();
+    let at = (since + chrono::TimeDelta::seconds(1)).to_rfc3339();
+    let work = store
+        .ingest_stand_in_message(
+            7,
+            "@primary",
+            source,
+            &json!({"id": "event", "text": "Message", "at": at}),
+            None,
+        )
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    let message = &store.stand_in_messages(7, work_id).unwrap()[0]["recordId"];
+    let runtime = TaskRuntime::new(store).unwrap();
+    let identity = StandInMcpIdentity {
+        task_id: work_id.into(),
+        user: 7,
+        device: "mac".into(),
+        role: Some("@primary".into()),
+        work: Some(work_id.into()),
+        ask_before_act: true,
+        coordinator_batch: None,
+        project: None,
+        review: false,
+        memory_review: false,
+        readonly_worker: false,
+    };
+    let denied = reply_to_work(
+        &runtime,
+        &identity,
+        &json!({"messageId": message, "text": "Reply"}),
+        false,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        denied,
+        "DingTalk delegation only admits messages for the owner"
+    );
+}
+
 #[test]
 fn delivery_context_tracks_injected_and_retrieved_memory_for_its_own_turn() {
     let mut request = ExecutionRequest::default();

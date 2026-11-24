@@ -2,6 +2,13 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+#[path = "personal_dingtalk_delegation.rs"]
+pub(super) mod dingtalk_delegation;
+pub use dingtalk_delegation::{
+    after_dingtalk_delegation_boundary, dingtalk_delegation_account_matches,
+    dingtalk_delegation_source_active, is_dingtalk_delegation_source,
+};
+
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
 use connections::validate_connections;
@@ -195,6 +202,24 @@ pub(super) fn read_personal(
     device: &str,
 ) -> Result<Value, TaskRuntimeError> {
     read_personal_state(connection, user, device).map(|(settings, _)| settings)
+}
+
+pub(super) fn read_dingtalk_delegation(
+    connection: &Connection,
+    user: i64,
+) -> Result<Value, TaskRuntimeError> {
+    let raw = connection
+        .query_row(
+            "SELECT json_extract(metadata,'$.primary.dingtalkDelegation')
+             FROM loop_items WHERE id=?1 AND resource_type='personal_stand_in'",
+            [personal_key(user)],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+    raw.as_deref().map_or(Ok(Value::Null), |raw| {
+        serde_json::from_str(raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+    })
 }
 
 fn personal_snapshot(
@@ -460,6 +485,7 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
         primary["id"] = json!("@primary");
         primary["name"] = json!("我的助理");
         primary["version"] = settings["version"].clone();
+        dingtalk_delegation::bind_sources(&mut primary);
         identities.push(primary);
     }
     for identity in &mut identities {
@@ -485,6 +511,25 @@ pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
 }
 
 impl LocalTaskStore {
+    pub fn pause_dingtalk_delegation(
+        &self,
+        user: i64,
+        device: &str,
+        settings_version: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut settings = read_personal(&connection, user, device)?;
+        if settings["version"] == *settings_version
+            && settings["primary"]["dingtalkDelegation"]["enabled"] == true
+        {
+            settings["primary"]["dingtalkDelegation"]["enabled"] = json!(false);
+            self.save_personal_stand_in_on(&connection, user, device, settings)?;
+        }
+        connection.commit()?;
+        Ok(())
+    }
+
     pub fn materialize_implicit_primary(
         &self,
         user: i64,
@@ -693,12 +738,18 @@ impl LocalTaskStore {
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
         }
+        if previous["primary"]["dingtalkDelegation"].is_object() && !value["primary"].is_object() {
+            return Err(TaskRuntimeError::Invalid(
+                "Preserve the saved DingTalk delegation".into(),
+            ));
+        }
         if let Some(routes) = previous.get("delegationRoutes") {
             value["delegationRoutes"] = routes.clone();
         } else if let Some(fields) = value.as_object_mut() {
             fields.remove("delegationRoutes");
         }
         if value["primary"].is_object() {
+            dingtalk_delegation::stamp(&mut value["primary"], &previous["primary"])?;
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }

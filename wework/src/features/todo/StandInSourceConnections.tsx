@@ -26,6 +26,7 @@ type SourceConnectionsProps = {
   api: StandInExecutorApi
   deviceId: string
   localDeviceId: string
+  lockedProfile?: string
   disabled: boolean
   onChange(role: StandInRole): void
   onReady?(): void
@@ -38,6 +39,7 @@ export function StandInSourceConnections(props: SourceConnectionsProps) {
     props.role.id,
     props.role.executionDeviceId,
     props.provider.id,
+    props.lockedProfile,
     props.provider.authTarget?.pluginKey,
     props.provider.authTarget?.connectorSlug,
   ])
@@ -53,6 +55,7 @@ function StandInSourceConnectionsContent({
   api,
   deviceId,
   localDeviceId,
+  lockedProfile,
   disabled,
   onChange,
   onReady,
@@ -64,6 +67,7 @@ function StandInSourceConnectionsContent({
       provider,
       api,
       deviceId,
+      lockedProfile,
       disabled,
       onChange,
       onReady,
@@ -72,7 +76,7 @@ function StandInSourceConnectionsContent({
         provider: provider.displayName,
       }),
     }),
-    [role, provider, api, deviceId, disabled, onChange, onReady, t]
+    [role, provider, api, deviceId, lockedProfile, disabled, onChange, onReady, t]
   )
   const [model] = useState(() => createSourceConnectionsModel(input))
   const subscribe = useCallback(
@@ -148,10 +152,18 @@ function StandInSourceConnectionsContent({
             <p className="text-xs text-text-secondary">
               {provider.resourceLabels?.[row.kind] ?? row.kind}
               {' · '}
-              {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
+              {lockedProfile
+                ? t(
+                    row.kind === 'group'
+                      ? 'standIn.workspace.group_mentions'
+                      : 'standIn.dingtalk_delegation.private_messages'
+                  )
+                : (row.configurationSummary ??
+                  t('standIn.workspace.connection_default_configuration'))}
             </p>
           </div>
-          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+          {!lockedProfile &&
+            provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
             row.kind === 'group' &&
             row.scope !== 'all' && (
               <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
@@ -309,11 +321,13 @@ function StandInSourceConnectionsContent({
       className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
       data-testid={`${prefix}-connections`}
     >
-      <StandInConnectionHeader
-        icon={MessageSquare}
-        title={provider.displayName}
-        description={t('standIn.workspace.message_connection_help')}
-      />
+      {!lockedProfile && (
+        <StandInConnectionHeader
+          icon={MessageSquare}
+          title={provider.displayName}
+          description={t('standIn.workspace.message_connection_help')}
+        />
+      )}
       {connectedScope}
       {!showAdding && (
         <ControlButton
@@ -415,7 +429,7 @@ function StandInSourceConnectionsContent({
               </>
             )}
           </div>
-          {!excluding && Boolean(provider.allResourceKinds?.length) && (
+          {!lockedProfile && !excluding && Boolean(provider.allResourceKinds?.length) && (
             <RadioGroup
               value={scope}
               name="connection-scope"
@@ -583,35 +597,39 @@ function StandInSourceConnectionsContent({
               )}
             </>
           )}
-          <p className="text-xs text-text-secondary">{t('standIn.workspace.connection_help')}</p>
+          {!lockedProfile && (
+            <p className="text-xs text-text-secondary">{t('standIn.workspace.connection_help')}</p>
+          )}
         </form>
       )}
-      <StandInProcessingSettings
-        disabled={disabled}
-        rows={
-          rows.length
-            ? rows.map(row => ({
-                key: identity(row),
-                name: row.name,
-                policy: row.policy,
-                outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
-                testId: `${prefix}-policy-${row.id}`,
-                onChange: policy =>
-                  updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),
-              }))
-            : [
-                {
-                  key: 'new',
-                  name: provider.displayName,
-                  policy: newPolicy,
+      {!lockedProfile && (
+        <StandInProcessingSettings
+          disabled={disabled}
+          rows={
+            rows.length
+              ? rows.map(row => ({
+                  key: identity(row),
+                  name: row.name,
+                  policy: row.policy,
                   outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
-                  testId: `${prefix}-new-policy`,
+                  testId: `${prefix}-policy-${row.id}`,
                   onChange: policy =>
-                    setNewPolicy({ ...policy, immediate: policy.immediate ?? false }),
-                },
-              ]
-        }
-      />
+                    updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),
+                }))
+              : [
+                  {
+                    key: 'new',
+                    name: provider.displayName,
+                    policy: newPolicy,
+                    outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
+                    testId: `${prefix}-new-policy`,
+                    onChange: policy =>
+                      setNewPolicy({ ...policy, immediate: policy.immediate ?? false }),
+                  },
+                ]
+          }
+        />
+      )}
       {authorization}
     </section>
   )
