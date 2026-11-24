@@ -8,12 +8,15 @@ import type {
 
 export class RuntimeTaskMachine {
   private state: RuntimeTaskLifecycleState
+  private snapshot: RuntimeTaskLifecycleSnapshot | undefined
+  private readonly onChange?: () => void
   private revision = 0
   private readonly observedTurnIds = new Set<string>()
   private readonly settledTurnIds = new Set<string>()
   private readonly retiredExecutorEpochs = new Set<string>()
 
-  constructor(address: RuntimeTaskAddress, unread = false) {
+  constructor(address: RuntimeTaskAddress, unread = false, onChange?: () => void) {
+    this.onChange = onChange
     this.state = {
       address,
       task: null,
@@ -55,7 +58,11 @@ export class RuntimeTaskMachine {
     if (changed && event.type === 'turn_settled' && this.state.latestTurnId) {
       this.settledTurnIds.add(this.state.latestTurnId)
     }
-    if (changed) this.revision += 1
+    if (changed) {
+      this.revision += 1
+      this.snapshot = undefined
+      this.onChange?.()
+    }
     return changed
   }
 
@@ -91,6 +98,7 @@ export class RuntimeTaskMachine {
   }
 
   getSnapshot(): RuntimeTaskLifecycleSnapshot {
+    if (this.snapshot) return this.snapshot
     const {
       address,
       task,
@@ -117,7 +125,7 @@ export class RuntimeTaskMachine {
     const hasPendingUserInput = isWaitingForUserInput || interactionStatus === 'awaitingUserReply'
     const isBusy = isQueued || isRunning || isTurnActive || isWaitingForUserInput
 
-    return {
+    this.snapshot = {
       key: getRuntimeTaskLifecycleKey(address),
       address,
       task,
@@ -152,6 +160,7 @@ export class RuntimeTaskMachine {
         shouldShowUnread: unread && !isRunning && !hasPendingUserInput,
       },
     }
+    return this.snapshot
   }
 }
 

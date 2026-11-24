@@ -6,6 +6,27 @@ sidebar_position: 33
 
 Wework 内置一个默认关闭的前端性能诊断开关，用于定位 release 包中“运行一段时间后变卡”的问题。诊断代码只在显式开启后运行；关闭时不会安装 React Profiler，也不会采集定时样本。
 
+## 桌面会话切换性能门禁
+
+Linux 桌面 CI 的 `streaming-conversation-switching` 检查点使用隔离的 Electron、真实任务运行时和模型测试流。两轮长 Markdown 历史包含代码和表格，随后分别验证流式输出贴底跟随，以及阅读历史时收到后台输出后的会话恢复。每个场景独立应用下表的硬上限，并保留原有的阅读位置、贴底和布局断言。
+
+| 指标 | 每场景上限 |
+| --- | ---: |
+| 可信点击到下一渲染机会后的帧回调 | 200 ms |
+| 单次切换到新会话编辑器或原会话阅读锚点可见 | 500 ms |
+| 最长主线程任务 / 最长动画帧 | 100 ms / 150 ms |
+| 长任务超出 50 ms 的部分之和 | 150 ms |
+| 主线程任务 CPU 时间 / 样式重算和布局 CPU 时间 | 350 ms / 120 ms |
+| 观测到的 JS 堆上限 / 相对起点增长 | 512 MiB / 64 MiB |
+| 观测到的 DOM 节点上限 / 相对起点增长 | 25,000 / 5,000 |
+| 观测到的 JS 事件监听器上限 / 相对起点增长 | 25,000 / 2,000 |
+
+每个场景从切换前开始采集，覆盖离开、返回和已有的 1 秒稳定性观察。帧延迟用 Chromium 可信点击的时间戳到第二次动画帧回调估算，切换完成时间包含本地 E2E 控制往返。资源计数在切换前、两次切换就绪时和观察结束时采样，表示该场景的观测峰值和增长。
+
+超限或缺少必需样本会令检查点失败。CI 保存 `renderer-performance-rich-bottom.json` 和 `renderer-performance-rich-reading.json`，包含已经采集的测量值、硬上限和失败原因。禁止放宽预算或移除门禁。收紧预算须提供同一 CI 环境下的对比证据。该门禁覆盖上述会话操作，版本常驻内存与系统总 CPU 由对应诊断衡量。
+
+使用 `pnpm --filter wework e2e:desktop --segment streaming-conversation-switching` 复现。
+
 ## 多实例调试
 
 使用 `pnpm --filter wework dev:mac` 启动日常 debug 应用时，各 worktree 共享 `~/.wegent/development/workbench` 下的开发历史，与正式版数据隔离；窗口状态、日志、设备身份和 IPC 按 worktree 分开。`--executor-isolation` 是保留的参数，开发数据隔离始终启用。

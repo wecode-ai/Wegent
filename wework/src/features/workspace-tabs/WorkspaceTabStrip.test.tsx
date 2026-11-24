@@ -148,8 +148,9 @@ describe('WorkspaceTabStrip', () => {
     )
   })
 
-  test('fits and reveals the selected tab when the strip becomes narrow', () => {
+  test('coalesces resize notifications and reveals the selected tab in the next frame', () => {
     const originalObserver = globalThis.ResizeObserver
+    vi.useFakeTimers()
     let resize: (() => void) | undefined
     vi.stubGlobal(
       'ResizeObserver',
@@ -162,20 +163,32 @@ describe('WorkspaceTabStrip', () => {
       }
     )
     try {
-      renderStrip()
+      const { unmount } = renderStrip()
       const strip = screen.getByTestId('workspace-tab-strip')
       const selected = within(strip).getByRole('tab', { selected: true }).parentElement!
-      Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 98 })
-      vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue({ left: 100, right: 198 } as DOMRect)
+      const measure = vi
+        .spyOn(strip, 'getBoundingClientRect')
+        .mockReturnValue({ left: 100, right: 198, width: 98 } as DOMRect)
       vi.spyOn(selected, 'getBoundingClientRect').mockReturnValue({
         left: 247,
         right: 345,
       } as DOMRect)
-      act(() => resize!())
-      expect(strip.style.getPropertyValue('--workspace-tab-viewport-width')).toBe('98px')
+      act(() => {
+        resize!()
+        resize!()
+      })
+      expect(measure).not.toHaveBeenCalled()
+      act(() => vi.advanceTimersToNextFrame())
+      expect(measure).toHaveBeenCalledTimes(1)
       expect(strip.scrollLeft).toBe(147)
+
+      act(() => resize!())
+      unmount()
+      act(() => vi.advanceTimersToNextFrame())
+      expect(measure).toHaveBeenCalledTimes(1)
     } finally {
       vi.stubGlobal('ResizeObserver', originalObserver)
+      vi.useRealTimers()
     }
   })
 

@@ -14,6 +14,7 @@ export {
   useRuntimeTaskLifecycleResolver,
   useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSidebarStatus,
   useRuntimeTaskSummaryResolver,
 } from './context'
 export type {
@@ -21,5 +22,6 @@ export type {
   RuntimeTaskLifecycleDerivedState,
   RuntimeTaskLifecycleSnapshot,
   RuntimeTaskLifecycleStoreSnapshot,
+  RuntimeTaskSidebarStatus,
   RuntimeTaskTurnPhase,
 } from './types'

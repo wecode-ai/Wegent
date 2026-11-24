@@ -346,33 +346,41 @@ export function WorkspaceTabStrip({
     availableTabs.getSnapshot,
     availableTabs.getSnapshot
   )
-  const rovingTabId = visibleTabs.some(tab => tab.id === focusedTabId)
-    ? focusedTabId
-    : visibleActiveTabId
+  const focusedTabIndex = visibleTabs.findIndex(tab => tab.id === focusedTabId)
+  const revealTabIndex =
+    focusedTabIndex >= 0
+      ? focusedTabIndex
+      : visibleTabs.findIndex(tab => tab.id === visibleActiveTabId)
+  const revealTabId = visibleTabs[revealTabIndex]?.id
 
   const bindTabStrip = useCallback(
     (strip: HTMLDivElement | null) => {
       if (!strip) return
-      const revealTab = () => {
-        const width = strip.clientWidth
-        if (!width) return
-        strip.style.setProperty('--workspace-tab-viewport-width', `${width}px`)
-        const targetId = visibleTabs.find(tab => tab.id === rovingTabId)?.id ?? visibleActiveTabId
-        const active = Array.from(strip.querySelectorAll<HTMLElement>('[role="tab"]')).find(
-          tab => tab.dataset.tabId === targetId
-        )?.parentElement
-        if (!active) return
-        const viewport = strip.getBoundingClientRect()
-        const tab = active.getBoundingClientRect()
-        if (tab.left < viewport.left) strip.scrollLeft += tab.left - viewport.left
-        else if (tab.right > viewport.right) strip.scrollLeft += tab.right - viewport.right
+      let frame: number | undefined
+      const scheduleReveal = () => {
+        if (frame !== undefined) return
+        frame = requestAnimationFrame(() => {
+          frame = undefined
+          const button = strip.children
+            .item(revealTabIndex)
+            ?.querySelector<HTMLElement>('[role="tab"]')
+          if (!button?.parentElement || button.dataset.tabId !== revealTabId) return
+          const viewport = strip.getBoundingClientRect()
+          if (viewport.width === 0) return
+          const tab = button.parentElement.getBoundingClientRect()
+          if (tab.left < viewport.left) strip.scrollLeft += tab.left - viewport.left
+          else if (tab.right > viewport.right) strip.scrollLeft += tab.right - viewport.right
+        })
       }
-      revealTab()
-      const observer = new ResizeObserver(revealTab)
+      scheduleReveal()
+      const observer = new ResizeObserver(scheduleReveal)
       observer.observe(strip)
-      return () => observer.disconnect()
+      return () => {
+        observer.disconnect()
+        if (frame !== undefined) cancelAnimationFrame(frame)
+      }
     },
-    [rovingTabId, visibleActiveTabId, visibleTabs]
+    [revealTabId, revealTabIndex]
   )
 
   useDOMEvent<KeyboardEvent>('window', 'keydown', event => {
@@ -522,7 +530,10 @@ export function WorkspaceTabStrip({
     <>
       <div
         data-testid="workspace-tab-strip-container"
-        className={cn('flex h-full min-w-0 flex-1 items-center px-2', className)}
+        className={cn(
+          'flex h-full min-w-0 flex-1 items-center px-2 [container-type:inline-size]',
+          className
+        )}
       >
         <TabsRoot
           value={visibleActiveTabId}
@@ -545,7 +556,7 @@ export function WorkspaceTabStrip({
             ref={bindTabStrip}
             data-testid="workspace-tab-strip"
             aria-label={t('workbench.workspace_tabs', '工作区标签页')}
-            className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-3rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden md:max-w-[calc(100%-2rem)]"
+            className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[var(--workspace-tab-viewport-width)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden [--workspace-tab-viewport-width:calc(100cqw-3rem)] md:[--workspace-tab-viewport-width:calc(100cqw-2rem)]"
             onFocusCapture={event => {
               if (
                 event.target instanceof HTMLElement &&

@@ -11,10 +11,11 @@ import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
 const ANCHORS = `${ACTIVE_WORKBENCH_SELECTOR} [data-scroll-anchor]`
 const SCROLLBAR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-scrollbar"]`
+const SWITCH_READINESS_TIMEOUT_MS = 2_000
 
 export async function verifyConversationSwitchPosition(
   control,
-  { address, anchorText, name, pinned, resultDir, uiTimeoutMs, whileAway }
+  { address, anchorText, name, pinned, resultDir, uiTimeoutMs, whileAway, measureSwitch }
 ) {
   await control.command('waitFor', ANCHORS, { text: anchorText })
   if (pinned) await waitForBottom(control, `${name}: pinned sampling readiness`, uiTimeoutMs, 1)
@@ -36,16 +37,36 @@ export async function verifyConversationSwitchPosition(
   let expired = false
   let settledFrom = 0
   try {
-    // The away pane sends no model request. Catalog/provider setup is not part
-    // of the measured conversation switch and has a separate readiness timeout.
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    const taskRow = `[data-testid="runtime-local-task-row-${address.taskId}"]`
+    const selectedTask = `${taskRow}[aria-current="page"]`
+    const newChat = '[data-testid="new-chat-button"]'
+    if (measureSwitch) {
+      await measureSwitch('away-ready', newChat, () =>
+        control.command('waitFor', `body:not(:has(${selectedTask})) ${COMPOSER_SELECTOR}`, {
+          visible: true,
+          timeoutMs: SWITCH_READINESS_TIMEOUT_MS,
+        })
+      )
+    } else {
+      await control.command('click', newChat)
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    }
     recordPhase('away-ready')
     await whileAway?.()
-    await control.command(
-      'clickWhenEnabled',
-      `[data-testid="runtime-local-task-row-${address.taskId}"]`
-    )
+    if (measureSwitch) {
+      await measureSwitch(
+        'transcript-restored',
+        `[data-testid="runtime-local-task-open-${address.taskId}"]`,
+        () =>
+          control.command('waitFor', `body:has(${selectedTask}) ${ANCHORS}`, {
+            text: anchorText,
+            visible: true,
+            timeoutMs: SWITCH_READINESS_TIMEOUT_MS,
+          })
+      )
+    } else {
+      await control.command('clickWhenEnabled', taskRow)
+    }
     await waitForWorkbenchDebugState(
       control,
       snapshot =>

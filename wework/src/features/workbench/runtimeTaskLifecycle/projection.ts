@@ -338,3 +338,31 @@ function runtimeTaskTimestamp(value: string | number | null | undefined): number
   const timestamp = Date.parse(value)
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
+
+export function runtimeTaskLifecycleTransitionChanged(
+  expected: RuntimeTaskLifecycleSnapshot | null,
+  current: RuntimeTaskLifecycleSnapshot | null
+): boolean {
+  if (!expected || !current) return expected !== current
+  return (
+    expected.execution.phase !== current.execution.phase ||
+    expected.turn.phase !== current.turn.phase ||
+    expected.turn.id !== current.turn.id ||
+    expected.turn.latestId !== current.turn.latestId ||
+    expected.turn.outcome !== current.turn.outcome ||
+    expected.goalStatus !== current.goalStatus ||
+    expected.continuable !== current.continuable
+  )
+}
+
+export function consumeRuntimeTaskLifecycleBlock(
+  blockedSnapshots: Map<string, RuntimeTaskLifecycleSnapshot | null>,
+  key: string,
+  current: RuntimeTaskLifecycleSnapshot | null
+): boolean {
+  if (!blockedSnapshots.has(key)) return true
+  const blocked = blockedSnapshots.get(key) ?? null
+  if (!runtimeTaskLifecycleTransitionChanged(blocked, current)) return false
+  blockedSnapshots.delete(key)
+  return true
+}

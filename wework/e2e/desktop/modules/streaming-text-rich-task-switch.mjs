@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { withRendererPerformanceBudget } from './renderer-performance-budget.mjs'
 import { verifyPlanConversationSwitch } from './streaming-text-plan-switch.mjs'
 import { verifyConversationSwitchPosition } from './streaming-text-switch-stability.mjs'
 import {
@@ -89,10 +90,17 @@ export function createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqlite
         address = debug.workbench?.currentRuntimeTask
         assert.ok(address?.taskId, 'The rich task-switch fixture has no task address')
         await waitForBottom(control, 'The running task before switching', uiTimeoutMs)
-        await verifyConversationSwitchPosition(control, {
-          address,
-          resultDir,
-          uiTimeoutMs,
+        const verifySwitch = options =>
+          withRendererPerformanceBudget(control, { resultDir, name: options.name }, measureSwitch =>
+            verifyConversationSwitchPosition(control, {
+              address,
+              resultDir,
+              uiTimeoutMs,
+              measureSwitch,
+              ...options,
+            })
+          )
+        await verifySwitch({
           name: 'rich-bottom',
           pinned: true,
           anchorText: RUNNING,
@@ -101,10 +109,7 @@ export function createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqlite
         await control.command('scrollIntoViewAsUser', CHUNKS, { text: anchorText, value: 'start' })
         await control.command('waitFor', ANCHORS, { text: anchorText })
         await control.command('scrollIntoViewAsUser', ANCHORS, { text: anchorText, value: 'start' })
-        await verifyConversationSwitchPosition(control, {
-          address,
-          resultDir,
-          uiTimeoutMs,
+        await verifySwitch({
           name: 'rich-reading',
           pinned: false,
           anchorText,
@@ -115,6 +120,11 @@ export function createRichTaskSwitchChecks({ resultDir, uiTimeoutMs, codexSqlite
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
         )
         await waitForBottom(control, 'Explicitly resuming bottom following', uiTimeoutMs)
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: 'TASK_SWITCH_BACKGROUND_TAIL',
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
       } finally {
         releaseAppend()
         releaseDone()
