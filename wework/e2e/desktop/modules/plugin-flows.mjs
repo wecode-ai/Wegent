@@ -18,6 +18,7 @@ import {
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
+import { verifyGitMarketplaceVersions } from './plugin-git-marketplace-versions.mjs'
 import {
   PLUGIN_REMOTE_CATALOG_TIMEOUT_MS,
   withHeldComposerAppCatalog,
@@ -1608,6 +1609,13 @@ async function verifyMarketplacePluginLifecycle({
   // Leave chat with a closed picker so the official-plugin install segment does
   // not inherit an open composer menu from this assertion.
   await closeComposerPluginPicker(control)
+
+  await verifyGitMarketplaceVersions({
+    codexHome,
+    control,
+    executorHome,
+    root: join(resultDir, 'git-marketplace-version-fixture'),
+  })
 }
 
 async function verifyCreatorAuthenticationToolkit(codexHome, workspacePath) {

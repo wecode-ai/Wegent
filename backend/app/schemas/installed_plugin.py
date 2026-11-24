@@ -271,7 +271,14 @@ class InstalledPluginUpdateRequest(BaseModel):
     displayName: Optional[str] = None
     description: Optional[str] = None
     releaseId: Optional[int] = None
+    expectedCurrentReleaseId: Optional[int] = Field(default=None, gt=0)
     updatePolicy: Optional[Literal["manual", "auto"]] = None
+
+    @model_validator(mode="after")
+    def validate_release_precondition(self) -> "InstalledPluginUpdateRequest":
+        if self.expectedCurrentReleaseId is not None and self.releaseId is None:
+            raise ValueError("expectedCurrentReleaseId requires releaseId")
+        return self
 
 
 class PluginUploadInfo(BaseModel):
