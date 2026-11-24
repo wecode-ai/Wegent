@@ -244,20 +244,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         }
       }
       const expectDiscussionActions = async ({ canMove }) => {
-        await wait(
-          control,
-          '[data-testid="personal-home-stand-in"] [role="tabpanel"]:not([inert]) :is([data-testid="cloud-task-status-created"], [data-testid="cloud-task-status-event-0"])',
-          { visible: true, text: '创建' }
-        )
+        const creation = `${activeHome} :is([data-testid="cloud-task-status-created"], [data-testid="cloud-task-status-event-0"])`
+        await wait(control, creation, { text: '创建' })
+        await control.command('scrollIntoView', creation)
+        await wait(control, creation, { visible: true, text: '创建' })
         for (const action of [
           'task-comment-attach',
           'task-comment-form-mention',
           'task-comment-form-assignee',
           'task-comment-form-send-actions',
         ]) {
-          await wait(control, `[data-testid="task-comment-form"] [data-testid="${action}"]`, {
-            visible: true,
-          })
+          const target = `${activeHome} [data-testid="task-comment-form"] [data-testid="${action}"]`
+          await wait(control, target)
+          await control.command('scrollIntoView', target)
+          await wait(control, target, { visible: true })
         }
         await wait(
           control,

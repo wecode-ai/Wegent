@@ -635,11 +635,11 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
     projectMemberIds: new Set(projectMembers.map(member => member.user_id)),
     excludedUserIds: new Set([
       ...collaborators.map(member => member.user_id),
-      ...(!project && item ? [item.created_by_user_id] : []),
+      ...(item && !item.cloud_project_id ? [item.created_by_user_id] : []),
     ]),
     onAdd: addCollaborator,
     searchUsers: editorPort.collaborators.searchUsers ?? searchIssueUsers,
-    outsideLabel: project ? outsideLabel : t('taskIssueShare.independentVisibility'),
+    outsideLabel: item?.cloud_project_id ? outsideLabel : t('taskIssueShare.independentVisibility'),
     retryLabel: t('common.retry', '重试'),
     confirmLabel: confirmPersonLabel,
     cancelLabel: t('common.cancel', '取消'),

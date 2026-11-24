@@ -756,7 +756,6 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
       })
     }
     const { assigneeUserId, assigneeAgentId, assigneeTeamId } = parseIssueAssigneeTarget(target)
-    const self = props.currentUserId ?? project?.current_user_id
     return editorPort.issues.update(source.id, {
       version: source.version,
       ...(assigneeUserId == null
@@ -765,7 +764,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
           : { assignee_agent_id: assigneeAgentId }
         : {
             assignee_user_id: assigneeUserId,
-            notify_assignee: shouldNotify && String(assigneeUserId) !== String(self),
+            notify_assignee: shouldNotify,
           }),
     })
   }
