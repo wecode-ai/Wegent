@@ -448,6 +448,56 @@ fn update_fixture(store: &AutomationStore) -> Automation {
 }
 
 #[test]
+fn scheduler_retries_interrupted_run_recovery_when_storage_recovers() {
+    let root = tempdir().unwrap();
+    let path = root.path().join("automations.json");
+    let store = AutomationStore::new(path.clone());
+    let automation = store
+        .create(
+            serde_json::from_value(json!({
+                "id": "daily", "version": 0, "name": "Daily", "prompt": "Summarize",
+                "schedule": {"type": "interval", "value": 1, "unit": "hours"},
+                "taskPayload": {},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let (_, interrupted) = store.start_manual_run(&automation.id).unwrap();
+    store.mark_running(&interrupted.id, "task".into()).unwrap();
+    drop(store);
+
+    let store = AutomationStore::new(path.clone());
+    let temporary = path.with_extension("json.tmp");
+    fs::create_dir(&temporary).unwrap();
+    let scheduled_for = automation.next_run_at.unwrap();
+
+    assert!(store
+        .reconcile_interrupted_runs(&Default::default(), &Default::default())
+        .is_err());
+    assert!(store.due(scheduled_for).is_err());
+    assert_eq!(store.list_runs(Some(&automation.id)).len(), 1);
+    assert_eq!(
+        store.get_run(&interrupted.id).unwrap().status,
+        AutomationRunStatus::Running
+    );
+    fs::remove_dir(&temporary).unwrap();
+
+    let due = store.due(scheduled_for).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].1.status, AutomationRunStatus::Pending);
+    assert_eq!(due[0].1.trigger, "scheduled");
+    assert_eq!(
+        read_state(&path)
+            .runs
+            .into_iter()
+            .find(|run| run.id == interrupted.id)
+            .map(|run| run.status),
+        Some(AutomationRunStatus::NeedsAttention)
+    );
+    assert!(store.due(scheduled_for).unwrap().is_empty());
+}
+
+#[test]
 fn schedule_update_write_failure_retains_memory_disk_and_retry_version() {
     let root = tempdir().unwrap();
     let path = root.path().join("automations.json");

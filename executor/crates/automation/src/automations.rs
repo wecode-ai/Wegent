@@ -44,6 +44,8 @@ struct AutomationState {
     runs: Vec<AutomationRun>,
     #[serde(skip)]
     restored_active_run_ids: HashSet<String>,
+    #[serde(skip)]
+    interrupted_run_ids: HashSet<String>,
     stand_in_onboarding: HashMap<i64, Value>,
     stand_in_memory_initialized: std::collections::HashSet<i64>,
 }
@@ -338,6 +340,7 @@ impl AutomationStore {
 
     pub fn due(&self, now: DateTime<Utc>) -> Result<Vec<(Automation, AutomationRun)>, String> {
         let mut state = self.lock_state()?;
+        self.persist_interrupted_runs(&mut state)?;
         let mut due = Vec::new();
         let automation_ids = state.automations.keys().cloned().collect::<Vec<_>>();
         for automation_id in automation_ids {
@@ -453,6 +456,7 @@ impl AutomationStore {
             .ok_or_else(|| "automation not found".to_owned())?;
         let now = Utc::now();
         let mut state = self.lock_state()?;
+        self.persist_interrupted_runs(&mut state)?;
         let active = state.runs.iter().any(|run| {
             run.automation_id == automation_id
                 && matches!(
@@ -577,41 +581,56 @@ impl AutomationStore {
         resumable_goal_task_ids: &HashSet<&str>,
     ) -> Result<usize, String> {
         let mut state = self.lock_state()?;
-        if state.restored_active_run_ids.is_empty() {
+        let restored = std::mem::take(&mut state.restored_active_run_ids);
+        if !restored.is_empty() {
+            state.interrupted_run_ids = state
+                .runs
+                .iter()
+                .filter(|run| {
+                    if !restored.contains(&run.id) || resumable_run_ids.contains(run.id.as_str()) {
+                        return false;
+                    }
+                    // Independent runs own a task. A Goal follow-up may replace the turn
+                    // that originally carried its automation metadata.
+                    !(run
+                        .task_id
+                        .as_deref()
+                        .is_some_and(|id| resumable_goal_task_ids.contains(id))
+                        && run.owns_task_for_goal_recovery())
+                })
+                .map(|run| run.id.clone())
+                .collect();
+        }
+        self.persist_interrupted_runs(&mut state)
+    }
+
+    fn persist_interrupted_runs(&self, state: &mut AutomationState) -> Result<usize, String> {
+        // Keep the startup classification until it is saved. Both scheduling
+        // paths retry it before testing whether a previous run is still active.
+        if state.interrupted_run_ids.is_empty() {
             return Ok(0);
         }
         let mut next = state.clone();
         let now = Utc::now();
         let mut reconciled = 0;
         for run in &mut next.runs {
-            if !next.restored_active_run_ids.contains(&run.id)
-                || resumable_run_ids.contains(run.id.as_str())
-                || !matches!(
+            if next.interrupted_run_ids.contains(&run.id)
+                && matches!(
                     run.status,
                     AutomationRunStatus::Pending | AutomationRunStatus::Running
                 )
             {
-                continue;
+                run.status = AutomationRunStatus::NeedsAttention;
+                run.error =
+                    Some("Executor restarted before the automation run could finish".into());
+                run.updated_at = now;
+                reconciled += 1;
             }
-            // Independent runs own a task. A Goal follow-up may replace the turn
-            // that originally carried its automation metadata.
-            let recovering_goal = run
-                .task_id
-                .as_deref()
-                .is_some_and(|id| resumable_goal_task_ids.contains(id))
-                && run.owns_task_for_goal_recovery();
-            if recovering_goal {
-                continue;
-            }
-            run.status = AutomationRunStatus::NeedsAttention;
-            run.error = Some("Executor restarted before the automation run could finish".into());
-            run.updated_at = now;
-            reconciled += 1;
         }
         if reconciled > 0 {
             self.write_state(&next)?;
         }
-        next.restored_active_run_ids.clear();
+        next.interrupted_run_ids.clear();
         *state = next;
         Ok(reconciled)
     }
