@@ -67,6 +67,7 @@ function sameTaskKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): bo
 
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'getSidebarSnapshot',
+  'getActiveTurnAddresses',
   'subscribe',
   'subscribeTask',
   'subscribeTaskChanges',
@@ -100,6 +101,7 @@ export class RuntimeTaskLifecycleStore {
   private unreadRevision = 0
   private version = 0
   private snapshot = EMPTY_STORE_SNAPSHOT
+  private activeTurnAddresses: RuntimeTaskAddress[] = []
   private sidebarSnapshot = {
     runningTaskKeys: EMPTY_STORE_SNAPSHOT.runningTaskKeys,
     waitingTaskKeys: new Set<string>() as ReadonlySet<string>,
@@ -157,6 +159,7 @@ export class RuntimeTaskLifecycleStore {
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
   getSidebarSnapshot = () => this.sidebarSnapshot
+  getActiveTurnAddresses = (): readonly RuntimeTaskAddress[] => this.activeTurnAddresses
 
   batch<T>(update: () => T): T {
     this.batchDepth++
@@ -937,6 +940,7 @@ export class RuntimeTaskLifecycleStore {
     const changedKeys = this.removedTaskKeys
     this.removedTaskKeys = new Set()
     const tasks = new Map<string, RuntimeTaskLifecycleSnapshot>()
+    const activeTurnAddresses: RuntimeTaskAddress[] = []
     const runningTaskKeys = new Set<string>()
     const queuedTaskKeys = new Set<string>()
     const unreadTaskKeys = new Set<string>()
@@ -945,6 +949,7 @@ export class RuntimeTaskLifecycleStore {
     for (const [key, machine] of this.machines) {
       const task = machine.getSnapshot()
       tasks.set(key, task)
+      if (task.turn.active) activeTurnAddresses.push(task.address)
       if ((trackTaskChanges || this.taskListeners.has(key)) && previousTasks.get(key) !== task)
         changedKeys.add(key)
       if (task.derived.isRunning) runningTaskKeys.add(key)
@@ -954,6 +959,7 @@ export class RuntimeTaskLifecycleStore {
       if (task.derived.isBusy) busyTaskKeys.add(key)
     }
     this.version += 1
+    this.activeTurnAddresses = activeTurnAddresses
     this.snapshot = {
       version: this.version,
       tasks,
