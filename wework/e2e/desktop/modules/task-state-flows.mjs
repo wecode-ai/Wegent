@@ -402,11 +402,11 @@ async function verifyRunningFollowUpFork({
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
       { value: '0' }
     )
+    await control.command('scrollIntoView', firstTurnForkButtonSelector)
     await control.command('waitFor', firstTurnForkButtonSelector, {
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
-    await control.command('scrollIntoView', firstTurnForkButtonSelector)
     await captureVerificationScreenshot(control, 'running-follow-up-fork-01-streaming.png')
 
     await control.command(
