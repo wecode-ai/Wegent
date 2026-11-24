@@ -385,8 +385,10 @@ impl RuntimeWorkRpcHandler {
                 .await
         }
         .await;
-        if result.is_err() {
-            if let Err(error) = self.record_assignment_start_failure(config, issue, binding) {
+        if let Err(start_error) = &result {
+            if let Err(error) =
+                self.record_assignment_start_failure(config, issue, binding, start_error)
+            {
                 log_executor_event(
                     "Assignment failure receipt persistence failed",
                     &[("code", error.code)],

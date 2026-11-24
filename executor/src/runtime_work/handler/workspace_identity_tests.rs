@@ -386,10 +386,11 @@ fn stand_in_current_workspace_intent_survives_completion_and_cold_summary() {
     )
     .unwrap();
     let config = json!({"workspace":{
-        "projectKey":project.key, "workspacePath":cwd, "executionMode":"current_workspace"
+        "projectKey":project.key, "workspacePath":root.path().join("old"), "executionMode":"current_workspace"
     }});
     let mut payload = json!({"executionRequest":ExecutionRequest::default()});
     super::super::stand_in_workspace::apply_stand_in_workspace(&mut payload, &config).unwrap();
+    assert_eq!(payload["workspacePath"], json!(cwd));
     assert_eq!(payload["execution"]["workspace"]["source"], "local_path");
     let request = execution_request(&payload).unwrap();
     assert_eq!(request.workspace_source.as_deref(), Some("local_path"));
