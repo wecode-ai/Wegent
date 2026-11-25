@@ -1,5 +1,8 @@
 import type { StandInExecutorApi, StandInInboxMessage, StandInInboxWork } from '@/api/standIn'
-import { delegationResultLabel } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
+import {
+  delegationResultLabel,
+  isOrdinaryDelegationSkip,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
@@ -62,7 +65,7 @@ export function StandInWorkMessages({
   const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
   const messages =
     snapshot.data?.messages.filter(
-      message => !message.source.delegated || message.delegationResult?.action !== 'skip'
+      message => !message.source.delegated || !isOrdinaryDelegationSkip(message.delegationResult)
     ) ?? []
   const error =
     snapshot.status === 'error' || snapshot.error !== undefined

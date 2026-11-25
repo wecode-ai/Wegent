@@ -5822,6 +5822,7 @@
       "result_sent": "已自动答复",
       "result_failed": "答复发送失败",
       "result_unknown": "答复送达待确认",
+      "result_owner_intervened": "本人已介入",
       "result_taken_over": "本人已接管",
       "result_receipt": "发送回执",
       "verify_delivery": "核查发送状态",

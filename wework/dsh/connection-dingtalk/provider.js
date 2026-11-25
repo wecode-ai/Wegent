@@ -565,6 +565,9 @@ function messagePage(source, response, ownId, cursor, selfConversationId, option
 }
 
 export function normalizeMessages(source, response, ownId, selfConversationId, options = {}) {
+  const strictScope =
+    (options.conversationId && verifyScopedMessagePage(response, options.conversationId)) ||
+    options.sourceEvents
   if (
     response.success === true &&
     response.result?.hasMore === false &&
@@ -579,12 +582,12 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
     if (typeof conversation.singleChat !== 'boolean') throw invalid('Missing conversation kind')
     const direct = conversation.singleChat
     if (direct !== (source.kind === 'direct')) {
-      if (options.sourceEvents) throw invalid('Recovery events belong to another conversation kind')
+      if (strictScope) throw invalid('Search events belong to another conversation kind')
       continue
     }
     const conversationId = required(conversation, 'openConversationId')
-    if (options.sourceEvents && conversationId !== options.conversationId)
-      throw invalid('Recovery events belong to another conversation')
+    if (strictScope && conversationId !== options.conversationId)
+      throw invalid('Search events belong to another conversation')
     if (!direct && source.scope !== 'all' && conversationId !== source.id) continue
     if (options.conversationId && conversationId !== options.conversationId) continue
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
@@ -634,6 +637,44 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
     }
   }
   return events
+}
+
+function verifyScopedMessagePage(response, conversationId) {
+  const { result, scope } = response
+  if (response.partial === true || result?.partial === true)
+    throw invalid('DingTalk returned partial conversation history')
+  if (scope === undefined && result?.complete === undefined) return false
+
+  // DWS verifies the requested conversation and aggregates scoped searches without a success flag.
+  const requested = scope?.requestedConversationIds
+  if (
+    response.success === false ||
+    response.ok === false ||
+    response.error != null ||
+    response.errorCode != null ||
+    scope?.filterApplied !== true ||
+    scope.targetsValidated !== true ||
+    scope.resultsWithinScope !== true ||
+    !Array.isArray(requested) ||
+    requested.length !== 1 ||
+    requested[0] !== conversationId ||
+    !Array.isArray(result?.conversationMessagesList) ||
+    !Number.isSafeInteger(result.pagesFetched) ||
+    result.pagesFetched < 1
+  )
+    throw invalid('DingTalk could not verify the exact search scope')
+
+  if (result.hasMore === false && result.complete === true && scope.sourceComplete === true)
+    return true
+  if (
+    result.hasMore === true &&
+    typeof result.complete === 'boolean' &&
+    typeof scope.sourceComplete === 'boolean' &&
+    typeof result.nextCursor === 'string' &&
+    result.nextCursor.trim()
+  )
+    return true
+  throw invalid('DingTalk scoped search did not finish or supply a continuation')
 }
 
 function isTextMessage(message) {
@@ -709,6 +750,7 @@ async function verifyMessageRead(ctx, identity, sources) {
     validateDelegatedSource(source)
     const { response, conversationId } = await readDelegatedPage(ctx, source, window)
     const { hasMore, conversationMessagesList, nextCursor } = response.result ?? {}
+    const scoped = verifyScopedMessagePage(response, conversationId)
     if (
       response.success === true &&
       hasMore === false &&
@@ -717,7 +759,7 @@ async function verifyMessageRead(ctx, identity, sources) {
     )
       continue
     if (
-      response.success !== true ||
+      (!scoped && response.success !== true) ||
       typeof hasMore !== 'boolean' ||
       !Array.isArray(conversationMessagesList) ||
       conversationMessagesList.some(

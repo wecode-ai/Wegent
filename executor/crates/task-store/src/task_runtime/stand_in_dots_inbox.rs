@@ -31,21 +31,30 @@ pub(super) fn mark_delegation_taken_over(result: &mut Value) {
 
 pub(super) fn project_delegation_result(work: &Value, messages: &[Value]) -> Value {
     let mut needs_user = None;
+    let mut owner_intervention = None;
     let mut all_skipped = !messages.is_empty();
     for message in messages {
-        match message["delegationResult"]["action"].as_str() {
+        let result = &message["delegationResult"];
+        match result["action"].as_str() {
             Some("reply") => return projected_message_result(work, Some(message)),
             Some("needs_user") => {
                 needs_user.get_or_insert(message);
                 all_skipped = false;
             }
-            Some("skip") => {}
+            Some("skip") => {
+                if result["reasonCode"] == "owner_intervened"
+                    || (result["reasonCode"].is_null()
+                        && result["reason"] == "The account owner already responded.")
+                {
+                    owner_intervention.get_or_insert(message);
+                }
+            }
             _ => all_skipped = false,
         }
     }
     projected_message_result(
         work,
-        needs_user.or_else(|| all_skipped.then(|| &messages[0])),
+        needs_user.or_else(|| all_skipped.then(|| owner_intervention.unwrap_or(&messages[0]))),
     )
 }
 

@@ -129,7 +129,8 @@ export async function exactConversation(ctx, source, until, readTool, validateNa
       profile: source.profile,
     })
     const conversation = Array.isArray(result) && result.length === 1 ? result[0] : result
-    return exactId(conversation?.openConversationId)
+    const info = conversation?.conversationInfo ?? conversation
+    return exactId(info?.openConversationId)
   }
   const page = await readTool(ctx, 'listDirectConversation', {
     peer: source.id,

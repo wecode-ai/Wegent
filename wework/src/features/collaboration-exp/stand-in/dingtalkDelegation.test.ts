@@ -109,4 +109,22 @@ describe('DingTalk delegation results', () => {
       })
     ).toBe('standIn.dingtalk_delegation.result_sent')
   })
+
+  it('identifies owner intervention from executor evidence and the legacy stored reason', () => {
+    const previous = {
+      action: 'skip',
+      status: 'complete',
+      reason: 'The account owner already responded.',
+    } as const
+    const label = 'standIn.dingtalk_delegation.result_owner_intervened'
+    expect(delegationResultLabel(previous)).toBe(label)
+    expect(
+      delegationResultLabel({
+        ...previous,
+        reason: 'Owner activity',
+        reasonCode: 'owner_intervened',
+      })
+    ).toBe(label)
+    expect(delegationResultLabel({ ...previous, reasonCode: 'model_skipped' })).toBeUndefined()
+  })
 })

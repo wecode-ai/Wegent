@@ -125,7 +125,21 @@ export function dingTalkDelegationModel(
   }
 }
 
+function isOwnerIntervention(result?: StandInDelegationResult) {
+  return (
+    result?.action === 'skip' &&
+    result.status === 'complete' &&
+    (result.reasonCode === 'owner_intervened' ||
+      (!result.reasonCode && result.reason === 'The account owner already responded.'))
+  )
+}
+
+export function isOrdinaryDelegationSkip(result?: StandInDelegationResult) {
+  return result?.action === 'skip' && !isOwnerIntervention(result)
+}
+
 export function delegationResultLabel(result?: StandInDelegationResult) {
+  if (isOwnerIntervention(result)) return 'standIn.dingtalk_delegation.result_owner_intervened'
   if (result?.action === 'needs_user') return 'standIn.dingtalk_delegation.result_needs_user'
   if (result?.action !== 'reply') return undefined
   if (delegationReceipt(result)) return 'standIn.dingtalk_delegation.result_sent'

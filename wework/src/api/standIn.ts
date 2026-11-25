@@ -98,6 +98,7 @@ export interface StandInDelegationResult {
   action: 'reply' | 'needs_user' | 'skip'
   status: 'complete' | 'submitting' | 'sent' | 'failed' | 'unknown'
   reason: string
+  reasonCode?: 'owner_intervened' | 'model_skipped'
   deliveryReason?: string
   deliveryReasonCode?: string
   attemptId?: string

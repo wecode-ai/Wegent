@@ -276,7 +276,7 @@ impl RuntimeWorkRpcHandler {
             );
         };
         if snapshot["ownerIntervened"] == true {
-            return result("skip", "The account owner already responded.");
+            return owner_intervention_result();
         }
         if identity["model"]["runtime"].is_string() && identity["model"]["runtime"] != "codex" {
             return result(
@@ -320,7 +320,14 @@ impl RuntimeWorkRpcHandler {
             );
         };
         match decision["action"].as_str() {
-            Some("skip") => return result("skip", reason),
+            Some("skip") => {
+                return json!({
+                    "action": "skip",
+                    "status": "complete",
+                    "reason": reason,
+                    "reasonCode": "model_skipped"
+                });
+            }
             Some("needs_user") => return result("needs_user", reason),
             Some("reply") => {}
             _ => {
@@ -389,7 +396,7 @@ impl RuntimeWorkRpcHandler {
             ));
         };
         if latest["ownerIntervened"] == true {
-            return Err(result("skip", "The account owner already responded."));
+            return Err(owner_intervention_result());
         }
         Ok(latest)
     }
@@ -524,6 +531,15 @@ where
 
 fn result(action: &str, reason: &str) -> Value {
     json!({"action":action,"status":"complete","reason":reason})
+}
+
+fn owner_intervention_result() -> Value {
+    json!({
+        "action": "skip",
+        "status": "complete",
+        "reason": "The account owner already responded.",
+        "reasonCode": "owner_intervened"
+    })
 }
 
 fn snapshot_fingerprint(snapshot: &Value) -> String {

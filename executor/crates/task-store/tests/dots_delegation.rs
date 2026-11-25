@@ -752,6 +752,46 @@ fn send_claim_respects_each_template_switch_independently() {
 }
 
 #[test]
+fn owner_intervention_remains_visible_with_another_skipped_message_in_the_same_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("group", "group", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let settings = saved(&store, settings);
+    let source = &settings["primary"]["connections"][0];
+    let event = json!({"id":"question", "text":"Where is the guide?", "at":"2099-01-01T00:00:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &event, None)
+        .unwrap();
+    let work = item["id"].as_str().unwrap();
+    let question = item["latestMessage"]["recordId"].as_str().unwrap();
+    let followup = json!({"id":"thanks", "text":"Thanks!", "at":"2099-01-01T00:01:00Z"});
+    store
+        .ingest_stand_in_message(7, "@primary", source, &followup, Some(work))
+        .unwrap();
+    let received = store
+        .known_stand_in_message(7, "@primary", source, "thanks")
+        .unwrap()
+        .unwrap();
+    let thanks = received["recordId"].as_str().unwrap();
+    assert_ne!(question, thanks);
+
+    for (record, reason_code) in [(question, "owner_intervened"), (thanks, "model_skipped")] {
+        let decision = json!({"action":"skip","reasonCode":reason_code});
+        assert!(store
+            .record_delegation_decision(7, "desktop", work, record, decision)
+            .unwrap()
+            .is_none());
+    }
+
+    let item = store.stand_in_work(7, work).unwrap();
+    assert_eq!(item["delegationResult"]["reasonCode"], "owner_intervened");
+    assert_eq!(item["delegationResult"]["recordId"], question);
+    assert!(item["delegationResult"]["receiptId"].is_null());
+    assert!(item["takenOverAt"].is_null());
+}
+
+#[test]
 fn unsupported_actions_never_claim_a_send_and_handoff_keeps_its_reason() {
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();

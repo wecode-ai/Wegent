@@ -5831,6 +5831,7 @@
       "result_sent": "Automatic reply sent",
       "result_failed": "Reply failed to send",
       "result_unknown": "Reply delivery unconfirmed",
+      "result_owner_intervened": "You stepped in",
       "result_taken_over": "Taken over by you",
       "result_receipt": "Delivery receipt",
       "verify_delivery": "Verify sending status",
