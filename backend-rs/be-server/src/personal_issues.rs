@@ -523,18 +523,19 @@ async fn create_issue_record(
                         "SELECT cloud_project_id,created_by_user_id FROM loop_items WHERE id=? AND resource_type='task' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) FOR UPDATE",
                         (id,),
                     ).await?;
-                    if let Some((previous_project, previous_creator)) = previous {
-                        if previous_project == target.project_id && previous_creator == user_id {
-                            let project_id = target.project_id.parse::<i64>().expect("validated project ID");
-                            let access: Option<brz_mysql::MysqlRow> = tx.fetch_optional(
-                                crate::cloud_projects::project_access_statement(user_id, Some(project_id), None),
-                                (),
-                            ).await?;
-                            return Ok(match access {
-                                Some(role) if role.get_required::<i64>("anon_1_priority")? <= 2 => Ok(Vec::new()),
-                                _ => Err(Admission::Missing),
-                            });
-                        }
+                    if let Some((previous_project, previous_creator)) = previous
+                        && previous_project == target.project_id
+                        && previous_creator == user_id
+                    {
+                        let project_id = target.project_id.parse::<i64>().expect("validated project ID");
+                        let access: Option<brz_mysql::MysqlRow> = tx.fetch_optional(
+                            crate::cloud_projects::project_access_statement(user_id, Some(project_id), None),
+                            (),
+                        ).await?;
+                        return Ok(match access {
+                            Some(role) if role.get_required::<i64>("anon_1_priority")? <= 2 => Ok(Vec::new()),
+                            _ => Err(Admission::Missing),
+                        });
                     }
                     return Ok(Err(Admission::Conflict));
                 }
