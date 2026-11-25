@@ -48,6 +48,7 @@ export function selectPendingRuntimeInteractions({
         !item.answered &&
         !isDismissed(item.id, issueQuestionIdentity(item), issueQuestionHandoff(item)) &&
         !isResolvedIssueQuestion(item, issueInteractions.resolved) &&
+        !isResolvedIssueQuestion(item, issueInteractions.transferred) &&
         !hasRecordedIssueResolution(item, history) &&
         !submitted.has(item.id) &&
         localStorage.getItem(acceptancePrefix + item.id) === null &&

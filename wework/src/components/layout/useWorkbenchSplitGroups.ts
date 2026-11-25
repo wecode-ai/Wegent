@@ -5,7 +5,6 @@ import {
   closeActiveWorkbenchPane,
   focusActiveWorkbenchPane,
   getActiveWorkbenchLayout,
-  getWorkbenchSplitGroupMemberships,
   placeActiveWorkbenchTask,
   splitActiveWorkbenchPane,
   updateActiveWorkbenchSplitSizes,
@@ -49,7 +48,6 @@ export function useWorkbenchSplitGroups({
   const commit = source.commit
 
   const activeLayout = getActiveWorkbenchLayout(state)
-  const memberships = useMemo(() => getWorkbenchSplitGroupMemberships(state), [state])
   const splitMode = state.activeView.type === 'group'
 
   const activatePane = useCallback(
@@ -86,7 +84,6 @@ export function useWorkbenchSplitGroups({
     () => ({
       state,
       activeLayout,
-      memberships,
       splitMode,
       activatePane,
       focusPane,
@@ -100,7 +97,6 @@ export function useWorkbenchSplitGroups({
       activeLayout,
       closePane,
       focusPane,
-      memberships,
       placeTask,
       splitMode,
       splitPane,

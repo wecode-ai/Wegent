@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { useContext, useMemo, useState } from 'react'
 
-import { ActionMenu } from '@/components/common/ActionMenu'
+import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu'
 
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 
@@ -100,6 +100,8 @@ import {
 } from './DesktopSidebarWidgets'
 import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 import type { WorkbenchSplitGroupMembership } from './workbenchSplitGroups'
+const EMPTY_PROJECT_ACTIONS: ActionMenuItem[] = []
+
 export function ProjectItem({
   nowMs,
   project,
@@ -225,6 +227,7 @@ export function ProjectItem({
     null
   )
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  const projectActionsVisible = projectMenuOpen || projectMenuPosition !== null
   const prioritizedRuntimeTaskItems = runtimeTaskItems
   const visibleRuntimeTaskItems = useMemo(
     () =>
@@ -404,7 +407,7 @@ export function ProjectItem({
       <SidebarHoverCard
         testId={`project-hover-card-${project.id}`}
         interactive
-        disabled={projectMenuOpen || projectMenuPosition !== null}
+        disabled={projectActionsVisible}
         cardClassName="w-[320px]"
         content={
           <ProjectSidebarHoverCardContent
@@ -511,77 +514,83 @@ export function ProjectItem({
               contextMenuPosition={projectMenuPosition}
               onContextMenuClose={() => setProjectMenuPosition(null)}
               onOpenChange={setProjectMenuOpen}
-              items={[
-                {
-                  label: projectPinned ? t('workbench.unpin_project') : t('workbench.pin_project'),
-                  icon: Pin,
-                  testId: `pin-project-${project.id}`,
-                  disabled:
-                    !runtimeProjectWork?.project.key ||
-                    !projectStateDeviceId ||
-                    !onSetRuntimeProjectPinned,
-                  onSelect: toggleProjectPinned,
-                },
-                {
-                  label: runtimeProjectWork
-                    ? t('workbench.edit_project', '编辑项目')
-                    : t('workbench.rename_project', '重命名项目'),
-                  icon: Edit3,
-                  testId:
-                    runtimeProjectWork?.project.stateDeviceId === sidebarStateDeviceId &&
-                    runtimeProjectWork?.project.source !== 'remote_project'
-                      ? `edit-project-${project.id}`
-                      : `rename-project-${project.id}`,
-                  onSelect: () => onRenameProject(project, runtimeProjectWork),
-                },
-                {
-                  label: t('workbench.change_project_appearance'),
-                  icon: Sparkles,
-                  testId: `change-project-appearance-${project.id}`,
-                  disabled:
-                    !runtimeProjectWork?.project.key ||
-                    !projectStateDeviceId ||
-                    !onSetRuntimeProjectAppearance,
-                  onSelect: cycleProjectAppearance,
-                },
-                ...(finderWorkspacePath
+              items={
+                projectActionsVisible
                   ? [
                       {
-                        label: fileManagerRevealLabel(t),
-                        icon: FolderOpen,
-                        testId: `show-project-in-finder-${project.id}`,
-                        onSelect: () =>
-                          openLocalWorkspace({
-                            opener: 'file-manager',
-                            path: finderWorkspacePath,
-                          }),
+                        label: projectPinned
+                          ? t('workbench.unpin_project')
+                          : t('workbench.pin_project'),
+                        icon: Pin,
+                        testId: `pin-project-${project.id}`,
+                        disabled:
+                          !runtimeProjectWork?.project.key ||
+                          !projectStateDeviceId ||
+                          !onSetRuntimeProjectPinned,
+                        onSelect: toggleProjectPinned,
+                      },
+                      {
+                        label: runtimeProjectWork
+                          ? t('workbench.edit_project', '编辑项目')
+                          : t('workbench.rename_project', '重命名项目'),
+                        icon: Edit3,
+                        testId:
+                          runtimeProjectWork?.project.stateDeviceId === sidebarStateDeviceId &&
+                          runtimeProjectWork?.project.source !== 'remote_project'
+                            ? `edit-project-${project.id}`
+                            : `rename-project-${project.id}`,
+                        onSelect: () => onRenameProject(project, runtimeProjectWork),
+                      },
+                      {
+                        label: t('workbench.change_project_appearance'),
+                        icon: Sparkles,
+                        testId: `change-project-appearance-${project.id}`,
+                        disabled:
+                          !runtimeProjectWork?.project.key ||
+                          !projectStateDeviceId ||
+                          !onSetRuntimeProjectAppearance,
+                        onSelect: cycleProjectAppearance,
+                      },
+                      ...(finderWorkspacePath
+                        ? [
+                            {
+                              label: fileManagerRevealLabel(t),
+                              icon: FolderOpen,
+                              testId: `show-project-in-finder-${project.id}`,
+                              onSelect: () =>
+                                openLocalWorkspace({
+                                  opener: 'file-manager',
+                                  path: finderWorkspacePath,
+                                }),
+                            },
+                          ]
+                        : []),
+                      {
+                        label: t('workbench.create_permanent_worktree'),
+                        icon: GitCompareArrows,
+                        testId: `create-permanent-worktree-${project.id}`,
+                        disabled: !permanentWorktreeSource || !onCreatePermanentWorktree,
+                        onSelect: () => setCreatePermanentWorktreeOpen(true),
+                      },
+                      {
+                        label: projectArchiving
+                          ? t('workbench.archiving_conversations', '归档中...')
+                          : t('workbench.archive_all_chats', '归档所有聊天'),
+                        icon: Archive,
+                        testId: `archive-project-conversations-${project.id}`,
+                        disabled: !canArchiveProjectConversations,
+                        onSelect: () => setArchiveConfirmOpen(true),
+                      },
+                      {
+                        label: t('workbench.remove_project', '移除'),
+                        icon: X,
+                        testId: `remove-project-${project.id}`,
+                        danger: true,
+                        onSelect: () => setRemoveConfirmOpen(true),
                       },
                     ]
-                  : []),
-                {
-                  label: t('workbench.create_permanent_worktree'),
-                  icon: GitCompareArrows,
-                  testId: `create-permanent-worktree-${project.id}`,
-                  disabled: !permanentWorktreeSource || !onCreatePermanentWorktree,
-                  onSelect: () => setCreatePermanentWorktreeOpen(true),
-                },
-                {
-                  label: projectArchiving
-                    ? t('workbench.archiving_conversations', '归档中...')
-                    : t('workbench.archive_all_chats', '归档所有聊天'),
-                  icon: Archive,
-                  testId: `archive-project-conversations-${project.id}`,
-                  disabled: !canArchiveProjectConversations,
-                  onSelect: () => setArchiveConfirmOpen(true),
-                },
-                {
-                  label: t('workbench.remove_project', '移除'),
-                  icon: X,
-                  testId: `remove-project-${project.id}`,
-                  danger: true,
-                  onSelect: () => setRemoveConfirmOpen(true),
-                },
-              ]}
+                  : EMPTY_PROJECT_ACTIONS
+              }
               triggerClassName="flex h-7 w-7 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             />
             <Tooltip
@@ -607,26 +616,28 @@ export function ProjectItem({
           </div>
         </div>
       </SidebarHoverCard>
-      <TextInputDialog
-        open={createPermanentWorktreeOpen}
-        title={t('workbench.create_permanent_worktree_title')}
-        description={t('workbench.create_permanent_worktree_description')}
-        label={t('workbench.project_name')}
-        initialValue={`${project.name}_2`}
-        confirmLabel={t('workbench.create')}
-        cancelLabel={t('workbench.cancel')}
-        inputTestId={`permanent-worktree-name-${project.id}`}
-        confirmTestId={`confirm-create-permanent-worktree-${project.id}`}
-        onClose={() => setCreatePermanentWorktreeOpen(false)}
-        onSubmit={async name => {
-          if (!permanentWorktreeSource || !onCreatePermanentWorktree) return
-          await onCreatePermanentWorktree({
-            deviceId: permanentWorktreeSource.deviceId,
-            sourcePath: permanentWorktreeSource.workspacePath,
-            name,
-          })
-        }}
-      />
+      {createPermanentWorktreeOpen && (
+        <TextInputDialog
+          open
+          title={t('workbench.create_permanent_worktree_title')}
+          description={t('workbench.create_permanent_worktree_description')}
+          label={t('workbench.project_name')}
+          initialValue={`${project.name}_2`}
+          confirmLabel={t('workbench.create')}
+          cancelLabel={t('workbench.cancel')}
+          inputTestId={`permanent-worktree-name-${project.id}`}
+          confirmTestId={`confirm-create-permanent-worktree-${project.id}`}
+          onClose={() => setCreatePermanentWorktreeOpen(false)}
+          onSubmit={async name => {
+            if (!permanentWorktreeSource || !onCreatePermanentWorktree) return
+            await onCreatePermanentWorktree({
+              deviceId: permanentWorktreeSource.deviceId,
+              sourcePath: permanentWorktreeSource.workspacePath,
+              name,
+            })
+          }}
+        />
+      )}
       <div
         data-testid={`project-local-tasks-panel-${project.id}`}
         aria-hidden={!expanded}
@@ -771,48 +782,54 @@ export function ProjectItem({
           </div>
         </div>
       </div>
-      <ArchiveConversationsConfirmDialog
-        open={archiveConfirmOpen}
-        title={t('workbench.archive_project_dialog_title', {
-          defaultValue: '归档 {{count}} 个对话?',
-          count: archiveConversationCount,
-        })}
-        description={t('workbench.archive_project_dialog_desc', {
-          defaultValue: '这会将 {{projectName}} 中的对话归档。之后你可以在已归档对话中找到它们',
-          projectName: archiveProjectName,
-        })}
-        confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
-        cancelLabel={t('workbench.cancel', '取消')}
-        testId={`archive-project-conversations-dialog-${project.id}`}
-        onClose={closeArchiveConfirm}
-        onConfirm={confirmArchiveProjectConversations}
-      />
-      <ArchiveConversationsConfirmDialog
-        open={removeConfirmOpen}
-        title={t('workbench.remove_project_dialog_title', {
-          projectName: project.name,
-          defaultValue: '移除 {{projectName}}?',
-        })}
-        description={t('workbench.remove_project_dialog_desc', {
-          defaultValue: '这将从 Wework 中移除该项目。磁盘上的文件不会被删除。',
-        })}
-        confirmLabel={t('workbench.remove_project_dialog_confirm', '移除')}
-        cancelLabel={t('workbench.cancel', '取消')}
-        submitting={removingProject}
-        testId={`remove-project-dialog-${project.id}`}
-        onClose={closeRemoveConfirm}
-        onConfirm={confirmRemoveProject}
-      />
-      <ArchiveConversationsConfirmDialog
-        open={forceArchiveConfirmOpen}
-        title={t('workbench.archive_runtime_task_dirty_worktree_title')}
-        description={t('workbench.archive_runtime_task_dirty_worktree_force_desc')}
-        confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
-        cancelLabel={t('workbench.cancel', '取消')}
-        testId={`archive-project-force-dialog-${project.id}`}
-        onClose={closeForceArchiveConfirm}
-        onConfirm={confirmForceArchiveProjectConversations}
-      />
+      {archiveConfirmOpen && (
+        <ArchiveConversationsConfirmDialog
+          open
+          title={t('workbench.archive_project_dialog_title', {
+            defaultValue: '归档 {{count}} 个对话?',
+            count: archiveConversationCount,
+          })}
+          description={t('workbench.archive_project_dialog_desc', {
+            defaultValue: '这会将 {{projectName}} 中的对话归档。之后你可以在已归档对话中找到它们',
+            projectName: archiveProjectName,
+          })}
+          confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
+          cancelLabel={t('workbench.cancel', '取消')}
+          testId={`archive-project-conversations-dialog-${project.id}`}
+          onClose={closeArchiveConfirm}
+          onConfirm={confirmArchiveProjectConversations}
+        />
+      )}
+      {removeConfirmOpen && (
+        <ArchiveConversationsConfirmDialog
+          open
+          title={t('workbench.remove_project_dialog_title', {
+            projectName: project.name,
+            defaultValue: '移除 {{projectName}}?',
+          })}
+          description={t('workbench.remove_project_dialog_desc', {
+            defaultValue: '这将从 Wework 中移除该项目。磁盘上的文件不会被删除。',
+          })}
+          confirmLabel={t('workbench.remove_project_dialog_confirm', '移除')}
+          cancelLabel={t('workbench.cancel', '取消')}
+          submitting={removingProject}
+          testId={`remove-project-dialog-${project.id}`}
+          onClose={closeRemoveConfirm}
+          onConfirm={confirmRemoveProject}
+        />
+      )}
+      {forceArchiveConfirmOpen && (
+        <ArchiveConversationsConfirmDialog
+          open
+          title={t('workbench.archive_runtime_task_dirty_worktree_title')}
+          description={t('workbench.archive_runtime_task_dirty_worktree_force_desc')}
+          confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
+          cancelLabel={t('workbench.cancel', '取消')}
+          testId={`archive-project-force-dialog-${project.id}`}
+          onClose={closeForceArchiveConfirm}
+          onConfirm={confirmForceArchiveProjectConversations}
+        />
+      )}
     </div>
   )
 }
