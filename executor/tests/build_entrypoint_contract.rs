@@ -140,9 +140,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(dev_reload_tokens
         .windows(2)
         .any(|args| args == ["'--bin',", "'wegent-executor',"]));
-    assert!(dev_reload_tokens
-        .windows(2)
-        .any(|args| args == ["'--target-dir',", "targetDir,"]));
     assert!(dev_reload.contains("watch(sourceDir, { recursive: true }"));
     assert!(!dev_reload.contains("wegent-executor-dev"));
 

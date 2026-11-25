@@ -26,7 +26,7 @@ pnpm --filter wework e2e:desktop --segment idle-executor-requests
 
 Linux Core 分片复用现有独占调度，先单独运行空闲工作台和 Executor 流恢复检查点，再启动分片中的并行检查点。这样可以避免多个桌面会话争抢 runner 时抬高被测进程的 CPU 用量。
 
-[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) 按检查点、runner 操作系统、架构和 CPU 型号维护基线。现有 `main` 夜间任务或在 `main` 手动运行的 Wework E2E 更新基线，PR 和合并队列只读取基线。CI 在已有分片运行相应检查点时显示当前值、基线和比值。已有基线时，任一进程的 CPU 时间超过基线的 150%，或检查点未产出 CPU 样本，都会让 CI 失败。首次无基线时，CI 仍可通过并显示可用的样本。
+[github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) 维护每个检查点和 runner 平台的基线。现有 `main` 夜间任务或在 `main` 手动运行的 Wework E2E 更新基线，PR 和合并队列只读取基线。CI 在已有分片运行相应检查点时显示当前值、基线和比值。已有基线时，任一进程的 CPU 时间超过基线的 150%，或检查点未产出 CPU 样本，都会让 CI 失败。首次无基线时，CI 仍可通过并显示可用的样本。
 
 ## 插件周期恢复 E2E
 

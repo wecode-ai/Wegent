@@ -43,9 +43,6 @@ const PYTHON_RUNTIME_STARTUP_PEERS = [
   'stand-in-cli',
   'quota-recovery',
   'permission-modes',
-  'mcp-apps',
-  'codex-notification-isolation',
-  'collaboration-local-group-cancellation',
 ]
 
 export function linuxCoreCheckpointResources(checkpoint) {

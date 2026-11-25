@@ -60,14 +60,6 @@ pub(crate) fn native_execution_epoch() -> &'static str {
 }
 
 pub(crate) fn settle_native_execution(link: &mut RuntimeTaskLink, outcome: &str) {
-    settle_native_execution_at(link, outcome, now_ms());
-}
-
-pub(crate) fn settle_native_execution_at(
-    link: &mut RuntimeTaskLink,
-    outcome: &str,
-    completed_at: i64,
-) {
     let Some(mut state) = native_execution_state(link) else {
         return;
     };
@@ -78,8 +70,8 @@ pub(crate) fn settle_native_execution_at(
     }
     state.turn_id = None;
     state.execution_outcome = Some(outcome.into());
-    state.updated_at = completed_at;
-    state.completed_at = Some(completed_at);
+    state.updated_at = now_ms();
+    state.completed_at = Some(state.updated_at);
     project_native_execution(link, &state);
 }
 

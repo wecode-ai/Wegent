@@ -1227,14 +1227,13 @@ impl RuntimeWorkRpcHandler {
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
         self.store.update_task(local_task_id, |link| {
-            let completed_at = now_ms();
-            settle_pending_native_admission(link, "cancelled", completed_at);
+            settle_pending_native_admission(link, "cancelled");
             link.running = false;
             link.status = "cancelled".to_owned();
             link.thread_status = "cancelled".to_owned();
             link.turn_status = Some("cancelled".to_owned());
-            link.updated_at = completed_at;
-            link.completed_at = Some(completed_at);
+            link.updated_at = now_ms();
+            link.completed_at = Some(link.updated_at);
             normalize_settled_task_state(link);
             if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
                 runtime_handle.remove("queuePosition");
