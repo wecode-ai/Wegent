@@ -7,12 +7,11 @@ export function useWorkbenchContextValue(
   {
     state,
     cloudWorkStatus,
-    runtimeTaskReminders,
     projectChat,
     updateUserPreferences,
   }: Pick<
     WorkbenchContextValue,
-    'state' | 'cloudWorkStatus' | 'runtimeTaskReminders' | 'projectChat' | 'updateUserPreferences'
+    'state' | 'cloudWorkStatus' | 'projectChat' | 'updateUserPreferences'
   >
 ): WorkbenchContextValue {
   return useMemo(
@@ -20,11 +19,10 @@ export function useWorkbenchContextValue(
       ...paneValue,
       state,
       cloudWorkStatus,
-      runtimeTaskReminders,
       projectChat,
       updateUserPreferences,
     }),
-    [paneValue, state, cloudWorkStatus, runtimeTaskReminders, projectChat, updateUserPreferences]
+    [paneValue, state, cloudWorkStatus, projectChat, updateUserPreferences]
   )
 }
 

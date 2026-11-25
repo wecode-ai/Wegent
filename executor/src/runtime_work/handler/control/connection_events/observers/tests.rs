@@ -178,9 +178,22 @@ fn expired_or_corrupt_ui_leases_cannot_reactivate_or_break_the_runtime() {
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         let handler=RuntimeWorkRpcHandler::new("device","/bin/false");
         let id=observer_id("device","ui","one");
-        handler.save_ui_observer(&json!({"id":id,"consumer_key":"ui","generation":"one","device_id":"device","status":"observing","expires_at":now_ms()-1})).unwrap();
+        handler.save_ui_observer(&json!({
+            "id": id,
+            "consumer_key": "ui",
+            "generation": "one",
+            "device_id": "device",
+            "status": "observing",
+            "expires_at": now_ms() - 1,
+            "resource_states": [{"kind": "change_request", "data": {"number": 17}}],
+        })).unwrap();
         assert_eq!(handler.connection_observer_operation("renew",json!({"consumerKey":"ui","generation":"one"})).await.unwrap_err().code,"observation_observer_lease_lost");
-        handler.poll_ui_observers().await.unwrap(); assert_eq!(handler.read_ui_observer(&id).unwrap()["status"],"stopped");
+        handler.poll_ui_observers().await.unwrap();
+        let stopped = handler.read_ui_observer(&id).unwrap();
+        assert_eq!(stopped["status"], "stopped");
+        assert_eq!(stopped["stop_reason"], "expired");
+        assert_eq!(change_request_number(&stopped), Some(17));
+        assert!(stopped.get("resource_states").is_none());
         let broken_id=observer_id("device","broken","one");
         handler.save_ui_observer(&json!({"id":broken_id,"consumer_key":"broken","generation":"one","device_id":"device","status":"observing","expires_at":now_ms()+90_000,"observation_id":"corrupt-source","source":source()})).unwrap();
         let before=event_store::transact(&handler.event_subscription_path(),|state| {

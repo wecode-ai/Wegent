@@ -4,11 +4,21 @@ import * as DocumentPicker from 'expo-document-picker'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import * as ImagePicker from 'expo-image-picker'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Image, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native'
+import {
+  Image,
+  Keyboard,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native'
 import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
 
 import { composerLogoUrl, composerMessage } from '@/domain/composerApps'
 import { chatComposerPresentation } from '@/domain/chatComposerPresentation'
+import { useComposerVoiceInput } from '@/hooks/useComposerVoiceInput'
 import type {
   Attachment,
   RuntimeAttachment,
@@ -17,6 +27,8 @@ import type {
 } from '@/types/runtime'
 import { ComposerContextMenu, type ComposerMenuAnchor } from './ComposerContextMenu'
 import { LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
+import { ModelDialIcon } from './ModelDialIcon'
+import { VoiceGlyph, VoiceInputBar } from './VoiceInputBar'
 import { useMobileFilePreview } from './files/FilePreviewContext'
 
 export interface ComposerSendOptions {
@@ -32,8 +44,8 @@ interface ChatComposerProps {
   disabled: boolean
   emptyContextPlaceholder?: string
   modelLabel: string
-  speed?: string
-  onToggleSpeed?: () => void
+  reasoningEffort?: string
+  reasoningEfforts?: string[]
   onLoadApps: () => Promise<RuntimeComposerApp[]>
   onClearPlanMode: () => void
   onSelectModel: () => void
@@ -84,8 +96,8 @@ export function ChatComposer({
   disabled,
   emptyContextPlaceholder = '跟进',
   modelLabel,
-  speed,
-  onToggleSpeed,
+  reasoningEffort,
+  reasoningEfforts = [],
   onLoadApps,
   onClearPlanMode,
   onSelectModel,
@@ -111,6 +123,7 @@ export function ChatComposer({
   const wrapperRef = useRef<View>(null)
   const inputRef = useRef<TextInput>(null)
   const consumedFocusRequest = useRef(0)
+  const keyboardWasVisibleRef = useRef(false)
   useEffect(() => {
     if (!active) {
       inputRef.current?.blur()
@@ -129,6 +142,10 @@ export function ChatComposer({
   const theme = useTheme()
   const filePreview = useMobileFilePreview()
   const outgoingMessage = composerMessage(message, selectedApps)
+  const modelDialProgress =
+    reasoningEfforts.length > 1
+      ? Math.max(0, reasoningEfforts.indexOf(reasoningEffort ?? '')) / (reasoningEfforts.length - 1)
+      : 0
   const canSend = Boolean(outgoingMessage) && !disabled && !running && !sendDisabled && !uploading
   const hasStructuredSelection =
     planModeActive || goalDraftActive || attachments.length > 0 || selectedApps.length > 0
@@ -159,9 +176,10 @@ export function ChatComposer({
       ? ''
       : emptyContextPlaceholder
 
-  const submit = async () => {
-    const value = composerMessage(message, selectedApps)
-    if (!value || !canSend) return
+  const submit = async (override?: string) => {
+    const value = composerMessage(override ?? message, selectedApps)
+    const canSubmit = Boolean(value) && !disabled && !running && !sendDisabled && !uploading
+    if (!value || !canSubmit) return
     const sent = await onSend(value, {
       attachmentIds: attachments.map(attachment => attachment.id),
       attachments: attachments.map(({ previewUri: _previewUri, ...attachment }) => attachment),
@@ -173,6 +191,21 @@ export function ChatComposer({
     setSelectedApps([])
     setGoalDraftActive(false)
   }
+
+  const voice = useComposerVoiceInput({
+    onTranscript: (text, send) => {
+      const next = appendTranscript(message, text)
+      setMessage(next)
+      if (send) void submit(next)
+    },
+  })
+  const voiceActive = voice.state !== 'idle'
+  useEffect(() => {
+    if (!keyboardWasVisibleRef.current) return
+    if (active && !disabled && (voice.state === 'starting' || voice.state === 'recording')) {
+      inputRef.current?.focus()
+    }
+  }, [active, disabled, voice.state])
 
   const openMenu = () => {
     wrapperRef.current?.measureInWindow((x, y, width, height) => {
@@ -281,7 +314,7 @@ export function ChatComposer({
       )}
     </Pressable>
   )
-  const sendButton = running ? (
+  const stopButton = (
     <Pressable
       accessibilityLabel="停止当前回复"
       accessibilityRole="button"
@@ -301,7 +334,8 @@ export function ChatComposer({
         <View style={[styles.stopGlyph, { backgroundColor: theme.colors.surface }]} />
       </View>
     </Pressable>
-  ) : (
+  )
+  const sendButton = (
     <Pressable
       accessibilityLabel="发送"
       accessibilityRole="button"
@@ -314,17 +348,57 @@ export function ChatComposer({
       <View
         style={[
           styles.sendButton,
-          { backgroundColor: canSend ? theme.colors.onSurface : theme.colors.surfaceVariant },
+          { backgroundColor: canSend ? '#0a84ff' : theme.colors.surfaceVariant },
         ]}
       >
         <Ionicons
-          color={canSend ? theme.colors.surface : theme.colors.onSurfaceVariant}
+          color={canSend ? '#ffffff' : theme.colors.onSurfaceVariant}
           name="arrow-up"
           size={22}
         />
       </View>
     </Pressable>
   )
+  const startVoice = () => {
+    if (disabled || running) return
+    keyboardWasVisibleRef.current = Keyboard.isVisible()
+    if (keyboardWasVisibleRef.current && active) {
+      inputRef.current?.focus()
+    } else {
+      inputRef.current?.blur()
+      setFocused(false)
+    }
+    void voice.start()
+  }
+  const voiceStartButton = (
+    <Pressable
+      accessibilityLabel="语音输入"
+      accessibilityRole="button"
+      accessibilityState={{ disabled: disabled || running }}
+      disabled={disabled || running}
+      onPress={startVoice}
+      style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]}
+      testID="composer-voice-start"
+    >
+      <View style={[styles.voicePrimaryButton, { backgroundColor: '#0a84ff' }]}>
+        <VoiceGlyph />
+      </View>
+    </Pressable>
+  )
+  const micButton = (
+    <Pressable
+      accessibilityLabel="语音输入"
+      accessibilityRole="button"
+      accessibilityState={{ disabled: disabled || running }}
+      disabled={disabled || running}
+      onPress={startVoice}
+      style={({ pressed }) => [styles.voiceMicButton, pressed && styles.pressed]}
+      testID="composer-voice-mic"
+    >
+      <Ionicons color={theme.colors.onSurface} name="mic-outline" size={24} />
+    </Pressable>
+  )
+  const primaryAction = running ? stopButton : outgoingMessage ? sendButton : voiceStartButton
 
   return (
     <View collapsable={false} ref={wrapperRef}>
@@ -335,182 +409,193 @@ export function ChatComposer({
             backgroundColor: theme.colors.surface,
             borderColor: theme.colors.outlineVariant,
           }}
-          style={expanded ? styles.expandedSurface : styles.compactSurface}
+          style={
+            voiceActive
+              ? styles.voiceSurface
+              : expanded
+                ? styles.expandedSurface
+                : styles.compactSurface
+          }
         >
-          {selectedMode ? (
-            <View style={styles.modeRow}>
-              <View style={styles.selectionChip} testID={`${selectedMode.testID}-selection`}>
-                <Ionicons
-                  color={theme.colors.onSurfaceVariant}
-                  name={selectedMode.icon}
-                  size={18}
-                />
-                <Text style={{ color: theme.colors.onSurfaceVariant }} variant="labelLarge">
-                  {selectedMode.label}
-                </Text>
-                <Pressable
-                  accessibilityLabel={selectedMode.accessibilityLabel}
-                  hitSlop={6}
-                  onPress={selectedMode.onRemove}
-                  testID={`${selectedMode.testID}-remove`}
-                >
-                  <Ionicons color={theme.colors.onSurfaceVariant} name="close" size={17} />
-                </Pressable>
-              </View>
-            </View>
-          ) : null}
-          {attachments.length || uploading ? (
-            <ScrollView
-              contentContainerStyle={styles.attachmentStrip}
-              horizontal
-              keyboardShouldPersistTaps="handled"
-              showsHorizontalScrollIndicator={false}
-            >
-              {attachments.map(attachment => (
-                <View key={attachment.id} style={styles.attachmentChip}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`预览 ${attachment.filename}`}
-                    disabled={!filePreview}
-                    onPress={() => filePreview?.openAttachment(attachment)}
-                    style={styles.attachmentOpen}
-                    testID={`composer-attachment-preview-${attachment.id}`}
-                  >
-                    {attachment.previewUri ? (
-                      <Image
-                        source={{ uri: attachment.previewUri }}
-                        style={styles.attachmentPreview}
-                      />
-                    ) : (
-                      <View style={styles.fileIcon}>
-                        <Ionicons
-                          color={theme.colors.onSurfaceVariant}
-                          name="document-outline"
-                          size={17}
-                        />
-                      </View>
-                    )}
-                    <Text numberOfLines={1} style={styles.attachmentName} variant="labelMedium">
-                      {attachment.filename}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityLabel={`移除 ${attachment.filename}`}
-                    hitSlop={6}
-                    onPress={() =>
-                      setAttachments(current => current.filter(item => item.id !== attachment.id))
-                    }
-                    testID={`composer-attachment-remove-${attachment.id}`}
-                  >
-                    <Ionicons color={theme.colors.onSurfaceVariant} name="close" size={16} />
-                  </Pressable>
-                </View>
-              ))}
-              {uploading ? (
-                <View style={styles.attachmentChip}>
-                  <ActivityIndicator color={theme.colors.onSurfaceVariant} size={14} />
-                  <Text variant="labelMedium">正在上传</Text>
-                </View>
-              ) : null}
-            </ScrollView>
-          ) : null}
-          {selectedApps.length ? (
-            <View style={styles.selectedApps}>
-              {selectedApps.map(app => {
-                const logoUrl = composerLogoUrl(app.logoUrl)
-                return (
-                  <Pressable
-                    accessibilityHint="轻点移除"
-                    accessibilityLabel={`已选择技能 ${app.name}`}
-                    accessibilityRole="button"
-                    key={app.reference}
-                    onPress={() =>
-                      setSelectedApps(current =>
-                        current.filter(item => item.reference !== app.reference)
-                      )
-                    }
-                    style={({ pressed }) => [styles.selectedAppRow, pressed && styles.pressed]}
-                    testID={`composer-selected-app-${app.id}`}
-                  >
-                    {logoUrl ? (
-                      <Image source={{ uri: logoUrl }} style={styles.selectedAppLogo} />
-                    ) : (
-                      <Ionicons color="#81c7b4" name="extension-puzzle-outline" size={21} />
-                    )}
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.selectedAppName,
-                        { color: theme.dark ? '#81c7b4' : '#267a69' },
-                      ]}
-                      variant="titleMedium"
-                    >
-                      {app.name}
-                    </Text>
-                  </Pressable>
-                )
-              })}
-            </View>
-          ) : null}
           <View
-            style={[styles.inputRow, expanded ? styles.expandedInputRow : styles.compactInputRow]}
+            pointerEvents={voiceActive ? 'none' : 'auto'}
+            style={voiceActive ? styles.voiceHiddenContent : styles.composerBody}
           >
-            {expanded ? null : attachmentButton}
-            <TextInput
-              nativeID="chat-input"
-              accessibilityLabel="消息"
-              editable={!disabled}
-              multiline
-              onBlur={() => setFocused(false)}
-              onChangeText={setMessage}
-              onFocus={() => setFocused(true)}
-              placeholder={placeholder}
-              placeholderTextColor={theme.colors.onSurfaceVariant}
-              ref={inputRef}
-              scrollEnabled={expanded}
-              textAlignVertical={expanded ? 'top' : 'center'}
-              style={[
-                styles.input,
-                expanded ? styles.expandedInput : styles.compactInput,
-                { color: theme.colors.onSurface },
-              ]}
-              testID={resolvedTestIDs.input}
-              value={message}
-            />
-            {expanded ? null : sendButton}
-          </View>
-          {expanded ? (
-            <View style={styles.actions}>
-              {attachmentButton}
-              {secondaryLeadingAction}
-              <View style={styles.actionSpacer} />
-              {onToggleSpeed ? (
-                <Pressable
-                  accessibilityLabel={`速度：${speed === 'fast' ? '快速' : '标准'}`}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: speed === 'fast' }}
-                  onPress={onToggleSpeed}
-                  style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]}
-                  testID="composer-speed"
-                >
+            {selectedMode ? (
+              <View style={styles.modeRow}>
+                <View style={styles.selectionChip} testID={`${selectedMode.testID}-selection`}>
                   <Ionicons
-                    name={speed === 'fast' ? 'flash' : 'flash-outline'}
-                    size={23}
-                    color={theme.colors.onSurface}
+                    color={theme.colors.onSurfaceVariant}
+                    name={selectedMode.icon}
+                    size={18}
                   />
-                </Pressable>
-              ) : null}
-              <Pressable
-                accessibilityLabel={`选择模型，当前 ${modelLabel}`}
-                accessibilityRole="button"
-                onPress={onSelectModel}
-                style={({ pressed }) => [styles.modelButton, pressed && styles.pressed]}
-                testID={resolvedTestIDs.model}
+                  <Text style={{ color: theme.colors.onSurfaceVariant }} variant="labelLarge">
+                    {selectedMode.label}
+                  </Text>
+                  <Pressable
+                    accessibilityLabel={selectedMode.accessibilityLabel}
+                    hitSlop={6}
+                    onPress={selectedMode.onRemove}
+                    testID={`${selectedMode.testID}-remove`}
+                  >
+                    <Ionicons color={theme.colors.onSurfaceVariant} name="close" size={17} />
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+            {attachments.length || uploading ? (
+              <ScrollView
+                contentContainerStyle={styles.attachmentStrip}
+                horizontal
+                keyboardShouldPersistTaps="handled"
+                showsHorizontalScrollIndicator={false}
               >
-                <Ionicons color="#2387f5" name="speedometer-outline" size={25} />
-              </Pressable>
-              {sendButton}
+                {attachments.map(attachment => (
+                  <View key={attachment.id} style={styles.attachmentChip}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`预览 ${attachment.filename}`}
+                      disabled={!filePreview}
+                      onPress={() => filePreview?.openAttachment(attachment)}
+                      style={styles.attachmentOpen}
+                      testID={`composer-attachment-preview-${attachment.id}`}
+                    >
+                      {attachment.previewUri ? (
+                        <Image
+                          source={{ uri: attachment.previewUri }}
+                          style={styles.attachmentPreview}
+                        />
+                      ) : (
+                        <View style={styles.fileIcon}>
+                          <Ionicons
+                            color={theme.colors.onSurfaceVariant}
+                            name="document-outline"
+                            size={17}
+                          />
+                        </View>
+                      )}
+                      <Text numberOfLines={1} style={styles.attachmentName} variant="labelMedium">
+                        {attachment.filename}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityLabel={`移除 ${attachment.filename}`}
+                      hitSlop={6}
+                      onPress={() =>
+                        setAttachments(current => current.filter(item => item.id !== attachment.id))
+                      }
+                      testID={`composer-attachment-remove-${attachment.id}`}
+                    >
+                      <Ionicons color={theme.colors.onSurfaceVariant} name="close" size={16} />
+                    </Pressable>
+                  </View>
+                ))}
+                {uploading ? (
+                  <View style={styles.attachmentChip}>
+                    <ActivityIndicator color={theme.colors.onSurfaceVariant} size={14} />
+                    <Text variant="labelMedium">正在上传</Text>
+                  </View>
+                ) : null}
+              </ScrollView>
+            ) : null}
+            {selectedApps.length ? (
+              <View style={styles.selectedApps}>
+                {selectedApps.map(app => {
+                  const logoUrl = composerLogoUrl(app.logoUrl)
+                  return (
+                    <Pressable
+                      accessibilityHint="轻点移除"
+                      accessibilityLabel={`已选择技能 ${app.name}`}
+                      accessibilityRole="button"
+                      key={app.reference}
+                      onPress={() =>
+                        setSelectedApps(current =>
+                          current.filter(item => item.reference !== app.reference)
+                        )
+                      }
+                      style={({ pressed }) => [styles.selectedAppRow, pressed && styles.pressed]}
+                      testID={`composer-selected-app-${app.id}`}
+                    >
+                      {logoUrl ? (
+                        <Image source={{ uri: logoUrl }} style={styles.selectedAppLogo} />
+                      ) : (
+                        <Ionicons color="#81c7b4" name="extension-puzzle-outline" size={21} />
+                      )}
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.selectedAppName,
+                          { color: theme.dark ? '#81c7b4' : '#267a69' },
+                        ]}
+                        variant="titleMedium"
+                      >
+                        {app.name}
+                      </Text>
+                    </Pressable>
+                  )
+                })}
+              </View>
+            ) : null}
+            <View
+              style={[styles.inputRow, expanded ? styles.expandedInputRow : styles.compactInputRow]}
+            >
+              {expanded ? null : attachmentButton}
+              <TextInput
+                nativeID="chat-input"
+                accessibilityLabel="消息"
+                editable={!disabled}
+                multiline
+                onBlur={() => setFocused(false)}
+                onChangeText={setMessage}
+                onFocus={() => setFocused(true)}
+                placeholder={placeholder}
+                placeholderTextColor={theme.colors.onSurfaceVariant}
+                ref={inputRef}
+                scrollEnabled={expanded}
+                textAlignVertical={expanded ? 'top' : 'center'}
+                style={[
+                  styles.input,
+                  expanded ? styles.expandedInput : styles.compactInput,
+                  { color: theme.colors.onSurface },
+                ]}
+                testID={resolvedTestIDs.input}
+                value={message}
+              />
+              {expanded ? null : micButton}
+              {expanded ? null : primaryAction}
             </View>
+            {expanded ? (
+              <View style={styles.actions}>
+                {attachmentButton}
+                {secondaryLeadingAction}
+                <View style={styles.actionSpacer} />
+                <Pressable
+                  accessibilityLabel={`选择模型，当前 ${modelLabel}`}
+                  accessibilityRole="button"
+                  onPress={onSelectModel}
+                  style={({ pressed }) => [styles.modelButton, pressed && styles.modelPressed]}
+                  testID={resolvedTestIDs.model}
+                >
+                  <ModelDialIcon progress={modelDialProgress} />
+                </Pressable>
+                {micButton}
+                {primaryAction}
+              </View>
+            ) : null}
+          </View>
+          {voiceActive ? (
+            <VoiceInputBar
+              errorMessage={voice.errorMessage}
+              levels={voice.levels}
+              onCancel={voice.cancel}
+              onRetry={() => {
+                keyboardWasVisibleRef.current = Keyboard.isVisible()
+                void voice.retry()
+              }}
+              onSend={voice.requestSend}
+              onStop={() => voice.stop(false)}
+              state={voice.state === 'idle' ? 'starting' : voice.state}
+            />
           ) : null}
         </LiquidGlassSurface>
       </LiquidGlassGroup>
@@ -538,6 +623,11 @@ export function ChatComposer({
       />
     </View>
   )
+}
+
+function appendTranscript(base: string, addition: string): string {
+  const existing = base.trimEnd()
+  return existing ? `${existing} ${addition}` : addition
 }
 
 function imageUploadAsset(asset: ImagePicker.ImagePickerAsset): RuntimeUploadAsset {
@@ -600,6 +690,21 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 4,
   },
+  voiceSurface: {
+    marginHorizontal: 12,
+    height: 48,
+    borderRadius: 24,
+    paddingHorizontal: 0,
+  },
+  composerBody: { width: '100%' },
+  voiceHiddenContent: {
+    position: 'absolute',
+    zIndex: -1,
+    width: '100%',
+    height: '100%',
+    opacity: 0,
+    overflow: 'hidden',
+  },
   modeRow: { paddingHorizontal: 8, paddingTop: 6 },
   selectionChip: {
     alignSelf: 'flex-start',
@@ -627,8 +732,26 @@ const styles = StyleSheet.create({
   actions: { height: 44, flexDirection: 'row', alignItems: 'center' },
   actionSpacer: { flex: 1 },
   modelButton: {
-    width: 44,
-    height: 44,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modelPressed: {
+    backgroundColor: 'rgba(10,132,255,0.12)',
+    transform: [{ scale: 0.92 }],
+  },
+  voiceMicButton: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voicePrimaryButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },

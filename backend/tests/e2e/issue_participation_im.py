@@ -30,8 +30,8 @@ from tests.e2e.dingtalk_notification_card_context import (
 )
 
 TITLE = "修复登录后白屏"
-CREATED = "Issue 已创建"
-JOINED = "你已加入 Issue"
+CREATED = "事项已创建"
+JOINED = "你已加入事项"
 
 
 def _assert_cards(

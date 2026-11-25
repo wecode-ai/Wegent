@@ -245,15 +245,21 @@ async function verifySearchOverlay(
     'The restored guest must own the former close-button hit target',
     5_000
   )
-  // The DOM hit target can be restored before Chromium routes native input to
-  // the guest. Approach the click target and observe the actual pointer event
-  // in the guest before sending the single press/release pair.
-  const clickTarget = { x: overlap.close.x + 1, y: overlap.close.y }
+  // Chromium can route the first motion to the host after the DOM hit target
+  // has recovered. Probe with distinct positions until the guest receives motion.
   const beforeMove = await readGuestInput()
-  await movePointer(clickTarget)
-  const { moves: readyMoves, ...readyInput } = await waitForValue(
-    readGuestInput,
-    state => state.moves > beforeMove.moves,
+  let offset = 1
+  const {
+    point: clickTarget,
+    input: { moves: readyMoves, ...readyInput },
+  } = await waitForValue(
+    async () => {
+      const point = { x: overlap.close.x + offset, y: overlap.close.y }
+      offset = 3 - offset
+      await movePointer(point)
+      return { point, input: await readGuestInput() }
+    },
+    state => state.input.moves > beforeMove.moves,
     'Native pointer movement must reach the restored guest',
     5_000
   )
