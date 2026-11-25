@@ -6,6 +6,8 @@ import type { WeworkNotificationPreferences } from '@/api/notifications'
 import { isStandInIdentityTask } from '@/lib/runtime-task-visibility'
 import { createStandInMessageReminderSource } from './standInMessageReminderSource'
 
+const EMPTY_IDENTITIES: RuntimeTaskReminderItem[] = []
+
 export function isStandInIdentity(item: RuntimeTaskReminderItem): boolean {
   return isStandInIdentityTask(item.task)
 }
@@ -18,7 +20,10 @@ export function useStandInMessageReminders(
   runtimeApi?: WorkbenchServices['runtimeWorkApi']
 ) {
   const receipts = store.messageReceipts
-  const identities = useMemo(() => items.filter(isStandInIdentity), [items])
+  const identities = useMemo(() => {
+    const matches = items.filter(isStandInIdentity)
+    return matches.length ? matches : EMPTY_IDENTITIES
+  }, [items])
   const inApp = Boolean(preferences.stand_in.in_app)
   const system = Boolean(preferences.stand_in.system)
   const source = useMemo(
