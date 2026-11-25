@@ -24,7 +24,10 @@ const UPSTREAM_TIMING_EVENT: &str = "responsesapi.websocket_timing";
 
 fn supports_websocket(upstream: &LocalModelProxyUpstream) -> bool {
     upstream.uses_native_chatgpt_auth()
-        && upstream.codex_request_mode == CodexRequestMode::Passthrough
+        && matches!(
+            upstream.codex_request_mode,
+            CodexRequestMode::Passthrough | CodexRequestMode::OfficialSubscription
+        )
 }
 
 pub(super) async fn handle_upgrade(
@@ -412,14 +415,8 @@ async fn prepare_create(
     let body = String::from_utf8(prepared.body)
         .map_err(|_| bad_gateway("Invalid Responses WebSocket payload"))?;
     let previous_response_id = request.get("previous_response_id").and_then(Value::as_str);
-    if previous_response_id.is_some()
-        && body != text
-        && serde_json::from_str::<Value>(&body).ok().map(|body| {
-            body.get("previous_response_id").and_then(Value::as_str) == previous_response_id
-        }) != Some(true)
-    {
-        // Removing the response ID from a delta would turn it into a request
-        // with missing history. Codex retries with the full input on this error.
+    if previous_response_id.is_some() && authorized.model_routing.model_switched {
+        // Codex must replay full history when a delta belongs to a different model.
         return Err(RequestError {
             error: HttpError {
                 status: StatusCode::BAD_REQUEST,

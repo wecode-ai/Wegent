@@ -581,7 +581,10 @@ export function createWorkbenchPaneSessionSource(
           ? lifecycleStore.subscribeTask(address, () => {
               if (!isActive()) return
               reconcileGoal(frame())
-              publish()
+              // Publish lifecycle and transcript changes from the same turn together.
+              if (external.presentationActive && presentationActivity() === 'foreground')
+                publishConversation()
+              else publish()
             })
           : undefined
       }

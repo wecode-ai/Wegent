@@ -10,6 +10,7 @@ import {
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { updateAppPreferences } from '@/desktop/appPreferences'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { getErrorMessage } from '@/lib/error-message'
 import { localHarnessLabel } from '@/lib/local-harness'
 import { cn } from '@/lib/utils'
@@ -80,6 +81,7 @@ export function DesktopWorkbenchConversationView({
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
+    startNewChat,
     services,
     t,
     currentRuntimeTask,
@@ -650,6 +652,17 @@ export function DesktopWorkbenchConversationView({
                 }
                 scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
                 devices={devices}
+                onContinueInNewConversation={
+                  !issueExecutionReadOnly && currentRuntimeTask
+                    ? () => {
+                        const reference = createConversationMentionReference(
+                          runtimeTaskSummary?.title ?? workbenchTitle ?? currentRuntimeTask.taskId,
+                          currentRuntimeConversationSource ?? currentRuntimeTask
+                        )
+                        startNewChat({ initialInput: `${reference} ` })
+                      }
+                    : undefined
+                }
                 onRetryFailedMessage={
                   issueExecutionReadOnly
                     ? undefined

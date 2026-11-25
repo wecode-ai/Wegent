@@ -1,7 +1,7 @@
 import { revealCollaborationSidebarElement } from './collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { reloadMainWindow } from './workspace-flows.mjs'
+import { reloadMainWindow, waitForNativeCollaborationPlatform } from './workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const selector = name => `${CONTENT} [data-testid="${name}"]`
@@ -64,8 +64,7 @@ export async function verifyTemplateDeletion(control, { request, captureScreensh
   await request(`/api/v1/collaboration-templates/${imported.id}`, 'GET', undefined, undefined, 404)
   await request(`/api/v1/collaboration-templates/${imported.id}`, 'DELETE')
   await reloadMainWindow(control, 'Deleted template must stay deleted after reload')
-  await revealCollaborationSidebarElement(control, selector('collaboration-primary-templates'))
-  await control.command('waitFor', selector('collaboration-primary-templates'))
+  await waitForNativeCollaborationPlatform(control, CONTENT)
   await revealCollaborationSidebarElement(control, selector('collaboration-primary-templates'))
   await control.command('click', selector('collaboration-primary-templates'))
   await control.command('waitFor', selector('collaboration-template-page'))

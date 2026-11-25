@@ -652,6 +652,7 @@ export function OwnedWorkbenchProvider({
     dispatch,
     workspaceTabId,
     user,
+    setDraftInputForScope,
   })
 
   const localSkillsWorkspacePath =
