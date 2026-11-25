@@ -22,14 +22,21 @@ export function buildQuickLaunchHref(
   options: {
     presetId?: string
     showPresets?: boolean
+    recommendation?: { source: string | null }
   } = {}
 ): string {
   const params = new URLSearchParams({
     [QUICK_LAUNCH_QUERY.teamId]: String(launcher.team.id),
   })
 
-  if (launcher.key.startsWith(LINKED_AGENT_LAUNCHER_PREFIX)) {
+  if (options.recommendation) {
     params.set('recommend', '1')
+    if (options.recommendation.source !== null) {
+      params.set('source', options.recommendation.source)
+    }
+  }
+
+  if (launcher.key.startsWith(LINKED_AGENT_LAUNCHER_PREFIX)) {
     return buildTeamTargetHref(launcher.targetPage, params)
   }
 

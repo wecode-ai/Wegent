@@ -17,6 +17,7 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({
     push: routerPush,
   }),
+  useSearchParams: () => new URLSearchParams('source=partner-test'),
 }))
 
 jest.mock('@/apis/team', () => ({ teamApis: { getTeam: jest.fn() } }))
@@ -534,21 +535,50 @@ describe('QuickAccessCards', () => {
     )
   })
 
-  test('carries a linked agent recommendation across modes without a preset intent', async () => {
-    const linked = makeTeam({ id: 65, name: 'Linked code agent', bind_mode: ['code'] })
-    render(
-      <QuickAccessCards
-        teams={[linked]}
-        selectedTeam={null}
-        onTeamSelect={jest.fn()}
-        currentMode="chat"
-        recommendedTeam={linked}
-      />
-    )
+  test.each([false, true])(
+    'carries the linked recommendation and source across modes (configured: %s)',
+    async configured => {
+      const linked = makeTeam({ id: 65, name: 'Linked code agent', bind_mode: ['code'] })
+      if (configured) {
+        mockGetQuickLaunch.mockResolvedValueOnce({
+          system_functions: [
+            {
+              type: 'system_function',
+              id: 'code_review',
+              title: 'Configured code agent',
+              team_id: linked.id,
+              name: linked.name,
+              bind_mode: ['code'],
+              enabled: true,
+              order: 0,
+              input_presets: [makeInputPreset('Review changes')],
+            },
+          ],
+          favorite_agents: [],
+        })
+      }
+      render(
+        <QuickAccessCards
+          teams={[linked]}
+          selectedTeam={null}
+          onTeamSelect={jest.fn()}
+          currentMode="chat"
+          recommendedTeam={linked}
+        />
+      )
 
-    fireEvent.click(await screen.findByText('Linked code agent'))
-    expect(routerPush).toHaveBeenCalledWith('/chat?teamId=65&recommend=1&agent=code')
-  })
+      fireEvent.click(await screen.findByText(configured ? 'Configured code agent' : linked.name))
+      const destination = new URL(routerPush.mock.calls[0][0], window.location.origin)
+      expect(destination.pathname).toBe('/chat')
+      expect(Object.fromEntries(destination.searchParams)).toEqual({
+        teamId: '65',
+        agent: 'code',
+        recommend: '1',
+        source: 'partner-test',
+        ...(configured ? { quickLauncher: 'system:code_review', showPresets: '1' } : {}),
+      })
+    }
+  )
 
   test('routes code-only system functions to code mode with the target team selected', async () => {
     const onTeamSelect = jest.fn()
