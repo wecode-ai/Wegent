@@ -96,8 +96,7 @@ jobs:
                 packages/chat-core/*|packages/collaboration/src/conversation/*|\
                 packages/collaboration/src/markdown/*|packages/collaboration/src/controls/*|\
                 packages/collaboration/src/composer/*|\
-                executor/src/runtime_work/*|executor/src/agents/codex/*|\
-                .github/workflows/wework-e2e.yml)
+                executor/src/runtime_work/*|executor/src/agents/codex/*)
                   echo 'renderer_profile=true' >> "$GITHUB_OUTPUT"
                   break
                   ;;

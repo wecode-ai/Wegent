@@ -42,6 +42,33 @@ test('unrelated labels execute neither desktop builds nor a replacement success 
   }
 })
 
+test('renderer performance runs for affected inputs and explicit full regressions', () => {
+  const classify = desktop.jobs.changes.steps.find(step => step.id === 'classify').run
+  for (const [path, forceAll, expected] of [
+    ['.github/workflows/wework-e2e.yml', false, false],
+    ['wework/src/components/chat/ChatMessage.tsx', false, true],
+    ['wework/scripts/profile-renderer.mjs', false, true],
+    ['.github/workflows/wework-e2e.yml', true, true],
+  ]) {
+    const output = execFileSync('bash', ['-e', '-c',
+      'git() { printf "%s\\n" "$CHANGED_PATH"; }\n' + classify,
+    ], {
+      cwd: new URL('../../', import.meta.url),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        BASE_SHA: 'base',
+        HEAD_SHA: 'head',
+        CHANGED_PATH: path,
+        FORCE_ALL: String(forceAll),
+        GITHUB_EVENT_NAME: 'pull_request',
+        GITHUB_OUTPUT: '/dev/stdout',
+      },
+    })
+    assert.equal(output.split('\n').includes('renderer_profile=true'), expected, path)
+  }
+})
+
 test('obsolete main warmups cancel and branch dispatches cannot populate shared caches', () => {
   assert.equal(warmup.concurrency['cancel-in-progress'], true)
   assert.equal(evaluate(warmup.jobs.changes.if, { ref: 'refs/heads/main' }), true)

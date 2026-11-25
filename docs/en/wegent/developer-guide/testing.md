@@ -332,7 +332,8 @@ Scheduled and manual runs retain full coverage. Executor device and sandbox
 projects run in parallel on separate runners with their own services and
 databases. Device tests keep one worker and sandbox tests keep two. Rust Backend
 Clippy runs alongside the tests, and `Test Summary` requires both to pass.
-The macOS renderer budget gate uploads the original measurements on failure.
+The macOS renderer budget gate runs when renderer inputs change and during full
+regressions. It uploads the original measurements on failure.
 For a trace, run `pnpm --filter wework profile:renderer --capture` on macOS.
 
 Linux desktop E2E shards get their native test tools from the shared image.
