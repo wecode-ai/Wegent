@@ -10,6 +10,7 @@ jest.mock('@playwright/test', () => ({
 }))
 
 const independent = new Set([
+  'tasks/chat-sandbox-connector.spec.ts',
   'tasks/executor-workspace-recovery.spec.ts',
   'tasks/pipeline-session-archive.spec.ts',
   'tasks/claude-background-lifecycle.spec.ts',
@@ -18,6 +19,7 @@ const independent = new Set([
   'tasks/shell-reference-cancel.spec.ts',
 ])
 const expectedCounts: Record<string, number> = {
+  'tasks/chat-sandbox-connector.spec.ts': 1,
   'global-setup.ts': 1,
   'global-teardown.ts': 1,
   'tasks/agent-conversation-regression.spec.ts': 26,

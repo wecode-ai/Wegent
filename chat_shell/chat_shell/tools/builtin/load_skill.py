@@ -16,6 +16,7 @@ In HTTP mode, skill prompts are obtained from the skill_configs passed via ChatR
 
 import asyncio
 import logging
+from collections.abc import Iterator
 from typing import Any, Awaitable, Callable, Optional, Set
 
 from langchain_core.callbacks import CallbackManagerForToolRun
@@ -145,12 +146,14 @@ class LoadSkillTool(BaseTool):
     skill_names: list[str]  # Available skill names for this session
     # Skill metadata from ChatRequest (skill_configs)
     skill_metadata: dict[str, dict] = {}  # skill_name -> {description, prompt, ...}
+    chat_only_skills: set[str] = Field(default_factory=set)
     # Number of turns to retain a loaded skill (default: 5)
     skill_retention_turns: int = DEFAULT_SKILL_RETENTION_TURNS
 
     # Private instance attribute for session-level cache (not shared between instances)
     # This tracks which skills have been expanded in the current conversation turn
     _expanded_skills: Set[str] = PrivateAttr(default_factory=set)
+    _loaded_sandbox_skills: set[str] = PrivateAttr(default_factory=set)
 
     # Store the actual skill prompts that have been loaded for dynamic injection
     _loaded_skill_prompts: dict[str, str] = PrivateAttr(default_factory=dict)
@@ -230,6 +233,8 @@ class LoadSkillTool(BaseTool):
 
         # Mark skill as expanded and store the prompt
         self._expanded_skills.add(skill_name)
+        if skill_name != "sandbox" and skill_name not in self.chat_only_skills:
+            self._loaded_sandbox_skills.add(skill_name)
         self._loaded_skill_prompts[skill_name] = prompt
 
         # Set the remaining turns counter
@@ -320,6 +325,7 @@ class LoadSkillTool(BaseTool):
         (after the AI has finished responding to the user).
         """
         self._expanded_skills.clear()
+        self._loaded_sandbox_skills.clear()
         self._loaded_skill_prompts.clear()
 
     def get_expanded_skills(self) -> set[str]:
@@ -791,6 +797,10 @@ The following skills provide specialized guidance for specific tasks. When your 
             Set of skill names that have been loaded
         """
         return self._expanded_skills.copy()
+
+    def iter_loaded_sandbox_skills(self) -> Iterator[str]:
+        """Iterate over the active Skills that need deployment to the sandbox."""
+        return iter(self._loaded_sandbox_skills)
 
     def get_skill_remaining_turns(self, skill_name: str) -> int:
         """Get the remaining turns for a loaded skill.
