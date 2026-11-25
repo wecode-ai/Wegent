@@ -44,6 +44,7 @@ export function createDesktopScenario({
     modelResponseTimeoutMs,
   })
   return {
+    reviewApproval: coordinator.reviewApproval,
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false

@@ -6175,6 +6175,8 @@
       "session_source_description": "Off by default: continue this source's conversation. Turn on to create a separate conversation for each new item.",
       "session_issue_description": "Project work keeps an independent conversation per Issue; different Issues never share a conversation.",
       "session_schedule_description": "Scheduled work retains each arrangement's existing conversation mode, independently of start timing.",
+      "schedule_ask_before_act": "Ask me before acting",
+      "schedule_ask_before_act_help": "When off, Calendar tasks default to full access with AI review for high-risk commands. Turn on to handle approvals yourself.",
       "connection_help": "Only selected sources are received after saving. New connections ask before sending or modifying content.",
       "connection_cli_request_unavailable": "The {{provider}} connection request failed. Its CLI or plugin may be unavailable. Try again later; if it keeps failing, reauthorize the connection.",
       "dingtalk_connections": "{{count}} DingTalk sources connected",
