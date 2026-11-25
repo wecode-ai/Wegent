@@ -21,6 +21,7 @@ use crate::{auth::SessionUser, http_compat::FastApiError, state::AppState};
 
 mod assignment_count;
 mod assistant;
+mod create;
 mod invitations;
 mod participants;
 pub(crate) mod share;
@@ -360,18 +361,66 @@ async fn create_issue(
     #[auth] user: SessionUser,
     body: Input,
 ) -> Result<Issue, FastApiError> {
-    let id = match body.request_id.as_deref() {
-        Some(request) => {
-            let hex = request.replace('-', "");
-            if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Err(invalid("Invalid child Issue request ID"));
-            }
-            format!("child-{}-{}", user.0.id, hex.to_ascii_lowercase())
-        }
-        None => identifier()?,
-    };
-    create_issue_record(state, user.0.id, body, &id, None).await?;
+    let id = creation_id(user.0.id, &body)?;
+    create_issue_record(state, user.0.id, body, &id, None, None).await?;
     get_issue(state, user, &id).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateLoopIssue<T = Input> {
+    issue: T,
+    project_id: Option<String>,
+    project_status: Option<String>,
+    request_id: Option<String>,
+}
+
+async fn create_loop_issue(
+    state: &AppState,
+    user: SessionUser,
+    body: CreateLoopIssue,
+) -> Result<Value, FastApiError> {
+    let Some(project_id) = body.project_id else {
+        if body.project_status.is_some() || body.request_id.is_some() {
+            return Err(invalid("Project creation fields require a project"));
+        }
+        let issue = create_issue(state, user, body.issue).await?;
+        return serde_json::to_value(issue).map_err(|_| FastApiError::internal());
+    };
+    crate::cloud_projects::parse_project_id(&project_id)?;
+    if body.issue.parent_id.is_some() {
+        return Err(invalid("Create a child from its parent Issue"));
+    }
+    let target = ProjectInput {
+        project_id,
+        version: 1,
+        status: body.project_status,
+    };
+    let request_id = body
+        .request_id
+        .ok_or_else(|| invalid("Missing Issue request ID"))?;
+    let request_id = normalize_creation_request_id(&request_id)
+        .ok_or_else(|| invalid("Invalid Issue request ID"))?;
+    let id = format!("issue-{}-{request_id}", user.0.id);
+    create_issue_record(state, user.0.id, body.issue, &id, Some(&target), None).await?;
+    Ok(json!({"project_id": target.project_id, "issue_id": id}))
+}
+
+fn creation_id(user_id: i32, body: &Input) -> Result<String, FastApiError> {
+    match body.request_id.as_deref() {
+        Some(request) => {
+            let request_id = normalize_creation_request_id(request)
+                .ok_or_else(|| invalid("Invalid child Issue request ID"))?;
+            Ok(format!("child-{user_id}-{request_id}"))
+        }
+        None => identifier(),
+    }
+}
+
+fn normalize_creation_request_id(request_id: &str) -> Option<String> {
+    let hex = request_id.replace('-', "");
+    (hex.len() == 32 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| hex.to_ascii_lowercase())
 }
 
 async fn participation_notice(
@@ -402,6 +451,7 @@ async fn create_issue_record(
     user_id: i32,
     body: Input,
     id: &str,
+    project: Option<&ProjectInput>,
     share: Option<&share::NewShare>,
 ) -> Result<(), FastApiError> {
     use crate::background_jobs::project::notifications;
@@ -450,7 +500,7 @@ async fn create_issue_record(
             if !valid_people(tx, &metadata.participants).await? {
                 return Ok(Err(Admission::InvalidPeople));
             }
-            wegent_project_coordination::project_store::insert(
+            let inserted = wegent_project_coordination::project_store::insert(
                 tx,
                 "task",
                 json!({
@@ -466,10 +516,32 @@ async fn create_issue_record(
                     "metadata": metadata,
                 }),
             )
-            .await?;
+            .await;
+            if let Err(error) = inserted {
+                if let Some(target) = project.filter(|_| share.is_none() && error.database_code() == Some(1062)) {
+                    let previous: Option<(String, i32)> = tx.fetch_optional(
+                        "SELECT cloud_project_id,created_by_user_id FROM loop_items WHERE id=? AND resource_type='task' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) FOR UPDATE",
+                        (id,),
+                    ).await?;
+                    if let Some((previous_project, previous_creator)) = previous {
+                        if previous_project == target.project_id && previous_creator == user_id {
+                            let project_id = target.project_id.parse::<i64>().expect("validated project ID");
+                            let access: Option<brz_mysql::MysqlRow> = tx.fetch_optional(
+                                crate::cloud_projects::project_access_statement(user_id, Some(project_id), None),
+                                (),
+                            ).await?;
+                            return Ok(match access {
+                                Some(role) if role.get_required::<i64>("anon_1_priority")? <= 2 => Ok(Vec::new()),
+                                _ => Err(Admission::Missing),
+                            });
+                        }
+                    }
+                    return Ok(Err(Admission::Conflict));
+                }
+                return Err(error);
+            }
             invitations::sync(tx, id, user_id, None, &metadata).await?;
-            if body.assignee_id.is_some() && share.is_none_or(|share| share.project.is_none())
-            {
+            if body.assignee_id.is_some() && (project.is_none() || share.is_none()) {
                 update_human_assignment(tx, id, user_id, &body, &mut metadata, true).await?;
                 tx.execute("UPDATE loop_items SET metadata=? WHERE id=?", (Json(&metadata), id))
                     .await?;
@@ -478,21 +550,21 @@ async fn create_issue_record(
                 let required = crate::loop_node_storage::required_columns(tx).await?;
                 share::insert_source(tx, &required, id, user_id, &share.source).await?;
                 share::insert_attachment_records(tx, &required, id, user_id, &share.files).await?;
-                if let Some(target) = &share.project {
-                    let outcome = move_to_project(tx, user_id, id, target, true).await?;
-                    if outcome != Admission::Allowed {
-                        // Roll back the new issue and the private source reference.
-                        return Err(share::association_error(outcome));
-                    }
-                    if let Some(assignee) = body.assignee_id.filter(|id| *id != user_id) {
-                        let issue = locked_issue_node(tx, id).await?;
-                        crate::background_jobs::project::assignments::record_manual_human(
-                            tx, &issue, user_id, assignee, true, true,
-                        ).await?;
-                    }
+            }
+            if let Some(target) = project {
+                let mode = if share.is_some() { AssociationMode::Share } else { AssociationMode::Create };
+                let outcome = move_to_project(tx, user_id, id, target, mode).await?;
+                if outcome != Admission::Allowed {
+                    return Err(share::association_error(outcome));
+                }
+                if let Some(assignee) = body.assignee_id.filter(|id| share.is_some() && *id != user_id) {
+                    let issue = locked_issue_node(tx, id).await?;
+                    crate::background_jobs::project::assignments::record_manual_human(
+                        tx, &issue, user_id, assignee, true, true,
+                    ).await?;
                 }
             }
-            let payload = if let Some(target) = share.and_then(|share| share.project.as_ref()) {
+            let payload = if let Some(target) = project {
                 json!({"projectId": target.project_id, "itemId": id})
             } else {
                 json!({"personalIssueId": id})
@@ -1022,6 +1094,13 @@ struct TargetProject {
     metadata: Json<Value>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AssociationMode {
+    Existing,
+    Create,
+    Share,
+}
+
 #[brz_http_server::post("/api/v1/personal-issues/:issue_id/project")]
 async fn associate_project(
     #[inject(state)] state: &AppState,
@@ -1032,7 +1111,9 @@ async fn associate_project(
     crate::cloud_projects::parse_project_id(&body.project_id)?;
     let result = state
         .mysql
-        .with_transaction(async |tx| move_to_project(tx, user.0.id, issue_id, &body, false).await)
+        .with_transaction(async |tx| {
+            move_to_project(tx, user.0.id, issue_id, &body, AssociationMode::Existing).await
+        })
         .await
         .map_err(internal)?;
     admitted(result)?;
@@ -1044,7 +1125,7 @@ async fn move_to_project(
     user_id: i32,
     issue_id: &str,
     body: &ProjectInput,
-    from_share: bool,
+    mode: AssociationMode,
 ) -> brz_mysql::MysqlResult<Admission> {
     let number = body
         .project_id
@@ -1056,7 +1137,7 @@ async fn move_to_project(
     if row.creator_id != user_id {
         return Ok(Admission::Missing);
     }
-    if !from_share && row.version != body.version {
+    if mode == AssociationMode::Existing && row.version != body.version {
         return Ok(Admission::Conflict);
     }
     let project: Option<TargetProject> = tx.fetch_optional("SELECT next_item_number,COALESCE(metadata,JSON_OBJECT()) AS metadata FROM loop_items WHERE id=? AND resource_type='project' AND status='active' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) FOR UPDATE", (body.project_id.as_str(),)).await?;
@@ -1086,7 +1167,7 @@ async fn move_to_project(
     if !matches!(provider, "backend" | "local") {
         return Ok(Admission::InvalidTarget);
     }
-    if from_share && !row.metadata.0.participants.is_empty() {
+    if mode == AssociationMode::Share && !row.metadata.0.participants.is_empty() {
         let permits_issue_guests = if provider == "local" {
             let parent: Option<UserId> = tx.fetch_optional(
                 "SELECT 1 AS id FROM resource_members relation JOIN kinds space ON space.id=relation.entity_id AND space.kind='CollaborationWorkspace' AND space.is_active=true WHERE relation.resource_type='CloudProject' AND relation.resource_id=? AND relation.entity_type='workspace' AND relation.status='approved' GROUP BY relation.resource_id HAVING COUNT(DISTINCT relation.entity_id)=1",
@@ -1121,7 +1202,6 @@ async fn move_to_project(
             }
         }
     }
-    let requested_status = body.status.as_deref().unwrap_or(&row.status);
     let statuses = crate::cloud_projects::metadata_board_statuses(
         project
             .metadata
@@ -1129,6 +1209,13 @@ async fn move_to_project(
             .as_object()
             .unwrap_or(&serde_json::Map::new()),
     );
+    let requested_status = body.status.as_deref().unwrap_or_else(|| {
+        if mode == AssociationMode::Create {
+            statuses.first().map_or("", |(id, _)| id.as_str())
+        } else {
+            &row.status
+        }
+    });
     if !statuses.is_empty() && !statuses.iter().any(|(id, _)| id == requested_status) {
         return Ok(Admission::InvalidTarget);
     }
@@ -1145,7 +1232,9 @@ async fn move_to_project(
         .as_ref()
         .filter(|r| r.kind == "agent")
         .map(|r| r.id);
-    let security = if from_share && project.metadata.0["default_issue_security"] != "related" {
+    let security = if mode == AssociationMode::Share
+        && project.metadata.0["default_issue_security"] != "related"
+    {
         "open"
     } else {
         "related"

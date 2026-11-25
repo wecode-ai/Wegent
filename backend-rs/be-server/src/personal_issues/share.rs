@@ -39,7 +39,6 @@ pub(super) struct Share {
 pub(super) struct NewShare {
     pub(super) source: SourceTask,
     pub(super) files: Vec<SharedAttachment>,
-    pub(super) project: Option<ProjectInput>,
 }
 
 #[derive(Deserialize)]
@@ -95,9 +94,16 @@ async fn create_shared_issue(
     let share = NewShare {
         source: request.source,
         files,
-        project,
     };
-    let result = create_issue_record(state, user.0.id, request.issue, &id, Some(&share)).await;
+    let result = create_issue_record(
+        state,
+        user.0.id,
+        request.issue,
+        &id,
+        project.as_ref(),
+        Some(&share),
+    )
+    .await;
     if let Err(error) = result {
         // The transaction may have committed despite a lost response. Only
         // reclaim this attempt's objects after confirming they aren't attached.
@@ -147,7 +153,7 @@ pub(super) fn association_error(reason: Admission) -> brz_mysql::MysqlError {
 pub(super) fn creation_error(error: brz_mysql::MysqlError) -> FastApiError {
     match error {
         brz_mysql::MysqlError::InvalidQuery { reason } if reason == "share_project_missing" => {
-            missing()
+            wegent_project_coordination::cloud_projects::cloud_project_not_found()
         }
         brz_mysql::MysqlError::InvalidQuery { reason } if reason == "share_project_invalid" => {
             invalid("Invalid target project or status")

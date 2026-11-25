@@ -100,6 +100,7 @@ fn active_route_inventory_selects_all_independent_issue_operations() {
             "/api/v1/loop-items/one/collaborators/8",
         ),
         (http::Method::POST, "/api/v1/personal-issues"),
+        (http::Method::POST, "/api/v1/loop-items"),
         (http::Method::POST, "/api/v1/personal-issues/share"),
         (http::Method::GET, "/api/v1/personal-issues/shared-from"),
         (http::Method::GET, "/api/v1/personal-issues/one/source"),

@@ -259,7 +259,7 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
   await control.command('waitFor', picker, { visible: true })
 }
 
-/** Recover a real partial save after the selected project is archived elsewhere. */
+/** Recover an unsaved draft after the selected project is archived elsewhere. */
 export async function verifyIssueAssociationRecovery(control, { request, reopen }) {
   const title = `Association recovery ${process.pid}`
   const project = await request(
@@ -284,27 +284,27 @@ export async function verifyIssueAssociationRecovery(control, { request, reopen 
     204
   )
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
-  await control.command('waitFor', testId('independent-issue-association-pending'), {
+  await control.command('waitFor', `${testId('independent-issue-dialog')} [role="alert"]`, {
     visible: true,
   })
   const saved = (await request('/api/v1/personal-issues?scope=created')).items.filter(
     row => row.title === title
   )
-  assert.equal(saved.length, 1, 'A failed association must retain exactly one saved Issue')
-  await chooseIssueProperty(control, 'independent-issue-project', '')
+  assert.equal(saved.length, 0, 'A failed project creation must roll back the Issue')
+  const projectPicker = testId('independent-issue-project')
+  await control.command('clickWhenEnabled', projectPicker)
+  await control.command('clickWhenEnabled', testId('independent-issue-project-option-empty'))
+  assert.equal(await control.command('getAttribute', projectPicker, { value: 'data-value' }), '')
   await control.command('fill', testId('independent-issue-title'), { value: `${title} recovered` })
   await control.command('clickWhenEnabled', testId('independent-issue-save'))
   await control.command('waitFor', testId('independent-issue-actions'), { visible: true })
-  const recovered = await request(`/api/v1/personal-issues/${saved[0].id}`)
-  assert.equal(recovered.title, `${title} recovered`)
-  assert.ok(recovered.version > saved[0].version, 'Recovery must update the saved version')
   const remaining = (await request('/api/v1/personal-issues?scope=created')).items.filter(row =>
     row.title.startsWith(title)
   )
   assert.deepEqual(
-    remaining.map(row => row.id),
-    [saved[0].id],
-    'Recovery must not create a duplicate'
+    remaining.map(row => row.title),
+    [`${title} recovered`],
+    'Retrying the retained draft must create exactly one Issue'
   )
   await control.command('clickWhenEnabled', testId('independent-issue-close'))
   await control.command('waitFor', testId('independent-issue-dialog'), { visible: false })

@@ -1240,6 +1240,11 @@ path = "/api/plugins/local-sync/complete"
 methods = ["POST"]
 path = "/api/plugins/native-auth/exchange"
 
+# Creating an Issue can optionally associate a project in the same transaction.
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-items"
+
 # First-class independent Issues have no project or space.
 [[routes]]
 methods = ["GET", "POST"]

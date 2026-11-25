@@ -415,6 +415,9 @@ it.each([false, true])(
       .mockResolvedValue({ ...saved, description: updatedDescription, version: 2 })
     const associate = vi
       .fn()
+      .mockResolvedValue({ project_id: '41', issue_id: 'new' })
+    const createInProject = vi
+      .fn()
       .mockRejectedValueOnce(new Error('Project temporarily unavailable'))
       .mockResolvedValue({ project_id: '41', issue_id: 'new' })
     const createShared = vi.fn().mockResolvedValue({ id: 'new', project_id: '41' })
@@ -427,6 +430,7 @@ it.each([false, true])(
         delete: vi.fn(),
       }),
       create,
+      createInProject,
       updateDetail,
       associate,
       createShared,
@@ -522,21 +526,21 @@ it.each([false, true])(
         expect(createShared.mock.calls[0][2].description).not.toContain('only')
         expect(create).not.toHaveBeenCalled()
       } else {
-        expect(find('independent-issue-association-pending')).not.toBeNull()
+        expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+          'Project temporarily unavailable'
+        )
         expect(find('independent-issue-title')).toHaveProperty('value', title)
         expect(find('independent-issue-description')).toHaveProperty('value', description)
         await act(async () => editField('independent-issue-description', updatedDescription))
         await act(async () => find('independent-issue-save')?.click())
-        expect(create).toHaveBeenCalledExactlyOnceWith(
-          expect.objectContaining({ title, description })
-        )
-        expect(updateDetail).toHaveBeenCalledExactlyOnceWith('new', {
-          description: updatedDescription,
-          version: 1,
-        })
-        expect(associate.mock.calls).toEqual([
-          ['new', '41', 1, 'ready'],
-          ['new', '41', 2, 'ready'],
+        expect(create).not.toHaveBeenCalled()
+        expect(updateDetail).not.toHaveBeenCalled()
+        expect(associate).not.toHaveBeenCalled()
+        const requestId = createInProject.mock.calls[0][3]
+        expect(requestId).toEqual(expect.any(String))
+        expect(createInProject.mock.calls).toEqual([
+          [expect.objectContaining({ title, description }), '41', 'ready', requestId],
+          [expect.objectContaining({ title, description: updatedDescription }), '41', 'ready', requestId],
         ])
         expect(createShared).not.toHaveBeenCalled()
       }

@@ -183,7 +183,8 @@ test.describe('Issue Dispatch human assignment', () => {
       const rejectedCreate = page.waitForResponse(
         response =>
           response.request().method() === 'POST' &&
-          response.url().endsWith(`/cloud-projects/${fixture.projectId}/loop-items`)
+          new URL(response.url()).pathname === '/api/v1/loop-items' &&
+          response.request().postDataJSON()?.project_id === fixture.projectId
       )
       await saveSilently(page, 'cloud-todo-create-confirm')
       expect((await rejectedCreate).status()).toBe(422)

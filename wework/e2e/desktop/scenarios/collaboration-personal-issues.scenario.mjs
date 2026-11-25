@@ -149,30 +149,32 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         201
       )
       sibling = await request(
-        `/api/v1/cloud-projects/${project.id}/loop-items`,
+        '/api/v1/loop-items',
         'POST',
         {
-          title: 'Narrow list retains a readable title',
-          notify_assignee: false,
+          project_id: project.id,
+          issue: { title: 'Narrow list retains a readable title', notify_assignee: false },
         },
         cloud.authToken,
         201
       )
       homeIssue = await request(
-        '/api/v1/personal-issues',
+        '/api/v1/loop-items',
         'POST',
         {
-          title: 'Independent Issue in the home workspace',
-          description: 'Open from the same list as project Issues.',
-          status: 'pending',
-          priority: 'medium',
-          assignee_id: owner.id,
-          participants: [],
-          archived: false,
-          due_at: null,
+          issue: {
+            title: 'Independent Issue in the home workspace',
+            description: 'Open from the same list as project Issues.',
+            status: 'pending',
+            priority: 'medium',
+            assignee_id: owner.id,
+            participants: [],
+            archived: false,
+            due_at: null,
+          },
         },
         cloud.authToken,
-        200
+        201
       )
       assert.ok(
         Math.abs(Date.parse(homeIssue.created_at + 'Z') - Date.now()) < 60_000,

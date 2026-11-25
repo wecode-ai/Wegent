@@ -783,10 +783,54 @@ async fn verify(mysql: MysqlService) {
     }
     verify_resource_invitations(&state).await;
     verify_shared_attachment_record(&state).await;
+    verify_create_with_optional_project(&state).await;
     verify_shared_due_dates(&state, &mysql).await;
     verify_child_creation(&state).await;
     verify_assistant_reply_requires_execution_binding(&state).await;
     verify_project_collaborator_removal(&state).await;
+}
+
+async fn verify_create_with_optional_project(state: &AppState) {
+    let request_id = crate::wework_auth_tokens::uuid4_hex().unwrap();
+    let request = |project_id: &str| CreateLoopIssue {
+        issue: input("Atomic project creation", None, vec![]),
+        project_id: Some(project_id.into()),
+        project_status: None,
+        request_id: Some(request_id.clone()),
+    };
+    let error = create_loop_issue(state, user(7), request("99999"))
+        .await
+        .unwrap_err();
+    assert_eq!(error.status(), StatusCode::NOT_FOUND);
+    let row: Option<String> = state
+        .mysql
+        .fetch_optional(
+            "SELECT id FROM loop_items WHERE title='Atomic project creation'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert!(row.is_none());
+
+    let target = create_loop_issue(state, user(7), request("1001"))
+        .await
+        .unwrap();
+    assert_eq!(
+        create_loop_issue(state, user(7), request("1001"))
+            .await
+            .unwrap(),
+        target
+    );
+    let (project, status): (String, String) = state
+        .mysql
+        .fetch_one(
+            "SELECT cloud_project_id,status FROM loop_items WHERE id=?",
+            (target["issue_id"].as_str().unwrap(),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(project, "1001");
+    assert!(status.is_empty());
 }
 
 async fn verify_project_collaborator_removal(state: &AppState) {
@@ -907,11 +951,10 @@ async fn verify_shared_attachment_record(state: &AppState) {
             }))
             .unwrap(),
         ],
-        project: None,
     };
     let mut issue_input = input("Shared attachment", None, vec![]);
     issue_input.assignee_id = Some(7);
-    create_issue_record(state, 7, issue_input, &id, Some(&share))
+    create_issue_record(state, 7, issue_input, &id, None, Some(&share))
         .await
         .unwrap();
     let created = get_issue(state, user(7), &id).await.unwrap();
@@ -1174,13 +1217,13 @@ async fn verify_shared_due_dates(state: &AppState, mysql: &MysqlService) {
                 }))
                 .unwrap(),
                 files: vec![],
-                project: Some(ProjectInput {
-                    project_id: "1001".into(),
-                    version: 1,
-                    status: None,
-                }),
             };
-            create_issue_record(state, 7, body, &id, Some(&share))
+            let project = ProjectInput {
+                project_id: "1001".into(),
+                version: 1,
+                status: None,
+            };
+            create_issue_record(state, 7, body, &id, Some(&project), Some(&share))
                 .await
                 .unwrap();
             let (project_id, stored_due_at): (String, Option<String>) = mysql

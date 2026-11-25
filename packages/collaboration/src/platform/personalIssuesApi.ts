@@ -258,7 +258,20 @@ export function createPersonalIssuesApi<Project>(client: PersonalIssueTransport)
         .then(unlinkedIssueFromDetail)
     },
     create(input: IndependentIssueInput): Promise<IndependentIssue> {
-      return client.post('/v1/personal-issues', input)
+      return client.post('/v1/loop-items', { issue: input })
+    },
+    createInProject(
+      input: IndependentIssueInput,
+      projectId: string,
+      projectStatus: string | undefined,
+      requestId: string
+    ): Promise<{ project_id: string; issue_id: string }> {
+      return client.post('/v1/loop-items', {
+        issue: input,
+        project_id: projectId,
+        project_status: projectStatus || undefined,
+        request_id: requestId,
+      })
     },
     createShared(
       requestId: string,

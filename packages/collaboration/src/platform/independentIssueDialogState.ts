@@ -234,6 +234,7 @@ export function createIndependentIssueDialogState(
       if (current()) publish({ busy: false })
     }
   }
+  const projectCreationRequests = new Map<string, string>()
   function openProjectIssue(target: CreatedProjectIssue, current: () => boolean) {
     notify(observer => {
       observer.onSaved(null)
@@ -333,6 +334,13 @@ export function createIndependentIssueDialogState(
           return
         }
         const existing = snapshot.issue
+        if (!existing && project_id) {
+          const requestId = projectCreationRequests.get(project_id) ?? crypto.randomUUID()
+          projectCreationRequests.set(project_id, requestId)
+          const target = await api.createInProject(input, project_id, project_status, requestId)
+          if (current()) openProjectIssue(target, current)
+          return
+        }
         const row = existing
           ? await updateIssueDraft(api, existing, input)
           : await api.create(input)

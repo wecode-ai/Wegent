@@ -1021,7 +1021,7 @@ export function createDeliveryApi(client: HttpClient) {
         personal_task?: boolean
       }
     ): Promise<CloudLoopItem> {
-      return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)
+      return client.post('/v1/loop-items', { project_id: String(projectId), issue: data })
     },
     updateLoopItem(
       itemId: string,
