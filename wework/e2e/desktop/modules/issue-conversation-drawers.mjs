@@ -3,6 +3,48 @@ import { createDevtoolsClient } from '../../../scripts/ai-verify-devtools.mjs'
 import { getSingleElementMetrics } from './conversation-layout.mjs'
 import { join, resultDir, writeFile } from './shared.mjs'
 
+async function mainRendererTarget(client) {
+  return (await client({ action: 'targets' })).find(
+    entry =>
+      entry.type === 'window' &&
+      !entry.url.startsWith('devtools:') &&
+      !entry.url.includes('startup-splash')
+  )?.id
+}
+
+async function clickWithNativeMouse(control, selector, timeoutMs) {
+  const bounds = await getSingleElementMetrics(control, selector, selector)
+  assert.ok(bounds.width > 0 && bounds.height > 0, `${selector} must be visible`)
+  assert.ok(bounds.hitTestVisible, `${selector} must not be covered`)
+  const x = Math.round(bounds.left + bounds.width / 2)
+  const y = Math.round(bounds.top + bounds.height / 2)
+  let client
+  let target
+  try {
+    client = await createDevtoolsClient(resultDir, timeoutMs)
+    target = await mainRendererTarget(client)
+    assert.ok(target, 'The main renderer is unavailable for a native mouse click')
+    const command = (method, params) => client({ action: 'command', target, method, params })
+    await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+    await command('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x,
+      y,
+      button: 'left',
+      clickCount: 1,
+    })
+    await command('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x,
+      y,
+      button: 'left',
+      clickCount: 1,
+    })
+  } finally {
+    if (target) await client({ action: 'detach', target }).catch(() => {})
+  }
+}
+
 async function sampleDrawerMotion(control, scope, action, direction, timeoutMs, reduced = false) {
   try {
     await captureDrawerMotion(control, scope, action, direction, timeoutMs, reduced)
@@ -17,12 +59,7 @@ async function captureDrawerFailure(direction, timeoutMs) {
   let target
   try {
     client = await createDevtoolsClient(resultDir, timeoutMs)
-    target = (await client({ action: 'targets' })).find(
-      entry =>
-        entry.type === 'window' &&
-        !entry.url.startsWith('devtools:') &&
-        !entry.url.includes('startup-splash')
-    )?.id
+    target = await mainRendererTarget(client)
     if (!target) throw new Error('The main renderer is unavailable')
     // Buffered browser timings survive the missed frame without profiling the
     // transition itself or changing its scheduling and acceptance assertions.
@@ -181,6 +218,43 @@ async function captureDrawerMotion(control, scope, action, direction, timeoutMs,
   }
 }
 
+async function verifyWorkspaceTabSwitchPreservesIssueDraft(control, scope, timeoutMs) {
+  const detail = scope('[data-testid="collaboration-issue-detail"]')
+  const description = scope('[data-testid="cloud-todo-detail-description"]')
+  const title = scope('[data-testid="cloud-todo-detail-title"]')
+  const save = scope('[data-testid="cloud-todo-save"]')
+  const boardTab = '[data-testid="workspace-tab-select-fixed-board"]'
+  const taskTab = '[data-testid="workspace-tab-select-fixed-task"]'
+  const originalDescription = await control.command('getValue', description)
+  const originalTitle = await control.command('getValue', title)
+  const draft = `Unsaved Issue draft ${process.pid}`
+
+  await control.command('fill', description, { value: draft })
+  await control.command('waitFor', save, { visible: true, timeoutMs })
+
+  await clickWithNativeMouse(control, taskTab, timeoutMs)
+  await control.command('waitFor', `${taskTab}[aria-selected="true"]`, { timeoutMs })
+  await clickWithNativeMouse(control, boardTab, timeoutMs)
+  await control.command('waitFor', `${boardTab}[aria-selected="true"]`, { timeoutMs })
+  await control.command('waitFor', detail, { visible: true, timeoutMs })
+  await control.command('waitFor', description, {
+    text: draft,
+    stableMs: 300,
+    timeoutMs,
+  })
+
+  assert.equal(await control.command('getValue', description), draft, 'Issue draft was lost')
+  assert.equal(await control.command('getValue', title), originalTitle, 'Issue detail changed')
+  await control.command('waitFor', save, { visible: true, timeoutMs })
+  await writeFile(
+    join(resultDir, 'issue-drawers-workspace-tab-switch.json'),
+    JSON.stringify({ boardTab, draft, originalTitle, taskTab }, null, 2)
+  )
+
+  await control.command('fill', description, { value: originalDescription })
+  await control.command('waitFor', save, { visible: false, timeoutMs })
+}
+
 // The caller owns a real Issue with at least one completed comment execution.
 export async function verifyIssueConversationDrawers(control, scope, timeoutMs) {
   await control.command('setReducedMotion', 'body', { value: 'no-preference' })
@@ -313,4 +387,5 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
   )
   await control.command('waitFor', chat, { visible: false, timeoutMs })
   await control.command('setReducedMotion', 'body', { value: 'system' })
+  await verifyWorkspaceTabSwitchPreservesIssueDraft(control, scope, timeoutMs)
 }
