@@ -263,7 +263,7 @@ export function createDesktopScenario(options) {
         )
         await control.command(
           'waitFor',
-          `${WAITING} [data-testid="thinking-indicator"] > [aria-hidden="true"] + [aria-hidden="true"] + [aria-hidden="true"]:last-child`,
+          `${WAITING} [data-testid="thinking-indicator"]:has(> [aria-hidden="true"] + [aria-hidden="true"] + [aria-hidden="true"]:last-child)`,
           { visible: true }
         )
         await control.command('click', '[data-testid="new-chat-button"]')
