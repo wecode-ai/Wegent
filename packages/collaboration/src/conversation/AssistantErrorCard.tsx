@@ -93,7 +93,7 @@ export function AssistantErrorCard({
               {t('assistant_error.actions.switch_model_retry')}
             </ControlButton>
           ) : null}
-          {onRetry && !recommendsNewConversation ? (
+          {onRetry ? (
             <ControlButton
               variant="outline"
               size="sm"
@@ -103,7 +103,7 @@ export function AssistantErrorCard({
               className={secondaryActionClass}
             >
               {t(
-                parsedError.retryPolicy === 'after_change'
+                parsedError.retryPolicy === 'after_change' && !recommendsNewConversation
                   ? 'assistant_error.actions.retry_after_change'
                   : 'assistant_error.actions.retry'
               )}
