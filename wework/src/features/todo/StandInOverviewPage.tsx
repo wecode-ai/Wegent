@@ -58,7 +58,7 @@ import type { StandInRoleLocation } from './useStandInRoleDirectory'
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
 
 function roleTabClass(selected: boolean) {
-  return `inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus md:min-h-8 ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
+  return `inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-sm md:min-h-8 ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
 }
 
 /** Hosts personal conversations, work and settings on the selected Executor. */

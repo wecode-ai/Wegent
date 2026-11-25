@@ -238,7 +238,7 @@ export function IssueParticipantPicker({
             </TabsList>
           </TabsRoot>
         )}
-        <label className="issue-participant-search flex min-w-0 items-center gap-2 rounded-md border border-border px-2 focus-within:border-focus focus-within:ring-1 focus-within:ring-focus">
+        <label className="issue-participant-search flex min-w-0 items-center gap-2 rounded-md border border-border px-2 keyboard:focus-within:border-focus keyboard:focus-within:ring-1 keyboard:focus-within:ring-focus">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
           <ControlInput
             appearance="plain"

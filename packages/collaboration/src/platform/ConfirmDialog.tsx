@@ -17,6 +17,7 @@ interface ConfirmDialogProps {
   dialogTestId?: string
   cancelTestId?: string
   destructive?: boolean
+  focusCancel?: boolean
   pending?: boolean
   confirmDisabled?: boolean
   overlayClassName?: string
@@ -35,6 +36,7 @@ export function ConfirmDialog({
   dialogTestId,
   cancelTestId,
   destructive = false,
+  focusCancel = false,
   pending = false,
   confirmDisabled = false,
   overlayClassName = 'z-modal',
@@ -58,7 +60,7 @@ export function ConfirmDialog({
           if (!pending) onClose()
         }}
         active={open}
-        initialFocus={destructive ? 'button:first-of-type' : 'button:last-of-type'}
+        initialFocus={destructive || focusCancel ? 'button:first-of-type' : 'button:last-of-type'}
         finalFocus={finalFocus}
         render={
           <div
