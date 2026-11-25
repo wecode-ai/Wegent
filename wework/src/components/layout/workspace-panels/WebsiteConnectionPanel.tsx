@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { X } from 'lucide-react'
+import { Textarea } from '@wegent/collaboration/controls/Textarea'
 import {
   cancelWebsiteCapture,
   finishWebsiteCapture,
@@ -344,8 +345,8 @@ export function WebsiteConnectionPanel({
         <>
           <label className="block">
             <span className="mb-1 block">{t('workbench.web_connection_intent_label')}</span>
-            <textarea
-              className="min-h-11 w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+            <Textarea
+              className="min-h-11 resize-y bg-background px-2 py-1.5 md:min-h-11"
               rows={2}
               data-testid="website-connection-intent"
               placeholder={t('workbench.web_connection_intent_placeholder')}
