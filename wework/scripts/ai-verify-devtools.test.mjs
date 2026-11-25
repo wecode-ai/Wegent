@@ -133,7 +133,7 @@ describe('DevTools evidence analysis', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
-  test.each(['trace-parse', 'report-write', 'profiler-stop'])(
+  test.each(['trace-parse', 'report-write', 'profiler-stop', 'source-metadata'])(
     'recovers recording state after %s failure',
     async stage => {
       const directory = await mkdtemp(join(tmpdir(), 'devtools-recovery-'))
@@ -159,6 +159,8 @@ describe('DevTools evidence analysis', () => {
           if (stage === 'profiler-stop') throw new Error('Profiler stop failed')
           return { profile: { nodes: [], samples: [], timeDeltas: [] } }
         }
+        if (input.method === 'Debugger.enable' && stage === 'source-metadata')
+          throw new Error('Script metadata replay failed')
         if (input.method === 'IO.read')
           return {
             data: stage === 'trace-parse' ? 'invalid trace' : '{"traceEvents":[]}',
@@ -169,9 +171,16 @@ describe('DevTools evidence analysis', () => {
       try {
         const blocked = join(directory, 'blocked')
         await writeFile(blocked, 'a file cannot be an output directory')
-        await expect(
-          stopPerformanceRecording(client, directory, 1, join(blocked, 'report.json'))
-        ).rejects.toThrow()
+        const report =
+          stage === 'source-metadata'
+            ? join(directory, 'report.json')
+            : join(blocked, 'report.json')
+        await expect(stopPerformanceRecording(client, directory, 1, report)).rejects.toThrow()
+        if (stage === 'source-metadata') {
+          const evidence = JSON.parse(await readFile(report + '.evidence.json', 'utf8'))
+          expect(evidence.profile).toMatchObject({ nodes: [] })
+          expect(evidence.trace).toEqual({ traceEvents: [] })
+        }
         if (stage === 'profiler-stop') {
           expect(await readFile(statePath, 'utf8')).toContain('target')
           expect(calls).not.toContain('Tracing.end')

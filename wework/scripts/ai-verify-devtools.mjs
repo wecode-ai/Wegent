@@ -367,18 +367,21 @@ async function finishPerformanceRecording(client, command, target, state, profil
   if (!complete.params.stream) throw new Error('Trace did not return a stream')
   const trace = JSON.parse(await readProtocolStream(command, complete.params.stream))
   const metrics = await command('Performance.getMetrics')
-  // Resolve scripts after measurement so enabling Debugger cannot prepare the
-  // cold code paths being profiled or lose their maps to later stream traffic.
-  await command('Debugger.enable')
-  const scripts = await collectProtocolEvents(client, target, cursor)
-  events.push(...scripts.events)
-  lost += scripts.lost
-  await writeDiagnosticFile(outputPath + '.evidence.json', {
-    profile,
-    trace,
-    events,
-    metadata: state.metadata,
-  })
+  // Read source maps after measurement so the debugging domain does not affect
+  // the recorded workload or lose its script metadata to later stream traffic.
+  try {
+    await command('Debugger.enable')
+    const scripts = await collectProtocolEvents(client, target, cursor)
+    events.push(...scripts.events)
+    lost += scripts.lost
+  } finally {
+    await writeDiagnosticFile(outputPath + '.evidence.json', {
+      profile,
+      trace,
+      events,
+      metadata: state.metadata,
+    })
+  }
   const { maps, errors } = await loadSourceMaps(command, [...state.metadata, ...events], profile)
   const report = {
     target,
