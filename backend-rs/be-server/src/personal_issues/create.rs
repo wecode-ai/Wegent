@@ -59,19 +59,7 @@ async fn create_board_issue(
     api_key: Option<&str>,
     trace_id: Option<&str>,
 ) -> Result<Response, FastApiError> {
-    static CLIENT: OnceLock<Result<brz_http::Client, brz_http::reqwest::Error>> = OnceLock::new();
-    let client = CLIENT.get_or_init(|| {
-        brz_http::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .configure(|builder| {
-                builder
-                    .no_proxy()
-                    .redirect(brz_http::reqwest::redirect::Policy::none())
-                    .retry(brz_http::reqwest::retry::never())
-            })
-            .build()
-    });
-    let client = client.as_ref().map_err(|_| upstream_error())?;
+    let client = board_issue_client()?;
     let upstream = std::env::var("WEGENT_PYTHON_UPSTREAM_URL")
         .unwrap_or_else(|_| wegent_backend_config::DEFAULT_PYTHON_UPSTREAM.to_owned());
     let project_path = format!("/api/v1/cloud-projects/{project_id}/loop-items");
@@ -100,9 +88,74 @@ async fn create_board_issue(
     Ok(response)
 }
 
+fn board_issue_client() -> Result<&'static brz_http::Client, FastApiError> {
+    const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+    static CLIENT: OnceLock<Result<brz_http::Client, brz_http::reqwest::Error>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            brz_http::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                // The default socket read deadline is shorter than a project Issue transaction.
+                .read_timeout(REQUEST_TIMEOUT)
+                .configure(|builder| {
+                    builder
+                        .no_proxy()
+                        .redirect(brz_http::reqwest::redirect::Policy::none())
+                        .retry(brz_http::reqwest::retry::never())
+                })
+                .build()
+        })
+        .as_ref()
+        .map_err(|_| upstream_error())
+}
+
 fn upstream_error() -> FastApiError {
     FastApiError::detail(
         StatusCode::BAD_GATEWAY,
         "Unable to reach the project Issue provider",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn board_issue_client_reads_a_response_after_the_default_read_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let provider = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                assert_ne!(stream.read_line(&mut line).await.unwrap(), 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            stream
+                .get_mut()
+                .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\n{}")
+                .await
+                .unwrap();
+        });
+
+        let response = board_issue_client()
+            .ok()
+            .expect("project Issue client")
+            .as_reqwest()
+            .post(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"{}");
+        provider.await.unwrap();
+    }
 }
