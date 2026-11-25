@@ -30,6 +30,7 @@ import { waitForClosedStartupSplash } from '../e2e/desktop/modules/native-window
 import { withTimeout } from '../e2e/desktop/modules/shared.mjs'
 import {
   createDevtoolsClient,
+  resolveCpuProfileLocations,
   startPerformanceRecording,
   stopPerformanceRecording,
   writeDiagnosticFile,
@@ -148,7 +149,7 @@ export function installTurnUpdateProbe() {
             observedAt,
             longTaskMs: longTask?.duration ?? 0,
             ...(longTask && {
-              longTaskStartAt: longTask.startTime,
+              longTaskStartMs: longTask.startTime,
               afterDeliveryAt,
             }),
             ...(frame && {
@@ -525,6 +526,7 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const capture = process.env.WEWORK_RENDERER_PROFILE_CAPTURE === 'true'
+  const enforceBudgets = process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true'
   const measureProcesses = capture || process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
   const measureHistory = process.env.WEWORK_RENDERER_PROFILE_HISTORY === 'true'
   const samples = []
@@ -790,9 +792,10 @@ export function createDesktopScenario({
           })),
         })
       }
-      const check = process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true'
-      const command = (method, params) => client({ action: 'command', target, method, params })
       let recording = false
+      let recordingTurnCpu = false
+      let turnCpuEvidence
+      const command = (method, params) => client({ action: 'command', target, method, params })
       let probingTurnUpdates = false
       try {
         if (measureHistory) {
@@ -853,11 +856,20 @@ export function createDesktopScenario({
         )
         await evaluate(`(${installTurnUpdateProbe.toString()})()`)
         probingTurnUpdates = true
-        if (check) {
-          await command('Performance.enable')
+        let navigationStartUs
+        if (enforceBudgets) {
+          await command('Performance.enable', { timeDomain: 'timeTicks' })
+          const { metrics } = await command('Performance.getMetrics')
+          const navigationStart = metrics.find(metric => metric.name === 'NavigationStart')?.value
+          assert.ok(
+            Number.isFinite(navigationStart),
+            'The renderer did not report its navigation clock'
+          )
+          navigationStartUs = navigationStart * 1_000_000
           await command('Profiler.enable')
-          await command('Profiler.setSamplingInterval', { interval: 2000 })
+          await command('Profiler.setSamplingInterval', { interval: 2_000 })
           await command('Profiler.start')
+          recordingTurnCpu = true
         }
 
         const controller = new AbortController()
@@ -919,19 +931,21 @@ export function createDesktopScenario({
           `window.__weworkProfileTurnUpdates.stop(${JSON.stringify(taskId)})`
         )
         probingTurnUpdates = false
-        if (check) {
+        if (recordingTurnCpu) {
+          recordingTurnCpu = false
           const { profile } = await command('Profiler.stop')
           await command('Profiler.disable')
-          if (turnUpdates.some(update => update.longTaskMs >= limits.maxTurnUpdateLongTaskMs)) {
-            const { metrics } = await command('Performance.getMetrics')
-            await writeDiagnosticFile(join(resultDir, 'renderer-turn-profile.json'), {
-              profile,
-              navigationStartSeconds: metrics.find(metric => metric.name === 'NavigationStart')
-                ?.value,
-              turnUpdates,
-            })
-          }
           await command('Performance.disable')
+          const slowUpdates = turnUpdates.filter(
+            update => update.longTaskMs >= limits.maxTurnUpdateLongTaskMs
+          )
+          turnCpuEvidence = { navigationStartUs, slowUpdates, profile }
+          if (slowUpdates.length > 0) {
+            await writeDiagnosticFile(
+              join(resultDir, 'renderer-turn-long-task-profile.json'),
+              turnCpuEvidence
+            )
+          }
         }
         assert.ok(
           turnUpdates.some(update => update.status === 'started'),
@@ -1011,7 +1025,22 @@ export function createDesktopScenario({
           recording = false
           await stopPerformanceRecording(client, resultDir, target, reportPath)
         }
-        if (check) {
+        if (enforceBudgets) {
+          if (
+            turnCpuEvidence &&
+            (turnCpuEvidence.slowUpdates.length > 0 ||
+              measurements.singleTaskCpuPercent >= limits.singleTaskCpuPercent)
+          ) {
+            const sourceMapEvidence = await resolveCpuProfileLocations(
+              client,
+              target,
+              turnCpuEvidence.profile
+            ).catch(error => ({ error: error.message }))
+            await writeDiagnosticFile(join(resultDir, 'renderer-turn-long-task-profile.json'), {
+              ...turnCpuEvidence,
+              sourceMapEvidence,
+            })
+          }
           assert.ok(
             report.withinLimits,
             'Renderer exceeds a limit; see renderer-threshold-measurements.json'
@@ -1022,6 +1051,7 @@ export function createDesktopScenario({
           if (probingTurnUpdates) await evaluate('window.__weworkProfileTurnUpdates?.stop()')
         } finally {
           try {
+            if (recordingTurnCpu) await command('Profiler.stop').catch(() => {})
             if (recording) await stopPerformanceRecording(client, resultDir, target, reportPath)
           } finally {
             await client({ action: 'detach', target })
