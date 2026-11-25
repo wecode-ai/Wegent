@@ -49,7 +49,6 @@ function setup(overrides: Partial<Parameters<typeof createIssueCommentActions>[0
     ...patch,
     version: 10,
   }))
-  const assign = vi.fn().mockResolvedValue({ ...original, version: 10 })
   const onUpdated = vi.fn()
   const actions = createIssueCommentActions({
     issue: original,
@@ -60,20 +59,19 @@ function setup(overrides: Partial<Parameters<typeof createIssueCommentActions>[0
     issues: {
       get,
       update,
-      assign,
     } as unknown as SharedIssueDetailPort['issues'],
     onUpdated,
     confirmAssignee: vi.fn(async () => true),
     translate: t,
     ...overrides,
   })
-  return { actions, get, update, assign, onUpdated }
+  return { actions, get, update, onUpdated }
 }
 
 describe('Issue composer board operations', () => {
   it.each([false, true])('confirms assignee column moves (approved=%s)', async approved => {
     const confirmAssignee = vi.fn(async () => approved)
-    const { actions, assign, onUpdated } = setup({
+    const { actions, update, onUpdated } = setup({
       confirmAssignee,
       board: {
         name: 'People',
@@ -91,16 +89,17 @@ describe('Issue composer board operations', () => {
     const result = await actions.move(JSON.stringify(['unassigned', 'user:5']))
     expect(confirmAssignee).toHaveBeenCalledExactlyOnceWith('user:5')
     if (approved) {
-      expect(assign).toHaveBeenCalledExactlyOnceWith('project', 'issue', {
+      expect(update).toHaveBeenCalledExactlyOnceWith('issue', {
         version: 9,
-        assigneeType: 'user',
-        assigneeId: '5',
-        notifyAssignee: true,
+        assignee_user_id: 5,
+        assignee_agent_id: null,
+        assignee_team_id: null,
+        notify_assignee: true,
       })
       expect(onUpdated).toHaveBeenCalledOnce()
     } else {
       expect(result).toBe(false)
-      expect(assign).not.toHaveBeenCalled()
+      expect(update).not.toHaveBeenCalled()
       expect(onUpdated).not.toHaveBeenCalled()
     }
   })

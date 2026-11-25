@@ -1,3 +1,4 @@
+import { IndependentIssueDialog } from './IndependentIssueDialog'
 import { revealWorkspaceTab } from '@/components/layout/workspace-panels/revealWorkspaceTab'
 import { WorkspaceTitleTab } from '@/components/layout/workspace-panels/WorkspaceTitleTab'
 import { useIsDesktop } from '@/hooks/useIsDesktop'
@@ -35,10 +36,10 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { IndependentIssueList } from './IndependentIssueList'
 import { PersonalIssueErrors } from './PersonalIssueErrors'
 import { PersonalIssueList } from './PersonalIssueList'
-import { useIndependentIssuePage } from './useIndependentIssuePage'
+import { usePersonalIssueSources } from '@wegent/collaboration/platform'
+import { useIndependentIssues } from './independentIssuesContext'
 import { usePersonalHomeIssues, type PersonalHomeIssueOrder } from './usePersonalHomeIssues'
 
 export interface PersonalHomeIssueDetailContext {
@@ -78,6 +79,7 @@ export function WeworkPersonalHome({
   draftScope = sources,
   createIssue,
   renderIssueDetail,
+  onOpenProjectIssue,
   conversation,
   createdIssue,
   onCreatedIssueHandled,
@@ -98,6 +100,7 @@ export function WeworkPersonalHome({
   }
   onCreatedIssueHandled?(key: string): void
   renderIssueDetail(context: PersonalHomeIssueDetailContext): ReactNode
+  onOpenProjectIssue?(projectId: string, issueId: string): void
   conversation(active: boolean, work: PersonalHomeCollaborationWork): ReactNode
 }) {
   const { t } = useTranslation('common')
@@ -133,12 +136,15 @@ export function WeworkPersonalHome({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const sidebarVisible = !isDesktop || !sidebarCollapsed
   const [issueTabs, setIssueTabs] = useState<
-    Array<{
-      id: string
-      issue: WorkspaceMyWorkItem
-      project: CollaborationProject
-      taskRequest?: PersonalHomeIssueDetailContext['taskRequest']
-    }>
+    Array<
+      | {
+          id: string
+          issue: WorkspaceMyWorkItem
+          project: CollaborationProject
+          taskRequest?: PersonalHomeIssueDetailContext['taskRequest']
+        }
+      | { id: string; issue: WorkspaceMyWorkItem; project: null }
+    >
   >([])
   const [activeTab, setActiveTab] = useState('stand-in')
   const viewport = useRef<HTMLDivElement>(null)
@@ -178,15 +184,19 @@ export function WeworkPersonalHome({
       target?.focus({ preventScroll: true })
     }
   }, [workspaceFocus, isDesktop])
-  const independent = useIndependentIssuePage(
-    assignedOnly ? 'assigned' : 'participating',
-    showCompleted,
-    active,
-    false,
-    order
-  )
+  const independent = useIndependentIssues()
+  const workSources = usePersonalIssueSources(sources, independent)
+  const activeIssueTab = issueTabs.find(tab => tab.id === activeTab)
+  const changeTabExpansion = (id: string, expanded: boolean) =>
+    setExpandedTabs(current => {
+      if (current.has(id) === expanded) return current
+      const next = new Set(current)
+      if (expanded) next.add(id)
+      else next.delete(id)
+      return next
+    })
   const state = usePersonalHomeIssues(
-    sources,
+    workSources,
     active,
     assignedOnly,
     showCompleted,
@@ -201,18 +211,22 @@ export function WeworkPersonalHome({
     captureList = false
   ) => {
     const project = projects.find(project => project.id === issue.cloud_project_id)
-    if (!project) return
+    if (!project && issue.cloud_project_id) return
     const summary: WorkspaceMyWorkItem = {
-      project_name: project.name,
-      project_key: project.project_key,
+      project_name: project?.name ?? '',
+      project_key: project?.project_key ?? '',
       has_active_task: false,
       ...issue,
     }
-    const id = issueTabId(project, summary)
+    const id = project ? issueTabId(project, summary) : `independent:${issue.id}`
     setIssueTabs(tabs =>
       tabs.some(tab => tab.id === id)
-        ? tabs.map(tab => (tab.id === id && taskRequest ? { ...tab, taskRequest } : tab))
-        : [{ id, issue: summary, project, taskRequest }]
+        ? tabs.map(tab =>
+            tab.project && tab.id === id && taskRequest ? { ...tab, taskRequest } : tab
+          )
+        : project
+          ? [{ id, issue: summary, project, taskRequest }]
+          : [{ id, issue: summary, project: null }]
     )
     setExpandedTabs(current => (current.has(id) ? current : new Set()))
     setSidebarCollapsed(false)
@@ -280,7 +294,7 @@ export function WeworkPersonalHome({
       setWorkspaceFocus({ target: next === 'stand-in' ? 'list' : 'detail' })
     }
   }
-  const firstUse = !projects.length && !independent.context?.api
+  const firstUse = !projects.length && !independent?.api
   return (
     <IssueDetailDraftProvider key={userId} scope={draftScope}>
       <div
@@ -391,15 +405,10 @@ export function WeworkPersonalHome({
                 </SelectRoot>
               </div>
             </div>
-            <PersonalIssueErrors projects={state} independent={independent} />
-            <IndependentIssueList state={independent} hideWhenEmpty />
+            <PersonalIssueErrors state={state} />
             <PersonalIssueList
-              hideEmpty={
-                firstUse ||
-                independent.loading ||
-                Boolean(independent.error) ||
-                independent.items.length > 0
-              }
+              hideEmpty={firstUse}
+              unassignedUserId={independent?.userId}
               emptyState={
                 <div data-testid="personal-home-empty" className="py-6">
                   <p className="text-base text-text-secondary">
@@ -438,7 +447,13 @@ export function WeworkPersonalHome({
                 recentCreation.assignedOnly === assignedOnly &&
                 recentCreation.order === order
                   ? issueTabs.find(
-                      tab =>
+                      (
+                        tab
+                      ): tab is Extract<
+                        (typeof issueTabs)[number],
+                        { project: CollaborationProject }
+                      > =>
+                        tab.project !== null &&
                         tab.issue.id === recentCreation.issueId &&
                         tab.issue.cloud_project_id === recentCreation.projectId
                     )?.issue
@@ -452,7 +467,7 @@ export function WeworkPersonalHome({
               showCompleted={showCompleted}
               assignedOnly={assignedOnly}
               onOpenIssue={issue => openIssue(issue, undefined, true)}
-              selectedIssue={issueTabs.find(tab => tab.id === activeTab)?.issue}
+              selectedIssue={activeIssueTab?.issue}
               active={active}
               onOpenTask={(issue, binding) =>
                 openIssue(issue, { key: crypto.randomUUID(), binding }, true)
@@ -463,7 +478,7 @@ export function WeworkPersonalHome({
                 variant="unstyled"
                 type="button"
                 data-testid="personal-home-load-more"
-                disabled={state.loading}
+                disabled={!state.canLoadMore}
                 onClick={() => void state.loadMore()}
                 className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
               >
@@ -537,7 +552,11 @@ export function WeworkPersonalHome({
                   testId={`personal-home-tab-${tab.issue.id}`}
                   active={activeTab === tab.id}
                   label={tab.issue.title}
-                  title={`${tab.project.name} · #${tab.issue.sequence_number} ${tab.issue.title}`}
+                  title={
+                    tab.project
+                      ? `${tab.project.name} · #${tab.issue.sequence_number} ${tab.issue.title}`
+                      : tab.issue.title
+                  }
                   icon={<Circle aria-hidden="true" className="h-4 w-4" />}
                   onSelect={() => {
                     setWorkspaceFocus(null)
@@ -588,30 +607,55 @@ export function WeworkPersonalHome({
               className={activeTab === tab.id ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
               inert={activeTab !== tab.id}
             >
-              {renderIssueDetail({
-                issue: tab.issue,
-                project: tab.project,
-                active: active && sidebarVisible && activeTab === tab.id,
-                taskRequest: tab.taskRequest,
-                detailExpanded,
-                onDetailExpandedChange: setDetailExpanded,
-                onClose: () => closeIssue(tab.id),
-                onExpandedChange: expanded =>
-                  setExpandedTabs(current => {
-                    if (current.has(tab.id) === expanded) return current
-                    const next = new Set(current)
-                    if (expanded) next.add(tab.id)
-                    else next.delete(tab.id)
-                    return next
-                  }),
-                onOpenIssue: openIssue,
-                onUpdated: issue => {
-                  state.replaceIssue(issue)
-                  setIssueTabs(tabs =>
-                    tabs.map(current => (current.id === tab.id ? { ...current, issue } : current))
-                  )
-                },
-              })}
+              {tab.project ? (
+                renderIssueDetail({
+                  issue: tab.issue,
+                  project: tab.project,
+                  active: active && sidebarVisible && activeTab === tab.id,
+                  taskRequest: tab.taskRequest,
+                  detailExpanded,
+                  onDetailExpandedChange: setDetailExpanded,
+                  onClose: () => closeIssue(tab.id),
+                  onExpandedChange: expanded => changeTabExpansion(tab.id, expanded),
+                  onOpenIssue: openIssue,
+                  onUpdated: issue => {
+                    state.replaceIssue(issue)
+                    setIssueTabs(tabs =>
+                      tabs.map(current =>
+                        current.project && current.id === tab.id ? { ...current, issue } : current
+                      )
+                    )
+                  },
+                })
+              ) : independent?.api ? (
+                <IndependentIssueDialog
+                  api={independent.api}
+                  collaborationApi={independent.collaborationApi}
+                  userId={independent.userId}
+                  issueId={tab.issue.id}
+                  presentation="embedded"
+                  expanded={detailExpanded}
+                  onExpandedChange={setDetailExpanded}
+                  onConversationOpenChange={open => changeTabExpansion(tab.id, open)}
+                  onClose={() => closeIssue(tab.id)}
+                  onOpenChildTask={openIssue}
+                  onSaved={issue => {
+                    state.reload()
+                    if (!issue) closeIssue(tab.id)
+                    else if (issue.detail) {
+                      const detail = issue.detail
+                      setIssueTabs(tabs =>
+                        tabs.map(current =>
+                          !current.project && current.id === tab.id
+                            ? { ...current, issue: { ...current.issue, ...detail } }
+                            : current
+                        )
+                      )
+                    }
+                  }}
+                  onOpenProjectIssue={onOpenProjectIssue}
+                />
+              ) : null}
             </div>
           ))}
         </aside>

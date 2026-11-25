@@ -7,10 +7,12 @@ import {
   verifyIssueAssociationRecovery,
   chooseIssueProperty,
   verifyEnglishLinkedIssueLayout,
+  pressFocusedIssueKey,
 } from '../modules/independent-issue-draft.mjs'
 import assert from 'node:assert/strict'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyIssueChildMode, verifyIssueSendModes } from '../modules/issue-comment-workflow.mjs'
 import {
   inCollaborationSidebar,
   revealCollaborationSidebarElement,
@@ -28,6 +30,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     project,
     issue,
     sibling,
+    homeIssue,
+    homeProjectIssue,
     agent,
     group
   const title = `Independent Issue ${process.pid}`
@@ -145,14 +149,53 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         201
       )
       sibling = await request(
+        '/api/v1/loop-items',
+        'POST',
+        {
+          project_id: project.id,
+          issue: { title: 'Narrow list retains a readable title', notify_assignee: false },
+        },
+        cloud.authToken,
+        201
+      )
+      homeIssue = await request(
+        '/api/v1/loop-items',
+        'POST',
+        {
+          issue: {
+            title: 'Independent Issue in the home workspace',
+            description: 'Open from the same list as project Issues.',
+            status: 'pending',
+            priority: 'medium',
+            assignee_id: owner.id,
+            participants: [],
+            archived: false,
+            due_at: null,
+          },
+        },
+        cloud.authToken,
+        201
+      )
+      assert.ok(
+        Math.abs(Date.parse(homeIssue.created_at + 'Z') - Date.now()) < 60_000,
+        'The shared storage writer must preserve the personal Issue timestamp convention'
+      )
+      homeProjectIssue = await request(
         `/api/v1/cloud-projects/${project.id}/loop-items`,
         'POST',
         {
-          title: 'Narrow list retains a readable title',
+          title: 'Project Issue in the home workspace',
+          assignee_user_id: owner.id,
           notify_assignee: false,
         },
         cloud.authToken,
         201
+      )
+      const homeDetail = await request(`/api/v1/loop-items/${homeIssue.id}`)
+      assert.ok(
+        Math.abs(Date.parse(homeDetail.created_at) - Date.parse(homeProjectIssue.created_at)) <
+          60_000,
+        `Issues created together must use the same clock: personal ${homeDetail.created_at}, project ${homeProjectIssue.created_at}`
       )
     },
     async verify(control) {
@@ -161,6 +204,134 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await click(control, 'workspace-tab-select-fixed-board')
+      await navigate(control, 'collaboration-primary-home')
+      const homeList = '[data-testid="personal-home-items-region"]'
+      const activeHome = '[data-testid="personal-home-stand-in"] [role="tabpanel"]:not([inert])'
+      for (const id of [
+        `independent-issue-${homeIssue.id}`,
+        `personal-home-issue-${homeProjectIssue.id}`,
+      ]) {
+        const row = `${homeList} [data-testid="${id}"]`
+        await wait(control, row, { visible: true })
+        assert.equal(Number(await control.command('getElementCount', row)), 1)
+        await wait(
+          control,
+          `${homeList} table[data-testid="collaboration-issue-table"]:not(:has(thead)) [data-testid="${id}"]`
+        )
+      }
+      await captureScreenshot(control, 'shared-issue-list.png')
+      const verifySendModes = (item, commentsPath, name) =>
+        verifyIssueSendModes(control, {
+          scope: activeHome,
+          name,
+          capture: captureScreenshot,
+          load: async () => ({
+            status: (await request(`/api/v1/loop-items/${item.id}`)).status,
+            comments: (await request(commentsPath)).length,
+          }),
+        })
+      await click(control, `independent-issue-${homeIssue.id}`)
+      await wait(
+        control,
+        '[data-testid="personal-home-stand-in"] [role="tabpanel"]:not([inert]) [data-testid="independent-issue-dialog"][role="region"] [data-testid="cloud-todo-detail-content"]',
+        { visible: true, text: homeIssue.title }
+      )
+      await wait(control, '[data-testid="independent-issue-dialog"][aria-modal="true"]', {
+        visible: false,
+      })
+      const linkedTasks = '[data-testid="cloud-todo-tasks"]'
+      const expectTaskActions = async () => {
+        for (const action of ['issue-link-existing-task', 'cloud-todo-create-task']) {
+          await wait(control, `${linkedTasks} [data-testid="${action}"]`, { visible: true })
+        }
+      }
+      const expectDiscussionActions = async ({ canMove }) => {
+        const creation = `${activeHome} :is([data-testid="cloud-task-status-created"], [data-testid="cloud-task-status-event-0"])`
+        await wait(control, creation, { text: '创建' })
+        await control.command('scrollIntoView', creation)
+        await wait(control, creation, { visible: true, text: '创建' })
+        for (const action of [
+          'task-comment-attach',
+          'task-comment-form-mention',
+          'task-comment-form-assignee',
+          'task-comment-form-send-actions',
+        ]) {
+          const target = `${activeHome} [data-testid="task-comment-form"] [data-testid="${action}"]`
+          await wait(control, target)
+          await control.command('scrollIntoView', target)
+          await wait(control, target, { visible: true })
+        }
+        await wait(
+          control,
+          `${activeHome} [data-testid="task-comment-form"] [data-testid="task-comment-form-move"]`,
+          { visible: canMove }
+        )
+      }
+      const expectTaskComposer = async () => {
+        await click(control, 'cloud-todo-create-task')
+        await wait(control, '[data-testid="work-item-new-task-chat-panel"]', { visible: true })
+        await click(control, 'ai-chat-modal-close')
+        await wait(control, '[data-testid="work-item-new-task-chat-panel"]', { visible: false })
+      }
+      await expectTaskActions()
+      await expectDiscussionActions({ canMove: false })
+      await expectTaskComposer()
+      await click(control, 'issue-link-existing-task')
+      await wait(control, '[data-testid="issue-existing-task-picker"]', { visible: true })
+      await control.command('press', '[data-testid="issue-existing-task-search"]', {
+        key: 'Escape',
+      })
+      await captureScreenshot(control, 'independent-issue-home-detail.png')
+      const child = await verifyIssueChildMode(control, {
+        scope: activeHome,
+        issueId: homeIssue.id,
+        name: 'independent-issue',
+        capture: captureScreenshot,
+        children: async () => (await request('/api/v1/personal-issues?scope=created')).items,
+      })
+      await click(control, `cloud-todo-open-child-task-${child.id}`)
+      await wait(control, `${activeHome} [data-testid="cloud-todo-detail-content"]`, {
+        text: child.title,
+        visible: true,
+      })
+      await wait(control, `${activeHome} [data-testid="issue-parent-link"]`, {
+        text: homeIssue.title,
+        visible: true,
+      })
+      await captureScreenshot(control, 'independent-issue-child-opened.png')
+      await click(control, 'issue-parent-link')
+      await wait(control, `${activeHome} [data-testid="cloud-todo-detail-content"]`, {
+        text: homeIssue.title,
+        visible: true,
+      })
+      await wait(control, `${activeHome} [data-testid="cloud-todo-open-child-task-${child.id}"]`, {
+        visible: true,
+      })
+      await captureScreenshot(control, 'independent-issue-child-returned.png')
+      await verifySendModes(
+        homeIssue,
+        `/api/v1/personal-issues/${homeIssue.id}/comments`,
+        'independent-issue'
+      )
+      await click(control, 'independent-issue-close')
+      await wait(control, '[data-testid="independent-issue-dialog"]', { visible: false })
+      await click(control, `personal-home-issue-${homeProjectIssue.id}`)
+      await wait(
+        control,
+        '[data-testid="personal-home-stand-in"] [role="tabpanel"]:not([inert]) [data-testid="cloud-todo-detail-content"]',
+        { visible: true, text: homeProjectIssue.title }
+      )
+      await expectTaskActions()
+      await expectDiscussionActions({ canMove: true })
+      await expectTaskComposer()
+      await captureScreenshot(control, 'project-issue-home-detail.png')
+      await verifySendModes(
+        homeProjectIssue,
+        `/api/v1/cloud-projects/${project.id}/loop-items/${homeProjectIssue.id}/activity-comments`,
+        'project-issue'
+      )
+      await click(control, 'cloud-todo-detail-close')
+      await wait(control, '[data-testid="cloud-todo-detail-content"]', { visible: false })
       const before = await request('/api/v1/cloud-projects')
       await verifyIssueConflictRecovery(control, {
         request,
@@ -182,7 +353,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         reopen: async () => {
           const target = sidebar('collaboration-primary-create-issue')
           await revealCollaborationSidebarElement(control, target)
-          await control.command('nativePress', target, { key: 'Enter', timeoutMs: uiTimeoutMs })
+          await pressFocusedIssueKey(control, target, 'Enter')
         },
         captureScreenshot,
       })
@@ -197,7 +368,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', '[data-testid="settings-default-runner"]', { visible: true })
       await captureScreenshot(control, 'new-issue-optional-runtime.png')
       await click(control, 'independent-issue-save')
-      await wait(control, '[data-testid="independent-issue-edit"]')
+      await wait(control, '[data-testid="independent-issue-actions"]')
+      await wait(
+        control,
+        '[data-testid="issue-conversation-drawers"] [data-testid="independent-issue-dialog"][role="region"]',
+        { visible: true }
+      )
       const mine = await request('/api/v1/personal-issues?scope=created')
       issue = mine.items.find(item => item.title === title)
       assert.ok(issue)
@@ -215,6 +391,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         outsiderToken,
         404
       )
+      await click(control, 'independent-issue-actions')
       await click(control, 'independent-issue-edit')
       await control.command('fill', '[data-testid="independent-issue-search-people"]', {
         value: `  ${participant.user_name}  `,
@@ -227,7 +404,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, `independent-issue-invite-${participant.id}`)
       await click(control, `issue-participant-assignee-human:${participant.id}`)
       await click(control, 'independent-issue-save')
-      await wait(control, '[data-testid="independent-issue-edit"]')
+      await wait(control, '[data-testid="independent-issue-actions"]')
       const invited = await request(
         `/api/v1/personal-issues/${issue.id}`,
         'GET',
@@ -235,6 +412,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         participantToken
       )
       assert.equal(invited.assignee_id, participant.id)
+      const bindingPath = `/api/v1/loop-items/${issue.id}/tasks`
+      const device = await deviceEnvironment.waitForConnectedAppDevice()
+      const taskAddress = {
+        deviceId: device.execution_target_id ?? device.device_id,
+        taskId: `personal-binding-${process.pid}`,
+      }
+      await request(bindingPath, 'POST', taskAddress, outsiderToken, 404)
+      const binding = await request(bindingPath, 'POST', taskAddress, cloud.authToken, 201)
+      assert.equal(binding.cloud_project_id, '')
+      assert.deepEqual(
+        (await request(bindingPath)).map(row => row.id),
+        [binding.id]
+      )
+      assert.deepEqual(await request(bindingPath, 'GET', undefined, participantToken), [])
+      await request(bindingPath, 'GET', undefined, outsiderToken, 404)
       assert.ok(
         (
           await request(
@@ -272,12 +464,36 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, '[data-testid="independent-issue-dialog"]', {
         text: 'Participant progress persisted',
       })
+      const attachmentName = 'issue-discussion.txt'
+      const attachmentContent = 'An attachment added from the shared Issue discussion.'
+      await control.command('selectFile', '[data-testid="task-comment-file-input"]', {
+        filename: attachmentName,
+        mimeType: 'text/plain',
+        value: Buffer.from(attachmentContent).toString('base64'),
+      })
+      await control.command('fill', '[data-testid="independent-issue-comment"]', {
+        value: 'Discussion attachment added from the composer.',
+      })
+      await click(control, 'independent-issue-comment-send')
+      await wait(control, '[data-testid="independent-issue-activity-list"]', {
+        text: attachmentName,
+      })
+      const [attachment] = await request(`/api/v1/loop-items/${issue.id}/attachments`)
+      assert.equal(attachment.display_name, attachmentName)
+      const attachmentPath = `/api/v1/loop-item-attachments/${attachment.id}/content`
+      assert.equal(
+        await request(attachmentPath, 'GET', undefined, participantToken, 200, 'text'),
+        attachmentContent
+      )
+      await request(attachmentPath, 'GET', undefined, outsiderToken, 404)
+      await click(control, 'independent-issue-actions')
       await click(control, 'independent-issue-edit')
       await click(control, `issue-participant-remove-human:${participant.id}`)
       await click(control, 'independent-issue-save')
-      await wait(control, '[data-testid="independent-issue-edit"]')
+      await wait(control, '[data-testid="independent-issue-actions"]')
       const revoked = await request(`/api/v1/personal-issues/${issue.id}`)
       assert.equal(revoked.assignee_id, null)
+      await request(attachmentPath, 'GET', undefined, participantToken, 404)
       await request(`/api/v1/personal-issues/${issue.id}`, 'GET', undefined, participantToken, 404)
       await request(
         `/api/v1/personal-issues/${issue.id}/comments`,
@@ -286,13 +502,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         participantToken,
         404
       )
+      await click(control, 'independent-issue-actions')
       await click(control, 'independent-issue-archive')
+      await click(control, 'independent-issue-actions')
       await wait(control, '[data-testid="independent-issue-archive"]', { text: '恢复' })
+      await click(control, 'independent-issue-actions')
       await click(control, 'independent-issue-close')
       await click(control, 'personal-issues-archived')
       await wait(control, `[data-testid="independent-issue-${issue.id}"]`)
       await click(control, `independent-issue-${issue.id}`)
+      await click(control, 'independent-issue-actions')
       await click(control, 'independent-issue-archive')
+      await click(control, 'independent-issue-actions')
       await wait(control, '[data-testid="independent-issue-archive"]', { text: '归档' })
       await click(control, 'independent-issue-associate')
       await chooseIssueProperty(
@@ -305,6 +526,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, '[data-testid="independent-issue-dialog"]', { visible: false })
       const moved = await request(`/api/v1/loop-items/${issue.id}`)
       assert.equal(String(moved.cloud_project_id), String(project.id))
+      const [movedBinding] = await request(bindingPath)
+      assert.equal(movedBinding.id, binding.id)
+      assert.equal(String(movedBinding.cloud_project_id), String(project.id))
       await request(`/api/v1/personal-issues/${issue.id}`, 'GET', undefined, participantToken, 404)
       await navigate(control, 'collaboration-primary-home')
       await wait(control, '[data-testid="personal-home"]')
@@ -359,14 +583,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         value: `Delete ${title}`,
       })
       await click(control, 'independent-issue-save')
-      await wait(control, '[data-testid="independent-issue-edit"]')
+      await wait(control, '[data-testid="independent-issue-actions"]')
       const deletion = (await request('/api/v1/personal-issues?scope=created')).items.find(
         item => item.title === `Delete ${title}`
       )
       assert.ok(deletion)
+      await click(control, 'independent-issue-actions')
       await click(control, 'independent-issue-delete')
       await wait(control, '[data-testid="independent-issue-confirm-delete"]')
       await click(control, 'independent-issue-confirm-delete')
+      await wait(control, '[data-testid="independent-issue-confirm-delete"]', { visible: false })
       await wait(control, '[data-testid="independent-issue-dialog"]', { visible: false })
       await request(
         `/api/v1/personal-issues/${deletion.id}`,
@@ -389,7 +615,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, `issue-participant-invite-group:${group.id}`)
       await click(control, `issue-participant-assignee-agent:${agent.id}`)
       await click(control, 'independent-issue-save')
-      await wait(control, '[data-testid="independent-issue-edit"]')
+      await wait(control, '[data-testid="independent-issue-actions"]')
       const typed = (await request('/api/v1/personal-issues?scope=created')).items.find(
         item => item.title === typedTitle
       )
@@ -444,9 +670,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await verifyIssueDeviceLayout(control, appDevice.id)
       await captureScreenshot(control, 'new-issue-project-devices.png')
-      await control.command('nativePress', '[data-testid="issue-environment-picker"]', {
-        key: 'Escape',
-      })
+      await pressFocusedIssueKey(control, '[data-testid="issue-environment-picker"]', 'Escape')
       await wait(control, '[data-testid="issue-environment-picker"]', { visible: false })
       assert.equal(
         await control.command('getValue', '[data-testid="independent-issue-title"]'),

@@ -16,7 +16,11 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.services.cloud_projects.access import CloudProjectAccess
 from app.services.collaboration_human_assignments import human_task_bindings
-from app.services.loop_items.access import item_security, related_item_filter
+from app.services.loop_items.access import (
+    issue_participation_filter,
+    item_security,
+    related_item_filter,
+)
 
 
 @dataclass
@@ -35,9 +39,9 @@ class LoopItemReadContext:
         db: Session,
         items: list[LoopItem],
         user_id: int,
-        access: CloudProjectAccess,
+        access: CloudProjectAccess | None,
     ) -> "LoopItemReadContext":
-        return cls.load_for_projects(db, items, user_id, [access])
+        return cls.load_for_projects(db, items, user_id, [access] if access else [])
 
     @classmethod
     def load_for_projects(
@@ -48,7 +52,11 @@ class LoopItemReadContext:
         accesses: list[CloudProjectAccess],
     ) -> "LoopItemReadContext":
         access_by_project = {str(access.project.id): access for access in accesses}
-        if any(str(item.cloud_project_id) not in access_by_project for item in items):
+        if any(
+            item.cloud_project_id
+            and str(item.cloud_project_id) not in access_by_project
+            for item in items
+        ):
             raise ValueError("Issue response context requires its project's access")
         item_ids = [item.id for item in items]
         executions = _latest_executions(db, item_ids)
@@ -114,10 +122,16 @@ def _visible_ids(
     user_id: int,
     access_by_project: dict[str, CloudProjectAccess],
 ) -> set[str]:
+    unlinked_invited_ids = {
+        item.id
+        for item in items
+        if not item.cloud_project_id and item.created_by_user_id != user_id
+    }
     restricted_ids = {
         item.id
         for item in items
-        if (
+        if item.cloud_project_id
+        and (
             any(
                 source.get("kind") == "issue_invitation"
                 for source in access_by_project[str(item.cloud_project_id)].sources
@@ -131,7 +145,15 @@ def _visible_ids(
             != "open"
         )
     }
-    visible_ids = {item.id for item in items} - restricted_ids
+    visible_ids = {item.id for item in items} - restricted_ids - unlinked_invited_ids
+    if unlinked_invited_ids:
+        visible_ids.update(
+            item_id
+            for (item_id,) in db.query(LoopItem.id).filter(
+                LoopItem.id.in_(unlinked_invited_ids),
+                issue_participation_filter(user_id),
+            )
+        )
     if not restricted_ids:
         return visible_ids
     related_ids = {

@@ -230,6 +230,7 @@ export function StandInSettingsEntry({
   description,
   summary,
   footer,
+  grouped = false,
 }: {
   testId: string
   disabled: boolean
@@ -238,11 +239,12 @@ export function StandInSettingsEntry({
   description?: string
   summary?: ReactNode
   footer?: ReactNode
+  grouped?: boolean
 }) {
   const labelId = useId()
   const descriptionId = useId()
   return (
-    <div className="rounded-lg border border-border">
+    <div className={grouped ? undefined : 'rounded-lg border border-border'}>
       <ControlButton
         variant="unstyled"
         type="button"
@@ -288,10 +290,11 @@ export function StandInSettingsShortcuts({
   disabled: boolean
   onOpen(id: StandInSettingsShortcut['id']): void
 }) {
-  if (!shortcuts?.length) return null
+  const entries = shortcuts?.filter(shortcut => shortcut.id !== 'revision')
+  if (!entries?.length) return null
   return (
     <section data-testid="stand-in-settings-tools" className="mt-4 space-y-4">
-      {shortcuts.map(({ id, testId, containerTestId, label, description, onClick }) => (
+      {entries.map(({ id, testId, containerTestId, label, description, onClick }) => (
         <div key={id} data-testid={containerTestId}>
           <StandInSettingsEntry
             testId={testId}

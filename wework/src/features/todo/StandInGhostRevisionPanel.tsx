@@ -1,7 +1,12 @@
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ArrowRight, RotateCw } from 'lucide-react'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
-import type { StandInExecutorApi, StandInGhostRevision, StandInLearningReport } from '@/api/standIn'
+import type {
+  StandInExecutorApi,
+  StandInGhostRevision,
+  StandInLearningReport,
+  StandInLearningRunStatus,
+} from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { Button } from '@wegent/collaboration/markdown/Button'
@@ -208,6 +213,22 @@ export function StandInGhostRevisionPanel({
   const revision = report?.revision
   const [busy, setBusy] = useState(false)
   const [undoError, setUndoError] = useState<string | null>(null)
+  const [starting, setStarting] = useState(false)
+  const [runStatus, setRunStatus] = useState<StandInLearningRunStatus | null>(null)
+  const [runError, setRunError] = useState<string | null>(null)
+  const runLearning = async () => {
+    setStarting(true)
+    setRunStatus(null)
+    setRunError(null)
+    try {
+      const result = await api.runLearning(userId, deviceId, roleId)
+      setRunStatus(result.status)
+    } catch (cause) {
+      setRunError(getStandInErrorMessage(cause))
+    } finally {
+      setStarting(false)
+    }
+  }
   const undo = async (reviewed: StandInGhostRevision) => {
     setBusy(true)
     setUndoError(null)
@@ -232,6 +253,16 @@ export function StandInGhostRevisionPanel({
         retry={{ testId: 'stand-in-ghost-revision-retry', onClick: () => void resource.reload() }}
       />
       <StandInSettingsError error={undoError} />
+      <StandInSettingsError error={runError} />
+      {runStatus && (
+        <p
+          role="status"
+          className="text-sm text-text-secondary"
+          data-testid="stand-in-learning-run-status"
+        >
+          {t(`standIn.workspace.learning_report.run_status.${runStatus}`)}
+        </p>
+      )}
       {report && (
         <LearningSummary
           report={report}
@@ -242,7 +273,18 @@ export function StandInGhostRevisionPanel({
               : undefined
           }
           refresh={
-            status !== 'error' && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="min-h-11 md:min-h-8"
+                data-testid="stand-in-learning-run-now"
+                disabled={starting || busy}
+                onClick={() => void runLearning()}
+              >
+                {t('standIn.workspace.learning_report.run_now')}
+              </Button>
               <Button
                 type="button"
                 size="sm"
@@ -250,12 +292,15 @@ export function StandInGhostRevisionPanel({
                 className="min-h-11 md:min-h-8"
                 data-testid="stand-in-learning-report-refresh"
                 disabled={busy || status === 'loading'}
-                onClick={() => void resource.reload()}
+                onClick={() => {
+                  setRunStatus(null)
+                  void resource.reload()
+                }}
               >
                 <RotateCw aria-hidden="true" className="size-4" />
                 {t('standIn.workspace.learning_report.refresh')}
               </Button>
-            )
+            </div>
           }
         />
       )}

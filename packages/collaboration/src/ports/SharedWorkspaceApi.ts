@@ -209,6 +209,7 @@ export interface WorkspaceIssueUpdateInput {
   assigneeGroupId?: string | null;
   assigneeAgentId?: string | null;
   assigneeTeamId?: number | null;
+  notifyAssignee?: boolean;
   startAt?: string | null;
   dueAt?: string | null;
   tags?: string[];

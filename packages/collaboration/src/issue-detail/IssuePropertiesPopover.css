@@ -36,6 +36,7 @@
   backdrop-filter: blur(12px);
 }
 
+.task-detail-more-menu-action,
 .task-detail-more-menu-danger {
   display: flex;
   width: 100%;
@@ -45,11 +46,19 @@
   border: 0;
   border-radius: 8px;
   padding: 6px 8px;
-  color: rgb(var(--color-destructive));
+  color: rgb(var(--color-text-primary));
   background: transparent;
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.task-detail-more-menu-action:hover {
+  background: rgb(var(--color-bg-muted));
+}
+
+.task-detail-more-menu-danger {
+  color: rgb(var(--color-destructive));
 }
 
 .task-detail-more-menu-danger:hover {
