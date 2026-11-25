@@ -13,6 +13,20 @@ import { ModelOptionPopover } from './ModelOptionPopover'
 const backHandlers = vi.hoisted(() => new Set<() => boolean>())
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
+vi.mock('expo-blur', () => ({ BlurView: 'BlurView' }))
+vi.mock('expo-haptics', () => ({ selectionAsync: vi.fn(async () => undefined) }))
+vi.mock('react-native-reanimated', () => ({
+  __esModule: true,
+  default: { View: 'AnimatedView' },
+  FadeInDown: { duration: () => ({}) },
+  FadeOut: { duration: () => ({}) },
+  interpolate: (_value: number, _input: number[], output: number[]) => output[0],
+  interpolateColor: (_value: number, _input: number[], output: string[]) => output[0],
+  useAnimatedStyle: (factory: () => object) => factory(),
+  useDerivedValue: (factory: () => number) => ({ value: factory() }),
+  useSharedValue: (value: number) => ({ value }),
+  withSpring: (value: number) => value,
+}))
 vi.mock('react-native', () => ({
   StyleSheet: {
     create: (styles: unknown) => styles,
