@@ -72,7 +72,7 @@ function createSse(events) {
 }
 
 // Script only the model: task-result delivery and its history read stay native.
-function delegatedTaskResultEvents(body) {
+function delegatedTaskResultEvents(body, { allowInterleavedUserMessage = false } = {}) {
   const input = Array.isArray(body.input) ? body.input : []
   let match
   // A user message can arrive while the result turn is discovering its tools.
@@ -83,7 +83,7 @@ function delegatedTaskResultEvents(body) {
     match = modelMessageText(item).match(
       /^Wework delegated task result: resultId=([^,\s]+), taskId=([^,\s]+), status=([^,\s]+),/
     )
-    if (match) break
+    if (match || !allowInterleavedUserMessage) break
   }
   if (!match) return null
   const [, resultId, taskId, status] = match

@@ -655,13 +655,16 @@ describe('delegated task completion model routing', () => {
       }),
       { role: 'user', content: 'Keep following the source.' }
     )
-    expect(JSON.stringify(delegatedTaskResultEvents(body))).toContain('THE_ACTUAL_CHILD_RESULT')
-    expect(JSON.stringify(delegatedTaskResultEvents(body))).toContain('child-1')
+    expect(delegatedTaskResultEvents(body)).toBeNull()
+    const options = { allowInterleavedUserMessage: true }
+    const result = JSON.stringify(delegatedTaskResultEvents(body, options))
+    expect(result).toContain('THE_ACTUAL_CHILD_RESULT')
+    expect(result).toContain('child-1')
     body.input.push(
       { role: 'assistant', phase: 'final_answer', content: 'THE_ACTUAL_CHILD_RESULT' },
       { role: 'user', content: 'Start a different task.' }
     )
-    expect(delegatedTaskResultEvents(body)).toBeNull()
+    expect(delegatedTaskResultEvents(body, options)).toBeNull()
   })
 
   test('a later completion command cannot reuse an earlier result read', () => {
