@@ -581,7 +581,10 @@ export function createWorkbenchCloudProjectContextSource(
       : address
         ? projectSpaceForRuntimeTask(address)
         : undefined
-    const reference = knownReference ?? selectedReference
+    const reference =
+      !session && knownReference?.projectId === DEFAULT_WORK_ITEM_PROJECT_ID
+        ? (selectedReference ?? knownReference)
+        : (knownReference ?? selectedReference)
     const itemId =
       session?.issueId ??
       (sameProjectSpace(reference, selectedReference) ? (item?.id ?? null) : null)

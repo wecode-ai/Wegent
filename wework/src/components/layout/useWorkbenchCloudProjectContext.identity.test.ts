@@ -8,6 +8,7 @@ import {
 import { ApiError } from '@/api/http'
 import {
   findProjectSpaceContextSourceForTask,
+  projectSpaceForRuntimeTask,
   projectSpaceRef,
   publishProjectSpaceTaskBindingChanged,
   publishProjectSpaceTaskContextChanged,
@@ -431,13 +432,29 @@ test.each(['remapped project', 'remapped item', 'same item', 'unbound', 'system 
       const retains = change === 'same item' || change === 'system bound'
       const expectedProject = retains ? board.id : null
       const expectedItem = retains ? item.id : null
+      const assertRetainedSubmission = () => {
+        expect(projectSpaceForRuntimeTask(task)).toEqual(projectSpaceRef(systemProject))
+        const submission = result.current.prepareSubmission('Follow up')
+        expect(submission.additionalContext?.cloudCollaboration?.value).toContain(
+          JSON.stringify({ project_store: 'backend', space_id: board.id, item_id: item.id })
+        )
+        expect(submission.cloudProjectId).toBe(board.id)
+        expect(submission.origin).toEqual({
+          type: 'board_task',
+          projectStore: 'backend',
+          cloudProjectId: board.id,
+          loopItemId: item.id,
+        })
+      }
       expect(result.current.boundCloudProject?.id ?? null).toBe(expectedProject)
       expect(result.current.boundCloudItem?.id ?? null).toBe(expectedItem)
+      if (change === 'system bound') assertRetainedSubmission()
       await act(async () => vi.advanceTimersByTimeAsync(51 * 100))
       expect(result.current.boundCloudProject?.id ?? null).toBe(expectedProject)
       expect(result.current.boundCloudItem?.id ?? null).toBe(expectedItem)
       expect(result.current.activeDeliveryItem?.id ?? null).toBe(expectedItem)
       expect(result.current.projectSpaceContextRetryAction?.onClick).toBeTypeOf('function')
+      if (change === 'system bound') assertRetainedSubmission()
     } finally {
       unmount()
       vi.useRealTimers()
@@ -480,6 +497,23 @@ test.each(['local', 'backend'] as const)(
 
       await act(async () => response.resolve({ project: board, loop_item: item }))
       expect(result.current.boundCloudItem?.id).toBe(item.id)
+      const submission = result.current.prepareSubmission('Follow up')
+      const submissionProjectId = projectStore === 'backend' ? execution.projectId : board.id
+      const submissionItemId = projectStore === 'backend' ? execution.issueId : item.id
+      expect(submission.additionalContext?.cloudCollaboration?.value).toContain(
+        JSON.stringify({
+          project_store: 'backend',
+          space_id: submissionProjectId,
+          item_id: submissionItemId,
+        })
+      )
+      expect(submission.cloudProjectId).toBe(submissionProjectId)
+      expect(submission.origin).toEqual({
+        type: 'board_task',
+        projectStore: 'backend',
+        cloudProjectId: submissionProjectId,
+        loopItemId: submissionItemId,
+      })
       act(() => result.current.openBoundProjectSpaceTask())
       expect(navigate).toHaveBeenLastCalledWith(
         `/todo?projectStore=backend&projectId=${board.id}&itemId=${item.id}`
