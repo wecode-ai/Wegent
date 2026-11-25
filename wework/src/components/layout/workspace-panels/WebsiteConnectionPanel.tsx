@@ -491,7 +491,11 @@ export function WebsiteConnectionPanel({
             </p>
           )}
           <p className="text-text-secondary">{t('workbench.web_connection_install_hint')}</p>
-          {busy && <p role="status">{t('workbench.web_connection_installing')}</p>}
+          {busy && (
+            <p role="status" data-testid="website-connection-installing">
+              {t('workbench.web_connection_installing')}
+            </p>
+          )}
           <div className="flex flex-wrap justify-end gap-2">
             <Button
               variant="outline"

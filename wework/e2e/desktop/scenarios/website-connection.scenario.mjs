@@ -320,7 +320,13 @@ export function createDesktopScenario({
             await click('website-connection-install')
             await wait('website-connection-open-installed', { timeoutMs: workbenchReadyTimeoutMs })
           },
-          nativeWindow
+          {
+            ...nativeWindow,
+            beforeDecision: async () => {
+              await wait('website-connection-installing', { text: '正在安装连接…' })
+              await captureScreenshot(control, 'website-04a-installing.png')
+            },
+          }
         )
         await captureScreenshot(control, 'website-04-installed.png')
         const readyCount = control.readyCount

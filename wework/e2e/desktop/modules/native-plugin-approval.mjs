@@ -17,19 +17,15 @@ let decisionSequence = 0
 export async function withNativePluginDecision(
   control,
   operation,
-  { allow = true, focusMainWindow = true, ...target } = {}
+  { allow = true, focusMainWindow = true, beforeDecision, ...target } = {}
 ) {
   const pid = control.applicationProcessId
   assert.ok(Number.isSafeInteger(pid) && pid > 0, 'An isolated Electron PID is required')
   if (focusMainWindow) await control.command('focusMainWindow', 'body')
   const abort = new AbortController()
-  const decision = clickNativeDecision(
-    pid,
-    allow,
-    abort.signal,
-    control.matrixEvidenceDirectory,
-    target
-  )
+  const decide = () =>
+    clickNativeDecision(pid, allow, abort.signal, control.matrixEvidenceDirectory, target)
+  const decision = beforeDecision ? Promise.resolve().then(beforeDecision).then(decide) : decide()
   try {
     const outcome = Promise.resolve().then(operation)
     if (process.platform !== 'darwin') {
