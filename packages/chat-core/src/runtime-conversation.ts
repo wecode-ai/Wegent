@@ -73,6 +73,7 @@ export type WorkbenchMessage = Omit<
   completedAt?: string | number | null;
   stoppedNotice?: boolean | null;
   runtimeGoalRequest?: boolean | null;
+  runtimeClientUserMessageId?: string | null;
   runtimeGuidance?: boolean | null;
   runtimeGuidanceSplitBefore?: boolean | null;
   runtimeGuidanceContinuation?: boolean | null;

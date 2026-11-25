@@ -2,6 +2,7 @@
 import { act, useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import { scrollToContentPosition } from './conversationViewportScroll'
 import {
   useConversationVirtualizer,
   type ConversationVirtualizer,
@@ -9,6 +10,7 @@ import {
 
 it('keeps the visible anchor and scroll state in sync with native and programmatic scrolling', async () => {
   const observers = new Map<Element, ResizeObserverCallback>()
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -46,7 +48,7 @@ it('keeps the visible anchor and scroll state in sync with native and programmat
     if (typeof options === 'object' && options.top !== undefined) viewport.scrollTop = options.top
   }
   let current!: ConversationVirtualizer
-  function Harness() {
+  function Harness({ restoreAnchor = false }: { restoreAnchor?: boolean }) {
     const { virtualizer } = useConversationVirtualizer({
       count: 100,
       estimateSize: () => 60,
@@ -58,6 +60,13 @@ it('keeps the visible anchor and scroll state in sync with native and programmat
     useLayoutEffect(() => {
       current = virtualizer
     }, [virtualizer])
+    useLayoutEffect(() => {
+      if (!restoreAnchor) return
+      // A layout restoration first writes the saved distance and then corrects
+      // to the visible anchor. Only the final offset survives the commit.
+      scrollToContentPosition(viewport, 100, 'auto')
+      scrollToContentPosition(viewport, 1400, 'auto')
+    })
     return null
   }
   const root = createRoot(mount)
@@ -92,6 +101,18 @@ it('keeps the visible anchor and scroll state in sync with native and programmat
       viewport.dispatchEvent(new Event('scroll'))
     })
     expect(current.scrollOffset).toBe(1400)
+    expect(current.isScrolling).toBe(false)
+
+    await act(async () => root.render(<Harness restoreAnchor />))
+    expect(current.scrollOffset).toBe(1400)
+    expect(viewport.scrollTop).toBe(1400)
+    await act(async () => root.render(<Harness />))
+
+    await act(async () => {
+      scrollToContentPosition(viewport, 100, 'auto')
+      scrollToContentPosition(viewport, 1430, 'auto')
+    })
+    expect(current.scrollOffset).toBe(1430)
     expect(current.isScrolling).toBe(false)
 
     await act(async () => {

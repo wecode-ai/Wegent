@@ -36,13 +36,11 @@ export function readDesktopPaneRuntimeTaskSummary(
   )
 }
 
-function readPaneContext(store: RuntimeTaskLifecycleStore, input: PaneContextObservation) {
-  const currentRuntimeTask = input.current ?? null
-  const runtimeTaskSummary = readDesktopPaneRuntimeTaskSummary(
-    store,
-    input.runtimeWork,
-    currentRuntimeTask
-  )
+function buildPaneContext(
+  currentRuntimeTask: RuntimeTaskAddress | null,
+  runtimeTaskSummary: ReturnType<typeof findRuntimeTask>,
+  connectionEventSubscriptions: unknown
+) {
   const currentRuntimeConversationSource: RuntimeTaskAddress | null =
     currentRuntimeTask && runtimeTaskSummary
       ? {
@@ -53,13 +51,11 @@ function readPaneContext(store: RuntimeTaskLifecycleStore, input: PaneContextObs
           runtimeHandle: runtimeTaskSummary.runtimeHandle ?? currentRuntimeTask.runtimeHandle,
         }
       : currentRuntimeTask
-  const lifecycleTask = store.selectTask(store.getSnapshot(), currentRuntimeTask)?.task
-  const eventTask = lifecycleTask ?? runtimeTaskSummary ?? currentRuntimeTask
   return {
     currentRuntimeTask,
     runtimeTaskSummary,
     currentRuntimeConversationSource,
-    connectionEventSubscriptions: eventTask?.runtimeHandle?.connectionEventSubscriptions,
+    connectionEventSubscriptions,
   }
 }
 
@@ -95,13 +91,24 @@ export function createDesktopPaneContextSource(store: RuntimeTaskLifecycleStore)
   }
   return {
     observe(input: PaneContextObservation) {
-      let lifecycleSnapshot = store.getSnapshot()
-      let snapshot = readPaneContext(store, input)
+      const current = input.current ?? null
+      const listedTask = findRuntimeTask(input.runtimeWork, current)
+      let lifecycleSnapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']> | undefined
+      let snapshot: ReturnType<typeof buildPaneContext> | undefined
       const getSnapshot = () => {
         const next = store.getSnapshot()
-        if (lifecycleSnapshot !== next) {
-          lifecycleSnapshot = next
-          snapshot = readPaneContext(store, input)
+        if (snapshot && lifecycleSnapshot === next) return snapshot
+        lifecycleSnapshot = next
+        const lifecycleTask = store.selectTask(next, current)?.task
+        const summary = listedTask ?? lifecycleTask ?? null
+        const eventTask = lifecycleTask ?? summary ?? current
+        const subscriptions = eventTask?.runtimeHandle?.connectionEventSubscriptions
+        if (
+          !snapshot ||
+          snapshot.runtimeTaskSummary !== summary ||
+          snapshot.connectionEventSubscriptions !== subscriptions
+        ) {
+          snapshot = buildPaneContext(current, summary, subscriptions)
         }
         return snapshot
       }

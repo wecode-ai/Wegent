@@ -1,5 +1,4 @@
 use super::*;
-use crate::task_runtime::personal_stand_in::{project_role, role_project_matches};
 
 #[cfg(test)]
 #[path = "project_intake_boundary_tests.rs"]
@@ -41,15 +40,17 @@ impl RuntimeWorkRpcHandler {
             return Ok((issue, binding));
         }
         let project = super::stand_in_tasks::required(event, "projectId")?;
-        let config = project_role(role, user, project, storage);
-        if !role_project_matches(role, project, storage)
-            || config["handlingPolicy"]["automatic"] != true
-        {
-            return Err(AppIpcError::new(
-                "source_removed",
-                "Project source is no longer connected or automatic",
-            ));
-        }
+        let config = self
+            .issue_intake_roles(std::slice::from_ref(role), user, project, storage, id)
+            .await?
+            .into_iter()
+            .find(|config| config["handlingPolicy"]["automatic"] == true)
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "source_removed",
+                    "Issue scope is no longer automatic or connected",
+                )
+            })?;
         let (issue, binding) = if storage == "cloud" {
             self.read_cloud_assignment_intake(user, &config, event)
                 .await?

@@ -179,7 +179,8 @@ export function createDesktopScenario({
             )
             return {
               input: await control.command('getValue', INPUT),
-              inputAttribute: await control.command('getAttribute', INPUT, { value: 'value' }),
+              inputText: await control.command('getText', INPUT),
+              editable: await control.command('getAttribute', INPUT, { value: 'contenteditable' }),
               mountId: await control.command(
                 'getAttribute',
                 `${CARD} [data-testid="request-user-input-question-question_1"]`,
@@ -202,7 +203,12 @@ export function createDesktopScenario({
             'STAFF',
             'Establish the first draft before releasing further questions'
           )
-          assert.equal(firstState.inputAttribute, 'STAFF', 'React must retain the first draft')
+          assert.equal(
+            firstState.editable,
+            'true',
+            'Question answers must use the shared rich editor'
+          )
+          assert.equal(firstState.inputText, 'STAFF', 'The first draft must be visibly rendered')
           await draftWindow.verifyMerge()
           releaseSecond()
           await control.command('waitFor', CARD, { text: THIRD, visible: true })

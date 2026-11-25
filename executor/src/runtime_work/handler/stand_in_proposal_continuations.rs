@@ -214,6 +214,10 @@ impl RuntimeWorkRpcHandler {
         task: &str,
         expected: &Value,
     ) -> Result<(), AppIpcError> {
+        let _lifecycle = self
+            .stand_in_lifecycle_gate
+            .lock()
+            .expect("stand-in lifecycle gate poisoned");
         let mut cancelled = merge_owner_state(expected, expected).ok_or_else(denied)?;
         cancelled["cancelled"] = json!(true);
         self.store

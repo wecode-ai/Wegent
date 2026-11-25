@@ -150,7 +150,7 @@ export function createReaderViewportAnchor(
       () => {
         scroller.scrollTop = previousScrollTop + correction
         appliedScrollTop = scroller.scrollTop - previousScrollTop
-        // Offset observers can synchronously measure again after this write.
+        // Account for the write before the virtualizer receives the new offset.
         state.selfScrollOffset += appliedScrollTop
         state.lastScrollPosition = getDistanceFromTop(scroller)
       }

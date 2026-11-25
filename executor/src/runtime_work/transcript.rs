@@ -230,6 +230,7 @@ fn project_transcript_checked(
             "status": turn_assistant_status(turn),
             "startedAt": turn_started_at(turn),
             "completedAt": turn_completed_at(turn, turn_started_at(turn)),
+            "durationMs": integer_field(turn, "durationMs").or_else(|| integer_field(turn, "duration_ms")),
             "error": turn_error_message(turn),
             "errorType": error_type,
             "position": turn.get("position"),
@@ -245,7 +246,6 @@ fn project_transcript_checked(
                 "memoryCitations",
                 "stoppedNotice",
                 "errorType",
-                "durationMs",
             ] {
                 if let Some(value) = message.get(key) {
                     normalized[key] = if key == "fileChanges" {
@@ -1215,29 +1215,40 @@ fn turn_should_fold_commentary(turn: &Value) -> bool {
 
 fn unphased_progress_item_ids(items: &[Value], interrupted: bool) -> HashSet<String> {
     let mut progress_ids = HashSet::new();
-    let mut later_reply = interrupted;
-    let mut process_before_reply = false;
-    for item in items.iter().rev() {
-        let kind = item_type(item);
-        if kind == "usermessage"
-            || (kind == "message"
-                && string_field(item, "role").is_some_and(|role| role.eq_ignore_ascii_case("user")))
-        {
-            later_reply = interrupted;
-            process_before_reply = false;
-        } else if is_final_assistant_message(item) {
-            // Preserve legacy progress across a process/reply boundary. A late
-            // tool snapshot without a later reply must not hide the final text.
-            // Interrupted turns retain their unfinished process text instead.
-            if process_before_reply && assistant_message_phase_name(item).is_none() {
+    let mut segment_start = 0;
+    let mut user_count = 0;
+    for segment_end in 0..=items.len() {
+        if segment_end < items.len() && !is_user_message(&items[segment_end]) {
+            continue;
+        }
+        let segment = &items[segment_start..segment_end];
+        let guidance = user_count > 1;
+        let latest_reply = segment.iter().rposition(is_final_assistant_message);
+        let process_end = if interrupted {
+            segment.len()
+        } else if guidance {
+            latest_reply.unwrap_or(0)
+        } else {
+            0
+        };
+        for item in &segment[..process_end] {
+            if is_final_assistant_message(item) && assistant_message_phase_name(item).is_none() {
                 progress_ids.insert(item_id(item, "assistant-text"));
             }
-            later_reply = true;
-        } else if later_reply && is_substantive_process_item(item) {
-            process_before_reply = true;
+        }
+        if segment_end < items.len() {
+            user_count += 1;
+            segment_start = segment_end + 1;
         }
     }
     progress_ids
+}
+
+fn is_user_message(item: &Value) -> bool {
+    let kind = item_type(item);
+    kind == "usermessage"
+        || (kind == "message"
+            && string_field(item, "role").is_some_and(|role| role.eq_ignore_ascii_case("user")))
 }
 
 fn turn_has_substantive_process(turn: &Value) -> bool {

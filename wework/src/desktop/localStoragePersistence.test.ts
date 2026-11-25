@@ -179,6 +179,28 @@ describe('desktop localStorage persistence', () => {
     await flushDesktopLocalStoragePersistence()
     expect(mocks.invokeDesktopHost).toHaveBeenCalledTimes(2)
   })
+
+  it('persists a retained draft on flush after storage recovers without another edit', async () => {
+    mocks.isElectronRuntime.mockReturnValue(true)
+    const failure = new Error('storage path is a directory')
+    mocks.invokeDesktopHost
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue(undefined)
+    const { initializeDesktopLocalStoragePersistence, flushDesktopLocalStoragePersistence } =
+      await loadPersistence()
+    await initializeDesktopLocalStoragePersistence()
+
+    localStorage.setItem('interaction-draft', 'retained reply')
+    await expect(flushDesktopLocalStoragePersistence()).rejects.toBe(failure)
+    await expect(flushDesktopLocalStoragePersistence()).rejects.toBe(failure)
+    await expect(flushDesktopLocalStoragePersistence()).resolves.toBeUndefined()
+    expect(mocks.invokeDesktopHost).toHaveBeenLastCalledWith('rendererStorage.update', {
+      clear: false,
+      changes: { 'interaction-draft': 'retained reply' },
+    })
+  })
 })
 
 describe('committed localStorage commands', () => {

@@ -28,6 +28,7 @@ import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTria
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   isCloudDevice,
@@ -108,7 +109,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
     startNewChat: onNewChat,
-    runtimeTaskReminders,
     startStandaloneChat: onStartStandaloneChat,
     selectProject: onSelectProject,
     openRuntimeTask: onOpenRuntimeTask,
@@ -132,7 +132,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
   const openPluginCenterAction = actions.find(action => action.id === 'plugin-center.open') ?? null
   const activeItem = 'chat'
-  const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const taskReminders = useWorkbench().runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const pendingModelRetryRef = useRef<WorkbenchMessage | null>(null)
@@ -178,6 +178,13 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const runtimeTaskSummary = findRuntimeTask(state.runtimeWork, currentRuntimeTask)
+  const taskPermissions = useRuntimeTaskPermissions(
+    currentRuntimeTask,
+    runtimeTaskSummary,
+    state.user?.id,
+    services.standInApi,
+    onRefreshWorkLists
+  )
   const currentRuntimeUsesCodex =
     (runtimeTaskSummary?.runtime ?? currentRuntimeTask?.runtime ?? 'codex').toLowerCase() ===
     'codex'
@@ -206,6 +213,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   }, [retryFailedMessage])
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...effectiveProjectChat,
+    ...taskPermissions,
     modelSelectorOpenSignal,
     setSelectedModel: model => {
       effectiveProjectChat.setSelectedModel(model)
@@ -512,6 +520,14 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                             source={currentRuntimeTask}
                             messages={paneMessages}
                             onCollapse={onCollapse}
+                            onSkip={() =>
+                              paneSession.skipRequestUserInput(
+                                pendingRequestUserInputPayloads(
+                                  paneMessages,
+                                  paneSession.answeredRequestUserInputIds
+                                )
+                              )
+                            }
                             onSubmit={response => {
                               const isImplementationPlanRequest =
                                 isImplementationPlanRequestUserInput(pendingRequestUserInput)

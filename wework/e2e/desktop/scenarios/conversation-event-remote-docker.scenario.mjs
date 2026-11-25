@@ -182,20 +182,33 @@ export function createDesktopScenario(options) {
     }
 
     await open(control, address)
-    await control.command('waitFor', '[data-testid="connection-event-status"]', {
+    const status = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="connection-event-status"]`
+    await control.command('waitFor', status, {
       text: '等待事件，到达后自动继续',
     })
-    const receipt = await cancel()
-    assert.equal(receipt.subscription.subscription_key, key)
-    assert.equal(receipt.subscription.status, 'cancelled')
+    await control.command(
+      'clickWhenEnabled',
+      `${status} [data-testid="cancel-connection-event-subscription"]`
+    )
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="connection-event-cancel-feedback"]`,
+      { text: '已取消' }
+    )
+    await control.command('waitFor', status, { visible: false })
     const cancelled = await waitForValue(
       snapshot,
       subscription => subscription.status === 'cancelled',
-      'The currently signed-in device must cancel the real Backend subscription',
+      'The Cancel watch button must cancel the real Backend subscription',
       uiTimeoutMs
     )
     assert.equal(cancelled.id, initial.id)
+    assert.equal(cancelled.subscriptionKey, key)
     assert.ok(!(await active()), 'The cancelled watch must leave the active Runtime projection')
+
+    const receipt = await cancel()
+    assert.equal(receipt.subscription.subscription_key, key)
+    assert.equal(receipt.subscription.status, 'cancelled')
     assert.equal(modelRequests, requestsBefore, 'Cancellation must not invoke the model')
   }
   const open = async (control, address) => {
