@@ -352,8 +352,8 @@ Rust backend E2E first looks up the exact runtime. On a miss, the build can
 reuse a prebuilt dependency image and GHCR BuildKit layers written by main.
 If the current dependency image is missing, a base-revision image can supply
 compiled dependencies when its toolchain, lockfile, and dependency build steps
-match. The build replaces workspace sources and compiles local crates from the
-current commit.
+match. The build synchronizes workspace sources by content, removes deleted
+files, and preserves unchanged timestamps so Cargo can rebuild affected crates.
 Without a prebuilt dependency image, it compiles the real targets directly.
 Only dependency prewarming compiles placeholder targets. The two Linux Core
 latency benchmarks keep their dedicated shards, while the scheduler distributes

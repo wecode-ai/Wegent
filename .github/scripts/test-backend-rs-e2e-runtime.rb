@@ -52,7 +52,8 @@ end
 # Compile-time migration assets must exist at the same relative paths inside the
 # builder. Check the actual include paths against its COPY instructions.
 builder = File.read(File.join(root, ".github/runtime-images/backend-rs-builder.Dockerfile"))
-unless builder.include?("COPY shared/assets/codex-models /workspace/shared/assets/codex-models")
+unless builder.include?("COPY shared/assets/codex-models /source/shared/assets/codex-models") &&
+  builder.include?("rsync -rlp --checksum --delete /source/shared/ /workspace/shared/")
   raise "Backend Rust builder omits the embedded Codex model catalogs"
 end
 {
@@ -65,16 +66,18 @@ end
     raise "#{path} must copy the offline calendar before compiling shared crates"
   end
 end
-copies = builder.scan(/^COPY (backend-rs\/\S+) (\.\/\S+)$/)
+source_copy = builder.lines
+  .drop_while { |line| !line.start_with?("FROM ${DEPS_IMAGE} AS build") }
+  .join.gsub(/\\\n\s+/, " ").lines
+  .find { |line| line.end_with?("backend-rs/ /source/backend-rs/\n") }
+raise "Missing backend workspace source copy" unless source_copy
+exclusions = source_copy.scan(/--exclude=(\S+)/).flatten
 Dir[File.join(root, "backend-rs/be-server/src/migrations/**/*.rs")].each do |source|
   File.read(source).scan(/include_(?:str|bytes)!\(\s*"([^"]+)"/).flatten.each do |path|
     asset = File.expand_path(path, File.dirname(source))
     relative = asset.delete_prefix("#{root}/backend-rs/")
-    copied = copies.any? do |input, destination|
-      prefix = destination.delete_prefix("./")
-      candidate = File.join(root, input, relative.delete_prefix("#{prefix}/"))
-      relative.start_with?("#{prefix}/") && File.file?(candidate)
-    end
+    copied = asset.start_with?("#{root}/backend-rs/") && File.file?(asset) &&
+      exclusions.none? { |path| relative == path || relative.start_with?("#{path}/") }
     raise "Backend Rust builder omits embedded asset #{relative}" unless copied
   end
 end
