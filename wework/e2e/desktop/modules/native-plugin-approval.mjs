@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
@@ -356,64 +357,10 @@ async function recordNativeWindowDiagnostics(pid) {
 /** Click the exact visible native button in one isolated process. */
 export async function clickMacosNativeDecision(pid, labels, options) {
   assert.ok(Number.isSafeInteger(pid) && pid > 0)
-  await execute(
-    '/usr/bin/osascript',
-    [
-      '-e',
-      `
-on run argv
-  set targetPid to (item 1 of argv) as integer
-  set acceptedLabels to items 2 thru -1 of argv
-  tell application "System Events"
-    set indexedProcess to a reference to (first application process whose unix id is targetPid)
-    if (get unix id of indexedProcess) is not targetPid then error "Cannot resolve the isolated app process"
-    set frontmost of indexedProcess to true
-    repeat with attempt from 1 to 100
-      set targetWindows to windows of indexedProcess
-      set inspectDialog to attempt = 1 or attempt = 100
-      if inspectDialog then
-        set appVisible to get visible of indexedProcess
-        set appFrontmost to get frontmost of indexedProcess
-        log {targetPid, appVisible, appFrontmost, (count of targetWindows)}
-      end if
-      repeat with w in targetWindows
-        set dialogs to sheets of w
-        if dialogs is {} then
-          set windowType to get subrole of w
-          if windowType is "AXDialog" then set dialogs to {w}
-        end if
-        if inspectDialog then log {count of dialogs}
-        repeat with dialogReference in dialogs
-          set nativeDialog to contents of dialogReference
-          repeat with candidate in buttons of nativeDialog
-            set nativeButton to contents of candidate
-            set labelText to get name of nativeButton
-            if labelText is in acceptedLabels then
-              log {"pressing native button", labelText}
-              click nativeButton
-              return true
-            end if
-          end repeat
-        end repeat
-      end repeat
-      delay 0.1
-    end repeat
-  end tell
-  error "The isolated app did not display its native Core plugin decision"
-end run`,
-      String(pid),
-      ...labels,
-    ],
-    options
-  ).catch(error => {
-    throw new Error(
-      [
-        error.killed ? 'Native decision helper exceeded its deadline' : error.message,
-        error.stderr?.trim(),
-      ]
-        .filter(Boolean)
-        .join('\n'),
-      { cause: error }
-    )
-  })
+  const script = fileURLToPath(new URL('./native-plugin-approval-macos.swift', import.meta.url))
+  try {
+    await execute('/usr/bin/swift', [script, String(pid), ...labels], options)
+  } catch (error) {
+    throw new Error(error.stderr?.trim() || error.message, { cause: error })
+  }
 }

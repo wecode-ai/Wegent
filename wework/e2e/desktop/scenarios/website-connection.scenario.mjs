@@ -323,7 +323,13 @@ export function createDesktopScenario({
           nativeWindow
         )
         await captureScreenshot(control, 'website-04-installed.png')
+        const readyCount = control.readyCount
         await click('website-connection-open-installed')
+        await withTimeout(
+          control.awaitReadyAfter(readyCount),
+          workbenchReadyTimeoutMs,
+          'The workbench did not reconnect after loading the installed connector'
+        )
         await wait('stand-in-website-add-source', { timeoutMs: workbenchReadyTimeoutMs })
         const { items } = await rpc('runtime.connections.catalog', {
           websiteUrl: control.url + SITE,
