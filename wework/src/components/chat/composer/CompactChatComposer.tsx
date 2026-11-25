@@ -1,3 +1,4 @@
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { CloudProject } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { QuickPhrase } from '@/desktop/appPreferences'
@@ -184,7 +185,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       isStreaming = false,
       showPauseButton = true,
       onPause,
-      projectPhrases = [],
+      projectPhrases,
       sendKey = 'enter',
       followUpBehavior = 'queue',
     },
@@ -303,7 +304,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       onRemoveAttachment(attachment.id)
       window.requestAnimationFrame(() => textareaRef.current?.focus())
     }
-    const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    const handleQuickPhraseSelect = useStableEvent((phrase: QuickPhrase) => {
       const activeComposer = fullscreenInputOpen
         ? fullscreenComposerRef.current
         : composerRef.current
@@ -325,7 +326,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           )
           .catch(cause => setPhraseError(cause instanceof Error ? cause.message : String(cause)))
       }
-    }
+    })
 
     const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files

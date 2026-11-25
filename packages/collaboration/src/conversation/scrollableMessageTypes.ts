@@ -76,6 +76,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   turnNavigationPortalTarget?: Element | null
   conversationKey?: string | number | null
   devices?: MessageListProps['devices']
+  onContinueInNewConversation?: () => void
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (
