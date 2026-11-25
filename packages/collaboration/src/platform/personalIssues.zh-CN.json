@@ -22,6 +22,7 @@
     "runningCount": "{{count}} 进行中",
     "title": "我的",
     "subtitle": "你参与的事，和助理正在推进的事。",
+    "webSubtitle": "查看待你处理和你参与的事项。",
     "assigned": "待我处理",
     "me": "我",
     "participating": "我参与的",
@@ -147,6 +148,9 @@
     "create_task": "创建任务",
     "record_submit": "记录",
     "record_placeholder": "记下一件事，也可以分配给同事或助理…",
+    "web_record_placeholder": "记录一件事，也可以分配给协作者…",
+    "launch_unconfirmed": "暂时无法确认任务是否已启动，请先查看关联任务。",
+    "no_execution_device": "暂无可用执行设备，草稿已保留。",
     "do_myself": "我"
   },
   "taskIssueShare": {
