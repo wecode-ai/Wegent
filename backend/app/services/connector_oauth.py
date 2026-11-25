@@ -38,6 +38,7 @@ from app.services.connector_apps import (
     create_connector_http_client,
 )
 from app.services.connector_connections import (
+    ConnectorAuthorizationSuperseded,
     ConnectorConnection,
     connector_connection_service,
 )
@@ -148,22 +149,32 @@ class ConnectorOAuthService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Connector app does not use OAuth",
             )
-        external = authorization_ticket is not None
+        external_disconnect_id = None
         if authorization_ticket is not None:
             _validate_external_authorization_ticket(
                 authorization_ticket, app=app, user_id=user_id
             )
             connection = connector_connection_service.get(
-                db, slug=slug, user_id=user_id
+                db, slug=slug, user_id=user_id, include_inactive=True
             )
-            if connector_connection_service.is_usable(connection):
+            if (
+                connection
+                and connection.row.is_active
+                and connector_connection_service.is_usable(connection)
+            ):
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
                     {"error_code": "CONNECTOR_ALREADY_AUTHORIZED"},
                 )
+            external_disconnect_id = (
+                connection.oauth_disconnect_id if connection else ""
+            )
         if slug != "github":
             return await ConnectorOAuthService._create_dynamic_session(
-                db, app=app, user_id=user_id, external=external
+                db,
+                app=app,
+                user_id=user_id,
+                external_disconnect_id=external_disconnect_id,
             )
         _require_github_config()
         now = int(time.time())
@@ -194,7 +205,8 @@ class ConnectorOAuthService:
             "nonce": nonce,
             "code_verifier": verifier,
             "oauth": "github",
-            "external": external,
+            "external": external_disconnect_id is not None,
+            "oauth_disconnect_id": external_disconnect_id,
             "expires_at": now + ttl,
         }
         if not await cache_manager.set(
@@ -229,7 +241,7 @@ class ConnectorOAuthService:
         *,
         app: ConnectorApp,
         user_id: int,
-        external: bool = False,
+        external_disconnect_id: str | None = None,
     ) -> ConnectorOAuthSessionCreateResponse:
         metadata = await discover_connector_oauth(app.mcp_url)
         client = await ConnectorOAuthService._dynamic_client(db, app, metadata)
@@ -261,7 +273,8 @@ class ConnectorOAuthService:
             "nonce": nonce,
             "code_verifier": verifier,
             "oauth": "dynamic",
-            "external": external,
+            "external": external_disconnect_id is not None,
+            "oauth_disconnect_id": external_disconnect_id,
             "resource": app.mcp_url,
             "authorization_endpoint": metadata["authorization_endpoint"],
             "token_endpoint": metadata["token_endpoint"],
@@ -406,10 +419,20 @@ class ConnectorOAuthService:
                 granted_scopes=scopes,
                 external_account_name=account_name,
                 expires_at=expires_at,
-                preserve_usable_connection=session.get("external") is True,
+                expected_oauth_disconnect_id=(
+                    session.get("oauth_disconnect_id", "")
+                    if session.get("external") is True
+                    else None
+                ),
             )
             if saved is not None and str(session.get("oauth")) == "dynamic":
                 await ConnectorOAuthService._cache_authorized_tools(db, session)
+        except ConnectorAuthorizationSuperseded as exc:
+            db.rollback()
+            message = "Connector was disconnected during authorization"
+            session.update({"status": "failed", "error": message})
+            await ConnectorOAuthService._write_session(session_id, session)
+            raise HTTPException(status.HTTP_409_CONFLICT, message) from exc
         except HTTPException:
             db.rollback()
             session.update(

@@ -330,7 +330,9 @@ def test_discover_oauth_connector_requires_authorization(
     assert "requires authorization" in response.json()["detail"]
 
 
-@pytest.mark.parametrize("external", [False, True])
+@pytest.mark.parametrize(
+    "mode", ["manual", "external", "disconnect_before_late_callback"]
+)
 def test_github_oauth_api_flow_connects_polls_and_disconnects(
     test_client: TestClient,
     test_db: Session,
@@ -338,8 +340,9 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
     test_user: User,
     test_token: str,
     monkeypatch,
-    external: bool,
+    mode: str,
 ):
+    external = mode != "manual"
     app = _create_app(
         test_db,
         test_admin_user,
@@ -378,13 +381,14 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
             side_effect=[
                 {"access_token": "github-access-token", "scope": "repo"},
                 {"access_token": "different-access-token", "scope": "repo"},
+                {"access_token": "reauthorized-access-token", "scope": "repo"},
             ]
         ),
     )
     monkeypatch.setattr(
         ConnectorOAuthService,
         "_fetch_github_login",
-        AsyncMock(side_effect=["octocat", "different-account"]),
+        AsyncMock(side_effect=["octocat", "different-account", "reauthorized-account"]),
     )
 
     path = "/api/connector-apps/github/oauth/sessions"
@@ -400,33 +404,65 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         assert response.status_code == 200
         pending.append(response.json())
 
-    for session in pending:
+    def complete(session: dict):
         state = parse_qs(urlsplit(session["authorize_url"]).query)["state"][0]
-        callback = test_client.get(
+        return test_client.get(
             "/api/connector-apps/oauth/callback",
             params={"state": state, "code": "provider-code"},
         )
-        assert callback.status_code == 200
-        poll = test_client.get(
+
+    def poll(session: dict):
+        response = test_client.get(
             f"/api/connector-apps/oauth/sessions/{session['session_id']}/poll",
             params={"poll_token": session["poll_token"]},
             headers=headers,
         )
-        assert poll.status_code == 200
-        assert poll.json()["status"] == "success"
-        assert poll.json()["connection"]["external_account_name"] == "octocat"
+        assert response.status_code == 200
+        return response.json()
 
-    if external:
+    def disconnect():
+        with monkeypatch.context() as config:
+            config.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "")
+            response = test_client.delete(
+                "/api/connector-apps/github/connection", headers=headers
+            )
+        assert response.status_code == 204
+
+    first = pending[0]
+    assert complete(first).status_code == 200
+    assert poll(first)["status"] == "success"
+    assert poll(first)["connection"]["external_account_name"] == "octocat"
+
+    if mode == "disconnect_before_late_callback":
+        disconnect()
+        late = pending[1]
+        assert complete(late).status_code == 409
+        assert poll(late)["status"] == "failed"
+        assert poll(late)["error"] == "Connector was disconnected during authorization"
+        assert (
+            connector_connection_service.get(
+                test_db, slug=app.slug, user_id=test_user.id
+            )
+            is None
+        )
+
+        restarted = test_client.post(path, headers=headers, json=payload)
+        assert restarted.status_code == 200
+        assert complete(restarted.json()).status_code == 200
+        assert poll(restarted.json())["connection"]["external_account_name"] == (
+            "reauthorized-account"
+        )
+    elif external:
+        late = pending[1]
+        assert complete(late).status_code == 200
+        result = poll(late)
+        assert result["status"] == "success"
+        assert result["connection"]["external_account_name"] == "octocat"
         reused = test_client.post(path, headers=headers, json=payload)
         assert reused.status_code == 409
         assert reused.json()["detail"]["error_code"] == "CONNECTOR_ALREADY_AUTHORIZED"
 
-    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "")
-    disconnect_response = test_client.delete(
-        "/api/connector-apps/github/connection",
-        headers=_admin_headers(test_token),
-    )
-    assert disconnect_response.status_code == 204
+    disconnect()
 
 
 @pytest.mark.parametrize(

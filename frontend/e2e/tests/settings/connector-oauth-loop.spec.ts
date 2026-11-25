@@ -238,6 +238,58 @@ test.describe('Connector app OAuth loop', () => {
     }
   })
 
+  test('keeps a connector disconnected when an older external consent returns', async ({
+    request,
+  }) => {
+    const token = await loginToken(request, REGULAR_USER)
+    const headers = authHeaders(token)
+    const createdKey = await request.post(`${API_URL}/api/api-keys`, {
+      headers,
+      data: { name: 'External connector disconnect E2E' },
+    })
+    expect(createdKey.status()).toBe(201)
+    const key = (await createdKey.json()) as { id: number; key: string }
+    const externalHeaders = { 'X-API-Key': key.key }
+    const externalPath = `${API_URL}/api/external/connector-apps/${SLUG}`
+    const connectionPath = `${API_URL}/api/connector-apps/${SLUG}/connection`
+    try {
+      const started = await request.post(`${externalPath}/oauth/start`, {
+        headers: externalHeaders,
+        timeout: 10_000,
+      })
+      expect(started.status()).toBe(200)
+      const { authorize_url: link } = (await started.json()) as { authorize_url: string }
+      const ticket = new URLSearchParams(new URL(link).hash.slice(1)).get('ticket')
+      expect(ticket).toBeTruthy()
+      const pending = await request.post(`${API_URL}/api/connector-apps/${SLUG}/oauth/sessions`, {
+        headers,
+        data: { authorization_ticket: ticket },
+        timeout: 10_000,
+      })
+      expect(pending.status()).toBe(200)
+      const { authorize_url: providerUrl } = (await pending.json()) as { authorize_url: string }
+      const consent = await request.get(providerUrl, { maxRedirects: 0, timeout: 10_000 })
+      expect(consent.status()).toBe(302)
+
+      await authorizeViaApi(request, token, SLUG)
+      const disconnected = await request.delete(connectionPath, { headers, timeout: 10_000 })
+      expect(disconnected.status()).toBe(204)
+
+      const late = await request.get(consent.headers().location, { timeout: 10_000 })
+      expect(late.status(), 'An older callback must respect the disconnect').toBe(409)
+      const status = await request.get(`${externalPath}/authorization`, {
+        headers: externalHeaders,
+        timeout: 10_000,
+      })
+      expect(status.status()).toBe(200)
+      expect(await status.json()).toEqual({ slug: SLUG, status: 'authorization_required' })
+    } finally {
+      await request.delete(connectionPath, { headers, timeout: 10_000 })
+      const removed = await request.delete(`${API_URL}/api/api-keys/${key.id}`, { headers })
+      expect(removed.status()).toBe(204)
+    }
+  })
+
   test('authorizes through the provider and exposes only allowlisted tools', async ({
     page,
     request,
