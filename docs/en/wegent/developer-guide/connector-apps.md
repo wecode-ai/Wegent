@@ -107,6 +107,23 @@ The paths below use the default `API_PREFIX=/api`; replace `/api` with your depl
 - `/api/connector-runtime/tools` and `/call`: accept only connector JWTs and are used by the Executor MCP proxy.
 - `/api/mcp/connectors/sse`: dynamic MCP endpoint for Chat and cloud coding shells. Task tokens identify the caller; listing and invocation enforce visibility, authorization, and the allowlist. Without `X-Connector-App`, the default listing exposes only static apps; `X-Connector-Loading: lazy` requests the current user's authorized lazy compact entries. An app scope further restricts the surface to that app. Desktop coding tasks use the device-local `wegent_apps` proxy without duplicating the cloud endpoint.
 
+## Authorization precheck for external services
+
+External services can check a target user's OAuth grant before calling a Wegent content API. Use the Connector App slug, such as `dingtalk_docs` for DingTalk Docs or the configured slug for an administrator-published OAuth Connector.
+
+- `GET /api/external/connector-apps/{slug}/authorization` returns `slug` and `status`. The precheck reads the stored Wegent grant without contacting the provider.
+- `POST /api/external/connector-apps/{slug}/oauth/start` returns the same fields. A response with `authorization_required` also includes `authorize_url` and `expires_at` (Unix seconds). The link is valid for 10 minutes and uses the deployment's `FRONTEND_URL`, including the Web base path when applicable.
+
+| `status` | External service action |
+| --- | --- |
+| `authorized` | Continue to the content API. This includes grants that can still be renewed with a refresh token. |
+| `authorization_required` | Call the start endpoint and show the resulting link to the target user. |
+| `not_required` | Continue to the content API. This Connector does not require user OAuth. |
+
+Call both endpoints with `X-API-Key`. For service keys, set `wegent-username` to the target user derived from the external application's signed-in identity. A personal key acts as its owner. Unknown, disabled, and hidden Connectors return `404`.
+
+The user opens the link, signs in to the bound Wegent account, and completes the provider's OAuth consent. Wegent stores the provider credentials. When the user returns, repeat the precheck and call the content API after receiving `authorized`. The precheck covers the Connector App OAuth grant. Legacy personal MCP URLs and individual document permissions are handled by their respective flows.
+
 ## Built-in DingTalk connector apps
 
 DingTalk hosts the document, sheet, AI table, and wiki MCP servers at fixed OAuth URLs, so users never paste a personal URL. On startup (`CONNECTOR_BUILTIN_APPS_ENABLED=True`) the backend backfills missing app definitions:

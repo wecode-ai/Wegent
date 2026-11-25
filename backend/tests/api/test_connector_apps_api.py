@@ -5,7 +5,9 @@
 """API coverage for administrator-managed connector apps."""
 
 import asyncio
+import hmac
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -13,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
+from jose import jwt
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
@@ -327,14 +330,17 @@ def test_discover_oauth_connector_requires_authorization(
     assert "requires authorization" in response.json()["detail"]
 
 
+@pytest.mark.parametrize("external", [False, True])
 def test_github_oauth_api_flow_connects_polls_and_disconnects(
     test_client: TestClient,
     test_db: Session,
     test_admin_user: User,
+    test_user: User,
     test_token: str,
     monkeypatch,
+    external: bool,
 ):
-    _create_app(
+    app = _create_app(
         test_db,
         test_admin_user,
         slug="github",
@@ -369,39 +375,51 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         ConnectorOAuthService,
         "_exchange_code",
         AsyncMock(
-            return_value={
-                "access_token": "github-access-token",
-                "token_type": "bearer",
-                "scope": "repo",
-            }
+            side_effect=[
+                {"access_token": "github-access-token", "scope": "repo"},
+                {"access_token": "different-access-token", "scope": "repo"},
+            ]
         ),
     )
     monkeypatch.setattr(
         ConnectorOAuthService,
         "_fetch_github_login",
-        AsyncMock(return_value="octocat"),
+        AsyncMock(side_effect=["octocat", "different-account"]),
     )
 
-    session_response = test_client.post(
-        "/api/connector-apps/github/oauth/sessions",
-        headers=_admin_headers(test_token),
+    path = "/api/connector-apps/github/oauth/sessions"
+    headers = _admin_headers(test_token)
+    payload = (
+        {"authorization_ticket": _external_ticket(app.id, app.slug, test_user.id)}
+        if external
+        else None
     )
-    assert session_response.status_code == 200
-    session = session_response.json()
-    state = parse_qs(urlsplit(session["authorize_url"]).query)["state"][0]
-    callback_response = test_client.get(
-        "/api/connector-apps/oauth/callback",
-        params={"state": state, "code": "provider-code"},
-    )
-    assert callback_response.status_code == 200
+    pending = []
+    for _ in range(2 if external else 1):
+        response = test_client.post(path, headers=headers, json=payload)
+        assert response.status_code == 200
+        pending.append(response.json())
 
-    poll_response = test_client.get(
-        f"/api/connector-apps/oauth/sessions/{session['session_id']}/poll",
-        params={"poll_token": session["poll_token"]},
-        headers=_admin_headers(test_token),
-    )
-    assert poll_response.status_code == 200
-    assert poll_response.json()["connection"]["external_account_name"] == "octocat"
+    for session in pending:
+        state = parse_qs(urlsplit(session["authorize_url"]).query)["state"][0]
+        callback = test_client.get(
+            "/api/connector-apps/oauth/callback",
+            params={"state": state, "code": "provider-code"},
+        )
+        assert callback.status_code == 200
+        poll = test_client.get(
+            f"/api/connector-apps/oauth/sessions/{session['session_id']}/poll",
+            params={"poll_token": session["poll_token"]},
+            headers=headers,
+        )
+        assert poll.status_code == 200
+        assert poll.json()["status"] == "success"
+        assert poll.json()["connection"]["external_account_name"] == "octocat"
+
+    if external:
+        reused = test_client.post(path, headers=headers, json=payload)
+        assert reused.status_code == 409
+        assert reused.json()["detail"]["error_code"] == "CONNECTOR_ALREADY_AUTHORIZED"
 
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "")
     disconnect_response = test_client.delete(
@@ -409,6 +427,57 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         headers=_admin_headers(test_token),
     )
     assert disconnect_response.status_code == 204
+
+
+@pytest.mark.parametrize(
+    ("claim_overrides", "expected_status"),
+    [
+        ({"user_id": -1}, 403),
+        ({"app_id": -1}, 400),
+        ({"slug": "another-connector"}, 400),
+        ({"exp": 1}, 400),
+        ({"aud": "other-purpose"}, 400),
+    ],
+)
+def test_external_authorization_ticket_is_bound_to_the_user_and_app(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    test_token: str,
+    claim_overrides: dict[str, str | int],
+    expected_status: int,
+):
+    app = _create_app(test_db, test_admin_user, auth_type="oauth2")
+    response = test_client.post(
+        f"/api/connector-apps/{app.slug}/oauth/sessions",
+        headers=_admin_headers(test_token),
+        json={
+            "authorization_ticket": _external_ticket(
+                app.id, app.slug, test_user.id, claim_overrides
+            )
+        },
+    )
+    assert response.status_code == expected_status
+
+
+def _external_ticket(
+    app_id: int, slug: str, user_id: int, overrides: dict[str, str | int] | None = None
+) -> str:
+    key = hmac.digest(
+        settings.SECRET_KEY.encode(),
+        b"wegent:external-connector-authorization:v1",
+        "sha256",
+    )
+    claims = {
+        "aud": "wegent-external-connector-authorization",
+        "user_id": user_id,
+        "app_id": app_id,
+        "slug": slug,
+        "exp": int(time.time()) + 600,
+        **(overrides or {}),
+    }
+    return jwt.encode(claims, key, algorithm="HS256")
 
 
 def test_role_visibility_is_enforced_for_user_catalog(

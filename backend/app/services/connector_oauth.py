@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -48,6 +49,8 @@ GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
 GITHUB_REVOKE_URL = "https://api.github.com/applications/{client_id}/token"
 SESSION_KEY_PREFIX = "connector_oauth_session:"
+EXTERNAL_LINK_KEY_CONTEXT = b"wegent:external-connector-authorization:v1"
+EXTERNAL_LINK_AUDIENCE = "wegent-external-connector-authorization"
 POLL_INTERVAL_SECONDS = 2
 DISCOVERY_TIMEOUT_SECONDS = 15
 logger = logging.getLogger(__name__)
@@ -73,6 +76,37 @@ def _session_key(session_id: str) -> str:
 
 def _state_secret() -> str:
     return settings.CONNECTOR_OAUTH_STATE_SECRET or settings.OIDC_STATE_SECRET_KEY
+
+
+def _validate_external_authorization_ticket(
+    ticket: str, *, app: ConnectorApp, user_id: int
+) -> None:
+    key = hmac.digest(settings.SECRET_KEY.encode(), EXTERNAL_LINK_KEY_CONTEXT, "sha256")
+    try:
+        claims = jwt.decode(
+            ticket,
+            key,
+            algorithms=["HS256"],
+            audience=EXTERNAL_LINK_AUDIENCE,
+            options={"require_aud": True, "require_exp": True},
+        )
+        if int(claims["exp"]) <= int(time.time()):
+            raise JWTError("Authorization ticket expired")
+    except JWTError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Connector authorization link is invalid or expired",
+        ) from exc
+    if claims.get("user_id") != user_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Connector authorization link belongs to another user",
+        )
+    if claims.get("app_id") != app.id or claims.get("slug") != app.slug:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Connector authorization link does not match this app",
+        )
 
 
 def _require_github_config() -> None:
@@ -104,6 +138,7 @@ class ConnectorOAuthService:
         *,
         slug: str,
         user_id: int,
+        authorization_ticket: str | None = None,
     ) -> ConnectorOAuthSessionCreateResponse:
         app = ConnectorAppService.get_app_by_slug(db, slug)
         if not app:
@@ -113,9 +148,22 @@ class ConnectorOAuthService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Connector app does not use OAuth",
             )
+        external = authorization_ticket is not None
+        if authorization_ticket is not None:
+            _validate_external_authorization_ticket(
+                authorization_ticket, app=app, user_id=user_id
+            )
+            connection = connector_connection_service.get(
+                db, slug=slug, user_id=user_id
+            )
+            if connector_connection_service.is_usable(connection):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    {"error_code": "CONNECTOR_ALREADY_AUTHORIZED"},
+                )
         if slug != "github":
             return await ConnectorOAuthService._create_dynamic_session(
-                db, app=app, user_id=user_id
+                db, app=app, user_id=user_id, external=external
             )
         _require_github_config()
         now = int(time.time())
@@ -146,6 +194,7 @@ class ConnectorOAuthService:
             "nonce": nonce,
             "code_verifier": verifier,
             "oauth": "github",
+            "external": external,
             "expires_at": now + ttl,
         }
         if not await cache_manager.set(
@@ -180,6 +229,7 @@ class ConnectorOAuthService:
         *,
         app: ConnectorApp,
         user_id: int,
+        external: bool = False,
     ) -> ConnectorOAuthSessionCreateResponse:
         metadata = await discover_connector_oauth(app.mcp_url)
         client = await ConnectorOAuthService._dynamic_client(db, app, metadata)
@@ -211,6 +261,7 @@ class ConnectorOAuthService:
             "nonce": nonce,
             "code_verifier": verifier,
             "oauth": "dynamic",
+            "external": external,
             "resource": app.mcp_url,
             "authorization_endpoint": metadata["authorization_endpoint"],
             "token_endpoint": metadata["token_endpoint"],
@@ -345,7 +396,7 @@ class ConnectorOAuthService:
                 else None
             )
             ConnectorOAuthService._lock_callback_app(db, session)
-            connector_connection_service.save_oauth_connection(
+            saved = connector_connection_service.save_oauth_connection(
                 db,
                 slug=str(session["slug"]),
                 user_id=int(session["user_id"]),
@@ -355,8 +406,9 @@ class ConnectorOAuthService:
                 granted_scopes=scopes,
                 external_account_name=account_name,
                 expires_at=expires_at,
+                preserve_usable_connection=session.get("external") is True,
             )
-            if str(session.get("oauth")) == "dynamic":
+            if saved is not None and str(session.get("oauth")) == "dynamic":
                 await ConnectorOAuthService._cache_authorized_tools(db, session)
         except HTTPException:
             db.rollback()

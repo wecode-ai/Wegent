@@ -159,6 +159,80 @@ test.describe('Connector app OAuth loop', () => {
     await providerControl(request, { rejectRefresh: false, revokeAll: true })
   })
 
+  test('prechecks and authorizes a custom connector from an external app', async ({
+    page,
+    request,
+  }) => {
+    const regularToken = await loginToken(request, REGULAR_USER)
+    const createdKey = await request.post(`${API_URL}/api/api-keys`, {
+      headers: authHeaders(regularToken),
+      data: { name: 'External connector OAuth E2E' },
+    })
+    expect(createdKey.status()).toBe(201)
+    const key = (await createdKey.json()) as { id: number; key: string }
+    const path = `${API_URL}/api/external/connector-apps/${SLUG}`
+    const headers = { 'X-API-Key': key.key }
+    const precheck = async () => {
+      const response = await request.get(`${path}/authorization`, { headers, timeout: 10_000 })
+      expect(response.status(), 'Connector precheck returns a status').toBe(200)
+      return response.json()
+    }
+
+    try {
+      expect(await precheck()).toEqual({ slug: SLUG, status: 'authorization_required' })
+      const started = await request.post(`${path}/oauth/start`, { headers, timeout: 10_000 })
+      expect(started.status()).toBe(200)
+      const { authorize_url: authorizeUrl } = (await started.json()) as { authorize_url: string }
+      const link = new URL(authorizeUrl)
+      const ticket = new URLSearchParams(link.hash.slice(1)).get('ticket')
+      expect(ticket).toBeTruthy()
+      const wrongUser = await request.post(`${API_URL}/api/connector-apps/${SLUG}/oauth/sessions`, {
+        headers: authHeaders(adminToken),
+        data: { authorization_ticket: ticket },
+        timeout: 10_000,
+      })
+      expect(wrongUser.status(), 'A different signed-in user cannot use the link').toBe(403)
+
+      await page.addInitScript(
+        ({ token, origin }) => {
+          if (window.location.origin !== origin) return
+          localStorage.setItem('auth_token', token)
+          localStorage.removeItem('auth_token_expire')
+        },
+        { token: regularToken, origin: link.origin }
+      )
+      await page.goto(authorizeUrl, { waitUntil: 'domcontentloaded' })
+      const authorize = page.getByTestId('authorize-external-connector')
+      await expect(authorize, 'Wegent shows the external connector consent page').toBeVisible({
+        timeout: 10_000,
+      })
+      const popupPromise = page.waitForEvent('popup', { timeout: 10_000 })
+      await authorize.click()
+      const popup = await popupPromise
+      await expect(
+        popup.locator('body'),
+        'Wegent accepted the provider OAuth callback'
+      ).toContainText('Connector is connected', { timeout: 20_000 })
+      await expect(
+        page.getByTestId('external-connector-authorized'),
+        'The authorization page reports the stored grant'
+      ).toBeVisible({ timeout: 10_000 })
+      expect(await precheck()).toEqual({ slug: SLUG, status: 'authorized' })
+    } finally {
+      const disconnected = await request.delete(
+        `${API_URL}/api/connector-apps/${SLUG}/connection`,
+        {
+          headers: authHeaders(regularToken),
+        }
+      )
+      expect(disconnected.status()).toBe(204)
+      const removed = await request.delete(`${API_URL}/api/api-keys/${key.id}`, {
+        headers: authHeaders(regularToken),
+      })
+      expect(removed.status()).toBe(204)
+    }
+  })
+
   test('authorizes through the provider and exposes only allowlisted tools', async ({
     page,
     request,

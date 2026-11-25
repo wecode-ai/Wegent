@@ -653,6 +653,15 @@ path = "/api/auth/wework/refresh"
 methods = ["POST"]
 path = "/api/connector-runtime/token"
 
+# Connector authorization precheck and user-bound OAuth links for external services.
+[[routes]]
+methods = ["GET"]
+path = "/api/external/connector-apps/:slug/authorization"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/external/connector-apps/:slug/oauth/start"
+
 # `POST /api/connector-apps/{slug}/connection/refresh` — renew an expired grant
 # and probe the upstream (`apps_installed::refresh_endpoint`). The handler and
 # its HTTP contract coverage are Rust-owned; there is no Python copy.

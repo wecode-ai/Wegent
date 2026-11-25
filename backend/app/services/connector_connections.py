@@ -150,6 +150,7 @@ class ConnectorConnectionService:
         expires_at: datetime | None,
         expected_refresh_token_encrypted: str | None = None,
         expected_access_token_encrypted: str | None = None,
+        preserve_usable_connection: bool = False,
     ) -> ConnectorConnection | None:
         """Persist a grant for ``slug``.
 
@@ -166,7 +167,16 @@ class ConnectorConnectionService:
         the write is also accepted while the connection is expired without a
         refresh token and still carries the access token the caller started
         from. ``expected_access_token_encrypted`` supplies that check.
+
+        External onboarding only fills a missing grant. Check the current
+        connection under the write lock so late callbacks keep a usable grant.
         """
+        row = ConnectorConnectionService._lock_row(db, slug=slug, user_id=user_id)
+        if preserve_usable_connection and row is not None and row.is_active:
+            current_connection = ConnectorConnectionService._row_to_connection(row)
+            if ConnectorConnectionService.is_usable(current_connection):
+                db.commit()
+                return None
         spec = {
             "connectorAppSlug": slug,
             "status": "connected",
@@ -179,7 +189,6 @@ class ConnectorConnectionService:
             ),
             "tokenType": token_type or "bearer",
         }
-        row = ConnectorConnectionService._lock_row(db, slug=slug, user_id=user_id)
         if row is None:
             if expected_refresh_token_encrypted is not None:
                 db.commit()
