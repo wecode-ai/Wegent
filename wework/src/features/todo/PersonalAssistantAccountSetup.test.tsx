@@ -31,12 +31,23 @@ function setup(initial: PersonalAssistantAccount | Error | null, local = blank) 
     standInApi: { personalGet },
     getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
   } as unknown as WorkbenchServices
-  render(
-    <PersonalAssistantAccountSetup services={services} userId={7} active>
+  const workspace = (preferredDevice?: string) => (
+    <PersonalAssistantAccountSetup
+      services={services}
+      userId={7}
+      active
+      preferredDevice={preferredDevice}
+    >
       {assistant => <p>{assistant?.defaultBotRef.name ?? 'local workspace'}</p>}
     </PersonalAssistantAccountSetup>
   )
-  return { get, personalGet, initialize }
+  const { rerender } = render(workspace())
+  return {
+    get,
+    personalGet,
+    initialize,
+    changePreferredDevice: (device: string) => rerender(workspace(device)),
+  }
 }
 
 test('an initialized cloud account opens without probing a legacy profile', async () => {
@@ -44,6 +55,14 @@ test('an initialized cloud account opens without probing a legacy profile', asyn
   expect(await screen.findByText('primary')).toBeVisible()
   expect(personalGet).not.toHaveBeenCalled()
   expect(initialize).not.toHaveBeenCalled()
+})
+
+test('device inventory changes keep the loaded cloud assistant mounted', async () => {
+  const { get, changePreferredDevice } = setup(account)
+  const workspace = await screen.findByText('primary')
+  changePreferredDevice('other-cloud-device')
+  expect(screen.getByText('primary')).toBe(workspace)
+  expect(get).toHaveBeenCalledTimes(1)
 })
 
 test('a saved legacy profile requires confirmation before import', async () => {

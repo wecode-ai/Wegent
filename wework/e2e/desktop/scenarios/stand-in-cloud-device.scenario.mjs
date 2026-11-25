@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { openStandInDetails, openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
+import { openStandInDetails } from '../modules/stand-in-profile-navigation.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -700,7 +700,7 @@ export function createDesktopScenario({
       await stopProcessGroup(cloud.remoteExecutor)
       await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
       await observeDevice(control, CLOUD_DEVICE_ID, '离线')
-      await openStandInSettings(control)
+      await control.command('waitFor', testId('stand-in-overview-retry'))
       await control.command('clickWhenEnabled', testId('stand-in-instance-stop'))
       await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
       await control.command('waitFor', testId('stand-in-instance-stop') + ':not(:disabled)')

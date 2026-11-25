@@ -702,6 +702,7 @@ export function StandInOverviewPage({
             >
               {t('standIn.reload')}
             </ControlButton>
+            {deviceId === primaryDeviceId && headerActions}
           </div>
         ) : (
           <>

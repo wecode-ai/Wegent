@@ -3,6 +3,7 @@ import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { Button } from '@/components/ui/button'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
@@ -64,16 +65,15 @@ export function PersonalAssistantAccountSetup({
 }) {
   const { t } = useTranslation('common')
   const name = t('standIn.personal.default_role')
+  const load = useStableEvent((signal: AbortSignal) =>
+    loadSetup(services, userId, name, signal, preferredDevice)
+  )
   const resource = useMemo(
     () =>
-      createAsyncResource(
-        JSON.stringify([userId]),
-        signal => loadSetup(services, userId, name, signal, preferredDevice),
-        {
-          refreshOnSubscribe: true,
-        }
-      ),
-    [services, userId, name, preferredDevice]
+      createAsyncResource(JSON.stringify([userId]), load, {
+        refreshOnSubscribe: true,
+      }),
+    [services, userId, name, load]
   )
   const snapshot = useSyncExternalStore(
     active ? resource.subscribe : subscribeIdleResource,
