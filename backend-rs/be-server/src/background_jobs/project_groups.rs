@@ -277,7 +277,7 @@ pub(super) async fn assign(
             let assignment_key=format!("group:{id}:{key}");
             let existing:Option<Id>=tx.fetch_optional("SELECT 1 AS id FROM wework_notifications WHERE user_id=? AND kind='assignment' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.collaborationGroupAssignmentKey'))=? LIMIT 1",(leader,assignment_key.as_str())).await?;
             payload["action"]=json!("coordinate_collaboration_group");payload["issueId"]=json!(issue.id);payload["collaborationGroupId"]=json!(id);payload["collaborationGroupAssignmentKey"]=json!(assignment_key);payload["instructions"]=json!(human_instructions(project,issue,group).map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?);
-            let pending=if existing.is_none(){Some(notifications::create_on(tx,leader,actor,"assignment",&format!("请协调：{}",issue.title),"你是该协作小组的负责人。请打开 Issue 分配本轮任务并验收结果。",payload).await?)}else{None};
+            let pending=if existing.is_none(){Some(notifications::create_on(tx,leader,actor,"assignment",&format!("请协调：{}",issue.title),"你是该协作小组的负责人。请打开事项分配本轮任务并验收结果。",payload).await?)}else{None};
             tx.execute("UPDATE loop_items SET status='succeeded',completed_at=UTC_TIMESTAMP(6),version=version+1 WHERE id=?",(run.id.as_str(),)).await?;Ok(pending)
         }
     }).await?;

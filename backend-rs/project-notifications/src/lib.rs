@@ -296,7 +296,7 @@ pub async fn direct_human_on(
             actor,
             "issue_dispatch_assignment",
             &format!("新任务：{title}"),
-            "这个 Issue 已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
+            "这个事项已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
             payload,
         )
         .await?,
