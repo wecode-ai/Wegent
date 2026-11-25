@@ -314,19 +314,14 @@ export function createDesktopScenario({
           'The trial query and poll must both reuse the signed-in browser session'
         )
         await captureScreenshot(control, 'website-03-trial.png')
+        if (nativeWindow.focusMainWindow) await control.command('focusMainWindow', 'body')
+        await click('website-connection-install')
+        await wait('website-connection-installing', { text: '正在安装连接…' })
+        await captureScreenshot(control, 'website-04a-installing.png')
         await withNativePluginDecision(
           control,
-          async () => {
-            await click('website-connection-install')
-            await wait('website-connection-open-installed', { timeoutMs: workbenchReadyTimeoutMs })
-          },
-          {
-            ...nativeWindow,
-            beforeDecision: async () => {
-              await wait('website-connection-installing', { text: '正在安装连接…' })
-              await captureScreenshot(control, 'website-04a-installing.png')
-            },
-          }
+          () => wait('website-connection-open-installed', { timeoutMs: workbenchReadyTimeoutMs }),
+          { focusMainWindow: false }
         )
         await captureScreenshot(control, 'website-04-installed.png')
         const readyCount = control.readyCount
