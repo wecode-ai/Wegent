@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   useRuntimeTaskLifecycle,
+  useRuntimeTaskLifecycleSelection,
   useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './context'
@@ -69,14 +70,18 @@ describe('RuntimeTaskLifecycleProvider', () => {
     expect(screen.getByTestId('lifecycle-phase')).toHaveTextContent('idle')
   })
 
-  test('updates a task row only when its lifecycle changes', () => {
+  test('updates a task row only when its selected status changes', () => {
     const store = new RuntimeTaskLifecycleStore('task-row')
     store.executorSettled(address)
     let renders = 0
     function TaskRow() {
-      const task = useRuntimeTaskLifecycle(address)
+      const status = useRuntimeTaskLifecycleSelection(
+        address,
+        task => ({ phase: task?.execution.phase }),
+        (previous, next) => previous.phase === next.phase
+      )
       renders++
-      return <output>{task?.execution.phase}</output>
+      return <output>{status.phase}</output>
     }
     render(
       <RuntimeTaskLifecycleProvider store={store}>
@@ -91,6 +96,12 @@ describe('RuntimeTaskLifecycleProvider', () => {
 
     act(() => store.turnStarted(address, 'current-turn'))
     expect(screen.getByRole('status')).toHaveTextContent('running')
+
+    const runningRenders = renders
+    const running = store.getTask(address)
+    act(() => store.turnStarted(address, 'next-turn'))
+    expect(store.getTask(address)).not.toBe(running)
+    expect(renders).toBe(runningRenders)
   })
 
   test('an inactive task surface renders the current snapshot when opened', () => {

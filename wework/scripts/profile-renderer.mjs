@@ -366,7 +366,7 @@ async function measureConcurrentTasks({
       getForegroundToolsSent,
       count => count >= sent,
       `Foreground task did not emit history batch ending at tool call ${sent}`,
-      uiTimeoutMs
+      offset === 0 ? modelResponseTimeoutMs : uiTimeoutMs
     )
   }
   await waitForValue(
