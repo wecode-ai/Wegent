@@ -163,9 +163,36 @@ async function verifySearchOverlay(
   const trigger = await read(`(() => {
       const button = document.querySelector('[data-testid="runtime-search-button"]')
       const rect = button.getBoundingClientRect()
+      if (${Boolean(linuxWindow)}) {
+        delete button.dataset.nativeSearchPointerReady
+        button.addEventListener('pointermove', event => {
+          if (event.isTrusted) button.dataset.nativeSearchPointerReady = 'true'
+        }, { once: true })
+      }
       return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
     })()`)
-  await click(trigger)
+  if (linuxWindow) {
+    // X11 can deliver the click to the previously hovered webview before Chromium
+    // updates the renderer hit target. Observe the new native target first.
+    let offset = 0
+    const point = await waitForValue(
+      async () => {
+        const cursor = { x: trigger.x + offset, y: trigger.y }
+        offset = 1 - offset
+        await movePointer(cursor)
+        const ready = await read(
+          `document.querySelector('[data-testid="runtime-search-button"]')?.dataset.nativeSearchPointerReady === 'true'`
+        )
+        return { cursor, ready }
+      },
+      state => state.ready && state.cursor,
+      'The Linux search button must receive native pointer movement before clicking',
+      5_000
+    )
+    await pressAndRelease(point)
+  } else {
+    await click(trigger)
+  }
   await waitForValue(
     () => read(`document.activeElement === document.querySelector(${JSON.stringify(searchInput)})`),
     focused => focused,
