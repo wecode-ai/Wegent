@@ -304,7 +304,7 @@ export default function SkillAutocomplete({
         data-testid="slash-skill-option"
         data-skill-index={displayIndex}
         aria-pressed={isSelected}
-        className={`w-full px-3 py-2 text-left transition-colors flex items-center gap-2 cursor-pointer ${
+        className={`min-h-[44px] w-full px-3 py-2 text-left transition-colors flex items-center gap-2 cursor-pointer ${
           displayIndex === selectedIndex ? 'bg-muted' : 'hover:bg-muted'
         } ${isSelected ? 'opacity-60' : ''}`}
         onMouseDown={e => e.preventDefault()}

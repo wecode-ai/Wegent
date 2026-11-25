@@ -8,6 +8,7 @@ import { executorMockUrl, expect, test } from '../../fixtures/executor-test'
 import { checked } from '../../fixtures/recent-team-history'
 import { type ApiClient, createApiClient } from '../../utils/api-client'
 import {
+  clearToolScenario,
   collectTaskToolCalls,
   configureToolScenario,
   extractTaskAnswer,
@@ -194,6 +195,8 @@ test('Chat consumes Ghost skills and automatic bindings with legacy shell metada
 
     const followUp = `Use the selected skill for the follow-up in ${prefix}.`
     const followUpAnswer = `FOLLOW_UP_${prefix}`
+    // The mock matches against the entire message history, including the first prompt.
+    await clearToolScenario(request, prompt)
     await configureToolScenario(request, followUp, [{ responseContent: followUpAnswer }])
     await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
     await page.goto(`/chat?taskId=${ack.task_id}`, { waitUntil: 'domcontentloaded' })
@@ -207,6 +210,16 @@ test('Chat consumes Ghost skills and automatic bindings with legacy shell metada
     ).toBeVisible({
       timeout: 10_000,
     })
+    const moreActions = page.getByTestId('desktop-input-more-actions-button')
+    await moreActions.click({ timeout: 5_000 })
+    const skillPicker = page.getByTestId('desktop-input-more-actions-menu').getByRole('button', {
+      name: /^(Skills|技能)$/,
+    })
+    await expect(skillPicker, 'The composer should have loaded the skill catalog').toBeEnabled({
+      timeout: 5_000,
+    })
+    await skillPicker.press('Escape')
+    await expect(skillPicker).toBeHidden({ timeout: 5_000 })
     await input.pressSequentially(`/${ghostOnDemand.name}`)
     const option = page.getByTestId('slash-skill-option').filter({ hasText: ghostOnDemand.name })
     await expect(option, 'The agent skill should be selectable on a follow-up').toBeVisible({

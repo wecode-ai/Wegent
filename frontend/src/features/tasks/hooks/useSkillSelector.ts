@@ -15,6 +15,28 @@ export type { SkillRef } from '@/types/api'
 
 const EMPTY_SKILL_REFS: SkillRef[] = []
 
+type SkillSelection = SkillRef | string
+
+function selectionName(selection: SkillSelection): string {
+  return typeof selection === 'string' ? selection : selection.name
+}
+
+function sameSkillRefs(current: SkillRef[], previous: SkillRef[]): boolean {
+  return (
+    current === previous ||
+    (current.length === previous.length &&
+      current.every((skill, index) => {
+        const old = previous[index]
+        return (
+          skill.name === old.name &&
+          skill.namespace === old.namespace &&
+          skill.is_public === old.is_public &&
+          (skill.skill_id ?? null) === (old.skill_id ?? null)
+        )
+      }))
+  )
+}
+
 export type AutoAvailableSkill = UnifiedSkill & {
   availabilitySources: Array<'agent_builtin' | 'my_default'>
 }
@@ -77,17 +99,30 @@ export function useSkillSelector({
   team,
   enabled = true,
   taskId,
-  initialSelectedSkills = EMPTY_SKILL_REFS,
+  initialSelectedSkills,
 }: UseSkillSelectorOptions): UseSkillSelectorReturn {
   // State for available skills from unified API
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   // State for team-specific skills (from backend)
-  const [teamSkillsData, setTeamSkillsData] = useState<TeamSkillsResponse | null>(null)
-  // Preserve record identity; names remain available for badges and task metadata.
-  const [selectedRefs, setSelectedRefs] = useState(initialSelectedSkills)
-  const selectedSkillNames = useMemo(() => selectedRefs.map(skill => skill.name), [selectedRefs])
+  const [loadedTeamSkills, setLoadedTeamSkills] = useState<TeamSkillsResponse | null>(null)
+  const teamSkillsData = enabled && loadedTeamSkills?.team_id === team?.id ? loadedTeamSkills : null
+
+  const scope = taskId === undefined ? `draft:${team?.id ?? ''}` : `task:${taskId}`
+  const initialRefs = initialSelectedSkills ?? EMPTY_SKILL_REFS
+  const [restored, setRestored] = useState({ scope, refs: initialRefs })
+  const [selectedRefs, setSelectedRefs] = useState<SkillSelection[]>(initialRefs)
+  // A same-task refresh can return a new array while the user is editing the next message.
+  if (
+    restored.scope !== scope ||
+    (initialSelectedSkills && !sameSkillRefs(initialRefs, restored.refs))
+  ) {
+    setRestored({ scope, refs: initialRefs })
+    setSelectedRefs(initialRefs)
+  }
+
+  const selectedSkillNames = useMemo(() => selectedRefs.map(selectionName), [selectedRefs])
   const setSelectedSkillNames = useCallback((names: string[]) => {
-    setSelectedRefs(names.map(name => ({ name, namespace: 'default', is_public: false })))
+    setSelectedRefs(names)
   }, [])
   // Loading and error states
   const [isLoading, setIsLoading] = useState(false)
@@ -170,28 +205,24 @@ export function useSkillSelector({
 
   // Fetch team-specific skills when team ID changes
   useEffect(() => {
-    if (!enabled || !team?.id) {
-      setTeamSkillsData(null)
-      return
-    }
+    if (!enabled || !team?.id) return
 
+    let active = true
     const fetchTeamSkillsData = async () => {
       try {
         const skills = await fetchTeamSkills(team.id)
-        setTeamSkillsData(skills)
+        if (active) setLoadedTeamSkills(skills)
       } catch (err) {
-        console.warn('[useSkillSelector] Failed to fetch team skills:', err)
+        if (active) console.warn('[useSkillSelector] Failed to fetch team skills:', err)
         // Don't set error for team skills - it's optional
       }
     }
 
-    fetchTeamSkillsData()
+    void fetchTeamSkillsData()
+    return () => {
+      active = false
+    }
   }, [enabled, team?.id])
-
-  const draftTeamId = taskId === undefined ? team?.id : undefined
-  useEffect(() => {
-    setSelectedRefs(initialSelectedSkills)
-  }, [taskId, draftTeamId, initialSelectedSkills])
 
   const resolveSkill = useCallback(
     (skill: UnifiedSkill): SkillRef => ({
@@ -204,10 +235,20 @@ export function useSkillSelector({
   )
 
   const resolveStoredSkill = useCallback(
-    (skill: SkillRef): SkillRef => {
-      if (skill.skill_id != null) return skill
-      const matches = availableSkills.filter(item => item.name === skill.name)
-      return matches.length === 1 ? resolveSkill(matches[0]) : skill
+    (selection: SkillSelection): SkillRef => {
+      const name = selectionName(selection)
+      if (typeof selection !== 'string' && selection.skill_id != null) return selection
+
+      const matches = availableSkills.filter(
+        item =>
+          item.name === name &&
+          (typeof selection === 'string' ||
+            (item.namespace === selection.namespace && item.is_public === selection.is_public))
+      )
+      if (matches.length === 1) return resolveSkill(matches[0])
+      return typeof selection === 'string'
+        ? { name, namespace: 'default', is_public: false }
+        : selection
     },
     [availableSkills, resolveSkill]
   )
@@ -215,20 +256,20 @@ export function useSkillSelector({
   const addSkill = useCallback(
     (selection: UnifiedSkill) => {
       const skill = resolveSkill(selection)
-      setSelectedRefs(prev => [...prev.filter(item => item.name !== skill.name), skill])
+      setSelectedRefs(prev => [...prev.filter(item => selectionName(item) !== skill.name), skill])
     },
     [resolveSkill]
   )
 
   const removeSkill = useCallback((skillName: string) => {
-    setSelectedRefs(prev => prev.filter(skill => skill.name !== skillName))
+    setSelectedRefs(prev => prev.filter(skill => selectionName(skill) !== skillName))
   }, [])
 
   const toggleSkill = useCallback(
     (selection: UnifiedSkill) => {
       const skill = resolveSkill(selection)
       setSelectedRefs(prev => {
-        const remaining = prev.filter(item => item.name !== skill.name)
+        const remaining = prev.filter(item => selectionName(item) !== skill.name)
         return prev.some(item => resolveStoredSkill(item).skill_id === skill.skill_id)
           ? remaining
           : [...remaining, skill]
