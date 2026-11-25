@@ -67,7 +67,6 @@ import {
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
   getNextRuntimeSidebarTaskVisibleLimit,
   getRuntimeSidebarTaskItems,
-  getRuntimeTaskAddress,
   getVisibleRuntimeSidebarTaskItems,
   hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
@@ -190,6 +189,19 @@ export function ProjectItem({
     () => getRuntimeSidebarTaskItems(runtimeWorkspaces ?? []),
     [runtimeWorkspaces]
   )
+  const lifecycleKeys = useMemo(
+    () =>
+      new Map(
+        allRuntimeTaskItems.map(item => [
+          item,
+          getRuntimeTaskLifecycleKey({
+            deviceId: item.workspace.deviceId,
+            taskId: item.task.taskId,
+          }),
+        ])
+      ),
+    [allRuntimeTaskItems]
+  )
   const runtimeTaskItems = useMemo(
     () =>
       allRuntimeTaskItems.filter(
@@ -223,23 +235,23 @@ export function ProjectItem({
         prioritizedRuntimeTaskItems,
         runtimeTaskVisibleLimit,
         currentRuntimeTask?.taskId,
-        ({ workspace, task }) =>
-          runningTaskKeys.has(getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task)))
+        item => runningTaskKeys.has(lifecycleKeys.get(item)!)
       ),
     [
       currentRuntimeTask?.taskId,
+      lifecycleKeys,
       runningTaskKeys,
       prioritizedRuntimeTaskItems,
       runtimeTaskVisibleLimit,
     ]
   )
-  const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
-    prioritizedRuntimeTaskItems,
-    visibleRuntimeTaskItems
+  const hasHiddenRuntimeTasks = useMemo(
+    () => hasHiddenRuntimeSidebarTaskItems(prioritizedRuntimeTaskItems, visibleRuntimeTaskItems),
+    [prioritizedRuntimeTaskItems, visibleRuntimeTaskItems]
   )
-  const canCollapseRuntimeTasks = hasExpandedRuntimeSidebarTaskItems(
-    prioritizedRuntimeTaskItems,
-    runtimeTaskVisibleLimit
+  const canCollapseRuntimeTasks = useMemo(
+    () => hasExpandedRuntimeSidebarTaskItems(prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit),
+    [prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit]
   )
   const projectDeviceState =
     getRuntimeProjectDeviceState(runtimeProjectWork, devices) ??
@@ -296,16 +308,24 @@ export function ProjectItem({
         source: shortenSidebarHomePath(path),
       })
   )
-  const projectActiveTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) =>
-    runningTaskKeys.has(getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task)))
-  ).length
-  const projectWaitingTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) => {
-    const key = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
-    return waitingTaskKeys.has(key) || isRuntimeTaskWaiting(task)
-  }).length
-  const projectUnreadTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) =>
-    unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
-  ).length
+  const projectActiveTaskCount = useMemo(
+    () => allRuntimeTaskItems.filter(item => runningTaskKeys.has(lifecycleKeys.get(item)!)).length,
+    [allRuntimeTaskItems, lifecycleKeys, runningTaskKeys]
+  )
+  const projectWaitingTaskCount = useMemo(
+    () =>
+      allRuntimeTaskItems.filter(
+        item => waitingTaskKeys.has(lifecycleKeys.get(item)!) || isRuntimeTaskWaiting(item.task)
+      ).length,
+    [allRuntimeTaskItems, lifecycleKeys, waitingTaskKeys]
+  )
+  const projectUnreadTaskCount = useMemo(
+    () =>
+      allRuntimeTaskItems.filter(({ workspace, task }) =>
+        unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
+      ).length,
+    [allRuntimeTaskItems, unreadTaskKeys]
+  )
   const toggleProjectPinned = async () => {
     const projectKey = projectSidebarStateKey
     if (!projectKey || !projectStateDeviceId || !onSetRuntimeProjectPinned) return
