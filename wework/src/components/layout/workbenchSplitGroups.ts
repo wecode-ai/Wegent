@@ -184,12 +184,16 @@ export function getActiveWorkbenchLayout(state: WorkbenchSplitGroupsState): Work
 }
 
 export function getWorkbenchSplitGroupMemberships(
-  state: WorkbenchSplitGroupsState
+  state: WorkbenchSplitGroupsState,
+  showActiveGroup: boolean
 ): Record<string, WorkbenchSplitGroupMembership> {
   const memberships: Record<string, WorkbenchSplitGroupMembership> = {}
   for (const group of state.groups) {
-    const active = state.activeView.type === 'group' && state.activeView.groupId === group.id
-    const focusedPane = findWorkbenchPane(group.layout.root, group.layout.focusedPaneId)
+    const active =
+      showActiveGroup && state.activeView.type === 'group' && state.activeView.groupId === group.id
+    const focusedPane = active
+      ? findWorkbenchPane(group.layout.root, group.layout.focusedPaneId)
+      : null
     for (const paneKey of runtimePaneKeys(group.layout)) {
       memberships[paneKey] = {
         groupId: group.id,

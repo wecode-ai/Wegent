@@ -557,6 +557,7 @@ export function createRuntimeInteractionsSource(
     setBusy(new Set(inFlight))
     const confirmedResolved = () =>
       isResolvedIssueQuestion(item, issueDiscovery.resolved) ||
+      isResolvedIssueQuestion(item, issueDiscovery.transferred) ||
       hasRecordedIssueResolution(item, readInteractionHistory(historyKey))
     try {
       if (confirmedResolved()) {
@@ -831,6 +832,7 @@ export function createRuntimeInteractionsSource(
       submitted,
       issueDiscovery.items,
       issueDiscovery.resolved,
+      issueDiscovery.transferred,
       history,
     ]
     if (changed(pendingInputs, nextPendingInputs)) {

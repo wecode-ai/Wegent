@@ -40,6 +40,26 @@ The desktop prompt above the composer offers **Notification settings**, **Don't 
 
 The number beside **My assistants** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. A completed stand-in turn generates at most one desktop notification showing its final reply. Background tasks routed through the stand-in deliver their results in the stand-in conversation. Primary notifications use the title **My assistants** and open the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
 
+<a id="assistant-teams"></a>
+
+## Organize assistant teams
+
+Open **My assistants → Teams → Create team**, enter a name, choose a lead and members, and add team duties as needed. A specialist can join multiple teams, with duties configured separately for each team. Use the primary assistant or a specialist on the current device as lead. Other members can run on their configured devices.
+
+Open a saved team from **Teams** to give it work. The lead delegates based on the team roster and duties, and results return to the team conversation. Each team conversation has its own history. Changing the lead opens a conversation under the new lead.
+
+From **Teams**, edit or delete a team. Its assistants remain available individually and in other teams after deletion.
+
+<a id="assistant-sharing"></a>
+
+## Share an assistant or team
+
+Open **My assistants → Sharing → Share an assistant or team**. Choose what to share, search for and select a recipient, then select **Send share**. Select **Allow recipient to copy** to enable **Copy to my assistants** for the recipient under **My assistants → Sharing → Shared with me**. The recipient configures connections, execution devices, and workspaces for their own assistants.
+
+In **Shared with me**, select **Use directly** to start a separate conversation, then select **Open conversation** to return. The owner maintains the configuration, and the executor reads the current version before starting a new turn. Under **Shared by me**, select **Revoke share** to end the recipient’s access. Recipients retain any copies they created.
+
+When two teams include the same source assistant, copying them on the same device reuses the existing assistant copy. When a newer version is available, select **Update team** or **Update to shared version** under **Shared with me** and confirm to apply the new team duties or assistant prompt.
+
 <a id="assistant-role-delegation"></a>
 
 ## Delegate work to another assistant
@@ -245,6 +265,8 @@ In these DingTalk source settings, both all-group mentions and all-contact direc
 Open **Sidebar → My assistants → select primary or role → Assistant details → Manage assistant → Connections → DingTalk**. After adding an individual group under filtered sources, use **Receive** beside that group to choose **Mentions only** (the default) or **All messages**. Existing individual groups can also be edited. The all-groups subscription still receives mentions only; direct messages do not have this option. Click **Save** in settings to apply the change; cancel discards it. A scope change starts intake at its save boundary without importing earlier history. Receiving all messages does not mean replying to every message: responsibilities, handling settings and sending approvals still determine the response.
 
 DingTalk groups set to **All messages** catch up in windows of up to 15 minutes. After a timeout, collection retries from the same starting point with a five-minute window. If that also times out, collection skips backlog older than five minutes and uses one-minute windows for recent messages. If timeouts continue, collection keeps advancing as time passes. Skipped messages remain available in DingTalk.
+
+To investigate a missing group message, search the execution device’s `dsh-core-runtime.log` for `wework-dingtalk-collection` using the group ID and send time. The log records each polling window, the message IDs returned by the API, and connector filter reasons. Search `executor.log` for `DingTalk group intake` and the message ID to check subscription filter reasons or queue status. A `pending` status means the event entered the queue. These diagnostic entries contain only the metadata needed for troubleshooting.
 
 You can manually mention yourself in a connected group to delegate work. You can also select yourself explicitly as a direct-message contact under filtered sources and save, then manually send instructions in your self-chat. The source's handling and approval policies still apply. Selecting all contacts alone does not enable this entry, and your outgoing messages to other contacts are not treated as instructions. Stand-in replies always retain DingTalk's AI-send marker.
 

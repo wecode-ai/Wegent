@@ -478,6 +478,7 @@ export function createDesktopScenario({
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('waitFor', testId('personal-assistant-connect-cloud'))
       assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
+      await captureScreenshot(control, 'personal-assistant-cloud-disconnected.png')
       await control.command('clickWhenEnabled', testId('personal-assistant-connect-cloud'))
       await control.command('waitFor', testId('settings-cloud-connect-button'))
       await control.command('setCloudSessionToken', 'body', { value: cloud.authToken })

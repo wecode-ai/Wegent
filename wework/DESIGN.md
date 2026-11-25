@@ -68,9 +68,16 @@ Codex's recognizable visual grammar is:
   four-card quick-start row is intentional and must not expand into a dashboard;
 - soft rounded shapes are systematic, not decorative;
 - borders are low-contrast hairlines and elevation is restrained;
-- one strong action is allowed; surrounding actions remain quiet;
-- information appears progressively instead of every option being visible at
-  equal weight.
+- buttons on the same surface must use the shared recipes in section 6.1.
+  Actions of equal importance use the same variant and size within a group.
+  When there is a clear next step, give that action the strongest emphasis;
+- organize each view around the user's current task. Show the work item and
+  the context needed to act on it together. For example, an issue detail view
+  should open with the issue and its status; choosing Edit reveals its fields;
+- ask only for information the current task requires. Reuse known values,
+  group fields that users decide together, and reveal occasional settings
+  when relevant. Keep essential choices visible and advanced options easy
+  to find.
 
 A normal screenshot should first read as work content, then structure, then
 controls. It must not first read as green, colorful, card-heavy, glossy, or

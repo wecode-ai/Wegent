@@ -1,6 +1,10 @@
 //! Persistent identity conversations share the ordinary Runtime task lifecycle.
 use super::stand_in::settings_error;
+use super::stand_in_shared_conversation::{
+    shared_conversation_instructions, shared_conversation_name, SharedConversation,
+};
 use super::*;
+use crate::task_runtime::personal_stand_in::{stand_in_team, team_scope_id};
 use sha2::{Digest, Sha256};
 
 const IDENTITY_INSTRUCTIONS: &str = "You are the user's persistent personal stand-in. Keep this conversation for communication, clarification, responsibilities and progress. Use wework_stand_in to inspect current responsibilities and propose configuration changes. Proposals are drafts: do not claim configuration is saved until the user confirms it in Wework. When specialist delegation tools are available, use them for explicit owner requests that fit the specialist's responsibilities. Follow any role the user names, assign a clear match automatically, and ask when choosing between roles would change the outcome. Coordinate branches and report the final result here after they finish. Ask follow-up questions when scope is ambiguous. Never grant broader access than requested. Read current state with tools instead of relying on stale conversation context.";
@@ -30,7 +34,7 @@ fn identity_system_prompt(
 
 const CONNECTION_INSTRUCTIONS: &str = "Before acting on mail, calendars or project updates, inspect available sources with get_profile and list_connection_providers (list_projects for projects). Attempt missing data-source connections with connect_source. A provider being ready or a subscription existing does not prove you have read its contents. When login is required, request native Wework authorization using only the exact pluginKey and connectorSlug returned by the provider; resume discovery after authorization. For account setup, guide the user to the secure native Connections form; never request passwords or tokens in chat. Clarify the required resource scope, propose subscriptions with propose_profile, and wait for explicit native confirmation before proceeding. When that configuration blocks the current explicit business request, set continueCurrentRequest=true and check willContinueCurrentRequest in the tool result so the host can resume this same owner request after acceptance. Omit it for ordinary configuration edits. Existing worker grants never expand; select exact current sources for any new execution. If a source cannot be read, explain what is missing and wait; do not invent content or create an aggregation task that cannot access its inputs. Keep the user's business request intact rather than asking them to write these setup instructions.";
 
-fn append_connection_instructions(system: &mut String) {
+pub(super) fn append_connection_instructions(system: &mut String) {
     if !system.contains(CONNECTION_INSTRUCTIONS) {
         system.push_str("\n\n");
         system.push_str(CONNECTION_INSTRUCTIONS);
@@ -70,7 +74,16 @@ pub(super) fn scoped_conversation_task_id(
     role: Option<&str>,
     scope: &Value,
 ) -> Result<String, AppIpcError> {
+    if let Some(reference) = SharedConversation::parse(scope).filter(|_| role.is_none()) {
+        return Ok(reference.task_id(user));
+    }
     let task = conversation_task_id(user, role);
+    if let Some(team) = team_scope_id(scope) {
+        return Ok(format!(
+            "stand-in-team-chat-{user}-{team}-{}",
+            role.unwrap_or("@primary")
+        ));
+    }
     match scope {
         Value::Null => Ok(task),
         Value::String(scope) if scope == "collaboration" => Ok(format!("{task}-collaboration")),
@@ -79,6 +92,33 @@ pub(super) fn scoped_conversation_task_id(
             "Unknown conversation scope",
         )),
     }
+}
+
+fn validate_team_lead(
+    settings: &Value,
+    team_id: &str,
+    role: Option<&str>,
+    device: &str,
+) -> Result<crate::task_runtime::personal_stand_in::StandInTeam, AppIpcError> {
+    stand_in_team(settings, team_id)
+        .filter(|team| {
+            settings["lifecycle"]["status"].is_null() && team.lead_id == role.unwrap_or("@primary")
+        })
+        .filter(|_| {
+            role.map_or(true, |id| {
+                settings["roles"].as_array().is_some_and(|roles| {
+                    roles
+                        .iter()
+                        .any(|role| role["id"] == id && role["executionDeviceId"] == device)
+                })
+            })
+        })
+        .ok_or_else(|| {
+            AppIpcError::new(
+                "team_unavailable",
+                "The team or its lead is no longer available on this device",
+            )
+        })
 }
 
 fn append_collaboration_instructions(system: &mut String) {
@@ -192,6 +232,15 @@ impl RuntimeWorkRpcHandler {
                 "Stand-in conversation owner does not match its stored identity",
             ));
         }
+        if let Some(team_id) = team_scope_id(&origin["conversationScope"]) {
+            let user = user.unwrap();
+            let store =
+                LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+            let settings = store
+                .read_personal_stand_in(user, &self.device_id)
+                .map_err(settings_error)?;
+            validate_team_lead(&settings, team_id, role, &self.device_id)?;
+        }
         // Device-local history survives a desktop identity change. Rebind only
         // the verified identity conversation, never external work or a batch.
         origin["deviceId"] = json!(self.device_id);
@@ -276,8 +325,16 @@ impl RuntimeWorkRpcHandler {
             } else {
                 None
             };
+            let connection = self.backend_connection_snapshot()?;
             let saved = store
-                .resolve_stand_in_proposal(user, &device, id, accept, prepared)
+                .resolve_stand_in_proposal_for_backend(
+                    user,
+                    &device,
+                    id,
+                    accept,
+                    prepared,
+                    connection.as_ref().map(|entry| entry.backend_url.as_str()),
+                )
                 .map_err(settings_error)?;
             drop(_guard);
             if let Err(error) = self.flush_stand_in_proposal_continuations().await {
@@ -348,13 +405,28 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let scope = &payload["options"]["conversationScope"];
+        let team = team_scope_id(scope)
+            .map(|id| validate_team_lead(&personal, id, role_id, &self.device_id))
+            .transpose()?;
         let task_id = scoped_conversation_task_id(user, role_id, scope)?;
         // Serialize creation, not individual turns; ordinary Runtime owns turn queuing.
         let gate = self.task_send_gate(&format!("stand-in-conversation:{task_id}"));
         let _guard = gate.lock().await;
-        let title = role
-            .and_then(|role| role["name"].as_str())
-            .filter(|name| !name.is_empty())
+        let shared_ref = SharedConversation::parse(scope);
+        let shared = match &shared_ref {
+            Some(reference) if self.local_task_link(&task_id).is_none() => {
+                Some(self.shared_conversation_snapshot(user, reference).await?)
+            }
+            _ => None,
+        };
+        let title = shared
+            .as_ref()
+            .map(shared_conversation_name)
+            .or_else(|| team.as_ref().map(|team| team.name.as_str()))
+            .or_else(|| {
+                role.and_then(|role| role["name"].as_str())
+                    .filter(|name| !name.is_empty())
+            })
             .unwrap_or("我的助理");
         let mut origin = json!({"runtimeTaskId":task_id,"type":"stand_in_identity","initiatedBy":"stand_in_identity","userId":user,"standInId":role_id,"deviceId":self.device_id,"askBeforeAct":true});
         if let Some(prompt) = shared_prompt {
@@ -409,12 +481,21 @@ impl RuntimeWorkRpcHandler {
         let system = prepared["executionRequest"]["system_prompt"]
             .as_str()
             .unwrap_or_default();
-        prepared["executionRequest"]["system_prompt"] = json!(identity_system_prompt(
-            system,
-            config["prompt"].as_str(),
-            config["preferences"].as_str(),
-            scope == "collaboration",
-        ));
+        let system = if let Some(snapshot) = &shared {
+            shared_conversation_instructions(snapshot)?
+        } else {
+            let mut system = identity_system_prompt(
+                system,
+                config["prompt"].as_str(),
+                config["preferences"].as_str(),
+                scope == "collaboration",
+            );
+            if team.is_some() {
+                system.push_str("\n\nYou are coordinating an assistant team. Use list_delegate_roles to read your current duty and the other members’ duties, then delegate to the team.");
+            }
+            system
+        };
+        prepared["executionRequest"]["system_prompt"] = json!(system);
         self.dispatch_stand_in_conversation(prepared, activity)
             .await?;
         Ok(self.identity_conversation_address(&task_id))

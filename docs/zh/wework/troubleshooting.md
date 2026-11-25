@@ -122,6 +122,10 @@ MCP 工具审批使用单独的等待期限，工具执行超时从获批后的�
 - 远程项目应确认设备在线，并重新选择该设备上的目录。
 - Git 项目目标目录已存在时，使用现有目录方式添加，或选择新的目标目录。
 
+## PR / MR 状态可能已过期
+
+在执行设备的 Executor 日志中查找 `UI observation lease lost`，按 `change_request_number` 查找已识别的 PR / MR，并用 `observer_id` 关联同一租约的 `UI observation lease stopped`。查看 `reason` 可区分租约到期、主动停止、记录缺失和云端拒绝。缺少租约记录时，日志可能无法识别 PR / MR 编号。
+
 ## Git 克隆失败
 
 | 提示                             | 检查内容                           |

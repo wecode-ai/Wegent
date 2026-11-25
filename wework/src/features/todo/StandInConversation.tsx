@@ -1,4 +1,5 @@
-import { standInConversationTaskId } from '@/api/personalStandIn'
+import { standInConversationTaskId, type StandInConversationScope } from '@/api/personalStandIn'
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import type { PersonalAssistantDefinition } from '@/api/personalAssistantAccount'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -70,7 +71,7 @@ export function StandInConversation({
   renderDetails?(activeBranches: ReturnType<typeof activeStandInBranchRows>): ReactNode
   settings?: Pick<WorkspaceStandInSettings, 'model' | 'modelOptions'>
   services?: WorkbenchServices
-  scope?: 'collaboration'
+  scope?: StandInConversationScope
   definition?: PersonalAssistantDefinition
 }) {
   const [recordOpened] = useState(createStandInOpenedReceipt)
@@ -91,6 +92,7 @@ export function StandInConversation({
   }
   const resource = owner.resource
   const workbench = useContext(WorkbenchContext)
+  const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const modelControls = useStandInConversationModel(
     services ?? workbench?.services,
     {
@@ -113,7 +115,7 @@ export function StandInConversation({
       : modelControls
   const aliases = getUnambiguousWorkbenchDeviceAliases(workbench?.state.devices ?? [])
   const persistedTaskExists = Boolean(
-    workbench?.runtimeTaskReminders.items.some(
+    taskReminderItems.some(
       item =>
         item.address.taskId === taskId &&
         (aliases.get(item.address.deviceId) ?? item.address.deviceId) ===
@@ -139,15 +141,16 @@ export function StandInConversation({
       ),
     [api, userId, deviceId, taskId]
   )
+  const roleDelegationEnabled = scope !== 'collaboration' && !scope?.startsWith('shared:')
   const remoteBranches = useSyncExternalStore(
-    active && !scope && address ? roleBranches.subscribe : subscribeIdleResource,
+    active && roleDelegationEnabled && address ? roleBranches.subscribe : subscribeIdleResource,
     roleBranches.getSnapshot,
     getIdleResourceSnapshot
   )
-  const delegatedWork = scope
+  const delegatedWork = !roleDelegationEnabled
     ? []
     : selectStandInDelegatedWork(
-        workbench?.runtimeTaskReminders.items ?? [],
+        taskReminderItems,
         remoteBranches.data?.items ?? [],
         userId,
         deviceId,
@@ -287,18 +290,22 @@ export function StandInConversation({
         placeholder={t(
           scope === 'collaboration'
             ? 'personalHome.conversationPrompt'
-            : roleId
-              ? 'standIn.workspace.role_prompt'
-              : 'standIn.workspace.primary_prompt'
+            : scope?.startsWith('team:')
+              ? 'standIn.teams.prompt'
+              : roleId
+                ? 'standIn.workspace.role_prompt'
+                : 'standIn.workspace.primary_prompt'
         )}
         emptyStateText={t(
           scope === 'collaboration'
             ? 'personalHome.conversationEmpty'
-            : hasPendingWork
-              ? 'standIn.workspace.pending_work_help'
-              : roleId
-                ? 'standIn.workspace.role_empty'
-                : 'standIn.workspace.primary_empty'
+            : scope?.startsWith('team:')
+              ? 'standIn.teams.empty_conversation'
+              : hasPendingWork
+                ? 'standIn.workspace.pending_work_help'
+                : roleId
+                  ? 'standIn.workspace.role_empty'
+                  : 'standIn.workspace.primary_empty'
         )}
         onOpenRuntimeTask={onOpenTask}
         createTask={async (message, options) => {
