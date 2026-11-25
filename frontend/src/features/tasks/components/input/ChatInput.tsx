@@ -78,8 +78,6 @@ interface ChatInputProps {
   selectedSkillIds?: number[]
   onSkillSelect?: (skill: UnifiedSkill) => void
   isChatShell?: boolean
-  /** Whether skill selector is read-only (can view but not modify via / command) */
-  skillSelectorReadOnly?: boolean
   /** Ref to the skill button element for fly animation target */
   skillButtonRef?: React.RefObject<HTMLElement | null>
 
@@ -122,7 +120,6 @@ export default function ChatInput({
   selectedSkillIds,
   onSkillSelect,
   isChatShell = false,
-  skillSelectorReadOnly = false,
   skillButtonRef,
   isExpanded = false,
   onExpandToggle,
@@ -162,6 +159,8 @@ export default function ChatInput({
 
   // Combine disabled, hasNoTeams and disabledReason for input disabled state
   const isInputDisabled = disabled || hasNoTeams || !!disabledReason
+  const canSelectSkills =
+    !isInputDisabled && showSkillSelector && Boolean(onSkillSelect) && availableSkills.length > 0
 
   const [isComposing, setIsComposing] = useState(false)
   // Track if composition just ended (for Safari where compositionend fires before keydown)
@@ -448,7 +447,7 @@ export default function ChatInput({
       }
 
       // Check for / trigger for skill selector
-      if (showSkillSelector && availableSkills.length > 0) {
+      if (canSelectSkills) {
         const lastChar = text[text.length - 1]
         // Only trigger at start of input or after whitespace
         const charBeforeLast = text.length > 1 ? text[text.length - 2] : ''
@@ -487,8 +486,7 @@ export default function ChatInput({
       team,
       enableTaskMentions,
       showMentionMenu,
-      showSkillSelector,
-      availableSkills.length,
+      canSelectSkills,
       showSkillMenu,
     ]
   )
@@ -797,7 +795,7 @@ export default function ChatInput({
       )}
 
       {/* Skill autocomplete menu */}
-      {showSkillMenu && showSkillSelector && availableSkills.length > 0 && (
+      {showSkillMenu && canSelectSkills && (
         <SkillAutocomplete
           skills={availableSkills}
           teamSkillNames={teamSkillNames}
@@ -811,7 +809,6 @@ export default function ChatInput({
           }}
           position={skillMenuPosition}
           isChatShell={isChatShell}
-          readOnly={skillSelectorReadOnly}
           skillButtonRef={skillButtonRef}
           onTriggerFlyAnimation={handleTriggerFlyAnimation}
         />

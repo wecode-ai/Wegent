@@ -36,8 +36,6 @@ interface SkillAutocompleteProps {
   position: { top: number; left: number }
   /** Whether this is a Chat Shell (affects filtering behavior) */
   isChatShell: boolean
-  /** Whether the selector is read-only (can view but not modify) */
-  readOnly?: boolean
   /** Ref to the skill button element for fly animation target */
   skillButtonRef?: React.RefObject<HTMLElement | null>
   /** Callback to trigger fly animation (animation is rendered in parent) */
@@ -69,7 +67,6 @@ export default function SkillAutocomplete({
   onClose,
   position,
   isChatShell,
-  readOnly = false,
   skillButtonRef,
   onTriggerFlyAnimation,
 }: SkillAutocompleteProps) {
@@ -174,6 +171,8 @@ export default function SkillAutocomplete({
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return
+
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
@@ -187,12 +186,10 @@ export default function SkillAutocomplete({
         event.stopPropagation()
         setSelectedIndex(prev => Math.max(prev - 1, 0))
       } else if (event.key === 'Enter') {
+        if (event.target instanceof Node && menuRef.current?.contains(event.target)) return
         event.preventDefault()
         event.stopPropagation()
-        // In read-only mode, Enter just closes the menu
-        if (readOnly) {
-          onClose()
-        } else if (filteredSkills[selectedIndex]) {
+        if (filteredSkills[selectedIndex]) {
           // For keyboard selection, get position from the selected item
           const selectedItem = menuRef.current?.querySelector(
             `[data-skill-index="${selectedIndex}"]`
@@ -213,7 +210,7 @@ export default function SkillAutocomplete({
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [onClose, filteredSkills, selectedIndex, handleSelect, readOnly])
+  }, [onClose, filteredSkills, selectedIndex, handleSelect])
 
   // Get section header for a group
   const getSectionHeader = (group: 'team' | 'personal' | 'group' | 'public') => {
@@ -301,43 +298,31 @@ export default function SkillAutocomplete({
     itemIndex++
 
     renderItems.push(
-      <div
-        key={skill.name}
+      <button
+        key={skill.id}
+        type="button"
+        data-testid="slash-skill-option"
         data-skill-index={displayIndex}
-        className={`px-3 py-2 transition-colors flex items-center gap-2 ${
-          readOnly ? 'cursor-default' : 'cursor-pointer'
-        } ${
-          displayIndex === selectedIndex ? 'bg-muted' : readOnly ? '' : 'hover:bg-muted'
+        aria-pressed={isSelected}
+        className={`w-full px-3 py-2 text-left transition-colors flex items-center gap-2 cursor-pointer ${
+          displayIndex === selectedIndex ? 'bg-muted' : 'hover:bg-muted'
         } ${isSelected ? 'opacity-60' : ''}`}
-        onClick={readOnly ? undefined : e => handleSelect(skill, e)}
-        role={readOnly ? undefined : 'button'}
-        tabIndex={readOnly ? -1 : 0}
-        onKeyDown={
-          readOnly
-            ? undefined
-            : e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  handleSelect(skill, e)
-                }
-              }
-        }
+        onMouseDown={e => e.preventDefault()}
+        onClick={e => handleSelect(skill, e)}
       >
-        <Zap className={`h-4 w-4 flex-shrink-0 ${readOnly ? 'text-text-muted' : 'text-primary'}`} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span
-              className={`text-sm font-medium truncate ${readOnly ? 'text-text-muted' : 'text-text-primary'}`}
-            >
+        <Zap className="h-4 w-4 flex-shrink-0 text-primary" />
+        <span className="flex-1 min-w-0">
+          <span className="flex items-center gap-2">
+            <span className="text-sm font-medium truncate text-text-primary">
               {skill.displayName || skill.name}
             </span>
             {isSelected && <Check className="h-3.5 w-3.5 text-primary flex-shrink-0" />}
-          </div>
+          </span>
           {skill.description && (
-            <div className="text-xs text-text-muted truncate">{skill.description}</div>
+            <span className="block text-xs text-text-muted truncate">{skill.description}</span>
           )}
-        </div>
-      </div>
+        </span>
+      </button>
     )
   }
 

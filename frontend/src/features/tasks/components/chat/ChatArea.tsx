@@ -1009,18 +1009,16 @@ function ChatAreaContent({
 
   const effectiveShowRepositorySelector = showRepositorySelector && effectiveTaskType === 'code'
 
-  // Compute initial selected skills from task detail (for page refresh recovery)
-  const initialSelectedSkills = useMemo(() => {
-    if (selectedTaskDetail?.requested_skills) {
-      return selectedTaskDetail.requested_skills.map(skill => skill.name)
-    }
-    return []
-  }, [selectedTaskDetail?.requested_skills])
+  const initialSelectedSkills =
+    selectedTaskDetail?.id === effectiveTaskId
+      ? (selectedTaskDetail?.requested_skills ?? undefined)
+      : undefined
 
   // Skill selector state - fetches available skills and manages selection
   const skillSelector = useSkillSelector({
     team: chatState.selectedTeam,
     enabled: true,
+    taskId: effectiveTaskId,
     initialSelectedSkills,
   })
 
@@ -2625,7 +2623,7 @@ function ChatAreaContent({
     teamSkillNames: skillSelector.teamSkillNames,
     preloadedSkillNames: skillSelector.preloadedSkillNames,
     selectedSkillIds: skillSelector.selectedSkills.flatMap(skill =>
-      skill.skill_id === undefined ? [] : [skill.skill_id]
+      skill.skill_id == null ? [] : [skill.skill_id]
     ),
     selectedSkillNames: skillSelector.selectedSkillNames,
     onToggleSkill: skillSelector.toggleSkill,

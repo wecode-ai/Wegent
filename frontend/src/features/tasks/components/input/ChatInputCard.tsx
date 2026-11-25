@@ -816,8 +816,6 @@ export function ChatInputCard({
               selectedSkillIds={selectedSkillIds}
               onSkillSelect={onToggleSkill}
               isChatShell={selectedTeam?.agent_type === 'chat'}
-              // Skill selection is read-only after task creation (hasMessages)
-              skillSelectorReadOnly={hasMessages}
               // Pass skill button ref for fly animation
               skillButtonRef={
                 { current: getSkillButtonElement() } as React.RefObject<HTMLElement | null>

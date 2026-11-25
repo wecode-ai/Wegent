@@ -40,9 +40,10 @@ async function uploadSkill(api: ApiClient, name: string, marker: string): Promis
 }
 
 // The existing sharded Chromium project provides real Rust Socket.IO, MySQL,
-// Redis and Chat Shell. This test only mocks the model and uses one Chat turn.
+// Redis and Chat Shell. This test only mocks the model.
 test('Chat consumes Ghost skills and automatic bindings with legacy shell metadata', async ({
   request,
+  page,
   executorAccount,
 }) => {
   test.setTimeout(90_000)
@@ -190,6 +191,42 @@ test('Chat consumes Ghost skills and automatic bindings with legacy shell metada
       )
     }
     expect(extractTaskAnswer(task)).toBe(answer)
+
+    const followUp = `Use the selected skill for the follow-up in ${prefix}.`
+    const followUpAnswer = `FOLLOW_UP_${prefix}`
+    await configureToolScenario(request, followUp, [{ responseContent: followUpAnswer }])
+    await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
+    await page.goto(`/chat?taskId=${ack.task_id}`, { waitUntil: 'domcontentloaded' })
+    const input = page.getByTestId('message-input')
+    await expect(input, 'The existing task composer should be editable').toBeEditable({
+      timeout: 15_000,
+    })
+    await expect(
+      page.getByText(answer, { exact: true }),
+      'The existing task should be loaded'
+    ).toBeVisible({
+      timeout: 10_000,
+    })
+    await input.pressSequentially(`/${ghostOnDemand.name}`)
+    const option = page.getByTestId('slash-skill-option').filter({ hasText: ghostOnDemand.name })
+    await expect(option, 'The agent skill should be selectable on a follow-up').toBeVisible({
+      timeout: 5_000,
+    })
+    await input.press('Enter')
+    await expect(option).toBeHidden()
+    await expect(input).toHaveText('')
+    await input.fill(followUp)
+    await page.getByTestId('send-button').click()
+    await expect(page.getByText(followUpAnswer, { exact: true })).toBeVisible({ timeout: 20_000 })
+    const [followUpBody] = await getScenarioModelBodies(request, followUp)
+    const modelMessages = followUpBody?.messages as Array<{ content: unknown }> | undefined
+    const context = modelMessages
+      ?.map(({ content }) => JSON.stringify(content) ?? '')
+      .find(content => content.includes('Loaded Skill Instructions'))
+    expect(context).toContain(ghostOnDemand.marker)
+    expect(
+      context?.match(/The user has explicitly selected .* for this task: ([^*]+)/)?.[1]
+    ).toContain(ghostOnDemand.name)
   } finally {
     client.dispose()
     for (const { path, status } of resources.reverse()) {

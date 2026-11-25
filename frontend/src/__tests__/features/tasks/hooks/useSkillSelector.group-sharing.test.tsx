@@ -4,6 +4,8 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { fetchUnifiedSkillsList } from '@/apis/skills'
+import { fetchTeamSkills, type TeamSkillsResponse } from '@/apis/team'
+import type { Team } from '@/types/api'
 import { useSkillSelector } from '@/features/tasks/hooks/useSkillSelector'
 
 jest.mock('@/apis/skills', () => ({ fetchUnifiedSkillsList: jest.fn() }))
@@ -24,8 +26,7 @@ it('sends the original ID and namespace when selecting another member’s shared
       availability: { inMyDefault: false },
     },
   ])
-  const initialSelectedSkills: string[] = []
-  const { result } = renderHook(() => useSkillSelector({ team: null, initialSelectedSkills }))
+  const { result } = renderHook(() => useSkillSelector({ team: null }))
   await waitFor(() => expect(result.current.temporarySkills).toHaveLength(1))
 
   act(() => result.current.toggleSkill(result.current.temporarySkills[0]))
@@ -72,9 +73,48 @@ it('can deselect a unique skill restored from name-only task metadata', async ()
     is_active: true,
   }
   jest.mocked(fetchUnifiedSkillsList).mockResolvedValue([skill])
-  const initialSelectedSkills = ['pdf']
+  const initialSelectedSkills = [{ name: 'pdf', namespace: 'engineering', is_public: false }]
   const { result } = renderHook(() => useSkillSelector({ team: null, initialSelectedSkills }))
   await waitFor(() => expect(result.current.selectedSkills[0].skill_id).toBe(3))
   act(() => result.current.toggleSkill(skill))
+  expect(result.current.selectedSkills).toEqual([])
+})
+
+it('keeps an explicitly selected skill when the agent catalog arrives and clears it for another task', async () => {
+  const skill = {
+    id: 4,
+    name: 'pdf',
+    namespace: 'default',
+    description: '',
+    user_id: 1,
+    is_public: false,
+    is_active: true,
+  }
+  jest.mocked(fetchUnifiedSkillsList).mockResolvedValue([skill])
+  let resolveTeamSkills!: (data: TeamSkillsResponse) => void
+  jest.mocked(fetchTeamSkills).mockReturnValue(
+    new Promise(resolve => {
+      resolveTeamSkills = resolve
+    })
+  )
+  const team = { id: 10 } as Team
+  const { result, rerender } = renderHook(({ taskId }) => useSkillSelector({ team, taskId }), {
+    initialProps: { taskId: 20 },
+  })
+  await waitFor(() => expect(result.current.availableSkills).toEqual([skill]))
+  act(() => result.current.toggleSkill(skill))
+  await act(async () =>
+    resolveTeamSkills({
+      team_id: team.id,
+      team_namespace: 'default',
+      skills: [skill.name],
+      preload_skills: [],
+    })
+  )
+  expect(result.current.teamSkillNames).toEqual([skill.name])
+  expect(result.current.selectedSkills).toEqual([
+    { skill_id: 4, name: 'pdf', namespace: 'default', is_public: false },
+  ])
+  rerender({ taskId: 21 })
   expect(result.current.selectedSkills).toEqual([])
 })

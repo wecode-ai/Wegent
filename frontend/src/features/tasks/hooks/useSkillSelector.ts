@@ -13,7 +13,7 @@ import { filterVisibleSkills } from '@/utils/skillVisibility'
 
 export type { SkillRef } from '@/types/api'
 
-const EMPTY_SKILL_NAMES: string[] = []
+const EMPTY_SKILL_REFS: SkillRef[] = []
 
 export type AutoAvailableSkill = UnifiedSkill & {
   availabilitySources: Array<'agent_builtin' | 'my_default'>
@@ -24,8 +24,10 @@ interface UseSkillSelectorOptions {
   team: Team | null
   /** Whether skills feature is enabled */
   enabled?: boolean
-  /** Initial selected skill names (e.g., from task metadata on page refresh) */
-  initialSelectedSkills?: string[]
+  /** Task that owns the current selection, or undefined for a new draft */
+  taskId?: number
+  /** Initial selections restored from task metadata */
+  initialSelectedSkills?: SkillRef[]
 }
 
 interface UseSkillSelectorReturn {
@@ -74,16 +76,15 @@ interface UseSkillSelectorReturn {
 export function useSkillSelector({
   team,
   enabled = true,
-  initialSelectedSkills = EMPTY_SKILL_NAMES,
+  taskId,
+  initialSelectedSkills = EMPTY_SKILL_REFS,
 }: UseSkillSelectorOptions): UseSkillSelectorReturn {
   // State for available skills from unified API
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   // State for team-specific skills (from backend)
   const [teamSkillsData, setTeamSkillsData] = useState<TeamSkillsResponse | null>(null)
   // Preserve record identity; names remain available for badges and task metadata.
-  const [selectedRefs, setSelectedRefs] = useState<SkillRef[]>(
-    initialSelectedSkills.map(name => ({ name, namespace: 'default', is_public: false }))
-  )
+  const [selectedRefs, setSelectedRefs] = useState(initialSelectedSkills)
   const selectedSkillNames = useMemo(() => selectedRefs.map(skill => skill.name), [selectedRefs])
   const setSelectedSkillNames = useCallback((names: string[]) => {
     setSelectedRefs(names.map(name => ({ name, namespace: 'default', is_public: false })))
@@ -187,28 +188,10 @@ export function useSkillSelector({
     fetchTeamSkillsData()
   }, [enabled, team?.id])
 
-  // Update selected skills when initialSelectedSkills changes (e.g., task detail loaded)
+  const draftTeamId = taskId === undefined ? team?.id : undefined
   useEffect(() => {
-    if (initialSelectedSkills && initialSelectedSkills.length > 0) {
-      setSelectedSkillNames(initialSelectedSkills)
-    }
-  }, [initialSelectedSkills, setSelectedSkillNames])
-
-  // Reset selected skills when team changes (only if no initialSelectedSkills provided)
-  useEffect(() => {
-    if (!initialSelectedSkills || initialSelectedSkills.length === 0) {
-      setSelectedSkillNames([])
-    }
-  }, [team?.id, initialSelectedSkills, setSelectedSkillNames])
-
-  useEffect(() => {
-    if (autoAvailableSkillNames.size === 0) return
-
-    setSelectedRefs(prev => {
-      const temporarySelection = prev.filter(skill => !autoAvailableSkillNames.has(skill.name))
-      return temporarySelection.length === prev.length ? prev : temporarySelection
-    })
-  }, [autoAvailableSkillNames])
+    setSelectedRefs(initialSelectedSkills)
+  }, [taskId, draftTeamId, initialSelectedSkills])
 
   const resolveSkill = useCallback(
     (skill: UnifiedSkill): SkillRef => ({
@@ -222,7 +205,7 @@ export function useSkillSelector({
 
   const resolveStoredSkill = useCallback(
     (skill: SkillRef): SkillRef => {
-      if (skill.skill_id !== undefined) return skill
+      if (skill.skill_id != null) return skill
       const matches = availableSkills.filter(item => item.name === skill.name)
       return matches.length === 1 ? resolveSkill(matches[0]) : skill
     },
