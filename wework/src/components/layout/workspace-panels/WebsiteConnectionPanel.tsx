@@ -16,7 +16,7 @@ import { restartCoreDsh } from '@/features/dsh-plugins/coreDshPlugins'
 import { generateWebsiteConnection } from '@/features/todo/generateWebsiteConnection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, toBrowserPath } from '@/lib/navigation'
 
 type Stage =
   | { kind: 'matching' }
@@ -139,15 +139,14 @@ export function WebsiteConnectionPanel({
     setBusy(true)
     try {
       const identity = await describeDshExecutor()
-      if (restart) await restartCoreDsh()
-      navigateTo(
-        `/stand-in?${new URLSearchParams({
-          profileId: '@primary',
-          deviceId: identity.device_id,
-          settingsRequest: crypto.randomUUID(),
-          connectionProvider: providerId,
-        })}`
-      )
+      const route = `/stand-in?${new URLSearchParams({
+        profileId: '@primary',
+        deviceId: identity.device_id,
+        settingsRequest: crypto.randomUUID(),
+        connectionProvider: providerId,
+      })}`
+      if (restart) await restartCoreDsh(toBrowserPath(route))
+      else navigateTo(route)
       onClose()
     } catch {
       setDetail(t('workbench.web_connection_open_failed'))

@@ -1019,6 +1019,7 @@ function layoutPrimaryView(): void {
   embeddedBrowser?.layoutAll()
 }
 
+let coreRestartRoute: string | undefined
 const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!mainWindow || !desktopRuntime) return
   if (!desktopRuntime.state().ready) return
@@ -1064,7 +1065,7 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
           error
         )
       })
-    const targetUrl = new URL(dshUrl)
+    const targetUrl = new URL(coreRestartRoute ?? dshUrl, dshUrl)
     if (pluginDevelopmentInstance) {
       targetUrl.searchParams.set(
         'weworkDevTitle',
@@ -1134,16 +1135,21 @@ function disposeCoreDshViews(): void {
   primaryDshLoaded = false
 }
 
-async function restartPrimaryCoreDsh(): Promise<void> {
+async function restartPrimaryCoreDsh(route?: string): Promise<void> {
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   disposeCoreDshViews()
   await mainWindow?.webContents.loadURL('about:blank')
   await desktopRuntime.restartCoreDsh()
-  await loadPrimaryDshView()
+  coreRestartRoute = route
+  try {
+    await loadPrimaryDshView()
+  } finally {
+    coreRestartRoute = undefined
+  }
   await restoreFixedWorkspaceWindows()
 }
 
-function scheduleCoreDshRestart(): void {
+function scheduleCoreDshRestart(route?: string): void {
   setTimeout(() => {
     void (async () => {
       if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
@@ -1152,7 +1158,7 @@ function scheduleCoreDshRestart(): void {
       lastStartupFailure = null
       rendererHealth.loading()
       notifyRuntimeChanged()
-      await restartPrimaryCoreDsh()
+      await restartPrimaryCoreDsh(route)
       runtimePhase = lastStartupFailure ? 'failed' : 'ready'
       notifyRuntimeChanged()
     })().catch(error => {

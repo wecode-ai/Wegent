@@ -35,6 +35,6 @@ export function uninstallCoreDshPlugin(name: string): Promise<CoreDshPlugin[]> {
   return invokeDesktopHost('runtime.uninstallCoreDshPlugin', { name })
 }
 
-export async function restartCoreDsh(): Promise<void> {
-  await invokeDesktopHost('runtime.restartCoreDsh')
+export async function restartCoreDsh(route?: string): Promise<void> {
+  await invokeDesktopHost('runtime.restartCoreDsh', route ? { route } : undefined)
 }

@@ -326,7 +326,7 @@ export interface ElectronE2EHost {
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
   traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
-  scheduleCoreDshRestart: () => void
+  scheduleCoreDshRestart: (route?: string) => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
   showMain: () => Promise<void>
   closeWorkspace: (label: string) => void
@@ -1354,8 +1354,12 @@ export function createElectronCapabilityRouter(
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   registerPluginDevelopmentCapabilities(router, desktopServices)
-  router.register('runtime.restartCoreDsh', (_params, context) => {
-    context.deferUntilResponseSent(e2eHost.scheduleCoreDshRestart)
+  router.register('runtime.restartCoreDsh', (params, context) => {
+    const route = optionalStringParam(params, 'route')
+    if (route && (route.length > 2048 || !route.startsWith('/wework/app/stand-in?'))) {
+      throw new HostCapabilityError('invalid_input', 'Invalid assistant setup route')
+    }
+    context.deferUntilResponseSent(() => e2eHost.scheduleCoreDshRestart(route))
     return { scheduled: true }
   })
   router.register('shell.openExternal', async params => {
