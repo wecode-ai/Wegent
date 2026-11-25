@@ -14,7 +14,7 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { deviceSurfaceExtension } from '@extensions/device-surface'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { WorkbenchServicesContext } from '@/features/workbench/workbenchContexts'
 import { useContext, useState } from 'react'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
@@ -88,7 +88,7 @@ function WorkspaceBrowserSession({
   onUrlChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
-  const workbench = useContext(WorkbenchContext)
+  const services = useContext(WorkbenchServicesContext)
   const [connectionPage, setConnectionPage] = useState<string | null>(null)
   const { state, source, browserPanelRef, bindPanel, bindHost, bindAddressInput } =
     useWorkspaceBrowserPanelSession({
@@ -403,7 +403,7 @@ function WorkspaceBrowserSession({
                   disabled: !canUsePageFind,
                   onSelect: openFindBar,
                 },
-                ...(electronRuntime && workbench?.services.standInApi
+                ...(electronRuntime && services?.standInApi
                   ? [
                       {
                         label: t('workbench.web_connection_title'),
@@ -475,12 +475,12 @@ function WorkspaceBrowserSession({
           ) : null}
         </div>
       )}
-      {connectionPage && workbench && (
+      {connectionPage && services && (
         <WebsiteConnectionPanel
           key={connectionPage}
           label={label}
           url={connectionPage}
-          services={workbench.services}
+          services={services}
           onClose={() => setConnectionPage(null)}
         />
       )}

@@ -11,6 +11,7 @@
     "wework/electron/src/host/web-connection-*.ts",
     "wework/src/api/webConnections.ts",
     "wework/src/components/layout/workspace-panels/WebsiteConnectionPanel.tsx",
+    "wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx",
     "wework/src/features/todo/generateWebsiteConnection.ts"
   ],
   "ci": {
