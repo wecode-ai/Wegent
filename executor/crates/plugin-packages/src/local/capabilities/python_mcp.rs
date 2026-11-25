@@ -138,11 +138,12 @@ fn project_file(
     configs: &mut BTreeMap<PathBuf, Value>,
     require_source_files: bool,
 ) -> Result<(), CapabilitySyncError> {
-    let path = path
-        .components()
-        .filter(|component| !matches!(component, std::path::Component::CurDir))
-        .collect::<PathBuf>();
-    if let Some(mut config) = read_json(root, &path, require_source_files)? {
+    if let Some(file) = package_file(root, path, require_source_files)? {
+        let path = file
+            .strip_prefix(root)
+            .expect("validated package file")
+            .to_owned();
+        let mut config: Value = serde_json::from_slice(&fs::read(file)?)?;
         // A bare server may share a wrapper's name; its command or URL identifies it.
         let is_server = |value: &Value| value["command"].is_string() || value["url"].is_string();
         let wrapper = ["mcpServers", "mcp_servers"].into_iter().find(|key| {
@@ -178,18 +179,25 @@ fn package_file(
     relative: &Path,
     required: bool,
 ) -> Result<Option<PathBuf>, CapabilitySyncError> {
-    if relative.components().any(|component| {
-        !matches!(
-            component,
-            std::path::Component::CurDir | std::path::Component::Normal(_)
-        )
-    }) {
-        return Ok(None);
-    }
-    let mut path = root.to_owned();
+    let mut normalized = PathBuf::new();
     for component in relative.components() {
         match component {
+            std::path::Component::CurDir => (),
+            std::path::Component::Normal(name) => normalized.push(name),
+            std::path::Component::ParentDir if normalized.pop() => (),
+            _ => return Ok(None),
+        }
+    }
+    let mut path = root.to_owned();
+    // Inspect the original traversal so '..' cannot conceal a symbolic link.
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        match component {
             std::path::Component::CurDir => continue,
+            std::path::Component::ParentDir => {
+                path.pop();
+                continue;
+            }
             std::path::Component::Normal(name) => path.push(name),
             _ => return Ok(None),
         }
@@ -204,6 +212,21 @@ fn package_file(
             Err(_) => return Ok(None),
         };
         if metadata.file_type().is_symlink() {
+            if required {
+                return Err(CapabilitySyncError::invalid_payload(format!(
+                    "Plugin Python MCP source {} cannot traverse a symbolic link",
+                    relative.display()
+                )));
+            }
+            return Ok(None);
+        }
+        if components.peek().is_some() && !metadata.is_dir() {
+            if required {
+                return Err(CapabilitySyncError::invalid_payload(format!(
+                    "Plugin Python MCP source {} traverses a non-directory",
+                    relative.display()
+                )));
+            }
             return Ok(None);
         }
     }
@@ -321,6 +344,63 @@ fn has_explicit_python_environment(server: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contained_parent_components_preserve_plugin_mcp_projection() {
+        let package = tempfile::tempdir().unwrap();
+        let root = package.path().join("plugin");
+        fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+        fs::create_dir(root.join("scripts")).unwrap();
+        fs::write(root.join("server.py"), "pass\n").unwrap();
+        fs::write(package.path().join("outside.py"), "pass\n").unwrap();
+        let launcher = root.join("executor-bin");
+        for config in [".mcp.json", "scripts/../.mcp.json"] {
+            write_json(
+                &root.join(CODEX_PLUGIN_MANIFEST_PATH),
+                &json!({"name":"demo", "mcpServers":config}),
+            )
+            .unwrap();
+            for (cwd, script, managed) in [
+                (".", "server.py", true),
+                ("scripts", "../server.py", true),
+                (".", "../outside.py", false),
+                ("scripts", "../../outside.py", false),
+            ] {
+                write_json(
+                    &root.join(".mcp.json"),
+                    &json!({"service":{"command":"python3", "cwd":cwd, "args":[script]}}),
+                )
+                .unwrap();
+                for required in [false, true] {
+                    let projected = projected_configs(&root, &root, &launcher, required).unwrap();
+                    assert_eq!(!projected.is_empty(), managed, "{config}: {cwd}: {script}");
+                    if managed {
+                        assert_eq!(
+                            projected[Path::new(".mcp.json")]["service"]["command"],
+                            json!(launcher)
+                        );
+                        assert_eq!(
+                            projected[Path::new(".mcp.json")]["service"]["args"],
+                            json!(["plugin-python", "--mcp", script])
+                        );
+                    }
+                }
+            }
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(package.path(), root.join("linked")).unwrap();
+            write_json(
+                &root.join(".mcp.json"),
+                &json!({"service":{"command":"python3", "cwd":"linked", "args":["../server.py"]}}),
+            )
+            .unwrap();
+            assert!(projected_configs(&root, &root, &launcher, false)
+                .unwrap()
+                .is_empty());
+            assert!(projected_configs(&root, &root, &launcher, true).is_err());
+        }
+    }
 
     #[test]
     fn external_mcp_wrappers_preserve_services_named_after_wrappers() {

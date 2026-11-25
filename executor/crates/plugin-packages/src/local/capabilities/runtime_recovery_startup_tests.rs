@@ -11,6 +11,7 @@ enum McpConfig {
     External,
     Default,
     MixedDefault,
+    MixedExternal,
 }
 
 async fn installed_python_mcp(
@@ -28,7 +29,12 @@ async fn installed_python_mcp(
         server:{"command":"python3","cwd":"./","args":["scripts/server.py"]}
     }});
     if !matches!(config, McpConfig::Inline) {
-        zip.start_file(".mcp.json", zip::write::FileOptions::default())
+        let path = if matches!(config, McpConfig::MixedExternal) {
+            "connectors.json"
+        } else {
+            ".mcp.json"
+        };
+        zip.start_file(path, zip::write::FileOptions::default())
             .unwrap();
         zip.write_all(
             json!({"mcpServers":manifest["mcpServers"]})
@@ -36,9 +42,12 @@ async fn installed_python_mcp(
                 .as_bytes(),
         )
         .unwrap();
-        if matches!(config, McpConfig::MixedDefault) {
+        if matches!(config, McpConfig::MixedDefault | McpConfig::MixedExternal) {
             let mut claude = manifest.clone();
             claude.as_object_mut().unwrap().remove("mcpServers");
+            if matches!(config, McpConfig::MixedExternal) {
+                claude["mcpServers"] = json!(path);
+            }
             zip.start_file(
                 CLAUDE_PLUGIN_MANIFEST_PATH,
                 zip::write::FileOptions::default(),
@@ -163,8 +172,15 @@ async fn incomplete_mcp_source_preserves_cached_runtime_and_error() {
         McpConfig::External,
         McpConfig::Default,
         McpConfig::MixedDefault,
+        McpConfig::MixedExternal,
     ] {
         for missing in [None, Some("scripts/server.py"), Some(".mcp.json")] {
+            let missing =
+                if matches!(config, McpConfig::MixedExternal) && missing == Some(".mcp.json") {
+                    Some("connectors.json")
+                } else {
+                    missing
+                };
             if matches!(config, McpConfig::Inline) && missing == Some(".mcp.json") {
                 continue;
             }
@@ -194,6 +210,8 @@ async fn incomplete_mcp_source_preserves_cached_runtime_and_error() {
                 );
                 let path = runtime.join(if matches!(config, McpConfig::Inline) {
                     CODEX_PLUGIN_MANIFEST_PATH
+                } else if matches!(config, McpConfig::MixedExternal) {
+                    "connectors.json"
                 } else {
                     ".mcp.json"
                 });
@@ -240,6 +258,49 @@ async fn incomplete_mcp_source_preserves_cached_runtime_and_error() {
             }
         }
     }
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn required_symlink_source_preserves_cached_runtime_and_error() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let store = installed_python_mcp(
+        &home,
+        false,
+        CODEX_PLUGIN_MANIFEST_PATH,
+        "service",
+        true,
+        McpConfig::MixedExternal,
+    )
+    .await;
+    let mut manifest = store.manifest.load().unwrap();
+    let entry = &manifest["plugins"]["demo@wegent"];
+    let source = PathBuf::from(entry["store_path"].as_str().unwrap()).join("connectors.json");
+    let runtime = PathBuf::from(entry["runtime"]["claude_link"].as_str().unwrap());
+    let path = runtime.join("connectors.json");
+    let mut stale: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    stale["mcpServers"]["service"]["command"] = json!(home.join("old-executor"));
+    write_json(&path, &stale).unwrap();
+    let before = tree_fingerprint(&runtime).unwrap();
+    manifest["plugins"]["demo@wegent"]["runtime_recovery_error"] = json!("previous failure");
+    store.manifest.save(manifest).unwrap();
+    let outside = temp.path().join("outside.json");
+    fs::rename(&source, &outside).unwrap();
+    let original = fs::read(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &source).unwrap();
+
+    let report = store.reconcile_managed_plugin_runtimes().unwrap();
+
+    assert!(report.failed.contains_key("demo@wegent"));
+    assert!(report.restored.is_empty());
+    assert!(store.reconcile_managed_claude_plugins().is_err());
+    assert_eq!(tree_fingerprint(&runtime).unwrap(), before);
+    assert!(
+        store.manifest.load().unwrap()["plugins"]["demo@wegent"]["runtime_recovery_error"]
+            .is_string()
+    );
+    assert_eq!(fs::read(outside).unwrap(), original);
 }
 
 #[tokio::test]
