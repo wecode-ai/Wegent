@@ -6476,7 +6476,7 @@
       "stand_in_grouping_failed": "助理未能整理工作归属，请重试。",
       "work_busy": "该工作正在处理中，请稍后重试。",
       "failed": "暂时无法完成此操作。请保留当前修改，重新加载后再试。",
-      "device_offline": "执行设备离线，请连接设备后重试。",
+      "device_offline": "执行设备离线。",
       "stand_in_project_connections": "助理的旧智能体绑定已失效。请重新加载助理设置后重试。",
       "coordination_recovery_required": "上次后台处理的执行结果尚未确认。请查看原执行记录；确认前不会自动重发。",
       "coordination_stopped": "上次后台处理已失败或取消。请查看执行记录，修复原因后点击「立即检查」重新处理未完成事件。",

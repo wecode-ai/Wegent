@@ -6495,7 +6495,7 @@
       "stand_in_grouping_failed": "Stand-in could not organize the work. Try again.",
       "work_busy": "This work is being processed. Try again later.",
       "failed": "This operation could not be completed. Keep your changes and reload before trying again.",
-      "device_offline": "The execution device is offline. Connect it and try again.",
+      "device_offline": "The execution device is offline.",
       "stand_in_project_connections": "The stand-in’s old agent binding is no longer valid. Reload the assistant settings and try again.",
       "coordination_recovery_required": "The previous background execution is unconfirmed. Review its original task; it will not be replayed automatically.",
       "coordination_stopped": "The previous background execution failed or was cancelled. Review its task, fix the cause, then choose Check now to reassess unfinished events.",
