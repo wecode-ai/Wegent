@@ -1,63 +1,64 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import type { MessageCenterSnapshot } from '@/api/standInMessageCenter'
+import type { MessageCenterSnapshot, MessageCenterSource } from '@/api/standInMessageCenter'
 import '@/i18n'
 import { StandInMessageCenter } from './StandInMessageCenter'
 
-it('preserves a template edit when pausing a source advances the policy version', async () => {
+it('uses the shared settings entry and identifies the exact source from details', async () => {
   const user = userEvent.setup()
-  const settings = {
-    version: 5,
-    sourceIds: ['group'],
-    templates: { document: true, confirmedLogistics: true, standardProcess: true },
+  const source: MessageCenterSource = {
+    id: 'group:conversation',
+    conversationId: 'conversation',
+    name: '项目讨论群',
+    kind: 'group',
+    paused: true,
+    included: true,
   }
   const snapshot: MessageCenterSnapshot = {
     identity: { id: 'dingtalk-account', account: '测试账号', organization: '测试组织' },
     deviceName: 'This Mac',
     updatedAt: null,
     status: 'paused',
-    records: [],
-    sources: [{ id: 'group', name: '项目讨论群', kind: 'group', paused: false, included: true }],
-    settings,
-    capabilities: ['saveSettings', 'setSourcePaused'],
+    records: [
+      {
+        id: 'record',
+        title: '项目链接',
+        sourceId: source.id,
+        sourceName: source.name,
+        sender: '测试联系人',
+        message: '项目链接在哪？',
+        at: '2026-11-20T09:00:00Z',
+        decision: 'needs_user',
+        progress: 'complete',
+        delivery: 'none',
+        takenOver: false,
+        deviceName: 'This Mac',
+      },
+    ],
+    sources: [{ ...source, id: 'direct:conversation', name: '测试私聊', kind: 'direct' }, source],
+    policyVersion: 5,
+    capabilities: [],
   }
-  const onCommand = vi.fn(async () => true)
-  const renderCenter = (value: MessageCenterSnapshot) => (
+  const onOpenSettings = vi.fn()
+  render(
     <StandInMessageCenter
-      snapshot={value}
+      snapshot={snapshot}
       loading={false}
       error={false}
-      actionError={false}
       busy={false}
-      onCommand={onCommand}
-      onOpenSettings={vi.fn()}
+      actionError={false}
+      onCommand={vi.fn(async () => true)}
+      onOpenSettings={onOpenSettings}
       onRefresh={vi.fn()}
     />
   )
-  const { rerender } = render(renderCenter(snapshot))
 
   await user.click(screen.getByTestId('message-center-open-settings'))
-  await user.click(screen.getByTestId('message-center-template-document'))
-  await user.click(screen.getByTestId('message-center-settings-pause-source-group'))
-  expect(onCommand).toHaveBeenCalledExactlyOnceWith({
-    type: 'setSourcePaused',
-    sourceId: 'group',
-    paused: true,
-  })
+  expect(onOpenSettings).toHaveBeenNthCalledWith(1)
 
-  rerender(
-    renderCenter({
-      ...snapshot,
-      settings: { ...settings, version: 6 },
-      sources: [{ ...snapshot.sources[0], paused: true }],
-    })
-  )
-
-  await user.click(screen.getByTestId('message-center-settings-save'))
-
-  expect(onCommand).toHaveBeenLastCalledWith({
-    type: 'saveSettings',
-    settings: { ...settings, version: 6, templates: { ...settings.templates, document: false } },
-  })
+  await user.click(screen.getByRole('button', { name: /项目链接/ }))
+  await user.click(screen.getByTestId('message-center-detail-settings'))
+  expect(onOpenSettings).toHaveBeenNthCalledWith(2, source)
+  expect(screen.getByTestId('message-center-detail')).toBeInTheDocument()
 })

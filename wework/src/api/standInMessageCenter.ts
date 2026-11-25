@@ -1,16 +1,10 @@
 export interface MessageCenterSource {
   id: string
+  conversationId?: string
   name: string
   kind: 'direct' | 'group'
   included: boolean
   paused: boolean
-}
-
-export interface MessageCenterSettings {
-  version: number
-  sourceIds: string[]
-  templates: Record<'document' | 'confirmedLogistics' | 'standardProcess', boolean>
-  modelName?: string
 }
 
 export interface MessageCenterRecord {
@@ -22,11 +16,11 @@ export interface MessageCenterRecord {
   message: string
   at: string
   decision: 'reply' | 'needs_user' | 'skip' | null
-  progress: 'queued' | 'generating' | 'ready_to_send' | 'complete'
+  progress: 'queued' | 'generating' | 'ready_to_send' | 'submitting' | 'complete'
   delivery: 'none' | 'submitted' | 'confirmed' | 'failed' | 'unknown'
   receipt?: {
     id: string
-    verifiedAt: string
+    verifiedAt?: string
     kind: 'channel_receipt' | 'recipient_verified'
   }
   reply?: string
@@ -34,18 +28,16 @@ export interface MessageCenterRecord {
   evidence?: Array<{ label: string; excerpt?: string }>
   attempts?: Array<{ at: string; status: MessageCenterRecord['delivery']; reason?: string }>
   takenOver: boolean
+  canTakeOver?: boolean
+  canVerify?: boolean
   originalUrl?: string
-  policyVersion: number
+  policyVersion?: number
   deviceName: string
 }
 
 export type MessageCenterCommand =
-  | { type: 'enable' }
-  | { type: 'resync' }
-  | { type: 'setPaused'; paused: boolean }
-  | { type: 'setSourcePaused'; sourceId: string; paused: boolean }
   | { type: 'takeOver'; recordId: string }
-  | { type: 'saveSettings'; settings: MessageCenterSettings }
+  | { type: 'verifyDelivery'; recordId: string }
 
 export interface MessageCenterSnapshot {
   identity: { id: string; account: string; organization: string } | null
@@ -62,7 +54,7 @@ export interface MessageCenterSnapshot {
     | 'component_unavailable'
   records: MessageCenterRecord[]
   sources: MessageCenterSource[]
-  settings: MessageCenterSettings | null
+  policyVersion: number | null
   syncGap?: string
   notificationUnavailable?: boolean
   capabilities: readonly (MessageCenterCommand['type'] | 'refresh')[]
@@ -81,9 +73,9 @@ export interface StandInMessageCenterApi {
     expected: { identityId: string; policyVersion: number },
     command: MessageCenterCommand
   ): Promise<MessageCenterSnapshot>
-  /** Report an identity change before publishing new facts for that scope. */
+  /** Report a binding update before publishing new facts for that scope. */
   subscribeInvalidation(
     scope: MessageCenterScope,
-    onInvalidate: (change: 'identity' | 'facts') => void
+    onInvalidate: (change: 'identity' | 'facts', identityId?: string) => void
   ): () => void
 }

@@ -12,7 +12,7 @@ export const unavailableMessageCenterSnapshot: MessageCenterSnapshot = {
   status: 'unavailable',
   records: [],
   sources: [],
-  settings: null,
+  policyVersion: null,
   capabilities: [],
 }
 
@@ -91,8 +91,10 @@ export function createStandInMessageCenterSource(
     const previous = revision
     let connected = true
     try {
-      const unsubscribe = api.subscribeInvalidation(scope, change => {
-        if (connected) void read(change)
+      const unsubscribe = api.subscribeInvalidation(scope, (change, identityId) => {
+        if (!connected) return
+        const sameIdentity = identityId && identityId === state.snapshot?.identity?.id
+        void read(sameIdentity ? 'facts' : change)
       })
       release = () => {
         connected = false
@@ -125,15 +127,14 @@ export function createStandInMessageCenterSource(
     if (
       pending ||
       !snapshot?.identity ||
-      !snapshot.settings ||
-      (command.type === 'saveSettings' && command.settings.version !== snapshot.settings.version) ||
+      snapshot.policyVersion === null ||
       !snapshot.capabilities.includes(command.type)
     ) {
       return false
     }
     const expected = {
       identityId: snapshot.identity.id,
-      policyVersion: snapshot.settings.version,
+      policyVersion: snapshot.policyVersion,
     }
     const started = ++revision
     const owner = Symbol()

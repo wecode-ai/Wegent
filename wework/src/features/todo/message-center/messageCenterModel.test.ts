@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MessageCenterRecord } from '@/api/standInMessageCenter'
-import { classifyMessageCenterRecords, safeDingTalkUrl } from './messageCenterModel'
+import { classifyMessageCenterRecords, isToday, safeDingTalkUrl } from './messageCenterModel'
 
 const receivedAt = '2026-11-24T07:00:00Z'
 const verifiedReceipt: NonNullable<MessageCenterRecord['receipt']> = {
@@ -99,6 +99,16 @@ describe('message center classification', () => {
       in_progress: [],
     })
     expect(views.exceptions[0].takenOver).toBe(true)
+  })
+
+  it('does not infer a delivery day when the valid receipt has no timestamp', () => {
+    const delivered = record('verified-without-date', {
+      delivery: 'confirmed',
+      reply: 'See the pinned document.',
+      receipt: { id: 'reply-id', kind: 'channel_receipt' },
+    })
+    expect(classifyMessageCenterRecords([delivered]).replied).toEqual([delivered])
+    expect(isToday(delivered.receipt?.verifiedAt, new Date(receivedAt))).toBe(false)
   })
 })
 

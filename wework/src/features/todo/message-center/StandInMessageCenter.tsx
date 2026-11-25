@@ -4,8 +4,6 @@ import {
   AlertCircle,
   CheckCheck,
   ChevronRight,
-  CirclePause,
-  CirclePlay,
   Clock,
   Minus,
   MessageSquare,
@@ -15,17 +13,17 @@ import type {
   MessageCenterCommand,
   MessageCenterRecord,
   MessageCenterSnapshot,
+  MessageCenterSource,
 } from '@/api/standInMessageCenter'
 import { Button } from '@/components/ui/button'
 import { OPEN_NOTIFICATION_SETTINGS_EVENT } from '@/features/notifications/notificationPreferences'
 import { useTranslation } from '@/hooks/useTranslation'
 import { classifyMessageCenterRecords, isToday } from './messageCenterModel'
 import { MessageCenterDetail } from './MessageCenterDetail'
-import { MessageCenterSettings } from './MessageCenterSettings'
 
 type Category = keyof ReturnType<typeof classifyMessageCenterRecords>
 type RecordFilter = Exclude<Category, 'in_progress'>
-type FocusDestination = 'detail' | 'row' | 'settings-trigger'
+type FocusDestination = 'detail' | 'row'
 const filters: RecordFilter[] = ['replied', 'needs_user', 'skipped', 'exceptions']
 const icons = {
   replied: CheckCheck,
@@ -43,7 +41,7 @@ type Props = {
   actionError: boolean
   onRefresh(): void
   onCommand(command: MessageCenterCommand): Promise<boolean>
-  onOpenSettings(): void
+  onOpenSettings(source?: MessageCenterSource): void
   onOpenComponents?(): void
 }
 
@@ -66,10 +64,8 @@ function MessageCenterContent({
   const groups = classifyMessageCenterRecords(snapshot?.identity ? snapshot.records : [])
   const [filter, setFilter] = useState<RecordFilter | null>(null)
   const [openedId, setOpenedId] = useState<string>()
-  const [settings, setSettings] = useState<{ sourceId: string | null } | null>(null)
   const centerRef = useRef<HTMLElement>(null)
   const rowTrigger = useRef<HTMLElement | null>(null)
-  const settingsTrigger = useRef<HTMLElement | null>(null)
   const [focusRequest, setFocusRequest] = useState<{ target: FocusDestination }>()
   const selected =
     filter ?? (groups.exceptions.length || snapshot?.syncGap ? 'exceptions' : 'replied')
@@ -84,14 +80,6 @@ function MessageCenterContent({
   const formatTime = (value: string) => {
     const date = new Date(value)
     return Number.isFinite(date.getTime()) ? dateFormatter.format(date) : ''
-  }
-  const openSettings = (sourceId: string | null, trigger: HTMLElement) => {
-    settingsTrigger.current = trigger
-    setSettings({ sourceId })
-  }
-  const closeSettings = () => {
-    setFocusRequest({ target: 'settings-trigger' })
-    setSettings(null)
   }
   const closeRecord = () => {
     setFocusRequest({ target: 'row' })
@@ -113,12 +101,11 @@ function MessageCenterContent({
             ) ?? null
           )
         }
-        const fromSettings = focusRequest?.target === 'settings-trigger'
-        const trigger = fromSettings ? settingsTrigger.current : rowTrigger.current
-        const fallback = fromSettings ? 'message-center-open-settings' : 'message-center-filter'
-        return trigger?.isConnected
-          ? trigger
-          : (centerRef.current?.querySelector<HTMLElement>(`[data-testid="${fallback}"]`) ?? null)
+        return rowTrigger.current?.isConnected
+          ? rowTrigger.current
+          : (centerRef.current?.querySelector<HTMLElement>(
+              '[data-testid="message-center-filter"]'
+            ) ?? null)
       },
     }),
     [focusRequest]
@@ -126,10 +113,8 @@ function MessageCenterContent({
   useFocusRequest(focusTarget, focusRequest, { enabled: !!focusRequest, preventScroll: true })
 
   const status = snapshot?.status ?? 'unavailable'
-  const paused = status === 'paused'
-  const canPause = (status === 'active' || paused) && snapshot?.capabilities.includes('setPaused')
   const todayCount = groups.replied.filter(
-    item => item.receipt && isToday(item.receipt.verifiedAt)
+    item => item.receipt?.verifiedAt && isToday(item.receipt.verifiedAt)
   ).length
   const hasRecords = Object.values(groups).some(items => items.length > 0)
   const showAttention = selected !== 'needs_user' && groups.needs_user.length > 0
@@ -142,7 +127,7 @@ function MessageCenterContent({
       className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background text-text-primary"
       data-testid="stand-in-message-center"
     >
-      <div className="flex min-h-0 flex-1" inert={settings !== null}>
+      <div className="flex min-h-0 flex-1">
         <div
           className={`${record ? 'hidden lg:flex lg:w-1/2' : 'flex'} min-h-0 min-w-0 flex-1 flex-col`}
         >
@@ -154,7 +139,7 @@ function MessageCenterContent({
               size="sm"
               className="min-h-11 min-w-11 md:min-h-9"
               data-testid="message-center-open-settings"
-              onClick={event => openSettings(null, event.currentTarget)}
+              onClick={() => onOpenSettings()}
             >
               {t('settings')}
             </Button>
@@ -185,56 +170,31 @@ function MessageCenterContent({
               )}
               {snapshot && !error && (
                 <>
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0 break-words">
-                      <p className="flex items-center gap-2 text-sm" role="status">
-                        <span
-                          aria-hidden="true"
-                          className={`size-1.5 shrink-0 rounded-full ${status === 'active' ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-text-muted'}`}
-                        />
-                        {t(`runStatus.${status}`)}
-                      </p>
-                      <p className="mt-1 text-xs text-text-secondary">
-                        {[
-                          snapshot.identity?.account,
-                          snapshot.identity?.organization,
-                          snapshot.deviceName,
-                          snapshot.updatedAt &&
-                            t('updated', { at: formatTime(snapshot.updatedAt) }),
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </p>
-                    </div>
-                    {canPause && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="min-h-11 md:min-h-9"
-                        data-testid="message-center-pause"
-                        disabled={busy}
-                        onClick={() => void onCommand({ type: 'setPaused', paused: !paused })}
-                      >
-                        {paused ? (
-                          <CirclePlay aria-hidden="true" />
-                        ) : (
-                          <CirclePause aria-hidden="true" />
-                        )}
-                        {t(paused ? 'resume' : 'pause')}
-                      </Button>
-                    )}
+                  <div className="min-w-0 break-words">
+                    <p className="flex items-center gap-2 text-sm" role="status">
+                      <span
+                        aria-hidden="true"
+                        className={`size-1.5 shrink-0 rounded-full ${status === 'active' ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-text-muted'}`}
+                      />
+                      {t(`runStatus.${status}`)}
+                    </p>
+                    <p className="mt-1 text-xs text-text-secondary">
+                      {[
+                        snapshot.identity?.account,
+                        snapshot.identity?.organization,
+                        snapshot.deviceName,
+                        snapshot.updatedAt && t('updated', { at: formatTime(snapshot.updatedAt) }),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
                   </div>
                   {(status === 'disconnected' || status === 'disabled') && (
                     <Button
                       type="button"
                       className="min-h-11 md:min-h-9"
                       data-testid="message-center-start-setup"
-                      onClick={event =>
-                        status === 'disabled'
-                          ? openSettings(null, event.currentTarget)
-                          : onOpenSettings()
-                      }
+                      onClick={() => onOpenSettings()}
                     >
                       {t(status === 'disabled' ? 'setupRequired' : 'connectionRequired')}
                     </Button>
@@ -256,17 +216,17 @@ function MessageCenterContent({
                       variant="outline"
                       className="min-h-11 md:min-h-9"
                       data-testid="message-center-model-settings"
-                      onClick={onOpenSettings}
+                      onClick={() => onOpenSettings()}
                     >
                       {t('manageConnection')}
                     </Button>
                   )}
-                  {status === 'offline' && snapshot.capabilities.includes('refresh') && (
+                  {snapshot.capabilities.includes('refresh') && (
                     <Button
                       type="button"
                       variant="outline"
                       className="min-h-11 md:min-h-9"
-                      data-testid="message-center-offline-refresh"
+                      data-testid="message-center-refresh"
                       onClick={onRefresh}
                     >
                       {t('refresh')}
@@ -287,7 +247,7 @@ function MessageCenterContent({
                         type="button"
                         className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-border p-4 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                         data-testid="message-center-scope"
-                        onClick={event => openSettings(null, event.currentTarget)}
+                        onClick={() => onOpenSettings()}
                       >
                         <ShieldCheck aria-hidden="true" className="size-4 shrink-0" />
                         <span className="min-w-0 flex-1 break-words">
@@ -295,7 +255,11 @@ function MessageCenterContent({
                           <span className="line-clamp-2 text-xs text-text-secondary">
                             {[
                               t('coverage', { count: includedSources.length }),
-                              ...includedSources.map(source => source.name),
+                              ...includedSources.map(source =>
+                                source.paused
+                                  ? t('scopeSourcePaused', { name: source.name })
+                                  : source.name
+                              ),
                             ].join(' · ')}
                           </span>
                         </span>
@@ -391,24 +355,9 @@ function MessageCenterContent({
                           </div>
                         </header>
                         {snapshot.syncGap && (
-                          <div className="mt-3 flex flex-wrap items-center gap-2 break-words text-sm">
-                            <p className="text-error">
-                              {t('syncGap')} {snapshot.syncGap}
-                            </p>
-                            {snapshot.capabilities.includes('resync') && (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="min-h-11 md:min-h-9"
-                                data-testid="message-center-sync-refresh"
-                                disabled={busy}
-                                onClick={() => void onCommand({ type: 'resync' })}
-                              >
-                                {t('resync')}
-                              </Button>
-                            )}
-                          </div>
+                          <p className="mt-3 break-words text-sm text-error">
+                            {t('syncGap')} {snapshot.syncGap}
+                          </p>
                         )}
                         {groups[selected].length ? (
                           <RecordList
@@ -446,26 +395,15 @@ function MessageCenterContent({
             busy={busy}
             formatTime={formatTime}
             onClose={closeRecord}
-            onSettings={openSettings}
+            onOpenSettings={onOpenSettings}
             onCommand={onCommand}
           />
         )}
       </div>
-      {actionError && !settings && (
+      {actionError && (
         <p role="alert" className="border-t border-border p-3 text-sm text-error">
           {t('actionError')}
         </p>
-      )}
-      {settings && (
-        <MessageCenterSettings
-          snapshot={snapshot}
-          sourceId={settings.sourceId}
-          busy={busy}
-          actionError={actionError}
-          onClose={closeSettings}
-          onOpenSettings={onOpenSettings}
-          onCommand={onCommand}
-        />
       )}
     </section>
   )

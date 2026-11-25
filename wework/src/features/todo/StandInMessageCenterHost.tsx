@@ -1,5 +1,9 @@
 import { useMemo, useSyncExternalStore } from 'react'
-import type { MessageCenterScope, StandInMessageCenterApi } from '@/api/standInMessageCenter'
+import type {
+  MessageCenterScope,
+  MessageCenterSource,
+  StandInMessageCenterApi,
+} from '@/api/standInMessageCenter'
 import { StandInMessageCenter } from './message-center/StandInMessageCenter'
 import {
   createStandInMessageCenterSource,
@@ -9,7 +13,7 @@ import {
 type Props = {
   api?: StandInMessageCenterApi
   scope: MessageCenterScope | null
-  onOpenSettings: () => void
+  onOpenSettings: (source?: MessageCenterSource) => void
   onOpenComponents?: () => void
 }
 

@@ -4,6 +4,7 @@ import type {
   MessageCenterCommand,
   MessageCenterRecord,
   MessageCenterSnapshot,
+  MessageCenterSource,
 } from '@/api/standInMessageCenter'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -17,7 +18,7 @@ export function MessageCenterDetail({
   busy,
   formatTime,
   onClose,
-  onSettings,
+  onOpenSettings,
   onCommand,
 }: {
   record: MessageCenterRecord
@@ -26,19 +27,21 @@ export function MessageCenterDetail({
   busy: boolean
   formatTime(at: string): string
   onClose(): void
-  onSettings(sourceId: string, trigger: HTMLElement): void
+  onOpenSettings(source?: MessageCenterSource): void
   onCommand(command: MessageCenterCommand): Promise<boolean>
 }) {
   const { t } = useTranslation('standInMessageCenter')
   const [openFailed, setOpenFailed] = useState(false)
   const source = snapshot.sources.find(item => item.id === record.sourceId)
   const receipt = category === 'replied' ? record.receipt : undefined
+  const verificationTime = receipt?.verifiedAt && formatTime(receipt.verifiedAt)
   const delivery = record.delivery === 'confirmed' && !receipt ? 'unknown' : record.delivery
   const canTakeOver =
-    snapshot.capabilities.includes('takeOver') &&
-    !record.takenOver &&
-    (record.delivery === 'unknown' ||
-      (record.delivery === 'none' && (category === 'needs_user' || record.progress !== 'complete')))
+    snapshot.capabilities.includes('takeOver') && record.canTakeOver && !record.takenOver
+  const canVerify =
+    snapshot.capabilities.includes('verifyDelivery') &&
+    record.delivery === 'unknown' &&
+    record.canVerify
   const url = safeDingTalkUrl(record.originalUrl)
   const at = formatTime(record.at)
 
@@ -152,8 +155,10 @@ export function MessageCenterDetail({
               {[
                 t(`receiptKind.${receipt.kind}`),
                 receipt.id,
-                t('receiptVerified', { at: formatTime(receipt.verifiedAt) }),
-              ].join(' · ')}
+                verificationTime && t('receiptVerified', { at: verificationTime }),
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </p>
           )}
           {delivery === 'unknown' && (
@@ -186,10 +191,12 @@ export function MessageCenterDetail({
                   .join(' · ')}
               </dd>
             </div>
-            <div>
-              <dt>{t('ruleVersion')}</dt>
-              <dd>{record.policyVersion}</dd>
-            </div>
+            {record.policyVersion !== undefined && (
+              <div>
+                <dt>{t('ruleVersion')}</dt>
+                <dd>{record.policyVersion}</dd>
+              </div>
+            )}
             <div>
               <dt>{t('device')}</dt>
               <dd>{record.deviceName}</dd>
@@ -243,23 +250,17 @@ export function MessageCenterDetail({
               {t('takeOver')}
             </Button>
           )}
-          {source?.included && snapshot.capabilities.includes('setSourcePaused') && (
+          {canVerify && (
             <Button
               type="button"
               variant="outline"
               size="sm"
               className="min-h-11 md:min-h-9"
-              data-testid="message-center-pause-source"
+              data-testid="message-center-verify-delivery"
               disabled={busy}
-              onClick={() =>
-                void onCommand({
-                  type: 'setSourcePaused',
-                  sourceId: source.id,
-                  paused: !source.paused,
-                })
-              }
+              onClick={() => void onCommand({ type: 'verifyDelivery', recordId: record.id })}
             >
-              {t(source.paused ? 'resumeSource' : 'pauseSource')}
+              {t('verifyDelivery')}
             </Button>
           )}
           <Button
@@ -268,9 +269,9 @@ export function MessageCenterDetail({
             size="sm"
             className="min-h-11 md:min-h-9"
             data-testid="message-center-detail-settings"
-            onClick={event => onSettings(record.sourceId, event.currentTarget)}
+            onClick={() => onOpenSettings(source)}
           >
-            {t('scopeSettings')}
+            {t(source ? 'scopeSettings' : 'settings')}
           </Button>
         </div>
         {openFailed && (

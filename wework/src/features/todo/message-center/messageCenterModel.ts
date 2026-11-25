@@ -16,7 +16,7 @@ function messageCategory(record: MessageCenterRecord): MessageCenterCategory {
       reply?.trim() &&
       receipt?.id.trim() &&
       (receipt.kind === 'channel_receipt' || receipt.kind === 'recipient_verified') &&
-      Number.isFinite(Date.parse(receipt.verifiedAt))
+      (!receipt.verifiedAt || Number.isFinite(Date.parse(receipt.verifiedAt)))
     ) {
       return 'replied'
     }
@@ -48,8 +48,8 @@ export function classifyMessageCenterRecords(
   return categories
 }
 
-export function isToday(value: string, now = new Date()): boolean {
-  const date = new Date(value)
+export function isToday(value: string | undefined, now = new Date()): boolean {
+  const date = new Date(value ?? '')
   return (
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
