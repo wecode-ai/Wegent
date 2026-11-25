@@ -247,6 +247,7 @@ export function ProviderSettingsSection() {
         cancelLabel={t('cancel')}
         confirmLabel={t('confirm')}
         confirmTestId="provider-action-confirm"
+        destructive
         pending={pending}
         onClose={() => setConfirmation(null)}
         onConfirm={() => {

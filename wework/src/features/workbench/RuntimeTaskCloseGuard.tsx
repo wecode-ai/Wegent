@@ -56,6 +56,7 @@ function RuntimeTaskCloseConfirmDialog({
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
     >
       <DialogSurface
+        initialFocus="content"
         onClose={() => {
           if (open && !closing)
             (() => {
@@ -65,7 +66,7 @@ function RuntimeTaskCloseConfirmDialog({
         render={
           <div
             aria-labelledby="runtime-task-close-confirm-title"
-            className="w-full max-w-[420px] rounded-lg border border-border bg-base p-5 shadow-2xl"
+            className="w-full max-w-[420px] rounded-lg border border-border bg-base p-5 shadow-2xl focus:[outline-style:none]"
           />
         }
       >

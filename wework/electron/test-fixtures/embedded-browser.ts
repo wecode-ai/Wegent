@@ -16,6 +16,7 @@ const electronMocks = vi.hoisted(() => ({
     },
   },
   menuPopup: vi.fn(),
+  showItemInFolder: vi.fn(),
   menuBuildFromTemplate: vi.fn((items: unknown[]) => ({
     items,
     popup: electronMocks.menuPopup,
@@ -43,6 +44,7 @@ vi.mock('electron', () => ({
   },
   shell: {
     openExternal: vi.fn(),
+    showItemInFolder: electronMocks.showItemInFolder,
   },
 }))
 

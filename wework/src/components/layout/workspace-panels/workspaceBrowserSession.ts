@@ -14,6 +14,7 @@ import {
   hasEmbeddedBrowserOverlayConflict,
 } from '@/lib/embedded-browser-overlay'
 import { BROWSER_ZOOM_DEFAULT_PERCENT } from '@/lib/browser-zoom'
+import { createBrowserDownloads } from './workspaceBrowserDownloads'
 import { createBrowserNavigation } from './workspaceBrowserNavigation'
 import { createBrowserViewport } from './workspaceBrowserViewport'
 import { createBrowserAnnotations } from './workspaceBrowserAnnotations'
@@ -160,6 +161,7 @@ export function createWorkspaceBrowserSession(
   }
   actions = {
     ...createBrowserNavigation(model),
+    ...createBrowserDownloads(model),
     ...createBrowserViewport(model),
     ...createBrowserAnnotations(model),
     ...createBrowserActions(model),
@@ -294,6 +296,13 @@ export function createWorkspaceBrowserSession(
         .catch(error =>
           console.error('Failed to sync embedded browser occlusion visibility:', error)
         )
+    }
+    if (options.active && state.downloadsOpen && (!before?.downloadsOpen || activeChanged)) {
+      model.set('downloadPeek', null)
+      model.actions.markDownloadsRead()
+      void model.actions.refreshDownloads()
+    } else if (before?.downloadsOpen && !state.downloadsOpen && model.runtime.nativeLabel) {
+      model.actions.reconcileDownloadSnapshot(model.runtime.nativeLabel)
     }
     if (before?.downloadPeek !== state.downloadPeek) {
       if (peekTimer !== null) window.clearTimeout(peekTimer)

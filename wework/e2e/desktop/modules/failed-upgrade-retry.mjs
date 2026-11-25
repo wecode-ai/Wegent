@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForUpdatePreparation } from './update-preparation-progress.mjs'
+import { dismissPreparedUpdateDialog } from './app-update-navigation.mjs'
 import { verifyCrossSlotProfile } from './cross-slot-profile.mjs'
 import { processIsAlive } from '../process-lifecycle.mjs'
 
@@ -129,6 +130,13 @@ export async function finishFailedUpgradeRetry(control, options) {
     JSON.parse(await control.command('getAppUpdateProgress', 'body'))
   )
   await control.command('waitFor', '[data-testid="app-update-restart-confirm"]')
+  // The source in a regression pair is built from the current UI revision.
+  if (pair.kind === 'regression') {
+    await dismissPreparedUpdateDialog(control, 'app-update-restart-confirm')
+    assert.equal(await installedVersion(), pair.from.version)
+    await control.command('clickWhenEnabled', UPDATE_BUTTON)
+    await control.command('waitFor', '[data-testid="app-update-restart-confirm"]')
+  }
   const beforeInstall = control.readyCount
   await control.command('click', '[data-testid="app-update-restart-confirm"]')
   await control.awaitReadyAfter(beforeInstall, workbenchReadyTimeoutMs)

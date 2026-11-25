@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { verifyProjectFieldFocus } from './project-create-focus-indicator.mjs'
 import { inCollaborationSidebar } from './workspace-flows.mjs'
 
 /** Reuse the checkpoint's completed real runtime session; no new model turn is needed. */
@@ -41,7 +42,15 @@ export async function verifyLinkExistingTask({
   await control.command('fill', '[data-testid="issue-existing-task-search"]', { value: taskId })
   const candidate = `[data-testid="issue-existing-task-picker"] button[data-testid$="-${taskId}"]`
   await control.command('waitFor', candidate, { visible: true })
-  await control.command('clickWhenEnabled', candidate)
+  await verifyProjectFieldFocus(control, 'issue-existing-task-search', {
+    includeParent: true,
+    nextButtonPattern: /^issue-existing-task-.+-.+$/,
+  })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    await control.command('getAttribute', candidate, { value: 'data-testid' })
+  )
+  await control.command('pointerClick', candidate)
   await control.command('waitFor', '[data-testid="cloud-todo-execution-task-count"]', { text: '1' })
   const bindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)
   assert.equal(bindings.length, 1)
