@@ -22,21 +22,144 @@ pub(super) fn query(input: &Value) -> Result<Value, AppIpcError> {
     )
 }
 
-pub(super) async fn read(instance: &str, input: &Value) -> Result<(ApiReply, String), AppIpcError> {
+pub(super) async fn read(
+    platform: &str,
+    instance: &str,
+    input: &Value,
+) -> Result<(ApiReply, String), AppIpcError> {
+    if platform == "gitlab" {
+        return read_merge_request(instance, input).await;
+    }
     let query = query(input)?;
-    let mut response = api_request(
-        "github",
-        instance,
-        "POST",
+    let mut response = time_read_phase(
         "graphql",
-        Some(&query),
-        input["number"].as_u64(),
+        api_request(
+            "github",
+            instance,
+            "POST",
+            "graphql",
+            Some(ApiBody::Json(&query)),
+            input["number"].as_u64(),
+        ),
     )
     .await
     .map_err(|failure| failure.error)?;
     let (request, profile) = checked_pull_request(instance, input, &response.data)?;
     response.data = request;
     Ok((response, profile))
+}
+
+const GITLAB_STATUS_QUERY: &str = "+    query($path: ID!, $iid: String!) {
+      currentUser { id }
+      project(fullPath: $path) {
+        id
+        mergeRequest(iid: $iid) {
+          iid webUrl title state draft mergedAt updatedAt sourceBranch diffHeadSha
+          detailedMergeStatus conflicts headPipeline { id sha status ref }
+        }
+      }
+    }";
+
+async fn read_merge_request(
+    instance: &str,
+    input: &Value,
+) -> Result<(ApiReply, String), AppIpcError> {
+    let iid =
+        positive_id(input["number"].as_u64()).ok_or_else(|| invalid("Missing object number"))?;
+    let path = input["repository"]
+        .as_str()
+        .filter(|path| {
+            path.len() <= 512
+                && path.contains('/')
+                && path.split('/').all(|part| {
+                    !matches!(part, "" | "." | "..")
+                        && part
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                })
+        })
+        .ok_or_else(|| invalid("Invalid repository"))?;
+    let mut response = time_read_phase(
+        "graphql",
+        api_request(
+            "gitlab",
+            instance,
+            "POST",
+            "graphql",
+            Some(ApiBody::GitLabGraphql {
+                query: GITLAB_STATUS_QUERY,
+                path,
+                iid,
+            }),
+            None,
+        ),
+    )
+    .await
+    .map_err(|failure| failure.error)?;
+    let (request, profile) = checked_merge_request(instance, input, iid, &response.data)?;
+    response.data = request;
+    Ok((response, profile))
+}
+
+fn gitlab_id(value: &Value, prefix: &str) -> Option<u64> {
+    positive_id(value.as_str()?.strip_prefix(prefix)?.parse().ok())
+}
+
+fn checked_merge_request(
+    instance: &str,
+    input: &Value,
+    iid: u64,
+    response: &Value,
+) -> Result<(Value, String), AppIpcError> {
+    if !response["errors"].is_null() && !response["errors"].as_array().is_some_and(Vec::is_empty) {
+        return Err(AppIpcError::new(
+            "git_status_unavailable",
+            "Cannot read the complete merge request status",
+        ));
+    }
+    let data = &response["data"];
+    let account = gitlab_id(&data["currentUser"]["id"], "gid://gitlab/User/").ok_or_else(|| {
+        AppIpcError::new(
+            "connector_auth_required",
+            "Cannot verify the GitLab account",
+        )
+    })?;
+    let profile = json!([instance, account.to_string()]).to_string();
+    verify_profile(input, &profile)?;
+    let project = &data["project"];
+    let request = &project["mergeRequest"];
+    if request.is_null() {
+        return Err(AppIpcError::new(
+            "git_not_found",
+            "Cannot read the bound merge request",
+        ));
+    }
+    let project_id = gitlab_id(&project["id"], "gid://gitlab/Project/");
+    verify_repository_id(&json!(project_id), &input["repositoryId"])?;
+    if request["iid"].as_str() != Some(iid.to_string().as_str()) {
+        return Err(invalid("Merge request identity changed"));
+    }
+    let pipeline = &request["headPipeline"];
+    let pipeline = if pipeline.is_null() {
+        Value::Null
+    } else {
+        let id = gitlab_id(&pipeline["id"], "gid://gitlab/Ci::Pipeline/")
+            .ok_or_else(|| invalid("Invalid pipeline ID"))?;
+        json!({"id":id,"sha":pipeline["sha"],"status":lowercase(&pipeline["status"]),"ref":pipeline["ref"]})
+    };
+    Ok((
+        json!({
+            "iid":iid,"web_url":request["webUrl"],"title":request["title"],"state":lowercase(&request["state"]),
+            "draft":request["draft"],"merged_at":request["mergedAt"],"updated_at":request["updatedAt"],
+            "source_branch":request["sourceBranch"],"sha":request["diffHeadSha"],"head_pipeline":pipeline,
+            "detailed_merge_status":lowercase(&request["detailedMergeStatus"]),"has_conflicts":request["conflicts"]
+        }),
+        profile,
+    ))
+}
+
+fn lowercase(value: &Value) -> Option<String> {
+    value.as_str().map(str::to_ascii_lowercase)
 }
 
 pub(super) fn log_cli_failure(
@@ -182,6 +305,50 @@ mod tests {
                 .unwrap_err()
                 .code,
             "git_account_changed"
+        );
+    }
+
+    #[test]
+    fn merge_request_status_preserves_subscription_fields_and_exact_binding() {
+        let instance = "https://gitlab.example.com";
+        let profile = json!([instance, "7"]).to_string();
+        let input = json!({"number":17,"profile":profile,"repositoryId":"42"});
+        let mut response = json!({"data":{
+            "currentUser":{"id":"gid://gitlab/User/7"},
+            "project":{"id":"gid://gitlab/Project/42","mergeRequest":{
+                "iid":"17","state":"OPENED","detailedMergeStatus":"CONFLICT","conflicts":true,
+                "diffHeadSha":"revision","headPipeline":{"id":"gid://gitlab/Ci::Pipeline/8","sha":"revision","status":"FAILED","ref":"topic"}
+            }}
+        }});
+        let (state, observed_profile) =
+            checked_merge_request(instance, &input, 17, &response).unwrap();
+        assert_eq!(observed_profile, profile);
+        assert_eq!(state["state"], "opened");
+        assert_eq!(state["detailed_merge_status"], "conflict");
+        assert_eq!(state["has_conflicts"], true);
+        assert_eq!(state["sha"], "revision");
+        assert_eq!(
+            state["head_pipeline"],
+            json!({"id":8,"status":"failed","sha":"revision","ref":"topic"})
+        );
+
+        let mut wrong = input.clone();
+        wrong["repositoryId"] = json!("43");
+        assert!(checked_merge_request(instance, &wrong, 17, &response).is_err());
+        assert!(checked_merge_request(instance, &input, 18, &response).is_err());
+        response["data"]["currentUser"]["id"] = json!("gid://gitlab/User/8");
+        assert_eq!(
+            checked_merge_request(instance, &input, 17, &response)
+                .unwrap_err()
+                .code,
+            "git_account_changed"
+        );
+        response["errors"] = json!([{"message":"Partial response"}]);
+        assert_eq!(
+            checked_merge_request(instance, &input, 17, &response)
+                .unwrap_err()
+                .code,
+            "git_status_unavailable"
         );
     }
 }

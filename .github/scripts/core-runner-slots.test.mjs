@@ -133,6 +133,13 @@ for (const [platform, balance, script, args] of [
       new Set(checkpoints(result)).size,
       checkpoints(original).length,
     );
+    if (platform === "Linux") {
+      const runner = (checkpoint) =>
+        result.include.find((entry) => entry.segments.split(",").includes(checkpoint))?.id;
+      assert.ok(runner("core-task-flow"));
+      assert.ok(runner("stand-in-notifications"));
+      assert.notEqual(runner("core-task-flow"), runner("stand-in-notifications"));
+    }
     for (const id of ["core-9", "core-10"]) {
       const originalShard = original.include.find((entry) => entry.id === id);
       const expected = platform === "Linux"

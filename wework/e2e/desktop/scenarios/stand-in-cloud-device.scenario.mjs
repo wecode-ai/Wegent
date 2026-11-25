@@ -154,7 +154,9 @@ export function createDesktopScenario({
     await control.command('fill', `${selector} [data-testid="chat-message-input"]`, {
       value: message,
     })
+    // Model selection can still disable submission while the composer is mounted.
     await control.command('clickWhenEnabled', `${selector} [data-testid="send-message-button"]`, {
+      visible: true,
       timeoutMs: uiTimeoutMs,
     })
   }
