@@ -51,33 +51,7 @@ import {
 import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { getAssistantReferences } from './codexReferences'
 
-export function AssistantMessage({
-  imageServices,
-  renderVisualization,
-  showProcessingStatus = true,
-  message,
-  runtimeTurn,
-  conversationKey,
-  isActiveTurn = false,
-  isHistoricalTurn = false,
-  forceExpanded = false,
-  devices,
-  onContinueInNewConversation,
-  onRetryFailedMessage,
-  onSwitchModelForFailedMessage,
-  onLoadFileChangesDiff,
-  onRevertFileChanges,
-  onOpenFileChangesReview,
-  fileChangesDiffPreviewDisabledSubtaskId,
-  onOpenWorkspaceFile,
-  onRequestUserInputSubmit,
-  onRequestUserInputIgnore,
-  onOpenAssistantPlan,
-  onOpenSubagent,
-  hideRequestUserInputBlocks,
-  hiddenRequestUserInputIds,
-  onFork,
-}: {
+interface AssistantMessageProps {
   imageServices: AttachmentImageServices<Attachment>
   showProcessingStatus?: boolean
   renderVisualization?: (
@@ -118,15 +92,10 @@ export function AssistantMessage({
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onFork?: () => Promise<void> | void
-}) {
-  const { t } = useConversationTranslation()
-  const interactions = useToolInteractionServices()
-  const isCancelled = isCancelledAssistantMessage(message)
-  const stoppedElapsedDuration =
-    showProcessingStatus && isCancelled && message.stoppedNotice !== false
-      ? getStoppedElapsedDuration(message, runtimeTurn)
-      : null
-  const shouldShowStoppedNotice = isCancelled && message.stoppedNotice !== false
+}
+
+export function AssistantMessage(props: AssistantMessageProps) {
+  const { message } = props
   const [projected, setProjected] = useState(() => ({
     message,
     result: getAssistantRenderProjection(message),
@@ -146,6 +115,47 @@ export function AssistantMessage({
     }
     setProjected({ message, result: renderProjection })
   }
+  // Updating the projection retries this render before React renders its child.
+  // Keep the message presentation out of that retry.
+  return <AssistantMessageContent {...props} renderProjection={renderProjection} />
+}
+
+function AssistantMessageContent({
+  imageServices,
+  renderVisualization,
+  showProcessingStatus = true,
+  message,
+  runtimeTurn,
+  conversationKey,
+  isActiveTurn = false,
+  isHistoricalTurn = false,
+  forceExpanded = false,
+  devices,
+  onContinueInNewConversation,
+  onRetryFailedMessage,
+  onSwitchModelForFailedMessage,
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
+  onOpenFileChangesReview,
+  fileChangesDiffPreviewDisabledSubtaskId,
+  onOpenWorkspaceFile,
+  onRequestUserInputSubmit,
+  onRequestUserInputIgnore,
+  onOpenAssistantPlan,
+  onOpenSubagent,
+  hideRequestUserInputBlocks,
+  hiddenRequestUserInputIds,
+  onFork,
+  renderProjection,
+}: AssistantMessageProps & { renderProjection: ReturnType<typeof getAssistantRenderProjection> }) {
+  const { t } = useConversationTranslation()
+  const interactions = useToolInteractionServices()
+  const isCancelled = isCancelledAssistantMessage(message)
+  const stoppedElapsedDuration =
+    showProcessingStatus && isCancelled && message.stoppedNotice !== false
+      ? getStoppedElapsedDuration(message, runtimeTurn)
+      : null
+  const shouldShowStoppedNotice = isCancelled && message.stoppedNotice !== false
   const {
     content: visibleContent,
     hidden: shouldHideContent,
@@ -280,11 +290,7 @@ export function AssistantMessage({
                     ? 'intermediate'
                     : 'live'
           }
-          showInterToolThinking={
-            isStreaming &&
-            !hasVisibleContent &&
-            index === lastToolSegment
-          }
+          showInterToolThinking={isStreaming && !hasVisibleContent && index === lastToolSegment}
           thinkingContent={activeThinkingContent}
           showSummary={segment.kind === 'tool'}
           stateKey={`${processingStateKey}:${segment.blocks[0]?.id}`}
