@@ -13,6 +13,7 @@ import {
   type WorkspaceNavigationDetail,
 } from '@/lib/navigation'
 import { getStandInErrorMessage, requiresStandInUpgrade } from '@/lib/stand-in-error-message'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { useDOMEvent } from '@wegent/collaboration/dom-events'
@@ -136,6 +137,7 @@ function AccountStandInWorkspace({
   const account = ownerId === userId ? connectedAccount : undefined
   const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
+  const boundDeviceOffline = findWorkbenchDevice(devices, deviceId)?.status === 'offline'
   const cloudAssistantServices = useMemo(
     () =>
       readAccount && publishAccount
@@ -397,15 +399,18 @@ function AccountStandInWorkspace({
         </StandInHomeSetup>
       ) : target && api ? (
         <>
-          {directory?.error && (
-            <p role="alert" className="px-5 py-2 text-sm text-error">
-              {directory.error}
-            </p>
+          {(directory?.error || boundDeviceOffline) && (
+            <div className="flex flex-wrap items-center gap-2 px-5 py-2">
+              <p role="alert" className="text-sm text-error">
+                {directory?.error || t('standIn.errors.device_offline')}
+              </p>
+              {boundDeviceOffline && actions}
+            </div>
           )}
           <StandInOverviewPage
             key={`${ownerId}:${selectedDevice}`}
             ref={overview}
-            headerActions={actions}
+            headerActions={boundDeviceOffline ? undefined : actions}
             account={account}
             onBindDevice={
               account && publishAccount && services.personalAssistantAccountApi

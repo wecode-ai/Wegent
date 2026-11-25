@@ -699,8 +699,9 @@ export function createDesktopScenario({
       await stopProcessGroup(cloud.remoteExecutor)
       await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
       await observeDevice(control, CLOUD_DEVICE_ID, '离线')
-      await control.command('waitFor', testId('stand-in-overview-retry'))
-      await control.command('clickWhenEnabled', testId('stand-in-instance-stop'))
+      await control.command('clickWhenEnabled', testId('stand-in-instance-stop'), {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
       await control.command('waitFor', testId('stand-in-instance-stop') + ':not(:disabled)')
       assert.equal(
