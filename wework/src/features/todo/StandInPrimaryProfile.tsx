@@ -40,9 +40,46 @@ type NormalizedPrimary = StandInIdentity & {
   connections: NonNullable<StandInIdentity['connections']>
 }
 
+const primaryDraftFields = [
+  'enabled',
+  'prompt',
+  'preferences',
+  'selfLearningEnabled',
+  'workspace',
+  'taskPermissions',
+  'calendar',
+  'collaboration',
+] as const
+
+function rebasePrimaryDraft(
+  current: NormalizedPrimary,
+  previous: NormalizedPrimary,
+  saved: NormalizedPrimary
+): NormalizedPrimary {
+  const draft = { ...saved }
+  const keepEdit = <Field extends keyof NormalizedPrimary>(field: Field) => {
+    if (!dequal(current[field], previous[field])) draft[field] = current[field]
+  }
+  primaryDraftFields.forEach(keepEdit)
+  if (dequal(previous.model, saved.model) && dequal(previous.modelOptions, saved.modelOptions)) {
+    keepEdit('model')
+    keepEdit('modelOptions')
+  }
+  const otherConnections = current.connections.filter(row => !isDingTalkSource(row))
+  const previousOtherConnections = previous.connections.filter(row => !isDingTalkSource(row))
+  const savedOtherConnections = saved.connections.filter(row => !isDingTalkSource(row))
+  if (
+    !dequal(otherConnections, previousOtherConnections) &&
+    !dequal(otherConnections, savedOtherConnections)
+  ) {
+    draft.connections = [...otherConnections, ...saved.connections.filter(isDingTalkSource)]
+  }
+  return draft
+}
+
 /** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
-  settings,
+  settings: incomingSettings,
   saving,
   loading = false,
   error,
@@ -89,6 +126,14 @@ export function StandInPrimaryProfile({
 }) {
   const { t } = useTranslation('common')
   const blocked = saving || loading
+  const [receipt, setReceipt] = useState<PersonalStandInSettings | null>(null)
+  const settings =
+    receipt?.userId === incomingSettings.userId &&
+    receipt.executionDeviceId === incomingSettings.executionDeviceId &&
+    receipt.version > incomingSettings.version
+      ? receipt
+      : incomingSettings
+  if (receipt && settings === incomingSettings) setReceipt(null)
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
   const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
   const defaultCollaboration = {
@@ -114,7 +159,6 @@ export function StandInPrimaryProfile({
   const original = normalizePrimary(saved)
   const [draft, setDraft] = useState(original)
   const [baseline, setBaseline] = useState(original)
-  const [acceptedPrimary, setAcceptedPrimary] = useState<NormalizedPrimary | null>(null)
   if (!dequal(baseline, original)) {
     setBaseline(original)
     if (dequal(draft, baseline)) setDraft(original)
@@ -153,6 +197,7 @@ export function StandInPrimaryProfile({
     tagOwner.userId !== settings.userId ||
     tagOwner.deviceId !== settings.executionDeviceId
   ) {
+    setReceipt(null)
     setDraft(original)
     setBaseline(original)
     setTagOwner({
@@ -168,15 +213,10 @@ export function StandInPrimaryProfile({
     tagDraft.getDirtySnapshot,
     tagDraft.getDirtySnapshot
   )
-  if (acceptedPrimary && dequal(original, acceptedPrimary)) {
-    setAcceptedPrimary(null)
-  }
-  const profileDirty = acceptedPrimary
-    ? !dequal(draft, acceptedPrimary)
-    : !dequal(
-        { ...original, delegation: original.delegation ?? defaultDingTalkDelegation },
-        { ...draft, delegation: draft.delegation ?? defaultDingTalkDelegation }
-      )
+  const profileDirty = !dequal(
+    { ...original, delegation: original.delegation ?? defaultDingTalkDelegation },
+    { ...draft, delegation: draft.delegation ?? defaultDingTalkDelegation }
+  )
   const dirty = profileDirty || scheduleDirty || connectionDraftDirty
   const preserveLegacyInstructions =
     !separatePrompt &&
@@ -208,8 +248,8 @@ export function StandInPrimaryProfile({
     const primary = next?.primary
     if (!primary) return false
     const accepted = normalizePrimary(primary)
-    setAcceptedPrimary(accepted)
-    setDraft(accepted)
+    setReceipt(next)
+    setDraft(current => rebasePrimaryDraft(current, original, accepted))
     return true
   }
   const role = {
