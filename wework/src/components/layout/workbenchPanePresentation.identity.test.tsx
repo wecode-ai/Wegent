@@ -1,12 +1,17 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { expect, test } from 'vitest'
 import type { DeviceInfo } from '@/types/api'
 import { SingleWorkbenchPane } from './workbenchPanePresentation'
 import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
-import { createWorkbenchLayout } from './workbenchSplitLayout'
+import { createDesktopPaneContextSource } from './desktopPaneContextSource'
+import { createWorkbenchLayout, splitWorkbenchPane } from './workbenchSplitLayout'
 import { WORKBENCH_SPLIT_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 
 function Content() {
   const [open, setOpen] = useState(false)
@@ -75,24 +80,27 @@ test('does not retain a pane through an ambiguous device alias', () => {
 function Split({
   pane: current,
   devices: knownDevices = [],
+  showSplit = false,
 }: {
   pane: WorkbenchPaneIdentity
   devices?: DeviceInfo[]
+  showSplit?: boolean
 }) {
   const key = getWorkbenchPaneKey(current)
+  const layout = createWorkbenchLayout(key)
   return (
     <>
       <div id={WORKBENCH_SPLIT_ACTIONS_PORTAL_ID} />
       <SplitWorkbenchPaneStack
         activePane={current}
         devices={knownDevices}
-        layout={createWorkbenchLayout(key)}
+        layout={showSplit ? splitWorkbenchPane(layout, layout.focusedPaneId, 'right') : layout}
         showWorkbenchBackground={false}
         validRuntimeKeys={[key]}
         activeTestId="active"
         workbenchVisible
         resolvePane={() => current}
-        getPaneTitle={() => 'Task'}
+        runtimeWork={null}
         onPaneFocus={() => {}}
         onLayoutFocus={() => {}}
         onLayoutClose={() => createWorkbenchLayout(key)}
@@ -104,6 +112,58 @@ function Split({
     </>
   )
 }
+
+test('pane metadata keeps its identity when a different task starts a turn', () => {
+  const address = { deviceId: 'electron-local', taskId: 'current' }
+  const store = new RuntimeTaskLifecycleStore('pane-metadata')
+  const source = createDesktopPaneContextSource(store).observe({
+    active: true,
+    current: address,
+    resolved: null,
+    runtimeWork: null,
+    openTask: async () => undefined,
+  })
+  const initial = source.getSnapshot()
+
+  store.turnStarted({ ...address, taskId: 'other' }, 'other-turn')
+  expect(source.getSnapshot()).toBe(initial)
+
+  store.syncRuntimeTask(address, {
+    runtime: 'codex',
+    workspacePath: '/work',
+    taskId: address.taskId,
+    title: 'Current task',
+    threadId: 'late-thread',
+  })
+  expect(source.getSnapshot().currentRuntimeConversationSource?.threadId).toBe('late-thread')
+})
+
+test('a split title follows an unlisted task without rebuilding its pane', () => {
+  const current = pane('electron-local')
+  const address = current.currentRuntimeTask!
+  const store = new RuntimeTaskLifecycleStore('split-title')
+  const summary = {
+    runtime: 'codex' as const,
+    workspacePath: '/work',
+    taskId: address.taskId,
+    title: 'Original title',
+  }
+  store.syncRuntimeTask(address, summary)
+  render(
+    <RuntimeTaskLifecycleProvider store={store}>
+      <Split pane={current} devices={devices} showSplit />
+    </RuntimeTaskLifecycleProvider>
+  )
+
+  fireEvent.click(screen.getByText('Picker closed'))
+  const host = screen.getByText('Picker open').closest('[data-workbench-pane-host]')
+  expect(screen.getByRole('button', { name: 'Original title' })).toBeInTheDocument()
+
+  act(() => store.syncRuntimeTask(address, { ...summary, title: 'Updated title' }))
+
+  expect(screen.getByRole('button', { name: 'Updated title' })).toBeInTheDocument()
+  expect(screen.getByText('Picker open').closest('[data-workbench-pane-host]')).toBe(host)
+})
 
 test('preserves the real desktop split portal and host when a discovered device alias resolves', () => {
   const { rerender } = render(<Split pane={pane('app-record-79')} />)

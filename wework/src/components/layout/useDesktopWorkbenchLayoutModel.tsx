@@ -71,7 +71,6 @@ export function useDesktopWorkbenchLayoutModel({
   const { t } = useTranslation('common')
 
   const { logout: onLogout } = useAuth()
-  const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const {
     state,
     cloudWorkStatus,
@@ -267,6 +266,10 @@ export function useDesktopWorkbenchLayoutModel({
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
   const workItemSurfaceOpen = routeWorkItemsOpen || taskBoardOpen
+  const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot(
+    undefined,
+    routeActive && workItemSurfaceOpen
+  )
   useDOMEvent('window', 'popstate', layoutSession.onLocation)
   useDOMEvent('window', 'resize', layoutSession.onResize)
   useDOMEvent('window', WORKBENCH_NEW_CHAT_FOCUS_EVENT, layoutSession.consumeComposer)

@@ -64,6 +64,8 @@ Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 nam
 
 打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
+Core DSH 以固定路径提供内置界面插件的 JavaScript 入口。渲染器在入口 URL 中带上当前构建的源码 SHA，避开同源下旧版本遗留的缓存。入口响应使用 `no-store`，带内容哈希的资源仍可长期缓存，以保证工作台与插件从同一构建加载 React 上下文。
+
 本地优先模式包含 Electron 主进程、executor sidecar 和 core DSH 三个本机运行时角色：
 
 ```mermaid
@@ -501,6 +503,8 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 Claude Code、Agno 运行时和 Codex 任务 shell 都会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`WEWORK_PARENT_TITLE` 提供当前任务标题，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_RUNTIME_AUTH_TOKEN` 提供本地 Skill 访问 Wegent runtime API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。Claude Code 和 Agno 通过子进程环境注入；Codex 通过 thread 级 `shell_environment_policy.set.*` 注入，身份值不会进入共享 app-server 进程环境，避免跨任务泄漏。Wework 连接云端后会通过 `POST /api/users/me/wegent-runtime-token` 获取 runtime token，并按响应的 `expires_in` 提前刷新；断开云端时会移除本地 Codex 配置中的 `WEGENT_RUNTIME_AUTH_TOKEN`。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`。
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
+
+Wework 桌面应用启动本地 executor 时，会传入 Electron 报告的应用版本。executor 向模型发送请求时会附上 `x-wework-version`、`x-wework-platform` 和 `x-wework-arch`，分别表示应用版本、操作系统和执行架构。经 Wegent 模型网关的请求使用网关的上游请求头转发机制，模型服务收到相同的字段名。
 
 ### 聊天任务设备解析与 Claude Code 启动上下文
 

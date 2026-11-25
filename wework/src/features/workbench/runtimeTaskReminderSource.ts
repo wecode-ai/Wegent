@@ -11,13 +11,6 @@ import {
 } from './runtimeTaskNotificationContent'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 
-export function getVisibleRuntimeTaskUnreadKeys(
-  items: RuntimeTaskReminderItem[],
-  unreadTaskKeys: ReadonlySet<string>
-): ReadonlySet<string> {
-  const visible = new Set(items.map(item => item.key))
-  return new Set([...unreadTaskKeys].filter(key => visible.has(key)))
-}
 interface Input {
   items: RuntimeTaskReminderItem[]
   listedItems: RuntimeTaskReminderItem[]
@@ -27,6 +20,13 @@ interface Input {
 
 function notificationIdentity(item: RuntimeTaskReminderItem): string {
   return `${item.task.taskId}\0${item.address.workspacePath ?? item.workspace.workspacePath ?? ''}`
+}
+
+function reportsToStandIn(task: RuntimeTaskReminderItem['task']): boolean {
+  const execution = task.runtimeHandle?.executionRequest as
+    | { standInReportTo?: { taskId?: unknown } }
+    | undefined
+  return typeof execution?.standInReportTo?.taskId === 'string'
 }
 
 /** Canonical read markers, delivery de-duplication and visible unread keys share one owner. */
@@ -50,6 +50,10 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
       (latestTask != null && isStandInMemoryReviewTask(latestTask))
     )
   }
+  function hasStandInReport(item: RuntimeTaskReminderItem): boolean {
+    const latestTask = store.getTask(item.address)?.task
+    return reportsToStandIn(item.task) || (latestTask != null && reportsToStandIn(latestTask))
+  }
   function deliver(item: RuntimeTaskReminderItem) {
     const epoch = generation
     if (globalThis.localStorage?.getItem('wework:debug-runtime') === '1')
@@ -64,6 +68,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
           epoch !== generation ||
           !listeners.size ||
           isMemoryReview(item) ||
+          hasStandInReport(item) ||
           !input?.notificationPreferences[runtimeTaskNotificationCategory(item)].system
         )
           return
@@ -83,7 +88,6 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         pending = false
         const current = input
         const lifecycle = store.getSnapshot()
-        const byKey = new Map(current.items.map(item => [item.key, item]))
         const newlyUnread = [...lifecycle.unreadTaskKeys].filter(
           key => !previousUnread.has(key) && store.isNewlyUnread(key)
         )
@@ -93,13 +97,18 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         const focused = isMainWindowFocused()
         if (focused) awaitingMetadata.clear()
         const candidates = new Set([...newlyUnread, ...awaitingMetadata.keys()])
-        for (const key of lifecycle.runningTaskKeys) {
-          const item = byKey.get(key)
-          if (item) notified.delete(notificationIdentity(item))
-        }
+        const byKey =
+          notified.size || candidates.size
+            ? new Map(current.items.map(item => [item.key, item]))
+            : undefined
+        if (notified.size)
+          for (const key of lifecycle.runningTaskKeys) {
+            const item = byKey?.get(key)
+            if (item) notified.delete(notificationIdentity(item))
+          }
         if (!focused)
           for (const key of candidates) {
-            const item = byKey.get(key)
+            const item = byKey?.get(key)
             if (!item) {
               if (!awaitingMetadata.has(key))
                 awaitingMetadata.set(key, current.notificationPreferences)
@@ -112,6 +121,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
                 !originalPreferences[runtimeTaskNotificationCategory(item)].system) ||
               isStandInIdentity(item) ||
               isMemoryReview(item) ||
+              hasStandInReport(item) ||
               standInOrigin(item) ||
               !current.notificationPreferences[runtimeTaskNotificationCategory(item)].system ||
               item.lifecycle?.interactionStatus ||
@@ -122,23 +132,31 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
             notified.add(notificationIdentity(item))
             deliver(item)
           }
-        for (const item of current.items) {
-          if (
-            !standInOrigin(item) &&
-            !current.notificationPreferences[runtimeTaskNotificationCategory(item)].in_app &&
-            lifecycle.unreadTaskKeys.has(item.key)
-          )
-            store.markRead(item.address)
-        }
-        const visibleItems = current.listedItems.filter(
-          item =>
-            !isStandInIdentity(item) &&
-            !isMemoryReview(item) &&
-            (current.notificationPreferences[runtimeTaskNotificationCategory(item)].in_app ||
-              standInOrigin(item))
-        )
+        if (lifecycle.unreadTaskKeys.size)
+          for (const item of current.items) {
+            if (
+              lifecycle.unreadTaskKeys.has(item.key) &&
+              !standInOrigin(item) &&
+              !current.notificationPreferences[runtimeTaskNotificationCategory(item)].in_app
+            )
+              store.markRead(item.address)
+          }
+        const unreadKeys = store.getSnapshot().unreadTaskKeys
+        const visibleUnread = new Set<string>()
+        if (unreadKeys.size)
+          for (const item of current.listedItems) {
+            if (
+              unreadKeys.has(item.key) &&
+              !isStandInIdentity(item) &&
+              !isMemoryReview(item) &&
+              (current.notificationPreferences[runtimeTaskNotificationCategory(item)].in_app ||
+                standInOrigin(item))
+            ) {
+              visibleUnread.add(item.key)
+            }
+          }
         const next = new Set([
-          ...getVisibleRuntimeTaskUnreadKeys(visibleItems, store.getSnapshot().unreadTaskKeys),
+          ...[...unreadKeys].filter(key => visibleUnread.has(key)),
           ...[...current.unreadMessageCounts].filter(([, count]) => count > 0).map(([key]) => key),
         ])
         if (next.size !== snapshot.size || [...next].some(key => !snapshot.has(key))) {

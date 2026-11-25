@@ -27,7 +27,7 @@ import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 
 import {
   getRuntimeTaskLifecycleKey,
-  useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSidebarSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
 
 import { useTranslation } from '@/hooks/useTranslation'
@@ -182,16 +182,7 @@ export function ProjectItem({
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
-  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
-  const waitingTaskKeys = useMemo(
-    () =>
-      new Set(
-        [...lifecycleSnapshot.tasks.entries()]
-          .filter(([, lifecycle]) => lifecycle.derived.shouldShowSidebarWaiting)
-          .map(([key]) => key)
-      ),
-    [lifecycleSnapshot.tasks]
-  )
+  const { runningTaskKeys, waitingTaskKeys } = useRuntimeTaskSidebarSnapshot()
   const runtimeWorkspaces = runtimeProjectWork?.deviceWorkspaces
   const allRuntimeTaskItems = useMemo(
     () => getRuntimeSidebarTaskItems(runtimeWorkspaces ?? []),
@@ -221,6 +212,7 @@ export function ProjectItem({
   const [projectMenuPosition, setProjectMenuPosition] = useState<ProjectCreateMenuPosition | null>(
     null
   )
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const prioritizedRuntimeTaskItems = runtimeTaskItems
   const visibleRuntimeTaskItems = useMemo(
     () =>
@@ -229,13 +221,11 @@ export function ProjectItem({
         runtimeTaskVisibleLimit,
         currentRuntimeTask?.taskId,
         ({ workspace, task }) =>
-          lifecycleSnapshot.runningTaskKeys.has(
-            getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
-          )
+          runningTaskKeys.has(getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task)))
       ),
     [
       currentRuntimeTask?.taskId,
-      lifecycleSnapshot.runningTaskKeys,
+      runningTaskKeys,
       prioritizedRuntimeTaskItems,
       runtimeTaskVisibleLimit,
     ]
@@ -304,9 +294,7 @@ export function ProjectItem({
       })
   )
   const projectActiveTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) =>
-    lifecycleSnapshot.runningTaskKeys.has(
-      getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
-    )
+    runningTaskKeys.has(getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task)))
   ).length
   const projectWaitingTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) => {
     const key = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
@@ -396,6 +384,7 @@ export function ProjectItem({
       <SidebarHoverCard
         testId={`project-hover-card-${project.id}`}
         interactive
+        disabled={projectMenuOpen || projectMenuPosition !== null}
         cardClassName="w-[320px]"
         content={
           <ProjectSidebarHoverCardContent
@@ -501,6 +490,7 @@ export function ProjectItem({
               testId={`project-menu-${project.id}`}
               contextMenuPosition={projectMenuPosition}
               onContextMenuClose={() => setProjectMenuPosition(null)}
+              onOpenChange={setProjectMenuOpen}
               items={[
                 {
                   label: projectPinned ? t('workbench.unpin_project') : t('workbench.pin_project'),

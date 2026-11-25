@@ -2,10 +2,14 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
+from uuid import UUID
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from app.api.endpoints import devices
 from app.schemas.device import DeviceType
 from app.services.device import command_service
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
@@ -59,7 +63,9 @@ async def test_observer_commands_use_fixed_runtime_methods(dispatch, operation):
         "exit_code": 0,
         "stdout": {"observation": {"id": "source"}},
         "stderr": "",
+        "duration": ANY,
     }
+    assert result["duration"] >= 0
     shell.assert_not_awaited()
 
 
@@ -163,9 +169,15 @@ async def test_commands_reach_the_owned_runtime_socket_without_model_configurati
     payload = {"consumerKey": "window", "generation": "activation"}
     result = await execute("connection_observer_start", [json.dumps(payload)])
     resolve.assert_awaited_once_with(user_id=7, submitted_device_id="owned-device")
+    request_id = socket_call.await_args.args[1]["request_id"]
+    assert UUID(request_id).hex == request_id
     socket_call.assert_awaited_once_with(
         "runtime:rpc",
-        {"method": "runtime.connections.observers.start", "payload": payload},
+        {
+            "method": "runtime.connections.observers.start",
+            "payload": payload,
+            "request_id": request_id,
+        },
         to="owned-socket",
         namespace="/local-executor",
         timeout=65,
@@ -174,10 +186,33 @@ async def test_commands_reach_the_owned_runtime_socket_without_model_configurati
     shell.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_subscription_cancellation_uses_owned_runtime_without_shell(dispatch):
+def test_subscription_cancellation_returns_valid_http_receipt(dispatch):
     rpc, shell = dispatch
-    await execute("connection_subscription_cancel", ["task", "subscription"])
+    receipt = {
+        "subscription": {"subscription_key": "subscription", "status": "cancelled"}
+    }
+    rpc.return_value = receipt
+    app = FastAPI()
+    app.include_router(devices.router, prefix="/api/devices")
+    app.dependency_overrides[devices.get_db] = object
+    app.dependency_overrides[devices.security.get_current_user] = (
+        lambda: SimpleNamespace(id=7)
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/devices/owned-device/commands",
+            json={
+                "command_key": "connection_subscription_cancel",
+                "args": ["task", "subscription"],
+            },
+        )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["success"] is True
+    assert result["stdout"] == receipt
+    assert result["duration"] >= 0
     rpc.assert_awaited_once_with(
         user_id=7,
         device_id="owned-device",

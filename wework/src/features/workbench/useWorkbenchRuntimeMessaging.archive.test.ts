@@ -123,6 +123,69 @@ function inputFixture() {
 }
 
 describe('runtime message archival', () => {
+  test.each(['turnId', 'turn_id'] as const)(
+    'projects an accepted async answer using %s before native guidance arrives',
+    async turnField => {
+      const { messaging, store, send } = fixture()
+      reconcileRuntimeConversationSnapshot(address, [
+        {
+          id: 'active-turn',
+          status: 'streaming',
+          items: [
+            {
+              id: 'original-user',
+              type: 'user_message',
+              message: {
+                id: 'original-user',
+                role: 'user',
+                content: 'Original request',
+                createdAt: '2026-11-17T00:00:00Z',
+                status: 'done',
+              },
+            },
+          ],
+        },
+      ])
+      const response: RequestUserInputResponse = {
+        itemId: 'question',
+        interactionScope: 'active-turn',
+        delivery: 'async',
+        answers: { direction: { answers: ['Proceed'] } },
+      }
+      send.mockResolvedValue({
+        accepted: true,
+        taskId: address.taskId,
+        [turnField]: 'active-turn',
+        guidanceId: queuedMessage.id,
+      })
+      const outcome = await sendRuntimeQueuedMessage(
+        address,
+        { ...queuedMessage, content: 'Proceed', requestUserInputResponse: response },
+        {
+          lifecycleStore: store,
+          sendRuntimePaneMessage: messaging.sendRuntimePaneMessage,
+        }
+      )
+      expect(outcome).toEqual({ accepted: true, queued: false, guidanceTurnId: 'active-turn' })
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestUserInputResponse: response,
+          clientUserMessageId: queuedMessage.id,
+        })
+      )
+      expect(getRuntimeConversationMessages(address)).toContainEqual(
+        expect.objectContaining({
+          id: queuedMessage.id,
+          role: 'user',
+          content: 'Proceed',
+          runtimeGuidance: true,
+          subtaskId: 'active-turn',
+        })
+      )
+      expect(getRuntimeConversationTurns(address).map(turn => turn.id)).toEqual(['active-turn'])
+    }
+  )
+
   beforeEach(() => {
     vi.spyOn(console, 'info').mockImplementation(() => {})
   })

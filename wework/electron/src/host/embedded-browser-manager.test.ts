@@ -12,6 +12,7 @@ import {
   FakeWebContents,
 } from '../../test-fixtures/embedded-browser.js'
 import { EmbeddedBrowserManager, type BrowserHostEvent } from './embedded-browser-manager.js'
+import { DownloadTargetPolicy } from './download-target-policy.js'
 
 describe('EmbeddedBrowserManager lifecycle', () => {
   beforeEach(() => {
@@ -907,9 +908,13 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
-  test('omits navigation actions for a non-plain browser context', async () => {
+  test('shows link and image Save As actions while omitting navigation for non-plain browser context', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const manager = new EmbeddedBrowserManager(directory)
+    const downloadPolicy = {
+      apply: vi.fn(),
+      downloadUrlAs: vi.fn(),
+    }
+    const manager = new EmbeddedBrowserManager(directory, undefined, undefined, downloadPolicy)
     const contents = new FakeWebContents()
     contents.loadURL.mockImplementation(async url => {
       contents.commitUrl(url)
@@ -938,16 +943,65 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       }
     )
 
-    const items = electronMocks.menuBuildFromTemplate.mock.calls.at(-1)?.[0] as Array<{
+    const linkItems = electronMocks.menuBuildFromTemplate.mock.calls.at(-1)?.[0] as Array<{
+      click?: () => void
       label?: string
       type?: string
     }>
-    expect(items.map(item => item.label ?? item.type)).toEqual([
+    expect(linkItems.map(item => item.label ?? item.type)).toEqual([
       '快速评论',
       '评论',
       'separator',
+      '在新标签页中打开链接',
+      '在外部浏览器中打开',
+      'separator',
+      '复制链接地址',
+      'separator',
+      '链接存储为...',
+      'separator',
       '检查',
     ])
+    linkItems.find(item => item.label === '链接存储为...')?.click?.()
+    expect(downloadPolicy.downloadUrlAs).toHaveBeenCalledWith(
+      contents,
+      'https://example.test/linked'
+    )
+
+    contents.emit(
+      'context-menu',
+      {},
+      {
+        x: 24,
+        y: 44,
+        isEditable: false,
+        formControlType: 'none',
+        mediaType: 'image',
+        linkURL: '',
+        srcURL: 'https://example.test/photo.png',
+        selectionText: '',
+      }
+    )
+    const imageItems = electronMocks.menuBuildFromTemplate.mock.calls.at(-1)?.[0] as Array<{
+      click?: () => void
+      label?: string
+      type?: string
+    }>
+    expect(imageItems.map(item => item.label ?? item.type)).toEqual([
+      '快速评论',
+      '评论',
+      'separator',
+      '在新标签页中打开图片',
+      '图片存储为...',
+      '复制图片',
+      '复制图片地址',
+      'separator',
+      '检查',
+    ])
+    imageItems.find(item => item.label === '图片存储为...')?.click?.()
+    expect(downloadPolicy.downloadUrlAs).toHaveBeenCalledWith(
+      contents,
+      'https://example.test/photo.png'
+    )
     await rm(directory, { recursive: true, force: true })
   })
 
@@ -1354,6 +1408,105 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       expect(contents.closeDevTools).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('applies the download target policy before tracking embedded browser downloads', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-download-'))
+    const downloadsDir = join(directory, 'downloads')
+    const events: BrowserHostEvent[] = []
+    const policy = new DownloadTargetPolicy({
+      defaultDownloadsDirectory: () => downloadsDir,
+    })
+    await policy.prepare()
+    try {
+      const manager = new EmbeddedBrowserManager(
+        directory,
+        event => events.push(event),
+        undefined,
+        policy
+      )
+      const contents = new FakeWebContents()
+      contents.loadURL.mockImplementation(async url => {
+        contents.commitUrl(url)
+      })
+      manager.attach('workspace-browser', contents as unknown as WebContents)
+      await manager.open({
+        label: 'workspace-browser',
+        url: 'https://example.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+
+      const willDownloadCall = electronMocks.browserSession.on.mock.calls.find(
+        ([eventName]) => eventName === 'will-download'
+      )
+      const listener = willDownloadCall?.[1] as (
+        event: unknown,
+        item: unknown,
+        webContents: WebContents
+      ) => void
+      expect(listener).toBeTypeOf('function')
+
+      let savePath = ''
+      const doneListeners: Array<(event: unknown, state: string) => void> = []
+      const item = {
+        cancel: vi.fn(),
+        getFilename: () => 'video_123.mp4',
+        getSavePath: () => savePath,
+        getURL: () => 'https://example.test/video_123.mp4',
+        getURLChain: () => ['https://example.test/video_123.mp4'],
+        getReceivedBytes: () => 0,
+        getTotalBytes: () => 1024,
+        setSavePath: vi.fn((path: string) => {
+          savePath = path
+        }),
+        setSaveDialogOptions: vi.fn(),
+        on: vi.fn(),
+        once: vi.fn((event: string, cb: (event: unknown, state: string) => void) => {
+          if (event === 'done') doneListeners.push(cb)
+        }),
+      }
+
+      const normalEvent = { defaultPrevented: false, preventDefault: vi.fn() }
+      listener(normalEvent, item, contents as unknown as WebContents)
+
+      const expectedPath = join(downloadsDir, 'video_123.mp4')
+      expect(item.setSavePath).toHaveBeenCalledExactlyOnceWith(expectedPath)
+      expect(item.setSaveDialogOptions).not.toHaveBeenCalled()
+      expect(events.find(event => event.type === 'download')?.payload).toMatchObject({
+        status: 'started',
+        path: expectedPath,
+      })
+
+      for (const cb of doneListeners) cb({}, 'completed')
+
+      const preventedEventsStart = events.length
+      const preventedItem = {
+        cancel: vi.fn(),
+        getFilename: () => 'blocked.mp4',
+        getSavePath: () => '',
+        getURL: () => 'https://example.test/blocked.mp4',
+        getURLChain: () => ['https://example.test/blocked.mp4'],
+        getReceivedBytes: () => 0,
+        getTotalBytes: () => 1024,
+        setSavePath: vi.fn(),
+        setSaveDialogOptions: vi.fn(),
+        on: vi.fn(),
+        once: vi.fn(),
+      }
+      const preventedEvent = {
+        defaultPrevented: true,
+        preventDefault: vi.fn(),
+      }
+      listener(preventedEvent, preventedItem, contents as unknown as WebContents)
+      expect(events.slice(preventedEventsStart).some(event => event.type === 'download')).toBe(
+        false
+      )
+      expect(preventedItem.on).not.toHaveBeenCalled()
+    } finally {
       await rm(directory, { recursive: true, force: true })
     }
   })

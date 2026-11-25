@@ -1,5 +1,5 @@
 diff --git a/dist/diagram.js b/dist/diagram.js
-index 77129a44f..489aef02f 100644
+index 77129a44f6ed8c667ffcc6984cb9c485822bd58a..3c5e861d3f486a8a33615fb2a9d196eb77729593 100644
 --- a/dist/diagram.js
 +++ b/dist/diagram.js
 @@ -1,5 +1,6 @@
@@ -10,7 +10,7 @@ index 77129a44f..489aef02f 100644
  const getOwnerWindow = (documentRef) => {
      return documentRef.defaultView || (typeof window !== 'undefined' ? window : undefined);
  };
-@@ -29,34 +30,82 @@ const normalizePlantumlServer = (documentRef, value) => {
+@@ -29,34 +30,81 @@ const normalizePlantumlServer = (documentRef, value) => {
          return normalized;
      }
  };
@@ -86,11 +86,6 @@ index 77129a44f..489aef02f 100644
 +        const mermaidModule = await import('mermaid');
 +        const mermaid = mermaidModule.default;
 +        const id = `file-viewer-mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-+        mermaid.initialize({
-+            startOnLoad: false,
-+            securityLevel: 'strict',
-+            theme: resolvedTheme
-+        });
 +        const renderContainer = documentRef.createElement('div');
 +        renderContainer.inert = true;
 +        renderContainer.setAttribute('aria-hidden', 'true');
@@ -99,7 +94,11 @@ index 77129a44f..489aef02f 100644
 +        documentRef.body.appendChild(renderContainer);
 +        try {
 +            await waitForFileViewerNextPaint(getOwnerWindow(documentRef));
-+            const rendered = await mermaid.render(id, text, renderContainer);
++            const rendered = await mermaid.render(id, text, renderContainer, {
++                startOnLoad: false,
++                securityLevel: 'strict',
++                theme: resolvedTheme
++            });
 +            return sanitizeMermaidSvg(documentRef, rendered.svg, t);
 +        }
 +        finally {
@@ -111,7 +110,7 @@ index 77129a44f..489aef02f 100644
  };
  const appendSvgText = (documentRef, parent, text, x, dy, weight = '500') => {
      const line = documentRef.createElementNS('http://www.w3.org/2000/svg', 'tspan');
-@@ -138,7 +187,7 @@ const renderPlantumlSvg = async (documentRef, text, options, t) => {
+@@ -138,7 +186,7 @@ const renderPlantumlSvg = async (documentRef, text, options, t) => {
          if (!response.ok) {
              throw new Error(t('drawing.error.plantumlRenderFailed', { status: response.status }));
          }
@@ -121,7 +120,7 @@ index 77129a44f..489aef02f 100644
      catch (error) {
          if (error instanceof DOMException && error.name === 'AbortError') {
 diff --git a/dist/drawing.js b/dist/drawing.js
-index 9e54c00c5..42642d051 100644
+index 9e54c00c578a97e492033ba26a31e4d310db438e..42642d05114d09158d0097dcada18952477000ec 100644
 --- a/dist/drawing.js
 +++ b/dist/drawing.js
 @@ -881,6 +881,8 @@ export default async function renderDrawing(buffer, target, type = 'drawio', con
@@ -135,14 +134,13 @@ index 9e54c00c5..42642d051 100644
              status = 'ready';
 diff --git a/dist/mermaid-cache.js b/dist/mermaid-cache.js
 new file mode 100644
-index 000000000..50a3f088f
+index 0000000000000000000000000000000000000000..25af3f1882cf7da130dcd67a12b3fc43ae200378
 --- /dev/null
 +++ b/dist/mermaid-cache.js
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,116 @@
 +const MAX_ENTRIES = 32
 +const MAX_CHARACTERS = 2_097_152
 +const documentCaches = new WeakMap()
-+let renderQueue = Promise.resolve()
 +let nextCopyId = 1
 +
 +const removeEntry = (cache, key) => {
@@ -235,9 +233,7 @@ index 000000000..50a3f088f
 +    cache.entries.set(key, existing)
 +    return cloneSvg(documentRef, await existing.promise, true)
 +  }
-+  // Mermaid's own queue excludes initialize(), so serialize the whole operation.
-+  const promise = renderQueue.then(renderTemplate)
-+  renderQueue = promise.then(() => undefined, () => undefined)
++  const promise = renderTemplate()
 +  const entry = { promise, characters: key.length }
 +  if (entry.characters <= MAX_CHARACTERS) {
 +    cache.entries.set(key, entry)

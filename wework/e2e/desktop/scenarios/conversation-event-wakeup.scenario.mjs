@@ -42,12 +42,13 @@ const CONTROL_MCP_IDLE_TTL_MS = 1000
 function latestWaitingSubscriptions(body) {
   const snapshot = body.input.findLast(
     item =>
-      item.type === 'function_call_output' &&
-      item.namespace === 'agent' &&
-      item.name === 'weworkconnectioneventswaiting'
+      item.type === 'message' &&
+      item.role === 'user' &&
+      item.content?.[0]?.text === '[tool_result without a matching tool_call]'
   )
   assert.ok(snapshot, 'The model must receive a waiting subscription snapshot')
-  return JSON.parse(snapshot.output)
+  assert.equal(snapshot.content[1]?.type, 'input_text', 'The snapshot must be model-visible text')
+  return JSON.parse(snapshot.content[1].text)
 }
 
 export function createDesktopScenario(options, { controlContextOnly = false } = {}) {
@@ -74,6 +75,7 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
   let busyStarted = false
   let ownerResponse
   let resumedGoalDeadline
+  let goalCompletionItemId
   const releaseBusy = () => {
     if (!busyResponse) return
     const { response, id } = busyResponse
@@ -90,7 +92,7 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
   const { events: modelEvents, completed } = createConversationEventModel({
     markerPrefix: MARKER,
     providerId: PROVIDER,
-    onEvent: () => human.eventStarted(),
+    onEvent: messageId => human.eventStarted(messageId),
     onQuestion: output => {
       questionOutput = output
     },
@@ -336,16 +338,25 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
       const held = phase === 'human' ? human.intercept(modelRequestTexts(body), response) : null
       if (held) return held
       const id = `conversation-event-${++sequence}`
+      const modelOutput =
+        phase === 'resumed_goal_seed'
+          ? [assistantMessage('Ready to resume a Goal.')]
+          : modelEvents(body, phase)
+      const goalCompletion =
+        phase === 'goal' &&
+        modelOutput.find(({ item }) =>
+          item?.content?.some(part => part.text?.includes(`${MARKER}_goal_DONE`))
+        )
+      if (goalCompletion) {
+        goalCompletionItemId = goalCompletion.item.id
+        const progress = assistantMessage('正在处理收到的文档事件。')
+        progress.item.phase = 'commentary'
+        modelOutput.unshift(progress)
+        // Simulate model latency so this resumed turn has whole seconds to display.
+        await delay(1200)
+      }
       response.writeHead(200, { 'content-type': 'text/event-stream' })
-      response.end(
-        createSse([
-          responseCreated(id),
-          ...(phase === 'resumed_goal_seed'
-            ? [assistantMessage('Ready to resume a Goal.')]
-            : modelEvents(body, phase)),
-          responseCompleted(id),
-        ])
-      )
+      response.end(createSse([responseCreated(id), ...modelOutput, responseCompleted(id)]))
       return true
     },
     async verify(control) {
@@ -766,6 +777,16 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
             { text: `${MARKER}_${phase}_DONE`, timeoutMs: 30000 }
           )
+          if (phase === 'goal') {
+            assert.ok(goalCompletionItemId, 'The woken Goal must have a distinct native result')
+            const duration = `${assistant}:has([data-runtime-item-id="${goalCompletionItemId}"]) [data-testid="final-processing-toggle"] [data-testid="processing-duration-label"]`
+            await control.command('waitFor', duration, { timeoutMs: uiTimeoutMs })
+            assert.match(
+              await control.command('getText', duration),
+              /^(?:用时|Worked for)\s*[1-9]\d*/,
+              'The completed event-woken turn must show nonzero processing time'
+            )
+          }
           const after = await getTask()
           assert.equal(
             after.task.threadId,

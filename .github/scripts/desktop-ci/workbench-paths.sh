@@ -23,7 +23,7 @@ classify_workbench_path() {
       select_target "core:stand-in-workspace"
       return
       ;;
-    wework/e2e/desktop/scenarios/stand-in-automation-assignment.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-suite.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-recovery.scenario.mjs|wework/e2e/desktop/modules/stand-in-round-assignment.mjs)
+    wework/e2e/desktop/scenarios/stand-in-automation-assignment.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-suite.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-recovery.scenario.mjs|wework/e2e/desktop/modules/stand-in-round-assignment.mjs|wework/e2e/desktop/modules/stand-in-workspace-recovery.mjs)
       select_target "core:stand-in-assignment-notifications"
       return
       ;;
@@ -350,8 +350,11 @@ classify_workbench_path() {
       return
       ;;
 
-    # Scheme interception and the agent fixture exercise the shared embedded browser.
+    # Scheme interception, download policy, and the agent fixture exercise the shared embedded browser.
     wework/electron/src/host/embedded-browser-manager* | \
+      wework/electron/src/host/download-target-policy* | \
+      wework/e2e/desktop/modules/native-download-dialogs.mjs | \
+      wework/e2e/desktop/scenarios/browser-download-policy-regression.mjs | \
       wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
       select_target "core:embedded-browser"
       return

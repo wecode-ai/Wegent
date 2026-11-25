@@ -3,6 +3,7 @@ import { usePart } from '@ui-sdk/react/primitive'
 import { Slider, SliderControl, SliderIndicator, SliderTrack } from '@ui-sdk/react/slider'
 import type { ComponentProps, ReactNode } from 'react'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import styles from './RangeSlider.module.css'
 
 function SliderThumb({
   testId,
@@ -33,8 +34,7 @@ function SliderThumb({
   const input = usePart(slider, 'thumb-input', { index: 0 }, inputProps, 'input')
   const thumbProps = {
     'data-testid': testId,
-    className:
-      'z-20 h-7 w-7 rounded-full border border-border bg-background shadow-sm has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus',
+    className: `${styles.thumb} z-20 rounded-full border border-border bg-background shadow-sm has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus`,
     children: input,
   }
   return usePart(slider, 'thumb', { index: 0 }, thumbProps, 'span')
@@ -98,28 +98,36 @@ export function RangeSlider({
       }}
       onValueCommit={() => onInteractionChange?.(false)}
     >
-      <SliderControl className="relative flex h-11 touch-none items-center px-3 md:h-8">
-        <SliderTrack className="relative h-6 w-full rounded-full bg-muted">
-          <SliderIndicator
-            data-testid={progressTestId}
-            className={cn(
-              'absolute h-full overflow-hidden rounded-full bg-focus',
-              progressClassName
-            )}
-          >
-            {progressContent}
-          </SliderIndicator>
-          {children}
-          <SliderThumb
-            testId={thumbTestId}
-            inputTestId={inputTestId}
-            label={label}
-            describedBy={describedBy}
-            value={value}
-            min={min}
-            max={max}
-          />
-        </SliderTrack>
+      <SliderControl
+        className={`${styles.control} relative flex h-11 touch-none items-center px-3 md:h-8`}
+      >
+        {/* The SDK uses the inset track for both thumb placement and pointer coordinates. */}
+        <div className={`${styles.rail} box-border w-full rounded-full bg-muted`}>
+          <SliderTrack className="h-6">
+            <SliderIndicator
+              data-testid={progressTestId}
+              data-at-minimum={value === min ? '' : undefined}
+              data-at-maximum={value === max ? '' : undefined}
+              className={cn(
+                styles.indicator,
+                'pointer-events-none h-full overflow-hidden rounded-full bg-focus',
+                progressClassName
+              )}
+            >
+              {progressContent}
+            </SliderIndicator>
+            {children}
+            <SliderThumb
+              testId={thumbTestId}
+              inputTestId={inputTestId}
+              label={label}
+              describedBy={describedBy}
+              value={value}
+              min={min}
+              max={max}
+            />
+          </SliderTrack>
+        </div>
       </SliderControl>
     </Slider>
   )

@@ -116,11 +116,12 @@ pub(super) fn with_headers(
     selected
         .entry("name".to_owned())
         .or_insert_with(|| json!(provider));
-    if !headers.is_empty() {
-        let mut merged = parse_header_map(selected.get("http_headers"));
-        for (key, value) in headers {
-            insert_header(&mut merged, &key, &value);
-        }
+    let mut merged = parse_header_map(selected.get("http_headers"));
+    for (key, value) in headers {
+        insert_header(&mut merged, &key, &value);
+    }
+    wegent_execution_contracts::model_request_headers::apply_wework_headers(&mut merged);
+    if !merged.is_empty() {
         selected.insert(
             "http_headers".into(),
             json!(merged.into_iter().collect::<BTreeMap<_, _>>()),
@@ -147,7 +148,6 @@ pub(super) fn official_proxy_overrides(base_url: String, supports_websockets: bo
     let mut selected = defaults("openai");
     selected.insert("base_url".into(), json!(base_url));
     selected.insert("supports_websockets".into(), json!(supports_websockets));
-    selected.insert("supports_standalone_web_search".into(), json!(false));
     serialize(selected)
 }
 
@@ -268,7 +268,7 @@ mod tests {
             assert_eq!(config["name"], "OpenAI");
             assert_eq!(config["requires_openai_auth"], true);
             assert_eq!(config["supports_websockets"], supports_websockets);
-            assert_eq!(config["supports_standalone_web_search"], false);
+            assert_eq!(config["supports_standalone_web_search"], true);
             assert!(config.get("auth").is_none());
             assert!(config.get("experimental_bearer_token").is_none());
         }

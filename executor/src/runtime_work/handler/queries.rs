@@ -33,6 +33,9 @@ impl RuntimeWorkRpcHandler {
             self.is_active_local_task(&task_id),
             self.queued_local_task_position(&task_id),
         );
+        sidebar::apply_sidebar_task_pin(&mut link, |thread_id| {
+            CodexGlobalProjectIndex::load().pinned_thread_order(thread_id)
+        });
         link.git_info = crate::runtime_work::response::git_info_for_workspace(
             link.git_info.take(),
             &link.workspace_path,
@@ -59,6 +62,7 @@ impl RuntimeWorkRpcHandler {
                         | "quotaWait"
                         | "connectionEventSubscriptions"
                         | "startupFailure"
+                        | super::stand_in_task_permissions::TASK_PERMISSIONS
                 )
             });
             // The serializer originally adds this authoritative identity after

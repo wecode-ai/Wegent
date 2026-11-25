@@ -58,6 +58,7 @@ Implementation invariants:
 - Content clicks and touch taps retain the existing follow/read policy. Pointer scroll input belongs to the scrollbar; native touch input starts at `touchmove`, so a later spring step cannot be mistaken for manual scrolling. Search and turn navigation still handle pointerdown and touchstart through their own cancellation lifecycles.
 - `overflow-anchor: none` prevents another anchoring owner. TanStack owns row geometry; the text anchor only corrects residual displacement: `correction = ΔanchorOffset + ΔreaderScrollTop`. Exclude actual engine writes and range clamps from reader movement. If the original node disappears, resample rather than using its old ordinal to select another paragraph.
 - Switching conversations uses saved snapshots without scanning the outgoing transcript during unmount. Follow snapshots save zero bottom distance; reading snapshots save distance and resolvable message/item/text identity. Suspending automatic scrolling for search or a hidden pane also suspends snapshot writes: temporary navigation in isolated search pages must not overwrite the original conversation snapshot. Restore-generated scroll events cannot overwrite the reader's position.
+- Restoring a reading position can write the saved bottom distance and then correct to the text anchor in one layout commit. The virtualizer acknowledges the final offset after the commit, while row measurement still reads the live viewport. Intermediate offsets cannot trigger another layout commit.
 
 | Trigger                                               | Ownership and expected behavior                                                                              |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -91,7 +92,7 @@ Async question model fixtures must also respect user-message boundaries: reuse t
 
 Streaming text and scroll following each have exactly one scheduler. Component animation, direct scrolling, and delayed scroll timers must not compete:
 
-- `useBufferedStreamingText` only coalesces text updates received within one frame into the next animation frame. It must not maintain a typewriter queue that trails the authoritative message content; the next frame must commit the latest complete prefix, with a short timeout fallback when frames are unavailable.
+- The desktop conversation cache coalesces high-frequency text deltas. Markdown passes each published prefix directly to Streamdown. Terminal and interactive updates publish immediately.
 - `Streamdown` remains in `streaming` mode for incremental Markdown parsing. Existing windowing and freezing continue to own non-tail Markdown blocks; animation must not rebuild the whole message tree.
 - Streaming auto-follow in `ScrollableMessageArea` is owned by one damped spring. ResizeObserver callbacks, message appends, and runtime-state changes may only ask that spring to keep tracking the latest bottom; they must not also perform streaming jumps or schedule stabilization timers.
 - While the spring owns following, disable TanStack append follow and end-resize compensation while retaining virtual row geometry. In reading mode, TanStack compensates row changes before the viewport; the text anchor corrects residual within-row reflow.

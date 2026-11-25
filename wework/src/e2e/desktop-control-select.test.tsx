@@ -74,6 +74,15 @@ describe('selectDesktopControlOption', () => {
     )
   })
 
+  test('captures the mounted options when an opted-in selection is missing', () => {
+    const select = createSelect()
+    select.options[1].disabled = true
+
+    expect(() => selectDesktopControlOption(select, 'missing', 'value', true)).toThrow(
+      'Unable to find select option by value "missing"; select={"selectedValue":"","selectedLabel":"None","options":[{"value":"","label":"None","disabled":false},{"value":"local:project-space-id","label":"Task Follow-up Board","disabled":true}]}'
+    )
+  })
+
   test('updates React controlled state before a following save click', async () => {
     const container = document.createElement('div')
     document.body.append(container)
@@ -303,6 +312,26 @@ test('clears an SDK selection when the list offers an empty value', async () => 
     expect(await selectDesktopControlChoice(fixture.element, '')).toBe('Unassigned')
     expect(await desktopControlSelectionValue(fixture.element)).toBe('')
     expect(fixture.container.querySelector('output')?.textContent).toBe('')
+  } finally {
+    await act(async () => fixture.root.unmount())
+    fixture.container.remove()
+  }
+})
+
+test('retains requested option diagnostics through unified selection', async () => {
+  const native = createSelect()
+  await expect(selectDesktopControlChoice(native, 'missing', 'value', 1000, true)).rejects.toThrow(
+    'selectedLabel":"None"'
+  )
+  native.remove()
+
+  const fixture = await sdkFixture('select')
+  try {
+    await act(async () => {
+      await expect(
+        selectDesktopControlChoice(fixture.element, 'missing', 'value', 1000, true)
+      ).rejects.toThrow('"label":"First project"')
+    })
   } finally {
     await act(async () => fixture.root.unmount())
     fixture.container.remove()

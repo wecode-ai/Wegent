@@ -5,6 +5,7 @@ import {
 import {
   applyRequestUserInputResponseToBlock,
   isAsyncRequestUserInputPayload,
+  requestUserInputResponseAttachments,
 } from '@wegent/chat-core/runtime-user-input'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import { useCallback, useRef } from 'react'
@@ -49,6 +50,7 @@ import {
 } from '@/lib/workbench-device'
 import type {
   Attachment,
+  RequestUserInputResponse,
   ModelType,
   ModelSelectionConfig,
   ModelOptions,
@@ -154,6 +156,27 @@ function runtimeCreateMessage(intent: PreparedRuntimeTaskIntent): string {
     : ''
 }
 
+function runtimeAttachmentsUseRemoteFilesystem(
+  deviceId: string,
+  devices: WorkbenchState['devices']
+): boolean {
+  const device = devices.find(item => item.device_id === deviceId)
+  return device?.device_type === 'cloud' || device?.device_type === 'remote'
+}
+
+async function prepareRuntimeAttachmentRecordsForDevice(
+  deviceId: string,
+  devices: WorkbenchState['devices'],
+  attachments: Attachment[],
+  uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
+): Promise<Attachment[]> {
+  const prepared = await resolvePreparingAttachments(attachments, filename =>
+    i18n.t('workbench.attachment_preparation_unavailable', { filename })
+  )
+  if (!runtimeAttachmentsUseRemoteFilesystem(deviceId, devices)) return prepared
+  return (await prepareCloudAttachments(prepared, uploadLocalAttachmentToCloud)).attachments
+}
+
 export async function prepareRuntimeAttachmentsForDevice(
   deviceId: string,
   devices: WorkbenchState['devices'],
@@ -161,17 +184,41 @@ export async function prepareRuntimeAttachmentsForDevice(
   attachments: Attachment[] = [],
   uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
 ): Promise<RuntimeAttachmentTransport> {
-  attachments = await resolvePreparingAttachments(attachments, filename =>
-    i18n.t('workbench.attachment_preparation_unavailable', { filename })
+  const prepared = await prepareRuntimeAttachmentRecordsForDevice(
+    deviceId,
+    devices,
+    attachments,
+    uploadLocalAttachmentToCloud
   )
-  attachmentIds = [...new Set([...attachmentIds, ...remoteAttachmentIds(attachments)])]
-  const device = devices.find(item => item.device_id === deviceId)
-  const usesRemoteFilesystem = device?.device_type === 'cloud' || device?.device_type === 'remote'
-  if (!usesRemoteFilesystem || attachments.length === 0) {
-    return { attachmentIds, attachments: localRuntimeAttachments(attachments) }
+  return {
+    attachmentIds: [...new Set([...attachmentIds, ...remoteAttachmentIds(prepared)])],
+    attachments: runtimeAttachmentsUseRemoteFilesystem(deviceId, devices)
+      ? prepared
+      : localRuntimeAttachments(prepared),
   }
+}
 
-  return prepareCloudAttachments(attachments, uploadLocalAttachmentToCloud, attachmentIds)
+export async function prepareRuntimeQuestionResponse(
+  response: RequestUserInputResponse,
+  deviceId: string,
+  devices: WorkbenchState['devices'],
+  uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
+): Promise<RequestUserInputResponse> {
+  const answers = Object.fromEntries(
+    await Promise.all(
+      Object.entries(response.answers).map(async ([id, answer]) => {
+        if (!answer.attachments?.length) return [id, answer]
+        const attachments = await prepareRuntimeAttachmentRecordsForDevice(
+          deviceId,
+          devices,
+          answer.attachments,
+          uploadLocalAttachmentToCloud
+        )
+        return [id, { ...answer, attachments }]
+      })
+    )
+  )
+  return { ...response, answers }
 }
 
 export function runtimeExecutablePathForTarget({
@@ -235,6 +282,7 @@ interface UseWorkbenchRuntimeMessagingOptions {
   ) => RuntimeTaskModelSelectionControls
   skillSelection: RuntimeMessagingSkillSelection
   refreshWorkLists: () => Promise<void>
+  workspaceTabId?: string
 }
 
 export function runtimeSendError(error: unknown, fallback: string): string {
@@ -364,6 +412,7 @@ export function useWorkbenchRuntimeMessaging({
   resolveRuntimeTaskModelSelection,
   skillSelection,
   refreshWorkLists,
+  workspaceTabId,
 }: UseWorkbenchRuntimeMessagingOptions) {
   const sendAttemptsRef = useRef(new Map<string, number>())
   const appPreferences = useAppPreferencesState()
@@ -422,8 +471,28 @@ export function useWorkbenchRuntimeMessaging({
 
   const prepareRuntimeSendRequest = useCallback(
     async (input: RuntimeSendRequest): Promise<RuntimeSendRequest> => {
+      const originalResponse = input.requestUserInputResponse ?? input.request_user_input_response
+      const response = originalResponse
+        ? await prepareRuntimeQuestionResponse(
+            originalResponse,
+            input.address.deviceId,
+            state.devices,
+            services.attachmentApi?.uploadLocalAttachmentToCloud
+          )
+        : undefined
+      const responseAttachments = response ? requestUserInputResponseAttachments(response) : []
       const request = await prepareRuntimeContinuationModel(
-        applyReadyRuntimeTaskModel(input),
+        applyReadyRuntimeTaskModel(
+          responseAttachments.length
+            ? {
+                ...input,
+                ...(input.requestUserInputResponse
+                  ? { requestUserInputResponse: response }
+                  : { request_user_input_response: response }),
+                attachments: responseAttachments,
+              }
+            : input
+        ),
         state.runtimeWork,
         () => executorClient.runtime.listRuntimeWork()
       )
@@ -565,6 +634,11 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
+        if (response.guided) {
+          if (sendRequested) lifecycleStore.sendAccepted(outboundRequest.address)
+          options?.onGuided?.()
+          return true
+        }
         if (options?.silentBusyRetry && !userInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
         }
@@ -574,12 +648,14 @@ export function useWorkbenchRuntimeMessaging({
             applyRequestUserInputResponseToBlock(block, userInputResponse)
           )
           lifecycleStore.userInputResponded(outboundRequest.address)
+          if (response.status === 'queued') options?.onQueued?.(response)
         } else if (response.status === 'queued') {
           lifecycleStore.sendQueued(outboundRequest.address, response.queuePosition)
           options?.onQueued?.(response)
         } else {
           lifecycleStore.sendAccepted(outboundRequest.address)
         }
+        options?.onAccepted?.(response)
         void refreshWorkLists().catch(error => {
           console.warn('[Wework] Runtime send accepted but work list refresh failed', {
             taskId: response.taskId ?? outboundRequest.address.taskId,
@@ -1573,10 +1649,10 @@ export function useWorkbenchRuntimeMessaging({
           execution_target: telemetryExecutionTarget(address.deviceId, state.devices),
         })
         if (!options?.ephemeral) {
-          void notifyMainRuntimeWorkChanged({
-            deviceId: address.deviceId,
-            taskId: address.taskId,
-          }).catch(error => {
+          void notifyMainRuntimeWorkChanged(
+            { deviceId: address.deviceId, taskId: address.taskId },
+            workspaceTabId
+          ).catch(error => {
             console.warn('[Wework] Failed to notify main window about runtime task creation', {
               deviceId: address.deviceId,
               taskId: address.taskId,
@@ -1672,6 +1748,7 @@ export function useWorkbenchRuntimeMessaging({
       state.runtimeWork,
       state.selectedDeviceWorkspaceId,
       state.standaloneChatKey,
+      workspaceTabId,
     ]
   )
 

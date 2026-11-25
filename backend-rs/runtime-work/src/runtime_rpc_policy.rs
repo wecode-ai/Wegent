@@ -10,13 +10,14 @@ use crate::remote_control_is_enabled;
 
 use super::runtime_rpc::Route;
 
-const PERSONAL_TASK_METHODS: [&str; 23] = [
+const PERSONAL_TASK_METHODS: [&str; 24] = [
     "runtime.tasks.create",
     "runtime.tasks.list",
     "runtime.tasks.search",
     "runtime.tasks.transcript",
     "runtime.tasks.transcript.search",
     "runtime.tasks.send",
+    "runtime.tasks.permissions.set",
     "runtime.tasks.guidance",
     "runtime.tasks.cancel",
     "runtime.tasks.goal.get",
@@ -184,7 +185,11 @@ mod tests {
                     Some(TaskGrant::StandInRole)
                 );
             }
-            for method in ["runtime.stand_in.role_task.unknown", "runtime.tasks.send"] {
+            for method in [
+                "runtime.stand_in.role_task.unknown",
+                "runtime.tasks.send",
+                "runtime.tasks.permissions.set",
+            ] {
                 assert_ne!(
                     authorize(&target, method, false),
                     Some(TaskGrant::StandInRole)

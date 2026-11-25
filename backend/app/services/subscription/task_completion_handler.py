@@ -164,9 +164,17 @@ class SubscriptionTaskCompletionHandler:
                     BackgroundExecutionStatus.COMPLETED,
                     BackgroundExecutionStatus.COMPLETED_SILENT,
                 ):
-                    await self._cleanup_completed_managed_subscription_executor(
-                        db, execution, event.task_id
-                    )
+                    try:
+                        await self._cleanup_completed_managed_subscription_executor(
+                            db, execution, event.task_id
+                        )
+                    except Exception as cleanup_error:
+                        db.rollback()
+                        logger.error(
+                            f"[TaskCompletionHandler] Failed to clean runtime for "
+                            f"task_id={event.task_id}: {cleanup_error}",
+                            exc_info=True,
+                        )
 
                 # Skip notifications for silent exits
                 if is_silent_exit:

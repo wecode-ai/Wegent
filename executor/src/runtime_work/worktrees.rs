@@ -644,6 +644,30 @@ impl WorktreeManager {
         )
     }
 
+    pub fn worktree_for_cleanup(&self, path: &Path) -> Result<Option<ManagedWorktree>, String> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
+        let state = self.load();
+        let key = normalized_path_key(path);
+        if let Some(record) = state.records.get(&key) {
+            return Ok(Some(record.clone()));
+        }
+        #[cfg(windows)]
+        if let Some(record) = state
+            .records
+            .values()
+            .find(|record| same_path(&key, &record.path))
+        {
+            return Ok(Some(record.clone()));
+        }
+        if ensure_managed_path(path, &state.known_roots).is_err() {
+            return Ok(None);
+        }
+        Ok(discovered_worktree_record(path, &self.device_id))
+    }
+
     pub fn list(
         &self,
         tasks: &[RuntimeTaskLink],
@@ -712,7 +736,9 @@ impl WorktreeManager {
             // snapshotted.
             let orphaned_path = !preserve_snapshot && is_orphaned_worktree_residue(path);
             if path.exists() && preserve_snapshot {
-                let snapshot = snapshot_worktree(path, &snapshot_dir)?;
+                let snapshot = measure_stage(&record.worktree_id, "delete_snapshot", || {
+                    snapshot_worktree(path, &snapshot_dir)
+                })?;
                 record.snapshot_ref = Some(snapshot.reference);
                 record.snapshot_commit = Some(snapshot.commit);
                 record.snapshot_at = Some(now_ms());
@@ -737,7 +763,9 @@ impl WorktreeManager {
                     );
                     remove_orphaned_worktree_path(path)?;
                 } else {
-                    remove_git_worktree(path)?;
+                    measure_stage(&record.worktree_id, "delete_remove_git_worktree", || {
+                        remove_git_worktree(path)
+                    })?;
                 }
             }
             if !preserve_snapshot {
@@ -771,14 +799,17 @@ impl WorktreeManager {
                 .mutation_lock
                 .lock()
                 .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
-            let mut state = self.load();
-            discover_worktrees(&mut state, &self.device_id);
+            let state = self.load();
             ensure_managed_path(path, &state.known_roots)?;
-            let record = state
+            let mut record = state
                 .records
                 .get(&key)
                 .cloned()
+                .or_else(|| discovered_worktree_record(path, &self.device_id))
                 .ok_or_else(|| "Managed worktree was not found".to_owned())?;
+            if record.source_path.is_none() && path.exists() {
+                record.source_path = source_repository_path(path);
+            }
             (record, state.known_roots)
         };
         let expected_path = if path.try_exists().map_err(|error| error.to_string())? {
@@ -802,11 +833,13 @@ impl WorktreeManager {
                     "Managed worktree path changed while waiting for deletion",
                 ));
             }
-            if preserve_snapshot {
-                validate_record_worktree_identity(&record, path)?;
-            } else {
-                validate_deletable_worktree_identity(&record, path)?;
-            }
+            measure_stage(&record.worktree_id, "delete_validate", || {
+                if preserve_snapshot {
+                    validate_record_worktree_identity(&record, path)
+                } else {
+                    validate_deletable_worktree_identity(&record, path)
+                }
+            })?;
         }
         operation(&mut record)?;
 
@@ -824,7 +857,6 @@ impl WorktreeManager {
                 .lock()
                 .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
             let mut state = self.load();
-            discover_worktrees(&mut state, &self.device_id);
             if let Some(current) = state.records.get(&key) {
                 if current.worktree_id != record.worktree_id
                     || !same_path(&current.path, &record.path)
@@ -1091,17 +1123,17 @@ fn snapshot_worktree(path: &Path, snapshot_dir: &Path) -> Result<Snapshot, Strin
     fs::create_dir_all(snapshot_dir).map_err(|error| error.to_string())?;
     let head = git_output(path, &["rev-parse", "HEAD"], None)?;
     let common_dir = git_common_dir(path)?;
-    let index = snapshot_dir.join(format!(
-        "snapshot-index-{}-{}",
-        std::process::id(),
-        now_ms()
-    ));
+    let temporary_index_dir = tempfile::Builder::new()
+        .prefix("snapshot-")
+        .tempdir_in(snapshot_dir)
+        .map_err(|error| error.to_string())?;
+    let index = temporary_index_dir.path().join("index");
     let index_value = index.display().to_string();
     let envs = [("GIT_INDEX_FILE", index_value.as_str())];
     git_output(path, &["read-tree", &head], Some(&envs))?;
     git_output(path, &["add", "-A", "--", "."], Some(&envs))?;
     let tree = git_output(path, &["write-tree"], Some(&envs))?;
-    let _ = fs::remove_file(&index);
+    drop(temporary_index_dir);
     let commit_envs = [
         ("GIT_AUTHOR_NAME", "Wegent Worktree Snapshot"),
         ("GIT_AUTHOR_EMAIL", "snapshot@wegent.local"),
@@ -1891,17 +1923,12 @@ fn discover_worktrees(state: &mut WorktreeState, device_id: &str) {
             };
             for repository in repositories.flatten().filter(|entry| entry.path().is_dir()) {
                 let path = repository.path();
-                if !path.join(".git").is_file() {
-                    continue;
-                }
                 let key = normalized_path_key(&path);
-                state.records.entry(key).or_insert_with(|| ManagedWorktree {
-                    worktree_id: id.file_name().to_string_lossy().to_string(),
-                    device_id: device_id.to_owned(),
-                    path: path.display().to_string(),
-                    repository_name: repository.file_name().to_string_lossy().to_string(),
-                    ..ManagedWorktree::default()
-                });
+                if let std::collections::hash_map::Entry::Vacant(entry) = state.records.entry(key) {
+                    if let Some(record) = discovered_worktree_record(&path, device_id) {
+                        entry.insert(record);
+                    }
+                }
             }
             let _ = remove_empty_directory(&id_path);
         }
@@ -1912,6 +1939,19 @@ fn discover_worktrees(state: &mut WorktreeState, device_id: &str) {
         }
         record.source_path = source_repository_path(Path::new(&record.path));
     }
+}
+
+fn discovered_worktree_record(path: &Path, device_id: &str) -> Option<ManagedWorktree> {
+    if !path.join(".git").is_file() {
+        return None;
+    }
+    Some(ManagedWorktree {
+        worktree_id: path.parent()?.file_name()?.to_string_lossy().into_owned(),
+        device_id: device_id.to_owned(),
+        path: path.display().to_string(),
+        repository_name: path.file_name()?.to_string_lossy().into_owned(),
+        ..ManagedWorktree::default()
+    })
 }
 
 fn source_repository_path(worktree_path: &Path) -> Option<String> {

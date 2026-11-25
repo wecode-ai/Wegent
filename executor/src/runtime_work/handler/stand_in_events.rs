@@ -49,7 +49,12 @@ impl RuntimeWorkRpcHandler {
         let personal = store
             .all_personal_stand_ins(&self.device_id)
             .map_err(settings_error)?;
-        let project_configs = self.stand_in_project_configs(&personal, project, "cloud");
+        let Some(user) = payload["recipientUserId"].as_i64() else {
+            return Ok(());
+        };
+        let project_configs = self
+            .cloud_issue_intake_configs(&personal, user, project, issue_id)
+            .await?;
         let configs: Vec<Value> = project_configs
             .iter()
             .filter(|config| {

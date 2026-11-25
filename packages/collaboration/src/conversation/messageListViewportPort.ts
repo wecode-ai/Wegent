@@ -40,6 +40,7 @@ export function createMessageListViewportPort() {
   let input: ViewportInput | null = null
   let lease: symbol | null = null
   let previousLayoutKey: string | null = null
+  let previousScrollHeight: number | undefined
   let measurements: MeasurementSnapshot | null = null
   const uncacheable = new Set<string>()
   const pending = new Map<MarkdownWindowingScope, Set<HTMLElement>>()
@@ -83,11 +84,35 @@ export function createMessageListViewportPort() {
     const row = chunk.closest<HTMLElement>('[data-message-row][data-index]')
     if (!row || !element.contains(row)) return
     input.measureRow(row)
-    capture()
+    if (!input.ready || !input.onLayoutChange) return
+    const scrollHeight = input.scrollElementRef?.current?.scrollHeight
+    if (scrollHeight === undefined || scrollHeight === previousScrollHeight) return
+    // Markdown can restore a clamped native range without changing the cached
+    // virtual row sizes. Reconcile the viewport in this DOM commit as well.
+    previousScrollHeight = scrollHeight
+    input.onLayoutChange()
   }
   return {
     chunkLayout,
-    bind(node: HTMLDivElement, next: ViewportInput) {
+    attach(node: HTMLDivElement) {
+      const binding = Symbol('message-list-viewport')
+      lease = binding
+      element = node
+      return () => {
+        if (lease !== binding) return
+        lease = null
+        queueMicrotask(() => {
+          if (lease !== null) return
+          persist()
+          element = null
+          input = null
+          pending.clear()
+        })
+      }
+    },
+    update(next: ViewportInput) {
+      const node = element
+      if (!node || !attached()) return
       const layoutChanged =
         !input ||
         input.scope !== next.scope ||
@@ -108,9 +133,6 @@ export function createMessageListViewportPort() {
         measurements = null
         uncacheable.clear()
       }
-      const binding = Symbol('message-list-viewport')
-      lease = binding
-      element = node
       input = next
       if (!next.virtual || next.ready) {
         const chunks = [...(pending.get(next.scope) ?? [])]
@@ -130,6 +152,8 @@ export function createMessageListViewportPort() {
       capture()
       if (layoutChanged && next.virtual && next.ready) {
         next.scope.getViewportRenders().forEach(render => render())
+        // The chunk callback can read the native range when it actually needs it.
+        previousScrollHeight = undefined
         if (isConversationDiagnosticsEnabled()) {
           const scroller = next.scrollElementRef?.current
           recordConversationDiagnostic('virtual-range', {
@@ -146,18 +170,6 @@ export function createMessageListViewportPort() {
           })
         }
         next.onLayoutChange?.()
-      }
-      return () => {
-        if (lease !== binding) return
-        lease = null
-        // Persist the last committed owner, even if TanStack has already accepted another scope's options.
-        persist()
-        queueMicrotask(() => {
-          if (lease !== null) return
-          element = null
-          input = null
-          pending.clear()
-        })
       }
     },
   }

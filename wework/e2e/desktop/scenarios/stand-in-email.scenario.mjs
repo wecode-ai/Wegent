@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import {
   openStandInActivity,
   openStandInDetails,
@@ -443,8 +444,7 @@ export function createDesktopScenario({
       const project = await rpc(control, 'projects.create', { name: '邮箱角色复用验证' })
       let current = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
       const role = {
-        ...current.roles[0],
-        id: 'default',
+        ...standInRoleFixture(current.executionDeviceId),
         name: '邮箱项目角色',
         enabled: false,
         version: 0,
@@ -456,9 +456,7 @@ export function createDesktopScenario({
         settings: {
           ...current,
           primary: { ...current.primary, enabled: false },
-          roles: current.roles.map(item =>
-            item.id === 'default' ? { ...role, version: item.version } : item
-          ),
+          roles: [...current.roles.filter(item => item.id !== role.id), role],
         },
       })
       await mail.deliver(

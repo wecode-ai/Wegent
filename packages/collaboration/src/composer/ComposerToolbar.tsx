@@ -19,7 +19,10 @@ import {
   runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
-import { PermissionModeSelector } from '../controls/PermissionModeSelector'
+import {
+  PermissionModeSelector,
+  type ComposerPermissionControls,
+} from '../controls/PermissionModeSelector'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 
 export interface ComposerToolbarProps {
@@ -48,6 +51,7 @@ export interface ComposerToolbarProps {
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onSelectPermissionOptions?: (options: ModelOptions) => void
+  permissionControls?: ComposerPermissionControls | null
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   modelSelectorOverride?: ReactNode
   onFileSelect: (files: File | File[]) => void
@@ -63,6 +67,7 @@ export interface ComposerToolbarProps {
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
   isStreaming?: boolean
+  showPauseButton?: boolean
   onPause?: () => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
@@ -99,6 +104,7 @@ export function ComposerToolbar({
   onSelectModelAndOptions,
   onSelectModelOption,
   onSelectPermissionOptions,
+  permissionControls,
   onBlockedModelSelect,
   modelSelectorOverride,
   onFileSelect,
@@ -113,6 +119,7 @@ export function ComposerToolbar({
   goalDraftActive = false,
   onCancelGoalDraft,
   isStreaming = false,
+  showPauseButton = true,
   onPause,
   onSubmit,
   sendButtonTestId = 'send-message-button',
@@ -157,28 +164,36 @@ export function ComposerToolbar({
     return () => observer.disconnect()
   }, [])
 
-  const permissionSelector = showExecutionTools ? (
-    <PermissionModeSelector
-      translate={t}
-      value={runtimePermissionMode(selectedModelOptions)}
-      commandApproval={runtimeCommandApprovalMode(selectedModelOptions)}
-      onCommandApprovalChange={mode => onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)}
-      disabled={disabled}
-      iconOnly
-      density="dense"
-      onChange={(mode, approval) => {
-        if (onSelectPermissionOptions) {
-          onSelectPermissionOptions({
-            [RUNTIME_PERMISSION_MODE_OPTION]: mode,
-            ...(approval ? { [RUNTIME_COMMAND_APPROVAL_OPTION]: approval } : {}),
-          })
-          return
+  const selectedPermissionControls: ComposerPermissionControls | null =
+    permissionControls === undefined
+      ? {
+          value: runtimePermissionMode(selectedModelOptions),
+          commandApproval: runtimeCommandApprovalMode(selectedModelOptions),
+          onCommandApprovalChange: mode =>
+            onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode),
+          onChange: (mode, approval) => {
+            if (onSelectPermissionOptions) {
+              onSelectPermissionOptions({
+                [RUNTIME_PERMISSION_MODE_OPTION]: mode,
+                ...(approval ? { [RUNTIME_COMMAND_APPROVAL_OPTION]: approval } : {}),
+              })
+              return
+            }
+            if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+            onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+          },
         }
-        if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
-        onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
-      }}
-    />
-  ) : null
+      : permissionControls
+  const permissionSelector =
+    showExecutionTools && selectedPermissionControls ? (
+      <PermissionModeSelector
+        translate={t}
+        iconOnly
+        density="dense"
+        {...selectedPermissionControls}
+        disabled={disabled || selectedPermissionControls.disabled}
+      />
+    ) : null
 
   return (
     <div
@@ -262,7 +277,7 @@ export function ComposerToolbar({
         {workspaceMenu}
         {renderTrailingActions?.(compact)}
         {showSubmitButton &&
-          (isStreaming && !canSend ? (
+          (showPauseButton && isStreaming && !canSend ? (
             <Tooltip
               label={t('workbench.pause_response', '暂停回复')}
               align="end"

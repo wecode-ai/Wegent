@@ -143,7 +143,7 @@ pub(super) fn prepare_request_with_model_hint(
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
-    normalize_responses_request_input(&mut responses_body, api_format);
+    normalize_responses_request_input(&mut responses_body, api_format == "openai-responses");
     group_responses_tool_history(&mut responses_body);
     image_budget::limit_request_images(&mut responses_body);
 
@@ -160,6 +160,7 @@ pub(super) fn prepare_request_with_model_hint(
             detail: format!("Failed to convert local model request: {error}"),
         })?;
         responses_body = converted;
+        request_policy::strip_incompatible_responses_history_ids(&mut responses_body);
         if tool_capabilities.function_tools_only {
             request_policy::retain_function_tools(&mut responses_body)?;
         }
@@ -202,6 +203,9 @@ fn group_responses_tool_history(body: &mut Value) {
 
     for index in 0..items.len() {
         let item = &items[index];
+        if chat::is_unlinked_server_tool_search(item) {
+            continue;
+        }
         let call_id = item["call_id"].as_str().filter(|id| !id.is_empty());
         match (item["type"].as_str(), call_id) {
             (Some("function_call" | "custom_tool_call" | "tool_search_call"), Some(id)) => {
@@ -268,14 +272,13 @@ pub(super) fn apply_max_output_tokens(body: &mut Value, max_output_tokens: u64) 
     );
 }
 
-fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
-    let adapt_detached_context =
-        matches!(api_format, "anthropic-messages" | "openai-chat-completions");
+fn normalize_responses_request_input(body: &mut Value, native_responses: bool) {
     let Some(input) = body.get_mut("input") else {
         return;
     };
     let items = match input {
         Value::Array(items) => {
+            discard_nameless_function_calls(items);
             items.retain_mut(retain_responses_input_item);
             items.as_mut_slice()
         }
@@ -284,10 +287,7 @@ fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
     };
 
     for item in items {
-        if let Some(message) = adapt_detached_context
-            .then(|| chat::detached_context_message(item))
-            .flatten()
-        {
+        if let Some(message) = chat::detached_context_message(item, native_responses) {
             *item = message;
             continue;
         }
@@ -313,6 +313,44 @@ fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
             }
         }
     }
+}
+
+fn discard_nameless_function_calls(items: &mut Vec<Value>) {
+    let mut invalid_ids: HashSet<_> = items
+        .iter()
+        .filter(|item| nameless_function_call(item))
+        .map(|item| item["call_id"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    if invalid_ids.is_empty() {
+        return;
+    }
+
+    // A callable item can still own an ID also used by a malformed item.
+    for item in items.iter().filter(|item| {
+        matches!(
+            item["type"].as_str(),
+            Some("function_call" | "custom_tool_call" | "tool_search_call")
+        ) && !nameless_function_call(item)
+    }) {
+        invalid_ids.remove(item["call_id"].as_str().unwrap_or_default());
+    }
+    items.retain(|item| {
+        if nameless_function_call(item) {
+            return false;
+        }
+        let call_id = item["call_id"].as_str().unwrap_or_default();
+        // Codex can carry detached context as a function result with an empty ID.
+        item["type"] != "function_call_output"
+            || !invalid_ids.contains(call_id)
+            || (call_id.is_empty() && item["output"] != "unsupported call: ")
+    });
+}
+
+pub(super) fn nameless_function_call(item: &Value) -> bool {
+    item["type"] == "function_call"
+        && !item["name"]
+            .as_str()
+            .is_some_and(|name| !name.trim().is_empty())
 }
 
 fn retain_responses_input_item(item: &mut Value) -> bool {

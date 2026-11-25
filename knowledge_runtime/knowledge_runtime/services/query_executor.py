@@ -104,6 +104,7 @@ class QueryExecutor:
             query=plan.normalized_query,
             metadata_condition=request.metadata_condition,
             max_results=request.max_results,
+            deduplicate_by_document=request.deduplicate_by_document,
         )
         result_records = result["records"]
         observer = RetrievalResultObserver.start(len(result_records))

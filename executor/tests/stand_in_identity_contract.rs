@@ -84,6 +84,7 @@ fn primary_project_intake_has_a_cutoff_and_never_collides_with_a_role_named_prim
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([wegent_executor_test_support::stand_in_role("mac")]);
     settings["primary"] = json!({"enabled":true,"prompt":"Coordinate","preferences":"","collaboration":{"enabled":true,"allProjects":false,"projects":[{"id":"project","store":"local"}],"excludedProjects":[],"tags":[],"policy":{"automatic":true,"askBeforeAct":true}}});
     settings["roles"][0]["id"] = json!("primary");
     let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
@@ -372,6 +373,7 @@ fn continuous_connection_scopes_preserve_account_kind_and_memory_isolation() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([wegent_executor_test_support::stand_in_role("mac")]);
     let source = json!({"providerId":DINGTALK_PROVIDER,"profile":"corp","kind":"group","id":"*","scope":"all","name":"All groups","policy":{"automatic":true,"askBeforeAct":true}});
     settings["roles"][0]["connections"] = json!([source.clone()]);
     let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();

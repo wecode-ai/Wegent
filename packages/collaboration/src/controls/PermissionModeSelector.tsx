@@ -4,7 +4,7 @@ import {
   type RuntimeCommandApprovalMode,
   type RuntimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
-import { Eye, FolderPen, ShieldAlert } from 'lucide-react'
+import { ChevronDown, Eye, FolderPen, ShieldAlert } from 'lucide-react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CollaborationTranslate } from '../i18n'
@@ -22,9 +22,15 @@ export interface PermissionModeSelectorProps {
   onCommandApprovalChange?: (mode: RuntimeCommandApprovalMode) => void
   disabled?: boolean
   iconOnly?: boolean
+  showChevron?: boolean
   density?: ControlDensity
   onChange: (mode: RuntimePermissionMode, approval?: RuntimeCommandApprovalMode) => void
 }
+
+export type ComposerPermissionControls = Pick<
+  PermissionModeSelectorProps,
+  'value' | 'commandApproval' | 'onChange' | 'onCommandApprovalChange' | 'disabled'
+>
 
 export function PermissionModeSelector({
   translate: t,
@@ -33,6 +39,7 @@ export function PermissionModeSelector({
   onCommandApprovalChange,
   disabled = false,
   iconOnly = false,
+  showChevron = false,
   density = 'compact',
   onChange,
 }: PermissionModeSelectorProps) {
@@ -60,6 +67,7 @@ export function PermissionModeSelector({
     ? `${labels[value]} · ${approvalLabels[commandApproval]}`
     : labels[value]
   const ariaLabel = `${t('workbench.permission_mode', '权限模式')}: ${label}`
+  const triggerLabel = iconOnly ? undefined : labels[value]
 
   const choose = (mode: RuntimePermissionMode) => {
     if (mode === 'full-access' && value !== 'full-access') {
@@ -77,7 +85,16 @@ export function PermissionModeSelector({
           ariaLabel={ariaLabel}
           testId="permission-mode-menu-button"
           icon={value === 'read-only' ? Eye : value === 'full-access' ? ShieldAlert : FolderPen}
-          triggerLabel={iconOnly ? undefined : labels[value]}
+          triggerLabel={
+            triggerLabel && showChevron ? (
+              <>
+                <span>{triggerLabel}</span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              </>
+            ) : (
+              triggerLabel
+            )
+          }
           disabled={disabled}
           placement="bottom-end"
           triggerClassName={
@@ -232,7 +249,7 @@ function FullAccessConfirmDialog({
                   key={mode}
                   value={mode}
                   data-testid={`command-approval-confirm-option-${mode}`}
-                  className="flex min-h-11 cursor-pointer items-center gap-3 px-3 py-2 hover:bg-muted/60 data-[checked]:bg-muted/60 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40"
+                  className="flex min-h-11 w-full cursor-pointer items-center gap-3 px-3 py-2 text-left outline-none hover:bg-muted/60 data-[checked]:bg-muted/60 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/40"
                 >
                   <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-background">
                     <RadioIndicator className="h-2 w-2 rounded-full bg-text-primary" />

@@ -1,6 +1,10 @@
 import i18n from '@/i18n'
+import { createPaneSubmissionCommands } from '@/components/layout/workbenchPaneSubmissionCommands'
+import { createPaneQueueGoalCommands } from '@/components/layout/workbenchPaneQueueGoalCommands'
+import { sendTemporaryChatMessage } from '@/components/layout/workspace-panels/temporaryChatSend'
+import type { RuntimePaneQueuedMessage } from '@/types/workbench'
 import type { Attachment, DeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskModelSelectionControls } from './workbenchContextTypes'
 import {
@@ -11,11 +15,14 @@ import {
 } from './runtimeConversationCache'
 import { createRuntimeTaskStreamHandlers } from './runtimePaneMessages'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
+import { useWorkbenchAttachments } from './useWorkbenchAttachments'
+import { useImageEditSubmission } from '@/components/layout/useImageEditSubmission'
 import {
   buildRuntimeTaskCreateHandle,
   friendlyTitleForTask,
   loadTemporaryChatSource,
   prepareRuntimeAttachmentsForDevice,
+  prepareRuntimeQuestionResponse,
   resolveRuntimeTaskCreateWorkspacePath,
   resolveTemporaryChatSource,
   runtimeExecutablePathForTarget,
@@ -24,6 +31,585 @@ import {
   useWorkbenchRuntimeMessaging,
 } from './useWorkbenchRuntimeMessaging'
 import { initialWorkbenchState } from './workbenchReducer'
+
+test('queues saved image comments in a temporary chat and restores them as attachment data', async () => {
+  const image: Attachment = {
+    id: 1,
+    filename: 'layout.png',
+    file_size: 3,
+    mime_type: 'image/png',
+    file_extension: '.png',
+    created_at: '',
+    status: 'ready',
+    image_markup_comments: [{ x: 36.7, y: 50.4, text: 'Look here' }],
+  }
+  const enqueue = vi.fn<(message: RuntimePaneQueuedMessage) => void>()
+  const context = {
+    address: { deviceId: 'device', taskId: 'task' },
+    active: true,
+    busy: true,
+    input: '',
+    instanceId: 'temporary',
+    sideChatProjectChat: { attachments: [image], resetAttachments: vi.fn() },
+    captureAttachmentsForScope: () => [image],
+    canSendWithCurrentModel: () => true,
+    sessionCommands: { isCurrent: () => true, getDraftEditVersion: () => 0 },
+    setError: vi.fn(),
+    setInput: vi.fn(),
+    setTrialGuide: vi.fn(),
+    conversationQueue: { enqueue },
+  } as unknown as Parameters<typeof sendTemporaryChatMessage>[0]
+  expect(await sendTemporaryChatMessage(context)).toBe(true)
+  const [[message]] = enqueue.mock.calls
+  expect(message.content).toMatch(/36\.7%.*50\.4%.*Look here/)
+
+  const replaceInput = vi.fn()
+  const addExistingAttachment = vi.fn()
+  const pane = {
+    frame: { addExistingAttachment, queuedMessageBusyBlocks: new Map(), queuedMessages: [message] },
+    commands: { replaceInput, setQueuedMessages: vi.fn() },
+  } as unknown as Parameters<typeof createPaneQueueGoalCommands>[0]
+  createPaneQueueGoalCommands(pane).editQueuedMessage(message.id)
+  expect(replaceInput).toHaveBeenCalledExactlyOnceWith('')
+  expect(addExistingAttachment).toHaveBeenCalledExactlyOnceWith(image)
+})
+
+type TemporarySendContext = Parameters<typeof sendTemporaryChatMessage>[0]
+
+function temporarySendContext({
+  instanceId,
+  attachments,
+  captureAttachmentsForScope,
+  resetAttachments,
+  addExistingAttachment,
+  sendRuntimePaneMessage,
+  input = '',
+  busy = false,
+}: {
+  instanceId: string
+  attachments: Attachment[]
+  captureAttachmentsForScope: TemporarySendContext['captureAttachmentsForScope']
+  resetAttachments(): void
+  addExistingAttachment(attachment: Attachment): void
+  sendRuntimePaneMessage: TemporarySendContext['sendRuntimePaneMessage']
+  input?: string
+  busy?: boolean
+}): TemporarySendContext {
+  const address = { deviceId: 'device', taskId: 'task' }
+  return {
+    address,
+    source: address,
+    active: true,
+    readOnly: false,
+    nativeConversation: false,
+    historySource: undefined,
+    scopedHistory: { available: true },
+    paneStatus: { isBusy: false },
+    taskModelIdentityPending: false,
+    sendConversationMessage: vi.fn(),
+    t: (key: string) => key,
+    goalDraftActive: false,
+    createTask: vi.fn(),
+    lifecycleStore: new RuntimeTaskLifecycleStore(instanceId),
+    createTemporaryRuntimeTask: vi.fn(),
+    currentProject: null,
+    input,
+    busy,
+    conversationQueue: { enqueue: vi.fn() },
+    queuePort: {},
+    captureAttachmentsForScope,
+    instanceId,
+    sideChatProjectChat: { attachments, resetAttachments, addExistingAttachment },
+    selectedModelFields: {},
+    runtimeContext: undefined,
+    sendQueuedMessageAsGuidance: vi.fn(),
+    sendRuntimePaneMessage,
+    interruptAndSendRuntimePaneMessage: vi.fn(),
+    sendEphemeral: false,
+    canSendWithCurrentModel: () => true,
+    sessionStartFields: {},
+    updateAddress: vi.fn(),
+    setInput: vi.fn(),
+    setError: vi.fn(),
+    setTrialGuide: vi.fn(),
+    setSending: vi.fn(),
+    setMessages: vi.fn(),
+    setAddress: vi.fn(),
+    setGoalDraftActive: vi.fn(),
+    setAcceptedSourceMessageIds: vi.fn(),
+    sessionCommands: {
+      isCurrent: () => true,
+      nativeSubmissionPending: () => false,
+      getDraftEditVersion: () => 0,
+    },
+  } as unknown as TemporarySendContext
+}
+
+test.each([
+  ['successful transport', false],
+  ['busy queue', true],
+] as const)('keeps a newer draft attachment through a pending %s', async (_label, busy) => {
+  const submitted: Attachment = {
+    id: -1,
+    filename: 'submitted.png',
+    file_size: 3,
+    mime_type: 'image/png',
+    file_extension: '.png',
+    created_at: '',
+    status: 'ready',
+    local_path: '/tmp/submitted.png',
+  }
+  const newer: Attachment = { ...submitted, id: -2, filename: 'newer.png' }
+  const { result } = renderHook(() => useWorkbenchAttachments({ scopeKey: 'pending-send' }))
+  act(() => result.current.addExistingAttachment(submitted))
+  let finishSend!: () => void
+  const sendRuntimePaneMessage = vi.fn(
+    (_request: unknown, handlers: { onError?: (message: string) => void }) =>
+      new Promise<boolean>(resolve => {
+        finishSend = () => {
+          if (busy) handlers.onError?.(i18n.t('workbench.runtime_task_running_message'))
+          resolve(!busy)
+        }
+      })
+  )
+  const context = temporarySendContext({
+    instanceId: 'pending-send',
+    attachments: result.current.attachments,
+    captureAttachmentsForScope: result.current.captureAttachmentsForScope,
+    resetAttachments: result.current.resetAttachments,
+    addExistingAttachment: result.current.addExistingAttachment,
+    sendRuntimePaneMessage,
+    input: 'Send the current draft',
+  })
+
+  let sending!: Promise<boolean>
+  act(() => {
+    sending = sendTemporaryChatMessage(context)
+  })
+  act(() => result.current.addExistingAttachment(newer))
+  await act(async () => {
+    finishSend()
+    await expect(sending).resolves.toBe(true)
+  })
+
+  expect(sendRuntimePaneMessage).toHaveBeenCalledOnce()
+  expect(result.current.attachments).toEqual([newer])
+})
+
+test('reuses a ready remote draft attachment for a comment-only image edit', async () => {
+  const existing: Attachment = {
+    ...attachment,
+    id: 77,
+    filename: 'remote-draft.png',
+    status: 'ready',
+    local_path: '/tmp/remote-draft.png',
+    image_markup_comments: [{ x: 10, y: 20, text: 'Existing' }],
+  }
+  const source = new File(['image'], 'remote-draft.png', { type: 'image/png' })
+  const upload = vi.fn()
+  let submitted: Attachment[] = []
+  const submit = vi.fn(
+    async (_message: string, options: { standaloneAttachments?: Attachment[] }) => {
+      submitted = options.standaloneAttachments ?? []
+      return true
+    }
+  )
+  const releaseDraftAttachment = vi.fn()
+  const { result } = renderHook(() =>
+    useImageEditSubmission({
+      enabled: true,
+      scope: 'reuse-remote',
+      attachmentScope: 'reuse-remote-draft',
+      upload,
+      submit,
+      releaseDraftAttachment,
+      getDraftAttachment: id => (id === 77 ? existing : undefined),
+    })
+  )
+
+  await act(async () => {
+    await expect(
+      result.current!.submit(
+        {
+          name: source.name,
+          mimeType: source.type,
+          loadFile: async () => source,
+          draftAttachmentId: 77,
+        },
+        { kind: 'comment', comments: [{ x: 50, y: 50, text: 'New' }] }
+      )
+    ).resolves.toBe(true)
+  })
+
+  expect(submitted).toEqual([expect.objectContaining({ id: 77, image_markup_comments: undefined })])
+  expect(upload).not.toHaveBeenCalled()
+  expect(releaseDraftAttachment).toHaveBeenCalledExactlyOnceWith('reuse-remote-draft', 77)
+})
+
+test('retries the real image-edit source read before releasing its draft', async () => {
+  const { resolvePreparingAttachments } = await import('@/lib/runtime-attachments')
+  const source = new File(['image'], 'retry-comment.png', { type: 'image/png' })
+  const loadFile = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('temporary read failure'))
+    .mockResolvedValueOnce(source)
+  const upload = vi.fn().mockResolvedValue({
+    ...attachment,
+    id: 42,
+    filename: 'retry-comment.png',
+    status: 'ready',
+  })
+  let submitted: Attachment[] = []
+  const submit = vi.fn(
+    async (_message: string, options: { standaloneAttachments?: Attachment[] }) => {
+      submitted = options.standaloneAttachments ?? []
+      return true
+    }
+  )
+  const releaseDraftAttachment = vi.fn()
+  const { result } = renderHook(() =>
+    useImageEditSubmission({
+      enabled: true,
+      scope: 'retry-comment',
+      attachmentScope: 'retry-comment-draft',
+      upload,
+      submit,
+      releaseDraftAttachment,
+    })
+  )
+
+  await act(async () => {
+    await expect(
+      result.current!.submit(
+        {
+          name: source.name,
+          mimeType: source.type,
+          loadFile,
+          draftAttachmentId: 10,
+        },
+        { kind: 'comment', comments: [{ x: 50, y: 50, text: 'Retry me' }] }
+      )
+    ).resolves.toBe(true)
+  })
+
+  await expect(resolvePreparingAttachments(submitted)).rejects.toThrow('temporary read failure')
+  expect(releaseDraftAttachment).not.toHaveBeenCalled()
+  const [prepared] = await resolvePreparingAttachments(submitted)
+  await waitFor(() =>
+    expect(releaseDraftAttachment).toHaveBeenCalledExactlyOnceWith('retry-comment-draft', 10)
+  )
+  expect(prepared).toMatchObject({ id: 42, status: 'ready' })
+  expect(loadFile).toHaveBeenCalledTimes(2)
+})
+
+test.each([
+  ['unchanged', false, true],
+  ['newer', true, false],
+] as const)(
+  'restores a native non-transactional draft only while revision is %s',
+  async (_label, newer, restored) => {
+    const { result } = renderHook(() =>
+      useWorkbenchAttachments({ scopeKey: `native-restore-${newer}` })
+    )
+    let draftEditVersion = 0
+    const setInput = vi.fn()
+    const context = temporarySendContext({
+      instanceId: `native-restore-${newer}`,
+      attachments: result.current.attachments,
+      captureAttachmentsForScope: result.current.captureAttachmentsForScope,
+      resetAttachments: result.current.resetAttachments,
+      addExistingAttachment: result.current.addExistingAttachment,
+      sendRuntimePaneMessage: vi.fn(),
+    })
+    context.nativeConversation = true
+    context.address = null
+    context.setInput = setInput
+    context.sessionCommands.getDraftEditVersion = () => draftEditVersion
+    context.createTask = vi.fn(async () => {
+      if (newer) draftEditVersion += 1
+      return false
+    })
+
+    await expect(sendTemporaryChatMessage(context, 'Keep this native draft')).resolves.toBe(false)
+
+    expect(setInput).toHaveBeenCalledWith('')
+    if (restored) expect(setInput).toHaveBeenLastCalledWith('Keep this native draft')
+    else expect(setInput).toHaveBeenCalledOnce()
+  }
+)
+
+test('sends an appshot image and hidden companion for a draft image comment', async () => {
+  const { resolvePreparingAttachments } = await import('@/lib/runtime-attachments')
+  const existingComments = [{ x: 25, y: 40, text: 'Existing pin' }]
+  const appshot: Attachment = {
+    id: 10,
+    filename: 'appshot.png',
+    file_size: 10,
+    mime_type: 'image/png',
+    file_extension: '.png',
+    created_at: '',
+    status: 'ready',
+    local_path: '/tmp/appshot.png',
+    ui_group_id: 'appshot-capture-1',
+    ui_group_role: 'primary',
+    ui_kind: 'appshot',
+    image_markup_comments: existingComments,
+  }
+  const companion: Attachment = {
+    ...appshot,
+    id: 11,
+    filename: 'appshot-context.txt',
+    mime_type: 'text/plain',
+    file_extension: '.txt',
+    local_path: '/tmp/appshot-context.txt',
+    ui_group_role: 'companion',
+    image_markup_comments: undefined,
+  }
+  const remove = vi.fn().mockResolvedValue(undefined)
+  const { result: attachments } = renderHook(() =>
+    useWorkbenchAttachments({ scopeKey: 'appshot-comment', deleteAttachment: remove })
+  )
+  act(() => {
+    attachments.current.addExistingAttachment(appshot)
+    attachments.current.addExistingAttachment(companion)
+  })
+  const enqueue = vi.fn()
+  const context = temporarySendContext({
+    instanceId: 'appshot-comment',
+    attachments: attachments.current.attachments,
+    captureAttachmentsForScope: attachments.current.captureAttachmentsForScope,
+    resetAttachments: attachments.current.resetAttachments,
+    addExistingAttachment: attachments.current.addExistingAttachment,
+    sendRuntimePaneMessage: vi.fn(),
+  })
+  context.busy = true
+  context.conversationQueue.enqueue = enqueue
+  const send = (
+    message: string,
+    options: { standaloneAttachments?: Attachment[]; draftAttachmentSourceId?: number }
+  ) => sendTemporaryChatMessage(context, message, options)
+  const upload = vi.fn(async (file: File) => ({
+    ...appshot,
+    id: 42,
+    filename: file.name,
+    local_path: '/tmp/appshot-comment.png',
+    image_markup_comments: undefined,
+  }))
+  const { result: editor } = renderHook(() =>
+    useImageEditSubmission({
+      enabled: true,
+      scope: 'appshot-comment',
+      attachmentScope: 'appshot-comment',
+      upload,
+      submit: send,
+      releaseDraftAttachment: attachments.current.releaseAttachmentForScope,
+    })
+  )
+  const source = new File(['appshot'], appshot.filename, { type: appshot.mime_type })
+
+  await act(async () => {
+    await expect(
+      editor.current!.submit(
+        {
+          name: source.name,
+          mimeType: source.type,
+          loadFile: async () => source,
+          draftAttachmentId: appshot.id,
+        },
+        {
+          kind: 'comment',
+          comments: [...existingComments, { x: 70, y: 80, text: 'New pin' }],
+        }
+      )
+    ).resolves.toBe(true)
+  })
+
+  const [queued] = enqueue.mock.calls[0]!
+  expect(queued.content).toMatch(/Existing pin/)
+  expect(queued.content).toMatch(/New pin/)
+  expect(queued.attachments.map((item: Attachment) => item.filename)).toEqual([
+    'appshot.png',
+    'appshot-context.txt',
+  ])
+  expect(
+    (await resolvePreparingAttachments(queued.attachments)).map(item => item.local_path)
+  ).toEqual(['/tmp/appshot-comment.png', '/tmp/appshot-context.txt'])
+  expect(queued.attachments[0]).toMatchObject({
+    id: 42,
+    status: 'ready',
+    local_path: '/tmp/appshot-comment.png',
+  })
+  await waitFor(() => expect(attachments.current.attachments).toEqual([]))
+  expect(remove).not.toHaveBeenCalled()
+})
+
+test.each([false, true])(
+  'includes saved coordinates in Goal messages (existing task %s)',
+  async existing => {
+    const objective = 'Inspect the layout'
+    const attachment: Attachment = {
+      id: 1,
+      filename: 'layout.png',
+      file_size: 3,
+      mime_type: 'image/png',
+      file_extension: '.png',
+      created_at: '',
+      status: 'ready',
+      image_markup_comments: [{ x: 36.7, y: 50.4, text: 'Look here' }],
+    }
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({ accepted: true })
+    const sendCurrentInput = vi.fn().mockResolvedValue(true)
+    const context = {
+      frame: {
+        attachmentState: { captureAttachments: () => [attachment] },
+        codeCommentContexts: [],
+        currentRuntimeTask: existing ? { deviceId: 'device', taskId: 'task' } : null,
+        goalDraftActive: true,
+        getInput: () => objective,
+        inputScopeKey: 'draft',
+        getInputRevisionForScope: () => 0,
+        lifecycleStore: new RuntimeTaskLifecycleStore('goal-markup-test'),
+        resetAttachments: vi.fn(),
+        sendCurrentInput,
+      },
+      actions: { setPendingGoalState: vi.fn() },
+      commands: {
+        getDraftEditVersion: () => 0,
+        getRuntimeModelFields: () => ({}),
+        readCurrentPaneBusy: () => false,
+        setError: vi.fn(),
+        setGoalDraftActive: vi.fn(),
+        clearCodeCommentsAfterCommit: vi.fn(),
+        appendLocalUserMessage: vi.fn(),
+        sendRuntimeMessage,
+      },
+      live: { mounted: false },
+    } as unknown as Parameters<typeof createPaneSubmissionCommands>[0]
+    expect(await createPaneSubmissionCommands(context).send()).toBe(true)
+    const [message, options] = (existing ? sendRuntimeMessage : sendCurrentInput).mock.calls[0]!
+    expect(existing ? message.content : message).toMatch(/36\.7%.*50\.4%.*Look here/)
+    expect(options.initialGoal.objective).toBe(objective)
+    const [image] = existing ? message.attachments : options.attachments
+    if (existing) {
+      expect(message.imageMarkupDraftText).toBe(objective)
+      expect(image.image_markup_comments).toEqual(attachment.image_markup_comments)
+    } else {
+      expect(image).not.toHaveProperty('image_markup_comments')
+    }
+  }
+)
+
+test.each([true, false])(
+  'sends the appshot group from a main pane image comment without deleting retained attachments: %s',
+  async accepted => {
+    const appshot: Attachment = {
+      id: 10,
+      filename: 'appshot.png',
+      file_size: 10,
+      mime_type: 'image/png',
+      file_extension: '.png',
+      created_at: '',
+      status: 'ready',
+      local_path: '/tmp/appshot.png',
+      ui_group_id: 'appshot-main-pane',
+      ui_group_role: 'primary',
+      ui_kind: 'appshot',
+    }
+    const companion: Attachment = {
+      ...appshot,
+      id: 11,
+      filename: 'appshot-context.txt',
+      mime_type: 'text/plain',
+      file_extension: '.txt',
+      local_path: '/tmp/appshot-context.txt',
+      ui_group_role: 'companion',
+    }
+    const newerDraft: Attachment = {
+      ...appshot,
+      id: -12,
+      filename: 'newer-draft.png',
+      local_path: '/tmp/newer-draft.png',
+      ui_group_id: undefined,
+      ui_group_role: undefined,
+      ui_kind: undefined,
+    }
+    const submitted: Attachment = {
+      ...appshot,
+      id: -20,
+      filename: 'appshot-comment.png',
+      local_path: '/tmp/appshot-comment.png',
+    }
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const { result: attachments } = renderHook(() =>
+      useWorkbenchAttachments({ scopeKey: 'main-appshot', deleteAttachment: remove })
+    )
+    act(() => {
+      attachments.current.addExistingAttachment(appshot)
+      attachments.current.addExistingAttachment(companion)
+      attachments.current.addExistingAttachment(newerDraft)
+    })
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({ accepted, queued: false })
+    const sendCurrentInput = vi.fn()
+    const resetDraftAttachments = vi.fn()
+    const context = {
+      frame: {
+        attachmentState: {
+          ...attachments.current,
+          captureAttachments: attachments.current.captureAttachments,
+          releaseAttachment: attachments.current.releaseAttachment,
+        },
+        codeCommentContexts: [],
+        currentRuntimeTask: { deviceId: 'device', taskId: 'task' },
+        goalDraftActive: false,
+        getInput: () => '',
+        inputScopeKey: 'main-appshot',
+        getInputRevisionForScope: () => 0,
+        lifecycleStore: new RuntimeTaskLifecycleStore('main-appshot'),
+        resetAttachments: resetDraftAttachments,
+        sendCurrentInput,
+      },
+      actions: { setPendingGoalState: vi.fn(), setDraftMessages: vi.fn() },
+      commands: {
+        getDraftEditVersion: () => 0,
+        getRuntimeModelFields: () => ({}),
+        readCurrentPaneBusy: () => false,
+        setError: vi.fn(),
+        setErrorForScope: vi.fn(),
+        setGoalDraftActive: vi.fn(),
+        clearCodeCommentsAfterCommit: vi.fn(),
+        appendLocalUserMessage: vi.fn(),
+        sendRuntimeMessage,
+        retainRuntimeQueuedMessage: vi.fn(),
+        setQueuedMessages: vi.fn(),
+      },
+      live: { mounted: false },
+    } as unknown as Parameters<typeof createPaneSubmissionCommands>[0]
+
+    await act(async () => {
+      await expect(
+        createPaneSubmissionCommands(context).send('Inspect the appshot', {
+          standaloneAttachments: [submitted],
+          draftAttachmentSourceId: appshot.id,
+        })
+      ).resolves.toBe(accepted)
+    })
+
+    const [queuedMessage] = sendRuntimeMessage.mock.calls[0]!
+    expect(queuedMessage.content).toBe('Inspect the appshot')
+    expect(queuedMessage.attachments.map((item: Attachment) => item.filename)).toEqual([
+      'appshot-comment.png',
+      'appshot-context.txt',
+    ])
+    expect(sendCurrentInput).not.toHaveBeenCalled()
+    expect(resetDraftAttachments).not.toHaveBeenCalled()
+    expect(attachments.current.attachments.map(item => item.filename)).toEqual([
+      'appshot.png',
+      'appshot-context.txt',
+      'newer-draft.png',
+    ])
+    expect(remove).not.toHaveBeenCalled()
+  }
+)
 
 function messagingFixture(
   modelState: {
@@ -108,6 +694,116 @@ function cacheAsyncQuestion(
     },
   ])
 }
+
+test('prepares cloud question files per answer without changing original drafts or skipped answers', async () => {
+  const file = {
+    id: -7,
+    filename: 'brief.txt',
+    local_path: '/tmp/brief.txt',
+    status: 'ready',
+  } as Attachment
+  const response = {
+    requestId: 12,
+    answers: { details: { answers: ['Review'], attachments: [file] }, skipped: { answers: [] } },
+  }
+  const upload = vi.fn().mockResolvedValue({ ...file, id: 42 })
+  const prepared = await prepareRuntimeQuestionResponse(
+    response,
+    'cloud',
+    [{ device_id: 'cloud', device_type: 'cloud' }] as DeviceInfo[],
+    upload
+  )
+  expect(prepared.answers.details).toEqual({
+    answers: ['Review'],
+    attachments: [expect.objectContaining({ id: 42 })],
+  })
+  expect(prepared.answers.details.attachments![0]).not.toHaveProperty('local_path')
+  expect(prepared.answers.skipped).toEqual({ answers: [] })
+  expect(response.answers.details.attachments[0]).toBe(file)
+  expect(upload).toHaveBeenCalledOnce()
+})
+
+test('routes files nested in native question answers through ordinary attachment transport', async () => {
+  const { address, store, send, messaging } = messagingFixture()
+  const attachment = {
+    id: -1,
+    filename: 'brief.txt',
+    local_path: '/tmp/brief.txt',
+    status: 'ready',
+  } as Attachment
+  const response = {
+    requestId: 2,
+    answers: { details: { answers: ['Review'], attachments: [attachment] } },
+  }
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage({
+        address,
+        message: 'Review',
+        requestUserInputResponse: response,
+      })
+    ).resolves.toBe(true)
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ requestUserInputResponse: response, attachments: [attachment] })
+    )
+  } finally {
+    store.remove(address)
+  }
+})
+
+test.each([false, true])(
+  'preserves mixed local and cloud files in separate question answers (pending=%s)',
+  async pending => {
+    const { createPreparingAttachment } = await import('@/lib/runtime-attachments')
+    const { address, store, send, messaging } = messagingFixture()
+    const remote = attachment({ id: 42, filename: 'cloud.png', local_path: undefined })
+    const local = attachment({ id: -7, filename: 'local.txt', local_path: '/tmp/local.txt' })
+    let finish!: (value: Attachment) => void
+    const cloudFile = pending
+      ? createPreparingAttachment(
+          new File(['cloud bytes'], 'cloud.png'),
+          new Promise(resolve => {
+            finish = resolve
+          })
+        )
+      : remote
+    const response = {
+      requestId: 2,
+      answers: {
+        remote: { answers: ['Cloud'], attachments: [cloudFile] },
+        local: { answers: ['Local'], attachments: [local] },
+      },
+    }
+    try {
+      const sending = messaging.sendRuntimePaneMessage({
+        address,
+        message: 'Review both files',
+        requestUserInputResponse: response,
+      })
+      if (pending) {
+        await Promise.resolve()
+        expect(send).not.toHaveBeenCalled()
+        finish(remote)
+      }
+      await expect(sending).resolves.toBe(true)
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestUserInputResponse: {
+            ...response,
+            answers: {
+              remote: { answers: ['Cloud'], attachments: [remote] },
+              local: { answers: ['Local'], attachments: [local] },
+            },
+          },
+          attachmentIds: [42],
+          attachments: [local],
+        })
+      )
+    } finally {
+      store.remove(address)
+    }
+  }
+)
 
 test('compaction renders only its native turn and remains active after an early RPC response', async () => {
   const { address, store, compact, messaging } = messagingFixture()
@@ -865,6 +1561,46 @@ describe('friendlyTitleForTask', () => {
 })
 
 describe('prepareRuntimeAttachmentsForDevice', () => {
+  test('admits a deferred image attachment before reading its source and retains the file for retry', async () => {
+    const { failedPreparationFile, localRuntimeAttachments, prepareAttachmentFile } =
+      await import('@/lib/runtime-attachments')
+    const source = new File(['image'], 'selection-mask.png', { type: 'image/png' })
+    const load = vi.fn().mockResolvedValue(source)
+    const upload = vi.fn().mockRejectedValue(new Error('staging failed'))
+    const pending = prepareAttachmentFile(source.name, source.type, load, upload)
+
+    expect(pending.status).toBe('uploading')
+    await Promise.resolve()
+    expect(load).not.toHaveBeenCalled()
+    expect(upload).not.toHaveBeenCalled()
+    await expect(
+      prepareRuntimeAttachmentsForDevice('local-device', [], [], localRuntimeAttachments([pending]))
+    ).rejects.toThrow('staging failed')
+    expect(failedPreparationFile(pending)).toBe(source)
+  })
+
+  test('retries a deferred attachment when reading its source fails', async () => {
+    const { prepareAttachmentFile, resolvePreparingAttachments } =
+      await import('@/lib/runtime-attachments')
+    const source = new File(['image'], 'retry.png', { type: 'image/png' })
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('read failed'))
+      .mockResolvedValueOnce(source)
+    const upload = vi
+      .fn()
+      .mockResolvedValue({ ...attachment, id: 42, filename: 'retry.png', status: 'ready' })
+    const pending = prepareAttachmentFile(source.name, source.type, load, upload)
+
+    await expect(resolvePreparingAttachments([pending])).rejects.toThrow('read failed')
+    expect(pending.status).toBe('failed')
+    const [prepared] = await resolvePreparingAttachments([pending])
+
+    expect(prepared).toMatchObject({ id: 42, status: 'ready' })
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(upload).toHaveBeenCalledOnce()
+  })
+
   test('reports how to recover an unfinished attachment after its in-memory preparation is lost', async () => {
     await expect(
       prepareRuntimeAttachmentsForDevice(

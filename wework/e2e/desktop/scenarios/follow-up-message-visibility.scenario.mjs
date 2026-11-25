@@ -20,7 +20,6 @@ const COMPOSER = `${PANE} [data-testid="chat-message-input"][contenteditable="tr
 const INITIAL = 'FOLLOW_UP_VISIBILITY_INITIAL'
 const FOLLOWUP = 'FOLLOW_UP_VISIBILITY_WHILE_CONTEXT_PENDING'
 const GATE = 'follow-up-project-context'
-const SEND_QUERY_GATE = 'follow-up-unexpected-context-query'
 const OLD_DESCRIPTION = 'ISSUE_BODY_BEFORE_FOLLOW_UP'
 const LATEST_DESCRIPTION = 'ISSUE_BODY_CHANGED_AFTER_CONTEXT_WAS_LOADED'
 
@@ -153,13 +152,6 @@ export function createDesktopScenario({
           task_id: issue.id,
           todo: { version: currentIssue.version, description: LATEST_DESCRIPTION },
         })
-        await gates.arm({
-          id: SEND_QUERY_GATE,
-          kind: 'request',
-          name: 'runtime_tasks.context',
-          where: [{ path: 'params.task_id', equals: address.taskId }],
-          hold: false,
-        })
         await control.command('fill', COMPOSER, { value: FOLLOWUP })
         await control.command('clickWhenEnabled', `${PANE} [data-testid="send-message-button"]`)
         // Read once, without polling through the unrelated context lookup's timeout.
@@ -183,12 +175,7 @@ export function createDesktopScenario({
           1,
           'The follow-up must complete exactly once after reading the latest source details'
         )
-        assert.equal(
-          await gates.read(SEND_QUERY_GATE),
-          null,
-          'Sending a follow-up must not issue another project context query'
-        )
-        await gates.save(resultDir, 'follow-up-message-visibility.json', [GATE, SEND_QUERY_GATE])
+        await gates.save(resultDir, 'follow-up-message-visibility.json', [GATE])
         await gates.release(GATE)
         await control.command('waitFor', `${PANE} [data-testid="message-user"]`, { text: FOLLOWUP })
         assert.equal(

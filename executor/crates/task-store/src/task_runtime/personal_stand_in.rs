@@ -1,6 +1,8 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
 use super::*;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use wegent_protocol::StandInTaskPermissions;
 
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
@@ -29,18 +31,28 @@ pub(super) fn migrate_personal_settings(value: &mut Value) -> Result<bool, TaskR
         .into_iter()
         .flatten()
     {
-        changed |= migrate_agent_binding(identity)?;
-        changed |= migrate_identity_connections(identity)?;
-        changed |= migrate_connection_timing(identity, immediate);
+        changed |= normalize_stand_in_identity(identity, immediate)?;
     }
     if value["primary"].is_object() {
-        changed |= migrate_agent_binding(&mut value["primary"])?;
-        changed |= migrate_identity_connections(&mut value["primary"])?;
-        changed |= migrate_connection_timing(&mut value["primary"], immediate);
+        changed |= normalize_stand_in_identity(&mut value["primary"], immediate)?;
     }
     changed |= value
         .as_object_mut()
         .is_some_and(|fields| fields.remove("processing").is_some());
+    Ok(changed)
+}
+
+pub(super) fn normalize_stand_in_identity(
+    identity: &mut Value,
+    immediate: bool,
+) -> Result<bool, TaskRuntimeError> {
+    let mut changed = migrate_agent_binding(identity)?;
+    changed |= migrate_identity_connections(identity)?;
+    changed |= migrate_connection_timing(identity, immediate);
+    changed |= identity
+        .get_mut("workspace")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|workspace| workspace.remove("workspacePath").is_some());
     Ok(changed)
 }
 
@@ -160,7 +172,7 @@ pub(super) fn empty_role(id: &str, device: &str) -> Value {
 
 fn empty_personal(user: i64, device: &str) -> Value {
     json!({"userId":user,"executionDeviceId":device,"version":0,
-        "roles":[empty_role("default", device)]})
+        "roles":[]})
 }
 
 pub(super) fn personal_key(user: i64) -> String {
@@ -296,6 +308,11 @@ pub fn role_project_matches(role: &Value, project: &str, store: &str) -> bool {
                 .is_some_and(|rows| rows.iter().any(matches)))
 }
 
+pub fn role_receives_participating_issues(role: &Value) -> bool {
+    role["collaboration"]["enabled"] == true
+        && role["collaboration"]["includeParticipatingIssues"] == true
+}
+
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
     if let Some(fields) = config.as_object_mut() {
@@ -357,8 +374,17 @@ pub(super) fn validate_role(role: &Value) -> Result<(), TaskRuntimeError> {
             "invalid personal stand-in role".into(),
         ));
     }
+    validate_task_permissions(role)?;
     validate_connections(role)?;
     super::stand_in::validate_execution_settings(role)
+}
+
+fn validate_task_permissions(identity: &Value) -> Result<(), TaskRuntimeError> {
+    if let Some(permissions) = identity.get("taskPermissions") {
+        StandInTaskPermissions::deserialize(permissions)
+            .map_err(|_| TaskRuntimeError::Invalid("invalid Stand-in task permissions".into()))?;
+    }
+    Ok(())
 }
 
 fn validate_policy(policy: &Value) -> bool {
@@ -377,6 +403,7 @@ mod session_policy_tests {
     #[test]
     fn role_devices_survive_profile_reads_and_primary_identity_changes() {
         let mut settings = empty_personal(7, "mac");
+        settings["roles"] = json!([empty_role("default", "mac")]);
         settings["roles"][0]["executionDeviceId"] = json!("remote");
         settings["primary"] = implicit_primary();
         bind_personal_device(&mut settings, "new-mac");
@@ -393,10 +420,18 @@ mod session_policy_tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        assert_eq!(settings["roles"], json!([]));
+        store.materialize_implicit_primary(7, "mac").unwrap();
+        settings = store.personal_stand_in(7, "mac").unwrap();
+        let identities = stand_in_identities(&settings);
+        assert_eq!(identities.len(), 1);
+        assert_eq!(identities[0]["id"], "@primary");
+        settings["roles"] = json!([empty_role("default", "mac")]);
         settings["roles"][0]["executionDeviceId"] = json!("remote");
         store.save_personal_stand_in(7, "mac", settings).unwrap();
         let restored = store.personal_stand_in(7, "mac").unwrap();
         assert_eq!(restored["executionDeviceId"], "mac");
+        assert_eq!(restored["roles"][0]["id"], "default");
         assert_eq!(restored["roles"][0]["executionDeviceId"], "remote");
     }
 
@@ -429,6 +464,9 @@ fn valid_collaboration(source: &Value) -> bool {
         && source["allProjects"].is_boolean()
         && source
             .get("includeIndependentIssues")
+            .map_or(true, Value::is_boolean)
+        && source
+            .get("includeParticipatingIssues")
             .map_or(true, Value::is_boolean)
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
@@ -664,6 +702,7 @@ impl LocalTaskStore {
             {
                 return Err(TaskRuntimeError::Invalid("invalid primary stand-in".into()));
             }
+            validate_task_permissions(primary)?;
             validate_connections(primary)?;
         }
         let mut ids = HashSet::new();
@@ -693,6 +732,14 @@ impl LocalTaskStore {
                 .unwrap()
                 .iter()
                 .find(|before| before["id"] == role["id"]);
+            if before.is_none()
+                && role["migrationSource"].is_string()
+                && role.get("taskPermissions").is_some()
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "A portable Stand-in import cannot carry task permissions".into(),
+                ));
+            }
             let version = before
                 .and_then(|before| before["version"].as_i64())
                 .unwrap_or(0);
@@ -764,6 +811,18 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"]
         && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"];
     let enabled_at = json!(now());
+    if identity["enabled"] == true && role_receives_participating_issues(identity) {
+        identity["participatingIssuesEnabledAfter"] = if preserve
+            && role_receives_participating_issues(previous)
+            && previous["participatingIssuesEnabledAfter"].is_string()
+        {
+            previous["participatingIssuesEnabledAfter"].clone()
+        } else {
+            enabled_at.clone()
+        };
+    } else if let Some(fields) = identity.as_object_mut() {
+        fields.remove("participatingIssuesEnabledAfter");
+    }
     if identity["enabled"] == true
         && identity["collaboration"]["enabled"] == true
         && identity["collaboration"]["includeIndependentIssues"] == true
@@ -896,6 +955,7 @@ mod email_policy_tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([empty_role("default", "mac")]);
         settings["roles"][0]["connections"] = json!([{
             "providerId":"example/events","profile":"account","kind":"resource",
             "id":"shared","name":"Shared","collectionKey":"selected:v1",

@@ -21,7 +21,8 @@ use crate::logging::log_executor_event;
 
 #[path = "tool_catalog.rs"]
 mod tool_catalog;
-use tool_catalog::{effective_tools, is_unlinked_server_tool_search};
+use tool_catalog::effective_tools;
+pub(super) use tool_catalog::is_unlinked_server_tool_search;
 
 mod custom_tools;
 pub(crate) use custom_tools::CustomToolConversion;
@@ -515,19 +516,19 @@ impl<S> ChatStreamState<S> {
             } else {
                 call_id
             };
-            let item_id = format!("fc_{}", call_id.trim_start_matches("call_"));
+            let (item_type, item_prefix) = if tool_search {
+                ("tool_search_call", "tsc_")
+            } else if custom {
+                ("custom_tool_call", "ctc_")
+            } else {
+                ("function_call", "fc_")
+            };
+            let item_id = format!("{item_prefix}{}", call_id.trim_start_matches("call_"));
             let state = self.calls.entry(index).or_default();
             state.started = true;
             state.output_index = output_index;
             state.item_id = item_id.clone();
             state.call_id = call_id.clone();
-            let item_type = if tool_search {
-                "tool_search_call"
-            } else if custom {
-                "custom_tool_call"
-            } else {
-                "function_call"
-            };
             let mut item = if tool_search {
                 json!({
                     "id": item_id,

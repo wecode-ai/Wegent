@@ -1,4 +1,6 @@
+import { useScopedDraft, type ScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 import { WorkbenchOwnerLeaseContext } from './workbenchContexts'
+import { WorkspaceTabSurface } from '@/AppWorkspaceRoutes'
 import { renderRuntimeTaskLifecycle } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.fixtures'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { clearLocalCodexPluginsReadStateCache } from '@/api/local/codexPlugins'
@@ -13,6 +15,7 @@ import {
 import { appReference } from '@/components/chat/composer/composerMentionCandidates'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import { MessageList } from '@/components/chat/MessageList'
+import { isRequestUserInputBlock } from '@wegent/chat-core/runtime-user-input'
 import {
   RUNTIME_RETRY_CONTINUATION_PROMPT,
   useWorkbenchPaneSession,
@@ -31,6 +34,7 @@ import {
   DISCONNECTED_STATE,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
+import { importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 import { writePluginInventory } from '@/features/plugins/pluginInventory'
 import {
   clearPluginMarketplaceCache,
@@ -1250,9 +1254,18 @@ function RemoteRuntimeCacheProbe() {
   )
 }
 
+function ScopedDraftText({ store, scope }: { store: ScopedDraftStore; scope: string }) {
+  const draft = useScopedDraft(store, scope)
+  return draft.value
+}
+
 function PluginTrialInputProbe({ testId }: { testId: string }) {
   const { paneSession } = useWorkbenchProbeSession()
-  return <span data-testid={testId}>{paneSession.input}</span>
+  return (
+    <span data-testid={testId}>
+      {<ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />}
+    </span>
+  )
 }
 
 function ProjectSendProbe({
@@ -1303,7 +1316,9 @@ function ProjectSendProbe({
           'none'}
       </span>
       <span data-testid="standalone-chat-key">{workbench.state.standaloneChatKey}</span>
-      <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="composer-input">
+        {<ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />}
+      </span>
       <span data-testid="project-browser-annotation-command">
         {paneSession.browserAnnotationCommand
           ? `${paneSession.browserAnnotationCommand.sequence}:${paneSession.browserAnnotationCommand.reason}`
@@ -1893,18 +1908,36 @@ function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
 }
 
 function RuntimePaneSessionIdentityProbe() {
+  const [presentationActive, setPresentationActive] = useState(true)
   const [address, setAddress] = useState<RuntimeTaskAddress>({
     deviceId: 'device-1',
     workspacePath: '/workspace/project-alpha',
     taskId: 'runtime-a',
   })
-  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address })
+  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address, presentationActive })
 
   return (
     <div>
       <span data-testid="runtime-session-messages">
         {paneSession.messages.map(message => message.content).join('|')}
       </span>
+      <span data-testid="runtime-session-turn-statuses">
+        {paneSession.turns.map(turn => `${turn.id}:${turn.status}`).join('|')}
+      </span>
+      <span data-testid="runtime-session-requests">
+        {paneSession.messages
+          .flatMap(message => message.blocks ?? [])
+          .filter(isRequestUserInputBlock)
+          .map(block => `${block.id}:${block.status}`)
+          .join('|')}
+      </span>
+      <span data-testid="runtime-session-error">{paneSession.error}</span>
+      <button type="button" onClick={() => setPresentationActive(active => !active)}>
+        toggle pane presentation
+      </button>
+      <button type="button" onClick={() => paneSession.setError('local pane event')}>
+        publish a pane error
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -2435,7 +2468,14 @@ function RuntimeModelSelectionProbe() {
       <span data-testid="runtime-model-task">
         {workbench.state.currentRuntimeTask?.taskId ?? ''}
       </span>
-      <span data-testid="runtime-model-draft">{workbench.projectChat.input}</span>
+      <span data-testid="runtime-model-draft">
+        {
+          <ScopedDraftText
+            store={workbench.projectChat.draftStore}
+            scope={workbench.projectChat.scopeKey}
+          />
+        }
+      </span>
       <span data-testid="background-task-selected-model">
         {backgroundTaskModel.selectedModel?.name ?? ''}
       </span>
@@ -2530,7 +2570,9 @@ function FollowUpProbe() {
 
   return (
     <div>
-      <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="composer-input">
+        {<ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />}
+      </span>
       <span data-testid="pane-session-error">{paneSession.error ?? ''}</span>
       <span data-testid="queued-messages">
         {paneSession.queuedMessages
@@ -2959,7 +3001,14 @@ function StartSkillChatProbe() {
       </span>
       <span data-testid="skill-chat-key">{workbench.state.standaloneChatKey}</span>
       <span data-testid="skill-chat-start-result">{result}</span>
-      <span data-testid="skill-chat-input">{workbench.projectChat.input}</span>
+      <span data-testid="skill-chat-input">
+        {
+          <ScopedDraftText
+            store={workbench.projectChat.draftStore}
+            scope={workbench.projectChat.scopeKey}
+          />
+        }
+      </span>
       <button
         type="button"
         onClick={() =>
@@ -3106,10 +3155,18 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.subscribeLocalExecutorEvents.mockResolvedValue(vi.fn())
   })
 
-  test('revalidates runtime work when a retained workspace tab is revealed again', async () => {
+  test('keeps the task tab mounted and refreshes work only on a change event', async () => {
+    let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
     const runtimeWorkApi = createRuntimeWorkApiMock()
+    runtimeWorkApi.listRuntimeWork.mockResolvedValueOnce({ projects: [], chats: [], totalTasks: 0 })
     const services = createWorkbenchServices({
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      runtimeWorkApi,
+      chatStream: {
+        subscribe: (handlers: ChatStreamHandlers) => {
+          if (handlers.onRuntimeWorkChanged) onChanged = handlers.onRuntimeWorkChanged
+          return vi.fn()
+        },
+      } as WorkbenchServices['chatStream'],
     })
     const cloudConnectionValue: CloudConnectionContextValue = {
       ...DISCONNECTED_STATE,
@@ -3119,24 +3176,51 @@ describe('WorkbenchProvider runtime tasks', () => {
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
     }
-    const renderTree = (workspaceTabRevealRevision: number) => (
+    const lifecycleStore = new RuntimeTaskLifecycleStore('retained-task-tab')
+    const tab = {
+      id: 'fixed-task',
+      kind: 'task' as const,
+      title: 'Tasks',
+      contentRoute: '/',
+      fixed: true,
+    }
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const renderTree = (active: boolean) => (
       <CloudConnectionContext.Provider value={cloudConnectionValue}>
-        <WorkbenchProvider
-          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        <WorkspaceTabSurface
+          active={active}
+          cloudWebUrl={null}
+          lifecycleStore={lifecycleStore}
+          nativeWorkbenchKind="task"
           services={services}
-          workspaceTabRevealRevision={workspaceTabRevealRevision}
-        >
-          <div />
-        </WorkbenchProvider>
+          tab={tab}
+          user={user}
+        />
       </CloudConnectionContext.Provider>
     )
 
-    const { rerender } = render(renderTree(0))
-    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
+    const module = 'plugins/wework-ui-core-apps.js'
+    window.__WEWORK_DSH_UI_MODULES__ = {
+      ...window.__WEWORK_DSH_UI_MODULES__,
+      [module]: { default: BootstrapProbe },
+    }
+    await importDshUiModule(module)
+    const { rerender } = render(renderTree(true))
+    const workbench = screen.getByTestId('runtime-total')
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    expect(workbench).toHaveTextContent('0')
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledOnce()
 
-    rerender(renderTree(1))
+    await act(async () => rerender(renderTree(false)))
+    expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument()
+    await act(async () => onChanged?.({ taskId: 'runtime-a', deviceId: 'device-1' }))
+    await waitFor(() => expect(workbench).toHaveTextContent('3'))
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
 
-    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+    await act(async () => rerender(renderTree(true)))
+    expect(screen.getByTestId('runtime-total')).toBe(workbench)
+    expect(screen.getByRole('tabpanel')).toContainElement(workbench)
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
   })
 
   test('bootstraps with local app services in local-first runtime mode', async () => {
@@ -13387,6 +13471,181 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(paneSubscribeCount()).toBe(0)
   })
 
+  test('presents a finished conversation when an inactive pane becomes visible again', async () => {
+    const address = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    }
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'loaded transcript' }],
+      } satisfies RuntimeTranscriptResponse),
+    })
+    renderWorkbench(
+      <RuntimePaneSessionIdentityProbe />,
+      createWorkbenchServices({ runtimeWorkApi })
+    )
+    const messages = screen.getByTestId('runtime-session-messages')
+    await waitFor(() => expect(messages).toHaveTextContent('loaded transcript'))
+    const toggle = screen.getByRole('button', { name: 'toggle pane presentation' })
+    await userEvent.click(toggle)
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        taskId: address.taskId,
+        subtaskId: 'background-turn',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_done',
+        subtaskId: 'background-turn',
+        itemId: 'background-content',
+        content: 'finished in another tab',
+      })
+    })
+    expect(
+      getRuntimeConversationMessages(address).some(
+        message => message.content === 'finished in another tab'
+      )
+    ).toBe(true)
+    expect(messages).not.toHaveTextContent('finished in another tab')
+    await userEvent.click(toggle)
+    expect(messages).toHaveTextContent('finished in another tab')
+  })
+
+  test('defers hidden stream text while publishing interaction requests and completed turns', async () => {
+    const address = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    }
+    let notifyWindowActivity: (activity: unknown) => void = () => undefined
+    const previousLifecycle = window.weworkElectronLifecycle
+    window.weworkElectronLifecycle = {
+      ...previousLifecycle,
+      onSystemResume: () => () => undefined,
+      getWorkbenchActivity: async () => 'foreground',
+      onWorkbenchActivityChanged: listener => {
+        notifyWindowActivity = listener
+        return () => {
+          notifyWindowActivity = () => undefined
+        }
+      },
+    }
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'loaded transcript' }],
+      } satisfies RuntimeTranscriptResponse),
+    })
+    const { unmount } = renderWorkbench(
+      <RuntimePaneSessionIdentityProbe />,
+      createWorkbenchServices({ runtimeWorkApi })
+    )
+    try {
+      const messages = screen.getByTestId('runtime-session-messages')
+      const turnStatuses = screen.getByTestId('runtime-session-turn-statuses')
+      const requests = screen.getByTestId('runtime-session-requests')
+      await waitFor(() => expect(messages).toHaveTextContent('loaded transcript'))
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_started',
+          taskId: address.taskId,
+          subtaskId: 'hidden-turn',
+        })
+        notifyWindowActivity('hidden')
+      })
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_chunk',
+          subtaskId: 'hidden-turn',
+          itemId: 'hidden-content',
+          content: 'hidden stream progress',
+        })
+      })
+      expect(
+        getRuntimeConversationMessages(address)
+          .map(message => message.content)
+          .join('|')
+      ).toContain('hidden stream progress')
+      await userEvent.click(screen.getByText('publish a pane error'))
+      expect(screen.getByTestId('runtime-session-error')).toHaveTextContent('local pane event')
+      expect(messages).not.toHaveTextContent('hidden stream progress')
+      act(() => notifyWindowActivity('foreground'))
+      expect(messages).toHaveTextContent('hidden stream progress')
+      act(() => {
+        notifyWindowActivity('hidden')
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_started',
+          taskId: address.taskId,
+          subtaskId: 'overlapping-turn',
+        })
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_chunk',
+          subtaskId: 'hidden-turn',
+          itemId: 'hidden-content',
+          content: ' with terminal content',
+        })
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_chunk',
+          subtaskId: 'overlapping-turn',
+          itemId: 'overlapping-content',
+          content: 'overlapping stream progress',
+        })
+        applyRuntimeConversationAction(address, {
+          type: 'block_created',
+          subtaskId: 'overlapping-turn',
+          block: {
+            id: 'hidden-question',
+            type: 'tool',
+            toolName: 'request_user_input',
+            subtaskId: 'overlapping-turn',
+            status: 'pending',
+            createdAt: Date.now(),
+            renderPayload: {
+              kind: 'request_user_input',
+              request_id: 42,
+              questions: [{ id: 'choice', question: 'Continue execution?' }],
+            },
+          },
+        })
+      })
+      expect(requests).toHaveTextContent('hidden-question:pending')
+      expect(messages).toHaveTextContent('hidden stream progress')
+      expect(messages).not.toHaveTextContent('with terminal content')
+      expect(messages).not.toHaveTextContent('overlapping stream progress')
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'block_updated',
+          subtaskId: 'overlapping-turn',
+          blockId: 'hidden-question',
+          updates: { status: 'done' },
+        })
+      })
+      expect(requests).toHaveTextContent('hidden-question:done')
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_done',
+          subtaskId: 'hidden-turn',
+        })
+      })
+      expect(turnStatuses).toHaveTextContent('hidden-turn:done')
+      expect(turnStatuses).toHaveTextContent('overlapping-turn:streaming')
+      expect(messages).toHaveTextContent('hidden stream progress with terminal content')
+      expect(messages).not.toHaveTextContent('overlapping stream progress')
+      act(() => notifyWindowActivity('foreground'))
+      expect(messages).toHaveTextContent('overlapping stream progress')
+    } finally {
+      unmount()
+      window.weworkElectronLifecycle = previousLifecycle
+    }
+  })
+
   test('clears the task plan progress when starting a new chat', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
@@ -13745,6 +14004,35 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('follow-up-collaboration-mode')).toHaveTextContent('plan')
     )
     expect(screen.getByTestId('runtime-attachment-count')).toHaveTextContent('1')
+  })
+
+  test('publishes a composer draft without rerendering the workbench or pane', async () => {
+    const rendered = vi.fn()
+    function DraftIsolationProbe() {
+      const { paneSession } = useWorkbenchProbeSession()
+      rendered()
+      return (
+        <>
+          <button onClick={() => paneSession.setInput('Isolated draft')}>Publish draft</button>
+          <output data-testid="draft-isolation-current">
+            <ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />
+          </output>
+          <output data-testid="draft-isolation-other">
+            <ScopedDraftText store={paneSession.draftStore} scope="pane:other" />
+          </output>
+        </>
+      )
+    }
+
+    await act(async () => {
+      renderWorkbench(<DraftIsolationProbe />)
+    })
+    const publish = screen.getByRole('button', { name: 'Publish draft' })
+    rendered.mockClear()
+    act(() => publish.click())
+    expect(screen.getByTestId('draft-isolation-current')).toHaveTextContent('Isolated draft')
+    expect(screen.getByTestId('draft-isolation-other')).toBeEmptyDOMElement()
+    expect(rendered).not.toHaveBeenCalled()
   })
 
   test('keeps blank chat draft when clearing a project chat context', async () => {

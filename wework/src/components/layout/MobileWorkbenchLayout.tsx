@@ -28,6 +28,7 @@ import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTria
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   isCloudDevice,
@@ -48,7 +49,7 @@ import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowLeftRight, Bot, Menu } from 'lucide-react'
 import { memo, useCallback, useRef, useState } from 'react'
-import { BufferedChatInput } from './BufferedChatInput'
+import { ScopedDraftChatInput } from './BufferedChatInput'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
@@ -108,7 +109,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
     startNewChat: onNewChat,
-    runtimeTaskReminders,
     startStandaloneChat: onStartStandaloneChat,
     selectProject: onSelectProject,
     openRuntimeTask: onOpenRuntimeTask,
@@ -132,7 +132,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
   const openPluginCenterAction = actions.find(action => action.id === 'plugin-center.open') ?? null
   const activeItem = 'chat'
-  const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const taskReminders = useWorkbench().runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const pendingModelRetryRef = useRef<WorkbenchMessage | null>(null)
@@ -175,8 +175,16 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsBusy = paneSession.status.isBusy
+  const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const runtimeTaskSummary = findRuntimeTask(state.runtimeWork, currentRuntimeTask)
+  const taskPermissions = useRuntimeTaskPermissions(
+    currentRuntimeTask,
+    runtimeTaskSummary,
+    state.user?.id,
+    services.standInApi,
+    onRefreshWorkLists
+  )
   const currentRuntimeUsesCodex =
     (runtimeTaskSummary?.runtime ?? currentRuntimeTask?.runtime ?? 'codex').toLowerCase() ===
     'codex'
@@ -205,6 +213,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   }, [retryFailedMessage])
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...effectiveProjectChat,
+    ...taskPermissions,
     modelSelectorOpenSignal,
     setSelectedModel: model => {
       effectiveProjectChat.setSelectedModel(model)
@@ -511,6 +520,14 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                             source={currentRuntimeTask}
                             messages={paneMessages}
                             onCollapse={onCollapse}
+                            onSkip={() =>
+                              paneSession.skipRequestUserInput(
+                                pendingRequestUserInputPayloads(
+                                  paneMessages,
+                                  paneSession.answeredRequestUserInputIds
+                                )
+                              )
+                            }
                             onSubmit={response => {
                               const isImplementationPlanRequest =
                                 isImplementationPlanRequestUserInput(pendingRequestUserInput)
@@ -539,14 +556,16 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         ) : null
                       }
                     >
-                      <BufferedChatInput
-                        value={paneSession.input}
-                        onChange={paneSession.setInput}
-                        onDraftEdit={paneSession.clearError}
+                      <ScopedDraftChatInput
+                        draftStore={paneSession.draftStore}
+                        draftScope={paneSession.scopeKey}
+                        writeDraft={paneSession.setInputForScope}
+                        onDraftEdit={paneSession.onDraftEdit}
                         onSubmit={submitPaneInput}
                         disabled={composerDisabled}
                         submitDisabled={paneSession.status.isSubmitting}
                         error={paneSession.error}
+                        onDismissError={paneSession.clearError}
                         disabledReason={inlineComposerDisabledReason}
                         placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
                         projectChat={projectChatWithModelSelectorSignal}
@@ -558,6 +577,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         guidanceMessages={paneGuidanceMessages}
                         codeComments={paneSession.codeCommentContexts}
                         isStreaming={paneIsBusy}
+                        showPauseButton={showPauseButton}
                         onPause={() => void paneSession.pauseCurrentResponse()}
                         onCompactContext={
                           currentRuntimeUsesCodex
@@ -639,14 +659,16 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 compact
                 className="mb-2"
               />
-              <BufferedChatInput
-                value={paneSession.input}
-                onChange={paneSession.setInput}
-                onDraftEdit={paneSession.clearError}
+              <ScopedDraftChatInput
+                draftStore={paneSession.draftStore}
+                draftScope={paneSession.scopeKey}
+                writeDraft={paneSession.setInputForScope}
+                onDraftEdit={paneSession.onDraftEdit}
                 onSubmit={submitPaneInput}
                 disabled={composerDisabled}
                 submitDisabled={paneSession.status.isSubmitting}
                 error={paneSession.error}
+                onDismissError={paneSession.clearError}
                 disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
@@ -658,6 +680,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsBusy}
+                showPauseButton={showPauseButton}
                 onPause={() => void paneSession.pauseCurrentResponse()}
                 onCompactContext={
                   currentRuntimeUsesCodex ? () => void paneSession.compactContext() : undefined

@@ -24,6 +24,8 @@ The independent checkpoint is registered in an existing Core CI shard and does n
 
 The existing Linux Core CI measures CPU for `idle-executor-requests`, `streaming-conversation-switching`, and `executor-stream-recovery`. The measurement spans the scenario's verification function, including any setup and reloads inside it. For example, the idle scenario's total includes its reload and follow-up verification. CPU time in milliseconds is reported separately for Electron Renderer processes and the main Executor process. Executor child processes are outside the current measurement scope. Both endpoints must identify the same measured processes. Collection failures and process changes are logged as unavailable samples.
 
+Linux Core shards run the idle workbench and Executor stream recovery checkpoints in isolation before starting the shard's parallel checkpoints. This prevents concurrent desktop sessions from inflating the measured processes' CPU time.
+
 [github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) tracks a baseline per checkpoint and runner platform. Scheduled or manually dispatched Wework E2E runs on `main` update the baseline. Pull requests and the merge queue only read it. When an existing shard runs the corresponding checkpoint, CI reports the current value, baseline, and ratio. With a baseline, CI fails when either process uses more than 150% of the baseline CPU time or the checkpoint produces no sample. Before the first baseline, CI can pass and reports any available samples.
 
 ## Periodic plugin recovery E2E
@@ -221,6 +223,41 @@ Once CPU profiling stops successfully, trace collection, parsing or report-write
 A successful explicit `detach` discards unfinished recording state for that target, allowing cancellation or recovery after an unexpected disconnect. Failed detaches retain state. The real Electron checkpoint also detaches during a recording, then starts another recording and generates its report.
 
 All desktop checkpoints use a `desktop-control` registry within their result directory for on-demand diagnosis of their isolated instance. Native macOS process snapshots read PID parent relationships first, then collect detailed metrics and command lines only for the Electron process tree, keeping unrelated process arguments out of the collection buffer.
+
+### Renderer CPU and JS heap benchmark
+
+On macOS, compare the baseline and candidate on the same machine with the same build configuration. The commands launch isolated Electron and the real executor. A test model emits 120 Markdown chunks at 100 ms intervals. The benchmark verifies that the first chunk appears while streaming and waits for the last chunk to appear. The isolated window uses the foreground rendering path without taking desktop focus. The report's `window` records native activity, document visibility, and focus.
+
+```bash
+pnpm --filter wework ai:verify:electron:build
+pnpm --filter wework profile:renderer --check
+pnpm --filter wework profile:renderer --history --check
+pnpm --filter wework profile:renderer --capture
+pnpm --filter wework profile:renderer --processes
+```
+
+- `--check` fails at idle CPU ≥ 3%, single-task CPU ≥ 15%, ten-concurrent-task CPU ≥ 20%, a main-thread task containing a turn update ≥ 100 ms, or sampled peak JS heap ≥ 200 MB (200,000,000 bytes). With no argument, the command reports measurements. CPU is cumulative CPU time across the isolated window renderer PIDs divided by elapsed wall time, with 100% representing one logical core. The idle window is about seven seconds. The task CPU window runs from the start of the model response until the last chunk is visible. The benchmark samples V8 used heap every second without forcing GC.
+- The benchmark loads 257 synthetic saved tasks. The concurrent phase loads a local project with 480 Issues, including 20 open Issues, and starts ten real Codex tasks. The foreground task first executes 180 read-only commands through the test model to build its tool history. Measurement starts once all ten tasks reach the test model. The foreground task and three background tasks execute another 40 read-only commands in batches while the conversation is active. The test model also streams 765 reasoning summary deltas through the Responses protocol over approximately 39 seconds. The run updates a Goal in the foreground conversation, then switches to Pending, scrolls the list, and updates three background Goals. The report records the phase averages, the highest CPU across sampled windows of at least ten seconds, and the window presentation state. The 20% limit applies to the highest concurrent result.
+- Turn update observation starts before submission and includes the started and settled `runtime.turn.updated` snapshots for the same task. The report's `turnUpdates` records the time of each update and the duration of the Chromium main-thread long task containing it. A duration of 0 means the update fell below Chromium's 50 ms long-task reporting threshold.
+- `--capture` uses the existing performance recording and writes `renderer-performance.json` and raw evidence. The `caller` field on native frames identifies JavaScript that triggered work such as layout. Recording requests a 100 µs V8 sampling interval and marks the idle and both concurrent measurement windows in the trace. Recording adds overhead. Run `--check` separately to verify the limits. All modes save `renderer-threshold-measurements.json` in the test directory printed in the console.
+- `--history` completes 16 persisted conversations in sequence and samples the heap after each one, then starts the benchmark task in the same renderer. It uses reproducible test model responses. `historicalTasks` records the conversation count in the report.
+- `--processes` records app process snapshots while idle, mid-stream, and after completion. Inspect `processSamples` for the main process, renderer, GPU, executor, and child processes. The snapshots report OS or Electron CPU samples. Run `--check` separately for threshold verification. Shared memory pages may appear in multiple per-process measurements.
+- To investigate a heap peak, identify the operation from the phase in `heapSamples`. If the heap drops quickly after natural GC, use Allocation sampling in Chromium's Memory panel to find call stacks allocating short-lived objects. Rerun the threshold check with allocation sampling disabled.
+- For long-lived memory growth, switch tasks repeatedly with the same history in an isolated instance, record JS heap usage, and take two heap snapshots in Chromium's Memory panel. Compare object counts and retained sizes, then inspect `Retainers` for reachable paths, including detached DOM, closures, and caches. Detach CDP recording for the target before opening the Memory panel. Keep reports and snapshots local.
+
+macOS desktop CI reuses the packaged app to run `--check` for relevant pull requests and merge groups. Exceeding a limit fails the required **Wework E2E Summary** check, and the measurements are retained with the CI diagnostics.
+
+### Workbench resource budget
+
+These proposed targets describe a steady-state single-window workbench. Profile startup, updates, indexing, embedded browsing, file previews, and local models under their own workloads.
+
+| Scenario | Longer-term target | What to measure |
+| --- | --- | --- |
+| Visible window at idle | About 1–3% renderer CPU and about 5% or less across desktop UI processes | Measure visible and background states after startup settles. Express CPU relative to a logical core and check background wakeups. |
+| One plain-text streaming task | About 8–12% renderer CPU | At ten chunks per second, this gives the renderer 80–120 ms of CPU time per second. Watch first and continuing text presentation, bottom following, and manual reading anchors. |
+| Single-window JS heap | About 100 MB for a new conversation and about 120–160 MB with typical history | Compare the same dataset, cadence, and phase. History stays available from persistent storage. The heap should stabilize after repeated task switches. |
+
+The main process handles windows, IPC and runtime coordination. The GPU process handles compositing and rendering. The executor and task subprocesses handle model connections, commands and tools. Plain-text streaming adds limited data, so document-wide style invalidation and full-page work on each update warrant investigation. For tool-heavy tasks, measure executor and subprocess activity and disk usage separately. Read JS heap, native renderer memory, GPU resources and other process memory as separate measurements. GPU-process CPU measures CPU time. [Electron process metrics](https://www.electronjs.org/docs/latest/api/app#appgetappmetrics) [Chrome DevTools memory diagnostics](https://developer.chrome.com/docs/devtools/memory-problems)
 
 ### Diff preview CPU and workbench memory regressions
 

@@ -1,5 +1,16 @@
+import assert from 'node:assert/strict'
+
 const TIMING_HEADER = /^Wall time: \d+(?:\.\d+)? seconds\nOutput:(?:\n|$)/
 const CODE_MODE_HEADER = /^Script completed[\s\S]*\nOutput:\n$/
+
+export function isDetachedResponsesContext(item) {
+  return (
+    item?.type === 'message' &&
+    item.role === 'user' &&
+    item.content?.[0]?.type === 'input_text' &&
+    item.content[0].text === '[tool_result without a matching tool_call]'
+  )
+}
 
 export function modelToolOutputText(output) {
   if (typeof output === 'string')
@@ -23,4 +34,15 @@ export function modelRequestTexts(body, role) {
         : [item.output === undefined ? (item.content ?? '') : modelToolOutputText(item.output)]
     )
     .join('\n')
+}
+
+export function readPreparedQuestionAttachmentPath(answers, filename) {
+  const prefix = `- ${filename} (`
+  const paths = answers
+    .flatMap(answer => answer.split('\n'))
+    .filter(line => line.startsWith(prefix))
+    .map(line => line.match(/\): (.+)$/)?.[1])
+    .filter(Boolean)
+  assert.equal(paths.length, 1, `Expected one prepared question attachment: ${filename}`)
+  return paths[0]
 }

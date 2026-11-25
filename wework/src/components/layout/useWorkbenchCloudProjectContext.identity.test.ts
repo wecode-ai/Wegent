@@ -105,6 +105,39 @@ test('retains the same owner binding during alias refresh but isolates another d
   expect(result.current.boundCloudItem).toBeNull()
 })
 
+test('recovers a persisted task association after a transient lookup timeout', async () => {
+  vi.useFakeTimers()
+  try {
+    const board = project('persisted-board')
+    const item = loopItem(board.id)
+    const findCloudContextForTask = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<never>(() => {}))
+      .mockResolvedValue({ project: board, loop_item: item })
+    const services = { workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask }) }
+    const { result, unmount } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: { deviceId: 'persisted-device', taskId: 'persisted-task' },
+        defaultProjectSpace: null,
+        paneKey: 'runtime:persisted-device:persisted-task',
+        runtimeTaskTitle: 'Persisted task',
+        services,
+        userId: 1,
+      })
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_200)
+    })
+    expect(result.current.boundCloudProject?.id).toBe(board.id)
+    expect(result.current.boundCloudItem?.id).toBe(item.id)
+    unmount()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 test('completes task association when the board items load during tracking', async () => {
   const board = project('tracking-board')
   const item = loopItem(board.id)

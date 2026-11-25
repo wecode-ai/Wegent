@@ -3,6 +3,7 @@ const MAX_CACHED_IMAGE_BYTES = 64 * 1024 * 1024
 
 interface CachedImageEntry {
   url: string
+  blob: Blob
   size: number
   activeUsers: number
   lastUsed: number
@@ -10,6 +11,7 @@ interface CachedImageEntry {
 
 export interface CachedImagePreview {
   url: string
+  blob: Blob
   release: () => void
 }
 
@@ -66,6 +68,7 @@ async function loadCachedImage(
 
       const entry: CachedImageEntry = {
         url: URL.createObjectURL(blob),
+        blob,
         size: blob.size,
         activeUsers: 0,
         lastUsed: ++accessSequence,
@@ -95,6 +98,7 @@ export async function acquireCachedImagePreview(
   let released = false
   return {
     url: entry.url,
+    blob: entry.blob,
     release: () => {
       if (released) return
       released = true

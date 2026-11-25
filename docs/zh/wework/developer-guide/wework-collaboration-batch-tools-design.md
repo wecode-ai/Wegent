@@ -117,6 +117,7 @@ type AssigneeRef = {
 | `query`                                | 匹配事项 ID、标题、描述和标签；不隐式全文扫描评论 |
 | `assignees`                            | 人、机器人、协作组、现有 team 类型；按 ID 匹配    |
 | `unassigned`                           | 无负责人；与 `assignees` 互斥                     |
+| `participation: "mine"`                 | 匹配当前认证用户已加入事项参与者名单的事项 |
 | `creator_user_ids`                     | 创建人，与负责人独立                              |
 | `statuses` / `exclude_statuses`        | 动态状态 ID；两者不能同时提供                     |
 | `priorities` / `tags`                  | 优先级和标签                                      |

@@ -139,6 +139,14 @@ async function verifyBackgroundCompletionRestore({
     'Switching back duplicated the completed background assistant message'
   )
 
+  const taskRow = `[data-testid="${taskRowTestId}"]`
+  const pinnedSection = '[data-testid="sidebar-pinned-section"]'
+  const pinnedTaskRow = `${pinnedSection} ${taskRow}`
+  const pinButton = `[data-testid="runtime-local-task-mark-${taskId}"]`
+  await control.command('hover', taskRow)
+  await control.command('clickWhenEnabled', pinButton)
+  await control.command('waitFor', pinnedTaskRow, { visible: true })
+
   control.setScenario('background_follow_up_restore')
   await sendPromptUntilScenarioRequest(
     control,
@@ -154,6 +162,16 @@ async function verifyBackgroundCompletionRestore({
   await control.command('waitFor', `[data-testid="${runningTaskTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${pinnedTaskRow} [data-testid="${runningTaskTestId}"]`
+      )
+    ),
+    1,
+    'The running follow-up must remain in the pinned section'
+  )
   await control.command('clickWhenEnabled', `[data-testid="${otherTaskRowTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -187,6 +205,14 @@ async function verifyBackgroundCompletionRestore({
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
+  assert.equal(
+    Number(await control.command('getElementCount', pinnedTaskRow)),
+    1,
+    'The settled follow-up must remain in the pinned section'
+  )
+  await control.command('hover', pinnedTaskRow)
+  await control.command('clickWhenEnabled', `${pinnedSection} ${pinButton}`)
+  await control.command('waitFor', pinnedTaskRow, { visible: false })
   const conversationMessageSelector = [
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -371,7 +397,16 @@ async function verifyRunningFollowUpFork({
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
+    await control.command(
+      'scrollToRatioAsUser',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
+      { value: '0' }
+    )
     await control.command('scrollIntoView', firstTurnForkButtonSelector)
+    await control.command('waitFor', firstTurnForkButtonSelector, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await captureVerificationScreenshot(control, 'running-follow-up-fork-01-streaming.png')
 
     await control.command(

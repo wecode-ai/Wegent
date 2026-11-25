@@ -111,6 +111,8 @@ pub(super) async fn start() -> Result<Value, AppIpcError> {
         BrowserAuthSession {
             plugin_key: "github".to_owned(),
             connector_slug: SLUG.to_owned(),
+            marketplace_id: None,
+            plugin_root: None,
             state,
             task,
         },

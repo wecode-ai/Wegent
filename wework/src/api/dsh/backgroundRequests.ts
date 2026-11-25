@@ -1,6 +1,7 @@
 export type DshRequestPriority = 'foreground' | 'background'
 
 const BACKGROUND_SLOTS = ['wework.dsh.background.0', 'wework.dsh.background.1'] as const
+export const DSH_BACKGROUND_CONCURRENCY = BACKGROUND_SLOTS.length
 const BACKGROUND_QUEUE_TIMEOUT_MS = 30_000
 
 // Allow the DSH-to-executor deadline to report its error before closing HTTP.
@@ -112,6 +113,15 @@ export function executorRequestPriority(
   method: string,
   params: Record<string, unknown>
 ): DshRequestPriority {
+  // Passive MCP App discovery fans out once per historical tool call when a
+  // transcript mounts. Keep it on the shared background lanes so it cannot
+  // occupy the interactive RPC path. App actions still stay foreground.
+  if (method === 'runtime.mcp_apps.request') {
+    const appMethod = params.method
+    return appMethod === undefined || appMethod === null || appMethod === 'discover'
+      ? 'background'
+      : 'foreground'
+  }
   if (method === 'device.execute_command') {
     const command = String(params.command_key ?? '')
     return command.startsWith('connection_observer_') ||

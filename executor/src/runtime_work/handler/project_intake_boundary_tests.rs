@@ -1,4 +1,5 @@
 use super::*;
+use crate::task_runtime::personal_stand_in::project_role;
 
 #[tokio::test]
 async fn project_intake_validates_assignment_age_against_each_saved_project_connection() {
@@ -9,6 +10,7 @@ async fn project_intake_validates_assignment_age_against_each_saved_project_conn
             .create_project(serde_json::from_value(json!({"name":"New connection"})).unwrap())
             .unwrap();
         let mut personal = store.personal_stand_in(7, "mac").unwrap();
+        personal["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         personal["roles"][0]["enabled"] = json!(true);
         personal["roles"][0]["collaboration"]["enabled"] = json!(true);
         personal["roles"][0]["collaboration"]["allProjects"] = json!(false);

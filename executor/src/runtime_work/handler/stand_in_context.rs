@@ -298,7 +298,9 @@ mod tests {
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-        store.personal_stand_in(7, "mac").unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "actor".into(), runtime: "chat".into(),
             runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"mac","standInId":"default"},"executionRequest":{"user_id":7}}),

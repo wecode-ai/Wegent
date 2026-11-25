@@ -5,10 +5,13 @@ import {
   useAttachmentPreview,
 } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { createBodyFlagRef } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Download, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+
+const markFilePreviewOpen = createBodyFlagRef('data-wework-file-preview-open')
 
 export function CloudFilePreviewDialog({
   filename,
@@ -58,6 +61,7 @@ export function CloudFilePreviewDialog({
 
   return createPortal(
     <div
+      ref={markFilePreviewOpen}
       data-wework-file-preview
       className="fixed inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm"
       onMouseDown={event => event.currentTarget === event.target && onClose()}

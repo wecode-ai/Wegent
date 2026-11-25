@@ -185,7 +185,7 @@ export function ProjectSpacePickerMenu({
               )}
             </ControlButton>
           </nav>
-          <div className="min-w-0 flex-1">{list}</div>
+          <div className="flex min-w-0 flex-1 flex-col">{list}</div>
         </div>
       )}
       actions={

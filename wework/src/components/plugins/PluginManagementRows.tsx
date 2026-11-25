@@ -45,6 +45,10 @@ export function InstalledPluginRow({
   onToggle,
   onUninstall,
   isUninstalling = false,
+  availableUpdate,
+  updating = false,
+  updateDisabled = false,
+  onUpdate,
 }: {
   plugin: InstalledPluginItem
   marketplaceItem?: PluginMarketplaceItem
@@ -58,6 +62,10 @@ export function InstalledPluginRow({
   onToggle: () => void
   onUninstall: () => void
   isUninstalling?: boolean
+  availableUpdate?: { current?: string | null; version: string }
+  updating?: boolean
+  updateDisabled?: boolean
+  onUpdate?: () => void
 }) {
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
@@ -109,7 +117,7 @@ export function InstalledPluginRow({
           >
             {distributionLabel}
           </span>
-          {plugin.updateAvailable && (
+          {plugin.updateAvailable && !availableUpdate && (
             <span className="plugin-management-pill plugin-management-pill-official">
               {t('workbench.plugins_update_available', '可更新')}
             </span>
@@ -118,6 +126,23 @@ export function InstalledPluginRow({
         <small className="mt-0.5 block truncate text-sm leading-5 text-text-muted">
           {subtitle}
         </small>
+        {availableUpdate && (
+          <small className="mt-0.5 block text-sm text-text-secondary">
+            {availableUpdate.current
+              ? t(
+                  onUpdate
+                    ? 'workbench.plugins_update_version_pair'
+                    : 'workbench.plugins_marketplace_version_hint',
+                  {
+                    current: availableUpdate.current.replace(/^v/i, ''),
+                    target: availableUpdate.version.replace(/^v/i, ''),
+                  }
+                )
+              : t('workbench.plugins_update_target_version', {
+                  version: availableUpdate.version.replace(/^v/i, ''),
+                })}
+          </small>
+        )}
         {needsRecovery && (
           <small
             role="status"
@@ -153,6 +178,19 @@ export function InstalledPluginRow({
         </div>
       )}
       <div className="relative flex items-center gap-[7px]">
+        {onUpdate && !isUninstalling && (
+          <ControlButton
+            variant="primary"
+            size="sm"
+            type="button"
+            data-testid={`installed-plugin-update-${plugin.id}`}
+            disabled={updateDisabled}
+            onClick={onUpdate}
+          >
+            {updating && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+            {t('workbench.plugins_update', '更新')}
+          </ControlButton>
+        )}
         {isUninstalling ? (
           <span
             role="status"

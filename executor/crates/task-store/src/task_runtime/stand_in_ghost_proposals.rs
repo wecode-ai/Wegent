@@ -13,6 +13,169 @@ fn owner_key(user: i64, device: &str, role: Option<&str>) -> String {
     json!([user, device, role]).to_string()
 }
 
+fn prompt_digest(prompt: &Value) -> String {
+    format!("{:x}", Sha256::digest(prompt.as_str().unwrap_or_default()))
+}
+
+struct EvaluationRow {
+    id: String,
+    iteration: Option<i64>,
+    status: String,
+    evaluated_at: String,
+    metadata: String,
+}
+
+fn latest_evaluation(
+    db: &Connection,
+    owner: &str,
+) -> Result<Option<EvaluationRow>, TaskRuntimeError> {
+    Ok(db
+        .query_row(
+            "SELECT sequence_number,status,created_at,metadata,id FROM loop_items
+         WHERE resource_type='ghost_evaluation' AND name=?1 ORDER BY rowid DESC LIMIT 1",
+            [owner],
+            |row| {
+                Ok(EvaluationRow {
+                    id: row.get(4)?,
+                    iteration: row.get(0)?,
+                    status: row.get(1)?,
+                    evaluated_at: row.get(2)?,
+                    metadata: row.get(3)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+fn evaluation_count(db: &Connection, owner: &str) -> Result<i64, TaskRuntimeError> {
+    // Only evaluations created before iteration numbers were stored need to be counted.
+    Ok(db.query_row(
+        "SELECT COUNT(*) FROM loop_items WHERE resource_type='ghost_evaluation' AND name=?1",
+        [owner],
+        |row| row.get(0),
+    )?)
+}
+
+fn ensure_report_index(db: &Connection) -> Result<(), TaskRuntimeError> {
+    db.execute_batch(
+        "CREATE INDEX IF NOT EXISTS ix_ghost_report_owner
+         ON loop_items(name) WHERE resource_type='ghost_evaluation';
+         CREATE INDEX IF NOT EXISTS ix_ghost_report_baseline
+         ON loop_items(name,json_extract(metadata,'$.comparison.baselinePrompt'))
+         WHERE resource_type='ghost_evaluation' AND status IN ('accepted','rejected','reverted','unchanged');
+         CREATE INDEX IF NOT EXISTS ix_ghost_report_candidate
+         ON loop_items(name,json_extract(metadata,'$.comparison.candidatePrompt'))
+         WHERE resource_type='ghost_evaluation' AND status IN ('accepted','reverted');",
+    )?;
+    Ok(())
+}
+
+fn previous_score(
+    db: &Connection,
+    owner: &str,
+    prompt: &str,
+) -> Result<Option<f64>, TaskRuntimeError> {
+    Ok(db
+        .query_row(
+            "SELECT score FROM (
+            SELECT * FROM (
+                SELECT rowid AS seq,json_extract(metadata,'$.comparison.baselineScore') AS score
+                FROM loop_items WHERE resource_type='ghost_evaluation' AND name=?1
+                AND status IN ('accepted','rejected','reverted','unchanged')
+                AND json_extract(metadata,'$.comparison.baselinePrompt')=?2
+                ORDER BY rowid DESC LIMIT 1
+            )
+            UNION ALL SELECT * FROM (
+                SELECT rowid AS seq,json_extract(metadata,'$.comparison.candidateScore') AS score
+                FROM loop_items WHERE resource_type='ghost_evaluation' AND name=?1
+                AND status IN ('accepted','reverted')
+                AND json_extract(metadata,'$.comparison.candidatePrompt')=?2
+                ORDER BY rowid DESC LIMIT 1
+            )
+         ) ORDER BY seq DESC LIMIT 1",
+            params![owner, prompt],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+pub const GHOST_LEARNING_AXES: [&str; 5] = [
+    "intent",
+    "verification",
+    "judgment",
+    "actionability",
+    "clarity",
+];
+
+fn compared_dimensions(rows: &[Value]) -> Option<Vec<Value>> {
+    // Keep historical rows and malformed auxiliary scores from affecting the verdict.
+    let distinct_rows = rows
+        .iter()
+        .filter(|row| row["baseline"] != row["candidate"]);
+    if !distinct_rows.clone().any(|row| {
+        row["dimensionRounds"].as_array().is_some_and(|rounds| {
+            rounds.len() == 2
+                && rounds
+                    .iter()
+                    .any(|round| round["baseline"].is_object() && round["candidate"].is_object())
+        })
+    }) {
+        return None;
+    }
+    Some(GHOST_LEARNING_AXES.iter().map(|axis| {
+        let (mut baseline_total, mut candidate_total) = (0, 0);
+        let (mut sample_count, mut insufficient_count, mut not_applicable_count) = (0, 0, 0);
+        for row in rows {
+            let Some(rounds) = row["dimensionRounds"].as_array() else {
+                insufficient_count += 1;
+                continue;
+            };
+            let identical = row["baseline"] == row["candidate"];
+            if rounds.len() != if identical { 1 } else { 2 } {
+                insufficient_count += 1;
+                continue;
+            }
+            let mut scores = rounds.iter().map(|round| (
+                &round["baseline"][axis]["score"], &round["candidate"][axis]["score"]
+            ));
+            if scores.clone().all(|(a,b)| a == "notApplicable" && b == "notApplicable") {
+                not_applicable_count += 1;
+                continue;
+            }
+            let totals = scores.try_fold((0,0), |(total_a,total_b),(a,b)| {
+                let a = a.as_u64().filter(|score| *score <= 2)?;
+                let b = b.as_u64().filter(|score| *score <= 2)?;
+                (!identical || a == b).then_some((total_a+a,total_b+b))
+            });
+            if let Some((baseline, candidate)) = totals {
+                baseline_total += baseline * 2 / rounds.len() as u64;
+                candidate_total += candidate * 2 / rounds.len() as u64;
+                sample_count += 1;
+            } else {
+                insufficient_count += 1;
+            }
+        }
+        let score = |sum| (sample_count != 0).then(|| 25.0 * sum as f64 / sample_count as f64);
+        json!({"id":axis,"baselineScore":score(baseline_total),"candidateScore":score(candidate_total),
+            "sampleCount":sample_count,"insufficientCount":insufficient_count,
+            "notApplicableCount":not_applicable_count})
+    }).collect())
+}
+
+fn comparison(rows: &[Value]) -> Option<Value> {
+    let wins = rows.iter().try_fold(0, |wins, row| {
+        row["candidateWon"]
+            .as_bool()
+            .map(|won| wins + usize::from(won))
+    })?;
+    let samples = rows.len();
+    let baseline = 50.0 * (samples - wins) as f64 / samples as f64;
+    Some(
+        json!({"sampleCount":samples,"baselineScore":baseline,"candidateScore":100.0-baseline,
+        "dimensions":compared_dimensions(rows)}),
+    )
+}
+
 fn evidence_refs(evidence: &Value) -> Result<BTreeMap<&str, i64>, TaskRuntimeError> {
     let entries = evidence
         .as_array()
@@ -130,6 +293,32 @@ pub(super) fn retire_stale_candidates(
     Ok(())
 }
 
+fn latest_applied_ghost_on(
+    db: &Connection,
+    settings: &mut Value,
+    owner: &str,
+    role: Option<&str>,
+) -> Result<Value, TaskRuntimeError> {
+    let row: Option<(String, String)> = db
+        .query_row(
+            "SELECT id,metadata FROM loop_items WHERE name=?1 AND resource_type='ghost_evaluation'
+        AND status='accepted' ORDER BY version DESC LIMIT 1",
+            [owner],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((id, raw)) = row else {
+        return Ok(Value::Null);
+    };
+    let data: Value = serde_json::from_str(&raw).map_err(|_| invalid("Invalid Ghost revision"))?;
+    if identity(settings, role)?["prompt"] != data["prompt"] {
+        return Ok(Value::Null);
+    }
+    Ok(
+        json!({"id":id,"before":data["before"],"after":data["prompt"],"version":settings["version"]}),
+    )
+}
+
 impl LocalTaskStore {
     /// Re-check the selected evidence and role opt-in in the same snapshot as the prompt revision.
     pub fn ghost_evaluation_is_current(
@@ -171,9 +360,19 @@ impl LocalTaskStore {
         role: Option<&str>,
         base_version: i64,
         evidence: &Value,
+        tied_samples: Option<usize>,
     ) -> Result<(), TaskRuntimeError> {
-        self.record_ghost_evaluation(user, device, role, base_version, evidence, None)
-            .map(|_| ())
+        let comparison = tied_samples
+            .map(|count| json!({"sampleCount":count,"baselineScore":50.0,"candidateScore":50.0}));
+        self.record_ghost_evaluation(
+            user,
+            device,
+            role,
+            base_version,
+            evidence,
+            json!({"comparison":comparison}),
+        )
+        .map(|_| ())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -208,8 +407,9 @@ impl LocalTaskStore {
         {
             return Err(invalid("Invalid evaluated Ghost proposal"));
         }
-        let data = json!({"prompt":candidate_prompt,"summary":summary,"evaluation":evaluation,"evidence":evidence});
-        self.record_ghost_evaluation(user, device, role, base_version, evidence, Some(data))
+        let data = json!({"prompt":candidate_prompt,"summary":summary,"evaluation":evaluation,
+            "evidence":evidence,"comparison":comparison(comparisons)});
+        self.record_ghost_evaluation(user, device, role, base_version, evidence, data)
     }
 
     fn record_ghost_evaluation(
@@ -219,7 +419,7 @@ impl LocalTaskStore {
         role: Option<&str>,
         base_version: i64,
         evidence: &Value,
-        candidate: Option<Value>,
+        mut data: Value,
     ) -> Result<bool, TaskRuntimeError> {
         let owner = owner_key(user, device, role);
         let digest = fingerprint(evidence)?;
@@ -238,14 +438,20 @@ impl LocalTaskStore {
         if profile["selfLearningEnabled"] != true {
             return Err(invalid("Assistant learning is disabled"));
         }
-        let status = if candidate.is_some() {
+        let status = if data["prompt"].is_string() {
             "pending"
         } else {
             "unchanged"
         };
-        let mut data = candidate.unwrap_or_else(|| json!({}));
         if status == "pending" && profile["prompt"] == data["prompt"] {
             return Ok(false);
+        }
+        if !data["comparison"].is_null() {
+            let candidate_digest = data["prompt"]
+                .as_str()
+                .map(|_| prompt_digest(&data["prompt"]));
+            data["comparison"]["baselinePrompt"] = json!(prompt_digest(&profile["prompt"]));
+            data["comparison"]["candidatePrompt"] = json!(candidate_digest);
         }
         data["roleId"] = json!(role);
         // The optional learning service owns these indexes; first use does not affect desktop startup.
@@ -253,11 +459,69 @@ impl LocalTaskStore {
             ON loop_items(name,status,version) WHERE resource_type='ghost_evaluation';
             CREATE INDEX IF NOT EXISTS ix_ghost_pending_user ON loop_items(user_id,device_id,version)
             WHERE resource_type='ghost_evaluation' AND status='pending'")?;
+        ensure_report_index(&tx)?;
+        let iteration = match latest_evaluation(&tx, &owner)? {
+            Some(EvaluationRow {
+                iteration: Some(count),
+                ..
+            }) => count + 1,
+            Some(_) => evaluation_count(&tx, &owner)? + 1,
+            None => 1,
+        };
         let id = format!("ghost:{}", Uuid::new_v4());
-        tx.execute("INSERT INTO loop_items (id,resource_type,name,user_id,device_id,version,sha256,status,metadata,created_at,updated_at)
-            VALUES (?1,'ghost_evaluation',?2,?3,?4,?5,?6,?7,?8,?9,?9)",params![id,owner,user,device,base_version,digest,status,data.to_string(),now()])?;
+        tx.execute("INSERT INTO loop_items (id,resource_type,name,user_id,device_id,version,sha256,status,metadata,created_at,updated_at,sequence_number)
+            VALUES (?1,'ghost_evaluation',?2,?3,?4,?5,?6,?7,?8,?9,?9,?10)",params![id,owner,user,device,base_version,digest,status,data.to_string(),now(),iteration])?;
         tx.commit()?;
         Ok(true)
+    }
+
+    pub fn ghost_learning_report(
+        &self,
+        user: i64,
+        device: &str,
+        role: Option<&str>,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut db = self.connection()?;
+        ensure_report_index(&db)?;
+        let tx = db.transaction()?;
+        let mut settings = read_personal(&tx, user, device)?;
+        if !role_device_matches(&settings, role, device) {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        let owner = owner_key(user, device, role);
+        let revision = latest_applied_ghost_on(&tx, &mut settings, &owner, role)?;
+        let Some(row) = latest_evaluation(&tx, &owner)? else {
+            return Ok(json!({"iterations":0,"latest":null,"revision":revision}));
+        };
+        let iterations = match row.iteration {
+            Some(count) => count,
+            None => evaluation_count(&tx, &owner)?,
+        };
+        let data: Value =
+            serde_json::from_str(&row.metadata).map_err(|_| invalid("Invalid Ghost evaluation"))?;
+        let stale = row.status == "pending"
+            && visible_cases(&tx, user, device, role, &data["evidence"])?.is_none();
+        let status = if stale { "obsolete" } else { &row.status };
+        let comparison = if stale {
+            &Value::Null
+        } else {
+            &data["comparison"]
+        };
+        let current = prompt_digest(&identity(&mut settings, role)?["prompt"]);
+        let current_score = if comparison["baselinePrompt"] == current {
+            comparison["baselineScore"].as_f64()
+        } else if status == "accepted" && comparison["candidatePrompt"] == current {
+            comparison["candidateScore"].as_f64()
+        } else {
+            previous_score(&tx, &owner, &current)?
+        };
+        Ok(json!({
+            "iterations":iterations,"revision":revision,
+            "latest":{"status":status,"evaluatedAt":row.evaluated_at,"currentScore":current_score,
+                "pendingProposalId":(status == "pending").then_some(row.id),
+                "baselineScore":comparison["baselineScore"],"candidateScore":comparison["candidateScore"],
+                "sampleCount":comparison["sampleCount"],"dimensions":comparison["dimensions"]}
+        }))
     }
 
     /// Manual conversation drafts keep their existing slot and take precedence over background work.
@@ -336,22 +600,11 @@ impl LocalTaskStore {
     ) -> Result<Value, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let tx = connection.transaction()?;
-        let row: Option<(String,String)> = tx.query_row("SELECT id,metadata FROM loop_items WHERE name=?1 AND resource_type='ghost_evaluation'
-            AND status='accepted' ORDER BY version DESC LIMIT 1", [owner_key(user,device,role)], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
-        let Some((id, raw)) = row else {
-            return Ok(Value::Null);
-        };
-        let data: Value =
-            serde_json::from_str(&raw).map_err(|_| invalid("Invalid Ghost revision"))?;
         let mut settings = read_personal(&tx, user, device)?;
-        if !role_device_matches(&settings, role, device)
-            || identity(&mut settings, role)?["prompt"] != data["prompt"]
-        {
+        if !role_device_matches(&settings, role, device) {
             return Ok(Value::Null);
         }
-        Ok(
-            json!({"id":id,"before":data["before"],"after":data["prompt"],"version":settings["version"]}),
-        )
+        latest_applied_ghost_on(&tx, &mut settings, &owner_key(user, device, role), role)
     }
 
     pub fn undo_trained_ghost(
@@ -395,7 +648,7 @@ impl LocalTaskStore {
         if !role_device_matches(&settings, role, device) {
             return Err(TaskRuntimeError::VersionConflict);
         }
-        let mut retained = json!({"roleId":role});
+        let mut retained = json!({"roleId":role,"comparison":data["comparison"]});
         let new_status =
             if let Some(reviewed_version) = undo_version {
                 let latest: Option<String> = tx.query_row(
@@ -480,8 +733,102 @@ mod tests {
     }
 
     #[test]
+    fn learning_report_keeps_the_current_score_after_an_unscored_iteration() {
+        let (_root, store, settings, mut evidence) = training_fixture();
+        let extra = store.save_verified_training_memory(7, "mac", json!({
+            "content":"Confirm urgency", "scope":{"kind":"personal"},
+            "evidence":{"taskId":"third","messageId":"third","trainingCase":{
+                "roleId":"@primary","group":"third","scene":"third","expected":"Ask urgency","kind":"demonstration"}}
+        })).unwrap();
+        let extra = json!({"id":extra["id"],"version":extra["version"]});
+        let get = || store.ghost_learning_report(7, "mac", None).unwrap();
+        assert_eq!(get()["iterations"], 0);
+        let round = |clarity| {
+            json!({
+                "baseline":{"intent":{"score":"insufficient"},"verification":{"score":0},
+                    "actionability":{"score":"notApplicable"},"clarity":{"score":clarity}},
+                "candidate":{"intent":{"score":"insufficient"},"verification":{"score":2},
+                    "actionability":{"score":"notApplicable"},"clarity":{"score":2}}
+            })
+        };
+        let comparisons = json!([
+            {"caseId":evidence[1]["id"],"baseline":"Infer","candidate":"Ask","reason":"Clarifies","candidateWon":true,
+                "dimensionRounds":[round(1),round(2)]},
+            {"caseId":extra["id"],"baseline":"Confirm","candidate":"Confirm","reason":"Equivalent","candidateWon":false}
+        ]);
+        evidence.as_array_mut().unwrap().push(extra.clone());
+        store
+            .propose_trained_ghost(
+                7,
+                "mac",
+                None,
+                settings["version"].as_i64().unwrap(),
+                "new",
+                "Clarify",
+                &evidence,
+                &comparisons,
+            )
+            .unwrap();
+        assert_eq!(get()["latest"]["currentScore"], 25.0);
+        assert_eq!(get()["latest"]["candidateScore"], 75.0);
+        let dimensions = get()["latest"]["dimensions"].clone();
+        assert_eq!(
+            dimensions,
+            json!([
+                {"id":"intent","baselineScore":null,"candidateScore":null,
+                    "sampleCount":0,"insufficientCount":2,"notApplicableCount":0},
+                {"id":"verification","baselineScore":0.0,"candidateScore":100.0,
+                    "sampleCount":1,"insufficientCount":1,"notApplicableCount":0},
+                {"id":"judgment","baselineScore":null,"candidateScore":null,
+                    "sampleCount":0,"insufficientCount":2,"notApplicableCount":0},
+                {"id":"actionability","baselineScore":null,"candidateScore":null,
+                    "sampleCount":0,"insufficientCount":1,"notApplicableCount":1},
+                {"id":"clarity","baselineScore":75.0,"candidateScore":100.0,
+                    "sampleCount":1,"insufficientCount":1,"notApplicableCount":0}
+            ])
+        );
+        let proposal = store.stand_in_proposal_for_device(7, "mac", None).unwrap();
+        let id = proposal["id"].as_str().unwrap();
+        assert_eq!(get()["latest"]["pendingProposalId"], id);
+        let settings = store
+            .resolve_stand_in_proposal(7, "mac", id, true, None)
+            .unwrap();
+        assert_eq!(get()["latest"]["currentScore"], 75.0);
+        assert_eq!(get()["latest"]["dimensions"], dimensions);
+        store
+            .record_ghost_evaluation_no_change(
+                7,
+                "mac",
+                None,
+                settings["version"].as_i64().unwrap(),
+                &json!([evidence[0], extra]),
+                None,
+            )
+            .unwrap();
+        let report = get();
+        assert_eq!(report["iterations"], 2);
+        assert_eq!(report["latest"]["status"], "unchanged");
+        assert_eq!(report["latest"]["currentScore"], 75.0);
+        assert!(report["latest"]["candidateScore"].is_null());
+        assert!(report["latest"]["dimensions"].is_null());
+        store
+            .undo_trained_ghost(
+                7,
+                "mac",
+                id,
+                report["revision"]["version"].as_i64().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(get()["latest"]["currentScore"], 25.0);
+        assert!(get()["revision"].is_null());
+    }
+
+    #[test]
     fn role_route_can_apply_and_undo_ghost_without_rebinding_profile() {
         let (_root, store, mut settings, _) = training_fixture();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
         let role = &mut settings["roles"][0];
         role["enabled"] = json!(true);
         role["selfLearningEnabled"] = json!(true);
@@ -553,6 +900,8 @@ mod tests {
             store.stand_in_proposal_for_device(7, "mac", None).unwrap()["id"],
             manual["id"]
         );
+        let report = store.ghost_learning_report(7, "mac", None).unwrap();
+        assert_eq!(report["latest"]["pendingProposalId"], ghost["id"]);
         assert!(store
             .resolve_stand_in_proposal(7, "mac", ghost["id"].as_str().unwrap(), true, None)
             .is_err());

@@ -7,7 +7,9 @@ import type { TFunction } from 'i18next'
 import {
   isAsyncRequestUserInputPayload,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@wegent/chat-core/runtime-user-input'
+import type { RequestUserInputResponse } from '@wegent/chat-core/runtime'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -40,6 +42,7 @@ import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNo
 import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
 import { weworkInteractionScheme } from './scheme'
 import { replyToInteractionProject } from './interactionProjectReply'
+import { prepareRuntimeQuestionResponse } from '@/features/workbench/useWorkbenchRuntimeMessaging'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
@@ -92,6 +95,7 @@ export function createRuntimeInteractionsSource(
   const successfulReads = new Map<string, { signature: string; readAt: number }>()
   let successfulReadApi = context.source?.services?.runtimeWorkApi
   let fetching = false
+  let inventoryDiscovered = false
   let reportedOfflineDevices = new Set<string>()
   let loading = false
   let replyNotice: string | null = null
@@ -107,18 +111,28 @@ export function createRuntimeInteractionsSource(
   const active = () => listeners.size > 0
   const update = <T>(value: SetStateAction<T>, previous: T): T =>
     typeof value === 'function' ? (value as (previous: T) => T)(previous) : value
+  const sameFields = <T>(previous: Record<string, T>, next: Record<string, T>) => {
+    const keys = Object.keys(next)
+    return (
+      keys.length === Object.keys(previous).length &&
+      keys.every(key => Object.hasOwn(previous, key) && previous[key] === next[key])
+    )
+  }
   const setLoaded = (value: SetStateAction<typeof loaded>) => {
     const next = update(value, loaded)
+    if (next === loaded || sameFields(loaded, next)) return
     loaded = next
     publish()
   }
   const setInventory = (value: SetStateAction<typeof inventory>) => {
     const next = update(value, inventory)
+    if (!changed(inventory, next)) return
     inventory = next
     publish()
   }
   const setErrors = (value: SetStateAction<typeof errors>) => {
     const next = update(value, errors)
+    if (next === errors || sameFields(errors, next)) return
     errors = next
     publish()
   }
@@ -139,6 +153,7 @@ export function createRuntimeInteractionsSource(
   }
   const setProjectCount = (value: SetStateAction<typeof projectCount>) => {
     const next = update(value, projectCount)
+    if (next === projectCount) return
     projectCount = next
     publish()
   }
@@ -231,9 +246,12 @@ export function createRuntimeInteractionsSource(
     if (successfulReadApi !== api) {
       successfulReads.clear()
       successfulReadApi = api
+      inventoryDiscovered = false
     }
     fetching = true
-    setLoading(true)
+    // Keep the visible loading state for initial discovery and explicit refresh.
+    const showLoading = force || !inventoryDiscovered
+    if (showLoading) setLoading(true)
     let stage = 'inventory'
     const diagnosticTimer =
       import.meta.env.VITE_WEWORK_E2E === 'true'
@@ -252,6 +270,7 @@ export function createRuntimeInteractionsSource(
       if (force) await Promise.all(issueDiscovery.resolved.map(archiveResolved))
       const discovered = await readInteractionTaskInventory(current)
       if (!active() || context.source?.services?.runtimeWorkApi !== api) return
+      inventoryDiscovered = true
       if (force) await issueDiscovery.refresh()
       else await issueDiscovery.discover(discovered.localIssueQuestionsPending)
       const retained = inventory.filter(
@@ -424,7 +443,7 @@ export function createRuntimeInteractionsSource(
     } finally {
       window.clearTimeout(diagnosticTimer)
       fetching = false
-      if (active()) setLoading(false)
+      if (loading && active()) setLoading(false)
     }
   }
 
@@ -518,13 +537,18 @@ export function createRuntimeInteractionsSource(
   const respond = async (
     item: RuntimeInteraction,
     answer: string,
-    options?: { clientMessageId?: string; send?: () => Promise<boolean> }
+    options?: {
+      clientMessageId?: string
+      send?: () => Promise<boolean>
+      response?: RequestUserInputResponse
+    }
   ): Promise<boolean> => {
     if (!active()) return false
     const api = context.source?.services?.runtimeWorkApi
     if (
       (!api && !item.sharedRequest) ||
-      !answer.trim() ||
+      (!answer.trim() &&
+        (!options?.response || !requestUserInputResponseAttachments(options.response).length)) ||
       !canReplyToInteraction(item) ||
       inFlight.has(item.id)
     )
@@ -550,7 +574,8 @@ export function createRuntimeInteractionsSource(
             answer,
             options?.clientMessageId ?? crypto.randomUUID(),
             services,
-            context.t('interactions.failed')
+            context.t('interactions.failed'),
+            options?.response ? requestUserInputResponseAttachments(options.response) : []
           )
         }
         await issueDiscovery.refresh()
@@ -589,16 +614,50 @@ export function createRuntimeInteractionsSource(
         )
           throw new Error(context.t('interactions.expired'))
         if (!active() || context.source?.services?.runtimeWorkApi !== api) return false
-        const response = interactionResponse(live.payload, {
-          [live.payload.questions![0].id!]: { answers: [answer] },
-        })
+        const asyncInput = isAsyncRequestUserInputPayload(live.payload)
+        const originalResponse = {
+          ...(options?.response ??
+            interactionResponse(live.payload, {
+              [live.payload.questions![0].id!]: { answers: [answer] },
+            })),
+          ...(asyncInput ? { delivery: 'async' as const } : {}),
+        }
+        const response = live.project
+          ? originalResponse
+          : await prepareRuntimeQuestionResponse(
+              originalResponse,
+              live.task.address.deviceId,
+              context.source?.devices ?? [],
+              context.source?.services?.attachmentApi?.uploadLocalAttachmentToCloud
+            )
+        if (!active() || context.source?.services?.runtimeWorkApi !== api) return false
         const previousClient = clientIds.get(item.id)
         const id =
           options?.clientMessageId ??
           (previousClient?.answer === answer ? previousClient.id : crypto.randomUUID())
         clientIds.set(item.id, { answer, id })
         const message = requestUserInputResponseText(response)
-        const asyncInput = isAsyncRequestUserInputPayload(live.payload)
+        const attachments = requestUserInputResponseAttachments(response)
+        const runtimePayload =
+          !options?.send && !live.project
+            ? await prepareRuntimeContinuationModel(
+                {
+                  address: live.task.address,
+                  message,
+                  ...(attachments.length ? { attachments } : {}),
+                  ...(asyncInput ? { queueIfBusy: true } : {}),
+                  requestUserInputResponse: response,
+                  clientUserMessageId: id,
+                },
+                {
+                  projects: [],
+                  chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
+                  totalTasks: 1,
+                },
+                () => api.listRuntimeWork()
+              )
+            : undefined
+        if (!active() || context.source?.services?.runtimeWorkApi !== api) return false
         const result = options?.send
           ? { accepted: await options.send(), error: undefined }
           : live.project
@@ -607,34 +666,10 @@ export function createRuntimeInteractionsSource(
                 message,
                 id,
                 context.source!.services!,
-                context.t('interactions.failed')
+                context.t('interactions.failed'),
+                attachments
               ).then(() => ({ accepted: true, error: undefined }))
-            : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
-              ? await api.guideRuntimeTask({
-                  address: live.task.address,
-                  message,
-                  clientGuidanceId: id,
-                })
-              : await api.sendRuntimeMessage(
-                  await prepareRuntimeContinuationModel(
-                    {
-                      address: live.task.address,
-                      message,
-                      ...(asyncInput
-                        ? {
-                            queueIfBusy: true,
-                          }
-                        : { requestUserInputResponse: response }),
-                      clientUserMessageId: id,
-                    },
-                    {
-                      projects: [],
-                      chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
-                      totalTasks: 1,
-                    },
-                    () => api.listRuntimeWork()
-                  )
-                )
+            : await api.sendRuntimeMessage(runtimePayload!)
         const accepted = result.accepted ?? ('success' in result && result.success)
         if (!accepted) throw new Error(result.error || context.t('notifications.failed'))
         saveInteractionState(acceptancePrefix + item.id, true)
@@ -800,7 +835,8 @@ export function createRuntimeInteractionsSource(
     ]
     if (changed(pendingInputs, nextPendingInputs)) {
       pendingInputs = nextPendingInputs
-      pending = computePending()
+      const next = computePending()
+      if (changed(pending, next)) pending = next
     }
     const nextNativeInputs = [loaded, issueDiscovery.items]
     if (changed(nativeInputs, nextNativeInputs)) {
@@ -864,34 +900,34 @@ export function createRuntimeInteractionsSource(
     settle: settleFromConversation,
   })
   function publish() {
-    snapshot = buildSnapshot()
+    const next = buildSnapshot()
+    const snapshotChanged =
+      next.value !== snapshot.value ||
+      next.replyNotice !== snapshot.replyNotice ||
+      next.nativeItems !== snapshot.nativeItems
+    if (snapshotChanged) snapshot = next
     if (!active()) return
     if (persistedPending !== pending) {
       persistedPending = pending
       saveInteractionState(cacheKey, pendingInteractionCache(pending))
     }
-    listeners.forEach(listener => listener())
+    if (snapshotChanged) listeners.forEach(listener => listener())
     settlements.synchronize()
     nativeReplies.synchronize()
     if (lastResolved !== issueDiscovery.resolved) {
       lastResolved = issueDiscovery.resolved
       for (const item of lastResolved) void archiveResolved(item)
     }
-    const nextNotifications = [
-      pending,
-      focused,
-      preferences,
-      context.source?.currentAddress,
-      context.tabs.activeTab,
-      context.t,
-    ]
+    const nextNotifications = [pending, focused, preferences]
     if (changed(notificationInputs, nextNotifications)) {
       notificationInputs = nextNotifications
-      clearTimeout(notificationTimer)
       // Publish request data before delivering; the displayed page commits its viewed lease first.
-      notificationTimer = setTimeout(() => {
-        if (active()) deliverNotices()
-      }, 0)
+      if (pending.length && notificationTimer === undefined) {
+        notificationTimer = setTimeout(() => {
+          notificationTimer = undefined
+          if (active() && pending.length) deliverNotices()
+        }, 0)
+      }
     }
     const nextDebug = [focused, pending, noticeIds]
     if (changed(debugInputs, nextDebug)) {
@@ -923,6 +959,7 @@ export function createRuntimeInteractionsSource(
     discoveryTimer = undefined
     clearTimeout(notificationTimer)
     notificationTimer = undefined
+    notificationInputs = []
     lastSignature = undefined
     lastTranslation = undefined
     lastRetainDraft = undefined

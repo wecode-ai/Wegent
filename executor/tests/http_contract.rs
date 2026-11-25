@@ -24,6 +24,7 @@ use wegent_executor::{
     protocol::{ExecutionRequest, TaskStatus},
     server::{create_router, AppState, RunnerResult, TaskRunner},
 };
+use wegent_model_proxy::local_model_proxy::{self, LocalModelProxyUpstream};
 
 #[path = "http_contract/skill_sync.rs"]
 mod skill_sync;
@@ -230,6 +231,166 @@ async fn codex_router_accepts_request_bodies_larger_than_axum_default() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap()["detail"],
+        "unknown or expired local model proxy token"
+    );
+}
+
+#[tokio::test]
+async fn official_codex_proxies_http_paths_to_the_registered_upstream() {
+    use axum::{body::Bytes, extract::OriginalUri, http::HeaderMap, routing::post};
+
+    let upstream = Router::new()
+        .route("/backend-api/codex/images/generations", post(receive))
+        .route("/backend-api/codex/images/edits", post(receive))
+        .route("/backend-api/codex/alpha/search", post(receive))
+        .route("/backend-api/codex/future/tool/{id}", get(receive));
+    async fn receive(
+        OriginalUri(uri): OriginalUri,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> impl IntoResponse {
+        assert_eq!(headers[header::AUTHORIZATION], "Bearer test-account");
+        assert_eq!(headers["chatgpt-account-id"], "test-account-id");
+        assert_eq!(headers["x-codex-turn-metadata"], "test-turn");
+        assert_eq!(headers["x-future-codex-header"], "future-value");
+        assert!(!headers.contains_key("x-hop-only"));
+        assert!(body == "tool request" || body == "upstream miss");
+        if uri.path().ends_with("/images/edits") {
+            assert_eq!(
+                headers[header::CONTENT_TYPE],
+                "multipart/form-data; boundary=test"
+            );
+        }
+        if uri.path().contains("/images/") {
+            assert_eq!(headers["x-codex-image-turn-id"], "test-image-turn");
+        }
+        let status = if body == "upstream miss" {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::OK
+        };
+        (
+            status,
+            [("x-request-id", "test-request-id")],
+            uri.to_string(),
+        )
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!(
+        "http://{}/backend-api/codex",
+        listener.local_addr().unwrap()
+    );
+    let upstream_server = tokio::spawn(async { axum::serve(listener, upstream).await.unwrap() });
+    let upstream = LocalModelProxyUpstream {
+        base_url,
+        request_url: None,
+        api_format: "openai-responses".to_owned(),
+        convert_custom_tools: false,
+        native_tool_search: true,
+        native_namespace_tools: true,
+        codex_request_mode: local_model_proxy::CodexRequestMode::Passthrough,
+        api_key: String::new(),
+        default_headers: Vec::new(),
+        proxy_url: None,
+        model_id: None,
+        routing_model_id: None,
+        max_output_tokens: None,
+        model_context_window: None,
+    };
+    let token = local_model_proxy::register_with_vision_sidecar(
+        "http-contract-official-codex",
+        upstream.clone(),
+        None,
+    );
+    let api_key_token = local_model_proxy::register_with_vision_sidecar(
+        "http-contract-api-key",
+        LocalModelProxyUpstream {
+            api_key: "test-api-key".to_owned(),
+            ..upstream
+        },
+        None,
+    );
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    for (method, path, content_type, status) in [
+        (
+            Method::POST,
+            "images/generations",
+            "application/json",
+            StatusCode::OK,
+        ),
+        (
+            Method::POST,
+            "images/edits",
+            "multipart/form-data; boundary=test",
+            StatusCode::OK,
+        ),
+        (
+            Method::POST,
+            "alpha/search",
+            "application/json",
+            StatusCode::OK,
+        ),
+        (
+            Method::POST,
+            "alpha/search",
+            "application/json",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            Method::GET,
+            "future/tool/a%2Fb?target=a%2Fb&mode=new",
+            "application/json",
+            StatusCode::OK,
+        ),
+    ] {
+        let request = |token: &str| {
+            Request::builder()
+                .method(method.clone())
+                .uri(format!("/v1/codex-router/{token}/{path}"))
+                .header(header::AUTHORIZATION, "Bearer test-account")
+                .header(header::CONTENT_TYPE, content_type)
+                .header(header::CONNECTION, "x-hop-only")
+                .header("x-hop-only", "local")
+                .header("x-future-codex-header", "future-value")
+                .header("chatgpt-account-id", "test-account-id")
+                .header("x-codex-image-turn-id", "test-image-turn")
+                .header("x-codex-turn-metadata", "test-turn")
+                .body(Body::from(if status == StatusCode::OK {
+                    "tool request"
+                } else {
+                    "upstream miss"
+                }))
+                .unwrap()
+        };
+        for rejected_token in ["unknown", &api_key_token] {
+            let response = app.clone().oneshot(request(rejected_token)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert!(!response.headers().contains_key("x-request-id"));
+        }
+
+        let response = app.clone().oneshot(request(&token)).await.unwrap();
+        assert_eq!(response.status(), status);
+        assert_eq!(response.headers()["x-request-id"], "test-request-id");
+        assert_eq!(
+            response.into_body().collect().await.unwrap().to_bytes(),
+            format!("/backend-api/codex/{path}")
+        );
+    }
+    let response = app
+        .oneshot(
+            Request::get(format!("/v1/codex-router/{token}/%2e%2e/other"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    local_model_proxy::unregister(&token);
+    local_model_proxy::unregister(&api_key_token);
+    upstream_server.abort();
 }
 
 #[tokio::test]

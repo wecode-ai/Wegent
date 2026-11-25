@@ -102,6 +102,7 @@ async def trigger_ai_response_unified(
     enable_tools: bool = True,
     enable_deep_thinking: bool = True,
     previous_bot_id: Optional[int] = None,
+    allow_new_session_fallback: bool = False,
 ) -> None:
     """Trigger AI response using unified execution architecture.
 
@@ -157,6 +158,7 @@ async def trigger_ai_response_unified(
         enable_tools=enable_tools,
         enable_deep_thinking=enable_deep_thinking,
         previous_bot_id=previous_bot_id,
+        allow_new_session_fallback=allow_new_session_fallback,
     )
 
     # 2. Dispatch task
@@ -201,6 +203,7 @@ async def build_execution_request(
     attachment_ids: Optional[List[int]] = None,
     include_wework_space_mcp: bool = False,
     web_runtime_guidance: Optional[bool] = None,
+    allow_new_session_fallback: bool = False,
 ) -> "ExecutionRequest":
     """Build ExecutionRequest without dispatching.
 
@@ -255,6 +258,7 @@ async def build_execution_request(
         generation_params=generation_params,
         include_wework_space_mcp=include_wework_space_mcp,
         web_runtime_guidance=web_runtime_guidance,
+        allow_new_session_fallback=allow_new_session_fallback,
     )
 
     from app.services.execution import TaskRequestBuilder

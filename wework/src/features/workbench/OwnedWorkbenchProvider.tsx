@@ -10,6 +10,7 @@ import {
 import { createWorkbenchRuntimeOperations } from './workbenchRuntimeOperations'
 import {
   createWorkbenchPaneActions,
+  useWorkbenchContextValue,
   useWorkbenchPaneValue,
   useWorkbenchProjectChatValue,
 } from './useWorkbenchContextProjection'
@@ -40,7 +41,7 @@ import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { WORKBENCH_NEW_CHAT_REQUEST_EVENT } from '@/lib/workbenchComposerFocus'
 import { normalizeAiModelId } from '@/telemetry/modelCatalog'
-import type { LocalDeviceApp, PluginPathComponent, User } from '@/types/api'
+import type { LocalDeviceApp, PluginPathComponent, RuntimeTaskAddress, User } from '@/types/api'
 import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   getProjectWorkPreferenceKey,
@@ -116,11 +117,7 @@ import {
   useUpdateGlobalImNotification,
 } from './useWorkbenchTaskCallbacks'
 import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
-import type {
-  WorkbenchContextValue,
-  WorkbenchPaneContextValue,
-  WorkbenchProviderProps,
-} from './workbenchContextTypes'
+import type { WorkbenchPaneContextValue, WorkbenchProviderProps } from './workbenchContextTypes'
 import {
   getModelSelectionScopeKey,
   getNewChatModelSelection,
@@ -154,7 +151,6 @@ export function OwnedWorkbenchProvider({
   taskRouteActive = false,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
-  workspaceTabRevealRevision = 0,
   workbenchIdentity,
   ownershipKey,
 }: WorkbenchProviderProps & { workbenchIdentity: User; ownershipKey: string }) {
@@ -225,7 +221,6 @@ export function OwnedWorkbenchProvider({
     syncRemoteProjects,
     consumePluginTrials,
     composerAppsSourceActive,
-    workspaceTabRevealRevision,
     onStartupReadyChange,
     marketplaceCacheKey: pluginMarketplaceCacheKey(
       cloudConnection.apiBaseUrl,
@@ -326,13 +321,8 @@ export function OwnedWorkbenchProvider({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
   })
-  const {
-    inputs: draftInputByScope,
-    setInput: writeDraftInputForScope,
-    getRevision: getInputRevisionForScope,
-    goalDraftActiveByScope,
-    setGoalDraftActiveForScope,
-  } = useWorkspaceTabDraftInput(workspaceTabId)
+  const { draftStore, goalDraftActiveByScope, setGoalDraftActiveForScope } =
+    useWorkspaceTabDraftInput(workspaceTabId)
   const [personalHomeTaskDraftStore] = useState(createPersonalHomeTaskDraftStore)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
@@ -342,7 +332,6 @@ export function OwnedWorkbenchProvider({
   const [trialPluginAppByScope, setTrialPluginAppByScope] = useState<
     Record<string, LocalDeviceApp>
   >({})
-  const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
   const composerError = composerErrorByScope[projectChatScopeKey] ?? null
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
@@ -354,7 +343,13 @@ export function OwnedWorkbenchProvider({
     setTrialPluginAppByScope,
   })
   const setDraftInputForScope = useSetDraftInputForScope({
-    writeDraftInputForScope,
+    writeDraftInputForScope: draftStore.write,
+    setTrialTemplatesByScope,
+    setTrialPluginNameByScope,
+    setTrialPluginAppByScope,
+  })
+  const replaceInputForScope = useSetDraftInputForScope({
+    writeDraftInputForScope: draftStore.replace,
     setTrialTemplatesByScope,
     setTrialPluginNameByScope,
     setTrialPluginAppByScope,
@@ -424,16 +419,19 @@ export function OwnedWorkbenchProvider({
       ? (runtimeProject?.aiSettings?.modelSelection ?? null)
       : null
   }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
+  const savedTaskModelSelection = resolveRuntimeTaskSummary(
+    state.currentRuntimeTask
+  )?.modelSelection
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
       return (
-        resolveRuntimeTaskSummary(state.currentRuntimeTask)?.modelSelection ??
+        savedTaskModelSelection ??
         modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle) ??
         null
       )
     }
     return projectModelSelection ?? getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser, projectModelSelection, resolveRuntimeTaskSummary, state.currentRuntimeTask])
+  }, [currentUser, projectModelSelection, savedTaskModelSelection, state.currentRuntimeTask])
   const defaultModelSelectionConfig = defaultNewChatModelSelection
   const persistNewChatModelSelection = usePersistNewChatModelSelection({
     latestUserPreferencesRef,
@@ -496,6 +494,14 @@ export function OwnedWorkbenchProvider({
     modelSelectionConfig,
     state.currentRuntimeTask,
   ])
+  // The model store restores selections missing from the discovery catalog.
+  const resolveActiveTaskSelectionReady = useCallback(
+    (address: RuntimeTaskAddress) =>
+      state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+        ? modelSelection.isSelectionReady
+        : null,
+    [modelSelection.isSelectionReady, state.currentRuntimeTask]
+  )
   const {
     resolveRuntimeTaskModelSelection,
     setRuntimeTaskSelectedModel,
@@ -505,12 +511,7 @@ export function OwnedWorkbenchProvider({
     userId: currentUser.id,
     resolveTask: resolveRuntimeTaskSummary,
     modelStore: modelSelection,
-    // The model store restores the focused task's saved selection, including a
-    // persisted cloud reference that the discovery catalog does not list.
-    resolveActiveTaskSelectionReady: address =>
-      state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
-        ? modelSelection.isSelectionReady
-        : null,
+    resolveActiveTaskSelectionReady,
   })
   const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
@@ -595,10 +596,17 @@ export function OwnedWorkbenchProvider({
             scopeKey: projectChatScopeKey,
             standaloneChatKey: state.standaloneChatKey,
             availableModelNames: modelSelection.models.map(model => model.name),
-            currentInputLength: draftInput.length,
-            scopedInputLengths: Object.fromEntries(
-              Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
-            ),
+            get currentInputLength() {
+              return draftStore.read(projectChatScopeKey).value.length
+            },
+            get scopedInputLengths() {
+              return Object.fromEntries(
+                Object.entries(draftStore.exportInputs()).map(([scope, value]) => [
+                  scope,
+                  value.length,
+                ])
+              )
+            },
             attachmentCount: attachmentSelection.attachments.length,
             contextUsagePercent: currentContextUsage
               ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
@@ -693,7 +701,7 @@ export function OwnedWorkbenchProvider({
   const startNewProjectChat = useStartNewProjectChat({
     state,
     attachmentSelection,
-    draftInputByScope,
+    draftStore,
     projectSelectionStartedRef,
     ownershipKey,
     dispatch,
@@ -749,6 +757,7 @@ export function OwnedWorkbenchProvider({
   const runtimeMessaging = useWorkbenchRuntimeMessaging({
     state,
     dispatch,
+    workspaceTabId,
     executorClient,
     services: resolvedServices,
     runtimeTasks,
@@ -808,11 +817,10 @@ export function OwnedWorkbenchProvider({
   )
   const projectChatValue = useWorkbenchProjectChatValue({
     scopeKey: projectChatScopeKey,
-    inputByScope: draftInputByScope,
+    draftStore,
     goalDraftActiveByScope,
     personalHomeTaskDraftStore,
     setGoalDraftActiveForScope,
-    getInputRevisionForScope,
     models: conversationModels,
     skills: skillSelection.skills,
     selectedModel: modelSelection.selectedModel,
@@ -824,7 +832,6 @@ export function OwnedWorkbenchProvider({
     isModelCatalogReady: modelSelection.isCatalogReady,
     isModelSelectionReady: modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
     onModelSelectorOpenChange: handleModelSelectorOpenChange,
-    input: draftInput,
     composerError,
     composerErrorByScope,
     trialTemplates,
@@ -853,6 +860,7 @@ export function OwnedWorkbenchProvider({
     onBlockedModelSelect: handleBlockedModelSelect,
     setInput: setDraftInput,
     setInputForScope: setDraftInputForScope,
+    replaceInputForScope,
     setComposerError,
     setComposerErrorForScope,
     setSelectedSkills: skillSelection.setSelectedSkills,
@@ -862,8 +870,13 @@ export function OwnedWorkbenchProvider({
     handleFileSelectForScope: attachmentSelection.handleFileSelectForScope,
     addExistingAttachment: attachmentSelection.addExistingAttachment,
     addExistingAttachmentForScope: attachmentSelection.addExistingAttachmentForScope,
+    replaceImageAttachmentForScope: attachmentSelection.replaceImageAttachmentForScope,
+    getAttachment: attachmentSelection.getAttachment,
+    getAttachmentForScope: attachmentSelection.getAttachmentForScope,
     removeAttachment: attachmentSelection.removeAttachment,
     removeAttachmentForScope: attachmentSelection.removeAttachmentForScope,
+    releaseAttachment: attachmentSelection.releaseAttachment,
+    releaseAttachmentForScope: attachmentSelection.releaseAttachmentForScope,
     dismissAttachmentError: attachmentSelection.dismissAttachmentError,
     dismissAttachmentErrorForScope: attachmentSelection.dismissAttachmentErrorForScope,
     resetAttachments: attachmentSelection.resetAttachments,
@@ -883,11 +896,11 @@ export function OwnedWorkbenchProvider({
   )
   const paneValue: WorkbenchPaneContextValue = useWorkbenchPaneValue({
     ...paneActions,
+    workspaceTabId,
     services: resolvedServices,
     state: paneState,
     isStartupReady,
     workspaceFileApi,
-    runtimeTaskReminders,
     projectChat: paneProjectChatValue,
     upgradingDevices,
     projectExecutionMode,
@@ -904,17 +917,13 @@ export function OwnedWorkbenchProvider({
     resolvedServices,
     t
   )
-  const value: WorkbenchContextValue = useMemo(
-    () => ({
-      ...paneValue,
-      workspaceTabId,
-      state,
-      cloudWorkStatus,
-      projectChat: projectChatValue,
-      updateUserPreferences,
-    }),
-    [paneValue, workspaceTabId, state, cloudWorkStatus, projectChatValue, updateUserPreferences]
-  )
+  const value = useWorkbenchContextValue(paneValue, {
+    state,
+    cloudWorkStatus,
+    runtimeTaskReminders,
+    projectChat: projectChatValue,
+    updateUserPreferences,
+  })
 
   const operationTargets: WorkbenchSessionOperations = {
     ...createWorkbenchRuntimeOperations({
@@ -929,7 +938,7 @@ export function OwnedWorkbenchProvider({
       updateLocalRuntimeTaskSnapshot,
       refreshWorkLists,
       refreshDevices,
-      draftInputByScope,
+      draftStore,
       projectChatScopeKey,
     }),
     stableConsumeQueuedPluginTrial: consumeQueuedPluginTrial,

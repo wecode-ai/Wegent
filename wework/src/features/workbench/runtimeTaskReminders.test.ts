@@ -7,6 +7,8 @@ import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
+import { createUnlistedStandInTasksSource } from '@/features/notifications/unlistedStandInTasksSource'
+import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
 import { createNotificationCenterSummary } from '@/features/notifications/notificationCenterSummary'
 import { readCachedRemoteRuntimeWork, writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import { serializeTaskKeys } from './runtimeTaskLifecycle/taskKeyStorage'
@@ -44,7 +46,41 @@ function reminderItem(key: string): RuntimeTaskReminderItem {
   }
 }
 
-describe('getVisibleRuntimeTaskUnreadKeys', () => {
+describe('runtime task reminders', () => {
+  test('preserves listed reminder rows when only an unlisted task changes', () => {
+    const listed = reminderItem('listed')
+    const unlisted = new RuntimeTaskMachine(reminderItem('unlisted').address).getSnapshot()
+    const items = [listed]
+    const initial = new RuntimeTaskLifecycleStore('reminder-row-identity-test').getSnapshot()
+    const { result, rerender } = renderHook(snapshot => useUnlistedStandInTasks(items, snapshot), {
+      initialProps: initial,
+    })
+    const rows = result.current
+    rerender({ ...initial, version: 1, tasks: new Map([[unlisted.key, unlisted]]) })
+    expect(result.current).toBe(rows)
+  })
+
+  test('discovers hidden stand-in work from task metadata without loading its transcript', async () => {
+    const hidden = reminderItem('hidden-stand-in')
+    const ordinary = reminderItem('hidden-ordinary')
+    const task = { ...hidden.task, runtimeHandle: { origin: { initiatedBy: 'stand_in' } } }
+    const readTask = vi.fn(async (_deviceId: string, taskId: string) => ({
+      success: true,
+      task: taskId === hidden.address.taskId ? task : ordinary.task,
+    }))
+    const source = createUnlistedStandInTasksSource({ readTask })
+    const stop = source.subscribe(vi.fn(), [
+      { key: hidden.key, address: hidden.address, signature: '1' },
+      { key: ordinary.key, address: ordinary.address, signature: '1' },
+    ])
+    try {
+      await waitFor(() => expect(source.getSnapshot().get(hidden.key)?.task).toBe(task))
+      expect(source.getSnapshot().has(ordinary.key)).toBe(false)
+    } finally {
+      stop()
+    }
+  })
+
   test('discovers hidden pending work without adding it to visible unread badges', () => {
     const item = reminderItem('hidden-pending')
     const machine = new RuntimeTaskMachine(item.address)
@@ -110,6 +146,14 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       taskId: 'memory-review',
       runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
     }
+    const reported = {
+      ...scheduled,
+      taskId: 'reported-by-assistant',
+      runtimeHandle: {
+        ...scheduled.runtimeHandle,
+        executionRequest: { standInReportTo: { userId: 7, taskId: 'stand-in-chat-7-primary' } },
+      },
+    }
     const work = {
       projects: [],
       chats: [
@@ -118,10 +162,11 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
           tasks: [
             originSource === 'task list' ? review : { ...review, runtimeHandle: undefined },
             scheduled,
+            reported,
           ],
         },
       ],
-      totalTasks: 2,
+      totalTasks: 3,
     }
     const items = collectRuntimeTaskReminderItems(work)
     store.syncRuntimeWork(work)
@@ -141,6 +186,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
                 updatedAt: 2000,
               },
               scheduled,
+              reported,
             ],
           },
         ],
@@ -155,7 +201,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       store.turnSettled(address, 'turn-1', 'succeeded')
       store.executorSettled(address)
     }
-    expect([...store.getSnapshot().unreadTaskKeys]).toEqual([items[1].key])
+    expect([...store.getSnapshot().unreadTaskKeys]).toEqual([items[1].key, items[2].key])
     const source = createRuntimeTaskReminderSource(store)
     const stop = source.subscribe(() => {}, {
       items,
@@ -178,7 +224,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       expect(send.mock.calls.map(([notification]) => notification.address?.taskId)).toEqual([
         scheduled.taskId,
       ])
-      expect([...source.getSnapshot()]).toEqual([items[1].key])
+      expect([...source.getSnapshot()]).toEqual([items[1].key, items[2].key])
     } finally {
       stop()
     }

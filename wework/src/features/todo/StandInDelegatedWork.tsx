@@ -1,35 +1,52 @@
 import { useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { Bot, ChevronRight } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeTaskReminderKey } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
 import { RuntimeInteractionReply } from '@/features/notifications/RuntimeInteractionReply'
 import { canReplyToInteraction } from '@/features/notifications/runtimeInteractions'
 import type { RuntimeTaskAddress } from '@/types/api'
+import {
+  WORKSPACE_ACTIVITY_ROW_CLASS,
+  WorkspaceActivityRowContent,
+} from '@/components/chat/WorkspaceActivityRowContent'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   CollapsiblePanel,
   CollapsibleRoot,
   CollapsibleTrigger,
 } from '@wegent/collaboration/controls/Collapsible'
-import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import { Button } from '@wegent/collaboration/markdown/Button'
 import {
   actionableStatuses,
+  activeStandInAncestors,
+  standInBranchStatus,
   activeStatuses,
   cancellingStatuses,
   type Branch,
 } from './standInDelegatedBranches'
 
 type Props = {
-  tasks: Branch[]
+  branches: Branch[]
+  inSidebar?: boolean
+  expanded: boolean
+  onExpandedChange(expanded: boolean): void
   taskId: string
   onOpenTask?(address: RuntimeTaskAddress): void | Promise<void>
   onCancel(root: string, branch?: { taskId: string; dispatcherDeviceId: string }): Promise<void>
   onRetry(branch: Branch): Promise<void>
 }
 
-export function StandInDelegatedWork({ tasks, taskId, onOpenTask, onCancel, onRetry }: Props) {
+export function StandInDelegatedWork({
+  branches: current,
+  inSidebar,
+  expanded,
+  onExpandedChange,
+  taskId,
+  onOpenTask,
+  onCancel,
+  onRetry,
+}: Props) {
   const { t } = useTranslation('common')
   const interactions = useRuntimeInteractions()
   const [replyId, setReplyId] = useState<string | null>(null)
@@ -38,37 +55,16 @@ export function StandInDelegatedWork({ tasks, taskId, onOpenTask, onCancel, onRe
   const [cancelFailed, setCancelFailed] = useState(false)
   const [retryPending, setRetryPending] = useState<string>()
   const [retryFailed, setRetryFailed] = useState<string>()
-  const [selectedRoot, setSelectedRoot] = useState<string>()
-  const [expanded, setExpanded] = useState(false)
-  const groups = new Map<string, typeof tasks>()
-  for (const row of tasks) {
-    const group = groups.get(row.root)
-    if (group) group.push(row)
-    else groups.set(row.root, [row])
-  }
-  const createdAt = (group: typeof tasks) => Math.min(...group.map(row => row.createdAt))
-  const active = (group: typeof tasks) => group.some(row => activeStatuses.includes(row.status))
-  const orderedGroups = [...groups.values()].sort(
-    (left, right) =>
-      Number(active(right)) - Number(active(left)) || createdAt(right) - createdAt(left)
-  )
-  const current = (selectedRoot && groups.get(selectedRoot)) || orderedGroups[0]
-  if (!current) return null
-  const viewingHistory = current !== orderedGroups[0]
   const branchTitles = new Map(current.map(branch => [branch.taskId, branch.title]))
 
-  const statusFor = (row: (typeof tasks)[number]) =>
-    row.status === 'completed' &&
-    current.some(
-      child => child.ancestors.includes(row.taskId) && activeStatuses.includes(child.status)
-    )
-      ? 'waitingChildren'
-      : row.status
+  const activeAncestors = activeStandInAncestors(current)
+  const statusFor = (row: Branch) => standInBranchStatus(row, activeAncestors)
   const statuses = current.map(statusFor)
   const cancelledCount = statuses.filter(status => status === 'cancelled').length
   const groupCancelled =
     statuses.every(status => status === 'cancelled') ||
-    (!active(current) && current.some(row => row.cancelGroup))
+    (!current.some(row => activeStatuses.includes(row.status)) &&
+      current.some(row => row.cancelGroup))
   const summary =
     (
       [
@@ -85,7 +81,19 @@ export function StandInDelegatedWork({ tasks, taskId, onOpenTask, onCancel, onRe
         'cancelled',
       ] as const
     ).find(status => statuses.includes(status)) ?? 'completed'
-  const rows: typeof tasks = []
+  const progress = t('standIn.delegation.progress', {
+    completed: statuses.filter(status => status === 'completed').length,
+    total: statuses.length,
+  })
+  const statusLabel =
+    summary !== 'completed' || groupCancelled
+      ? t(`standIn.delegation.${groupCancelled ? 'delegationCancelled' : summary}`)
+      : null
+  const partialCancellation =
+    cancelledCount > 0 && !groupCancelled && summary !== 'cancelled'
+      ? t('standIn.delegation.cancelledCount', { count: cancelledCount })
+      : null
+  const rows: Branch[] = []
   function addBranch(parentId: string) {
     const children = current
       .filter(task => task.parentId === parentId && !rows.includes(task))
@@ -131,52 +139,58 @@ export function StandInDelegatedWork({ tasks, taskId, onOpenTask, onCancel, onRe
   return (
     <CollapsibleRoot
       open={expanded}
-      onOpenChange={setExpanded}
-      className="group my-3 rounded-xl border border-border text-sm"
+      onOpenChange={onExpandedChange}
+      className={inSidebar ? 'text-sm' : 'group my-3 rounded-xl border border-border text-sm'}
       data-testid="stand-in-delegated-work"
+      data-delegation-root={current[0].root}
     >
       <CollapsibleTrigger
-        className="min-h-11 px-3 md:min-h-10"
+        className={
+          inSidebar
+            ? WORKSPACE_ACTIVITY_ROW_CLASS + ' [&>.collapsible-chevron]:order-last'
+            : 'min-h-11 px-3 md:min-h-10'
+        }
         data-testid="stand-in-delegated-work-toggle"
       >
-        <span className="min-w-0 flex-1 font-medium">
-          {t(`standIn.delegation.${viewingHistory ? 'history' : 'title'}`)}
-        </span>
-        <span className="shrink-0 text-xs text-text-secondary">
-          {t('standIn.delegation.progress', {
-            completed: statuses.filter(status => status === 'completed').length,
-            total: statuses.length,
-          })}
-        </span>
-        {cancelledCount > 0 && !groupCancelled && summary !== 'cancelled' && (
-          <span className="shrink-0 text-xs text-text-secondary">
-            {t('standIn.delegation.cancelledCount', { count: cancelledCount })}
-          </span>
-        )}
-        {(summary !== 'completed' || groupCancelled) && (
-          <span className="max-w-[52%] shrink-0 text-right text-xs text-text-secondary">
-            {t(`standIn.delegation.${groupCancelled ? 'delegationCancelled' : summary}`)}
-          </span>
+        {inSidebar ? (
+          <WorkspaceActivityRowContent
+            icon={
+              <Bot aria-hidden="true" className="mt-0.5 size-6 shrink-0 p-1 text-text-secondary" />
+            }
+            title={current[0].title}
+            status={statusLabel ?? progress}
+            detail={
+              statusLabel
+                ? [progress, partialCancellation].filter(Boolean).join(' · ')
+                : t('standIn.delegation.branchCount', { count: statuses.length })
+            }
+          />
+        ) : (
+          <>
+            <Bot aria-hidden="true" className="size-4 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 break-words font-medium">
+              {t('standIn.delegation.title')}
+            </span>
+            <span className="shrink-0 text-xs text-text-secondary">{progress}</span>
+            {partialCancellation && (
+              <span className="shrink-0 text-xs text-text-secondary">{partialCancellation}</span>
+            )}
+            {statusLabel && (
+              <span className="max-w-[52%] shrink-0 text-right text-xs text-text-secondary">
+                {statusLabel}
+              </span>
+            )}
+          </>
         )}
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        {orderedGroups.length > 1 && (
-          <div className="border-t border-border px-3 py-2">
-            <SelectField
-              value={selectedRoot ?? ''}
-              options={[
-                { value: '', label: t('standIn.delegation.currentDelegation') },
-                ...orderedGroups.map(group => ({ value: group[0].root, label: group[0].title })),
-              ]}
-              testId="stand-in-delegated-work-select"
-              accessibleLabel={t('standIn.delegation.selectDelegation')}
-              triggerContent={<span className="truncate">{current[0].title}</span>}
-              className="w-full"
-              onChange={root => setSelectedRoot(root || undefined)}
-            />
-          </div>
-        )}
-        <ul className="max-h-56 overflow-y-auto border-t border-border px-3 py-1">
+        <ul
+          className={
+            inSidebar
+              ? 'max-h-56 overflow-y-auto pl-7 py-1'
+              : 'max-h-56 overflow-y-auto border-t border-border px-3 py-1'
+          }
+        >
           {rows.map(row => {
             const { address, taskId, ancestors, role, status, error, title } = row
             const key = address ? getRuntimeTaskReminderKey(address) : undefined
@@ -198,13 +212,13 @@ export function StandInDelegatedWork({ tasks, taskId, onOpenTask, onCancel, onRe
                   <Button
                     variant="unstyled"
                     type="button"
-                    className="flex min-h-10 w-full items-center gap-3 rounded-md px-2 text-left enabled:hover:bg-muted"
+                    className="flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left enabled:hover:bg-muted disabled:opacity-100"
                     disabled={!open}
                     onClick={open}
                     data-testid="stand-in-delegated-work-open"
                   >
                     <span className="min-w-0 flex-1">
-                      <span className="block break-words">{title}</span>
+                      <span className="block [overflow-wrap:anywhere]">{title}</span>
                       {role && <span className="block text-xs text-text-secondary">{role}</span>}
                     </span>
                     <span className="max-w-[52%] shrink-0 text-right text-xs text-text-secondary">
@@ -291,7 +305,13 @@ export function StandInDelegatedWork({ tasks, taskId, onOpenTask, onCancel, onRe
           })}
         </ul>
         {current.some(canCancel) && (
-          <div className="flex justify-end border-t border-border p-2">
+          <div
+            className={
+              inSidebar
+                ? 'flex justify-end px-2 pb-2'
+                : 'flex justify-end border-t border-border p-2'
+            }
+          >
             <Button
               variant="unstyled"
               type="button"

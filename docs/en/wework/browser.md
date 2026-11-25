@@ -36,6 +36,8 @@ AI uses structured `inspect` results to understand the page. `screenshot` still 
 
 The right panel shows the Agent browser-control state while AI operates the page. You can pause AI control and resume it after review. Confirm the target and impact before account, publishing, payment, deletion, or other high-risk actions.
 
+When a browser action needs your confirmation, **Continue** and **Cancel** appear below the address bar. **Continue** runs that action, and **Cancel** ends the request. If approval expires, return to the conversation and ask AI to try again. If AI times out waiting for the page, ask it to inspect the page again.
+
 ### Individual browsing-history operations
 
 <!-- ui-source: src/components/settings/BrowserHistoryPage.tsx -->

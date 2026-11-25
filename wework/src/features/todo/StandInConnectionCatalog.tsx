@@ -30,7 +30,6 @@ export function StandInConnectionCatalog({
   loading,
   disabled,
   scheduling,
-  local = true,
   projectScopeConfigured = true,
   onSelect,
 }: {
@@ -40,7 +39,6 @@ export function StandInConnectionCatalog({
   loading: boolean
   disabled: boolean
   scheduling: boolean
-  local?: boolean
   projectScopeConfigured?: boolean
   onSelect(view: string): void
 }) {
@@ -48,8 +46,9 @@ export function StandInConnectionCatalog({
   const [query, setQuery] = useState('')
   const [configuredOnly, setConfiguredOnly] = useState(false)
   const source = role.collaboration
+  const participates = source.includeParticipatingIssues === true
   const projectConfigured =
-    projectScopeConfigured && (source.allProjects || source.projects.length > 0)
+    projectScopeConfigured && (participates || source.allProjects || source.projects.length > 0)
   const connections = role.connections ?? []
   const providerIds = [
     ...new Set([...providers.map(item => item.id), ...connections.map(row => row.providerId)]),
@@ -79,23 +78,37 @@ export function StandInConnectionCatalog({
       configured: projectConfigured,
       active: projectConfigured && source.enabled,
       quietStatus: !projectConfigured || source.enabled,
-      summary: projectConfigured ? projectSummary : t('standIn.workspace.project_connection_help'),
-      summaryLabel: source.allProjects
-        ? t('standIn.workspace.all_projects_with_exclusions', {
-            count: source.excludedProjects.length,
-          })
-        : source.projects.map(ref => findStandInProject(projects, ref)?.name ?? ref.id).join(' · '),
+      summary: projectConfigured ? (
+        <>
+          {participates && (
+            <span>
+              {t('standIn.workspace.receive_participating_issues')}
+              {(source.allProjects || source.projects.length > 0) && ' · '}
+            </span>
+          )}
+          {projectSummary}
+        </>
+      ) : (
+        t('standIn.workspace.project_connection_help')
+      ),
+      summaryLabel: [
+        participates && t('standIn.workspace.receive_participating_issues'),
+        ...(source.allProjects
+          ? [
+              t('standIn.workspace.all_projects_with_exclusions', {
+                count: source.excludedProjects.length,
+              }),
+            ]
+          : source.projects.map(ref => findStandInProject(projects, ref)?.name ?? ref.id)),
+      ]
+        .filter(Boolean)
+        .join(' · '),
       status: t(
         !projectConfigured
           ? 'standIn.workspace.connection_not_configured'
           : !source.enabled
             ? 'standIn.workspace.connection_receiving_paused'
             : 'standIn.workspace.connection_configured'
-      ),
-      action: t(
-        projectConfigured
-          ? 'standIn.workspace.connection_manage'
-          : 'standIn.workspace.connection_choose_scope'
       ),
     },
     ...providerIds.map(id => {
@@ -163,19 +176,6 @@ export function StandInConnectionCatalog({
         summaryLabel: selected
           .map(row => [row.name, row.configurationSummary].filter(Boolean).join(' · '))
           .join(' · '),
-        action: t(
-          availability === 'dependency_missing'
-            ? 'standIn.workspace.install_dependencies'
-            : availability === 'auth_required'
-              ? local
-                ? 'standIn.workspace.connection_authorize'
-                : 'standIn.workspace.connection_authorize_on_device'
-              : ready
-                ? configured
-                  ? 'standIn.workspace.connection_manage'
-                  : 'standIn.workspace.connection_choose_scope'
-                : 'standIn.workspace.connection_view_details'
-        ),
       }
     }),
   ]
@@ -190,7 +190,7 @@ export function StandInConnectionCatalog({
   return (
     <div className="space-y-6" data-testid="stand-in-connection-type-picker">
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <p className="text-sm text-text-secondary">
             {t('standIn.workspace.connection_catalog_help')}
           </p>
@@ -207,7 +207,6 @@ export function StandInConnectionCatalog({
               : t('standIn.workspace.connection_configured_count', {
                   count: rows.filter(row => row.configured).length,
                 })}
-            <ChevronRight aria-hidden="true" className="h-4 w-4" />
           </ControlButton>
         </div>
         <label className="flex min-h-11 items-center gap-2 rounded-xl bg-muted px-3 text-text-secondary focus-within:ring-2 focus-within:ring-focus">
@@ -240,14 +239,13 @@ export function StandInConnectionCatalog({
                   : 'standIn.workspace.connection_available_sources'
               )}
             </h4>
-            {group.map(row => (
-              <ConnectionRow
-                key={row.id}
-                {...row}
-                disabled={disabled}
-                onSelect={() => onSelect(row.id)}
-              />
-            ))}
+            <ul className="divide-y divide-border">
+              {group.map(row => (
+                <li key={row.id}>
+                  <ConnectionRow {...row} disabled={disabled} onSelect={() => onSelect(row.id)} />
+                </li>
+              ))}
+            </ul>
           </section>
         )
       })}
@@ -261,7 +259,6 @@ export function StandInConnectionCatalog({
             icon={Clock}
             name={t('standIn.workspace.time_connection')}
             summary={t('standIn.workspace.calendar_help')}
-            action={t('standIn.workspace.connection_manage_schedule')}
             disabled={disabled}
             onSelect={() => onSelect('time')}
           />
@@ -287,7 +284,6 @@ function ConnectionRow({
   summary,
   summaryLabel,
   status,
-  action,
   active = false,
   quietStatus = false,
   disabled,
@@ -299,7 +295,6 @@ function ConnectionRow({
   summary: ReactNode
   summaryLabel?: string
   status?: string
-  action: string
   active?: boolean
   quietStatus?: boolean
   disabled: boolean
@@ -312,15 +307,15 @@ function ConnectionRow({
       data-testid={testId}
       disabled={disabled}
       onClick={onSelect}
-      className="group flex min-h-11 w-full items-center gap-3 rounded-xl px-2 py-4 text-left hover:bg-muted/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-40"
+      className="flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left hover:bg-muted/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-40"
     >
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/50 text-text-primary">
-        <Icon aria-hidden="true" className="h-6 w-6" strokeWidth={1.5} />
+      <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-text-secondary">
+        <Icon aria-hidden="true" className="size-4" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-base font-medium">{name}</span>
+        <span className="block text-sm font-medium">{name}</span>
         <span
-          className="mt-1 line-clamp-1 break-words text-sm text-text-secondary"
+          className="mt-0.5 line-clamp-2 break-words text-sm text-text-secondary"
           title={summaryLabel || undefined}
         >
           {summary}
@@ -334,10 +329,8 @@ function ConnectionRow({
           </span>
         )}
       </span>
-      <span className="flex max-w-32 shrink-0 items-center gap-1 rounded-full bg-muted px-3 py-1.5 text-center text-sm text-text-secondary group-hover:bg-background">
-        {active && <Check aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-success" />}
-        {action}
-      </span>
+      {active && <Check aria-hidden="true" className="size-4 shrink-0 text-text-secondary" />}
+      <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-text-secondary" />
     </ControlButton>
   )
 }
