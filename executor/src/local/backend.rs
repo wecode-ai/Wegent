@@ -240,14 +240,13 @@ where
         let event_hub = ExecutorEventHub::new(runtime_event_tx.clone());
         event_hub.ensure_started();
         let device_route_id = Arc::new(Mutex::new(None));
+        let connection_snapshot = Arc::new(Mutex::new(connection_snapshot_from_config(&config)));
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
             RuntimeWorkRpcHandler::with_event_sender_and_backend_connection(
                 config.device_id.clone(),
                 resolve_codex_binary(),
                 runtime_event_tx,
-                Some(Arc::new(Mutex::new(connection_snapshot_from_config(
-                    &config,
-                )))),
+                Some(Arc::clone(&connection_snapshot)),
                 Some(device_route_id.clone()),
             )
             .with_connection_observation_device_type(&config.device_type),
@@ -258,6 +257,7 @@ where
             runtime_work_handler,
             event_hub,
             session_gateway_profile,
+            Some(connection_snapshot),
         )
         .with_device_route_id_slot(device_route_id)
     }
@@ -288,6 +288,7 @@ where
             runtime_work_handler,
             event_hub,
             SessionGatewayProfile::AppSidecar,
+            None,
         )
     }
 
@@ -297,6 +298,7 @@ where
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
         event_hub: ExecutorEventHub,
         session_gateway_profile: SessionGatewayProfile,
+        connection_snapshot: Option<crate::agents::model_gateway::ConnectionSnapshot>,
     ) -> Self {
         let running_tasks = LocalRunningTaskTracker::default();
         let client = LocalBackendClient::with_capability_reporter_and_tracker(
@@ -307,11 +309,15 @@ where
         );
         let sink = LocalBackendEventSink::new(client.clone());
         let runner = ManagedLocalTaskRunner::new(
-            AgentProcessEngine::new(AgentCommandPlanner::from_env()),
+            AgentProcessEngine::new(AgentCommandPlanner::from_env())
+                .with_gateway_connection(connection_snapshot.clone()),
             sink,
             running_tasks,
         );
         let mut backend = Self::from_client_and_runner(client, runner.clone());
+        if let Some(snapshot) = connection_snapshot {
+            backend.connection_snapshot = snapshot;
+        }
         backend.task_controller = Some(Arc::new(runner));
         backend.runtime_work_handler = Some(runtime_work_handler);
         backend.runtime_event_hub = Some(event_hub);

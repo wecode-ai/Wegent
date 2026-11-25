@@ -2051,7 +2051,11 @@ impl RuntimeWorkRpcHandler {
                     .run_turn_with_cancel(
                         request.clone(),
                         CodexAppServerTurnOptions {
-                            gateway_credentials: handler.gateway_credentials(&request).await,
+                            gateway_credentials: crate::agents::model_gateway::credentials(
+                                &handler.backend_connection,
+                                &request,
+                            )
+                            .await,
                             input_admission: handler
                                 .automatic_input_admission(&turn_local_task_id, &request),
                             event_goal,

@@ -49,6 +49,7 @@ use projection::StandardEventProjection;
 pub struct CodexAppServerEngine {
     binary: String,
     pending: Arc<Mutex<BTreeMap<String, PendingTurn>>>,
+    gateway_connection: Option<crate::agents::model_gateway::ConnectionSnapshot>,
 }
 
 impl fmt::Debug for CodexAppServerEngine {
@@ -129,7 +130,16 @@ impl CodexAppServerEngine {
         Self {
             binary: resolve_codex_binary(&binary.into()),
             pending: Arc::new(Mutex::new(BTreeMap::new())),
+            gateway_connection: None,
         }
+    }
+
+    pub(crate) fn with_gateway_connection(
+        mut self,
+        connection: Option<crate::agents::model_gateway::ConnectionSnapshot>,
+    ) -> Self {
+        self.gateway_connection = connection;
+        self
     }
 
     async fn execute<S: EventSink>(
@@ -314,7 +324,7 @@ impl CodexAppServerEngine {
         drop(pending);
         let (notification_tx, notification_rx) = mpsc::unbounded_channel();
         let (answer_tx, answer_rx) = mpsc::channel(1);
-        let options = CodexAppServerTurnOptions {
+        let mut options = CodexAppServerTurnOptions {
             resume_thread_id: agent_session::load_saved_codex_thread_id(request),
             notifications: Some(notification_tx),
             request_user_input_answers: Some(answer_rx),
@@ -323,8 +333,13 @@ impl CodexAppServerEngine {
         };
         let request = request.clone();
         let binary = self.binary.clone();
+        let gateway_connection = self.gateway_connection.clone();
         Ok(LiveTurn {
             future: Box::pin(async move {
+                if let Some(connection) = gateway_connection {
+                    options.gateway_credentials =
+                        crate::agents::model_gateway::credentials(&connection, &request).await;
+                }
                 run_codex_app_server_turn_with_cancel(&binary, request, options).await
             }),
             notifications: notification_rx,
