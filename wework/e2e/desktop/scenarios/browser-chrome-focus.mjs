@@ -8,6 +8,11 @@ import {
   outlineContrast,
   readFocusPaint,
 } from '../modules/focus-paint.mjs'
+import {
+  activateLinuxMainWindow,
+  clickLinuxPointer,
+  moveLinuxWindowPointer,
+} from '../modules/native-download-dialogs.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
@@ -107,12 +112,26 @@ async function verifySearchOverlay(
   { control, bridgeCall, address, resultDir, command, read },
   inspectDialog
 ) {
+  // X11 owns the physical cursor while CDP injects independent mouse positions.
+  // Keep the Linux search interaction on one input path, including the guest.
+  const linuxWindow = process.platform === 'linux' ? await activateLinuxMainWindow(control) : null
+  const movePointer = point =>
+    linuxWindow
+      ? moveLinuxWindowPointer(linuxWindow, point)
+      : command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+  const pressAndRelease = point => (linuxWindow ? clickLinuxPointer() : clickPoint(command, point))
+  const click = async point => {
+    if (linuxWindow) return moveLinuxWindowPointer(linuxWindow, point, 1)
+    await movePointer(point)
+    await pressAndRelease(point)
+  }
   const pagePath = join(resultDir, 'search-overlay-page.html')
   await writeFile(
     pagePath,
     `<!doctype html><title>Search overlay fixture</title>
       <style>button { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: rgb(${searchFixtureColor.join(',')}); }</style>
-      <button id="page" aria-label="Test page" data-clicks="0" data-downs="0" data-ups="0"
+      <button id="page" aria-label="Test page" data-clicks="0" data-downs="0" data-ups="0" data-moves="0"
+        onpointermove="this.dataset.moves=Number(this.dataset.moves)+1"
         onpointerdown="this.dataset.downs=Number(this.dataset.downs)+1"
         onpointerup="this.dataset.ups=Number(this.dataset.ups)+1"
         onclick="this.dataset.clicks=Number(this.dataset.clicks)+1"></button>`
@@ -146,7 +165,7 @@ async function verifySearchOverlay(
       const rect = button.getBoundingClientRect()
       return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
     })()`)
-  await clickPoint(command, trigger)
+  await click(trigger)
   await waitForValue(
     () => read(`document.activeElement === document.querySelector(${JSON.stringify(searchInput)})`),
     focused => focused,
@@ -193,7 +212,7 @@ async function verifySearchOverlay(
   })()`
   const openHit = await read(readHit)
   assert.ok(openHit.closeButton && !openHit.guest, 'The search close button must receive the click')
-  await clickPoint(command, overlap.close)
+  await click(overlap.close)
   await control.command('waitFor', searchInput, { visible: false, timeoutMs: 5_000 })
   const restoredPixel = await waitForValue(
     () => capturePixel(command, read, overlap.sample),
@@ -205,14 +224,14 @@ async function verifySearchOverlay(
     const result = await bridgeCall({
       action: 'evaluate',
       expression: `(() => {
-        const { clicks, downs, ups } = document.querySelector('#page').dataset
-        return { clicks: Number(clicks), downs: Number(downs), ups: Number(ups) }
+        const { clicks, downs, ups, moves } = document.querySelector('#page').dataset
+        return { clicks: Number(clicks), downs: Number(downs), ups: Number(ups), moves: Number(moves) }
       })()`,
     })
     assert.equal(result.ok, true, 'The guest input counters must be readable')
     return result.value
   }
-  const closedInput = await readGuestInput()
+  const { moves: closedMoves, ...closedInput } = await readGuestInput()
   assert.deepEqual(
     closedInput,
     { clicks: 0, downs: 0, ups: 0 },
@@ -226,7 +245,20 @@ async function verifySearchOverlay(
     'The restored guest must own the former close-button hit target',
     5_000
   )
-  await clickPoint(command, overlap.close)
+  // The DOM hit target can be restored before Chromium routes native input to
+  // the guest. Approach the click target and observe the actual pointer event
+  // in the guest before sending the single press/release pair.
+  const clickTarget = { x: overlap.close.x + 1, y: overlap.close.y }
+  const beforeMove = await readGuestInput()
+  await movePointer(clickTarget)
+  const { moves: readyMoves, ...readyInput } = await waitForValue(
+    readGuestInput,
+    state => state.moves > beforeMove.moves,
+    'Native pointer movement must reach the restored guest',
+    5_000
+  )
+  assert.deepEqual(readyInput, closedInput, 'Moving into the guest must not click it')
+  await pressAndRelease(clickTarget)
   const pageClicked = await bridgeCall({
     action: 'waitFor',
     options: {
@@ -234,11 +266,24 @@ async function verifySearchOverlay(
     },
     timeoutMs: 5000,
   })
-  const guestInput = await readGuestInput()
+  const { moves: finalMoves, ...guestInput } = await readGuestInput()
   await writeFile(
     join(resultDir, 'search-overlay-input.json'),
     JSON.stringify(
-      { restoredPixel, openHit, readyHit, closedInput, guestInput, finalHit: await read(readHit) },
+      {
+        restoredPixel,
+        openHit,
+        readyHit,
+        closedInput,
+        pointerMoves: {
+          closed: closedMoves,
+          before: beforeMove.moves,
+          ready: readyMoves,
+          final: finalMoves,
+        },
+        guestInput,
+        finalHit: await read(readHit),
+      },
       null,
       2
     )
