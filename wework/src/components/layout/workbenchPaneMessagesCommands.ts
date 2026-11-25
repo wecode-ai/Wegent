@@ -54,6 +54,7 @@ import {
   optimisticallyInterruptRuntimeConversation,
   removeOptimisticRuntimeConversationGuidance,
   removeRuntimeConversationTurn,
+  replaceRuntimeConversationGuidance,
   replaceRuntimeConversationFromUserMessage,
   settleOptimisticallyInterruptedRuntimeConversation,
   restoreOptimisticallyInterruptedRuntimeConversation,
@@ -90,7 +91,9 @@ import type {
 } from './workbenchPaneSessionTypes'
 import type { PaneCommandContext } from './workbenchPaneCommandContext'
 
-type ContinuationOptions = Pick<RuntimePaneQueuedMessage, 'displayContent' | 'attachments'>
+type ContinuationOptions = Pick<RuntimePaneQueuedMessage, 'displayContent' | 'attachments'> & {
+  appendAcceptedMessage?: boolean
+}
 
 export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
   const getRuntimeModelFields = (modelOptionsOverride?: ModelOptions) => {
@@ -202,7 +205,8 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
         {
           ...options,
           isCurrent: operation.isCurrent,
-          appendAcceptedMessage: !appendedLocalMessage,
+          appendAcceptedMessage:
+            options.appendAcceptedMessage ?? message.appendAcceptedMessage ?? !appendedLocalMessage,
           onError: options.onError ?? setError,
         }
       )
@@ -365,10 +369,12 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     } = sessionOwner.commands
 
     if (!currentRuntimeTask) return false
+    const { appendAcceptedMessage, ...messageOptions } = options ?? {}
     const message: RuntimePaneQueuedMessage = {
       id: `runtime-retry-continuation-${crypto.randomUUID()}`,
       content: input,
-      ...options,
+      ...messageOptions,
+      ...(appendAcceptedMessage === false ? { appendAcceptedMessage: false } : {}),
       status: 'queued',
       createdAt: new Date().toISOString(),
       ...getRuntimeModelFields(),
@@ -377,6 +383,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     let sendError: string | null = null
     const result = await sendRuntimeMessage(message, {
       appendLocalMessage: false,
+      ...(appendAcceptedMessage === false ? { appendAcceptedMessage: false } : {}),
       onError: error => {
         sendError = error
       },
@@ -457,7 +464,6 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     const { getRuntimeModelFields, sendContinuation, setError } = sessionOwner.commands
 
     const submittedContent = content.trim()
-    if (!submittedContent) return false
     if (!currentRuntimeTask) return false
     if (paneStatus.isBusy) {
       setError('当前回复仍在进行中，完成后再编辑')
@@ -471,11 +477,34 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       return false
     }
 
-    if (currentMessages[messageIndex]?.runtimeGuidance) {
-      return sendContinuation(
-        i18n.t('workbench.guidance_correction_prompt', { content: submittedContent }),
-        { attachments: message.attachments }
+    const targetMessage = currentMessages[messageIndex]
+    if (!targetMessage) return false
+    const guidanceAttachments = targetMessage.attachments ?? []
+    const isGuidance = targetMessage.runtimeGuidance === true
+    if (!submittedContent && !(isGuidance && guidanceAttachments.length > 0)) return false
+
+    if (isGuidance) {
+      const originalGuidance = {
+        ...targetMessage,
+        role: 'user' as const,
+        runtimeGuidance: true as const,
+      }
+      replaceRuntimeConversationGuidance(currentRuntimeTask, {
+        ...originalGuidance,
+        content: submittedContent,
+      })
+      const sent = await sendContinuation(
+        submittedContent
+          ? i18n.t('workbench.guidance_correction_prompt', { content: submittedContent })
+          : i18n.t('workbench.guidance_attachment_correction_prompt'),
+        {
+          attachments: targetMessage.attachments,
+          displayContent: submittedContent || undefined,
+          appendAcceptedMessage: false,
+        }
       )
+      if (!sent) replaceRuntimeConversationGuidance(currentRuntimeTask, originalGuidance)
+      return sent
     }
 
     const previousTurns = getRuntimeConversationTurns(currentRuntimeTask)

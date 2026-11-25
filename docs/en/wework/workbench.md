@@ -311,7 +311,7 @@ After restoring a conversation, you can answer an existing MCP form or another r
 
 ## Use selected response text
 
-Hover a message for its copy action. The latest ordinary user message shows a pencil when editing is supported. If the latest user message was sent as guidance, wait for the response to finish, hover the guidance, and choose **Revise and continue**. Update the text and choose **Send correction** to start the next turn with a new message. The conversation keeps the original guidance and response in its history.
+Hover a message for its copy action. The latest ordinary user message shows a pencil when editing is supported. If the latest user message was sent as guidance, wait for the response to finish, hover the guidance, and choose **Revise and continue**. Update the text and choose **Send correction** to update that guidance in place and continue the next turn from the revised content. No duplicate user message is added below it, and the earlier response remains in chronological order. An attachment-only guidance message also opens the edit form so you can add text or send the attachments again.
 
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
 

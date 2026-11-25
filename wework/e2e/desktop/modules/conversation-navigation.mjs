@@ -862,8 +862,29 @@ async function verifyGuidanceCorrection(control) {
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: GUIDANCE_CORRECTION_COMPLETION,
   })
-  await control.command('waitFor', guidance, { text: GUIDANCE_CORRECTION_PROMPT })
-  await control.command('waitFor', guidance, { text: GUIDANCE_SCROLL_MESSAGE })
+  await control.command('waitFor', marked, { text: GUIDANCE_CORRECTION_PROMPT })
+  const correctedGuidanceText = await control.command('getText', marked)
+  assert.equal(
+    countTextOccurrences(correctedGuidanceText, GUIDANCE_CORRECTION_PROMPT),
+    1,
+    'The original guidance row was not updated in place'
+  )
+  assert.equal(
+    countTextOccurrences(correctedGuidanceText, GUIDANCE_SCROLL_MESSAGE),
+    0,
+    'The original guidance text remained after correction'
+  )
+  const correctedUserMessagesText = await control.command('getText', guidance)
+  assert.equal(
+    countTextOccurrences(correctedUserMessagesText, GUIDANCE_SCROLL_MESSAGE),
+    0,
+    'The correction appended a duplicate guidance message'
+  )
+  assert.equal(
+    countTextOccurrences(correctedUserMessagesText, GUIDANCE_CORRECTION_PROMPT),
+    1,
+    'The corrected guidance was not rendered exactly once'
+  )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: GUIDANCE_SCROLL_COMPLETION_TEXT,
   })

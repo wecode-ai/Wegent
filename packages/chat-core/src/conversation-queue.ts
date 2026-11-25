@@ -32,6 +32,7 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   displayContent?: string
   imageMarkupDraftText?: string
   codeComments?: CodeCommentContext[]
+  appendAcceptedMessage?: boolean
   modelId?: string
   modelType?: RuntimeSendRequest['modelType']
   modelOptions?: ModelOptions

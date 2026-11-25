@@ -661,6 +661,15 @@ export function appendOptimisticRuntimeConversationGuidance(
   )
 }
 
+export function replaceRuntimeConversationGuidance(
+  address: RuntimeTaskAddress,
+  guidance: WorkbenchMessage & { role: 'user'; runtimeGuidance: true }
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    appendRuntimeConversationGuidance(turns, guidance.turnId ?? guidance.subtaskId, guidance)
+  )
+}
+
 export function removeOptimisticRuntimeConversationGuidance(
   address: RuntimeTaskAddress,
   clientGuidanceId: string

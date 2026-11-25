@@ -47,6 +47,7 @@ export interface RuntimePaneSendOptions {
 
 export interface SendRuntimeMessageOptions {
   appendLocalMessage?: boolean
+  appendAcceptedMessage?: boolean
   initialGoal?: RuntimeGoalCreateInput | null
   onError?: (error: string) => void
   silentBusyRetry?: boolean

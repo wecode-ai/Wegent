@@ -13,6 +13,7 @@ export function UserMessageEditForm({
   onOpenMentionPlugin,
   initialContent,
   correction = false,
+  allowEmpty = false,
   submitting,
   onCancel,
   onSubmit,
@@ -22,6 +23,7 @@ export function UserMessageEditForm({
   onOpenMentionPlugin?: (reference: PluginReference) => void
   initialContent: string
   correction?: boolean
+  allowEmpty?: boolean
   submitting: boolean
   onCancel?: () => void
   onSubmit?: (content: string) => Promise<boolean | void> | boolean | void
@@ -30,7 +32,7 @@ export function UserMessageEditForm({
   const [draft, setDraft] = useState(initialContent)
   const textareaRef = useRef<HTMLElement | null>(null)
   const trimmedDraft = draft.trim()
-  const submitDisabled = submitting || trimmedDraft.length === 0
+  const submitDisabled = submitting || (!allowEmpty && trimmedDraft.length === 0)
 
   useFocusRequest(textareaRef)
 
@@ -53,9 +55,9 @@ export function UserMessageEditForm({
         value={draft}
         onChange={setDraft}
         onSubmit={value => {
-          if (!submitting && value.trim()) void onSubmit?.(value.trim())
+          if (!submitting && (allowEmpty || value.trim())) void onSubmit?.(value.trim())
         }}
-        canSend={trimmedDraft.length > 0}
+        canSend={allowEmpty || trimmedDraft.length > 0}
         disabled={submitting}
         placeholder=""
         rows={2}
