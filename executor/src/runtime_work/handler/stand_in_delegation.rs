@@ -8,6 +8,7 @@ use crate::task_runtime::personal_stand_in::{
     stand_in_identities, DINGTALK_PROVIDER,
 };
 use sha2::{Digest, Sha256};
+use std::time::Duration;
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn take_over_delegated_dingtalk_work(
@@ -31,19 +32,32 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
     ) -> Result<Value, AppIpcError> {
         let user = runtime_user(&payload)?;
-        self.verify_local_stand_in_owner(user)?;
         let work = string_field(&payload, "workId")
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         let record = string_field(&payload, "recordId")
             .ok_or_else(|| AppIpcError::new("bad_request", "recordId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        validate_work_accounts(&store, user, &self.device_id, &work, None)?;
+        let result = self
+            .check_delegated_dingtalk_receipt(&store, user, &work, &record)
+            .await?;
+        Ok(json!({"delegationResult":result}))
+    }
+
+    async fn check_delegated_dingtalk_receipt(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        work: &str,
+        record: &str,
+    ) -> Result<Value, AppIpcError> {
+        self.verify_local_stand_in_owner(user)?;
+        validate_work_accounts(store, user, &self.device_id, work, None)?;
         let message = store
-            .delegated_work_message(user, &work, &record)
+            .delegated_work_message(user, work, record)
             .map_err(settings_error)?;
         let result = &message["delegationResult"];
         if result["status"] != "unknown" || !result["channelTaskId"].is_string() {
-            return Ok(json!({"delegationResult":result}));
+            return Ok(result.clone());
         }
         let source = &message["source"];
         let readiness = self
@@ -57,16 +71,16 @@ impl RuntimeWorkRpcHandler {
         let outcome =
             crate::runtime_work::dingtalk::verify_delegated_reply(source, &message, result).await?;
         self.verify_local_stand_in_owner(user)?;
-        validate_work_accounts(&store, user, &self.device_id, &work, None)?;
+        validate_work_accounts(store, user, &self.device_id, work, None)?;
         if matches!(outcome["status"].as_str(), Some("sent" | "failed")) {
             store
-                .reconcile_delegated_receipt(user, &work, &record, &outcome)
+                .reconcile_delegated_receipt(user, work, record, &outcome)
                 .map_err(settings_error)?;
         }
         let message = store
-            .delegated_work_message(user, &work, &record)
+            .delegated_work_message(user, work, record)
             .map_err(settings_error)?;
-        Ok(json!({"delegationResult":message["delegationResult"]}))
+        Ok(message["delegationResult"].clone())
     }
 
     pub(super) fn store_delegated_event(
@@ -190,6 +204,18 @@ impl RuntimeWorkRpcHandler {
             store
                 .finish_delegated_submission(user, work_id, record_id, &outcome)
                 .map_err(settings_error)?;
+            if outcome["status"] == "unknown" && outcome["channelTaskId"].is_string() {
+                let confirmation = poll_delegated_receipt(|| {
+                    self.check_delegated_dingtalk_receipt(store, user, work_id, record_id)
+                })
+                .await;
+                if let Err(error) = confirmation {
+                    crate::logging::log_executor_event(
+                        "DingTalk automatic receipt check stopped",
+                        &[("category", error.code)],
+                    );
+                }
+            }
         }
         Ok(())
     }
@@ -472,6 +498,28 @@ impl RuntimeWorkRpcHandler {
             )
         })
     }
+}
+
+async fn poll_delegated_receipt<F>(mut check: impl FnMut() -> F) -> Result<(), AppIpcError>
+where
+    F: std::future::Future<Output = Result<Value, AppIpcError>>,
+{
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for delay in [0, 1, 3] {
+            if delay > 0 {
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+            }
+            match check().await {
+                Ok(result) if result["status"] == "unknown" => {}
+                Ok(_) => break,
+                Err(error) if error.code == "connection_cli_request_unavailable" => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    })
+    .await
+    .unwrap_or(Ok(()))
 }
 
 fn result(action: &str, reason: &str) -> Value {

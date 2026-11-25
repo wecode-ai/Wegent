@@ -2,6 +2,28 @@ use super::*;
 
 const QUESTION_AT: i64 = 1_795_507_200_000;
 
+#[tokio::test(start_paused = true)]
+async fn automatic_receipt_check_stops_on_confirmation_or_when_only_uncertainty_remains() {
+    for (confirmation, expected_checks) in [(Some(2), 2), (None, 3)] {
+        let mut checks = 0;
+        poll_delegated_receipt(|| {
+            checks += 1;
+            let status = if confirmation == Some(checks) {
+                "sent"
+            } else {
+                "unknown"
+            };
+            std::future::ready(Ok(json!({"status":status})))
+        })
+        .await
+        .unwrap();
+        assert_eq!(checks, expected_checks);
+    }
+    let started = tokio::time::Instant::now();
+    poll_delegated_receipt(std::future::pending).await.unwrap();
+    assert_eq!(started.elapsed(), Duration::from_secs(10));
+}
+
 #[tokio::test]
 async fn interrupted_dingtalk_submission_reopens_as_unknown_without_replaying() {
     let root = tempfile::tempdir().unwrap();

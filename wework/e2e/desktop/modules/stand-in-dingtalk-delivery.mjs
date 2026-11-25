@@ -12,7 +12,7 @@ const takeover = `${preview} ${byId('stand-in-delegation-takeover')}`
 
 export async function verifyDingTalkDelivery(
   control,
-  { mailbox, work, pending, rejected, timeout }
+  { mailbox, work, automaticallyConfirmed, pending, rejected, timeout }
 ) {
   const pendingId = pending.id
   const rejectedId = rejected.id
@@ -23,8 +23,12 @@ export async function verifyDingTalkDelivery(
   assert.equal(rejected.delegationResult.status, 'failed')
   assert.equal(rejected.delegationResult.receiptId, null)
 
-  const readChecks = async () =>
-    (await mailbox.reads()).filter(row => row.operation === 'query-send-status')
+  const readChecks = async id =>
+    (await mailbox.reads()).filter(
+      row => row.operation === 'query-send-status' && row.taskId === `task-${id}`
+    )
+  const auditChecks = async id =>
+    (await readChecks(id)).map(({ profile, matching }) => [profile, matching])
   const assertSingleSubmission = async record => {
     const attempts = (await mailbox.replies()).filter(row => row.messageId === record.id)
     assert.equal(attempts.length, 1, `${record.id} must submit only once`)
@@ -55,12 +59,36 @@ export async function verifyDingTalkDelivery(
         takeover: '本人已接管',
         sent: '已自动答复',
       }
+  for (const record of automaticallyConfirmed) {
+    const recordId = record.id
+    assert.equal(record.delegationResult.status, 'sent')
+    assert.equal(record.delegationResult.channelTaskId, `task-${recordId}`)
+    assert.deepEqual(await auditChecks(recordId), [
+      [DINGTALK_DELEGATION_IDS.profile, false],
+      [DINGTALK_DELEGATION_IDS.profile, true],
+    ])
+    await openResult(record)
+    await control.command('waitFor', preview, { text: labels.sent })
+    await control.command('waitFor', receipt, { text: `accepted-${recordId}` })
+    await control.command('waitFor', verify, { visible: false })
+    await assertSingleSubmission(record)
+  }
+
   await openResult(rejected)
   await control.command('waitFor', preview, { text: labels.failed })
   await control.command('waitFor', receipt, { visible: false })
   await control.command('waitFor', verify, { visible: false })
   await assertSingleSubmission(rejected)
 
+  const automaticChecks = await storyUntil(
+    () => readChecks(pendingId),
+    checks => checks.length === 3,
+    timeout,
+    'Automatic checks must stop after three mismatched responses'
+  )
+  assert.ok(
+    automaticChecks.every(row => row.profile === DINGTALK_DELEGATION_IDS.profile && !row.matching)
+  )
   await openResult(pending)
   await control.command('waitFor', preview, { text: labels.unknown })
   await control.command('waitFor', receipt, { visible: false })
@@ -71,8 +99,8 @@ export async function verifyDingTalkDelivery(
 
   await control.command('clickWhenEnabled', verify)
   await storyUntil(
-    readChecks,
-    checks => checks.length === 1,
+    () => readChecks(pendingId),
+    checks => checks.length === automaticChecks.length + 1,
     timeout,
     'The first UI verification must query the recorded channel task'
   )
@@ -88,13 +116,16 @@ export async function verifyDingTalkDelivery(
   await control.command('waitFor', preview, { text: labels.takeover })
   await control.command('waitFor', verify, { visible: false })
   await assertSingleSubmission(pending)
-  assert.deepEqual(
-    (await readChecks()).map(({ taskId, profile, matching }) => [taskId, profile, matching]),
-    [
-      [channelTaskId, DINGTALK_DELEGATION_IDS.profile, false],
-      [channelTaskId, DINGTALK_DELEGATION_IDS.profile, true],
-    ]
-  )
+  assert.deepEqual((await auditChecks(pendingId)).slice(automaticChecks.length), [
+    [DINGTALK_DELEGATION_IDS.profile, false],
+    [DINGTALK_DELEGATION_IDS.profile, true],
+  ])
   await control.command('clickWhenEnabled', byId('stand-in-preview-close'))
-  return { channelTaskId, rejected: rejectedId, confirmed: pendingId, ownerTakeover: true }
+  return {
+    automaticallyConfirmed: automaticallyConfirmed.map(record => record.id),
+    channelTaskId,
+    rejected: rejectedId,
+    confirmed: pendingId,
+    ownerTakeover: true,
+  }
 }

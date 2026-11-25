@@ -82,10 +82,13 @@ export function createDingTalkDelegationMailbox(options) {
     setUnknownReceipt(messageId) {
       return publishFile('unknown-receipt', messageId == null ? '' : identity(messageId))
     },
-    configureDelivery({ channelTaskMessageId, rejectedMessageId }) {
+    configureDelivery({ automatic, pending, rejected }) {
+      const outcomes = automatic.map(({ id, conversationId }) => [id, 'automatic', conversationId])
+      if (pending) outcomes.push([pending.id, 'manual', pending.conversationId])
+      if (rejected) outcomes.push([rejected.id, 'rejected', rejected.conversationId])
       return publishFile(
         'delivery.tsv',
-        `${identity(channelTaskMessageId)}\t${identity(rejectedMessageId)}`
+        outcomes.map(row => row.map(identity).join('\t')).join('\n')
       )
     },
     releaseMatchingReceipt() {

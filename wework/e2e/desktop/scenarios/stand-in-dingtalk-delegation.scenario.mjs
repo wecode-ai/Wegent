@@ -346,6 +346,10 @@ export function createDesktopScenario(options) {
             )
           )
         )
+        const automatic = positive
+          .filter(sample => sample.question.id.endsWith('-document-1'))
+          .map(sample => sample.question)
+        await mailbox.configureDelivery({ automatic })
         await publishCases(positive)
         await assertDelivered(positive)
         assert.equal(results.length, 18)
@@ -511,8 +515,9 @@ export function createDesktopScenario(options) {
         const pending = replyCase('pending-task-receipt', 'group', 'document', Date.now() + 500)
         const rejected = replyCase('rejected-submit', 'direct', 'schedule', Date.now() + 500)
         await mailbox.configureDelivery({
-          channelTaskMessageId: pending.question.id,
-          rejectedMessageId: rejected.question.id,
+          automatic,
+          pending: pending.question,
+          rejected: rejected.question,
         })
         await publishCases([followup, pending, rejected])
         const [followupResult] = await awaitOutcomes(
@@ -535,6 +540,7 @@ export function createDesktopScenario(options) {
         const delivery = await verifyDingTalkDelivery(control, {
           mailbox,
           work,
+          automaticallyConfirmed: automatic.map(question => records().get(question.id)),
           pending: records().get(pending.question.id),
           rejected: records().get(rejected.question.id),
           timeout: options.uiTimeoutMs,

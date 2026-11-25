@@ -218,6 +218,17 @@ fn search_messages(root: &Path, args: &[&str], mentions: bool) -> String {
     format!("{{\"success\":true,\"result\":{{\"hasMore\":{has_more},\"nextCursor\":\"{next_cursor}\",\"conversationMessagesList\":[{{\"singleChat\":{single},\"openConversationId\":{conversation},\"title\":{conversation},\"messages\":[{selected}]}}]}}}}")
 }
 
+fn delivery_for<'a>(config: &'a str, message: &str) -> Option<(&'a str, &'a str)> {
+    config.lines().find_map(|row| {
+        let (id, outcome) = row.split_once('\t').expect("Configured delivery id");
+        (id == message).then(|| {
+            outcome
+                .split_once('\t')
+                .expect("Configured delivery mode and conversation")
+        })
+    })
+}
+
 fn reply(root: &Path, args: &[&str]) -> String {
     let message = required(args, "--ref-msg-id");
     let profile = required(args, "--profile");
@@ -251,17 +262,21 @@ fn reply(root: &Path, args: &[&str]) -> String {
         return r#"{"success":true,"result":{}}"#.into();
     }
     let delivery = read(root, "delivery.tsv");
-    if let Some((pending, rejected)) = delivery.split_once('\t') {
-        if message == rejected {
+    if let Some((mode, expected_conversation)) = delivery_for(&delivery, message) {
+        assert_eq!(conversation, expected_conversation);
+        if mode == "rejected" {
             println!(
                 r#"{{"success":false,"code":"PAT_SCOPE_AUTH_REQUIRED","data":{{"errorType":"missing_scope"}}}}"#
             );
             process::exit(6);
         }
-        if message == pending {
-            let task = quote(&format!("task-{pending}"));
-            return format!("{{\"success\":true,\"result\":{{\"openTaskId\":{task}}}}}");
-        }
+        assert!(matches!(mode, "automatic" | "manual"));
+        let task = quote(&format!("task-{message}"));
+        return match (mode, conversation) {
+            ("automatic", DIRECT) => format!(r#"{{"result":{{"openTaskId":{task}}}}}"#),
+            ("automatic", GROUP) => format!(r#"{{"openTaskId":{task}}}"#),
+            _ => format!(r#"{{"success":true,"result":{{"openTaskId":{task}}}}}"#),
+        };
     }
     let receipt = quote(&format!("accepted-{message}"));
     format!("{{\"success\":true,\"result\":{{\"openMessageId\":{receipt}}}}}")
@@ -271,14 +286,16 @@ fn query_send_status(root: &Path, args: &[&str]) -> String {
     let task_id = required(args, "--open-task-id");
     let profile = required(args, "--profile");
     let delivery = read(root, "delivery.tsv");
-    let (pending, _) = delivery.split_once('\t').expect("Configured channel task");
-    assert_eq!(task_id, format!("task-{pending}"));
+    let message = task_id.strip_prefix("task-").expect("Fixture send task ID");
+    let (mode, conversation) = delivery_for(&delivery, message).expect("Configured channel task");
     assert_eq!(profile, PROFILE);
     assert_eq!(required(args, "--format"), "json");
-    let matching = read(root, "matching-receipt") == "true";
-    let conversation = if matching { GROUP } else { OTHER_GROUP };
     let task = quote(task_id);
-    let receipt = quote(&format!("accepted-{pending}"));
+    let matching = match mode {
+        "automatic" => read(root, "reads.jsonl").contains(&format!("\"taskId\":{task}")),
+        "manual" => read(root, "matching-receipt") == "true",
+        _ => panic!("Only a submitted channel task can be queried"),
+    };
     append(
         root,
         "reads.jsonl",
@@ -287,7 +304,16 @@ fn query_send_status(root: &Path, args: &[&str]) -> String {
             quote(profile)
         ),
     );
-    format!("{{\"success\":true,\"result\":{{\"openTaskId\":{task},\"openConversationId\":\"{conversation}\",\"openMessageId\":{receipt}}}}}")
+    if mode == "automatic" && !matching {
+        return format!(
+            r#"{{"contractVersion":"im.message-send-status.v1","openTaskId":{task},"readyForMessageActions":false}}"#
+        );
+    }
+    let conversation = quote(if matching { conversation } else { OTHER_GROUP });
+    let receipt = quote(&format!("accepted-{message}"));
+    format!(
+        r#"{{"contractVersion":"im.message-send-status.v1","openTaskId":{task},"readyForMessageActions":true,"messageRef":{{"openConversationId":{conversation},"openMessageId":{receipt}}}}}"#
+    )
 }
 
 fn matching_resources(args: &[&str], rows: &[(&str, String)]) -> String {
@@ -350,7 +376,7 @@ fn main() {
         ["chat", "message", "list-mentions", ..] => search_messages(&root, &args, true),
         ["chat", "message", "search-advanced", ..] => search_messages(&root, &args, false),
         ["chat", "message", "reply", ..] => reply(&root, &args),
-        ["chat", "message", "query-send-status", ..] => query_send_status(&root, &args),
+        ["chat", "+messages-query-send-status", ..] => query_send_status(&root, &args),
         _ => panic!("Unrecognized isolated DingTalk command: {:?}", args.iter().take(3).collect::<Vec<_>>()),
     };
     println!("{response}");

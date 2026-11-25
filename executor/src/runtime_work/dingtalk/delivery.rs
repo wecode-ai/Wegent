@@ -92,11 +92,21 @@ fn submission_outcome(binding: &ReplyBinding, response: Result<Value, AppIpcErro
         "reasonCode":"channel_result_unconfirmed"
     });
     match response {
-        Ok(response) if response["success"] == true => {
-            if let Some(task) = channel_id(&response["result"]["openTaskId"]) {
+        Ok(response) => {
+            // The DWS runner has already rejected unsuccessful tool calls. Atomic IM
+            // replies pass through either a bare result or a result object.
+            let result = response
+                .get("result")
+                .filter(|result| result.is_object())
+                .unwrap_or(&response);
+            if let Some(task) = channel_id(&result["openTaskId"]) {
                 outcome["channelTaskId"] = json!(task);
             }
-            apply_receipt(binding, &mut outcome, &response);
+            if result["openConversationId"].is_null()
+                || result["openConversationId"] == binding.conversation_id
+            {
+                apply_receipt(binding, &mut outcome, &result["openMessageId"]);
+            }
         }
         Err(error) => {
             // These errors prove the send was not started or its authority was refused.
@@ -110,7 +120,6 @@ fn submission_outcome(binding: &ReplyBinding, response: Result<Value, AppIpcErro
             }
             outcome["reasonCode"] = json!(error.code);
         }
-        Ok(_) => {}
     }
     outcome
 }
@@ -131,8 +140,7 @@ pub(crate) async fn verify_delegated_reply(
     }
     let args = [
         "chat",
-        "message",
-        "query-send-status",
+        "+messages-query-send-status",
         "--open-task-id",
         task,
         "--profile",
@@ -142,27 +150,31 @@ pub(crate) async fn verify_delegated_reply(
     ]
     .map(str::to_owned);
     let response = run_declared_plugin_tool("dingtalk", "dws", &args).await?;
+    Ok(status_outcome(&binding, task, &response))
+}
+
+fn status_outcome(binding: &ReplyBinding, task: &str, response: &Value) -> Value {
     let mut outcome = json!({
         "status":"unknown",
         "attemptId":binding.attempt_id,
         "channelTaskId":task
     });
-    apply_receipt(&binding, &mut outcome, &response);
-    Ok(outcome)
+    let message = &response["messageRef"];
+    if response["contractVersion"] == "im.message-send-status.v1"
+        && response["openTaskId"] == task
+        && response["readyForMessageActions"] == true
+        && message["openConversationId"] == binding.conversation_id
+    {
+        apply_receipt(binding, &mut outcome, &message["openMessageId"]);
+    }
+    outcome
 }
 
-fn apply_receipt(binding: &ReplyBinding, outcome: &mut Value, response: &Value) {
-    let result = &response["result"];
-    let Some(receipt) = channel_id(&result["openMessageId"]) else {
+fn apply_receipt(binding: &ReplyBinding, outcome: &mut Value, receipt: &Value) {
+    let Some(receipt) = channel_id(receipt) else {
         return;
     };
-    if response["success"] != true
-        || receipt == binding.message_id
-        || outcome["channelTaskId"] == receipt
-        || (!result["openConversationId"].is_null()
-            && result["openConversationId"] != binding.conversation_id)
-        || (!result["openTaskId"].is_null() && result["openTaskId"] != outcome["channelTaskId"])
-    {
+    if receipt == binding.message_id || outcome["channelTaskId"] == receipt {
         return;
     }
     outcome["status"] = json!("sent");
@@ -271,25 +283,50 @@ mod tests {
     }
 
     #[test]
+    fn submission_records_the_native_task_acknowledgement() {
+        let binding = ReplyBinding::from_source(&source(), &message()).unwrap();
+        for response in [
+            json!({"openTaskId":"task"}),
+            json!({"result":{"openTaskId":"task"}}),
+        ] {
+            let accepted = submission_outcome(&binding, Ok(response));
+            assert_eq!(accepted["status"], "unknown");
+            assert_eq!(accepted["channelTaskId"], "task");
+            assert!(accepted["receiptId"].is_null());
+        }
+        let delivered =
+            submission_outcome(&binding, Ok(json!({"result":{"openMessageId":"outbound"}})));
+        assert_eq!(delivered["status"], "sent");
+        assert_eq!(delivered["receiptId"], "outbound");
+    }
+
+    #[test]
     fn status_receipt_must_belong_to_the_recorded_task() {
         let binding = ReplyBinding::from_source(&source(), &message()).unwrap();
-        let mut outcome = json!({"status":"unknown","channelTaskId":"requested"});
-        apply_receipt(
-            &binding,
-            &mut outcome,
-            &json!({
-                "success":true,"result":{"openTaskId":"unrelated","openMessageId":"sent"}
-            }),
-        );
-        assert_eq!(outcome["status"], "unknown");
-        apply_receipt(
-            &binding,
-            &mut outcome,
-            &json!({
-                "success":true,"result":{"openTaskId":"requested","openMessageId":"sent"}
-            }),
-        );
-        assert_eq!(outcome["status"], "sent");
-        assert_eq!(outcome["receiptId"], "sent");
+        for (task, conversation, receipt, ready, expected) in [
+            ("unrelated", "room", "outbound", true, "unknown"),
+            ("requested", "other", "outbound", true, "unknown"),
+            ("requested", "room", "incoming", true, "unknown"),
+            ("requested", "room", "requested", true, "unknown"),
+            ("requested", "room", "", false, "unknown"),
+            ("requested", "room", "outbound", true, "sent"),
+        ] {
+            let outcome = status_outcome(
+                &binding,
+                "requested",
+                &json!({
+                    "contractVersion":"im.message-send-status.v1",
+                    "openTaskId":task,
+                    "readyForMessageActions":ready,
+                    "messageRef":{"openConversationId":conversation,"openMessageId":receipt},
+                }),
+            );
+            assert_eq!(outcome["status"], expected);
+            if expected == "sent" {
+                assert_eq!(outcome["receiptId"], receipt);
+            } else {
+                assert!(outcome["receiptId"].is_null());
+            }
+        }
     }
 }
