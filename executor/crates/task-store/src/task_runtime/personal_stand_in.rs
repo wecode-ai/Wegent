@@ -1,6 +1,8 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
 use super::*;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use wegent_protocol::StandInTaskPermissions;
 
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
@@ -313,6 +315,11 @@ pub fn role_project_matches(role: &Value, project: &str, store: &str) -> bool {
                 .is_some_and(|rows| rows.iter().any(matches)))
 }
 
+pub fn role_receives_participating_issues(role: &Value) -> bool {
+    role["collaboration"]["enabled"] == true
+        && role["collaboration"]["includeParticipatingIssues"] == true
+}
+
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
     if let Some(fields) = config.as_object_mut() {
@@ -374,8 +381,17 @@ pub(super) fn validate_role(role: &Value) -> Result<(), TaskRuntimeError> {
             "invalid personal stand-in role".into(),
         ));
     }
+    validate_task_permissions(role)?;
     validate_connections(role)?;
     super::stand_in::validate_execution_settings(role)
+}
+
+fn validate_task_permissions(identity: &Value) -> Result<(), TaskRuntimeError> {
+    if let Some(permissions) = identity.get("taskPermissions") {
+        StandInTaskPermissions::deserialize(permissions)
+            .map_err(|_| TaskRuntimeError::Invalid("invalid Stand-in task permissions".into()))?;
+    }
+    Ok(())
 }
 
 fn validate_policy(policy: &Value) -> bool {
@@ -455,6 +471,9 @@ fn valid_collaboration(source: &Value) -> bool {
         && source["allProjects"].is_boolean()
         && source
             .get("includeIndependentIssues")
+            .map_or(true, Value::is_boolean)
+        && source
+            .get("includeParticipatingIssues")
             .map_or(true, Value::is_boolean)
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
@@ -760,6 +779,7 @@ impl LocalTaskStore {
             {
                 return Err(TaskRuntimeError::Invalid("invalid primary stand-in".into()));
             }
+            validate_task_permissions(primary)?;
             validate_connections(primary)?;
         }
         let mut ids = HashSet::new();
@@ -796,6 +816,14 @@ impl LocalTaskStore {
                 .unwrap()
                 .iter()
                 .find(|before| before["id"] == role["id"]);
+            if before.is_none()
+                && role["migrationSource"].is_string()
+                && role.get("taskPermissions").is_some()
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "A portable Stand-in import cannot carry task permissions".into(),
+                ));
+            }
             let version = before
                 .and_then(|before| before["version"].as_i64())
                 .unwrap_or(0);
@@ -867,6 +895,18 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"]
         && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"];
     let enabled_at = json!(now());
+    if identity["enabled"] == true && role_receives_participating_issues(identity) {
+        identity["participatingIssuesEnabledAfter"] = if preserve
+            && role_receives_participating_issues(previous)
+            && previous["participatingIssuesEnabledAfter"].is_string()
+        {
+            previous["participatingIssuesEnabledAfter"].clone()
+        } else {
+            enabled_at.clone()
+        };
+    } else if let Some(fields) = identity.as_object_mut() {
+        fields.remove("participatingIssuesEnabledAfter");
+    }
     if identity["enabled"] == true
         && identity["collaboration"]["enabled"] == true
         && identity["collaboration"]["includeIndependentIssues"] == true

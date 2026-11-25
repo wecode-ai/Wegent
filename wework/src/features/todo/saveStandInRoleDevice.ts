@@ -71,6 +71,7 @@ export async function saveStandInRoleDevice(
       ...new Set(previous ? [...(previous.previousExecutionDevices ?? []), sourceDevice] : []),
     ].filter(device => device !== targetDevice),
   }
+  delete transferred.taskPermissions
   const staged = await api.personalSave(
     userId,
     {
@@ -80,7 +81,8 @@ export async function saveStandInRoleDevice(
         { ...transferred, enabled: false },
       ],
     },
-    targetDevice
+    targetDevice,
+    role.id
   )
   let redirected: PersonalStandInSettings | undefined
   try {
@@ -108,9 +110,12 @@ export async function saveStandInRoleDevice(
       userId,
       {
         ...staged,
-        roles: staged.roles.map(row => (row.id === role.id ? transferred : row)),
+        roles: staged.roles.map(row =>
+          row.id === role.id ? { ...row, enabled: role.enabled } : row
+        ),
       },
-      targetDevice
+      targetDevice,
+      role.id
     )
     return result.roles.find(row => row.id === role.id)!
   } catch (cause) {

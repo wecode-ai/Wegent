@@ -14,6 +14,7 @@ export {
   useRuntimeTaskLifecycleResolver,
   useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSidebarSnapshot,
   useRuntimeTaskSummaryResolver,
 } from './context'
 export type {

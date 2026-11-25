@@ -360,6 +360,7 @@ async def assign_loop_item(
     there is no separate queue storage.
     """
 
+    values = values.model_copy(update={"notify_self": values.notify_assignee})
     if external_loop_item_provider.is_external_item(db, item_id):
         response = external_loop_item_provider.assign(
             db, item_id, current_user.id, values

@@ -472,6 +472,7 @@ class RealCloudEnvironment {
       TERMINAL_PROTOCOL_V2_ENABLED: 'true',
       PYTHONIOENCODING: 'utf-8',
       PYTHONUTF8: '1',
+      WEWORK_E2E_SOCKET_ACK_DIAGNOSTICS: 'true',
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
       INIT_DATA_DIR: join(repoDir, 'backend-rs', 'init_data'),

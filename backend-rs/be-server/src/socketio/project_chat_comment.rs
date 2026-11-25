@@ -371,7 +371,7 @@ async fn guide_active_comment(
             ),
             "attachments": attachments,
         }),
-        15, false,
+        15, false, None,
     ).await;
     let accepted = match result {
         Ok(value) if value["accepted"] == true => value,

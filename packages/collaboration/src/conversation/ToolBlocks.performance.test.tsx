@@ -4,7 +4,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '../i18n'
 import { ConversationTranslationProvider } from './ConversationTranslation'
+import { AssistantMessage } from './AssistantMessage'
+import * as presentation from './assistantMessagePresentation'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import * as activity from './blocks/ProcessingActivity'
 import * as labels from './blocks/toolBlockLabels'
 import * as details from './blocks/ToolBlockDetails'
@@ -13,6 +16,7 @@ import type { ToolBlock } from './blocks/types'
 
 let container: HTMLDivElement
 let root: Root
+const translate = createCollaborationTranslator('en')
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -33,7 +37,7 @@ afterEach(() => {
 function render(children: ReactNode) {
   act(() =>
     root.render(
-      <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
+      <ConversationTranslationProvider translate={translate}>
         {children}
       </ConversationTranslationProvider>
     )
@@ -62,6 +66,116 @@ function tool(status: ToolBlock['status'] = 'done'): ToolBlock {
 }
 
 describe('processing clock render isolation', () => {
+  it('keeps tool presentation stable while separate reasoning updates remain visible', () => {
+    const project = vi.spyOn(presentation, 'getAssistantRenderProjection')
+    const images = { identity: () => '', load: vi.fn(), download: vi.fn() }
+    const command = tool()
+    const thinking = {
+      id: 'reasoning',
+      subtaskId: 1,
+      type: 'thinking' as const,
+      content: 'Checking the workspace',
+      status: 'streaming' as const,
+      createdAt: Date.now(),
+    }
+    const update = (content: string, block = command) => {
+      const message: WorkbenchMessage = {
+        id: 'reply',
+        role: 'assistant',
+        status: 'streaming',
+        content: '',
+        createdAt: new Date().toISOString(),
+        blocks: [block, { ...thinking, content }],
+        runtimeDisplayItems: [
+          { id: block.id, type: 'block' },
+          { id: thinking.id, type: 'block' },
+        ],
+        streamingThinkingContent: content,
+      }
+      render(<AssistantMessage message={message} imageServices={images} devices={[]} />)
+    }
+    update(thinking.content)
+    project.mockClear()
+
+    update('Checking the workspace and tests')
+    expect(project).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Checking the workspace and tests')
+    expect(container.textContent).not.toContain('Searched code')
+
+    update('Checking the workspace and tests', { ...command, toolInput: { command: 'ls' } })
+    expect(project).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('Searched code')
+  })
+
+  it('follows a burst of tool rows with one layout read in the next frame', () => {
+    const first = tool()
+    const second = { ...first, id: 'second' }
+    const third = { ...first, id: 'third' }
+    render(<ToolBlocksDisplay blocks={[first]} isStreaming />)
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="processing-live-preview-scroll"]'
+    )!
+    const readHeight = vi.fn(() => 400)
+    Object.defineProperty(viewport, 'scrollHeight', { get: readHeight })
+
+    render(<ToolBlocksDisplay blocks={[first, second]} isStreaming />)
+    render(<ToolBlocksDisplay blocks={[first, second, third]} isStreaming />)
+    expect(readHeight).not.toHaveBeenCalled()
+
+    act(() => vi.advanceTimersToNextFrame())
+    expect(readHeight).toHaveBeenCalledTimes(1)
+    expect(viewport.scrollTop).toBe(400)
+
+    render(<ToolBlocksDisplay blocks={[first]} isStreaming />)
+    render(null)
+    act(() => vi.advanceTimersToNextFrame())
+    expect(readHeight).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps completed tool rows stable while reasoning streams into the live preview', () => {
+    const label = vi.spyOn(labels, 'getBlockLabel')
+    const command = tool()
+    const reasoning = {
+      id: 'reasoning',
+      subtaskId: 1,
+      type: 'thinking' as const,
+      content: 'Checking the workspace',
+      status: 'streaming' as const,
+      createdAt: Date.now(),
+    }
+    render(
+      <ToolBlocksDisplay
+        blocks={[command, reasoning]}
+        isStreaming
+        showInterToolThinking
+        thinkingContent={reasoning.content}
+      />
+    )
+    const preview = container.querySelector('[data-testid="processing-live-preview"]')
+    const toggle = preview?.querySelector<HTMLButtonElement>('[data-tool-detail-toggle]')
+    expect(toggle).toBeTruthy()
+    act(() => toggle!.click())
+    expect(preview?.textContent).toContain('result')
+    label.mockClear()
+
+    const nextReasoning = { ...reasoning, content: 'Checking the workspace and tests' }
+    render(
+      <ToolBlocksDisplay
+        blocks={[command, nextReasoning]}
+        isStreaming
+        showInterToolThinking
+        thinkingContent={nextReasoning.content}
+      />
+    )
+
+    expect(label.mock.calls.filter(([block]) => block === command)).toHaveLength(0)
+    expect(preview?.querySelector('[data-tool-detail-toggle]')).toBe(toggle)
+    expect(preview?.textContent).toContain('result')
+    expect(preview?.querySelector('[data-testid="tool-thinking-indicator"]')?.textContent).toContain(
+      nextReasoning.content
+    )
+  })
+
   it('does no clock work for the hidden summary duration while waiting after a tool', () => {
     const classify = vi.spyOn(activity, 'countProcessingActivityKinds')
     const format = vi.spyOn(duration, 'getDurationText')

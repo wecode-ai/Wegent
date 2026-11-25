@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { runnerModelKey, type RunnerModel } from '@wegent/collaboration'
 import {
@@ -250,6 +251,22 @@ test('a model change keeps the unified instructions for a profile without learni
     prompt: '',
     preferences: 'Ask for evidence\n\nPrivate context',
     model: { model_id: model.model_id },
+  })
+})
+
+test('saves a confirmed task permission with the primary profile', async () => {
+  const user = userEvent.setup()
+  const { save } = openPrimaryProfile()
+  await user.click(screen.getByTestId('stand-in-primary-execution-toggle'))
+  const trigger = screen.getByTestId('permission-mode-menu-button')
+  expect(trigger).toHaveTextContent('只读')
+
+  await user.click(trigger)
+  await user.click(screen.getByTestId('permission-mode-full-access'))
+  await user.click(screen.getByTestId('command-approval-confirm-option-ai'))
+  await user.click(screen.getByTestId('full-access-confirm-submit'))
+  expect(save()).toMatchObject({
+    taskPermissions: { permissionMode: 'full-access', commandApproval: 'ai' },
   })
 })
 

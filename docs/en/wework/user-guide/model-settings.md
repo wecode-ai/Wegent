@@ -42,6 +42,7 @@ and defaults follow the PC capability resolver without requiring the model list 
 Manage task models in **Settings → Models**.
 
 - **Codex subscription**: Enable the local subscription to use your local Codex account and models. Use “View models” to adjust model capabilities and “Manage account” to sign in or manage your account. Changing the subscription switch requires restarting the app. With the local subscription enabled, use “Connection transport” in the same section to choose HTTP (the default) or WebSocket for new conversations.
+  In a conversation, you can ask the model to generate an image or search the web. The local proxy forwards native tool requests to the official Codex service. Tool availability depends on the selected model and subscription account.
 - **Custom models**: Select “Add models”, choose a service such as DeepSeek, and enter a connection name and API key. Discover or manually add models in the same form, then save once to use them without switching steps. Connections may be saved without models and completed later. Different connection names support multiple accounts with the same service.
 - **Custom endpoint**: Choose the last option in the same provider dropdown. Enter a name, API protocol, Base URL, and any required API key, then fetch or manually add models.
 - **Cloud models**: Connect to the cloud to view models provided by the server.

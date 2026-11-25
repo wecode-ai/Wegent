@@ -54,8 +54,9 @@ export function StandInConnectionCatalog({
   const [query, setQuery] = useState('')
   const [configuredOnly, setConfiguredOnly] = useState(false)
   const source = role.collaboration
+  const participates = source.includeParticipatingIssues === true
   const projectConfigured =
-    projectScopeConfigured && (source.allProjects || source.projects.length > 0)
+    projectScopeConfigured && (participates || source.allProjects || source.projects.length > 0)
   const connections = role.connections ?? []
   const providerIds = [
     ...new Set([...providers.map(item => item.id), ...connections.map(row => row.providerId)]),
@@ -85,12 +86,31 @@ export function StandInConnectionCatalog({
       configured: projectConfigured,
       active: projectConfigured && source.enabled,
       quietStatus: !projectConfigured || source.enabled,
-      summary: projectConfigured ? projectSummary : t('standIn.workspace.project_connection_help'),
-      summaryLabel: source.allProjects
-        ? t('standIn.workspace.all_projects_with_exclusions', {
-            count: source.excludedProjects.length,
-          })
-        : source.projects.map(ref => findStandInProject(projects, ref)?.name ?? ref.id).join(' · '),
+      summary: projectConfigured ? (
+        <>
+          {participates && (
+            <span>
+              {t('standIn.workspace.receive_participating_issues')}
+              {(source.allProjects || source.projects.length > 0) && ' · '}
+            </span>
+          )}
+          {projectSummary}
+        </>
+      ) : (
+        t('standIn.workspace.project_connection_help')
+      ),
+      summaryLabel: [
+        participates && t('standIn.workspace.receive_participating_issues'),
+        ...(source.allProjects
+          ? [
+              t('standIn.workspace.all_projects_with_exclusions', {
+                count: source.excludedProjects.length,
+              }),
+            ]
+          : source.projects.map(ref => findStandInProject(projects, ref)?.name ?? ref.id)),
+      ]
+        .filter(Boolean)
+        .join(' · '),
       status: t(
         !projectConfigured
           ? 'standIn.workspace.connection_not_configured'

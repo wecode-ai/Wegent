@@ -42,6 +42,7 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInProjectSetup } from './StandInProjectSetup'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
+import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
 import { createStandInRoleDraft } from './standInRoleDraft'
 import {
   StandInSettingsActions,
@@ -188,6 +189,13 @@ function StandInSettingsEditor({
   const role =
     draft?.roles.find(role => role.id === (initialProject ? projectRoleId : selectedId)) ??
     draft?.roles[0]
+  const previousRole = saved?.roles.find(row => row.id === role?.id)
+  const changingDevice =
+    role &&
+    (previousRole
+      ? role.executionDeviceId !== previousRole.executionDeviceId
+      : role.executionDeviceId !== draft?.executionDeviceId &&
+        role.executionDeviceId !== state.loadedDeviceId)
   const executionDeviceId = role?.executionDeviceId ?? draft?.executionDeviceId
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const tagScope = JSON.stringify([userId, executionDeviceId, role?.id])
@@ -341,11 +349,6 @@ function StandInSettingsEditor({
             }
           : draft
     const changedRole = value.roles.find(row => row.id === role.id)!
-    const previousRole = saved?.roles.find(row => row.id === role.id)
-    const changingDevice = previousRole
-      ? changedRole.executionDeviceId !== previousRole.executionDeviceId
-      : changedRole.executionDeviceId !== value.executionDeviceId &&
-        changedRole.executionDeviceId !== state.loadedDeviceId
     if (changingDevice) {
       if (!services.standInApi || !saved) return
       setMoving(true)
@@ -416,6 +419,7 @@ function StandInSettingsEditor({
       devices={userId === 0 ? [] : devices}
       disabled={saving || moving}
       onChange={value => {
+        if (value === role.executionDeviceId) return
         setNotice(false)
         updateRole(role.id, current => ({
           ...current,
@@ -711,8 +715,19 @@ function StandInSettingsEditor({
                   devices={devices}
                   services={services}
                 />
+                <StandInTaskPermissionSettings
+                  value={changingDevice ? undefined : role.taskPermissions}
+                  disabled={saving || Boolean(changingDevice)}
+                  onChange={taskPermissions =>
+                    updateRole(role.id, current => ({ ...current, taskPermissions }))
+                  }
+                />
                 <p className="text-xs text-text-secondary">
-                  {t('standIn.personal.device_change_help')}
+                  {t(
+                    changingDevice
+                      ? 'standIn.personal.device_change_permissions_help'
+                      : 'standIn.personal.device_change_help'
+                  )}
                 </p>
                 <StandInSettingsError
                   error={runtimeError}

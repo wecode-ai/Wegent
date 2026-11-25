@@ -53,7 +53,7 @@ export interface PaneSessionExternal {
   draftEditVersions: Map<string, number>
   currentRuntimeTask: RuntimeTaskAddress | null
   debugSnapshotEnabled: boolean
-  queueDiagnosticSessionId: string
+  presentationActive: boolean
   workbench: ReturnType<typeof useWorkbenchPaneContext>
   lifecycleStore: ReturnType<typeof useRuntimeTaskLifecycleStore>
   attachmentState: ReturnType<typeof useScopedComposerAttachments>
@@ -69,7 +69,6 @@ export function createPaneSessionFrame(
   readConversation: typeof getRuntimeConversationSnapshot
 ) {
   const { currentRuntimeTask, debugSnapshotEnabled } = external
-  const queueDiagnosticSessionId = external.queueDiagnosticSessionId
   const runtimeTranscriptPageSize = resolveRuntimeTranscriptPageSize()
   const {
     state: workbenchState,
@@ -205,9 +204,6 @@ export function createPaneSessionFrame(
       currentRuntimeTask,
       lifecycle: taskLifecycle,
     }))()
-  const diagnosticTaskId = lifecycleAddress?.taskId
-  const diagnosticDeviceId = lifecycleAddress?.deviceId
-  const diagnosticHasActiveAssistant = Boolean(paneStatus.activeAssistantMessage)
   const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = (() => {
     let resolvedGoal: RuntimeGoal | null
@@ -241,7 +237,6 @@ export function createPaneSessionFrame(
   return {
     currentRuntimeTask,
     debugSnapshotEnabled,
-    queueDiagnosticSessionId,
     runtimeTranscriptPageSize,
     workbenchState,
     projectChat,
@@ -319,9 +314,6 @@ export function createPaneSessionFrame(
     quotaWaitPending,
     currentRuntime,
     paneStatus,
-    diagnosticTaskId,
-    diagnosticDeviceId,
-    diagnosticHasActiveAssistant,
     activeAssistantMessage,
     goal,
     goalContinuing,

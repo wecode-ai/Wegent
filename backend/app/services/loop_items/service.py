@@ -114,6 +114,7 @@ from app.services.loop_items.ordering import (
     position_siblings,
     sibling_items,
 )
+from app.services.loop_items.participation import participating_item_filter
 from app.services.loop_items.read_context import LoopItemReadContext
 from app.services.loop_items.task_bindings import (
     active_task_binding_query,
@@ -1043,6 +1044,7 @@ class LoopItemService:
         assignee_type: str | None = None,
         assignee_id: str | None = None,
         execution_state: str | None = None,
+        participating: bool = False,
     ) -> list[LoopItem]:
         access = require_cloud_project_role(db, cloud_project_id, user_id)
         return self.list_for_access(
@@ -1052,6 +1054,7 @@ class LoopItemService:
             assignee_type=assignee_type,
             assignee_id=assignee_id,
             execution_state=execution_state,
+            participating=participating,
         )
 
     def list_for_access(
@@ -1063,6 +1066,7 @@ class LoopItemService:
         assignee_type: str | None = None,
         assignee_id: str | None = None,
         execution_state: str | None = None,
+        participating: bool = False,
     ) -> list[LoopItem]:
         self._require_local_task_provider(access.project)
         query = db.query(LoopItem).filter(
@@ -1071,6 +1075,8 @@ class LoopItemService:
         )
         if not has_permission(access.role, BaseRole.Maintainer):
             query = query.filter(visible_item_filter(user_id, access.project))
+        if participating:
+            query = query.filter(participating_item_filter(user_id))
         if assignee_type == "user" and assignee_id:
             try:
                 assignee_user_id = int(assignee_id)

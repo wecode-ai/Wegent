@@ -20,7 +20,7 @@ import {
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import {
   useRuntimeTaskLifecycleStore,
-  useRuntimeTaskLifecycleStoreSnapshot,
+  useRuntimeTaskSidebarSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
 
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
@@ -231,17 +231,17 @@ export function useDesktopSidebarModel({
     projectDevicePluginApi,
     onUpdateLocalRuntimeProject,
   })
-  const [priorityFilterActive, setPriorityFilterActive] = useState(false)
   const [taskViewAction, setTaskViewAction] = useState<DesktopSidebarTaskViewAction>(() =>
     onToggleMyWork ? 'board' : 'priority'
   )
   const [prioritySession, setPrioritySession] = useState<DesktopSidebarPrioritySession | null>(null)
+  const priorityFilterActive = prioritySession !== null
   const priorityFilterShortcut = useConfiguredKeybinding(TOGGLE_PRIORITY_FILTER_COMMAND)
   const collapseReadShortcut = useConfiguredKeybinding(COLLAPSE_READ_CONVERSATIONS_COMMAND)
   const [priorityScope, setPriorityScope] = useState(storageScope)
   if (priorityScope !== storageScope) {
     setPriorityScope(storageScope)
-    setPriorityFilterActive(false)
+
     setPrioritySession(null)
   }
   const pinScope = useRuntimeTaskLifecycleStore().notificationScope
@@ -261,16 +261,7 @@ export function useDesktopSidebarModel({
     preserveLockedScrollPosition,
   } = useSidebarPaneDragScrollLock()
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? EMPTY_RUNTIME_TASK_KEYS
-  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
-  const waitingTaskKeys = useMemo(
-    () =>
-      new Set(
-        [...lifecycleSnapshot.tasks.entries()]
-          .filter(([, lifecycle]) => lifecycle.derived.shouldShowSidebarWaiting)
-          .map(([key]) => key)
-      ),
-    [lifecycleSnapshot.tasks]
-  )
+  const { runningTaskKeys, waitingTaskKeys, busyTaskKeys } = useRuntimeTaskSidebarSnapshot()
   const {
     sidebarStateDeviceId,
     sidebarRuntimeProjectSource,
@@ -303,10 +294,11 @@ export function useDesktopSidebarModel({
     localHarnessSessions,
     visibleUnreadRuntimeTaskKeys,
     currentRuntimeTask,
-    lifecycleSnapshot,
+    busyTaskKeys,
+    waitingTaskKeys,
     storageScope,
   })
-  const allPriorityViewTaskItems = useMemo<RuntimePriorityTaskItem[]>(() => {
+  const priorityInventory = useMemo<Omit<RuntimePriorityTaskItem, 'reason'>[]>(() => {
     const projectTasks = sidebarRuntimeProjects.flatMap(projectWork =>
       getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).map(({ workspace, task }) => ({
         workspace,
@@ -314,13 +306,6 @@ export function useDesktopSidebarModel({
         projectName: projectWork.project.name,
         projectStateDeviceId: projectWork.project.stateDeviceId ?? workspace.deviceId,
         isStandaloneChat: false,
-        reason: getRuntimeTaskPriorityReason(
-          workspace,
-          task,
-          visibleUnreadRuntimeTaskKeys,
-          lifecycleSnapshot.runningTaskKeys,
-          waitingTaskKeys
-        ),
       }))
     )
     const standaloneChatTasks = chatTaskItemsWithPinState.map(({ workspace, task }) => ({
@@ -329,49 +314,45 @@ export function useDesktopSidebarModel({
       projectName: null,
       projectStateDeviceId: workspace.deviceId,
       isStandaloneChat: true,
-      reason: getRuntimeTaskPriorityReason(
+    }))
+    return [...projectTasks, ...standaloneChatTasks]
+  }, [chatTaskItemsWithPinState, sidebarRuntimeProjects])
+  const priorityReason = useCallback(
+    ({ workspace, task }: Pick<RuntimePriorityTaskItem, 'workspace' | 'task'>) =>
+      getRuntimeTaskPriorityReason(
         workspace,
         task,
         visibleUnreadRuntimeTaskKeys,
-        lifecycleSnapshot.runningTaskKeys,
+        runningTaskKeys,
         waitingTaskKeys
       ),
-    }))
-
-    return [...projectTasks, ...standaloneChatTasks]
-  }, [
-    chatTaskItemsWithPinState,
-    lifecycleSnapshot.runningTaskKeys,
-    sidebarRuntimeProjects,
-    visibleUnreadRuntimeTaskKeys,
-    waitingTaskKeys,
-  ])
-  const priorityViewSources = useMemo<DesktopSidebarPrioritySource<RuntimePriorityTaskItem>[]>(
-    () =>
-      allPriorityViewTaskItems.map(item => ({
-        key: getRuntimeTaskSortableId(item.workspace, item.task),
-        item,
-        pinned: Boolean(item.task.pinned),
-        pinnedOrder: item.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER,
-        priorityRank: item.reason === null ? null : getRuntimeTaskPriorityRank(item.reason),
-        recencyAt: getRuntimeTaskActivityTime(item.task),
-      })),
-    [allPriorityViewTaskItems]
+    [runningTaskKeys, visibleUnreadRuntimeTaskKeys, waitingTaskKeys]
   )
-  const livePriorityTaskItems = useMemo(
-    () =>
-      allPriorityViewTaskItems
-        .filter(item => item.reason !== null)
-        .sort(
-          (left, right) =>
-            getRuntimeTaskPriorityRank(left.reason!) - getRuntimeTaskPriorityRank(right.reason!) ||
-            getRuntimeTaskActivityTime(right.task) - getRuntimeTaskActivityTime(left.task)
-        ),
-    [allPriorityViewTaskItems]
+  const readPrioritySources = useCallback(
+    (): DesktopSidebarPrioritySource<RuntimePriorityTaskItem>[] =>
+      priorityInventory.map(task => {
+        const reason = priorityReason(task)
+        return {
+          key: getRuntimeTaskSortableId(task.workspace, task.task),
+          item: { ...task, reason },
+          pinned: Boolean(task.task.pinned),
+          pinnedOrder: task.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER,
+          priorityRank: reason === null ? null : getRuntimeTaskPriorityRank(reason),
+          recencyAt: getRuntimeTaskActivityTime(task.task),
+        }
+      }),
+    [priorityInventory, priorityReason]
   )
-  const priorityNeedsAttention = livePriorityTaskItems.length > 0
+  const priorityViewSources = useMemo(
+    () => (priorityFilterActive ? readPrioritySources() : []),
+    [priorityFilterActive, readPrioritySources]
+  )
+  const priorityNeedsAttention = useMemo(
+    () => priorityInventory.some(task => priorityReason(task) !== null),
+    [priorityInventory, priorityReason]
+  )
   let currentPrioritySession = prioritySession
-  if (priorityFilterActive && currentPrioritySession) {
+  if (currentPrioritySession) {
     const reconciledSession = reconcileDesktopSidebarPrioritySession(
       currentPrioritySession,
       priorityViewSources,
@@ -390,22 +371,20 @@ export function useDesktopSidebarModel({
       )
     : {
         pinnedItems: [],
-        priorityItems: livePriorityTaskItems,
+        priorityItems: [],
         recentGroups: [],
       }
   const setPriorityFilterEnabled = useCallback(
     (enabled: boolean) => {
       if (!enabled) {
-        setPriorityFilterActive(false)
         setPrioritySession(null)
         return
       }
       setPrioritySession(
-        createDesktopSidebarPrioritySession(priorityViewSources, priorityShowPinned)
+        createDesktopSidebarPrioritySession(readPrioritySources(), priorityShowPinned)
       )
-      setPriorityFilterActive(true)
     },
-    [priorityShowPinned, priorityViewSources, setPriorityFilterActive, setPrioritySession]
+    [priorityShowPinned, readPrioritySources, setPrioritySession]
   )
   const selectedTaskViewAction =
     taskViewAction === 'board' && !onToggleMyWork ? 'priority' : taskViewAction

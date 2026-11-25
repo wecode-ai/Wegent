@@ -24,6 +24,28 @@ use crate::config::AuthConfig;
 /// `verify_task_token`'s required `type` claim value.
 const TASK_TOKEN_TYPE: &str = "task_token";
 
+pub fn create_personal_runtime_token(
+    config: &AuthConfig,
+    user_id: i64,
+    user_name: &str,
+) -> Result<String, crate::http_compat::FastApiError> {
+    let now = chrono::Utc::now().timestamp();
+    let hour = 60 * 60;
+    let expires_at = now - now.rem_euclid(hour) + 24 * hour;
+    crate::wework_auth_tokens::create_token(
+        &config.jwt_key,
+        &config.algorithm,
+        serde_json::json!({
+            "type": TASK_TOKEN_TYPE,
+            "task_id": 0,
+            "subtask_id": 0,
+            "user_id": user_id,
+            "user_name": user_name,
+            "exp": expires_at,
+        }),
+    )
+}
+
 /// The authenticated task identity carried by a verified task token.
 pub struct TaskTokenIdentity {
     pub user_id: i64,
@@ -131,6 +153,17 @@ mod tests {
             legacy_jwt_keys: Vec::new(),
             algorithm: "HS256".to_string(),
         }
+    }
+
+    #[test]
+    fn personal_runtime_token_uses_the_verified_account_without_task_delegation() {
+        let config = config();
+        let token = create_personal_runtime_token(&config, 42, "account").unwrap();
+        let identity = verify(&config, Some(&format!("Bearer {token}"))).unwrap();
+        assert_eq!(identity.user_id, 42);
+        assert_eq!(identity.user_name, "account");
+        assert_eq!((identity.task_id, identity.subtask_id), (0, 0));
+        assert!(identity.expire_at > chrono::Utc::now().timestamp());
     }
 
     fn token_for(claims: serde_json::Value) -> String {

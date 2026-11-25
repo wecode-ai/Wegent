@@ -301,6 +301,7 @@ fn profile_settings_schema() -> Value {
     },"required":["automatic","askBeforeAct","immediate"]});
     let collaboration = json!({"type":"object","properties":{
         "enabled":{"type":"boolean"},"allProjects":{"type":"boolean"},
+        "includeParticipatingIssues":{"type":"boolean"},
         "projects":{"type":"array","items":project},
         "excludedProjects":{"type":"array","items":project},
         "tags":{"type":"array","items":{"type":"string"},"description":"Incoming Issue tag filter, not descriptive role keywords. Use [] to receive all assigned Issues; only restrict tags when the user requests it."},"policy":policy

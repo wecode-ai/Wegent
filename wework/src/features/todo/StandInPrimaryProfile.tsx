@@ -21,6 +21,7 @@ import type { StandInConnectionNavigationHandle } from './StandInConnectionSetti
 import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
+import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
 import {
   StandInSettingsActions,
   StandInSettingsEntry,
@@ -452,6 +453,11 @@ export function StandInPrimaryProfile({
                 onChange={onSelectDevice}
               />
             }
+          />
+          <StandInTaskPermissionSettings
+            value={draft.taskPermissions}
+            disabled={blocked}
+            onChange={taskPermissions => setDraft(current => ({ ...current, taskPermissions }))}
           />
           <p className="text-xs text-text-secondary">
             {t('standIn.workspace.execution_device_help')}

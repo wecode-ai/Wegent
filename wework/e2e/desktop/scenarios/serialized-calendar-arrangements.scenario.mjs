@@ -17,6 +17,8 @@ import {
 const USER = 9001
 const MARKER = 'CALENDAR_SERIAL_QUEUE_WORK'
 const AUTOMATION = 'calendar-serialized-deadlines'
+const PERSONAL_AUTOMATION = 'personal-schedule-after-restart'
+const WORKSPACE_PROJECT = 'arrangement-recovery-workspace'
 
 /** Reuse the existing recovery checkpoint and hold only its model service. */
 export function createDesktopScenario(options) {
@@ -60,6 +62,7 @@ export function createDesktopScenario(options) {
       const model = catalog.models.find(row => row.runtime === 'codex' && row.is_default)
       assert.ok(model)
       const runs = []
+      const interruptedRunId = randomUUID()
       try {
         await rpc('runtime.stand_in.personal.save', {
           userId: USER,
@@ -103,6 +106,24 @@ export function createDesktopScenario(options) {
             taskPayload: { runtime: 'codex', title: '同一安排逐轮执行' },
           },
         })
+        await rpc('runtime.automations.create', {
+          automation: {
+            id: PERSONAL_AUTOMATION,
+            version: 0,
+            name: '恢复项目定时任务',
+            prompt: 'Review the linked project',
+            enabled: true,
+            timezone: 'UTC',
+            schedule: { type: 'one_time', execute_at: '2099-01-01T00:00:00Z' },
+            taskRequest: {
+              deviceId: 'local-device',
+              runtime: 'codex',
+              message: 'Review the linked project',
+              runtimeProjectKey: WORKSPACE_PROJECT,
+            },
+            taskPayload: { runtime: 'codex', title: '恢复项目定时任务' },
+          },
+        })
         await options.restartDesktopApp({
           afterStop: async () => {
             const path = join(options.executorHome, 'runtime-work', 'automations.json')
@@ -130,6 +151,17 @@ export function createDesktopScenario(options) {
               state.runs.push(run)
               runs.push(run)
             }
+            const interruptedAt = new Date(Date.now() - 60_000).toISOString()
+            state.runs.push({
+              id: interruptedRunId,
+              automationId: PERSONAL_AUTOMATION,
+              scheduledFor: interruptedAt,
+              trigger: 'scheduled',
+              status: 'running',
+              taskId: 'interrupted-unowned-task',
+              createdAt: interruptedAt,
+              updatedAt: interruptedAt,
+            })
             await writeFile(path, JSON.stringify(state))
           },
         })
@@ -164,6 +196,30 @@ export function createDesktopScenario(options) {
           options.modelResponseTimeoutMs + options.uiTimeoutMs
         )
         assert.equal(calls, 2, 'Each deadline must execute exactly once')
+
+        const scheduledItem = `[data-testid="automation-open-${PERSONAL_AUTOMATION}"]`
+        const projectPicker = '[data-testid="automation-project-select"]'
+        const saveButton = '[data-testid="automation-save-button"]'
+        await control.command('clickWhenEnabled', '[data-testid="automation-button"]')
+        await control.command('clickWhenEnabled', scheduledItem)
+        const interruptedStatus = `[data-testid="automation-run-status-${interruptedRunId}"]`
+        await control.command('waitFor', interruptedStatus, { text: '需要关注' })
+        await control.command('scrollIntoView', interruptedStatus)
+        await options.captureScreenshot(control, 'automation-interrupted-run.png')
+        await control.command('waitFor', projectPicker, { text: 'Arrangement workspace' })
+        await control.command('fill', '[data-testid="automation-prompt-input"]', {
+          value: 'Review the linked project after restart',
+        })
+        await control.command('clickWhenEnabled', saveButton)
+        await control.command('waitFor', saveButton, { visible: false })
+        await control.command('waitFor', projectPicker, { text: 'Arrangement workspace' })
+        await control.command('click', '[data-testid="automation-detail-close"]')
+        await control.command('clickWhenEnabled', scheduledItem)
+        await control.command('waitFor', projectPicker, { text: 'Arrangement workspace' })
+        await control.command('scrollIntoView', projectPicker)
+        await options.captureScreenshot(control, 'automation-reopened-project.png')
+        const saved = await rpc('runtime.automations.get', { automationId: PERSONAL_AUTOMATION })
+        assert.equal(saved.automation.taskRequest.runtimeProjectKey, WORKSPACE_PROJECT)
       } catch (error) {
         failureDiagnostics = {
           runs: await rpc('runtime.automation_runs.list'),
@@ -173,6 +229,7 @@ export function createDesktopScenario(options) {
       } finally {
         releaseFirst?.()
         await rpc('runtime.automations.delete', { automationId: AUTOMATION })
+        await rpc('runtime.automations.delete', { automationId: PERSONAL_AUTOMATION })
         const latest = await rpc('runtime.stand_in.personal.get', { userId: USER })
         await rpc('runtime.stand_in.personal.save', {
           userId: USER,

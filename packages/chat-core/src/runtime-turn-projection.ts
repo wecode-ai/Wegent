@@ -140,6 +140,7 @@ function projectTurn(
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
       runtimeMessageIndex: turn.runtimeMessageIndex,
+      runtimeClientUserMessageId: turn.clientUserMessageId ?? undefined,
       blocks: blocks.length > 0 ? blocks : undefined,
       runtimeDisplayItems: assistantItems.flatMap<RuntimeAssistantDisplayItem>(
         (item) =>

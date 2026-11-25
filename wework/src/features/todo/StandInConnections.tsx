@@ -103,6 +103,20 @@ export function StandInConnections({
         <label className="flex min-h-11 items-start gap-3 md:min-h-9">
           <Checkbox
             className="mt-1 accent-text-primary"
+            data-testid="stand-in-participating-issues"
+            checked={source.includeParticipatingIssues === true}
+            onCheckedChange={checked => setSource({ includeParticipatingIssues: checked === true })}
+          />
+          <span>
+            {t('standIn.workspace.receive_participating_issues')}
+            <span className="mt-1 block text-xs text-text-secondary">
+              {t('standIn.workspace.receive_participating_issues_help')}
+            </span>
+          </span>
+        </label>
+        <label className="flex min-h-11 items-start gap-3 md:min-h-9">
+          <Checkbox
+            className="mt-1 accent-text-primary"
             data-testid="stand-in-independent-issues"
             checked={source.includeIndependentIssues === true}
             disabled={disabled}

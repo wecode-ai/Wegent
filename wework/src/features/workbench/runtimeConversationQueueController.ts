@@ -218,6 +218,13 @@ class RuntimeConversationQueueController {
           lifecyclePresent: dependencies.lifecycleStore.getTask(this.address) !== null,
         })
         retainRuntimeQueuedMessage(this.address, message, result.queuePosition)
+      } else if (result.accepted && result.guidanceTurnId) {
+        this.busyBlocks.delete(message.id)
+        this.update(message.id, {
+          deliveryMode: 'guidance',
+          awaitingTurnStart: undefined,
+          awaitingGuidanceAcceptance: undefined,
+        })
       } else if (result.accepted) {
         this.busyBlocks.delete(message.id)
         if (runtimeConversationMessageHasStartedTurn(this.address, message.id)) {
@@ -243,7 +250,10 @@ class RuntimeConversationQueueController {
   private useDependencies(dependencies: QueueDependencies): void {
     if (this.dependencies?.lifecycleStore !== dependencies.lifecycleStore) {
       this.unsubscribeLifecycle?.()
-      this.unsubscribeLifecycle = dependencies.lifecycleStore.subscribe(this.schedule)
+      this.unsubscribeLifecycle = dependencies.lifecycleStore.subscribeTask(
+        this.address,
+        this.schedule
+      )
     }
     this.dependencies = dependencies
   }

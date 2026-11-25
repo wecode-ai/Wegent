@@ -1898,6 +1898,14 @@ export function createHybridWorkbenchServices(
           return (await standInApiForDevice(deviceId)).taskCommands.resolve(deviceId, resolution)
         },
       },
+      async setTaskPermissions(userId, deviceId, taskId, taskPermissions) {
+        return (await standInApiForDevice(deviceId)).setTaskPermissions(
+          userId,
+          deviceId,
+          taskId,
+          taskPermissions
+        )
+      },
       async gitConnection(deviceId, input) {
         return (await standInApiForDevice(deviceId)).gitConnection(deviceId, input)
       },
@@ -2086,8 +2094,8 @@ export function createHybridWorkbenchServices(
       async proposal(userId, deviceId, roleId) {
         return (await standInApiForDevice(deviceId)).proposal(userId, deviceId, roleId)
       },
-      async latestAppliedGhost(userId, deviceId, roleId) {
-        return (await standInApiForDevice(deviceId)).latestAppliedGhost(userId, deviceId, roleId)
+      async learningReport(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).learningReport(userId, deviceId, roleId)
       },
       async resolveProposal(userId, deviceId, proposalId, accept, undoVersion) {
         return (await standInApiForDevice(deviceId)).resolveProposal(
@@ -2120,8 +2128,13 @@ export function createHybridWorkbenchServices(
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
       },
-      async personalSave(userId, settings, deviceId) {
-        return (await standInApiForDevice(deviceId)).personalSave(userId, settings, deviceId)
+      async personalSave(userId, settings, deviceId, transferRoleId) {
+        return (await standInApiForDevice(deviceId)).personalSave(
+          userId,
+          settings,
+          deviceId,
+          transferRoleId
+        )
       },
       async saveDelegationRoute(userId, deviceId, version, roleId, route) {
         return (await standInApiForDevice(deviceId)).saveDelegationRoute(

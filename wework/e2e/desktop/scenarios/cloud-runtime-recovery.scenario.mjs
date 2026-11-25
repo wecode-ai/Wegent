@@ -15,11 +15,14 @@ import {
   handleEmptyReplyPrediction,
   readRequestBody,
   streamingTextEvents,
+  responseCreated,
+  responseCompleted,
 } from '../modules/response-protocol.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForTranscriptState } from '../modules/transcript-restoration.mjs'
 import { createRuntimeNotificationReconnect } from '../modules/runtime-notification-reconnect.mjs'
 import { createRuntimeImQuestions } from '../modules/runtime-im-questions.mjs'
+import { createCloudQuestionAttachments } from '../modules/cloud-question-attachments.mjs'
 
 const PROMPT = 'WEWORK_E2E_CLOUD_STREAM_RECOVERY'
 const PARTIAL = 'CLOUD_STREAM_PARTIAL'
@@ -38,6 +41,7 @@ export function createDesktopScenario(options) {
   const existing = createCloudModelRecovery(options)
   const notifications = createRuntimeNotificationReconnect(options)
   const questions = createRuntimeImQuestions(options)
+  const questionFiles = createCloudQuestionAttachments(options)
   const appEnvironment = { ...existing.appEnvironment }
   let cloud
   let proxy
@@ -47,6 +51,14 @@ export function createDesktopScenario(options) {
   return {
     ...existing,
     appEnvironment,
+    // Cloud resources use this Codex capability identity independently of their
+    // public resource name and upstream model ID.
+    cloudModelCatalogOverrides: [
+      {
+        slug: 'wework-gpt-6.1-sol',
+        fields: { experimental_supported_tools: ['request_user_input_async'] },
+      },
+    ],
     async prepareCloud(value) {
       await existing.prepareCloud(value)
       proxy = await new TransportFaultProxy(value.backendUrl).start()
@@ -66,6 +78,18 @@ export function createDesktopScenario(options) {
         return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
+      const questionEvents = questionFiles.respond(body)
+      if (questionEvents) {
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(
+          createSse([
+            responseCreated('cloud-question'),
+            ...questionEvents,
+            responseCompleted('cloud-question'),
+          ])
+        )
+        return true
+      }
       if (!JSON.stringify(body).includes(PROMPT)) return false
       assert.equal(finishModel, undefined, 'The held cloud model request was duplicated')
       const stream = streamingTextEvents('cloud-stream-recovery', COMPLETED, 'final_answer')
@@ -179,6 +203,12 @@ export function createDesktopScenario(options) {
       } finally {
         finishModel?.()
         proxy.disconnectWebSockets(false)
+        active = false
+      }
+      active = true
+      try {
+        await questionFiles.verify(cloud, control)
+      } finally {
         active = false
       }
       await notifications.verify(cloud, control)
