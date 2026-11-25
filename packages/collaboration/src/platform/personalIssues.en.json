@@ -22,6 +22,7 @@
     "runningCount": "{{count}} running",
     "title": "My work",
     "subtitle": "Your issues and the work your assistant is moving forward.",
+    "webSubtitle": "See issues that need your action and issues you participate in.",
     "assigned": "Needs my action",
     "me": "Me",
     "participating": "Participating",
@@ -147,6 +148,9 @@
     "create_task": "Create task",
     "record_submit": "Record",
     "record_placeholder": "Capture an issue, or assign it to a teammate or assistant…",
+    "web_record_placeholder": "Record an issue and assign it to a collaborator if needed…",
+    "launch_unconfirmed": "Task launch could not be confirmed. Check the linked task before trying again.",
+    "no_execution_device": "No execution device is available. Your draft is kept.",
     "do_myself": "Me"
   },
   "taskIssueShare": {

@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test'
 const EXECUTOR_REGRESSION_SPEC =
   /(tasks\/(agent-conversation-regression|chat-sandbox-connector|claude-background-lifecycle|claudecode-compaction|executor-workspace-recovery|pipeline-session-archive|provider-native-claudecode|shell-reference-cancel|device-artifact-declaration|device-ide)|collaboration\/(collaboration-agent-execution|issue-dispatch-executor))\.spec\.ts/
 const EXECUTOR_INDEPENDENT_SPEC =
-  /tasks\/(chat-sandbox-connector|claude-background-lifecycle|device-ide|executor-workspace-recovery|pipeline-session-archive|provider-native-claudecode|shell-reference-cancel)\.spec\.ts/
+  /tasks\/(chat-sandbox-connector|claude-background-lifecycle|device-artifact-declaration|device-ide|executor-workspace-recovery|pipeline-session-archive|provider-native-claudecode|shell-reference-cancel)\.spec\.ts/
 const STALLED_CHAT_SPEC = /tasks\/chat-stalled-execution\.spec\.ts/
 // Specs that share the mock provider MCP server and must run serially.
 const PROVIDER_NATIVE_CHAT_SPEC =
@@ -144,7 +144,7 @@ export default defineConfig({
       dependencies: ['setup'],
     },
     {
-      // Keep the existing CI entry point and run isolated files after device flows.
+      // Each CI project has its own services. Local combined runs keep their existing order.
       name: 'executor-chromium',
       testMatch: EXECUTOR_INDEPENDENT_SPEC,
       workers: 2,
@@ -153,7 +153,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',
       },
-      dependencies: ['executor-device-chromium'],
+      dependencies: [process.env.E2E_EXECUTOR_PROJECT ? 'setup' : 'executor-device-chromium'],
     },
   ],
 

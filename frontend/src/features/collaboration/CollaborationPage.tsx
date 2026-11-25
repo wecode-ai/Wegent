@@ -13,7 +13,14 @@ import {
   type ProjectSurfaceFeatureFlags,
 } from '@wegent/collaboration/project-shell'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+  type ComponentProps,
+} from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   CollaborationPlatformApp,
@@ -26,6 +33,7 @@ import {
   type CollaborationWorkspaceView,
 } from '@wegent/collaboration'
 import {
+  BrowserPersonalHomeIssue,
   createPersonalIssueTranslator,
   IndependentIssueDialog,
   PersonalIssuesView,
@@ -114,6 +122,7 @@ function CollaborationWebShell({
         </div>
       ) : (
         <ResizableSidebar
+          flush
           minWidth={220}
           maxWidth={360}
           defaultWidth={244}
@@ -374,6 +383,95 @@ export function CollaborationPage({
     }
   }, [api, directPath, legacyIssueId, legacyProjectId, projectView, removedRootRoute, router])
 
+  const renderPersonalIssues = useCallback(
+    (
+      scope: ComponentProps<typeof PersonalIssuesView>['scope'],
+      projects: ComponentProps<typeof PersonalIssuesView>['projects'],
+      onOpenIssue: ComponentProps<typeof PersonalIssuesView>['onOpenIssue'],
+      home?: ComponentProps<typeof PersonalIssuesView>['home']
+    ) => {
+      if (!user) return null
+      const open = (id?: string) => {
+        const params = new URLSearchParams(searchParams.toString())
+        if (id) params.set('personalIssueId', id)
+        else params.delete('personalIssueId')
+        router.push(params.size ? `${pathname}?${params}` : pathname)
+      }
+      return (
+        <PersonalIssuesView
+          key={`${accountScope}:${scope}`}
+          scope={scope}
+          sources={[api]}
+          projects={projects}
+          userId={user.id}
+          active={home?.contentVisible ?? true}
+          home={home}
+          language={locale}
+          translate={issueTranslate}
+          onOpenIssue={issue => {
+            if (!home) {
+              onOpenIssue(issue)
+            } else if (issue.cloud_project_id && issue.can_view_detail !== false) {
+              router.push(
+                `/collaboration/${encodeURIComponent(issue.cloud_project_id)}/issues/${encodeURIComponent(issue.id)}`
+              )
+            }
+          }}
+          renderIssueDetail={
+            home
+              ? context => (
+                  <BrowserPersonalHomeIssue
+                    api={api}
+                    locale={locale}
+                    context={context}
+                    translate={issueTranslate}
+                  />
+                )
+              : undefined
+          }
+          onOpenProject={project => router.push(`/collaboration/${encodeURIComponent(project.id)}`)}
+          independent={{
+            api: webPersonalIssuesApi,
+            userId: user.id,
+            revision: personalIssueRevision,
+            create: () => setIssueCreationScope(accountScope),
+          }}
+          independentSelection={{
+            id: searchParams.get('personalIssueId') ?? undefined,
+            select: open,
+          }}
+          renderIndependentIssue={drawer => (
+            <IndependentIssueDialog
+              key={drawer.issueId}
+              {...drawer}
+              api={webPersonalIssuesApi}
+              collaborationApi={api}
+              userId={user.id}
+              presentation="embedded"
+              saveAttachment={saveBrowserIssueAttachment}
+              onMovedToProject={(project, issue) =>
+                router.replace(
+                  `/collaboration/${encodeURIComponent(project)}/issues/${encodeURIComponent(issue)}`
+                )
+              }
+            />
+          )}
+        />
+      )
+    },
+    [
+      accountScope,
+      api,
+      issueTranslate,
+      locale,
+      pathname,
+      personalIssueRevision,
+      router,
+      searchParams,
+      user,
+    ]
+  )
+
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
       accountScope,
@@ -409,57 +507,10 @@ export function CollaborationPage({
       },
       templateNavigation: true,
       createIndependentIssue: user ? () => setIssueCreationScope(accountScope) : undefined,
-      renderIssueList: ({ scope, projects, onOpenIssue }) => {
-        if (!user) return null
-        const open = (id?: string) => {
-          const params = new URLSearchParams(searchParams.toString())
-          if (id) params.set('personalIssueId', id)
-          else params.delete('personalIssueId')
-          router.push(params.size ? `${pathname}?${params}` : pathname)
-        }
-        return (
-          <PersonalIssuesView
-            key={`${accountScope}:${scope}`}
-            scope={scope}
-            sources={[api]}
-            projects={projects}
-            userId={user.id}
-            active
-            language={locale}
-            translate={issueTranslate}
-            onOpenIssue={onOpenIssue}
-            onOpenProject={project =>
-              router.push(`/collaboration/${encodeURIComponent(project.id)}`)
-            }
-            independent={{
-              api: webPersonalIssuesApi,
-              userId: user.id,
-              revision: personalIssueRevision,
-              create: () => setIssueCreationScope(accountScope),
-            }}
-            independentSelection={{
-              id: searchParams.get('personalIssueId') ?? undefined,
-              select: open,
-            }}
-            renderIndependentIssue={drawer => (
-              <IndependentIssueDialog
-                key={drawer.issueId}
-                {...drawer}
-                api={webPersonalIssuesApi}
-                collaborationApi={api}
-                userId={user.id}
-                presentation="embedded"
-                saveAttachment={saveBrowserIssueAttachment}
-                onMovedToProject={(project, issue) =>
-                  router.replace(
-                    `/collaboration/${encodeURIComponent(project)}/issues/${encodeURIComponent(issue)}`
-                  )
-                }
-              />
-            )}
-          />
-        )
-      },
+      renderPersonalHome: home =>
+        renderPersonalIssues('home', home.projects, home.onOpenIssue, home),
+      renderIssueList: ({ scope, projects, onOpenIssue }) =>
+        renderPersonalIssues(scope, projects, onOpenIssue),
       location: {
         platformView: 'spaces',
         rootView,
@@ -519,14 +570,12 @@ export function CollaborationPage({
       accountScope,
       api,
       issueId,
-      issueTranslate,
-      locale,
       pathname,
-      personalIssueRevision,
       projectId,
       projectView,
       projectSettingsSection,
       rootView,
+      renderPersonalIssues,
       router,
       user,
       workspaceId,
