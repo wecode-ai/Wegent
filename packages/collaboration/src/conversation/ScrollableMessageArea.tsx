@@ -56,6 +56,7 @@ function ScrollableMessagePaneContent({
   turnNavigationPortalTarget,
   conversationKey,
   devices,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -309,6 +310,7 @@ function ScrollableMessagePaneContent({
                 waitingIndicatorStyle={waitingIndicatorStyle}
                 disableContentVisibility={turnNavigationLoading}
                 devices={devices}
+                onContinueInNewConversation={onContinueInNewConversation}
                 onRetryFailedMessage={onRetryFailedMessage}
                 onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
                 onLoadFileChangesDiff={onLoadFileChangesDiff}

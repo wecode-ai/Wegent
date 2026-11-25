@@ -160,6 +160,12 @@ pub(super) fn prepare_request_with_model_hint(
             detail: format!("Failed to convert local model request: {error}"),
         })?;
         responses_body = converted;
+        if let Some(items) = responses_body
+            .get_mut("input")
+            .and_then(Value::as_array_mut)
+        {
+            merge_tool_outputs(items);
+        }
         request_policy::strip_incompatible_responses_history_ids(&mut responses_body);
         if tool_capabilities.function_tools_only {
             request_policy::retain_function_tools(&mut responses_body)?;
@@ -191,6 +197,61 @@ pub(super) fn prepare_request_with_model_hint(
         detail: format!("Failed to serialize local model request: {error}"),
     })?;
     Ok((body, Some(context), HashSet::new()))
+}
+
+// Code Mode can emit both the cell result and notify() updates for one call.
+fn merge_tool_outputs(items: &mut Vec<Value>) {
+    let mut first_by_call = std::collections::HashMap::new();
+    let mut removed = false;
+    for index in 0..items.len() {
+        let item = &items[index];
+        if matches!(
+            item["type"].as_str(),
+            Some("function_call" | "custom_tool_call")
+        ) {
+            // Forked history can contain an earlier invocation with the same provider ID.
+            if let Some(id) = item["call_id"].as_str() {
+                first_by_call.remove(id);
+            }
+            continue;
+        }
+        if !matches!(
+            item["type"].as_str(),
+            Some("function_call_output" | "custom_tool_call_output")
+        ) {
+            continue;
+        }
+        let Some(id) = item["call_id"].as_str().filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        let first = *first_by_call.entry(id.to_owned()).or_insert(index);
+        if first == index {
+            continue;
+        }
+        let extra = items[index]["output"].take();
+        let output = &mut items[first]["output"];
+        match (&mut *output, extra) {
+            (Value::String(original), Value::String(text)) => {
+                original.push('\n');
+                original.push_str(&text);
+            }
+            (output, extra) => {
+                if !output.is_array() {
+                    *output = json!([{"type":"input_text","text":output.take()}]);
+                }
+                let parts = output.as_array_mut().unwrap();
+                match extra {
+                    Value::Array(more) => parts.extend(more),
+                    text => parts.push(json!({"type":"input_text","text":text})),
+                }
+            }
+        }
+        items[index] = Value::Null;
+        removed = true;
+    }
+    if removed {
+        items.retain(|item| !item.is_null());
+    }
 }
 
 fn group_responses_tool_history(body: &mut Value) {

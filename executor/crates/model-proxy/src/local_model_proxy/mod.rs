@@ -332,6 +332,12 @@ pub fn upstream_from_model_config(
         .or_else(|| non_empty_string(model_config, "apiKey"))
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
+    let mut default_headers = header_pairs(model_config.get("default_headers"));
+    if codex_request_mode == CodexRequestMode::Passthrough
+        && model_config["wework_model_kind"] == "cloud"
+    {
+        default_headers.push(("X-Wegent-Request-Mode".to_owned(), "passthrough".to_owned()));
+    }
     Ok(Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
@@ -350,7 +356,7 @@ pub fn upstream_from_model_config(
             .or_else(|| boolean_value(model_config, "nativeNamespaceTools"))
             .unwrap_or(false),
         api_key,
-        default_headers: header_pairs(model_config.get("default_headers")),
+        default_headers,
         proxy_url: model_config
             .get("proxy")
             .and_then(|proxy| {

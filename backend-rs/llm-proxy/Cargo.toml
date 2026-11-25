@@ -21,6 +21,7 @@ regex.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
+wegent-protocol.workspace = true
 wegent-access.workspace = true
 wegent-http-compat.workspace = true
 wegent-identity.workspace = true

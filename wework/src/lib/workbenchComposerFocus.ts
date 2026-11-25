@@ -7,6 +7,10 @@ export interface WorkbenchComposerFocusDetail {
   scopeKey: string
 }
 
+export interface NewWorkbenchChatOptions {
+  initialInput?: string
+}
+
 interface PendingWorkbenchComposerFocus {
   scopeKey: string
   consumers: Set<symbol>
@@ -17,16 +21,16 @@ const WORKBENCH_COMPOSER_FOCUS_TTL_MS = 2_000
 const WORKBENCH_COMPOSER_FOCUS_RETRY_MS = 16
 let pendingWorkbenchComposerFocus: PendingWorkbenchComposerFocus | null = null
 const pendingNewChatScopes = new Set<string>()
-let pendingWorkbenchNewChat = false
+let pendingWorkbenchNewChat: NewWorkbenchChatOptions | null = null
 
-export function requestWorkbenchNewChat() {
-  pendingWorkbenchNewChat = true
+export function requestWorkbenchNewChat(options: NewWorkbenchChatOptions = {}) {
+  pendingWorkbenchNewChat = options
   window.dispatchEvent(new Event(WORKBENCH_NEW_CHAT_REQUEST_EVENT))
 }
 
 export function consumeWorkbenchNewChatRequest() {
   const pending = pendingWorkbenchNewChat
-  pendingWorkbenchNewChat = false
+  pendingWorkbenchNewChat = null
   return pending
 }
 
