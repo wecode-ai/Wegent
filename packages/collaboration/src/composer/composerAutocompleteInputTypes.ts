@@ -46,8 +46,8 @@ export interface ComposerAutocompleteInputProps<
   onSubmit(value?: string, options?: import('./composerInputTypes').ComposerSubmitOptions): void
   testId?: string
   predictionStatusTarget?: HTMLElement | null
-  skillMenuClassName?: string
-  slashMenuClassName?: string
+  /** Width only; the anchored popup owns placement. */
+  slashMenuWidthClassName?: string
   disableAutocomplete?: boolean
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceMentionTarget | null

@@ -140,6 +140,15 @@ async function verifyComposerEditorScroll({ composerSelector, control }) {
     menu.bottom <= viewport.top,
     'The autocomplete menu must open outside the clipped content'
   )
+  const menuMaxWidth = Math.min(448, viewport.viewportWidth - 32)
+  assert.ok(
+    menu.width <= menuMaxWidth + 1,
+    `The autocomplete menu must retain its width limit: width=${menu.width}, max=${menuMaxWidth}`
+  )
+  assert.ok(
+    menu.left >= 0 && menu.right <= viewport.viewportWidth,
+    `The autocomplete menu must remain inside the viewport: ${JSON.stringify(menu)}`
+  )
   await control.command('press', composerSelector, { key: 'Escape' })
   await control.command('fill', composerSelector, { value: '' })
 }

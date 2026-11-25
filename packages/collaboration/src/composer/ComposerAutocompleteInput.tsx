@@ -64,6 +64,7 @@ import {
 import { selectComposerMentionRow } from './selectComposerMentionRow'
 import { useScrollRequest } from '../dom-events'
 const EMPTY_EVENTS = {}
+const MENTION_MENU_WIDTH = 'w-[min(28rem,calc(100vw-2rem))]'
 const noAppLogo = () => ({ url: null, contrastPad: false, source: 'none' })
 const defaultAppIcon = (command: SlashCommand) => (
   <ComposerPluginIcon
@@ -94,8 +95,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   className,
   scrollContainerClassName,
   nativeEmptyCaret = false,
-  skillMenuClassName = 'w-[min(28rem,calc(100vw-2rem))]',
-  slashMenuClassName = skillMenuClassName,
+  slashMenuWidthClassName = MENTION_MENU_WIDTH,
   disableAutocomplete = false,
   onKeyDown,
   onPasteFiles,
@@ -921,7 +921,9 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
           label={
             modelMenuOpen ? t('workbench.search_models') : t('workbench.slash_command_menu_title')
           }
-          className={showSlashMenu && !modelMenuOpen ? slashMenuClassName : skillMenuClassName}
+          className={
+            showSlashMenu && !modelMenuOpen ? slashMenuWidthClassName : MENTION_MENU_WIDTH
+          }
           onClose={restoreEditor => {
             if (modelMenuOpen) closeSlashModelMenu(restoreEditor)
             else closeAutocompleteMenu()
