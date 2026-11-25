@@ -1564,6 +1564,7 @@ impl RuntimeWorkRpcHandler {
                 delegation["attempt"] = json!(attempt);
             }
             self.refresh_identity_conversation_origin(&mut request, link)?;
+            self.apply_shared_stand_in_prompt(&mut request, payload["assistantPrompt"].as_str())?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
         // A prepared local request defaults to a new native session, while a

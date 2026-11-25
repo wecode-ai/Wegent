@@ -11,11 +11,12 @@ export async function saveStandInRoleDevice(
     source: PersonalStandInSettings
     draft: PersonalStandInSettings
     role: StandInRole
+    definitionChange?: Parameters<StandInExecutorApi['personalSave']>[4]
   }
 ): Promise<StandInRole> {
   const { userId, sourceDevice, source, draft, role } = input
   const targetDevice = role.executionDeviceId
-  const target = await api.personalGet(userId, targetDevice)
+  const target = await api.personalGet(userId, targetDevice, { deviceSettingsOnly: true })
   if (target.executionDeviceId === source.executionDeviceId) {
     const [sourceIdentity, targetIdentity] = await Promise.all([
       api.deviceIdentity(sourceDevice),
@@ -37,7 +38,9 @@ export async function saveStandInRoleDevice(
               : row
           ),
         },
-        sourceDevice
+        sourceDevice,
+        undefined,
+        input.definitionChange
       )
       return result.roles.find(row => row.id === role.id)!
     }
@@ -110,12 +113,14 @@ export async function saveStandInRoleDevice(
       userId,
       {
         ...staged,
+        cloudDefinitionRevision: target.cloudDefinitionRevision,
         roles: staged.roles.map(row =>
           row.id === role.id ? { ...row, enabled: role.enabled } : row
         ),
       },
       targetDevice,
-      role.id
+      role.id,
+      input.definitionChange
     )
     return result.roles.find(row => row.id === role.id)!
   } catch (cause) {

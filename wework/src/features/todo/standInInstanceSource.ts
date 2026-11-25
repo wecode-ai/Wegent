@@ -24,7 +24,7 @@ interface InstanceObservation {
   active: boolean
   entryRequestKey?: number
 }
-const configured = (settings: PersonalStandInSettings) =>
+export const hasSavedStandIn = (settings: PersonalStandInSettings) =>
   Boolean(
     settings.version > 0 ||
     settings.roles.some(
@@ -105,7 +105,8 @@ export function createStandInInstanceSource({
     const mayBind = () =>
       observed(revision, deviceId) && observation?.active && activation === epoch
     if (!mayBind()) return { binding: unbound }
-    const localOwner = !initialDeviceId && !configured(owned) && !!local && configured(local)
+    const localOwner =
+      !initialDeviceId && !hasSavedStandIn(owned) && !!local && hasSavedStandIn(local)
     const available = owner.connected ? availableStandInDevices(owner.devices) : []
     const preferred = available.find(device => device.is_default) ?? available[0]
     const target = {
@@ -113,7 +114,7 @@ export function createStandInInstanceSource({
       backendUrl: localOwner || userId === LOCAL_USER.id ? '' : backendUrl,
       deviceId:
         initialDeviceId ||
-        (configured(owned) || localOwner ? deviceId : (preferred?.device_id ?? deviceId)),
+        (hasSavedStandIn(owned) || localOwner ? deviceId : (preferred?.device_id ?? deviceId)),
     }
     if (target.deviceId !== deviceId) {
       await api!.personalGet(target.userId, target.deviceId)

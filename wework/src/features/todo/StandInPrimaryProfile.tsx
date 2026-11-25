@@ -82,8 +82,8 @@ export function StandInPrimaryProfile({
     ...defaultRole.collaboration,
     policy: { automatic: true, askBeforeAct: true, immediate: false },
   }
-  // Legacy profiles retain their single editor. Learning-enabled profiles keep sources and private preferences separate.
-  const separatePrompt = saved.selfLearningEnabled !== undefined
+  const separatePrompt =
+    settings.cloudDefinitionRevision !== undefined || saved.selfLearningEnabled !== undefined
   const original = {
     ...saved,
     collaboration: saved.collaboration ?? defaultCollaboration,

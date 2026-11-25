@@ -91,6 +91,7 @@ export type StandInDelegationRoute = Pick<
 >
 
 export interface PersonalStandInSettings {
+  cloudDefinitionRevision?: string
   userId: number
   executionDeviceId: string
   version: number

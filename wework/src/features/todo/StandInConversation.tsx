@@ -1,4 +1,5 @@
 import { standInConversationTaskId } from '@/api/personalStandIn'
+import type { PersonalAssistantDefinition } from '@/api/personalAssistantAccount'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Button } from '@/components/ui/button'
@@ -52,6 +53,7 @@ export function StandInConversation({
   settings,
   services,
   scope,
+  definition,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -69,6 +71,7 @@ export function StandInConversation({
   settings?: Pick<WorkspaceStandInSettings, 'model' | 'modelOptions'>
   services?: WorkbenchServices
   scope?: 'collaboration'
+  definition?: PersonalAssistantDefinition
 }) {
   const [recordOpened] = useState(createStandInOpenedReceipt)
   const openedIdentity = roleId ? 'role' : 'primary'
@@ -274,6 +277,9 @@ export function StandInConversation({
         assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
+        runtimeContext={
+          definition ? { assistantPrompt: definition.ghost.spec.systemPrompt } : undefined
+        }
         allowMessagesDuringApproval
         modelControls={conversationModelControls}
         expanded
@@ -302,6 +308,7 @@ export function StandInConversation({
             const result = await api.conversation(userId, deviceId, message, roleId, {
               ...options.executionModel,
               ...(scope ? { conversationScope: scope } : {}),
+              ...(definition ? { assistantPrompt: definition.ghost.spec.systemPrompt } : {}),
               attachments: localRuntimeAttachments(options.attachments),
               clientUserMessageId: options.optimisticUserMessage.id,
             })

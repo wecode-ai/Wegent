@@ -49,6 +49,29 @@ fn onboarding_never_resumes_unrelated_persisted_turns() {
 }
 
 #[tokio::test]
+async fn implicit_primary_learning_report_is_empty_on_its_own_executor() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let request = json!({"userId":7,"learningReport":true});
+    let report = handler
+        .stand_in_proposal(request.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        report,
+        json!({"iterations":0,"latest":null,"revision":null})
+    );
+    assert!(store.configured_personal_stand_in(7, "mac").unwrap()["primary"].is_null());
+
+    let settings = store.personal_stand_in(7, "remote").unwrap();
+    store.save_personal_stand_in(7, "remote", settings).unwrap();
+    let error = handler.stand_in_proposal(request, false).await.unwrap_err();
+    assert_eq!(error.code, "permission_denied");
+}
+
+#[tokio::test]
 async fn scheduled_review_uses_the_real_run_window_and_rejects_stale_versions() {
     let root = tempfile::tempdir().unwrap();
     let (handler, mut identity) = fixture(root.path());

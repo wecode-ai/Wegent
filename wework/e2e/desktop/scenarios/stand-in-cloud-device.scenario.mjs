@@ -79,6 +79,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   modelResponseTimeoutMs,
+  captureScreenshot,
 }) {
   let cloud
   let modelRequests = 0
@@ -215,14 +216,73 @@ export function createDesktopScenario({
         userId: member.id,
         operation: 'start',
       })
+      const localProfile = await rpc(control, 'runtime.stand_in.personal.get', {
+        userId: member.id,
+      })
+      const legacyPrompt = 'Check the source before answering.'
+      await rpc(control, 'runtime.stand_in.personal.save', {
+        userId: member.id,
+        settings: {
+          ...localProfile,
+          primary: {
+            enabled: true,
+            preferences: '',
+            ...localProfile.primary,
+            prompt: legacyPrompt,
+          },
+        },
+      })
+      const readCloudAssistant = () =>
+        fetchJson(`${cloud.backendUrl}/api/v1/personal-assistant`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          signal: AbortSignal.timeout(uiTimeoutMs),
+        })
+      assert.equal((await readCloudAssistant()).assistant, null)
       await reloadMainWindow(control)
+      const migrateConfirm = testId('personal-assistant-account-migrate-confirm')
+      await control.command('waitFor', migrateConfirm, { timeoutMs: uiTimeoutMs })
+      await captureScreenshot(control, 'personal-assistant-01-migration-confirmation.png')
+      await control.command('clickWhenEnabled', testId('personal-assistant-account-migrate-cancel'))
+      await control.command('waitFor', migrateConfirm, { visible: false, timeoutMs: uiTimeoutMs })
+      assert.equal(
+        (await readCloudAssistant()).assistant,
+        null,
+        'Cancel leaves the cloud account uninitialized'
+      )
+      const migrate = testId('personal-assistant-account-initialize')
       await control.command('waitFor', testId('stand-in-overview'))
+      await captureScreenshot(control, 'personal-assistant-02-migration-deferred.png')
+      await control.command('clickWhenEnabled', migrate)
+      await control.command('clickWhenEnabled', migrateConfirm)
+      await control.command('waitFor', migrate, { visible: false, timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', testId('transient-notice'), {
+        text: '云端助理已就绪',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', testId('stand-in-overview'))
+      await captureScreenshot(control, 'personal-assistant-03-migration-complete.png')
+      const shared = (await readCloudAssistant()).assistant
+      const primary = shared.definitions.find(definition => definition.roleId === '@primary')
+      assert.deepEqual(primary.bot.spec.ghostRef, {
+        name: primary.ghost.metadata.name,
+        namespace: primary.ghost.metadata.namespace,
+      })
+      assert.equal(primary.ghost.spec.systemPrompt, legacyPrompt)
+      assert.equal(primary.bot.spec.execution_policy.mode, 'user_select')
       assert.deepEqual((await binding(control)).target, registered)
 
       await createRole(control, 'Ordinary account stand-in')
       const profile = await rpc(control, 'runtime.stand_in.personal.get', { userId: member.id })
       const role = profile.roles.find(row => row.name === 'Ordinary account stand-in')
       assert.ok(role)
+      const sharedRole = (await readCloudAssistant()).assistant.definitions.find(
+        definition => definition.roleId === role.id
+      )
+      assert.equal(
+        sharedRole?.bot.metadata.displayName,
+        role.name,
+        'New roles are saved to the cloud'
+      )
       await stop(control)
       const aliased = await saveBinding(control, {
         ...registered,
@@ -340,6 +400,40 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', testId('stand-in-onboarding-continue'))
       await control.command('clickWhenEnabled', testId('stand-in-onboarding-complete'))
       await control.command('waitFor', testId('stand-in-onboarding'), { visible: false })
+      const readInitialAssistant = () =>
+        fetchJson(`${cloud.backendUrl}/api/v1/personal-assistant`, {
+          headers: { Authorization: `Bearer ${cloud.authToken}` },
+          signal: AbortSignal.timeout(uiTimeoutMs),
+        })
+      const initialAssistant = (await readInitialAssistant()).assistant
+      assert.equal(initialAssistant.definitions[0].roleId, '@primary')
+      const executionDevice = testId('personal-assistant-execution-device')
+      const activeBinding = await binding(control)
+      await control.command('clickWhenEnabled', executionDevice)
+      await control.command('waitFor', '[role="listbox"] [role="option"]', {
+        text: '当前设备',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'personal-assistant-05-execution-choices.png')
+      await control.command('select', executionDevice, {
+        value: localDevice,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', executionDevice, {
+        text: '当前设备',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'personal-assistant-04-execution-device.png')
+      assert.deepEqual(
+        await binding(control),
+        activeBinding,
+        'Execution selection preserves the binding'
+      )
+      assert.deepEqual((await readInitialAssistant()).assistant, initialAssistant)
+      await control.command('select', executionDevice, {
+        value: firstUse.target.deviceId,
+        timeoutMs: uiTimeoutMs,
+      })
       await stop(control)
       if (firstUse.target.deviceId !== CLOUD_DEVICE_ID) {
         await bind(control, USER, CLOUD_DEVICE_ID)

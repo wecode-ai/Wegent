@@ -34,6 +34,7 @@ import { createPortal } from 'react-dom'
 import { StandInConversation } from './StandInConversation'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
 import type { activeStandInBranchRows } from './standInDelegatedBranches'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
@@ -76,6 +77,9 @@ export function StandInOverviewPage({
   entryRoute = '/stand-in',
   primaryDeviceId,
   roleLocations,
+  account,
+  executionControl,
+  executionRoute,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -92,6 +96,9 @@ export function StandInOverviewPage({
   entryRoute?: string
   primaryDeviceId?: string
   roleLocations?: StandInRoleLocation[]
+  account?: PersonalAssistantAccount
+  executionControl?: ReactNode
+  executionRoute?: { deviceId: string; userId: number }
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
@@ -251,7 +258,16 @@ export function StandInOverviewPage({
   const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
   const delegationPanelOpen = delegationPanelScope === detailsScope
   const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
-  const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
+  const rolesById = new Map(state.draft?.roles.map(role => [role.id, role]))
+  const retiredRoles = new Set(account?.retiredRoleIds)
+  const roles = [
+    ...(roleLocations?.map(entry => {
+      const role = rolesById.get(entry.role.id)
+      rolesById.delete(entry.role.id)
+      return role ? { ...entry.role, name: role.name, prompt: role.prompt } : entry.role
+    }) ?? []),
+    ...rolesById.values(),
+  ]
   const role =
     roleLocations?.find(entry => entry.role.id === roleId && entry.deviceId === deviceId)?.role ??
     state.draft?.roles.find(value => value.id === roleId)
@@ -558,6 +574,7 @@ export function StandInOverviewPage({
                     />
                     <span className="max-w-40 truncate">
                       {standInRoleName(value, index, t('standIn.personal.unnamed_assistant'))}
+                      {retiredRoles.has(value.id) ? ` · ${t('standIn.account.device_only')}` : ''}
                     </span>
                     {selected && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
                     <span className="sr-only">{scope}</span>
@@ -586,6 +603,7 @@ export function StandInOverviewPage({
               </ControlButton>
             </div>
           </nav>
+          {executionControl}
           {api && deviceId && saved && (
             <Tooltip label={t('standIn.delegation.panel')} side="bottom" align="end">
               <ControlButton
@@ -666,12 +684,21 @@ export function StandInOverviewPage({
                   setExampleDraft(current => (current?.id === id ? undefined : current))
                 }
                 active={active}
-                key={`${deviceId}:${props.userId}:${roleId ? `role:${roleId}` : 'primary'}`}
+                key={JSON.stringify([executionRoute ?? { deviceId, userId: props.userId }, roleId])}
                 api={api}
-                userId={props.userId}
-                deviceId={deviceId}
+                userId={executionRoute?.userId ?? props.userId}
+                deviceId={executionRoute?.deviceId ?? deviceId}
                 roleId={roleId}
-                settings={roleId ? saved?.roles.find(role => role.id === roleId) : saved?.primary}
+                definition={account?.definitions.find(
+                  item => item.roleId === (roleId ?? '@primary')
+                )}
+                settings={
+                  executionRoute
+                    ? undefined
+                    : roleId
+                      ? saved?.roles.find(role => role.id === roleId)
+                      : saved?.primary
+                }
                 services={props.services}
                 onOpenTask={onOpenTask}
               />

@@ -24,6 +24,7 @@ import { StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
 import { useStandInInbox } from './useStandInInbox'
 import type { PersonalHomeCollaborationWork } from './WeworkPersonalHome'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 
 type Props = {
   services: WorkbenchServices
@@ -32,6 +33,7 @@ type Props = {
   localDeviceId: string
   active: boolean
   settings: PersonalStandInSettings
+  account?: PersonalAssistantAccount
   projects: CollaborationProject[]
   collaborationWork?: PersonalHomeCollaborationWork
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -170,6 +172,7 @@ export function StandInHomeWorkspace(props: Props) {
               userId={userId}
               deviceId={deviceId}
               settings={settings.primary}
+              definition={props.account?.definitions.find(item => item.roleId === '@primary')}
               scope="collaboration"
               active={active && view === 'conversation'}
               onOpenTask={props.onOpenTask}
