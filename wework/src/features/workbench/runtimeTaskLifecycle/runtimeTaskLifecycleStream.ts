@@ -4,6 +4,7 @@ import {
 } from '../runtimeConversationCacheStore'
 import { synchronizeRuntimeConversation } from '../runtimeConversationSynchronization'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { isStandInIdentityTask } from '@/lib/runtime-task-visibility'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import {
   createExecutorClientForWorkbenchServices,
@@ -395,7 +396,10 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
       )
         return
       const finishTranscriptRead =
-        outcome === 'succeeded' && terminalTurnId && !terminalTurnIsPrior
+        outcome === 'succeeded' &&
+        terminalTurnId &&
+        !terminalTurnIsPrior &&
+        isStandInIdentityTask(expectedSnapshot?.task ?? address)
           ? beginTerminalTranscriptRead(address, terminalTurnId, store.notificationScope)
           : undefined
       try {

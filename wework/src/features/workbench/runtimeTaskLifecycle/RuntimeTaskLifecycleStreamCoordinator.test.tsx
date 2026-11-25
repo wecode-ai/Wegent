@@ -131,10 +131,12 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     ])
   })
 
-  test('replaces an optimistic turn after the executor projection settles during transcript refresh', async () => {
+  test.each([false, true])('replaces the optimistic turn (stand-in: %s)', async standIn => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
+    const work = runtimeWork(true)
+    if (standIn) work.chats[0].tasks[0].runtimeHandle = { origin: { type: 'stand_in_identity' } }
+    store.syncRuntimeWork(work)
     store.turnStarted(address, 'provisional-turn')
     applyRuntimeConversationAction(address, {
       type: 'user_added',
@@ -184,7 +186,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     })
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
     expect(pendingTerminalTranscriptTurn(address, store.notificationScope)).toBe(
-      'provider-renamed-turn'
+      standIn ? 'provider-renamed-turn' : null
     )
 
     act(() => store.syncRuntimeWork(runtimeWork(false)))
