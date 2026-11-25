@@ -78,6 +78,29 @@ describe('runtime task reminders', () => {
     expect(result.current).toBe(rows)
   })
 
+  test('reuses unchanged lifecycle projections when another listed task starts', () => {
+    const store = new RuntimeTaskLifecycleStore('reminder-lifecycle-row-identity')
+    const workspace = notificationItem('device-1').workspace
+    const runtimeWork = {
+      projects: [],
+      chats: [{ ...workspace, tasks: [reminderItem('first').task, reminderItem('second').task] }],
+      totalTasks: 2,
+    }
+    store.syncRuntimeWork(runtimeWork)
+    const items = collectRuntimeTaskReminderItems(runtimeWork)
+    const { result, rerender } = renderHook(snapshot => useUnlistedStandInTasks(items, snapshot), {
+      initialProps: store.getSnapshot(),
+    })
+    const [first, second] = result.current
+    expect(second.lifecycle).toBeDefined()
+
+    store.executorStarted(first.address)
+    rerender(store.getSnapshot())
+
+    expect(result.current[0].lifecycle?.derived.isRunning).toBe(true)
+    expect(result.current[1]).toBe(second)
+  })
+
   test('discovers hidden stand-in work from task metadata without loading its transcript', async () => {
     const hidden = reminderItem('hidden-stand-in')
     const ordinary = reminderItem('hidden-ordinary')
