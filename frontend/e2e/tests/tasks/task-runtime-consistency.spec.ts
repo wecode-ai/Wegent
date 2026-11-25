@@ -485,7 +485,7 @@ test.describe('Task runtime consistency', () => {
     const followUpMarker = `${TEST_PREFIX}-navigation-follow-up`
     await configureStreamRule(request, messageText, {
       responseContent: streamMarker,
-      doneDelayMs: 30_000,
+      holdDone: true,
     })
     await configureStreamRule(request, followUp, { responseContent: followUpMarker })
     await gotoChatWithTestTeam(page)
@@ -509,7 +509,12 @@ test.describe('Task runtime consistency', () => {
     await expect(queuedMessage).toBeVisible({ timeout: 5_000 })
     await expect(messages.getByText(followUp, { exact: true })).toHaveCount(0)
 
-    await stopActiveStream(page)
+    // Release the original turn and remove its rule so the earlier prompt in
+    // conversation history cannot select that rule again on the follow-up.
+    const release = await request.delete(
+      `${MOCK_MODEL_SERVER_URL}/stream-rules?matchText=${encodeURIComponent(messageText)}`
+    )
+    expect(release.ok(), 'The mock model must complete the original turn').toBe(true)
     await expect(messages).toContainText(followUpMarker, { timeout: 15_000 })
     await expect(messages.getByText(followUp, { exact: true })).toHaveCount(1)
     await expect(queuedMessage).toHaveCount(0)
@@ -613,15 +618,14 @@ test.describe('Task runtime consistency', () => {
       responseContent: string
       chunkDelayMs?: number
       doneDelayMs?: number
+      holdDone?: boolean
     }
   ): Promise<void> {
     streamRulesForCleanup.push(matchText)
     const response = await request.post(`${MOCK_MODEL_SERVER_URL}/stream-rules`, {
       data: {
         matchText,
-        responseContent: options.responseContent,
-        chunkDelayMs: options.chunkDelayMs,
-        doneDelayMs: options.doneDelayMs,
+        ...options,
       },
     })
     expect(response.status()).toBe(200)
