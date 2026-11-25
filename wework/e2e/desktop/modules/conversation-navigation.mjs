@@ -862,6 +862,9 @@ async function verifyGuidanceCorrection(control) {
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: GUIDANCE_CORRECTION_COMPLETION,
   })
+  await control.command('scrollIntoViewAsUser', marked, {
+    text: GUIDANCE_CORRECTION_PROMPT,
+  })
   await control.command('waitFor', marked, { text: GUIDANCE_CORRECTION_PROMPT })
   const correctedGuidanceText = await control.command('getText', marked)
   assert.equal(
@@ -885,6 +888,9 @@ async function verifyGuidanceCorrection(control) {
     1,
     'The corrected guidance was not rendered exactly once'
   )
+  await control.command('scrollIntoViewAsUser', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_COMPLETION_TEXT,
+  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: GUIDANCE_SCROLL_COMPLETION_TEXT,
   })
