@@ -44,7 +44,14 @@ describe('DeviceCard Wework badge', () => {
     status => {
       render(
         <DeviceCard
-          device={{ ...baseDevice, device_type: 'remote', status, update_available: true }}
+          device={{
+            ...baseDevice,
+            device_type: 'remote',
+            status,
+            executor_version: '2.0.20',
+            latest_version: '2.0.21',
+            update_available: true,
+          }}
           {...callbacks}
           onUpgrade={jest.fn()}
         />
