@@ -20,6 +20,12 @@ export function useRuntimeComposerCatalog(
   const readCatalog = services?.composerCatalogApi?.readCatalog
   const readChunk = services?.deviceApi?.readWorkspaceFileChunk
   return useMemo(() => {
+    if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+      console.debug(
+        '[Wework] Composer catalog bound',
+        JSON.stringify({ deviceId, taskId, scope, workspacePath })
+      )
+    }
     const binding: ComposerCatalogBinding = {
       appsStore: createComposerCatalogStore(),
       catalogEvents: { catalogChanged: LOCAL_PLUGIN_SKILLS_CHANGED_EVENT },
