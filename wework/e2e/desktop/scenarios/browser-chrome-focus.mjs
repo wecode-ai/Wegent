@@ -248,9 +248,11 @@ async function verifySearchOverlay(
   // Move from the former close button into the restored surface, then back
   // to verify native input at the exact point where the dialog intercepted it.
   const moveInGuest = async (point, previousMoves) => {
-    await movePointer(point)
     return waitForValue(
-      readGuestInput,
+      async () => {
+        await movePointer(point)
+        return readGuestInput()
+      },
       state => state.moves > previousMoves,
       `Native pointer movement at ${point.x},${point.y} must reach the restored guest`,
       5_000
