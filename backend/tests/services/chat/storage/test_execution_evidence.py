@@ -98,6 +98,7 @@ async def _probe(client, *, since=SINCE):
     [
         (START + timedelta(seconds=10), SINCE),
         (START + timedelta(seconds=10), START + timedelta(seconds=10)),
+        (START + timedelta(microseconds=500_000), START + timedelta(seconds=1)),
         (START + timedelta(microseconds=1), START + timedelta(microseconds=1)),
     ],
 )
@@ -131,6 +132,10 @@ async def test_timezone_aware_offsets_are_compared_as_instants(redis_probe):
     [
         (None, SINCE),
         (_metadata(), SINCE),
+        (
+            _metadata(last_activity_at=START + timedelta(microseconds=499_999)),
+            START + timedelta(seconds=1),
+        ),
         (
             _metadata(last_activity_at=START + timedelta(seconds=5)),
             START + timedelta(seconds=6),

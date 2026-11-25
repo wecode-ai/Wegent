@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { access, mkdir, writeFile } from 'node:fs/promises'
+import { availableParallelism, freemem, loadavg } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -26,6 +27,7 @@ import { waitForWorkbenchDebugState } from '../e2e/desktop/modules/workspace-flo
 import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
 import { waitForValue } from '../e2e/desktop/modules/workspace-agent-setup.mjs'
 import { waitForClosedStartupSplash } from '../e2e/desktop/modules/native-window-state.mjs'
+import { withTimeout } from '../e2e/desktop/modules/shared.mjs'
 import {
   createDevtoolsClient,
   startPerformanceRecording,
@@ -531,7 +533,7 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const capture = process.env.WEWORK_RENDERER_PROFILE_CAPTURE === 'true'
-  const measureProcesses = process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
+  const measureProcesses = capture || process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
   const measureHistory = process.env.WEWORK_RENDERER_PROFILE_HISTORY === 'true'
   const samples = []
   const processSamples = []
@@ -541,6 +543,7 @@ export function createDesktopScenario({
   let finished = false
   let start
   let pids
+  const singleModelRequest = Promise.withResolvers()
   const concurrentResponses = new Map()
   const startConcurrent = Promise.withResolvers()
   const finishConcurrent = new Map()
@@ -697,6 +700,7 @@ export function createDesktopScenario({
       if (!ready || !body.includes(prompt)) return false
       if (started) return false
       started = true
+      singleModelRequest.resolve()
       start = await cpuSnapshot(pids)
       await emitStream(response, 'wework-benchmark-response')
       finished = true
@@ -775,6 +779,11 @@ export function createDesktopScenario({
         processSamples.push({
           phase,
           at: snapshot.capturedAt,
+          system: {
+            availableParallelism: availableParallelism(),
+            freeMemoryBytes: freemem(),
+            loadAverage: loadavg(),
+          },
           incomplete: Boolean(snapshot.collectingSystemProcesses),
           degradation: snapshot.degraded?.map(entry => entry.code) ?? [],
           processes: snapshot.processes.map(process => ({
@@ -874,6 +883,11 @@ export function createDesktopScenario({
             ready = true
             await control.command('fill', composer, { value: prompt })
             await control.command('press', composer, { key: 'Enter' })
+            await withTimeout(
+              singleModelRequest.promise,
+              modelResponseTimeoutMs,
+              'The single-task renderer profile did not reach the isolated model service'
+            )
             await observeText(client, target, prefix, uiTimeoutMs)
             assert.ok(!finished, 'The first response text must appear while streaming')
             await observeText(client, target, suffix, textTimeoutMs)
