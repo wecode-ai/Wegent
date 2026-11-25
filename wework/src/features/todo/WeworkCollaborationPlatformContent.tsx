@@ -882,7 +882,6 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
             const runtimePort = issueRuntimePort(project.project_store, props.services)
             return (
               <WeworkSharedProject
-                workspaceActive={props.workspaceActive}
                 api={projectApi}
                 projectCatalogApi={platformApi?.projects}
                 detailServices={

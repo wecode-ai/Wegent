@@ -31,17 +31,16 @@ describe("IssueConversationDrawers", () => {
     else Reflect.deleteProperty(Element.prototype, "getAnimations");
   });
 
-  it("keeps the active workspace tab clickable while an Issue drawer is mounted", async () => {
+  it("keeps an outside workspace control clickable while an Issue drawer is mounted", async () => {
     const close = vi.fn();
     const switchWorkspaceTab = vi.fn();
-    const render = (active: boolean) => (
-      <>
-        <button data-testid="outside-task" onClick={switchWorkspaceTab}>
-          Agents
-        </button>
-        <section hidden={!active}>
+    await act(async () =>
+      root.render(
+        <>
+          <button data-testid="outside-task" onClick={switchWorkspaceTab}>
+            Agents
+          </button>
           <IssueConversationDrawers
-            active={active}
             label="Issue detail"
             conversation={null}
             onClose={close}
@@ -49,10 +48,9 @@ describe("IssueConversationDrawers", () => {
           >
             {() => <input data-testid="issue-draft" defaultValue="Draft" />}
           </IssueConversationDrawers>
-        </section>
-      </>
+        </>
+      )
     );
-    await act(async () => root.render(render(true)));
     const outside = container.querySelector('[data-testid="outside-task"]')!;
     const draft = container.querySelector('[data-testid="issue-draft"]')!;
     await act(async () => {
@@ -61,12 +59,6 @@ describe("IssueConversationDrawers", () => {
     await act(async () => outside.click());
     expect(switchWorkspaceTab).toHaveBeenCalledOnce();
     expect(close).not.toHaveBeenCalled();
-    await act(async () => root.render(render(false)));
-    expect(outside.closest("[inert]")).toBeNull();
-    expect(container.querySelector('[data-testid="issue-draft"]')).toBe(draft);
-    expect(close).not.toHaveBeenCalled();
-    await act(async () => root.render(render(true)));
-    expect(outside.closest("[inert]")).toBeNull();
     expect(container.querySelector('[data-testid="issue-draft"]')).toBe(draft);
   });
 
