@@ -35,16 +35,23 @@ export function observeBrowserNativeEvents(model: BrowserSessionModel) {
   stops.push(
     subscribeEmbeddedBrowserDownloadEvents(download => {
       if (!model.observed) return
-      if (download.nativeLabel !== model.runtime.nativeLabel) return
+      if ('historyUnavailable' in download) {
+        model.actions.applyDownloadHistoryStatus(download.revision, download.historyUnavailable)
+        return
+      }
+      if ('cleared' in download) {
+        model.actions.clearDownloadHistory(download.revision)
+        return
+      }
+      if (model.options.active || download.historyRemoval)
+        model.actions.applyDownloadEvent(download)
+      if (download.historyRemoval || download.nativeLabel !== model.runtime.nativeLabel) return
       if (download.status === 'started' || download.status === 'progress') {
         model.runtime.activeDownloadIds.add(download.id)
       } else {
         model.runtime.activeDownloadIds.delete(download.id)
       }
       model.options.onDownloadActivityChange?.(model.runtime.activeDownloadIds.size > 0)
-      if (model.options.active) {
-        model.actions.applyDownloadEvent(download)
-      }
       if (
         (download.status === 'finished' ||
           download.status === 'failed' ||
@@ -127,6 +134,8 @@ export function observeBrowserNativeEvents(model: BrowserSessionModel) {
       model.set('annotations', [])
       model.set('downloads', [])
       model.set('downloadsOpen', false)
+      model.actions.markDownloadsRead()
+      model.set('downloadPeek', null)
       model.set('localFilePreviewToast', null)
       model.set('clearDataNotice', null)
       model.set('clearingDataKind', null)

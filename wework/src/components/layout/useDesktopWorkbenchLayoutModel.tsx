@@ -279,16 +279,16 @@ export function useDesktopWorkbenchLayoutModel({
     layoutSession.onHarnessSessionsChanged,
     { enabled: !workItemSurfaceOpen && isLocalHarnessAvailable() }
   )
-  useDOMEvent('window', 'keydown', (event: KeyboardEvent) => {
-    if (
-      workItemSurfaceOpen ||
-      event.key.toLowerCase() !== 'k' ||
-      (!event.metaKey && !event.ctrlKey)
-    )
-      return
-    event.preventDefault()
-    setSearchOpen(true)
-  })
+  useDOMEvent(
+    'window',
+    'keydown',
+    (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k' || (!event.metaKey && !event.ctrlKey)) return
+      event.preventDefault()
+      setSearchOpen(true)
+    },
+    { enabled: routeActive && !workItemSurfaceOpen }
+  )
   const workItemUser = state.user ?? (routedDefaultWorkItemsOpen ? LOCAL_USER : null)
   const workItemServicesReady = routedDefaultWorkItemsOpen
     ? availableProjectSpaceApis.length > 0

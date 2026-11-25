@@ -62,6 +62,11 @@ export async function verifyReasoningSliderAccessibility(control, trigger) {
   await control.command('nativePress', TRACK, { key: 'Shift+Tab' })
   const lastStep = `${MENU} button[data-testid^="model-control-reasoning-"]:last-of-type`
   await assertProjectKeyboardFocus(lastStep)
+  assert.equal(
+    await control.command('getComputedStyleValue', lastStep, { value: 'box-shadow' }),
+    'none',
+    'The focused reasoning step must paint just its keyboard outline'
+  )
   await verifyModelPickerEscape(control, lastStep, 'nativePress', () =>
     control.command('waitFor', MENU, { visible: false })
   )

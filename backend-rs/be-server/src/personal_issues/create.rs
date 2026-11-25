@@ -11,8 +11,6 @@ use serde_json::{Map, Value};
 use super::{CreateLoopIssue, FastApiError, SessionUser, create_loop_issue, invalid};
 use crate::{auth, state::AppState};
 
-const PROJECT_ISSUE_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-
 #[brz_http_server::post("/api/v1/loop-items", access = public)]
 async fn create(
     #[inject(state)] state: &AppState,
@@ -26,7 +24,17 @@ async fn create(
         && body.project_status.is_none()
     {
         let project_id = crate::cloud_projects::parse_project_id(project_id)?;
-        return create_board_issue(project_id, body.issue, authorization, api_key, trace_id).await;
+        let upstream = std::env::var("WEGENT_PYTHON_UPSTREAM_URL")
+            .unwrap_or_else(|_| wegent_backend_config::DEFAULT_PYTHON_UPSTREAM.to_owned());
+        return create_board_issue(
+            &upstream,
+            project_id,
+            body.issue,
+            authorization,
+            api_key,
+            trace_id,
+        )
+        .await;
     }
 
     let user = auth::get_current_user(&state.auth, &state.mysql, authorization)
@@ -55,15 +63,29 @@ async fn create(
 // Project providers still own board automation, external issue creation and
 // support for task tokens. Forward the original credentials to that owner.
 async fn create_board_issue(
+    upstream: &str,
     project_id: i64,
     issue: Map<String, Value>,
     authorization: Option<&str>,
     api_key: Option<&str>,
     trace_id: Option<&str>,
 ) -> Result<Response, FastApiError> {
-    let client = project_issue_client()?;
-    let upstream = std::env::var("WEGENT_PYTHON_UPSTREAM_URL")
-        .unwrap_or_else(|_| wegent_backend_config::DEFAULT_PYTHON_UPSTREAM.to_owned());
+    const PROVIDER_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+    static CLIENT: OnceLock<Result<brz_http::Client, brz_http::reqwest::Error>> = OnceLock::new();
+    let client = CLIENT.get_or_init(|| {
+        brz_http::Client::builder()
+            .timeout(PROVIDER_REQUEST_TIMEOUT)
+            // Breeze's default read timeout is 400ms, shorter than the provider request budget.
+            .read_timeout(PROVIDER_REQUEST_TIMEOUT)
+            .configure(|builder| {
+                builder
+                    .no_proxy()
+                    .redirect(brz_http::reqwest::redirect::Policy::none())
+                    .retry(brz_http::reqwest::retry::never())
+            })
+            .build()
+    });
+    let client = client.as_ref().map_err(|_| upstream_error())?;
     let project_path = format!("/api/v1/cloud-projects/{project_id}/loop-items");
     let url = format!("{}{project_path}", upstream.trim_end_matches('/'));
     let mut request = client.as_reqwest().post(url).json(&issue);
@@ -90,25 +112,6 @@ async fn create_board_issue(
     Ok(response)
 }
 
-fn project_issue_client() -> Result<&'static brz_http::Client, FastApiError> {
-    static CLIENT: OnceLock<Result<brz_http::Client, brz_http::reqwest::Error>> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            brz_http::Client::builder()
-                .timeout(PROJECT_ISSUE_REQUEST_TIMEOUT)
-                .read_timeout(PROJECT_ISSUE_REQUEST_TIMEOUT)
-                .configure(|builder| {
-                    builder
-                        .no_proxy()
-                        .redirect(brz_http::reqwest::redirect::Policy::none())
-                        .retry(brz_http::reqwest::retry::never())
-                })
-                .build()
-        })
-        .as_ref()
-        .map_err(|_| upstream_error())
-}
-
 fn upstream_error() -> FastApiError {
     FastApiError::detail(
         StatusCode::BAD_GATEWAY,
@@ -118,43 +121,91 @@ fn upstream_error() -> FastApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use std::convert::Infallible;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use http_body_util::{BodyExt, Full};
+    use hyper::{
+        body::{Bytes, Incoming},
+        service::service_fn,
+    };
+    use serde_json::json;
     use tokio::net::TcpListener;
 
+    use super::*;
+
     #[tokio::test]
-    async fn project_issue_client_accepts_responses_after_default_read_timeout() {
+    async fn board_issue_waits_for_slow_provider_without_retrying_creation() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let upstream = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.unwrap();
-            let mut request = BufReader::new(socket);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                assert_ne!(request.read_line(&mut line).await.unwrap(), 0);
-                if line == "\r\n" {
-                    break;
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(600)).await;
-            request
-                .get_mut()
-                .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\n{}")
-                .await
-                .unwrap();
-        });
-        let response = project_issue_client()
-            .unwrap()
-            .as_reqwest()
-            .post(format!(
-                "http://{address}/api/v1/cloud-projects/1/loop-items"
-            ))
-            .send()
-            .await
-            .unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let received_calls = calls.clone();
+        let server = tokio::spawn(brz_http_server::hyper::serve(
+            listener,
+            move |_| {
+                let calls = received_calls.clone();
+                service_fn(move |request: http::Request<Incoming>| {
+                    let calls = calls.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(request.method(), http::Method::POST);
+                        assert_eq!(
+                            request.uri().path(),
+                            "/api/v1/cloud-projects/1001/loop-items"
+                        );
+                        assert_eq!(request.headers()["authorization"], "Bearer fixture-token");
+                        assert_eq!(request.headers()["x-request-id"], "fixture-trace");
+                        let body = request.into_body().collect().await.unwrap().to_bytes();
+                        assert_eq!(
+                            serde_json::from_slice::<Value>(&body).unwrap(),
+                            json!({"title": "Slow Issue"})
+                        );
+                        // The provider responds after Breeze's default socket read deadline.
+                        tokio::time::sleep(
+                            brz_http::DEFAULT_READ_TIMEOUT + Duration::from_millis(100),
+                        )
+                        .await;
+                        Ok::<_, Infallible>(
+                            http::Response::builder()
+                                .status(StatusCode::CREATED)
+                                .body(Full::new(Bytes::from_static(br#"{"id":"created-issue"}"#)))
+                                .unwrap(),
+                        )
+                    }
+                })
+            },
+            std::future::pending(),
+            Default::default(),
+        ));
+
+        let issue = json!({"title": "Slow Issue"}).as_object().unwrap().clone();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            create_board_issue(
+                &upstream,
+                1001,
+                issue,
+                Some("Bearer fixture-token"),
+                None,
+                Some("fixture-trace"),
+            ),
+        )
+        .await;
+        server.abort();
+        let response = result
+            .expect("The test provider must respond promptly")
+            .expect("The provider must complete within the configured request deadline");
         assert_eq!(response.status(), StatusCode::CREATED);
-        assert_eq!(response.text().await.unwrap(), "{}");
-        upstream.await.unwrap();
+        let brz_http_server::ResponseBody::Owned(body) = response.body() else {
+            panic!("Expected the provider's response body");
+        };
+        assert_eq!(
+            serde_json::from_slice::<Value>(body).unwrap(),
+            json!({"id": "created-issue"})
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

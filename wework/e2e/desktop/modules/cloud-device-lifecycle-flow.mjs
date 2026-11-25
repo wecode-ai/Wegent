@@ -13,6 +13,7 @@ import {
   mkdir,
 } from './shared.mjs'
 import { MANAGED_CLOUD_SANDBOX_ID } from './cloud-environment.mjs'
+import { waitForSnapshot } from './conversation-layout.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const BUSY_MODEL_SCENARIO = 'cloud_device_restart_busy'
@@ -166,6 +167,36 @@ async function verifyUnconfiguredRestart(control, cloud, controls) {
   )
 }
 
+async function openRestartDialog(control) {
+  await control.command('click', `[data-testid="connection-more-button-${CLOUD_DEVICE_ID}"]`)
+  await control.command('click', `[data-testid="connection-restart-menu-item-${CLOUD_DEVICE_ID}"]`)
+}
+
+export async function verifyCloudDeviceRestartFocus(control, cloud) {
+  await openRestartDialog(control)
+  const menuConfirmation = await control.command('getText', RESTART_DIALOG)
+  assert.match(menuConfirmation, /短暂离线|temporarily go offline/i)
+  assert.match(menuConfirmation, /终端|terminal/i)
+  const focused = await waitForCondition(
+    async () => {
+      const id = await control.command('getActiveElementTestId', 'body')
+      return ['confirm-restart-device-button', 'cancel-restart-device-button'].includes(id) && id
+    },
+    5_000,
+    'Opening the restart dialog did not move focus to either action'
+  )
+  await control.command('nativePress', `[data-testid="${focused}"]`, { key: 'Escape' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('confirm-restart-device-dialog'),
+    'Escape did not dismiss the restart dialog',
+    5_000
+  )
+  assert.equal(cloud.sandboxRestartRequestCount(), 0, 'Dismissing the dialog restarted the sandbox')
+  assert.equal(focused, 'cancel-restart-device-button', 'Opening the dialog must focus Cancel')
+  console.log('[cloud-device-lifecycle] Restart initially focused Cancel; Escape dismissed it')
+}
+
 export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
   const deviceCard = `[data-testid="connection-device-${CLOUD_DEVICE_ID}"]`
   const versionBadge = `[data-testid="connection-upgrade-badge-${CLOUD_DEVICE_ID}"]`
@@ -195,11 +226,8 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
   await captureVerificationScreenshot(control, 'cloud-device-01-online.png')
   assert.match(await control.command('getText', versionBadge), /有新版本|update available/i)
 
-  await control.command('click', moreButton)
-  await control.command('click', `[data-testid="connection-restart-menu-item-${CLOUD_DEVICE_ID}"]`)
-  const menuConfirmation = await control.command('getText', RESTART_DIALOG)
-  assert.match(menuConfirmation, /短暂离线|temporarily go offline/i)
-  assert.match(menuConfirmation, /终端|terminal/i)
+  await verifyCloudDeviceRestartFocus(control, cloud)
+  await openRestartDialog(control)
   if (cloud.usePublicSandboxController) {
     await verifyUnconfiguredRestart(control, cloud, {
       deviceCard,

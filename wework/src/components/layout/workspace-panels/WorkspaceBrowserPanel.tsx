@@ -6,30 +6,22 @@ import { zoomPercentToScaleFactor } from '@/lib/browser-zoom'
 import {
   canUseEmbeddedBrowser,
   clearEmbeddedBrowserAnnotations,
-  deleteEmbeddedBrowserDownload,
   goBackEmbeddedBrowser,
   goForwardEmbeddedBrowser,
-  pauseEmbeddedBrowserDownload,
   readEmbeddedBrowserAnnotationState,
-  resumeEmbeddedBrowserDownload,
 } from '@/lib/embedded-browser'
-import { fileManagerRevealLabel } from '@/lib/file-manager'
-import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { deviceSurfaceExtension } from '@extensions/device-surface'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { useContext, useState } from 'react'
-import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
-import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
   CircleAlert,
-  Download,
   EllipsisVertical,
   ExternalLink,
   Globe2,
@@ -42,6 +34,8 @@ import {
   X,
 } from 'lucide-react'
 import { BrowserFindBar } from './browser-find/BrowserFindBar'
+import { BrowserAddressBar } from './BrowserAddressBar'
+import { BrowserDownloads } from './BrowserDownloads'
 import { BrowserDeviceToolbar } from './BrowserDeviceToolbar'
 import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
 import { WebsiteConnectionPanel } from './WebsiteConnectionPanel'
@@ -52,7 +46,6 @@ import {
   OriginalViewEyeOff,
 } from './workspaceBrowserPanelChrome'
 import {
-  formatDownloadBytes,
   getFallbackBrowserTitle,
   shouldShowAgentState,
   type BrowserStateUpdate,
@@ -143,7 +136,10 @@ function WorkspaceBrowserSession({
     originalViewHeld,
     downloads,
     downloadsOpen,
+    downloadsError,
+    downloadsLoading,
     downloadPeek,
+    unreadDownloadCount,
     localFilePreviewToast,
     clearDataNotice,
     clearingDataKind,
@@ -170,7 +166,7 @@ function WorkspaceBrowserSession({
     handleOriginalViewKeyUp,
     handleOcclusionSnapshotLoad,
     runBrowserCommand,
-    handleSubmit,
+    submitAddress,
     handleReload,
     handleOpenExternal,
     clearBrowserData,
@@ -201,10 +197,10 @@ function WorkspaceBrowserSession({
     source.set('discardingAnnotations', value)
   const setOriginalViewHeld = (value: BrowserStateUpdate<'originalViewHeld'>) =>
     source.set('originalViewHeld', value)
-  const setDownloadsOpen = (value: BrowserStateUpdate<'downloadsOpen'>) =>
-    source.set('downloadsOpen', value)
-  const setDownloadPeek = (value: BrowserStateUpdate<'downloadPeek'>) =>
-    source.set('downloadPeek', value)
+  const setDownloadsOpen = (open: boolean) => {
+    source.set('downloadPeek', null)
+    source.set('downloadsOpen', open)
+  }
   const setFindQuery = (value: BrowserStateUpdate<'findQuery'>) => source.set('findQuery', value)
   const electronRuntime = isElectronRuntime()
   const embeddedBrowserAvailable = canUseEmbeddedBrowser()
@@ -222,6 +218,30 @@ function WorkspaceBrowserSession({
     activePageUrl && /^https?:\/\//i.test(activePageUrl) && !internalExtensionPage
       ? activePageUrl
       : null
+  const hideDownloadsTrigger = hideToolbar || (annotationMode && !internalExtensionPage)
+  const browserDownloads = (
+    <BrowserDownloads
+      active={active}
+      hideTrigger={hideDownloadsTrigger}
+      downloads={downloads}
+      open={downloadsOpen}
+      loading={downloadsLoading}
+      loadError={downloadsError}
+      onRetry={source.actions.refreshDownloads}
+      unreadCount={unreadDownloadCount}
+      peek={downloadPeek}
+      onOpenChange={setDownloadsOpen}
+      onDismissPeek={() => source.set('downloadPeek', null)}
+      onAcknowledge={source.actions.markDownloadRead}
+      onActionError={() => {
+        if (downloadsOpen) void source.actions.refreshDownloads()
+        source.set('localFilePreviewToast', {
+          id: Date.now(),
+          message: t('workbench.browser_download_action_failed'),
+        })
+      }}
+    />
+  )
   return (
     <div
       ref={bindPanel}
@@ -335,47 +355,21 @@ function WorkspaceBrowserSession({
           >
             <RotateCw className="h-4 w-4" />
           </BrowserToolbarButton>
-          <form onSubmit={handleSubmit} className="min-w-0 flex-1">
-            <ControlInput
-              density="compact"
-              appearance="plain"
-              ref={bindAddressInput}
-              name="url"
-              data-testid="workspace-browser-url-input"
-              value={address}
-              autoCapitalize="none"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              onChange={event => setAddress(event.target.value)}
-              onFocus={() => {
-                source.setAddressEditing(true)
-              }}
-              onBlur={event => {
-                // Window deactivation can emit blur while this input retains DOM focus.
-                if (event.currentTarget.ownerDocument.activeElement === event.currentTarget) return
-                source.setAddressEditing(false)
-                const currentPageUrl = source.getPageUrl()
-                if (currentPageUrl) setAddress(currentPageUrl)
-              }}
-              placeholder={t('workbench.browser_url_placeholder')}
-              className="workbench-chrome-input w-full transition-colors placeholder:text-text-muted focus:bg-background"
-            />
-          </form>
-          <BrowserToolbarButton
-            testId="workspace-browser-downloads-button"
-            label={t('workbench.browser_downloads')}
-            onClick={() => setDownloadsOpen(open => !open)}
-          >
-            <span className="relative">
-              <Download className="h-4 w-4" />
-              {downloads.some(
-                download => download.status === 'started' || download.status === 'progress'
-              ) ? (
-                <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-primary" />
-              ) : null}
-            </span>
-          </BrowserToolbarButton>
+          <BrowserAddressBar
+            active={active}
+            address={address}
+            historyAvailable={embeddedBrowserAvailable}
+            inputRef={bindAddressInput}
+            onChange={setAddress}
+            onFocus={() => source.setAddressEditing(true)}
+            onBlur={() => {
+              source.setAddressEditing(false)
+              const currentPageUrl = source.getPageUrl()
+              if (currentPageUrl) setAddress(currentPageUrl)
+            }}
+            onNavigate={submitAddress}
+          />
+          {browserDownloads}
           <BrowserToolbarButton
             testId="workspace-browser-annotate-button"
             label={t('workbench.browser_annotation_start')}
@@ -436,6 +430,11 @@ function WorkspaceBrowserSession({
                   label: '',
                   testId: 'workspace-browser-more-separator-actions',
                   separator: true,
+                },
+                {
+                  label: t('workbench.browser_downloads'),
+                  testId: 'workspace-browser-downloads-item',
+                  onSelect: () => setDownloadsOpen(true),
                 },
                 {
                   label: t('workbench.browser_history'),
@@ -593,126 +592,7 @@ function WorkspaceBrowserSession({
           ) : null}
         </div>
       ) : null}
-      {(!annotationMode || internalExtensionPage) && downloadsOpen ? (
-        <div
-          data-testid="workspace-browser-downloads-panel"
-          className="flex max-h-40 shrink-0 flex-col overflow-y-auto border-b border-border bg-surface px-3 py-2"
-        >
-          <div className="flex items-center justify-between pb-1">
-            <span className="text-xs font-medium text-text-secondary">
-              {t('workbench.browser_downloads')}
-            </span>
-            <ControlButton
-              variant="unstyled"
-              type="button"
-              data-testid="workspace-browser-downloads-close"
-              aria-label={t('workbench.browser_downloads_close')}
-              className="rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
-              onClick={() => setDownloadsOpen(false)}
-            >
-              <X className="h-3.5 w-3.5" />
-            </ControlButton>
-          </div>
-          {downloads.length === 0 ? (
-            <span className="text-xs text-text-muted">
-              {t('workbench.browser_downloads_empty')}
-            </span>
-          ) : (
-            downloads.map(download => {
-              const fileName = download.path?.split(/[\\/]/).pop() || download.url
-              const downloading = download.status === 'started' || download.status === 'progress'
-              const progress =
-                download.totalBytes && download.receivedBytes !== null
-                  ? Math.min(100, Math.round((download.receivedBytes / download.totalBytes) * 100))
-                  : null
-              return (
-                <div
-                  key={download.id}
-                  data-testid="workspace-browser-download-item"
-                  className="flex min-h-12 flex-col justify-center gap-1 text-xs"
-                >
-                  <div className="flex items-center gap-2">
-                    {download.status === 'finished' ? (
-                      <CheckCircle2 className="h-4 w-4 shrink-0 text-success wework:text-green-600" />
-                    ) : download.status === 'failed' ? (
-                      <CircleAlert className="h-4 w-4 shrink-0 text-destructive wework:text-red-500" />
-                    ) : download.status === 'paused' ? (
-                      <Download className="h-4 w-4 shrink-0 text-text-muted" />
-                    ) : (
-                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate" title={download.path ?? download.url}>
-                      {fileName}
-                    </span>
-                    <span className="shrink-0 text-text-muted">
-                      {downloading
-                        ? progress !== null
-                          ? `${progress}% · ${formatDownloadBytes(download.receivedBytes)} / ${formatDownloadBytes(download.totalBytes)}`
-                          : formatDownloadBytes(download.receivedBytes) ||
-                            t('workbench.browser_download_started')
-                        : t(`workbench.browser_download_${download.status}`)}
-                    </span>
-                    {download.status === 'finished' && download.path ? (
-                      <ControlButton
-                        variant="unstyled"
-                        type="button"
-                        data-testid="workspace-browser-download-reveal-button"
-                        className="shrink-0 rounded-md px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
-                        onClick={() => void revealLocalFile(download.path ?? undefined)}
-                      >
-                        {fileManagerRevealLabel(t)}
-                      </ControlButton>
-                    ) : null}
-                    {downloading ? (
-                      <ControlButton
-                        variant="unstyled"
-                        type="button"
-                        data-testid="workspace-browser-download-pause-button"
-                        className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
-                        aria-label={t('workbench.browser_download_pause')}
-                        onClick={() => void pauseEmbeddedBrowserDownload(download.id)}
-                      >
-                        <Pause className="h-3.5 w-3.5" />
-                      </ControlButton>
-                    ) : null}
-                    {download.status === 'paused' ? (
-                      <>
-                        <ControlButton
-                          variant="unstyled"
-                          type="button"
-                          data-testid="workspace-browser-download-resume-button"
-                          className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
-                          aria-label={t('workbench.browser_download_resume')}
-                          onClick={() => void resumeEmbeddedBrowserDownload(download.id)}
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                        </ControlButton>
-                        <DeleteIconButton
-                          type="button"
-                          data-testid="workspace-browser-download-delete-button"
-                          aria-label={t('workbench.browser_download_delete')}
-                          onClick={() => void deleteEmbeddedBrowserDownload(download.id)}
-                        />
-                      </>
-                    ) : null}
-                  </div>
-                  {downloading ? (
-                    <div
-                      data-testid="workspace-browser-download-progress"
-                      className="ml-6 h-1 overflow-hidden rounded-full bg-muted"
-                    >
-                      <div
-                        className={`h-full rounded-full bg-primary transition-[width] ${progress === null ? 'w-1/3 animate-pulse' : ''}`}
-                        style={progress === null ? undefined : { width: `${progress}%` }}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              )
-            })
-          )}
-        </div>
-      ) : null}
+      {hideDownloadsTrigger ? browserDownloads : null}
       <TransientNotice
         key={localFilePreviewToast?.id ?? 'workspace-browser-local-file-toast'}
         message={localFilePreviewToast?.message ?? null}
@@ -721,85 +601,6 @@ function WorkspaceBrowserSession({
         horizontalAnchorRef={browserPanelRef}
         visible={active}
       />
-      {downloadPeek ? (
-        <div
-          key={downloadPeek.id}
-          data-testid="workspace-browser-download-peek"
-          role="status"
-          className="absolute bottom-4 right-4 z-20 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-[0_8px_28px_rgba(0,0,0,0.12)]"
-        >
-          <div className="flex items-center gap-2">
-            {downloadPeek.status === 'finished' ? (
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-success wework:text-green-600" />
-            ) : (
-              <CircleAlert className="h-4 w-4 shrink-0 text-destructive wework:text-red-500" />
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-text-primary">
-                {t(`workbench.browser_download_${downloadPeek.status}`)}
-              </p>
-              <p
-                className="truncate text-xs text-text-muted"
-                title={downloadPeek.path ?? downloadPeek.fileName}
-              >
-                {downloadPeek.fileName}
-              </p>
-            </div>
-            <ControlButton
-              variant="unstyled"
-              type="button"
-              data-testid="workspace-browser-download-peek-dismiss"
-              aria-label={t('workbench.browser_download_peek_dismiss')}
-              className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
-              onClick={() => setDownloadPeek(null)}
-            >
-              <X className="h-3.5 w-3.5" />
-            </ControlButton>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {downloadPeek.status === 'finished' && downloadPeek.path ? (
-              <>
-                <ControlButton
-                  variant="unstyled"
-                  type="button"
-                  data-testid="workspace-browser-download-peek-open"
-                  className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                  onClick={() => {
-                    void openLocalFile(downloadPeek.path ?? undefined)
-                    setDownloadPeek(null)
-                  }}
-                >
-                  {t('workbench.browser_download_peek_open')}
-                </ControlButton>
-                <ControlButton
-                  variant="unstyled"
-                  type="button"
-                  data-testid="workspace-browser-download-peek-show-in-folder"
-                  className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                  onClick={() => {
-                    void revealLocalFile(downloadPeek.path ?? undefined)
-                    setDownloadPeek(null)
-                  }}
-                >
-                  {fileManagerRevealLabel(t)}
-                </ControlButton>
-              </>
-            ) : null}
-            <ControlButton
-              variant="unstyled"
-              type="button"
-              data-testid="workspace-browser-download-peek-view-downloads"
-              className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-              onClick={() => {
-                setDownloadPeek(null)
-                setDownloadsOpen(true)
-              }}
-            >
-              {t('workbench.browser_download_peek_view_downloads')}
-            </ControlButton>
-          </div>
-        </div>
-      ) : null}
       <TransientNotice
         key={clearDataNotice?.id ?? 'workspace-browser-clear-data-toast'}
         message={clearDataNotice?.message ?? null}

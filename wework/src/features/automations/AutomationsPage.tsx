@@ -657,6 +657,7 @@ export function AutomationsPage({
           confirmLabel={t('standIn.personal.discard')}
           cancelLabel={t('standIn.personal.keep_editing')}
           confirmTestId="automation-discard"
+          destructive
           cancelTestId="automation-keep-editing"
           onConfirm={() => {
             const action = pendingNavigation

@@ -16,6 +16,25 @@
   }
 }
 
+/* DSH's theme still colors the outline on editable controls during pointer input. */
+:where(html[data-input-modality='pointer']) :read-write:focus-visible {
+  --dsw-focus-ring-color: transparent;
+}
+
+/* Controls that draw their own keyboard ring share one visible indicator with DSH. */
+@media (forced-colors: none) {
+  :where(html:not([data-input-modality='pointer']))
+    .outline-none:is(
+      .keyboard\:focus-visible\:ring-1,
+      .keyboard\:focus-visible\:ring-2,
+      .keyboard\:focus\:ring-1,
+      .keyboard\:focus\:ring-2
+    ):focus-visible {
+    --dsw-focus-ring-color: transparent;
+    --tw-ring-color: rgb(var(--color-focus));
+  }
+}
+
 .electron-titlebar-drag-region {
   -webkit-app-region: drag;
 }
