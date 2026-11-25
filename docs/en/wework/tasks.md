@@ -92,7 +92,7 @@ When a registered event wakes a local conversation, the Executor delivers and de
 
 In the **task conversation composer**, ask AI to continue here when a document or another connected resource changes. AI discovers installed connection providers, selects the resource and saves a subscription through tools. No manual schedule setup is required. Ordinary conversations and Goals both support this; available events depend on the provider and account permissions. The device executor must advertise event protocol support. Older devices retain ordinary chat and existing PR status queries; unavailable event actions show an upgrade hint.
 
-A signal icon in the composer and task sidebar marks connection event waits, such as waiting for GitHub checks to finish. Above the composer, **Waiting for events; resumes automatically** identifies the source. Triggered events appear as short attributed receipts rather than full model continuation instructions. A Goal also shows **Waiting for events**. The host collects events without repeated model turns. Matching new events continue the original conversation with its model, permissions and workspace. Each subscription delivers one batch; AI can subscribe again when more input is needed. Local tasks require Wework to remain running; remote tasks require their device to be online. Recreating a Remote Docker device requires preserving its executor data volumes and native session directory to recover the original conversation's wait and Goal. No model calls run while the device is offline; the source determines which missed historical events remain available.
+A signal icon in the composer and task sidebar marks connection event waits, such as waiting for GitHub checks to finish. The waiting icon in the task sidebar pulses gently and stays still when Reduce Motion is enabled. Above the composer, **Waiting for events; resumes automatically** identifies the source. Triggered events appear as short attributed receipts rather than full model continuation instructions. A Goal also shows **Waiting for events**. The host collects events without repeated model turns. Matching new events continue the original conversation with its model, permissions and workspace. Each subscription delivers one batch; AI can subscribe again when more input is needed. Local tasks require Wework to remain running; remote tasks require their device to be online. Recreating a Remote Docker device requires preserving its executor data volumes and native session directory to recover the original conversation's wait and Goal. No model calls run while the device is offline; the source determines which missed historical events remain available.
 
 After an event arrives and before execution starts, **Event received; waiting for this conversation to continue** explains the pending delivery. An unresolved question or approval takes priority and shows **Event received; waiting for your answer or approval**. The Goal shows **Waiting to continue**, without asking you to start it again. Events never answer human requests or authorize external actions. Click **Cancel watch** on the source status row to cancel that subscription directly without a model call, or ask AI to cancel it. Cancellation also removes the subscription’s queued continuation. Work already started can finish, and a waiting Goal still requires a continuation. If the device is offline, reconnect before cancelling; a failed cancellation retains the watch and offers retry. For a waiting Goal, **Pause goal** also stops automatic recovery; paused, cleared or replaced Goals are never resumed by an old wait.
 
@@ -116,6 +116,8 @@ In the **Codex conversation composer**, describe an operation such as “Create 
 4. Choose Monday–Friday, daily, weekly, custom or once; set execution time and custom intervals. Recurring Cron schedules offer **Run only on mainland China statutory workdays**. It uses Beijing dates to exclude statutory days off and include make-up working weekends. Choose Daily to cover every make-up workday; Monday–Friday, weekly and custom Cron schedules retain their existing date constraints. Interval and once-only schedules do not offer this option. Notifications support every run, attention-only or none.
 5. The workday filter defaults to off, preserving existing Monday–Friday schedules. It works on local and cloud devices without changing execution location. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
 6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
+
+Reopen the details to see the saved project. After an Executor restart, a run that cannot resume is marked **Needs attention** and the schedule can continue at its next due time.
 
 Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
 
@@ -275,12 +277,18 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 You can steer the current response with text, images, and files, or send attachments alone. If an attachment is unavailable, the message stays in the queue so you can edit it and retry.
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
+If a command's exit result arrives after the response stops, its tool entry still updates to show the outcome and any output received.
 
+<a id="question-answers"></a>
 While a subagent is running, the composer keeps the Send button visible. Enter a draft to send a follow-up message.
 
 ### Answer AI questions
 
 Question cards show the full question above the answer field. Long questions wrap, and oversized cards scroll. Questions without options remain visible while you type. Enter your answer in the field labeled “Type your answer”, then click **Submit**.
+
+Paste or drop files and images into the answer field. Use `Shift + Enter` for a new line and `Enter` to submit. Selecting an option keeps your custom draft; editing it again or pressing Enter in the field submits the custom answer. Selected options survive collapsing and reopening the card. If attachment handling fails, paste again to retry, or close the error after processing finishes to discard the failed attachment and submit text. An attachment alone can answer a question or provide plan feedback.
+
+On business question cards, **Skip** hides asynchronous questions without sending a message or starting another AI reply. Blocking questions receive empty answers to end their wait. **Collapse** preserves the text and attachment drafts. **Talk it through** opens a discussion and lets you fill an answer for review before submitting. Permission approvals and connector authorization keep their existing controls and do not offer business-question skipping.
 
 ## Use the personal supervisor
 
@@ -312,6 +320,8 @@ A plan generated in Plan mode remains part of the visible response instead of be
 ## Manage conversations
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+You can click Archive on several tasks in succession. After each task's undo window closes, its request joins the same queue as batch archives. Tasks leave the list once they are successfully archived.
 
 Right-click a started task and select **Move to project** to place it under another available project on the same device. The task retains its session, history, and execution directory, and remains under the destination project after restarting Wework.
 

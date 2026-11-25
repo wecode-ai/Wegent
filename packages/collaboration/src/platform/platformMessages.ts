@@ -262,7 +262,7 @@ export const platformMessages = {
     createdIssues: "Created by me",
     participatingIssues: "Participating",
     collaborationManagement: "Collaboration management",
-    standIn: "My stand-in",
+    standIn: "My assistants",
     templates: "Templates",
     newConversation: "New conversation",
     teams: "Teams",

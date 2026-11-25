@@ -916,6 +916,7 @@ mod tests {
             owner_resolution: None,
             resource_event_keys: Vec::new(),
             native: None,
+            guidance_turn_id: None,
             turn: SpawnTurnRequest {
                 task_kind: None,
                 local_task_id: source.clone(),

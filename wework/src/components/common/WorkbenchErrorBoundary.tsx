@@ -3,20 +3,21 @@ import { WorkbenchErrorPage } from './WorkbenchErrorPage'
 
 export class WorkbenchErrorBoundary extends Component<
   { children: ReactNode; onError?: (error: Error) => void },
-  { hasError: boolean }
+  { failure: { error: unknown; componentStack?: string | null } | null }
 > {
-  state = { hasError: false }
+  state: { failure: { error: unknown; componentStack?: string | null } | null } = { failure: null }
 
-  static getDerivedStateFromError() {
-    return { hasError: true }
+  static getDerivedStateFromError(error: unknown) {
+    return { failure: { error } }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    this.setState({ failure: { error, componentStack: info.componentStack } })
     console.error('[Wework] Desktop frontend crashed:', error, info.componentStack)
     this.props.onError?.(error)
   }
 
   render() {
-    return this.state.hasError ? <WorkbenchErrorPage /> : this.props.children
+    return this.state.failure ? <WorkbenchErrorPage {...this.state.failure} /> : this.props.children
   }
 }

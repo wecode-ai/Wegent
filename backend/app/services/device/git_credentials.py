@@ -6,7 +6,7 @@
 
 import json
 import logging
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
@@ -34,6 +34,64 @@ DEFAULT_GIT_USERNAMES = {
     "gitea": "oauth2",
 }
 
+DEVICE_APPLY_ERRORS = {
+    "credential_payload_missing": (
+        "payload",
+        "The device did not receive Git credentials",
+    ),
+    "credential_payload_invalid": (
+        "payload",
+        "The device received invalid Git credential data",
+    ),
+    "invalid_workbench_home": ("directory", "The device's workbench path is invalid"),
+    "credential_directory_invalid": (
+        "directory",
+        "The device's Git credential directory is invalid",
+    ),
+    "legacy_credentials_unmanaged": (
+        "directory",
+        "The device has an unmanaged legacy Git credential directory",
+    ),
+    "credential_directory_unwritable": (
+        "directory",
+        "The device cannot write to its Git credential directory",
+    ),
+    "credential_lock_failed": (
+        "lock",
+        "The device could not acquire its Git credential lock",
+    ),
+    "credential_lock_invalid": ("lock", "The device's Git credential lock is invalid"),
+    "git_not_found": (
+        "preflight",
+        "Git was not found in the device executor environment",
+    ),
+    "managed_git_config_invalid": (
+        "stage",
+        "The generated device Git configuration is invalid",
+    ),
+    "credential_stage_failed": (
+        "stage",
+        "The device could not prepare its Git credential files",
+    ),
+    "git_config_failed": (
+        "publish",
+        "The device could not update its global Git configuration",
+    ),
+    "profile_update_failed": (
+        "publish",
+        "The device could not update its managed shell profile",
+    ),
+    "credential_publish_failed": (
+        "publish",
+        "The device could not publish its Git credential configuration",
+    ),
+    "credential_rollback_failed": (
+        "rollback",
+        "The device could not restore all of its previous Git configuration",
+    ),
+}
+GENERIC_APPLY_ERROR = "The device could not apply the Git credential configuration"
+
 
 def _single_line_value(value: object, *, field: str, domain: str) -> str:
     normalized = str(value or "").strip()
@@ -46,6 +104,12 @@ def _single_line_value(value: object, *, field: str, domain: str) -> str:
 
 class DeviceGitCredentialSyncError(RuntimeError):
     """Base error for safe user-facing Git credential sync failures."""
+
+    def __init__(
+        self, message: str, *, error_code: str = "credential_apply_failed"
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class DeviceGitCredentialNotFoundError(DeviceGitCredentialSyncError):
@@ -70,6 +134,12 @@ class DeviceGitCredentialConflictError(DeviceGitCredentialSyncError):
 
 class DeviceGitCredentialUnknownResultError(DeviceGitCredentialSyncError):
     """Raised when the device may have applied a request without acknowledging it."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The device did not confirm the sync result; retrying is safe",
+            error_code="git_sync_result_unconfirmed",
+        )
 
 
 def _normalize_domain(value: object) -> tuple[str, str]:
@@ -261,6 +331,46 @@ async def _require_eligible_device(
         )
 
 
+def _raise_device_sync_failure(
+    device_id: str, user_id: int, result: dict[str, Any]
+) -> NoReturn:
+    stdout = result.get("stdout")
+    raw_code = stdout.get("error") if isinstance(stdout, dict) else None
+    if raw_code == "sync_in_progress":
+        raise DeviceGitCredentialConflictError(
+            "Git credential synchronization is already in progress",
+            error_code="sync_in_progress",
+        )
+    exit_code = result.get("exit_code")
+    timed_out = result.get("timed_out") is True
+    error: DeviceGitCredentialSyncError
+    if timed_out or (
+        not isinstance(stdout, dict)
+        and (exit_code == 0 or result.get("success") is True)
+    ):
+        error = DeviceGitCredentialUnknownResultError()
+        phase = "response"
+    else:
+        code = (
+            raw_code
+            if isinstance(raw_code, str) and raw_code in DEVICE_APPLY_ERRORS
+            else "credential_apply_failed"
+        )
+        phase, message = DEVICE_APPLY_ERRORS.get(code, ("device", GENERIC_APPLY_ERROR))
+        error = DeviceGitCredentialSyncError(message, error_code=code)
+    logger.warning(
+        "Git credential sync failed: user_id=%s device_id=%s phase=%s "
+        "error_code=%s exit_code=%s timed_out=%s",
+        user_id,
+        device_id,
+        phase,
+        error.error_code,
+        exit_code if type(exit_code) is int else None,
+        timed_out,
+    )
+    raise error
+
+
 def _safe_device_result(
     device_id: str,
     result: dict[str, Any],
@@ -270,19 +380,20 @@ def _safe_device_result(
 ) -> dict[str, Any]:
     stdout = result.get("stdout")
     if not result.get("success") or not isinstance(stdout, dict):
-        error_code = stdout.get("error") if isinstance(stdout, dict) else None
-        if error_code == "sync_in_progress":
-            raise DeviceGitCredentialConflictError(
-                "Git credential synchronization is already in progress"
-            )
-        raise DeviceGitCredentialSyncError(
-            "The device could not apply the Git credential configuration"
-        )
+        _raise_device_sync_failure(device_id, user_id, result)
 
-    cli = stdout.get("cli") if isinstance(stdout.get("cli"), list) else []
-    for item in cli:
-        if not isinstance(item, dict) or item.get("status") == "configured":
-            continue
+    raw_cli = stdout.get("cli")
+    cli = (
+        [item for item in raw_cli if isinstance(item, dict)]
+        if isinstance(raw_cli, list)
+        else []
+    )
+    cli_warnings = [
+        item
+        for item in cli
+        if item.get("status") != "configured" or item.get("reason_code")
+    ]
+    for item in cli_warnings:
         logger.warning(
             "Git credential CLI setup incomplete: user_id=%s device_id=%s "
             "provider=%s domain=%s status=%s reason_code=%s detail=%s",
@@ -302,11 +413,7 @@ def _safe_device_result(
     warning_codes = (
         stdout.get("warnings") if isinstance(stdout.get("warnings"), list) else []
     )
-    has_warning = bool(
-        identity_warnings
-        or warning_codes
-        or any(item.get("status") != "configured" for item in cli)
-    )
+    has_warning = bool(identity_warnings or warning_codes or cli_warnings)
     return {
         "device_id": device_id,
         "status": "synced_with_warnings" if has_warning else "synced",
@@ -349,7 +456,8 @@ async def sync_git_accounts_to_device(
     ) as acquired:
         if not acquired:
             raise DeviceGitCredentialConflictError(
-                "Git credential synchronization is already in progress"
+                "Git credential synchronization is already in progress",
+                error_code="sync_in_progress",
             )
         try:
             result = await execute_configured_device_command(
@@ -375,10 +483,9 @@ async def sync_git_accounts_to_device(
             )
             detail = str(exc).lower()
             if "timed out" in detail or "disconnected" in detail:
-                raise DeviceGitCredentialUnknownResultError(
-                    "The device did not confirm the sync result; retrying is safe"
-                ) from exc
+                raise DeviceGitCredentialUnknownResultError() from exc
             raise DeviceGitCredentialSyncError(
-                "The selected device could not receive Git credentials"
+                "The selected device could not receive Git credentials",
+                error_code="git_sync_device_unavailable",
             ) from exc
     return _safe_device_result(device_id, result, duplicate_domains, user_id=user.id)

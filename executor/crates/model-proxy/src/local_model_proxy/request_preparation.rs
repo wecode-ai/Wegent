@@ -160,6 +160,7 @@ pub(super) fn prepare_request_with_model_hint(
             detail: format!("Failed to convert local model request: {error}"),
         })?;
         responses_body = converted;
+        request_policy::strip_incompatible_responses_history_ids(&mut responses_body);
         if tool_capabilities.function_tools_only {
             request_policy::retain_function_tools(&mut responses_body)?;
         }

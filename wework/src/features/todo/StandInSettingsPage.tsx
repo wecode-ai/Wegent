@@ -42,6 +42,7 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInProjectSetup } from './StandInProjectSetup'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
+import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
 import { createStandInRoleDraft } from './standInRoleDraft'
 import {
   StandInSettingsActions,
@@ -121,7 +122,6 @@ function StandInSettingsEditor({
   const { t } = useTranslation('common')
   const roleDraftRequest = useMemo(
     () => ({
-      defaultRoleName: t('standIn.personal.default_role'),
       project: initialProject
         ? {
             id: initialProject.id,
@@ -189,6 +189,13 @@ function StandInSettingsEditor({
   const role =
     draft?.roles.find(role => role.id === (initialProject ? projectRoleId : selectedId)) ??
     draft?.roles[0]
+  const previousRole = saved?.roles.find(row => row.id === role?.id)
+  const changingDevice =
+    role &&
+    (previousRole
+      ? role.executionDeviceId !== previousRole.executionDeviceId
+      : role.executionDeviceId !== draft?.executionDeviceId &&
+        role.executionDeviceId !== state.loadedDeviceId)
   const executionDeviceId = role?.executionDeviceId ?? draft?.executionDeviceId
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const tagScope = JSON.stringify([userId, executionDeviceId, role?.id])
@@ -232,7 +239,7 @@ function StandInSettingsEditor({
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
     executionDeviceId,
-    view === 'advanced'
+    view === 'advanced' || ((view === 'main' || view === 'create') && Boolean(role?.workspace))
   )
 
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
@@ -342,11 +349,6 @@ function StandInSettingsEditor({
             }
           : draft
     const changedRole = value.roles.find(row => row.id === role.id)!
-    const previousRole = saved?.roles.find(row => row.id === role.id)
-    const changingDevice = previousRole
-      ? changedRole.executionDeviceId !== previousRole.executionDeviceId
-      : changedRole.executionDeviceId !== value.executionDeviceId &&
-        changedRole.executionDeviceId !== state.loadedDeviceId
     if (changingDevice) {
       if (!services.standInApi || !saved) return
       setMoving(true)
@@ -417,6 +419,7 @@ function StandInSettingsEditor({
       devices={userId === 0 ? [] : devices}
       disabled={saving || moving}
       onChange={value => {
+        if (value === role.executionDeviceId) return
         setNotice(false)
         updateRole(role.id, current => ({
           ...current,
@@ -564,7 +567,7 @@ function StandInSettingsEditor({
                       : standInRoleName(
                           role,
                           draft.roles.indexOf(role),
-                          t('standIn.personal.default_role')
+                          t('standIn.personal.unnamed_assistant')
                         )
                   }
                 />
@@ -589,6 +592,7 @@ function StandInSettingsEditor({
                 <StandInRequirements
                   key={role.id}
                   role={role}
+                  runtimeWork={runtimeWork}
                   services={services}
                   onChange={update => updateRole(role.id, update)}
                   disabled={saving}
@@ -711,8 +715,19 @@ function StandInSettingsEditor({
                   devices={devices}
                   services={services}
                 />
+                <StandInTaskPermissionSettings
+                  value={changingDevice ? undefined : role.taskPermissions}
+                  disabled={saving || Boolean(changingDevice)}
+                  onChange={taskPermissions =>
+                    updateRole(role.id, current => ({ ...current, taskPermissions }))
+                  }
+                />
                 <p className="text-xs text-text-secondary">
-                  {t('standIn.personal.device_change_help')}
+                  {t(
+                    changingDevice
+                      ? 'standIn.personal.device_change_permissions_help'
+                      : 'standIn.personal.device_change_help'
+                  )}
                 </p>
                 <StandInSettingsError
                   error={runtimeError}
@@ -801,7 +816,7 @@ function StandInSettingsEditor({
                       ? 'standIn.personal.disable_project'
                       : 'standIn.personal.enable_and_use'
                     : view === 'create' && !initialProject
-                      ? 'standIn.personal.create_role'
+                      ? 'standIn.personal.create_title'
                       : view === 'connections'
                         ? 'standIn.personal.save_connections'
                         : 'standIn.save'
@@ -837,7 +852,7 @@ function StandInSettingsEditor({
             >
               <p className="text-sm">
                 {t('standIn.personal.delete_role_help', {
-                  name: role.name || t('standIn.personal.default_role'),
+                  name: role.name || t('standIn.personal.unnamed_assistant'),
                 })}
               </p>
               <div className="mt-3 flex justify-end gap-2">

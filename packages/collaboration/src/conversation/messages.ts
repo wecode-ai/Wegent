@@ -218,6 +218,10 @@ export const conversationMessages: Record<
     "conversation.request_user_input.collapse": "收起",
     "conversation.request_user_input.ignore": "取消",
     "conversation.request_user_input.submit": "提交",
+    "conversation.request_user_input.skip": "跳过",
+    "conversation.request_user_input.skipped_reply": "已跳过 · 回复问题",
+    "conversation.request_user_input.files_unavailable":
+      "当前会话的附件服务不可用，请重试。",
     "conversation.subagent.active_count": "进行中 · {{count}}",
     "conversation.subagent.activity": "子代理活动",
     "conversation.subagent.agent": "子代理",
@@ -590,6 +594,11 @@ export const conversationMessages: Record<
     "conversation.request_user_input.collapse": "Collapse",
     "conversation.request_user_input.ignore": "Cancel",
     "conversation.request_user_input.submit": "Submit",
+    "conversation.request_user_input.skip": "Skip",
+    "conversation.request_user_input.skipped_reply":
+      "Skipped · Answer question",
+    "conversation.request_user_input.files_unavailable":
+      "Attachment services are unavailable for this conversation. Try again.",
     "conversation.subagent.active_count": "Active · {{count}}",
     "conversation.subagent.activity": "Subagent activity",
     "conversation.subagent.agent": "Subagent",

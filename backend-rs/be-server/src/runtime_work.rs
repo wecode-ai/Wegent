@@ -17,6 +17,7 @@ pub(crate) fn transport(app: &AppState) -> RuntimeRpcServices<'_> {
 
 pub(crate) fn request_services(app: &AppState) -> RuntimeRequestServices<'_> {
     RuntimeRequestServices {
+        auth: &app.auth,
         mysql: &app.mysql,
         transport: transport(app),
         proxy: &AccountProxy,

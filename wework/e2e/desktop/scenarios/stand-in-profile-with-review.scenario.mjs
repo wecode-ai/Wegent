@@ -305,7 +305,7 @@ export function createDesktopScenario(options) {
       const afterSetup = await rpc('runtime.stand_in.personal.get', { userId: USER })
       const roleSelector = '[data-testid="stand-in-role-selector"]'
       await control.command('waitFor', `${roleSelector} [data-testid="stand-in-primary-open"]`, {
-        text: '我的助理',
+        text: '默认助理',
       })
       assert.equal(
         await control.command(

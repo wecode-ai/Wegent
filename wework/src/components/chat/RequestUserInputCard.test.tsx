@@ -1,3 +1,4 @@
+import { setComposerValue } from '@/test/composer'
 import '@/i18n'
 
 import { openExternalUrl } from '@/lib/external-links'
@@ -36,9 +37,7 @@ test('shares a hosted draft while retaining the original structured response', a
     />
   )
   expect(screen.getByTestId('request-user-input-custom-details')).toHaveValue('Saved draft')
-  fireEvent.change(screen.getByTestId('request-user-input-custom-details'), {
-    target: { value: 'New reply' },
-  })
+  setComposerValue(screen.getByTestId('request-user-input-custom-details'), 'New reply')
   expect(change).toHaveBeenCalledWith({ details: 'New reply' })
   rerender(
     <RequestUserInputCard
@@ -905,9 +904,7 @@ test('preserves a typed draft when another question arrives and submits both ans
     questions: [{ id: 'first', question: 'First?' }],
   }
   const { rerender } = render(<RequestUserInputCard payload={payload} onSubmit={onSubmit} />)
-  fireEvent.change(screen.getByTestId('request-user-input-custom-first'), {
-    target: { value: 'Draft answer' },
-  })
+  setComposerValue(screen.getByTestId('request-user-input-custom-first'), 'Draft answer')
   rerender(
     <RequestUserInputCard
       payload={{

@@ -64,6 +64,8 @@ Local Electron packages reuse the release package's brand metadata and update so
 
 The packaged Wework Electron app defaults to local-first mode. This mode does not start the frontend Node dev server and does not start an extra local HTTP Backend service. The React UI runs inside the Electron renderer, while the Electron main process provides the app's internal command layer.
 
+Core DSH serves bundled UI plugin entries at stable paths. The renderer includes its build's source SHA in the entry URL to bypass cached entries from older builds on the same origin. Entry responses use `no-store`, while content-hashed assets remain cacheable. This keeps the workbench and plugin on the same build of the React context module.
+
 Local-first mode has three local runtime roles: the Electron main process, the executor sidecar, and core DSH:
 
 ```mermaid
@@ -509,6 +511,8 @@ When a project task runs through the local executor, its task-level `CLAUDE_CONF
 Claude Code, Agno, and Codex task shells receive a task identity environment set. `WEGENT_TASK_ID` identifies the current Task, `WEWORK_PARENT_TITLE` provides the current task title, `AUTH_TOKEN` provides the per-turn bearer token for Backend API access, `WEGENT_RUNTIME_AUTH_TOKEN` provides the bearer token that local Skills use to access Wegent runtime APIs, and `WEGENT_SKILL_IDENTITY_TOKEN` plus `WEGENT_SKILL_USER_NAME` identify task-scoped Skill operations. Claude Code and Agno receive the values through their child-process environments. Codex receives them through thread-scoped `shell_environment_policy.set.*` settings, so task identity never enters the shared app-server process environment and cannot leak across tasks. After Wework connects to cloud, it issues the runtime token through `POST /api/users/me/wegent-runtime-token` and refreshes it before the returned `expires_in`; disconnecting from cloud removes `WEGENT_RUNTIME_AUTH_TOKEN` from the local Codex config. The executor does not inject `WEGENT_SUBTASK_ID` into these child runtimes.
 
 When project mode calls Claude or Codex model APIs, the executor adds a `wecode-project: <project_id>` request header in the directly launched runtime context and fills source identity headers: `wecode-action: wegent`, `wecode-source: wegent-local`, and `wecode-executor: <runtime>`, where Claude Code uses `claudecode` and Codex uses `codex`. Claude Code local mode first merges existing `ANTHROPIC_CUSTOM_HEADERS` from the executor startup process environment and the runtime environment, then appends the project identity and writes the resulting header set to both `ANTHROPIC_CUSTOM_HEADERS` and `DEFAULT_HEADERS`/`default_headers`. This keeps the Claude Code child process and downstream model gateways on the same header set. Codex writes the header into provider `http_headers` for Wegent-managed provider configs, and also injects it for personal Codex config runs when the execution model explicitly names the provider.
+
+The Wework desktop app passes its Electron-reported application version when it starts the local executor. Model requests carry `x-wework-version`, `x-wework-platform`, and `x-wework-arch` for the application version, operating system, and executor architecture. When a request uses the Wegent model gateway, the gateway forwards the same header names to the model service.
 
 ### Chat Task Device Resolution And Claude Code Launch Context
 

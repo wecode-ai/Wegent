@@ -20,7 +20,6 @@ import {
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForTestIdByText } from '../modules/workspace-flows.mjs'
@@ -89,8 +88,6 @@ export function createDesktopScenario({
       const verifyMemoryInChat = async marker => {
         await control.command('click', '[data-testid="stand-in-memory-close"]')
         const chat = '[data-testid="stand-in-conversation"]'
-        await control.command('waitFor', `${chat} [data-testid="model-selector-button"]`)
-        await selectE2EModel(control, undefined, undefined, chat)
         assert.equal(
           await control.command(
             'getElementCount',
@@ -108,6 +105,7 @@ export function createDesktopScenario({
         await control.command('fill', `${chat} [data-testid="chat-message-input"]`, {
           value: `MEMORY_VERIFY_${marker}。${marker === 'REMEMBER' ? '请记住：PROFILE_MEMORY_FROM_EXPLICIT_CHAT' : '请根据已保存记忆回答'}`,
         })
+        await control.command('waitFor', `${chat} [data-testid="send-message-button"]:enabled`)
         await control.command('press', `${chat} [data-testid="chat-message-input"]`, {
           key: 'Enter',
         })
@@ -181,7 +179,8 @@ export function createDesktopScenario({
       const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
       assert.equal(saved.primary.prompt, '')
       assert.equal(saved.primary.preferences, '帮我跟进工作\n\n回复简洁，发送前确认')
-      assert.equal(saved.primary.workspace.workspacePath, workspacePath)
+      assert.equal(saved.primary.workspace.projectKey, NAME)
+      assert.equal(saved.primary.workspace.workspacePath, undefined)
       assert.equal(saved.primary.model.model_id, model.model_id)
       await openStandInSettings(control)
       await control.command('waitFor', PANEL)

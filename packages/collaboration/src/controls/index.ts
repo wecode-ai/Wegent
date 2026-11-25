@@ -4,7 +4,11 @@ export {
   GitAccountConfigurationProvider,
 } from './GitAccountConfiguration'
 export { KeyboardShortcut } from './KeyboardShortcut'
-export { PermissionModeSelector, type PermissionModeSelectorProps } from './PermissionModeSelector'
+export {
+  PermissionModeSelector,
+  type ComposerPermissionControls,
+  type PermissionModeSelectorProps,
+} from './PermissionModeSelector'
 
 export {
   SearchableSelect,

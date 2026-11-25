@@ -397,3 +397,18 @@ fn local_presentation_reference_token(name: &str, href: &str) -> Option<String> 
     }
     href.starts_with("plugin://").then(|| format!("@{name}"))
 }
+
+fn retain_stand_in_guidance_source(link: &mut RuntimeTaskLink, turn_id: &Value, display: &Value) {
+    let source = &display["source"];
+    let Some(callback) = source["callback_id"]
+        .as_str()
+        .filter(|_| source["source"] == "im")
+    else {
+        return;
+    };
+    let replies = &mut link.runtime_handle["standInGuidanceReplies"];
+    if replies["turnId"] != *turn_id {
+        *replies = json!({"turnId":turn_id,"sources":{}});
+    }
+    replies["sources"][callback] = source.clone();
+}

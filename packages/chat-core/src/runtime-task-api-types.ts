@@ -203,8 +203,10 @@ export interface RuntimeSendRequest {
 
 export interface RuntimeSendResponse {
   accepted: boolean
+  guidanceId?: string
   taskId: string
   status?: 'queued' | 'running'
+  guided?: boolean
   queuePosition?: number | null
   turnId?: string
   turn_id?: string

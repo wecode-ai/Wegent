@@ -2,8 +2,22 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import type { RuntimeWorkListResponse } from '@/types/api'
 
 type RuntimeWorkApi = NonNullable<WorkbenchServices['runtimeWorkApi']>
+
+export function standInProjectWorkspace(
+  project: RuntimeWorkListResponse['projects'][number],
+  deviceId: string
+) {
+  return project.deviceWorkspaces.find(
+    workspace =>
+      workspace.deviceId === deviceId &&
+      workspace.available &&
+      workspace.workspaceKind !== 'chat' &&
+      workspace.workspaceSource !== 'remote'
+  )
+}
 
 /** Keep environment reads and recovery independent of editable personal settings. */
 export function useStandInRuntimeWork(

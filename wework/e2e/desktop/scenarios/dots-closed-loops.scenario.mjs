@@ -63,6 +63,14 @@ const TASK_TITLES = {
   LAUNCH: 'Changed launch scope to reviewed beta pack',
   REVENUE: 'Updated orders to evidence-backed follow-up plan',
 }
+const WRITES_REQUIRING_APPROVAL = new Set([
+  'dots-CART-2',
+  'dots-LAUNCH-1',
+  'dots-LAUNCH-2',
+  'dots-REVENUE-2',
+  'dots-REVENUE-2-plan',
+  'dots-REVENUE-4',
+])
 
 function latestUserText(body) {
   const item = (body.input ?? []).filter(entry => entry.role === 'user').at(-1)
@@ -149,6 +157,12 @@ export function createDesktopScenario(options) {
     const verifiedSource = `const compareCwd=${comparableDotsPath.toString()};require('assert/strict').equal(compareCwd(require('fs').realpathSync(process.cwd())),compareCwd(require('fs').realpathSync(${JSON.stringify(root)})),'The native default task cwd must retain the selected stories subdirectory');${source}`
     const encoded = Buffer.from(verifiedSource).toString('base64')
     const cmd = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`
+    if (WRITES_REQUIRING_APPROVAL.has(id)) {
+      return shellCommandResponse(body, id, `${cmd} ${id}`, undefined, {
+        sandbox_permissions: 'require_escalated',
+        justification: 'Write the requested revision inside the isolated story workspace.',
+      })
+    }
     return shellCommandResponse(body, id, cmd, undefined, { yield_time_ms: 1000 })
   }
 
@@ -360,13 +374,29 @@ export function createDesktopScenario(options) {
     console.log(`[dots-closed-loops] verified ${story} revision ${phase}: real task ${taskId}`)
   }
 
-  async function answer(control, title, answerText) {
+  async function openWork(control) {
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
     await openStandInActivity(control)
     const card = `[data-testid="stand-in-activity-task-${tasks.get(story)}"]`
     await control.command('waitFor', card, { timeoutMs: options.modelResponseTimeoutMs })
     await control.command('click', card)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
+  }
+
+  async function approveWrite(control, commandId) {
+    await control.command(
+      'waitFor',
+      `${INPUT_CARD} [data-testid="request-user-input-question-__codex_approval"]`,
+      { text: commandId }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      `${INPUT_CARD} [data-testid="request-user-input-option-__codex_approval-0"]`
+    )
+  }
+
+  async function answer(control, title, answerText) {
+    await openWork(control)
     await control.command('waitFor', INPUT_CARD, {
       text: title,
       visible: true,
@@ -400,10 +430,7 @@ export function createDesktopScenario(options) {
       !transcript.messages.some(item => item.content?.includes(RESULT(story, phase))),
       'No successful delivery may precede the required business answer'
     )
-    await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-    await openStandInActivity(control)
-    await control.command('click', card)
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
+    await openWork(control)
     await control.command('waitFor', INPUT_CARD, { text: title, visible: true })
     if (story === 'LAUNCH') await assertLaunchUnchanged(root)
     else assert.equal(await readFile(join(root, 'revenue-fixture/followup-plan.md'), 'utf8'), '')
@@ -602,6 +629,7 @@ export function createDesktopScenario(options) {
               prompt: '',
               preferences: '',
               model,
+              taskPermissions: { permissionMode: 'workspace-write' },
               workspace: {
                 projectKey: 'dots-closed-loops',
                 workspacePath: root,
@@ -639,6 +667,8 @@ export function createDesktopScenario(options) {
           2,
           'Continue that task: zero quantity must contribute zero. Add the regression and return verified results.'
         )
+        await openWork(control)
+        await approveWrite(control, 'dots-CART-2')
         await outcome(control)
         assert.match(
           await readFile(join(root, 'cart-fixture/cart.test.mjs'), 'utf8'),
@@ -689,6 +719,7 @@ export function createDesktopScenario(options) {
           'Compare scope-v1.md and scope-v2.md in launch-fixture. Ask for the missing date; leave existing assets unchanged until I answer. Then prepare all three launch assets.'
         )
         await answer(control, LAUNCH_QUESTION, LAUNCH_ANSWER)
+        await approveWrite(control, 'dots-LAUNCH-1')
         await outcome(control)
         for (const file of ['announcement.md', 'launch-checklist.md', 'scope-change-summary.md']) {
           const content = await readFile(join(root, 'launch-fixture', file), 'utf8')
@@ -703,6 +734,8 @@ export function createDesktopScenario(options) {
           2,
           'Continue the same work. Add the explicit sentence No automatic scheduling in this beta to announcement.md, retaining the agreed date and audience.'
         )
+        await openWork(control)
+        await approveWrite(control, 'dots-LAUNCH-2')
         await outcome(control)
         assert.match(
           await readFile(join(root, 'launch-fixture/announcement.md'), 'utf8'),
@@ -735,7 +768,10 @@ export function createDesktopScenario(options) {
           2,
           'New evidence is in orders.csv: Birch refunded, Cedar pending added. Continue the same analysis, recompute amounts and decline, ask which follow-up to prioritize, and write an internal plan after my answer.'
         )
+        await openWork(control)
+        await approveWrite(control, 'dots-REVENUE-2')
         await answer(control, REVENUE_QUESTION, REVENUE_ANSWER)
+        await approveWrite(control, 'dots-REVENUE-2-plan')
         await outcome(control)
         const report = await readFile(join(root, 'revenue-fixture/revenue-report.md'), 'utf8')
         for (const fact of [
@@ -771,6 +807,8 @@ export function createDesktopScenario(options) {
           4,
           'The invalid amount has been corrected. Continue the original task and recalculate the report.'
         )
+        await openWork(control)
+        await approveWrite(control, 'dots-REVENUE-4')
         await outcome(control)
         assert.equal(
           await readFile(join(root, 'revenue-fixture/revenue-report.md'), 'utf8'),

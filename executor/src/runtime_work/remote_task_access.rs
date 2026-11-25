@@ -24,6 +24,7 @@ pub(crate) const TASK_METHODS: &[&str] = &[
     "runtime.tasks.transcript",
     "runtime.tasks.transcript.search",
     "runtime.tasks.send",
+    "runtime.tasks.permissions.set",
     "runtime.tasks.guidance",
     "runtime.tasks.cancel",
     "runtime.tasks.goal.get",
@@ -184,6 +185,7 @@ mod tests {
         for method in [
             "runtime.tasks.create",
             "runtime.tasks.guidance",
+            "runtime.tasks.permissions.set",
             "runtime.worktrees.capabilities",
             "runtime.worktrees.preflight",
             "runtime.projects.upsert_local",
@@ -199,6 +201,9 @@ mod tests {
         ] {
             assert!(reader.authorize(method, None).is_err());
             assert!(reader.authorize(method, Some("project-session")).is_err());
+            assert!(reader
+                .authorize(method, Some("stand-in-role-task"))
+                .is_err());
             access.update(json!({"enabled": true})).unwrap();
             assert!(reader.authorize(method, None).is_ok());
             assert!(peer.authorize(method, None).is_err());

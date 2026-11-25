@@ -1579,12 +1579,18 @@ async function selectE2EModel(
     console.info(
       '[desktop-e2e-model-selection]',
       JSON.stringify({
-        modelIds,
-        labels,
-        modelSelectorButton,
+        selector: modelSelectorButton,
+        targetModelIds: modelIds,
+        targetLabels: labels,
+        expectedProviderId,
         selectedModelLabel,
         selectedProviderId,
-        expectedProviderId,
+        triggers: await control.command('getElementMetrics', modelSelectorButton, {
+          value: JSON.stringify({
+            includeText: true,
+            attributeNames: ['data-model-provider-id'],
+          }),
+        }),
       })
     )
     if (

@@ -41,6 +41,7 @@ import type {
   RuntimeSendResponse,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeTranscriptSearchResponse,
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskCreateRequest,
@@ -193,6 +194,8 @@ export interface RuntimePaneActionOptions {
   isCurrent?: () => boolean
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void
+  onAccepted?: (response: RuntimeSendResponse) => void
+  onGuided?: () => void
   silentBusyRetry?: boolean
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
 }
@@ -263,7 +266,8 @@ export interface WorkbenchContextValue {
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
     resolveRuntimeTaskModelSelection: (
-      address: RuntimeTaskAddress
+      address: RuntimeTaskAddress,
+      task?: RuntimeTaskSummary | null
     ) => RuntimeTaskModelSelectionControls
     setRuntimeTaskSelectedModel: (address: RuntimeTaskAddress, model: UnifiedModel | null) => void
     setRuntimeTaskSelectedModelAndOptions: (
@@ -536,7 +540,7 @@ export type WorkbenchPaneState = Pick<
 
 export type WorkbenchPaneContextValue = Omit<
   WorkbenchContextValue,
-  'state' | 'cloudWorkStatus' | 'updateUserPreferences'
+  'state' | 'cloudWorkStatus' | 'runtimeTaskReminders' | 'updateUserPreferences'
 > & {
   state: WorkbenchPaneState
 }

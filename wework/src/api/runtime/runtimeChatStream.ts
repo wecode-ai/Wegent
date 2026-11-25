@@ -83,7 +83,8 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       })
     }
     const subscriptionEntries = Array.from(subscriptions)
-    logRuntimeChatStreamNativeEvent(event, subscriptionEntries)
+    const debugEnabled = isRuntimeChatStreamDebugEnabled()
+    if (debugEnabled) logRuntimeChatStreamNativeEvent(event, subscriptionEntries)
     if (shouldLogRuntimeChatStreamEvent(event.event)) {
       const matchedSubscriptionCount = subscriptionEntries.filter(([, subscription]) =>
         isLocalExecutorEventInScope(event, subscription.handlers.scope)
@@ -92,7 +93,23 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
     }
     for (const [subscriptionId, subscription] of subscriptionEntries) {
       if (event.event === 'wework.notification.created') {
-        subscription.handlers.onWeworkNotification?.()
+        const { id, stored, standInStartFailure } = event.payload
+        const { userId, itemTitle, code, url } = asRecord(standInStartFailure)
+        subscription.handlers.onWeworkNotification?.(
+          typeof id === 'string'
+            ? {
+                id,
+                stored: stored !== false,
+                standInStartFailure:
+                  typeof userId === 'number' &&
+                  typeof itemTitle === 'string' &&
+                  typeof code === 'string' &&
+                  typeof url === 'string'
+                    ? { userId, itemTitle, code, url }
+                    : undefined,
+              }
+            : undefined
+        )
         continue
       }
       if (event.event === 'wework.issue.assignments.changed') {
@@ -146,12 +163,13 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       if (event.event === 'response.output_text.delta') {
         subscription.textDeltaCount += 1
       }
-      logRuntimeChatStreamEvent(
-        subscriptionId,
-        event,
-        subscription.eventCount,
-        subscription.textDeltaCount
-      )
+      if (debugEnabled)
+        logRuntimeChatStreamEvent(
+          subscriptionId,
+          event,
+          subscription.eventCount,
+          subscription.textDeltaCount
+        )
       try {
         measureRuntimeStreamEvent(event.event, () => {
           emitResponseApiEvent(
@@ -654,7 +672,6 @@ function logRuntimeChatStreamEvent(
   eventCount: number,
   textDeltaCount: number
 ): void {
-  if (!isRuntimeChatStreamDebugEnabled()) return
   const payload = asRecord(event.payload)
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
@@ -689,7 +706,6 @@ function logRuntimeChatStreamNativeEvent(
     ]
   >
 ): void {
-  if (!isRuntimeChatStreamDebugEnabled()) return
   const payload = asRecord(event.payload)
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)

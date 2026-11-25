@@ -88,6 +88,7 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     query: str
     search_hints: SearchHints | None = None
     max_results: int = 5
+    deduplicate_by_document: bool = Field(default=False, strict=True)
     route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto"
     direct_injection_budget: Optional[DirectInjectionBudget] = None
     scope: Optional[RetrievalScope] = None

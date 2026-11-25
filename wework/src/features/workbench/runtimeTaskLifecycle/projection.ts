@@ -165,23 +165,32 @@ export function shouldReplaceRuntimeTaskProjection(
   return true
 }
 
+export function isNewerRuntimeTaskSnapshotRevision(
+  candidate: string | null | undefined,
+  current: string | null | undefined
+): boolean {
+  const revision = (value: string | null | undefined) =>
+    value && /^\d+$/.test(value) ? BigInt(value) : 0n
+  return revision(candidate) > revision(current)
+}
+
 /** Persistent metadata has its own order across native execution epochs. */
 export function mergeRuntimeTaskSnapshotMetadata(
   current: RuntimeTaskSummary,
   candidate: RuntimeTaskSummary
 ): RuntimeTaskSummary {
   if (current.taskId !== candidate.taskId) return current
-  const revision = (value: string | undefined) =>
-    value && /^\d+$/.test(value) ? BigInt(value) : 0n
-  if (revision(candidate.snapshotRevision) <= revision(current.snapshotRevision)) return current
+  if (!isNewerRuntimeTaskSnapshotRevision(candidate.snapshotRevision, current.snapshotRevision))
+    return current
   const runtimeHandle = { ...current.runtimeHandle }
-  // These fields are independent of native turn, session and permission bindings.
+  // These fields can change without starting a new native turn or replacing session bindings.
   for (const field of [
     'connectionEventSubscriptions',
     'changeRequests',
     'modelSelection',
     'model_selection',
     'quotaWait',
+    'taskPermissions',
   ]) {
     if (Object.hasOwn(candidate.runtimeHandle ?? {}, field)) {
       runtimeHandle[field] = candidate.runtimeHandle![field]

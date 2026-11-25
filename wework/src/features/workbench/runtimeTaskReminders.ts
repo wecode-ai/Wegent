@@ -1,5 +1,4 @@
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
-export { getVisibleRuntimeTaskUnreadKeys } from './runtimeTaskReminderSource'
 import { createAppPreferencesStore } from '@/features/app-preferences/appPreferencesStore'
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { defaultAppPreferences, type AppPreferences } from '@/desktop/appPreferences'
@@ -126,12 +125,7 @@ export function useRuntimeTaskReminders({
   )
 
   const sidebarItems = useMemo(() => collectRuntimeTaskReminderItems(runtimeWork), [runtimeWork])
-  const listedItems = useUnlistedStandInTasks(
-    sidebarItems,
-    lifecycleSnapshot,
-    standInApi,
-    runtimeApi
-  )
+  const listedItems = useUnlistedStandInTasks(sidebarItems, lifecycleSnapshot, standInApi)
   const items = useMemo(() => {
     const visible = new Set(listedItems.map(item => item.key))
     const unlisted = [...lifecycleSnapshot.tasks.values()].flatMap(snapshot => {
@@ -152,7 +146,7 @@ export function useRuntimeTaskReminders({
         },
       ]
     })
-    return [...listedItems, ...unlisted]
+    return unlisted.length ? [...listedItems, ...unlisted] : listedItems
   }, [listedItems, lifecycleSnapshot.tasks])
   const unreadMessageCounts = useStandInMessageReminders(
     items,

@@ -6,6 +6,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { verifyRoundStandInAssignment } from '../modules/stand-in-round-assignment.mjs'
 import { verifyOrphanStandInRecovery } from '../modules/stand-in-orphan-binding-recovery.mjs'
 import { verifyStandInStartupRecovery } from '../modules/stand-in-startup-recovery.mjs'
+import { verifyStandInWorkspaceRecovery } from '../modules/stand-in-workspace-recovery.mjs'
 import {
   assistantMessage,
   createSse,
@@ -327,6 +328,15 @@ export function createDesktopScenario({
         user,
         until,
         record,
+      })
+      await verifyStandInWorkspaceRecovery({
+        request,
+        rpc,
+        project,
+        user,
+        until,
+        control,
+        resultDir,
       })
       console.log(
         '[stand-in-assignment-recovery] PASS: same Issue processed twice after transfer away and back'

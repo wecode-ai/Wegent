@@ -16,6 +16,7 @@ mod harness_protocol;
 mod history;
 mod image_budget;
 mod long_context;
+mod official_http;
 mod openai_reasoning;
 mod passthrough_stream;
 mod progressive_tools;
@@ -44,11 +45,13 @@ use futures_util::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+use wegent_execution_contracts::model_request_headers::apply_wework_headers;
 
 use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
 use fork::{codex_forked_from_thread_id, prepare_fork_request};
+pub use official_http::{official_http_route, OFFICIAL_HTTP_ROUTE};
 pub use request_policy::CodexRequestMode;
 
 pub const API_KEY: &str = "wework-local-router";
@@ -152,6 +155,7 @@ pub struct LocalModelProxyUpstream {
 
 pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream) -> String {
     upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
+    apply_wework_headers(&mut upstream.default_headers);
     let upstream_endpoint = upstream
         .request_url
         .as_deref()
@@ -467,9 +471,13 @@ pub fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> String 
 pub fn register_with_vision_sidecar(
     route_scope: &str,
     mut upstream: LocalModelProxyUpstream,
-    vision_sidecar: Option<VisionSidecarUpstream>,
+    mut vision_sidecar: Option<VisionSidecarUpstream>,
 ) -> String {
     upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
+    apply_wework_headers(&mut upstream.default_headers);
+    if let Some(sidecar) = &mut vision_sidecar {
+        apply_wework_headers(&mut sidecar.default_headers);
+    }
     let upstream_endpoint = upstream
         .request_url
         .as_deref()

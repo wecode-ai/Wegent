@@ -4,7 +4,7 @@ import { ArrowUpRight, Folder, MessageCircle, Pin, Settings } from 'lucide-react
 import { useState } from 'react'
 
 import { TextInputDialog } from '@/components/common/TextInputDialog'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
 import {
@@ -28,7 +28,7 @@ export function ConversationHeaderTitle({
   projectWork?: RuntimeProjectWork
 }) {
   const { t } = useTranslation('common')
-  const { state, renameRuntimeTask, setRuntimeProjectPinned } = useWorkbench()
+  const { state, renameRuntimeTask, setRuntimeProjectPinned } = useWorkbenchPaneContext()
   const [renaming, setRenaming] = useState(false)
   const [pinning, setPinning] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)

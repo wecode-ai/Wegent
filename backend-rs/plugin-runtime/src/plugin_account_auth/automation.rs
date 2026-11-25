@@ -348,13 +348,18 @@ pub(super) async fn grant_targets<T: MysqlTransaction>(
     transaction: &mut T,
     user_id: i64,
     device_id: &str,
+    request: &AutomationRequest,
 ) -> Result<Vec<i64>, &'static str> {
     let binding = route::device_binding_on(transaction, user_id, device_id).await?;
+    let reported: BTreeSet<_> = request.installed_ids.iter().copied().collect();
+    // An empty inventory requests all missing grants. Otherwise only consider
+    // reported installations, without leasing plugins that require no grant.
     Ok(grant_connections(transaction, user_id)
         .await?
         .into_iter()
         .filter(|row| needs_device_grant(&row.json["spec"], &binding.logical_device_id))
         .filter_map(|row| row.json["spec"]["installedPluginId"].as_i64())
+        .filter(|id| reported.is_empty() || reported.contains(id))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect())

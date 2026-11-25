@@ -71,8 +71,11 @@ export function StandInProposalDiff({
       )}
       {!dequal(identity.workspace, previous?.workspace) && (
         <p className="break-all text-sm">
-          {t('standIn.local_project')}：
-          {identity.workspace?.workspacePath ?? t('standIn.inherit_environment')}
+          {t(
+            identity.workspace
+              ? 'standIn.workspace.runtime_workspace_changed'
+              : 'standIn.inherit_environment'
+          )}
         </p>
       )}
       {!dequal(identity.model, previous?.model) && (

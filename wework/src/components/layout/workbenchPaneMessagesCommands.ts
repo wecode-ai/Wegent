@@ -16,6 +16,7 @@ import {
 import { normalizeGuidanceError } from '@/features/workbench/workbenchProviderHelpers'
 
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { persistAttachmentReferences } from '@/lib/attachments'
 import {
   applyRequestUserInputResponseToBlock,
   findRequestUserInputPayload,
@@ -23,6 +24,7 @@ import {
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@/components/chat/requestUserInputMessages'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 
@@ -571,6 +573,15 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     })
   }
 
+  const skipRequestUserInput = (payloads: RequestUserInputPayload[]) => {
+    const { setAnsweredRequestUserInputIds } = sessionOwner.actions
+    const keys = payloads
+      .filter(isAsyncRequestUserInputPayload)
+      .map(requestUserInputPayloadKey)
+      .filter((key): key is string => Boolean(key))
+    setAnsweredRequestUserInputIds(current => new Set([...current, ...keys]))
+  }
+
   const sendQueuedMessage = async (message: RuntimePaneQueuedMessage) => {
     const { queueController } = sessionOwner.frame
 
@@ -608,7 +619,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     if (queuedMessage.status === 'sending') return false
 
     setError(null)
-    if (!readCurrentPaneBusy() && !forceActiveTurn) {
+    if (queuedMessage.requestUserInputResponse || (!readCurrentPaneBusy() && !forceActiveTurn)) {
       setQueuedMessages(messages =>
         messages.map(message =>
           message.id === id
@@ -618,6 +629,23 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       )
       try {
         const result = await sendRuntimeMessage(queuedMessage)
+        if (result.accepted && result.guidanceTurnId) {
+          setQueuedMessages(messages =>
+            messages.map(message =>
+              message.id === id
+                ? {
+                    ...message,
+                    status: 'sending',
+                    deliveryMode: 'guidance',
+                    awaitingGuidanceAcceptance: undefined,
+                    error: undefined,
+                    notice: '正在引导当前对话',
+                  }
+                : message
+            )
+          )
+          return true
+        }
         if (result.queued) {
           retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
           return true
@@ -775,6 +803,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     if (!currentRuntimeTask) return false
 
     const message = requestUserInputResponseText(response)
+    const attachments = requestUserInputResponseAttachments(response)
     const requestUserInputKey = requestUserInputResponseKey(response)
     const operation = beginRuntimeConversationOperation(currentRuntimeTask, {
       requestUserInputKey,
@@ -791,20 +820,23 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       // any other user message. Codex then steers the running turn while the model
       // is still working and starts a new turn once it has stopped, instead of
       // rejecting the answer for arriving mid-turn.
-      const answerIsUserMessage =
-        options.appendUserMessage ||
-        isAsyncRequestUserInputPayload(
-          findRequestUserInputPayload(
-            getRuntimeConversationMessages(currentRuntimeTask),
-            requestUserInputKey
-          )
+      const asyncQuestion = isAsyncRequestUserInputPayload(
+        findRequestUserInputPayload(
+          getRuntimeConversationMessages(currentRuntimeTask),
+          requestUserInputKey
         )
+      )
+      const answerIsUserMessage = options.appendUserMessage || asyncQuestion
       if (answerIsUserMessage) {
         const answerMessage: RuntimePaneQueuedMessage = {
           id: `queued-runtime-pane-${crypto.randomUUID()}`,
           content: message,
+          ...(attachments.length ? { attachments: persistAttachmentReferences(attachments) } : {}),
           status: 'queued',
           createdAt: new Date().toISOString(),
+          ...(asyncQuestion
+            ? { requestUserInputResponse: { ...response, delivery: 'async' as const } }
+            : {}),
           ...getRuntimeModelFields(runtimeModelOverride),
         }
         setQueuedMessages(messages => [...messages, answerMessage])
@@ -815,6 +847,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
           address: currentRuntimeTask,
           message,
           requestUserInputResponse: response,
+          ...(attachments.length ? { attachments } : {}),
           ...(additionalContext ? { additionalContext } : {}),
         })
         if (!sent) return false
@@ -847,6 +880,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     retryFailedMessageInPane,
     editLastUserMessageInPane,
     ignoreRequestUserInput,
+    skipRequestUserInput,
     sendQueuedMessage,
     sendQueuedMessageAsGuidance,
     setDefaultCollaborationMode,
