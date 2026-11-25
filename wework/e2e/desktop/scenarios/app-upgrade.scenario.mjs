@@ -682,6 +682,13 @@ export async function createDesktopScenario(options) {
       await send(`${PROMPT} continue after upgrade`)
       await continuity.assertThread()
       await assertSelectedComposition(pair.to.version)
+      if (process.platform === 'win32') {
+        const confirmed = JSON.parse(await readFile(join(root, 'last-activation.json'), 'utf8'))
+        assert.equal(confirmed.to, targetReleaseId)
+        assert.equal((await readFile(join(root, 'healthy'), 'utf8')).trim(), confirmed.token)
+        assert.equal((await readFile(join(root, 'active'), 'utf8')).trim(), confirmed.to)
+        assert.equal((await readFile(join(root, 'previousHealthy'), 'utf8')).trim(), confirmed.from)
+      }
       assert.ok(
         modelRequests > beforeRequests,
         'The restored task did not execute through the real runtime'

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -39,9 +39,10 @@ describe('RendererStorageStore', () => {
     const history = join(root, 'renderer-local-storage-origins.json')
     await mkdir(history)
     const cleanup = { clearAll: vi.fn(), clearOrigin: vi.fn() }
-    await expect(store.prepareOrigin('http://127.0.0.1:4101', cleanup)).rejects.toThrow(
-      'unreadable'
-    )
+    await expect(store.prepareOrigin('http://127.0.0.1:4101', cleanup)).rejects.toMatchObject({
+      path: history,
+      code: expect.stringMatching(/EISDIR|EACCES|EPERM/),
+    })
     expect(cleanup.clearAll).not.toHaveBeenCalled()
     expect(cleanup.clearOrigin).not.toHaveBeenCalled()
     await expect(store.read()).resolves.toEqual({ credential: 'preserved' })
@@ -68,12 +69,13 @@ describe('RendererStorageStore', () => {
     expect(JSON.parse(await readFile(path, 'utf8')).entries).toEqual(seed)
   })
 
-  it('preserves unreadable state and refuses to certify it as a snapshot-ready store', async () => {
+  it('reports corrupt state during startup validation and closes without pending writes', async () => {
     const { root, store } = await createStore()
     const path = join(root, 'renderer-local-storage.json')
     await writeFile(path, '{invalid')
     await expect(store.initialize({})).resolves.toEqual({})
-    await expect(store.close()).rejects.toThrow('unreadable')
+    await expect(store.validate()).rejects.toMatchObject({ path, code: 'INVALID_JSON' })
+    await expect(store.close()).resolves.toBeUndefined()
     expect(await readFile(path, 'utf8')).toBe('{invalid')
   })
   it('retains the filesystem error code without exposing stored contents', async () => {
@@ -217,6 +219,70 @@ describe('RendererStorageStore', () => {
     expect(await readFile(join(root, 'renderer-local-storage-origins.json'), 'utf8')).toBe(
       '{"version":1,"origins":["http://127.0.0.1:4101"]}\n'
     )
+  })
+
+  it('reports a critical file and preserves its bytes until an explicit reset', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage-origins.json')
+    await writeFile(path, '{"version":1,"origins":"invalid"}')
+    await expect(store.validate()).rejects.toMatchObject({ path, code: 'INVALID_DATA' })
+    await expect(readFile(path, 'utf8')).resolves.toContain('"origins":"invalid"')
+    await store.clear()
+    await expect(store.validate()).resolves.toBeUndefined()
+  })
+
+  it.each([
+    ['truncated data', Buffer.from([0x7b, 0x22, 0x61, 0xff])],
+    ['invalid entries', Buffer.from('{"version":1,"entries":{"appearance":false}}')],
+  ])(
+    'preserves the exact bytes of %s and repairs only the renderer state',
+    async (_label, bytes) => {
+      const { root, store } = await createStore()
+      const path = join(root, 'renderer-local-storage.json')
+      const originPath = join(root, 'renderer-local-storage-origins.json')
+      const origins = '{"version":1,"origins":["http://127.0.0.1:4101"]}\n'
+      await writeFile(path, bytes)
+      await writeFile(originPath, origins)
+      const error = await store.validate().catch(cause => cause)
+      expect(store.canRepairStartup(error)).toBe(true)
+      expect(await readFile(path)).toEqual(bytes)
+
+      const backup = await store.repairStartupState()
+
+      expect(backup?.startsWith(`${path}.corrupt-`)).toBe(true)
+      expect(await readFile(backup!)).toEqual(bytes)
+      await expect(store.validate()).resolves.toBeUndefined()
+      await expect(store.initialize({ stale: 'browser data' })).resolves.toEqual({})
+      await expect(readFile(originPath, 'utf8')).resolves.toBe(origins)
+      await store.update({ clear: false, changes: { 'new-setting': 'preserve' } })
+      await expect(store.repairStartupState()).resolves.toBeNull()
+      await expect(store.read()).resolves.toEqual({ 'new-setting': 'preserve' })
+      expect((await readdir(root)).filter(name => name.includes('.corrupt-'))).toHaveLength(1)
+    }
+  )
+
+  it('preserves files from an unsupported schema version during recovery', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    const future = '{"version":2,"entries":{"appearance":"dark"}}'
+    await writeFile(path, future)
+    const error = await store.validate().catch(cause => cause)
+    expect(error).toMatchObject({ path, code: 'UNSUPPORTED_VERSION' })
+    expect(store.canRepairStartup(error)).toBe(false)
+    await expect(store.repairStartupState()).rejects.toMatchObject({ code: 'UNSUPPORTED_VERSION' })
+    expect(await readdir(root)).toEqual(['renderer-local-storage.json'])
+    expect(await readFile(path, 'utf8')).toBe(future)
+  })
+
+  it('leaves filesystem read errors for manual recovery', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    await mkdir(path)
+    const error = await store.validate().catch(cause => cause)
+    expect(error).toMatchObject({ path })
+    expect(store.canRepairStartup(error)).toBe(false)
+    await expect(store.repairStartupState()).rejects.toMatchObject({ code: 'NOT_REGULAR_FILE' })
+    expect(await readdir(root)).toEqual(['renderer-local-storage.json'])
   })
 
   it('seeds the durable store once and restores it on later origins', async () => {

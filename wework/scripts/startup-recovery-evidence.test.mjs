@@ -82,6 +82,7 @@ test('retains only explicit recovery diagnostics when a child assertion fails', 
     'startup-reset-evidence.json',
     'startup-reset-handoff.jsonl',
     'startup-reset-recovery.log',
+    'startup-reset-renderer-confirmation.png',
     'startup-reset-runtime-confirmation.png',
     'startup-reset-user-confirmation.png',
   ]
@@ -92,8 +93,9 @@ test('retains only explicit recovery diagnostics when a child assertion fails', 
 
 const successfulRecovery = {
   runtimeResetPreservesUserState: true,
+  rendererRepairPreservesOriginal: true,
   userResetPreservesTasksAndSessions: true,
-  realRelaunches: 2,
+  realRelaunches: 3,
   failedCleanupRetried: true,
 }
 
@@ -111,6 +113,7 @@ test('accepts complete successful evidence and retains the required diagnostics'
 
 test.each([
   { runtimeResetPreservesUserState: false },
+  { rendererRepairPreservesOriginal: false },
   { userResetPreservesTasksAndSessions: false },
   { realRelaunches: 1 },
   { failedCleanupRetried: false },

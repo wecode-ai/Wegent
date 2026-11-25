@@ -1,16 +1,29 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { isJsonObject, LocalJsonReadError, readLocalJson } from '../runtime/local-json.js'
 
 export class PreferencesStore {
   private operation = Promise.resolve()
   private closed = false
-  private readFailure: unknown = null
+  private failure: LocalJsonReadError | null = null
+  private readonly writes = new Set<Promise<unknown>>()
+  private closing?: Promise<void>
 
   constructor(private readonly dataDirectory: string) {}
 
   close(): Promise<void> {
+    if (this.closing) return this.closing
     this.closed = true
-    return this.operation
+    const writes = Promise.allSettled(this.writes)
+    this.closing = this.operation.then(async () => {
+      const failed = (await writes).find(write => write.status === 'rejected')
+      if (failed) throw failed.reason
+    })
+    return this.closing
+  }
+
+  get readFailure(): LocalJsonReadError | null {
+    return this.failure
   }
 
   read(): Promise<Record<string, unknown>> {
@@ -28,7 +41,7 @@ export class PreferencesStore {
     patch: Record<string, unknown>,
     expectedTelemetryConsentRevision?: number
   ): Promise<Record<string, unknown>> {
-    return this.serial(async () => {
+    return this.trackWrite(async () => {
       const current = await this.readFile()
       if (this.readFailure) throw this.readFailure
       const revision =
@@ -61,7 +74,7 @@ export class PreferencesStore {
   }
 
   clear(): Promise<void> {
-    return this.serial(() => rm(this.path(), { force: true }))
+    return this.trackWrite(() => rm(this.path(), { force: true }))
   }
 
   private path(): string {
@@ -69,34 +82,25 @@ export class PreferencesStore {
   }
 
   private async readFile(): Promise<Record<string, unknown>> {
-    this.readFailure = null
-    let content: string
+    this.failure = null
     try {
-      content = await readFile(this.path(), 'utf8')
+      return (await readLocalJson(this.path(), isJsonObject)) ?? {}
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-      // A permission, sharing, or I/O error says nothing about the contents:
-      // keep the file where it is instead of moving valid settings aside.
-      this.readFailure = error
+      if (!(error instanceof LocalJsonReadError)) throw error
+      this.failure = error
       console.warn('[Preferences] Settings are temporarily read-only', {
-        reason: describeError(error),
+        code: error.code,
       })
       return {}
     }
-    try {
-      const value = JSON.parse(content) as unknown
-      if (!value || typeof value !== 'object' || Array.isArray(value))
-        throw new Error('Invalid application preferences')
-      return value as Record<string, unknown>
-    } catch (error) {
-      this.readFailure = new Error(
-        'Application preferences are damaged; the original file is preserved'
-      )
-      console.warn('[Preferences] Damaged settings are read-only', {
-        errorType: error instanceof Error ? error.name : typeof error,
-      })
-      return {}
-    }
+  }
+
+  private trackWrite<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const result = this.serial(operation)
+    this.writes.add(result)
+    const done = () => this.writes.delete(result)
+    void result.then(done, done)
+    return result
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {
@@ -108,8 +112,4 @@ export class PreferencesStore {
     )
     return result
   }
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

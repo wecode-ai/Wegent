@@ -57,6 +57,7 @@ import {
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { release } from 'node:os'
@@ -160,7 +161,20 @@ import {
   type ApplicationMenuCapabilityState,
 } from './host/application-menu.js'
 import { AppUpdateService } from './host/app-update-service.js'
-import { ReleaseStore } from './runtime/release-store.js'
+import { atomicReleaseWrite, ReleaseStore } from './runtime/release-store.js'
+import { LocalJsonReadError } from './runtime/local-json.js'
+import {
+  acknowledgeWindowsInstallation,
+  pendingWindowsInstallation,
+  prepareWindowsInstallationProfile,
+  windowsInstallationId,
+} from './runtime/windows-release-installation.js'
+import { settleReleaseBeforeStartup } from './runtime/release-startup-recovery.js'
+import {
+  confirmStartupDataRestore,
+  showStartupRollback,
+  showUnreadablePreferences,
+} from './host/startup-notices.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import { PluginNativeAuthorization } from './host/plugin-native-authorization.js'
@@ -473,16 +487,20 @@ let pendingTrayState:
   | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
+const releaseStore = new ReleaseStore(join(app.getPath('userData'), 'releases'))
+let windowsInstallation: string | null = null
+let recoveryTrial: string | null = null
+let startupDataFailure: LocalJsonReadError | null = null
+let releaseConfirmation: Promise<void> | undefined
 const startupTelemetry = new StartupTelemetryLifecycle({
   id: randomUUID(),
   now: () => performance.now(),
   publish: (type, payload) => {
     desktopHostEvents.publish(type, payload)
-    if (type === 'startup.succeeded' && process.env.WEWORK_ACTIVE_RELEASE_ID) {
-      const releases = new ReleaseStore(join(app.getPath('userData'), 'releases'))
-      void releases
-        .confirm(process.env.WEWORK_ACTIVE_RELEASE_ID)
-        .catch(error => console.error('[release] failed to confirm startup', error))
+    if (type === 'startup.succeeded') {
+      releaseConfirmation = confirmRunningRelease().catch(error =>
+        console.error('[release] failed to confirm startup', error)
+      )
     }
   },
 })
@@ -698,7 +716,7 @@ const logRetention = new LogRetentionService({
   onResult: reportLogCleanup,
 })
 const appUpdates = new AppUpdateService({
-  store: new ReleaseStore(join(app.getPath('userData'), 'releases')),
+  store: releaseStore,
   dataDirectory: app.getPath('userData'),
   currentVersion: app.getVersion(),
   executable: process.execPath,
@@ -717,13 +735,15 @@ const appUpdates = new AppUpdateService({
   log: event => appUpdateLogger.info(event),
   shutdown: async () => {
     await prepareApplicationShutdown()
-    await Promise.all([preferences?.close(), rendererStorage?.close()])
+    await closeLocalStores()
     await appUpdateLogger
       .flush()
       .catch(error =>
         console.error('[app-update] failed to flush updater log before installation', error)
       )
   },
+  preferencesUnreadable: () => Boolean(preferences?.readFailure),
+  installerTakeoverPending: () => windowsInstallation !== null,
   restart: () => {
     app.relaunch()
     app.exit(0)
@@ -1117,6 +1137,10 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       if (!pluginName || quitting || contents.isDestroyed()) return
       console.warn('[core-dsh] plugin failed to load', { pluginName })
       logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
+      await runtimeStartPromise
+      if (!quitting && (await desktopRuntime?.isolateFailedStartupPlugin(pluginName))) {
+        await restartPrimaryCoreDsh()
+      }
     })
   } catch (error) {
     primaryDshLoaded = false
@@ -1885,10 +1909,39 @@ const presentStartupWindow = createStartupReadyHandler(async (source: string) =>
 
 const rendererStartupReady = createStartupReadyHandler(async (source: string) => {
   logStartupStep('renderer-startup-ready', 'completed', { source })
+  if (process.platform === 'win32') startupTelemetrySuccess.markRendererReady()
   await presentStartupWindow(source)
-  startupTelemetrySuccess.markRendererReady()
+  if (process.platform !== 'win32') startupTelemetrySuccess.markRendererReady()
+  void reportStartupNotices().catch(error => console.warn('[startup] notice failed', error))
   scheduleComputerUseStartup()
 })
+
+async function confirmRunningRelease(): Promise<void> {
+  if (windowsInstallation) {
+    const token = windowsInstallation
+    const id = windowsInstallationId(app.getVersion(), token)
+    await appUpdates.registerInstalledRelease(id)
+    process.env.WEWORK_ACTIVE_RELEASE_ID = id
+    await acknowledgeWindowsInstallation(releaseStore, token)
+    windowsInstallation = null
+  } else if (process.env.WEWORK_ACTIVE_RELEASE_ID) {
+    await releaseStore.confirm(process.env.WEWORK_ACTIVE_RELEASE_ID)
+  }
+}
+
+async function reportStartupNotices(): Promise<void> {
+  if (quitting) return
+  const parent = mainWindow ?? undefined
+  const id = process.env.WEWORK_ACTIVE_RELEASE_ID
+  const rollback = id && (await releaseStore.startupRollbackNotice(id))
+  if (rollback) {
+    await showStartupRollback(rollback, parent)
+    await releaseStore.acknowledgeStartupRollback()
+  }
+  if (preferences?.readFailure && !quitting) {
+    await showUnreadablePreferences(preferences.readFailure, mainWindow ?? undefined)
+  }
+}
 
 async function reactivateMainWindow(): Promise<void> {
   await reactivateWorkbenchWindow(null)
@@ -2112,7 +2165,7 @@ function installIpc(): void {
   ipcMain.handle('startup-recovery:recover-workbench', event => {
     assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
     logStartupStep('startup-recovery-workbench', 'started')
-    return requiredStartupRecovery().run('workbench')
+    return requiredStartupRecovery().repairStartup(startupDataFailure)
   })
   ipcMain.handle('startup-recovery:reset-app-state', event => {
     assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
@@ -2307,7 +2360,7 @@ function installIpc(): void {
   )
 }
 
-async function shutdown(): Promise<void> {
+async function shutdown(keepStartupSplash: boolean): Promise<void> {
   await traceShutdownStep('main-window-state', () => mainWindowState?.stop()).catch(error => {
     console.error('[window-state] Failed to save main window geometry during shutdown', error)
   })
@@ -2349,11 +2402,9 @@ async function shutdown(): Promise<void> {
   }
   workspaceWindows.clear()
   disposeSystemDragWindow()
-  // The startup splash refuses native close requests until the workbench is
-  // ready. When the app quits within that window, an open splash cancels
-  // app.quit() and strands the app on the splash, so close it through the
-  // controlled-close path as part of every shutdown.
-  await traceShutdownStep('startup-splash', () => startupSplash?.close())
+  // Native quit must close the startup splash explicitly. Recovery keeps it
+  // available to report failures before exiting through app.exit().
+  if (!keepStartupSplash) await traceShutdownStep('startup-splash', () => startupSplash?.close())
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -2399,15 +2450,27 @@ async function shutdown(): Promise<void> {
 }
 
 function requestApplicationShutdown(exit: () => void): void {
-  void prepareApplicationShutdown().finally(exit)
+  void prepareApplicationShutdown()
+    .finally(closeLocalStores)
+    .finally(() => releaseConfirmation)
+    .catch(error =>
+      console.error('[shutdown] failed to stop desktop services or flush stores', error)
+    )
+    .finally(exit)
 }
 
-function prepareApplicationShutdown(): Promise<void> {
+async function closeLocalStores(): Promise<void> {
+  const results = await Promise.allSettled([preferences?.close(), rendererStorage?.close()])
+  const failed = results.find(result => result.status === 'rejected')
+  if (failed) throw failed.reason
+}
+
+function prepareApplicationShutdown(keepStartupSplash = false): Promise<void> {
   if (shutdownPromise) return shutdownPromise
   quitting = true
   rendererStartupReady.cancel()
   presentStartupWindow.cancel()
-  shutdownPromise = traceShutdownStep('application', shutdown)
+  shutdownPromise = traceShutdownStep('application', () => shutdown(keepStartupSplash))
   return shutdownPromise
 }
 
@@ -2435,6 +2498,7 @@ function downloadsDirectory(): string {
 
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
+  await rendererStorage?.validate()
   logStartupStep('runtime-configure', 'started')
   logStartupStep('desktop-environment', 'started')
   const environment = await desktopEnvironment()
@@ -3031,11 +3095,40 @@ function startDesktopRuntime(): Promise<void> {
   runtimePhase = 'initializing'
   runtimeError = null
   lastStartupFailure = null
+  startupDataFailure = null
   startStartupMaintenance('development status', () =>
     pluginDevelopmentChildRuntime?.writeState('starting')
   )
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
+    if (packagedApplication && !process.env.WEWORK_ACTIVE_RELEASE_ID) {
+      windowsInstallation = await pendingWindowsInstallation(
+        releaseStore,
+        process.execPath,
+        app.getVersion()
+      )
+      if (windowsInstallation) {
+        const dataDirectory = app.getPath('userData')
+        const proceed = await settleReleaseBeforeStartup(
+          releaseStore,
+          dataDirectory,
+          confirmStartupDataRestore,
+          true
+        )
+        if (!proceed) {
+          throw new Error(
+            app.getLocale().startsWith('zh')
+              ? '更新数据等待恢复确认，原始数据已保留。'
+              : 'Update recovery needs confirmation. Original data is preserved.'
+          )
+        }
+        await prepareWindowsInstallationProfile(
+          releaseStore,
+          dataDirectory,
+          windowsInstallationId(app.getVersion(), windowsInstallation)
+        )
+      }
+    }
     await configureDesktopRuntime()
     logStartupStep('core-dsh-start', 'started')
     startupProgress.report('core-dsh')
@@ -3069,8 +3162,9 @@ function startDesktopRuntime(): Promise<void> {
   })()
     .catch(async error => {
       const failurePublished = startupTelemetry.fail('desktop_runtime')
+      startupDataFailure = error instanceof LocalJsonReadError ? error : null
       try {
-        if (await componentUpdates?.rollbackStartup()) {
+        if (!startupDataFailure && (await componentUpdates?.rollbackStartup())) {
           console.error(
             '[components] startup failed after activation; rolling back and relaunching'
           )
@@ -3100,11 +3194,31 @@ function startDesktopRuntime(): Promise<void> {
         errorType: error instanceof Error ? error.name : typeof error,
       })
       console.error('[runtime] startup failed', error)
-      void startupSplash?.showError().catch(async splashError => {
-        console.error('[startup-splash] failed to show runtime failure', splashError)
-        if (!keepE2EWindowInBackground) mainWindow?.show()
-        await startupSplash?.close()
-      })
+      const activeReleaseId = process.env.WEWORK_ACTIVE_RELEASE_ID
+      if (startupDataFailure && process.platform === 'win32' && activeReleaseId) {
+        await releaseStore
+          .activation()
+          .then(async activation => {
+            if (activation?.to !== activeReleaseId) return
+            await atomicReleaseWrite(join(releaseStore.root, 'recovery-required'), activation.token)
+            recoveryTrial = activation.token
+          })
+          .catch(error => console.error('[release] failed to hold startup for recovery', error))
+      }
+      const canRepairData = rendererStorage?.canRepairStartup(startupDataFailure) ?? false
+      void startupSplash
+        ?.showError(null, startupDataFailure?.path, canRepairData)
+        .catch(async splashError => {
+          console.error('[startup-splash] failed to show runtime failure', splashError)
+          if (recoveryTrial) {
+            recoveryTrial = null
+            await rm(join(releaseStore.root, 'recovery-required'), { force: true }).catch(error =>
+              console.error('[release] failed to release the startup recovery hold', error)
+            )
+          }
+          if (!keepE2EWindowInBackground) mainWindow?.show()
+          await startupSplash?.close()
+        })
     })
     .finally(() => {
       runtimeStartPromise = null
@@ -3175,7 +3289,7 @@ if (hasSingleInstanceLock) {
         cloudCredentials,
         prepareCleanup: async () => {
           await runtimeStartPromise
-          await prepareApplicationShutdown()
+          await prepareApplicationShutdown(true)
           disposeCoreDshViews()
           if (mainWindow && !mainWindow.isDestroyed()) {
             await mainWindow.webContents.loadURL('about:blank')
@@ -3212,7 +3326,11 @@ if (hasSingleInstanceLock) {
           await desktopRuntime.setCoreDshPluginEnabled(name, false)
         },
         log: logStartupStep,
-        relaunch: () => app.relaunch(),
+        relaunch: async () => {
+          if (recoveryTrial)
+            await atomicReleaseWrite(join(releaseStore.root, 'retry-after-repair'), recoveryTrial)
+          else app.relaunch()
+        },
         shutdown: () => requestApplicationShutdown(() => app.exit(0)),
       })
       logStartupStep('startup-recovery-install', 'completed')

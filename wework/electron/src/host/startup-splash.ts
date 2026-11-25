@@ -252,7 +252,11 @@ export class StartupSplash {
     contents.send(STARTUP_PROGRESS_CHANNEL, update)
   }
 
-  showError(pluginName: string | null = null): Promise<void> {
+  showError(
+    pluginName: string | null = null,
+    dataFile?: string,
+    canRepairData = false
+  ): Promise<void> {
     if (this.showErrorPromise) return this.showErrorPromise
     const target = this.options.window
     if (target.webContents.isDestroyed()) return Promise.resolve()
@@ -260,9 +264,11 @@ export class StartupSplash {
     this.restoreAfterInterruptedHandoff()
     this.showErrorPromise = target.webContents
       .executeJavaScript(
-        `window.dispatchEvent(new CustomEvent('wework-startup-error', { detail: { pluginName: ${JSON.stringify(
-          pluginName
-        )} } })); true`
+        `window.dispatchEvent(new CustomEvent('wework-startup-error', { detail: ${JSON.stringify({
+          pluginName,
+          dataFile,
+          canRepairData,
+        })} })); true`
       )
       .then(() => undefined)
       .finally(() => {

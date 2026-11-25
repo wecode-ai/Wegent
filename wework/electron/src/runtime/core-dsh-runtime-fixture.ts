@@ -60,7 +60,9 @@ export async function writeRuntime(
   await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ version }))
   await writeFile(join(packageRoot, 'lib', 'bin.js'), '')
   await Promise.all(
-    Object.values(pluginRoots).map(root => writeFile(join(root, 'package.json'), '{}'))
+    Object.entries(pluginRoots).map(([name, root]) =>
+      writeFile(join(root, 'package.json'), JSON.stringify({ name }))
+    )
   )
   return {
     root: runtime,

@@ -45,13 +45,15 @@ async function assertOwnedTree(path: string, owner: string): Promise<void> {
 export async function snapshotReleaseData(
   dataDirectory: string,
   releaseRoot: string,
-  executorHome = dataDirectory
+  executorHome = dataDirectory,
+  preserveUnreadablePreferences = false
 ): Promise<string> {
   const id = randomUUID()
   const root = join(releaseRoot, 'snapshots', id)
   await mkdir(root, { recursive: true, mode: 0o700 })
   const entries: string[] = []
   for (const entry of RELEASE_SNAPSHOT_ENTRIES) {
+    if (preserveUnreadablePreferences && entry === 'app-preferences.json') continue
     const dataRoot = entry.startsWith('data/') ? executorHome : dataDirectory
     const source = join(dataRoot, entry)
     if (!(await exists(source))) continue

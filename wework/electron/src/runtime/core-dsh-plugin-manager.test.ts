@@ -18,6 +18,28 @@ import { prepareElectronNodeRuntime } from './electron-node-runtime.js'
 
 vi.mock('node:child_process', { spy: true })
 
+test('isolates a failed user plugin through launch entries while preserving its configuration', async () => {
+  const fixture = await createFixture({ failedPlugins: new Set(['dsh-alpha']) })
+  try {
+    const before = await fixture.manifest()
+    await writeFile(
+      join(fixture.profileRoot, 'node_modules', 'dsh-alpha', 'cordis.patch.yml'),
+      '- insert:\n    - id: alpha-ui\n      name: dsh-alpha\n    - id: core\n      name: "@wegent/dsh-app-wework"\n'
+    )
+    const manager = fixture.manager()
+    await expect(manager.startupPluginEntries('dsh-alpha')).resolves.toEqual([
+      { id: 'alpha-ui', name: 'dsh-alpha', disabled: true },
+    ])
+    await expect(manager.startupPluginEntries('@wegent/dsh-app-wework')).resolves.toEqual([])
+    expect(await manager.list()).toContainEqual(
+      expect.objectContaining({ name: 'dsh-alpha', enabled: true, loadFailed: true })
+    )
+    expect(await fixture.manifest()).toEqual(before)
+  } finally {
+    await fixture.remove()
+  }
+})
+
 describe('CoreDshPluginManager', () => {
   test.runIf(process.platform === 'win32')(
     'validates a profile and supervised process from Electron beyond MAX_PATH',
@@ -622,6 +644,7 @@ async function createFixture(
     environment?: NodeJS.ProcessEnv
     realCommands?: boolean
     confirmInstall?: ((request: CoreDshPluginInstallRequest) => Promise<boolean>) | null
+    failedPlugins?: ReadonlySet<string>
     runCommand?: (
       command: string,
       args: string[],
@@ -699,6 +722,7 @@ async function createFixture(
           options.confirmInstall === null
             ? undefined
             : (options.confirmInstall ?? (async () => true)),
+        failedPlugins: options.failedPlugins,
         runCommand: options.realCommands
           ? undefined
           : (options.runCommand ??

@@ -51,7 +51,13 @@ class FakeResizeObserver {
 
 async function createRendererFixture(
   now: () => number = Date.now,
-  options: { reducedMotion?: boolean; language?: string; theme?: 'light' | 'dark' } = {}
+  options: {
+    reducedMotion?: boolean
+    language?: string
+    theme?: 'light' | 'dark'
+    copyDiagnostics?: () => Promise<void>
+    recoverWorkbench?: () => Promise<void>
+  } = {}
 ) {
   const electronRoot =
     basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
@@ -111,6 +117,10 @@ async function createRendererFixture(
     clearInterval,
     setTimeout,
     clearTimeout: (id: number) => timers.delete(id),
+    weworkStartupDiagnostics: options.copyDiagnostics && { copy: options.copyDiagnostics },
+    weworkStartupRecovery: options.recoverWorkbench && {
+      recoverWorkbench: options.recoverWorkbench,
+    },
     weworkStartupProgress: {
       onUpdate: (listener: (update: unknown) => void) => {
         progressListener = listener
@@ -626,6 +636,47 @@ describe('startup splash renderer', () => {
     brandAnimation.complete.mockRejectedValueOnce(new Error('Brand could not settle'))
     await expect(complete(rendererUpdate(true))).rejects.toThrow('Brand could not settle')
     expect(frames.size).toBe(0)
+  })
+
+  test('names the unreadable data file in the existing recovery view', async () => {
+    const copyDiagnostics = vi.fn(async () => undefined)
+    const { listeners, element } = await createRendererFixture(() => 10_000, { copyDiagnostics })
+    listeners.get('wework-startup-error')?.({
+      detail: { dataFile: 'renderer-local-storage.json' },
+    })
+    expect(element('#startup-failure-detail').textContent).toContain('renderer-local-storage.json')
+    expect(element('#startup-recovery').hidden).toBe(false)
+    expect(element('#startup-recover').hidden).toBe(true)
+    expect(element('#startup-failure-detail').textContent).toContain('choose Restart')
+    expect(element('#startup-copy-diagnostics').textContent).toBe('Copy diagnostics')
+    element('#startup-copy-diagnostics').click()
+    await vi.waitFor(() => expect(copyDiagnostics).toHaveBeenCalledOnce())
+  })
+
+  test('asks to back up the damaged file, and shows a failed repair in the confirmation view', async () => {
+    const recoverWorkbench = vi.fn(async () => {
+      throw new Error('Disk full')
+    })
+    const { listeners, element } = await createRendererFixture(() => 10_000, {
+      language: 'zh-CN',
+      recoverWorkbench,
+    })
+    listeners.get('wework-startup-error')?.({
+      detail: { dataFile: 'renderer-local-storage.json', canRepairData: true },
+    })
+
+    expect(element('#startup-recover').hidden).toBe(false)
+    element('#startup-recover').click()
+    expect(element('#startup-confirmation-description').textContent).toContain('.corrupt-')
+    expect(element('#startup-confirmation-description').textContent).toContain('布局可能恢复默认')
+    expect(element('#startup-confirmation-submit').textContent).toBe('备份并重启')
+    expect(recoverWorkbench).not.toHaveBeenCalled()
+    element('#startup-confirmation-submit').click()
+
+    await vi.waitFor(() => expect(element('#startup-action-error').hidden).toBe(false))
+    expect(element('#startup-action-error').textContent).toContain('无法完成文件修复')
+    expect(element('#startup-confirmation').hidden).toBe(false)
+    expect(element('#startup-confirmation-submit').disabled).toBe(false)
   })
 
   test('cancels completion frames and observers when the splash is disposed', async () => {

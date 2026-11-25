@@ -6,11 +6,14 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { formatAppUpdateVersion } from './app-update-format'
 import { AppUpdateContext, APP_UPDATE_SIMULATE_EVENT } from './app-update-context'
 import { createAppUpdateSource } from './appUpdateSource'
+import { AppUpdateErrorDetailsDialog } from './AppUpdateErrorDetailsDialog'
+import type { AppUpdateError } from './app-update-error'
 
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation('common')
   const appVersion = useAppVersion()
   const [source] = useState(createAppUpdateSource)
+  const [dismissedError, setDismissedError] = useState<AppUpdateError | null>(null)
   const subscribe = useCallback(
     (listener: () => void) => source.subscribe(listener, appVersion),
     [source, appVersion]
@@ -19,12 +22,32 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     subscribe,
     source.getSnapshot
   )
-  const { availableUpdate, status } = value
+  const { availableUpdate, error, status } = value
+  const preparationError =
+    status === 'error' &&
+    error !== dismissedError &&
+    error &&
+    ['extract', 'verify', 'prepare'].includes(error.stage)
+      ? error
+      : null
   useDOMEvent('window', APP_UPDATE_SIMULATE_EVENT, source.simulateUpdate)
 
   return (
     <AppUpdateContext.Provider value={value}>
       {children}
+      {preparationError && !restartConfirmationOpen && !retryUpdate ? (
+        <AppUpdateErrorDetailsDialog
+          key={preparationError.occurredAt}
+          open
+          error={preparationError}
+          onClose={() => setDismissedError(preparationError)}
+          onRetry={async () => {
+            setDismissedError(preparationError)
+            if (availableUpdate) await value.installUpdate()
+            else await value.checkNow()
+          }}
+        />
+      ) : null}
       <ConfirmDialog
         open={restartConfirmationOpen || retryUpdate !== null}
         title={

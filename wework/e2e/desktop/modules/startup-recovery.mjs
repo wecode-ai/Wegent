@@ -59,8 +59,9 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
       if (evidence) {
         assert.equal(evidence.error, undefined, evidence.error)
         assert.equal(evidence.runtimeResetPreservesUserState, true)
+        assert.equal(evidence.rendererRepairPreservesOriginal, true)
         assert.equal(evidence.userResetPreservesTasksAndSessions, true)
-        assert.equal(evidence.realRelaunches, 2)
+        assert.equal(evidence.realRelaunches, 3)
         assert.equal(evidence.failedCleanupRetried, true)
         await writeFile(
           join(resultDir, 'startup-reset-evidence.json'),
@@ -69,6 +70,7 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
         for (const name of [
           'development-release-routing.json',
           'runtime-confirmation.png',
+          'renderer-confirmation.png',
           'user-confirmation.png',
           'cleanup-failure.png',
           'recovery.log',
@@ -91,6 +93,7 @@ async function retainStartupRecoveryDiagnostics(root, resultDir) {
     'development-release-routing.json',
     'evidence.json',
     'runtime-confirmation.png',
+    'renderer-confirmation.png',
     'user-confirmation.png',
     'cleanup-failure.png',
     'recovery.log',
@@ -158,6 +161,11 @@ async function runRecoveryVerification() {
   const taskPath = path.join(root, 'data/tasks.sqlite')
   const projectPath = path.join(root, 'workspace/project/index.ts')
   const manifestPath = path.join(paths.capabilitiesHome, 'manifest-v2.json')
+  const rendererStatePath = path.join(dataDirectory, 'renderer-local-storage.json')
+  const rendererOriginsPath = path.join(dataDirectory, 'renderer-local-storage-origins.json')
+  const rendererOrigins = '{"version":1,"origins":["http://127.0.0.1:4101"]}'
+  const corruptRendererState = '{"version":1,"entries":'
+  const runtimeMarker = path.join(dataDirectory, 'managed-components', 'repair-marker')
   const userState = {
     version: 1,
     entries: { auth_token: 'synthetic-token', 'wework.workspaceTabs.v3:user': 'layout' },
@@ -180,7 +188,8 @@ async function runRecoveryVerification() {
       manifestPath,
       JSON.stringify({ version: 2, skills: { skill: {} }, plugins: { plugin: {} } })
     )
-    await put(path.join(dataDirectory, 'renderer-local-storage.json'), JSON.stringify(userState))
+    await put(rendererStatePath, JSON.stringify(userState))
+    await put(rendererOriginsPath, rendererOrigins)
     await put(path.join(dataDirectory, 'app-preferences.json'), JSON.stringify({ theme: 'dark' }))
     await put(path.join(dataDirectory, 'cloud-credentials.json'), 'synthetic credentials')
     await put(path.join(paths.codexHome, 'plugins/installed.json'), 'installed plugin')
@@ -243,6 +252,7 @@ async function runRecoveryVerification() {
   const { StartupRecoveryService, assertStartupRecoverySender } = await load('startup-recovery')
   const { clearStartupRuntimeFiles, clearStartupUserFiles } = await load('startup-recovery-files')
   const { RendererStorageStore } = await load('renderer-storage-store')
+  const rendererStorage = new RendererStorageStore(dataDirectory)
   const { PreferencesStore } = await load('preferences-store')
   const { CloudCredentialService } = await load('cloud-credential-service')
   const assertRetained = async () => {
@@ -264,13 +274,7 @@ async function runRecoveryVerification() {
       { code: 'ENOENT' }
     )
   }
-  if (phase === 'user') {
-    assert.deepEqual(
-      JSON.parse(
-        await fs.readFile(path.join(dataDirectory, 'renderer-local-storage.json'), 'utf8')
-      ),
-      userState
-    )
+  if (phase === 'renderer' || phase === 'user') {
     assert.equal(await fs.readFile(pluginPath, 'utf8'), 'user plugin')
     assert.equal(
       JSON.parse(await fs.readFile(path.join(dataDirectory, 'app-preferences.json'), 'utf8')).theme,
@@ -280,18 +284,39 @@ async function runRecoveryVerification() {
       await fs.readFile(path.join(dataDirectory, 'cloud-credentials.json'), 'utf8'),
       'synthetic credentials'
     )
+  }
+  if (phase === 'renderer') {
+    assert.deepEqual(JSON.parse(await fs.readFile(rendererStatePath, 'utf8')), userState)
+    await put(rendererStatePath, corruptRendererState)
+    await put(runtimeMarker, 'retain runtime when repairing renderer state')
+  }
+  if (phase === 'user') {
+    await rendererStorage.validate()
+    assert.deepEqual(await rendererStorage.read(), {})
+    const backups = (await fs.readdir(dataDirectory)).filter(file =>
+      file.startsWith('renderer-local-storage.json.corrupt-')
+    )
+    assert.equal(backups.length, 1)
+    assert.equal(
+      await fs.readFile(path.join(dataDirectory, backups[0]), 'utf8'),
+      corruptRendererState
+    )
+    assert.equal(await fs.readFile(rendererOriginsPath, 'utf8'), rendererOrigins)
+    assert.equal(
+      await fs.readFile(runtimeMarker, 'utf8'),
+      'retain runtime when repairing renderer state'
+    )
+    await put(rendererStatePath, JSON.stringify(userState))
     // A directory in place of the preferences file produces a real filesystem
     // error on both Windows and Unix, without mocking a recovery dependency.
     await fs.rm(path.join(dataDirectory, 'app-preferences.json'))
     await fs.mkdir(path.join(dataDirectory, 'app-preferences.json'))
   }
   if (phase === 'verify') {
-    assert.deepEqual(
-      JSON.parse(
-        await fs.readFile(path.join(dataDirectory, 'renderer-local-storage.json'), 'utf8')
-      ),
-      { version: 1, entries: {} }
-    )
+    assert.deepEqual(JSON.parse(await fs.readFile(rendererStatePath, 'utf8')), {
+      version: 1,
+      entries: {},
+    })
     for (const file of [
       pluginPath,
       path.join(dataDirectory, 'app-preferences.json'),
@@ -319,8 +344,9 @@ async function runRecoveryVerification() {
     assert.deepEqual(manifest.skills, { skill: {} })
     await publishStartupRecoveryEvidence(root, {
       runtimeResetPreservesUserState: true,
+      rendererRepairPreservesOriginal: true,
       userResetPreservesTasksAndSessions: true,
-      realRelaunches: 2,
+      realRelaunches: 3,
       failedCleanupRetried: true,
     })
     app.exit(0)
@@ -338,7 +364,7 @@ async function runRecoveryVerification() {
     },
   })
   const recovery = new StartupRecoveryService({
-    rendererStorage: new RendererStorageStore(dataDirectory),
+    rendererStorage,
     preferences: new PreferencesStore(dataDirectory),
     cloudCredentials: new CloudCredentialService(dataDirectory),
     prepareCleanup: async () => {},
@@ -362,39 +388,47 @@ async function runRecoveryVerification() {
         args: [
           process.argv[1],
           process.argv[2],
-          phase === 'runtime' ? 'user' : 'verify',
+          { runtime: 'renderer', renderer: 'user', user: 'verify' }[phase],
           ...process.argv.slice(4),
         ],
       }),
     shutdown: () => app.exit(0),
   })
-  for (const [channel, mode] of [
-    ['recover-workbench', 'workbench'],
-    ['reset-app-state', 'app-state'],
+  const startupFailure =
+    phase === 'renderer' ? await rendererStorage.validate().catch(cause => cause) : null
+  for (const [channel, action] of [
+    ['recover-workbench', () => recovery.repairStartup(startupFailure)],
+    ['reset-app-state', () => recovery.run('app-state')],
   ]) {
     ipcMain.handle('startup-recovery:' + channel, event => {
       assertStartupRecoverySender(event.sender.id, splash.webContents.id)
-      return recovery.run(mode)
+      return action()
     })
   }
   await splash.loadFile(path.join(dist, 'shell/startup-splash/index.html'))
   splash.showInactive()
+  const failure = {}
+  if (phase === 'renderer') {
+    assert.equal(rendererStorage.canRepairStartup(startupFailure), true)
+    failure.dataFile = startupFailure.path
+    failure.canRepairData = true
+  }
   await splash.webContents.executeJavaScript(
-    "window.dispatchEvent(new CustomEvent('wework-startup-error', { detail: {} }))"
+    `window.dispatchEvent(new CustomEvent('wework-startup-error', { detail: ${JSON.stringify(failure)} }))`
   )
-  const button = phase === 'runtime' ? 'startup-recover-button' : 'startup-reset-options-button'
+  const button = phase === 'user' ? 'startup-reset-options-button' : 'startup-recover-button'
   await splash.webContents.executeJavaScript(
     `document.querySelector('[data-testid="${button}"]').click()`
   )
   const description = await splash.webContents.executeJavaScript(
     "document.querySelector('#startup-confirmation-description').textContent"
   )
-  assert.match(
-    description,
-    phase === 'runtime'
-      ? /plugins.*preserved|插件.*保留/
-      : /removes installed plugins|移除已安装插件/
-  )
+  const confirmation = {
+    runtime: /plugins.*preserved|插件.*保留/,
+    renderer: /renderer-local-storage\.json.*\.corrupt-/,
+    user: /removes installed plugins|移除已安装插件/,
+  }
+  assert.match(description, confirmation[phase])
   const paintDeadline = Date.now() + 10_000
   while (
     await splash.webContents.executeJavaScript(

@@ -62,7 +62,12 @@ async function completedWriter(input, mode, evidence) {
     path.join(input.root, 'evidence.json'),
     mode === 'malformed' ? '{"broken":' : JSON.stringify(evidence)
   )
-  for (const name of ['runtime-confirmation.png', 'user-confirmation.png', 'cleanup-failure.png']) {
+  for (const name of [
+    'runtime-confirmation.png',
+    'renderer-confirmation.png',
+    'user-confirmation.png',
+    'cleanup-failure.png',
+  ]) {
     await fs.writeFile(path.join(input.root, name), 'unit diagnostic fixture')
   }
   await fs.writeFile(

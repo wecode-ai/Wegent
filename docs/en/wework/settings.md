@@ -213,6 +213,26 @@ the update action again reopens the confirmation without downloading it again. W
 updates have already finished the download in the background, selecting the update action enters
 the same restart-confirmation flow immediately.
 
+If extraction, verification, or preparation fails, Wework opens **Application update failed**.
+Use **Retry** or **Copy diagnostics**, or close the dialog and continue using the current version.
+
+On Windows, the first startup after an in-app update has up to three minutes to complete.
+After automatic rollback, the previous version shows **The new version failed to start. The previous version is running.**
+You can copy diagnostics from the notice. If local data needs recovery, follow the recovery
+window instructions before continuing. After installing over an existing copy, check **About**
+on the first launch, after reopening via a shortcut, and after restarting Windows.
+
+If Wework cannot read local settings at startup, it opens with defaults and preserves the
+original file. Choose **Copy diagnostics** in the startup notice, follow its instructions, and
+then reopen Wework.
+
+On the startup recovery screen, **Repair startup** shows a confirmation for the detected failure.
+For runtime failures, the confirmation offers to clear and rebuild the runtime and caches.
+If `renderer-local-storage.json` is damaged, **Back up and restart** saves its original contents
+in a sibling file with a `.corrupt-…` suffix and writes default local state. Interface settings
+and layouts may reset, and you may need to sign in again. For permissions, unsupported file
+versions, or other critical files, follow the recovery instructions and then choose **Restart**.
+
 <!-- ui-source: src/components/settings/KeyboardShortcutsSettingsPage.tsx -->
 
 In **Settings → Personal → Shortcuts**, search for an action and click its binding or unset value. Press a new combination to save automatically; Esc cancels recording. Clear removes the binding; Reset restores its default. A duplicate combination may replace another action's binding, so inspect related actions after editing.

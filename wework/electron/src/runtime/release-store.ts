@@ -5,6 +5,7 @@ import { removePhysicalRelease } from './physical-release-files.js'
 import { serializePathOperation } from './path-operation-queue.js'
 import { parseRollbackHistory, type ReleaseRollbackRecord } from './release-update-history.js'
 import { planReleaseCleanup } from './release-cleanup.js'
+import { isJsonObject, LocalJsonReadError, readLocalJson } from './local-json.js'
 
 export type ReleasePruneResult = { status: 'completed' } | { status: 'skipped'; reason: string }
 
@@ -36,6 +37,13 @@ export interface ReleaseActivation {
   snapshot: string
   restoreRequired: boolean
   rollbackRequested?: boolean
+}
+
+export interface StartupRollbackNotice {
+  releaseId: string
+  failedVersion: string
+  restoredVersion: string
+  reason: string
 }
 
 export function releaseId(value: string): string {
@@ -196,17 +204,22 @@ export class ReleaseStore {
   }
 
   async activation(): Promise<ReleaseActivation | null> {
-    const value = await optionalText(join(this.root, 'activation.json'))
+    const path = join(this.root, 'activation.json')
+    const value = await readLocalJson(path, isJsonObject)
     if (!value) return null
-    const activation = JSON.parse(value) as ReleaseActivation
-    for (const id of [activation.token, activation.from, activation.to, activation.snapshot])
-      releaseId(id)
     if (
-      typeof activation.restoreRequired !== 'boolean' ||
-      (activation.rollbackRequested !== undefined &&
-        typeof activation.rollbackRequested !== 'boolean')
+      ['token', 'from', 'to', 'snapshot'].some(key => typeof value[key] !== 'string') ||
+      typeof value.restoreRequired !== 'boolean' ||
+      (value.rollbackRequested !== undefined && typeof value.rollbackRequested !== 'boolean')
     )
-      throw new Error('Invalid release activation')
+      throw new LocalJsonReadError(path, 'INVALID_DATA')
+    const activation = value as unknown as ReleaseActivation
+    try {
+      for (const id of [activation.token, activation.from, activation.to, activation.snapshot])
+        releaseId(id)
+    } catch {
+      throw new LocalJsonReadError(path, 'INVALID_DATA')
+    }
     return activation
   }
 
@@ -314,8 +327,8 @@ export class ReleaseStore {
     await this.finishActivation()
   }
 
-  async rollback(): Promise<DesktopRelease> {
-    return this.serial(() => this.rollbackRelease())
+  async rollback({ installerTakeover = false } = {}): Promise<DesktopRelease> {
+    return this.serial(() => this.rollbackRelease(installerTakeover))
   }
 
   async recoverUnstartedActivation(sourceId: string, prepare: () => Promise<void>): Promise<void> {
@@ -355,7 +368,7 @@ export class ReleaseStore {
     })
   }
 
-  private async rollbackRelease(): Promise<DesktopRelease> {
+  private async rollbackRelease(installerTakeover = false): Promise<DesktopRelease> {
     const activation = await this.activation()
     if (!activation) throw new Error('No release activation to roll back')
     const previous = await this.read(activation.from)
@@ -397,9 +410,45 @@ export class ReleaseStore {
       join(this.root, 'bridge'),
       previous.macosInstallation?.payloadExecutable ?? previous.executable
     )
+    if (
+      process.platform === 'win32' &&
+      !installerTakeover &&
+      !activation.rollbackRequested &&
+      attempted === activation.token
+    ) {
+      const failure = await optionalText(join(this.root, 'failure-reason'))
+      const [failedToken, failedReason] = failure?.split(/\r?\n/) ?? []
+      const reason = failedToken === activation.token ? failedReason : 'interrupted'
+      const notice: StartupRollbackNotice = {
+        releaseId: previous.id,
+        failedVersion: rejected.version,
+        restoredVersion: previous.version,
+        reason,
+      }
+      await atomicReleaseWrite(
+        join(this.root, 'startup-rollback-notice.json'),
+        JSON.stringify(notice)
+      )
+    }
     if (activation.rollbackRequested) await rm(join(this.root, 'previousHealthy'), { force: true })
     await this.finishActivation()
     return previous
+  }
+
+  async startupRollbackNotice(id: string): Promise<StartupRollbackNotice | null> {
+    const notice = await readLocalJson(
+      join(this.root, 'startup-rollback-notice.json'),
+      (value): value is StartupRollbackNotice =>
+        isJsonObject(value) &&
+        ['releaseId', 'failedVersion', 'restoredVersion', 'reason'].every(
+          key => typeof value[key] === 'string'
+        )
+    )
+    return notice?.releaseId === id ? notice : null
+  }
+
+  async acknowledgeStartupRollback(): Promise<void> {
+    await rm(join(this.root, 'startup-rollback-notice.json'), { force: true })
   }
 
   async requestRollback(): Promise<ReleaseActivation> {

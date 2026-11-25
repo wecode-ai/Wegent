@@ -113,7 +113,10 @@ describe('PreferencesStore', () => {
       await writeFile(path, damaged)
       const store = new PreferencesStore(root)
       await expect(store.readSnapshot()).resolves.toEqual({ preferences: {}, readable: false })
-      await expect(store.update({ localCodexSubscriptionEnabled: true })).rejects.toThrow('damaged')
+      await expect(store.update({ localCodexSubscriptionEnabled: true })).rejects.toMatchObject({
+        path,
+        code: expect.stringMatching(/^INVALID_(JSON|DATA)$/),
+      })
       expect(await readFile(path, 'utf8')).toBe(damaged)
       await expect(new PreferencesStore(root).readSnapshot()).resolves.toEqual({
         preferences: {},

@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
+import { LocalJsonReadError } from '../runtime/local-json.js'
 import { OpenAiCatalogStore } from './openai-catalog-store.js'
 import {
   assertStartupRecoverySender,
@@ -13,6 +14,8 @@ function createFixture() {
   const dependencies = {
     rendererStorage: {
       clear: vi.fn(async () => undefined),
+      canRepairStartup: vi.fn(() => false),
+      repairStartupState: vi.fn(async () => 'renderer-local-storage.json.corrupt-1'),
     },
     preferences: {
       clear: vi.fn(async () => undefined),
@@ -114,6 +117,51 @@ describe('StartupRecoveryService', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  test('backs up damaged renderer state after stopping writers and relaunches', async () => {
+    const { dependencies, recovery } = createFixture()
+    const failure = new LocalJsonReadError('renderer-local-storage.json', 'INVALID_JSON')
+    dependencies.rendererStorage.canRepairStartup.mockReturnValue(true)
+
+    await recovery.repairStartup(failure)
+
+    expect(dependencies.rendererStorage.repairStartupState).toHaveBeenCalledOnce()
+    expect(dependencies.prepareCleanup.mock.invocationCallOrder[0]).toBeLessThan(
+      dependencies.rendererStorage.repairStartupState.mock.invocationCallOrder[0]
+    )
+    expect(dependencies.clearRuntimeFiles).not.toHaveBeenCalled()
+    expect(dependencies.clearCache).not.toHaveBeenCalled()
+    expect(dependencies.clearAppStorage).not.toHaveBeenCalled()
+    expect(dependencies.clearUserStorage).not.toHaveBeenCalled()
+    expect(dependencies.clearUserFiles).not.toHaveBeenCalled()
+    expect(dependencies.rendererStorage.clear).not.toHaveBeenCalled()
+    expect(dependencies.preferences.clear).not.toHaveBeenCalled()
+    expect(dependencies.cloudCredentials.clear).not.toHaveBeenCalled()
+    expect(dependencies.relaunch).toHaveBeenCalledOnce()
+    expect(dependencies.shutdown).toHaveBeenCalledOnce()
+  })
+
+  test('keeps file access or format failures on the manual recovery path', async () => {
+    const { dependencies, recovery } = createFixture()
+    const failure = new LocalJsonReadError('renderer-local-storage.json', 'EACCES')
+
+    await expect(recovery.repairStartup(failure)).rejects.toThrow('manual recovery')
+    expect(dependencies.prepareCleanup).not.toHaveBeenCalled()
+    expect(dependencies.rendererStorage.repairStartupState).not.toHaveBeenCalled()
+    expect(dependencies.clearRuntimeFiles).not.toHaveBeenCalled()
+  })
+
+  test('keeps recovery open when the renderer state repair fails', async () => {
+    const { dependencies, recovery } = createFixture()
+    dependencies.rendererStorage.repairStartupState.mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(recovery.run('renderer-state')).rejects.toThrow('disk full')
+
+    expect(dependencies.relaunch).not.toHaveBeenCalled()
+    expect(dependencies.shutdown).not.toHaveBeenCalled()
+    await recovery.run('renderer-state')
+    expect(dependencies.relaunch).toHaveBeenCalledOnce()
   })
 
   test('shares one recovery operation across repeated clicks', async () => {

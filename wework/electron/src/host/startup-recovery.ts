@@ -1,8 +1,12 @@
-export type StartupRecoveryMode = 'retry' | 'workbench' | 'app-state'
+import type { LocalJsonReadError } from '../runtime/local-json.js'
+
+export type StartupRecoveryMode = 'retry' | 'workbench' | 'renderer-state' | 'app-state'
 
 export interface StartupRecoveryDependencies {
   rendererStorage: {
     clear: () => Promise<void>
+    canRepairStartup: (error: unknown) => boolean
+    repairStartupState: () => Promise<string | null>
   }
   preferences: {
     clear: () => Promise<void>
@@ -23,7 +27,7 @@ export interface StartupRecoveryDependencies {
     status: 'started' | 'completed' | 'failed',
     details?: Record<string, unknown>
   ) => void
-  relaunch: () => void
+  relaunch: () => void | Promise<void>
   shutdown: () => void
 }
 
@@ -37,6 +41,13 @@ export class StartupRecoveryService {
   private operation: Promise<void> | null = null
 
   constructor(private readonly dependencies: StartupRecoveryDependencies) {}
+
+  repairStartup(failure: LocalJsonReadError | null): Promise<void> {
+    if (!failure) return this.run('workbench')
+    if (this.dependencies.rendererStorage.canRepairStartup(failure))
+      return this.run('renderer-state')
+    return Promise.reject(new Error('This file requires manual recovery'))
+  }
 
   run(mode: StartupRecoveryMode): Promise<void> {
     if (this.operation) return this.operation
@@ -59,8 +70,17 @@ export class StartupRecoveryService {
   private async runOnce(mode: StartupRecoveryMode): Promise<void> {
     this.dependencies.log(`startup-recovery-${mode}-cleanup`, 'started')
     try {
-      if (mode !== 'retry') {
-        await this.dependencies.prepareCleanup()
+      if (mode !== 'retry') await this.dependencies.prepareCleanup()
+      if (mode === 'renderer-state') {
+        await this.cleanupStep('renderer-storage-backup', async () => {
+          const backup = await this.dependencies.rendererStorage.repairStartupState()
+          if (backup)
+            this.dependencies.log('startup-recovery-renderer-storage-backed-up', 'completed', {
+              path: backup,
+            })
+        })
+      }
+      if (mode === 'workbench' || mode === 'app-state') {
         await this.cleanupStep('runtime-files', this.dependencies.clearRuntimeFiles)
         await this.cleanupStep('cache', this.dependencies.clearCache)
         await this.cleanupStep('app-cache-storage', this.dependencies.clearAppStorage)
@@ -85,7 +105,7 @@ export class StartupRecoveryService {
       })
       throw error
     }
-    this.dependencies.relaunch()
+    await this.dependencies.relaunch()
     this.dependencies.log('startup-recovery-relaunch', 'completed')
     this.dependencies.shutdown()
   }
@@ -116,7 +136,7 @@ export class StartupRecoveryService {
       })
       throw error
     }
-    this.dependencies.relaunch()
+    await this.dependencies.relaunch()
     this.dependencies.log('startup-recovery-relaunch', 'completed')
     this.dependencies.shutdown()
   }

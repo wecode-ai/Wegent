@@ -1,4 +1,5 @@
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { join } from 'node:path'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import {
   createCoreDshLaunch,
@@ -12,6 +13,7 @@ import {
   type CoreDshDevelopmentPlugin,
   type CoreDshPlugin,
   type CoreDshPluginInstallRequest,
+  type StartupPluginEntry,
 } from './core-dsh-plugin-manager.js'
 import { DshRuntime, type DshRuntimeOptions } from './dsh-runtime.js'
 import {
@@ -25,6 +27,7 @@ import {
 } from './workbench-runtime.js'
 import { applyWorkbenchModeToCorePlugins, type WorkbenchMode } from './workbench-mode.js'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
+import { atomicReleaseWrite } from './release-store.js'
 import type { ModelConfigurationStore } from '../host/model-configuration-store.js'
 import { modelInterfaceRunnerModels } from '../host/model-interface-runtime.js'
 
@@ -101,6 +104,8 @@ export class DesktopRuntime {
   private coreDsh: CoreDshHandle | null = null
   private desktopDeviceId: Promise<string> | null = null
   private coreDshPlugins: CoreDshPluginManager | null = null
+  private readonly failedCorePlugins = new Set<string>()
+  private readonly startupPluginOverrides = new Map<string, StartupPluginEntry[]>()
   private developmentPlugin: CoreDshDevelopmentPlugin | null = null
   private readonly workbench = new WorkbenchRuntimeManager()
   private started = false
@@ -220,6 +225,14 @@ export class DesktopRuntime {
 
   listCoreDshPlugins(): Promise<CoreDshPlugin[]> {
     return this.requiredCoreDshPlugins().list()
+  }
+
+  async isolateFailedStartupPlugin(name: string): Promise<boolean> {
+    if (this.startupPluginOverrides.has(name)) return false
+    const entries = await this.requiredCoreDshPlugins().startupPluginEntries(name)
+    if (!entries.length) return false
+    this.startupPluginOverrides.set(name, entries)
+    return true
   }
 
   installCoreDshPlugin(spec: string): Promise<CoreDshPlugin[]> {
@@ -364,6 +377,8 @@ export class DesktopRuntime {
   }
 
   private async prepareCoreDshLaunch(): Promise<PreparedCoreDshLaunch | null> {
+    this.failedCorePlugins.clear()
+    for (const name of this.startupPluginOverrides.keys()) this.failedCorePlugins.add(name)
     this.startupStep('core-dsh-prepare', 'started')
     const generation = this.lifecycleGeneration
     const externalDshUrl = this.options.environment.WEWORK_CORE_DSH_URL?.trim()
@@ -398,6 +413,8 @@ export class DesktopRuntime {
         nodeCommand: managedRuntime.command,
         environment: managedRuntime.environment,
         confirmInstall: this.options.confirmPluginInstall,
+        failedPlugins: this.failedCorePlugins,
+        managedPackages: managedRuntime.managedPackages,
       })
       if (this.options.readWorkbenchMode) {
         recordReleaseDiagnostic('core-preparation', { phase: 'mode-read-start' }, true)
@@ -419,7 +436,15 @@ export class DesktopRuntime {
     const deviceId = await this.resolveDesktopDeviceId()
     if (this.lifecycleGeneration !== generation) return null
     if (managedRuntime) {
-      const launch = createCoreDshLaunch(managedRuntime, 0)
+      let patch: string | undefined
+      if (this.startupPluginOverrides.size) {
+        patch = join(managedRuntime.dshHome, 'wework-startup-plugin-overrides.json')
+        await atomicReleaseWrite(
+          patch,
+          JSON.stringify([...this.startupPluginOverrides.values()].flat())
+        )
+      }
+      const launch = createCoreDshLaunch(managedRuntime, 0, patch)
       command = launch.command
       args = launch.args
     }
@@ -438,6 +463,14 @@ export class DesktopRuntime {
       logDirectory: this.options.logDirectory,
       logFileName: 'dsh-core-runtime.log',
       startTimeoutMs: CORE_DSH_START_TIMEOUT_MS,
+      onStderrLine: line => {
+        // Harness skips bundles whose package or patch cannot be loaded.
+        const skipped = /^dsh: skipping profile bundle "([@a-zA-Z0-9._/-]+)":/.exec(line)
+        // Its optional activation audit also reports each inactive package.
+        const inactive = /^[\w.-]+ \(([@a-zA-Z0-9._/-]+)\):/.exec(line)
+        const name = skipped?.[1] ?? inactive?.[1]
+        if (name) this.failedCorePlugins.add(name)
+      },
       env: {
         ...runtimeEnvironment,
         ...this.options.hostPipe.environment(),

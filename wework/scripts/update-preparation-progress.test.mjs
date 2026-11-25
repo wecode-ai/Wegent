@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { waitForUpdatePreparation } from '../e2e/desktop/modules/update-preparation-progress.mjs'
+import { waitForReleasePreparation } from '../electron/src/runtime/release-preparation-progress.mjs'
 
 function clock() {
   let time = 0
@@ -49,6 +50,22 @@ test('preserves the preparation failure', async () => {
       failure: { message: 'corrupt package' },
     })),
     /corrupt package/
+  )
+})
+
+test('names the preparation phase even if the child exits before the first progress poll', async () => {
+  const exited = Object.assign(new Error('internal command line'), {
+    stderr: 'internal output\n[release-preparation] Required plugin test-plugin is missing\n',
+  })
+  await assert.rejects(
+    waitForReleasePreparation(Promise.reject(exited), async () => ({ phase: 'profile-prepare' }), {
+      stop: async () => assert.fail('An exited process should not be stopped'),
+      ...clock(),
+    }),
+    {
+      message:
+        'Release preparation failed during profile-prepare: Required plugin test-plugin is missing',
+    }
   )
 })
 

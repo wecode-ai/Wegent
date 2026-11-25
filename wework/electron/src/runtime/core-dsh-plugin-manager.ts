@@ -12,6 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, toNamespacedPath } from 'node:path'
+import { parse } from 'yaml'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
 import { terminateProcessTree } from './runtime-supervisor.js'
@@ -53,6 +54,7 @@ export interface CoreDshPlugin {
   canUpdate: boolean
   canToggle: boolean
   canUninstall: boolean
+  loadFailed?: boolean
 }
 
 interface ProfileManifest {
@@ -83,9 +85,15 @@ interface PackageManifest {
   }
   dsh?: {
     bundle?: {
-      patch?: string
+      patch?: string | string[]
     }
   }
+}
+
+export interface StartupPluginEntry {
+  id: string
+  name: string
+  disabled: true
 }
 
 export interface CoreDshDevelopmentPlugin {
@@ -115,6 +123,8 @@ export interface CoreDshPluginManagerOptions {
   environment: NodeJS.ProcessEnv
   runCommand?: CommandRunner
   confirmInstall?: (request: CoreDshPluginInstallRequest) => Promise<boolean>
+  failedPlugins?: ReadonlySet<string>
+  managedPackages?: ReadonlySet<string>
 }
 
 export interface CoreDshPluginInstallRequest {
@@ -141,6 +151,33 @@ export class CoreDshPluginManager {
 
   list(): Promise<CoreDshPlugin[]> {
     return this.serial(() => this.readInventory())
+  }
+
+  startupPluginEntries(name: string): Promise<StartupPluginEntry[]> {
+    return this.serial(async () => {
+      if (IMMUTABLE_CORE_DSH_PLUGINS.has(name) || this.options.managedPackages?.has(name)) return []
+      if (!(await this.readManifest()).dsh?.profile?.bundles?.includes(name)) return []
+      const bundle = (await this.readPackage(name))?.dsh?.bundle?.patch
+      if (!bundle) return []
+      const root = await realpath(this.packageRoot(name))
+      const entries: StartupPluginEntry[] = []
+      for (const file of Array.isArray(bundle) ? bundle : [bundle]) {
+        const path = await realpath(resolve(root, file))
+        const offset = relative(root, path)
+        if (offset.startsWith('..') || isAbsolute(offset)) continue
+        const parsed: unknown = parse(await readFile(path, 'utf8'))
+        if (!Array.isArray(parsed)) continue
+        for (const item of parsed) {
+          if (!Array.isArray(item?.insert)) continue
+          for (const entry of item.insert) {
+            if (entry?.name === name && typeof entry.id === 'string') {
+              entries.push({ id: entry.id, name, disabled: true })
+            }
+          }
+        }
+      }
+      return entries
+    })
   }
 
   install(spec: string): Promise<CoreDshPlugin[]> {
@@ -310,26 +347,28 @@ export class CoreDshPluginManager {
       ]),
     ]
     const plugins = await Promise.all(
-      names.map(async name => {
+      names.map(async (name): Promise<CoreDshPlugin | null> => {
         const installed = await this.readPackage(name)
-        if (!installed) return null
+        const loadFailed = this.options.failedPlugins?.has(name)
+        if (!installed && !loadFailed) return null
         const immutable = IMMUTABLE_CORE_DSH_PLUGINS.has(name)
-        if (!immutable && !installed.dsh?.bundle?.patch) return null
+        if (!immutable && !loadFailed && !installed?.dsh?.bundle?.patch) return null
         const requestedSpec = manifest.dependencies?.[name] ?? ''
         return {
           name,
-          displayName: installed.displayName || installed.name || name,
-          description: installed.description || '',
-          version: installed.version || '',
+          displayName: installed?.displayName || installed?.name || name,
+          description: installed?.description || '',
+          version: installed?.version || '',
           requestedSpec,
           enabled: active.has(name),
           immutable,
-          homepage: installed.homepage || '',
-          repository: repositoryUrl(installed.repository),
+          homepage: installed?.homepage || '',
+          repository: repositoryUrl(installed?.repository),
           canUpdate: !immutable && Boolean(requestedSpec),
-          canToggle: !immutable && Boolean(installed.dsh?.bundle?.patch),
+          canToggle: !immutable && Boolean(installed?.dsh?.bundle?.patch),
           canUninstall: !immutable && Boolean(requestedSpec),
-        } satisfies CoreDshPlugin
+          ...(loadFailed ? { loadFailed: true } : {}),
+        }
       })
     )
     return plugins
@@ -588,7 +627,8 @@ async function readDevelopmentPlugin(sourceRoot: string): Promise<CoreDshDevelop
   const manifest = (await readRequiredJson(join(root, 'package.json'))) as PackageManifest
   const name = manifest.name?.trim() ?? ''
   validateMutableName(name)
-  const patch = manifest.dsh?.bundle?.patch?.trim()
+  const declaration = manifest.dsh?.bundle?.patch
+  const patch = typeof declaration === 'string' ? declaration.trim() : ''
   if (!patch) throw new Error(`${name} does not declare dsh.bundle.patch`)
   const patchPath = resolve(root, patch)
   if (relative(root, patchPath).startsWith('..') || isAbsolute(relative(root, patchPath))) {

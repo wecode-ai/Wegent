@@ -408,6 +408,7 @@ body {
 .startup-confirmation p {
   margin: 8px 0 12px;
   line-height: 18px;
+  overflow-wrap: anywhere;
 }
 
 :root[data-confirmation-visible='true'] .splash-copy,

@@ -1,5 +1,13 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import {
+  isJsonObject,
+  LocalJsonReadError,
+  parseLocalJson,
+  readLocalJson,
+} from '../runtime/local-json.js'
+import { atomicReleaseWrite } from '../runtime/release-store.js'
 
 interface RendererStorageState {
   version: 1
@@ -24,8 +32,10 @@ export interface RendererStorageCleanup {
 export class RendererStorageStore {
   private operation = Promise.resolve()
   private closed = false
-  private readFailure: unknown = null
+  private readFailure: LocalJsonReadError | null = null
   private pendingSeed: Record<string, string> | null = null
+  private readonly writes = new Set<Promise<unknown>>()
+  private closing?: Promise<void>
 
   constructor(
     private readonly dataDirectory: string,
@@ -33,24 +43,73 @@ export class RendererStorageStore {
   ) {}
 
   close(): Promise<void> {
-    if (this.closed) return this.operation
+    if (this.closing) return this.closing
     this.closed = true
-    this.operation = this.operation.then(async () => {
+    const writes = Promise.allSettled(this.writes)
+    this.closing = this.operation.then(async () => {
+      const failed = (await writes).find(write => write.status === 'rejected')
+      if (failed) throw failed.reason
+      if (!this.pendingSeed) return
       const state = await this.readFile()
       if (this.readFailure) throw this.readFailure
       if (!state && this.pendingSeed) {
         await this.writeFile({ version: 1, entries: this.pendingSeed })
       }
     })
-    return this.operation
+    return this.closing
+  }
+
+  validate(): Promise<void> {
+    return this.serial(async () => {
+      await readLocalJson(this.path(), validRendererStorage)
+      await this.readOriginFile()
+    })
+  }
+
+  canRepairStartup(error: unknown): boolean {
+    return (
+      error instanceof LocalJsonReadError &&
+      error.path === this.path() &&
+      (error.code === 'INVALID_JSON' || error.code === 'INVALID_DATA')
+    )
+  }
+
+  repairStartupState(): Promise<string | null> {
+    return this.write(async () => {
+      const path = this.path()
+      const info = await lstat(path).catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      })
+      if (!info) return null
+      if (!info.isFile()) throw new LocalJsonReadError(path, 'NOT_REGULAR_FILE')
+      const original = await readFile(path)
+      try {
+        parseLocalJson(path, original.toString('utf8'), validRendererStorage)
+        return null
+      } catch (error) {
+        if (!this.canRepairStartup(error)) throw error
+      }
+
+      const backup = `${path}.corrupt-${Date.now()}-${randomUUID()}`
+      // Save the exact bytes before replacing the active file. An interruption
+      // leaves either the original in place or a durable backup beside it.
+      await writeFile(backup, original, { flag: 'wx', flush: true, mode: 0o600 })
+      await atomicReleaseWrite(path, `${JSON.stringify({ version: 1, entries: {} })}\n`)
+      this.pendingSeed = null
+      this.readFailure = null
+      return backup
+    })
   }
 
   prepareOrigin(origin: string, cleanup: RendererStorageCleanup): Promise<void> {
-    return this.serial(async () => {
-      if (!(await this.readFile())) return
+    return this.write(async () => {
+      const storage = await this.readFile()
+      if (this.readFailure) throw this.readFailure
+      if (!storage) return
 
       const state = await this.readOriginFile()
-      if (!state) {
+      if (!state?.origins.length) {
         await cleanup.clearAll()
       } else {
         await Promise.all(
@@ -69,7 +128,7 @@ export class RendererStorageStore {
   }
 
   initialize(seed: Record<string, string>): Promise<Record<string, string>> {
-    return this.serial(async () => {
+    return this.write(async () => {
       const state = await this.readFile()
       if (state) return state.entries
       if (this.readFailure) return seed
@@ -89,7 +148,7 @@ export class RendererStorageStore {
   }
 
   update(update: RendererStorageUpdate): Promise<void> {
-    return this.serial(async () => {
+    return this.write(async () => {
       const state = await this.readFile()
       if (this.readFailure) throw this.readFailure
       const seed = state ? null : this.pendingSeed
@@ -115,7 +174,10 @@ export class RendererStorageStore {
   }
 
   clear(): Promise<void> {
-    return this.serial(() => this.writeFile({ version: 1, entries: {} }))
+    return this.write(async () => {
+      await this.writeFile({ version: 1, entries: {} })
+      await this.writeOriginFile({ version: 1, origins: [] })
+    })
   }
 
   private notifyUpdate(update: RendererStorageUpdate): void {
@@ -137,55 +199,28 @@ export class RendererStorageStore {
   private async readFile(): Promise<RendererStorageState | null> {
     this.readFailure = null
     try {
-      const value = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
-      if (!value || typeof value !== 'object' || Array.isArray(value))
-        throw new Error('Invalid renderer storage state')
-      const record = value as Partial<RendererStorageState>
-      if (record.version !== 1 || !validEntries(record.entries))
-        throw new Error('Invalid renderer storage entries')
-      this.pendingSeed = null
-      return { version: 1, entries: record.entries }
+      const state = await readLocalJson(this.path(), validRendererStorage)
+      if (state) this.pendingSeed = null
+      return state
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      // JSON errors may include a source excerpt containing stored credentials.
-      const code = (error as NodeJS.ErrnoException).code
-      const suffix = typeof code === 'string' && /^E[A-Z0-9]+$/.test(code) ? ` (${code})` : ''
-      this.readFailure = new Error(
-        `Stored application state is unreadable; the original file is preserved${suffix}`
-      )
+      if (!(error instanceof LocalJsonReadError)) throw error
+      this.readFailure = error
       console.warn('[renderer-storage] Stored state is temporarily read-only', {
-        errorType: error instanceof Error ? error.name : typeof error,
+        code: error.code,
       })
       return null
     }
   }
 
-  private async readOriginFile(): Promise<RendererStorageOriginState | null> {
-    try {
-      const value = JSON.parse(await readFile(this.originPath(), 'utf8')) as unknown
-      if (!value || typeof value !== 'object' || Array.isArray(value))
-        throw new Error('Invalid renderer origin history')
-      const record = value as Partial<RendererStorageOriginState>
-      if (
-        record.version !== 1 ||
-        !Array.isArray(record.origins) ||
-        record.origins.some(origin => typeof origin !== 'string')
-      ) {
-        throw new Error('Invalid renderer origin history entries')
-      }
-      if (record.origins.length === 0) return null
-      return { version: 1, origins: record.origins }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      if (error instanceof SyntaxError) {
-        // Syntax errors can expose the JSON source, including a stored URL.
-        error.message = 'Invalid origin history JSON'
-        error.stack = undefined
-      }
-      throw new Error('Renderer storage origin history is unreadable; browser state is preserved', {
-        cause: error,
-      })
-    }
+  private readOriginFile(): Promise<RendererStorageOriginState | null> {
+    return readLocalJson(
+      this.originPath(),
+      (value): value is RendererStorageOriginState =>
+        isJsonObject(value) &&
+        value.version === 1 &&
+        Array.isArray(value.origins) &&
+        value.origins.every(origin => typeof origin === 'string')
+    )
   }
 
   private async writeFile(state: RendererStorageState): Promise<void> {
@@ -204,6 +239,14 @@ export class RendererStorageStore {
     await rename(temporary, path)
   }
 
+  private write<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const result = this.serial(operation)
+    this.writes.add(result)
+    const done = () => this.writes.delete(result)
+    void result.then(done, done)
+    return result
+  }
+
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {
     if (this.closed) return Promise.reject(new Error('Renderer storage is closed'))
     const result = this.operation.then(operation, operation)
@@ -213,6 +256,13 @@ export class RendererStorageStore {
     )
     return result
   }
+}
+
+function validRendererStorage(value: unknown, path: string): value is RendererStorageState {
+  if (!isJsonObject(value)) return false
+  if (Object.hasOwn(value, 'version') && value.version !== 1)
+    throw new LocalJsonReadError(path, 'UNSUPPORTED_VERSION')
+  return value.version === 1 && validEntries(value.entries)
 }
 
 function validEntries(value: unknown): value is Record<string, string> {

@@ -262,51 +262,27 @@ describe('core DSH runtime', () => {
       'node_modules',
       '@wegent'
     )
-    await expect(
-      readFile(join(profileModules, 'dsh-app-wework', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-electron-host', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-executor-runtime', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-terminal-runtime', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-plugin-runtime', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-core-apps', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-core-settings', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-plugin-center', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-applications', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-automations', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-cloud-work', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-home-focus', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-home-developer', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-git', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
-    await expect(
-      readFile(join(profileModules, 'dsh-ui-outputs', 'package.json'), 'utf8')
-    ).resolves.toBe('{}')
+    for (const plugin of [
+      'dsh-app-wework',
+      'dsh-electron-host',
+      'dsh-executor-runtime',
+      'dsh-terminal-runtime',
+      'dsh-plugin-runtime',
+      'dsh-ui-core-apps',
+      'dsh-ui-core-settings',
+      'dsh-ui-plugin-center',
+      'dsh-ui-applications',
+      'dsh-ui-automations',
+      'dsh-ui-cloud-work',
+      'dsh-ui-home-focus',
+      'dsh-ui-home-developer',
+      'dsh-ui-git',
+      'dsh-ui-outputs',
+    ]) {
+      await expect(readFile(join(profileModules, plugin, 'package.json'), 'utf8')).resolves.toBe(
+        JSON.stringify({ name: `@wegent/${plugin}` })
+      )
+    }
     await root.remove()
   })
 
