@@ -696,7 +696,6 @@ function IndependentIssueDialogContent({
   const drawer = (
     <div className="issue-drawer-workspace h-full min-h-0 w-full">
       <IssueConversationDrawers
-        active={!deleting && !discarding}
         embedded={!overlayDrawer}
         label={issue?.title ?? t('independentIssues.noProject')}
         conversation={
