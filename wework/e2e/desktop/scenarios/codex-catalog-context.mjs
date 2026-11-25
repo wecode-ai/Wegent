@@ -44,23 +44,22 @@ function catalogRestartCompleted(log) {
     const finished = pending.slice(finishedAt).split('\n', 1)[0]
     if (!finished.endsWith(' ok=true')) continue
     const interval = pending.slice(0, finishedAt)
-    const processStart = interval.indexOf('codex shared app-server process starting ')
-    const prepared = interval.indexOf('codex router model catalog prepared ')
-    const processId = /codex shared app-server process starting process_id=(\d+)/.exec(
-      interval
-    )?.[1]
-    const fileLoaded =
-      prepared >= 0 &&
-      prepared < processStart &&
-      processId &&
-      new RegExp(
-        `codex shared app-server process initialized process_id=${processId}(?:\\s|$)`
+    for (const process of interval.matchAll(
+      /codex shared app-server process starting process_id=(\d+)/g
+    )) {
+      const processStart = process.index
+      const initialized = new RegExp(
+        `codex shared app-server process initialized process_id=${process[1]}(?:\\s|$)`
       ).test(interval.slice(processStart))
-    if (
-      processStart >= 0 &&
-      (fileLoaded || interval.indexOf('codex router model catalog served ', processStart) >= 0)
-    ) {
-      return true
+      // Discovery may start a process before the restart handler replaces it with
+      // the initialized process that loaded the written catalog.
+      const prepared = interval.lastIndexOf('codex router model catalog prepared ', processStart)
+      if (
+        (prepared >= 0 && initialized) ||
+        interval.includes('codex router model catalog served ', processStart)
+      ) {
+        return true
+      }
     }
   }
   return false
