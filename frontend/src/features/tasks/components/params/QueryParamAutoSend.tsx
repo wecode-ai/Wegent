@@ -15,6 +15,35 @@ const WS_READY_TIMEOUT = 10_000
 /** Polling interval (ms) for checking readiness conditions */
 const POLL_INTERVAL = 200
 
+type QueryAction = {
+  key: string
+  prefilled: boolean
+  handled: boolean
+  interacted: boolean
+  awaitingTaskNavigation: boolean
+}
+
+function autoSendRequested(params: Pick<URLSearchParams, 'get'>) {
+  return (params.get('autoSend') ?? params.get('autosend'))?.toLowerCase() === 'true'
+}
+
+function getQueryActionKey(params: Pick<URLSearchParams, 'get'>) {
+  const message = params.get('q')?.trim()
+  if (!message) return null
+  return JSON.stringify([
+    message,
+    params.get('teamId'),
+    params.get('teamName'),
+    params.get('teamNamespace') || 'default',
+    params.get('projectId') || null,
+    params.get('conversationGroupId') || null,
+    params.get('deviceId') || params.get('device_id'),
+    params.get('agent'),
+    params.get('mode'),
+    autoSendRequested(params),
+  ])
+}
+
 interface QueryParamAutoSendProps {
   /** Available teams to select from */
   teams: Team[]
@@ -27,10 +56,10 @@ interface QueryParamAutoSendProps {
   /** Callback to change the selected team */
   onTeamChange: (team: Team) => void
   /** Callback to send a message (same as manual send) */
-  onSendMessage: (message: string) => Promise<void>
+  onSendMessage: (message: string, onFailure: () => void) => Promise<void>
   /** Whether there is an existing task selected (taskId in URL) */
   hasTaskId: boolean
-  /** Callback to prefill the input box with the query text (called immediately on mount) */
+  /** Callback to prefill the input box when a new query prompt arrives */
   onPrefillMessage?: (message: string) => void
 }
 
@@ -41,7 +70,7 @@ interface QueryParamAutoSendProps {
  *
  * Behavior:
  * - Only fires when `q` is present and non-empty, and no `taskId` exists.
- * - `q` content is always prefilled into the input box immediately on mount.
+ * - Each new `q` prompt prefills the input immediately.
  * - Auto-send only happens when `autoSend=true` is present in the URL.
  * - Waits for WebSocket connection, teams loaded, and final team selection before sending.
  * - Clears `q`, `teamId`, `teamName`, `teamNamespace`, and `autoSend` after the normal send flow
@@ -63,11 +92,9 @@ export default function QueryParamAutoSend({
   const router = useRouter()
   const { isConnected } = useSocket()
 
-  // Guard: ensure we only process once per page load
-  const processedRef = useRef(false)
-  const awaitingTaskNavigationRef = useRef(false)
-  // Track if user manually interacted before auto-send fires
-  const userInteractedRef = useRef(false)
+  const actionKey = getQueryActionKey(searchParams)
+  const actionRef = useRef<QueryAction | null>(null)
+  const completedAutoSendKeys = useRef(new Set<string>())
 
   // Keep latest values in refs so setTimeout callbacks always read current state
   const isConnectedRef = useRef(isConnected)
@@ -106,86 +133,90 @@ export default function QueryParamAutoSend({
     onSendMessageRef.current = onSendMessage
   }, [onSendMessage])
 
-  // Detect user interaction (typing / team switch) to cancel auto-send
+  // A keypress cancels auto-send for the current prompt only.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       // Ignore modifier-only keys
       if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return
-      userInteractedRef.current = true
+      if (actionRef.current) actionRef.current.interacted = true
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // Remove q, teamId, teamName, teamNamespace, and autoSend from URL without adding browser history entries
-  const clearQueryParams = useCallback(() => {
-    const url = new URL(window.location.href)
-    url.searchParams.delete('q')
-    url.searchParams.delete('teamId')
-    url.searchParams.delete('teamName')
-    url.searchParams.delete('teamNamespace')
-    url.searchParams.delete('autoSend')
-    url.searchParams.delete('autosend')
-    router.replace(url.pathname + url.search)
-  }, [router])
-
-  // Prefill input box immediately when q param is present (even before auto-send conditions are met)
-  const prefillDoneRef = useRef(false)
-  useEffect(() => {
-    if (prefillDoneRef.current) return
-    if (hasTaskId) return
-
-    const query = searchParams.get('q')
-    if (!query) return
-
-    const decodedMessage = decodeURIComponent(query).trim()
-    if (!decodedMessage) return
-
-    prefillDoneRef.current = true
-    onPrefillMessage?.(decodedMessage)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, hasTaskId])
+  // Remove consumed action parameters without adding a browser history entry.
+  const clearQueryParams = useCallback(
+    (key: string, keepTeamId = false) => {
+      const url = new URL(window.location.href)
+      if (getQueryActionKey(url.searchParams) !== key) return
+      url.searchParams.delete('q')
+      if (!keepTeamId) {
+        url.searchParams.delete('teamId')
+        url.searchParams.delete('recommend')
+        url.searchParams.delete('conversationGroupId')
+      }
+      url.searchParams.delete('teamName')
+      url.searchParams.delete('teamNamespace')
+      url.searchParams.delete('autoSend')
+      url.searchParams.delete('autosend')
+      router.replace(url.pathname + url.search + url.hash)
+    },
+    [router]
+  )
 
   useEffect(() => {
-    // The send callback navigates with its captured search params. Clean up only
-    // after that navigation commits so it cannot restore the consumed parameters.
-    if (hasTaskId && awaitingTaskNavigationRef.current) {
-      awaitingTaskNavigationRef.current = false
-      clearQueryParams()
+    if (actionKey === null) {
+      actionRef.current = null
+      return
     }
-    // Already processed or user interacted
-    if (processedRef.current) return
+    const existing = actionRef.current
+    const action =
+      existing?.key === actionKey
+        ? existing
+        : {
+            key: actionKey,
+            prefilled: false,
+            handled: false,
+            interacted: false,
+            awaitingTaskNavigation: false,
+          }
+    actionRef.current = action
 
-    // taskId takes priority - ignore q when viewing an existing task
+    // Successful sends carry the action parameters into their new task URL.
     if (hasTaskId) {
-      processedRef.current = true
+      if (action.awaitingTaskNavigation) {
+        action.awaitingTaskNavigation = false
+        clearQueryParams(action.key)
+      }
+      action.handled = true
       return
     }
+    if (action.handled || completedAutoSendKeys.current.has(action.key)) return
 
-    const query = searchParams.get('q')
-    if (!query) return
-
-    const decodedMessage = decodeURIComponent(query).trim()
-    if (!decodedMessage) return
-
-    // Only auto-send when autoSend=true is explicitly set in the URL
-    // Support both camelCase (autoSend) and lowercase (autosend) parameter names
-    const autoSendParam = searchParams.get('autoSend') ?? searchParams.get('autosend')
-    if (autoSendParam?.toLowerCase() !== 'true') {
-      // No auto-send requested - just prefill (already done above) and stop
-      processedRef.current = true
-      return
+    const message = searchParams.get('q')?.trim()
+    if (!message) return
+    if (!action.prefilled) {
+      action.prefilled = true
+      onPrefillMessage?.(message)
     }
+    action.handled = true
+    if (!autoSendRequested(searchParams)) return
 
     const teamIdParam = searchParams.get('teamId')
-    const targetTeamId = teamIdParam ? Number(teamIdParam) : null
+    const parsedTeamId = teamIdParam === null ? null : Number(teamIdParam)
+    const targetTeamId =
+      parsedTeamId !== null && Number.isSafeInteger(parsedTeamId) && parsedTeamId > 0
+        ? parsedTeamId
+        : null
 
     // Support team lookup by name and namespace (user-friendly alternative to teamId)
     const teamNameParam = searchParams.get('teamName')
     const teamNamespaceParam = searchParams.get('teamNamespace') || 'default'
 
-    // Mark processed immediately to prevent duplicate triggers
-    processedRef.current = true
+    if (teamIdParam !== null && targetTeamId === null && !teamNameParam) {
+      clearQueryParams(action.key, true)
+      return
+    }
 
     // Wait for prerequisites then send
     let cancelled = false
@@ -196,7 +227,8 @@ export default function QueryParamAutoSend({
 
     const finishWithoutSending = () => {
       completed = true
-      clearQueryParams()
+      completedAutoSendKeys.current.add(action.key)
+      clearQueryParams(action.key, true)
     }
 
     const waitForReadiness = () => {
@@ -209,7 +241,7 @@ export default function QueryParamAutoSend({
 
     const tryExecute = () => {
       if (cancelled) return
-      if (userInteractedRef.current) {
+      if (action.interacted) {
         // User interacted, cancel auto-send but still clean URL params
         finishWithoutSending()
         return
@@ -220,25 +252,38 @@ export default function QueryParamAutoSend({
       const teamsLoading = isTeamsLoadingRef.current
       const currentTeams = teamsRef.current
 
-      if (!connected || teamsLoading || currentTeams.length === 0) {
+      if (!connected) {
         waitForReadiness()
         return
       }
-      // Switch team if requested (by ID or by name+namespace)
-      let targetTeam: Team | undefined
-
-      if (targetTeamId) {
-        // Lookup by ID (backward compatible)
-        targetTeam = currentTeams.find(t => t.id === targetTeamId)
-      } else if (teamNameParam) {
-        // Lookup by name and namespace (user-friendly)
-        targetTeam = currentTeams.find(
-          t => t.name === teamNameParam && t.namespace === teamNamespaceParam
-        )
-      }
 
       const currentSelectedTeam = selectedTeamRef.current
-      if (targetTeam && currentSelectedTeam?.id !== targetTeam.id) {
+      // ChatArea resolves explicit IDs independently of the catalog.
+      if (targetTeamId !== null) {
+        if (isTeamSelectionReadyRef.current && currentSelectedTeam?.id === targetTeamId) {
+          executeAutoSend(message)
+        } else {
+          waitForReadiness()
+        }
+        return
+      }
+
+      if (teamsLoading || currentTeams.length === 0) {
+        waitForReadiness()
+        return
+      }
+      const targetTeam = teamNameParam
+        ? currentTeams.find(t => t.name === teamNameParam && t.namespace === teamNamespaceParam)
+        : undefined
+      if (teamNameParam && !targetTeam) {
+        waitForReadiness()
+        return
+      }
+      if (
+        targetTeam &&
+        (currentSelectedTeam?.id !== targetTeam.id ||
+          (teamIdParam !== null && !isTeamSelectionReadyRef.current))
+      ) {
         if (requestedTeamId !== targetTeam.id) {
           requestedTeamId = targetTeam.id
           onTeamChangeRef.current(targetTeam)
@@ -251,22 +296,24 @@ export default function QueryParamAutoSend({
         waitForReadiness()
         return
       }
-      // An unknown URL target retains the existing current-team behavior.
-      executeAutoSend(decodedMessage)
+      executeAutoSend(message)
     }
 
     const executeAutoSend = (message: string) => {
-      if (cancelled || userInteractedRef.current) {
+      if (cancelled || action.interacted) {
         finishWithoutSending()
         return
       }
       completed = true
-      awaitingTaskNavigationRef.current = true
-      onSendMessageRef.current(message).catch(() => {
-        awaitingTaskNavigationRef.current = false
-        clearQueryParams()
-        // Error handling is done inside onSendMessage (toast etc.)
-      })
+      // Task creation pushes a history entry, leaving the original link behind it.
+      completedAutoSendKeys.current.add(action.key)
+      action.awaitingTaskNavigation = true
+      const onFailure = () => {
+        if (cancelled || actionRef.current !== action || !action.awaitingTaskNavigation) return
+        action.awaitingTaskNavigation = false
+        clearQueryParams(action.key, true)
+      }
+      void onSendMessageRef.current(message, onFailure).catch(onFailure)
     }
 
     // Start the readiness polling
@@ -275,12 +322,12 @@ export default function QueryParamAutoSend({
     return () => {
       cancelled = true
       clearTimeout(timeoutId)
-      if (!completed) processedRef.current = false
+      if (!completed) action.handled = false
     }
     // We intentionally use a minimal dependency array.
     // The ref guards and the cancelled flag prevent double execution.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, hasTaskId])
+  }, [actionKey, hasTaskId])
 
   return null
 }

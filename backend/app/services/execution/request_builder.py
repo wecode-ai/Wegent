@@ -2878,6 +2878,7 @@ class TaskRequestBuilder:
             matched = self._connector_keywords_match(prompt_text, app.keywords)
             config = {
                 "name": skill_name,
+                "sandbox_deploy": False,
                 "displayName": app.name,
                 "description": description,
                 "prompt": (

@@ -1,4 +1,5 @@
 import { BetaBadge } from '@/components/common/BetaBadge'
+import { memo } from 'react'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Archive, FolderPlus, MessageSquarePlus, Plus, Search, UserRound } from 'lucide-react'
 import {
@@ -57,7 +58,7 @@ import { RuntimeTaskRow } from './DesktopSidebarTaskRow'
 import type { DesktopSidebarProps, OpenSettingsOptions } from './desktopSidebarTypes'
 import { LocalHarnessSessionRow, SidebarReleaseNotesCard } from './DesktopSidebarWidgets'
 import { useDesktopSidebarModel } from './useDesktopSidebarModel'
-export function DesktopSidebar(props: DesktopSidebarProps) {
+export const DesktopSidebar = memo(function DesktopSidebar(props: DesktopSidebarProps) {
   const model = useDesktopSidebarModel(props)
   const {
     nowMs,
@@ -956,4 +957,4 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
       )}
     </aside>
   )
-}
+})

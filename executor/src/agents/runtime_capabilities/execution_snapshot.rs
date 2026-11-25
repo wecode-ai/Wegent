@@ -17,6 +17,7 @@ mod tests {
         install_deferred_mcp_hook(&first);
         let mut settings: Value =
             serde_json::from_slice(&fs::read(first.join("settings.json")).unwrap()).unwrap();
+        let first_settings = settings.clone();
         settings["hooks"]["PreToolUse"].as_array_mut().unwrap().push(json!({"matcher": "Bash", "hooks": [{"type": "command", "command": "custom-hook"}]}));
         write_json_file(&second.join("settings.json"), &settings).unwrap();
         install_deferred_mcp_hook(&second);
@@ -38,9 +39,22 @@ mod tests {
                 .display()
                 .to_string()
         );
-        assert!(!next.to_string().contains(first.to_str().unwrap()));
-        assert!(fs::read_to_string(first.join("settings.json"))
-            .unwrap()
-            .contains(first.to_str().unwrap()));
+        assert!(!hooks
+            .iter()
+            .flat_map(|rule| rule["hooks"].as_array().unwrap())
+            .any(|hook| hook["command"]
+                .as_str()
+                .unwrap()
+                .contains(first.to_str().unwrap())));
+        let original: Value =
+            serde_json::from_slice(&fs::read(first.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(original, first_settings);
+        assert_eq!(
+            original["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            first
+                .join("defer-interactive-mcp-hook.sh")
+                .display()
+                .to_string()
+        );
     }
 }
