@@ -13,10 +13,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(json!({"items":[]}));
         };
         let origin = &link.runtime_handle["origin"];
-        if !owned_role_task(&link, user, &self.device_id)
-            || origin["type"] != "stand_in_identity"
-            || !origin["conversationScope"].is_null()
-        {
+        if !owned_role_task(&link, user, &self.device_id) || !supports_role_delegation(origin) {
             return Err(denied());
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
@@ -299,7 +296,20 @@ mod tests {
         assert_eq!(stale_attempt["status"], "dispatched");
         assert!(stale_attempt["statusSource"].is_null());
 
-        for scope in ["team:00000000-0000-4000-8000-000000000001", "collaboration"] {
+        // Team conversations now use the same owned branch status projection.
+        handler.store.update_task(conversation, |link| {
+            link.runtime_handle["origin"]["conversationScope"] =
+                json!("team:00000000-0000-4000-8000-000000000001");
+        });
+        assert_eq!(row(&handler), stale_attempt);
+        assert_eq!(
+            handler
+                .stand_in_role_branches(&json!({"userId":user + 1,"taskId":conversation}))
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        for scope in ["team:not-a-uuid", "collaboration", "shared:17:team:weekly"] {
             handler.store.update_task(conversation, |link| {
                 link.runtime_handle["origin"]["conversationScope"] = json!(scope);
             });

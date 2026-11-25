@@ -22,6 +22,7 @@ export function createRuntimeInteractionInboxState(
     return {
       items: [...cloudSnapshot.items, ...localSnapshot.items],
       resolved: [...cloudSnapshot.resolved, ...localSnapshot.resolved],
+      transferred: [...cloudSnapshot.transferred, ...localSnapshot.transferred],
       errors,
     }
   }

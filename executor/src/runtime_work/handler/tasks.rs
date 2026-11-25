@@ -1581,6 +1581,8 @@ impl RuntimeWorkRpcHandler {
                 delegation["attempt"] = json!(attempt);
             }
             self.refresh_identity_conversation_origin(&mut request, link)?;
+            self.refresh_shared_conversation_request(&mut request)
+                .await?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
         // A prepared local request defaults to a new native session, while a
@@ -2046,6 +2048,8 @@ impl RuntimeWorkRpcHandler {
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);
         self.refresh_identity_conversation_origin(&mut request, &existing_link)?;
+        self.refresh_shared_conversation_request(&mut request)
+            .await?;
         self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         request.new_session = false;
         if !workspace_path.is_empty() {
