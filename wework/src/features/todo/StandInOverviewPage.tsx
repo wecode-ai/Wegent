@@ -1,3 +1,4 @@
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import {
   roleSelectsProject,
   standInConversationTaskId,
@@ -8,7 +9,6 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { dingTalkInboxScope } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkspaceNavigationDetail } from '@/lib/navigation'
 import { navigateTo, WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
@@ -24,7 +24,6 @@ import { Check, PanelRight, Plus, SlidersHorizontal, UserRound } from 'lucide-re
 import type { ComponentProps, ReactNode, Ref } from 'react'
 import {
   useCallback,
-  useContext,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -95,7 +94,7 @@ export function StandInOverviewPage({
   roleLocations?: StandInRoleLocation[]
 }) {
   const { t } = useTranslation('common')
-  const workbench = useContext(WorkbenchContext)
+  const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const state = usePersonalStandIn(
     props.services,
     props.userId,
@@ -268,12 +267,7 @@ export function StandInOverviewPage({
     roleLocations?.find(entry => entry.role.id === roleId && entry.deviceId === deviceId)?.role ??
     state.draft?.roles.find(value => value.id === roleId)
   const visibleInbox = inbox.items.filter(work => work.messageCount > 0 || work.task)
-  const items = mergeStandInWorkItems(
-    workbench?.runtimeTaskReminders.items ?? [],
-    inbox.items,
-    deviceId,
-    props.projects
-  )
+  const items = mergeStandInWorkItems(taskReminderItems, inbox.items, deviceId, props.projects)
     .filter(
       item =>
         standInWorkRole(item) !== null &&

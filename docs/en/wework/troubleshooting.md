@@ -155,6 +155,10 @@ localStorage.setItem("wework:debug-runtime", "1");
 - For Git authentication errors, verify the token and repository permissions.
 - Check the repository URL, default branch, device network, and proxy for clone failures.
 
+### PR or MR status may be stale
+
+Find `UI observation lease lost` in the execution device's Executor logs. Search for a known PR or MR using `change_request_number`, then use `observer_id` to match any `UI observation lease stopped` entry for the same lease. The `reason` field distinguishes expiry, an explicit stop, a missing record, and cloud rejection. If the lease record is missing, the log may have no PR or MR number.
+
 ## Reviews and browser
 
 Change review and undo require the original device and per-turn artifact. Resolve later conflicting edits manually.
