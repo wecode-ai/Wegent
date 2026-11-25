@@ -31,11 +31,14 @@ describe("IssueConversationDrawers", () => {
     else Reflect.deleteProperty(Element.prototype, "getAnimations");
   });
 
-  it("releases the active tab while keeping an Issue drawer mounted", async () => {
+  it("keeps the active workspace tab clickable while an Issue drawer is mounted", async () => {
     const close = vi.fn();
+    const switchWorkspaceTab = vi.fn();
     const render = (active: boolean) => (
       <>
-        <button data-testid="outside-task">Task search</button>
+        <button data-testid="outside-task" onClick={switchWorkspaceTab}>
+          Agents
+        </button>
         <section hidden={!active}>
           <IssueConversationDrawers
             active={active}
@@ -53,18 +56,17 @@ describe("IssueConversationDrawers", () => {
     const outside = container.querySelector('[data-testid="outside-task"]')!;
     const draft = container.querySelector('[data-testid="issue-draft"]')!;
     await act(async () => {
-      await vi.waitFor(() => expect(outside.closest("[inert]")).not.toBeNull());
-    });
-    await act(async () => root.render(render(false)));
-    await act(async () => {
       await vi.waitFor(() => expect(outside.closest("[inert]")).toBeNull());
     });
+    await act(async () => outside.click());
+    expect(switchWorkspaceTab).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => root.render(render(false)));
+    expect(outside.closest("[inert]")).toBeNull();
     expect(container.querySelector('[data-testid="issue-draft"]')).toBe(draft);
     expect(close).not.toHaveBeenCalled();
     await act(async () => root.render(render(true)));
-    await act(async () => {
-      await vi.waitFor(() => expect(outside.closest("[inert]")).not.toBeNull());
-    });
+    expect(outside.closest("[inert]")).toBeNull();
     expect(container.querySelector('[data-testid="issue-draft"]')).toBe(draft);
   });
 
