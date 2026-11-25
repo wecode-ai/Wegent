@@ -275,7 +275,7 @@ export function createPersonalIssuesApi<Project>(client: PersonalIssueTransport)
     },
     createShared(
       requestId: string,
-      source: SharedIssueSource,
+      source: SharedIssueSource | undefined,
       issue: IndependentIssueInput,
       files: File[],
       projectId?: string,

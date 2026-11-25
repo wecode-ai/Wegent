@@ -7,6 +7,14 @@ interface VisibleRectangle {
   height: number
 }
 
+function isOpenPopover(element: HTMLElement) {
+  return (
+    element.hasAttribute('popover') &&
+    typeof element.showPopover === 'function' &&
+    element.matches(':popover-open')
+  )
+}
+
 /** Geometry alone cannot prove visibility inside nested scrollports or overlays. */
 export function readElementVisibility(
   element: HTMLElement,
@@ -21,7 +29,11 @@ export function readElementVisibility(
   let top = Math.max(0, rect.top)
   let right = Math.min(view.innerWidth, rect.right)
   let bottom = Math.min(view.innerHeight, rect.bottom)
-  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+  for (
+    let ancestor = isOpenPopover(element) ? null : element.parentElement;
+    ancestor;
+    ancestor = ancestor.parentElement
+  ) {
     const style = view.getComputedStyle(ancestor)
     const bounds = ancestor.getBoundingClientRect()
     if (/^(auto|scroll|hidden|clip)$/.test(style.overflowX || style.overflow)) {
@@ -34,6 +46,8 @@ export function readElementVisibility(
       top = Math.max(top, edge)
       bottom = Math.min(bottom, edge + ancestor.clientHeight)
     }
+    // Native top-layer popovers retain DOM ancestry but escape its overflow clipping.
+    if (isOpenPopover(ancestor)) break
   }
   if (right <= left || bottom <= top) {
     return { visibleIntersection: null, hitTestVisible: false }

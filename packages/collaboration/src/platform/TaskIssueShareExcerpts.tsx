@@ -1,18 +1,11 @@
 import { selectedShareExcerpts } from './selectedShareExcerpts'
 import { Button } from '../markdown/Button'
-import { Fragment, useRef, useState } from 'react'
+import { Fragment, useRef, useState, type ReactNode } from 'react'
 import { useScrollRequest } from '../dom-events'
-import {
-  Check,
-  ChevronDown,
-  ChevronUp,
-  Ellipsis,
-  Expand,
-  Loader2,
-  Minus,
-  Shrink,
-} from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Expand, Loader2, Minus, Shrink } from 'lucide-react'
 import { usePersonalIssueTranslation } from './personalIssueMessages'
+import ReactMarkdown from 'react-markdown'
+import { preprocessCjkEmphasis } from '../markdown/preprocessCjkEmphasis'
 import type { TaskIssueShareDraft } from './personalIssuesApi'
 
 export function TaskIssueShareExcerpts({
@@ -24,6 +17,7 @@ export function TaskIssueShareExcerpts({
   selected,
   onSelect,
   loadEarlier,
+  renderShareContent,
 }: {
   excerpts: TaskIssueShareDraft['excerpts']
   selection?: TaskIssueShareDraft['selectedExcerpt']
@@ -33,6 +27,7 @@ export function TaskIssueShareExcerpts({
   selected: string[]
   onSelect(ids: string[]): void
   loadEarlier?(): Promise<void>
+  renderShareContent?(messages: ReactNode, messageActions: ReactNode): ReactNode
 }) {
   const t = usePersonalIssueTranslation()
   const excerptsRef = useRef<HTMLDivElement>(null)
@@ -56,16 +51,13 @@ export function TaskIssueShareExcerpts({
   const partial = (id: string) =>
     selection?.excerpt.id === id && hasPartialRange && !shareWholeMessage
   const toggle = (id: string) => {
-    if (selected.includes(id) && partial(id)) {
-      onShareWholeMessage?.(true)
-      return
-    }
     if (selection?.excerpt.id === id) onShareWholeMessage?.(false)
     onSelect(selected.includes(id) ? selected.filter(value => value !== id) : [...selected, id])
   }
-  const allSelected = displayed.every(
-    excerpt => selected.includes(excerpt.id) && !partial(excerpt.id)
-  )
+  const selectedIds = new Set(selected)
+  const visibleSelectedCount = displayed.filter(excerpt => selectedIds.has(excerpt.id)).length
+  const allSelected = visibleSelectedCount === displayed.length
+  const hiddenSelectedCount = selectedIds.size - visibleSelectedCount
   async function fetchEarlier() {
     setLoading(true)
     setFailed(false)
@@ -79,14 +71,19 @@ export function TaskIssueShareExcerpts({
     }
   }
 
+  if (displayed.length === 0 && !loadEarlier) return renderShareContent?.(null, null) ?? null
+
   const expandCached = !showAll && excerpts.length > 2
   const showHistoryGap =
     firstAvailable && displayed.length > 1 && (Boolean(loadEarlier) || expandCached)
+  const showEarlierAtStart = !firstAvailable && Boolean(loadEarlier)
   const historyLabel = t(
     loading
       ? 'independentIssues.loading'
-      : expandCached
-        ? 'taskIssueShare.expandPreview'
+      : showHistoryGap
+        ? showAll
+          ? 'taskIssueShare.showMoreMiddleMessages'
+          : 'taskIssueShare.showMiddleMessages'
         : loadEarlier
           ? 'taskIssueShare.loadEarlier'
           : showAll
@@ -101,97 +98,68 @@ export function TaskIssueShareExcerpts({
       data-testid="task-issue-share-all-excerpts"
       aria-expanded={showAll}
       aria-busy={loading}
-      aria-label={showHistoryGap ? historyLabel : undefined}
-      title={showHistoryGap ? historyLabel : undefined}
       disabled={loading}
       onClick={() => (loadEarlier && !expandCached ? void fetchEarlier() : setShowAll(!showAll))}
-      className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-md px-2 py-1 text-xs text-text-secondary before:flex-1 before:border-t before:border-border after:flex-1 after:border-t after:border-border hover:text-text-primary md:min-h-8 ${showHistoryGap ? 'before:border-dashed after:border-dashed' : ''}`}
+      className={`flex min-h-11 items-center justify-center gap-2 rounded-md px-2 py-1 text-xs text-text-secondary hover:text-text-primary md:min-h-8 ${showHistoryGap ? 'justify-self-center hover:bg-muted' : 'w-full before:flex-1 before:border-t before:border-border after:flex-1 after:border-t after:border-border'}`}
     >
-      {showHistoryGap ? (
-        <span
-          className="flex h-6 shrink-0 items-center gap-1 rounded bg-muted px-1.5"
-          aria-hidden="true"
-        >
-          {loading ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <>
-              <Ellipsis className="size-4" />
-              {expandCached ? <ChevronDown className="size-3" /> : <ChevronUp className="size-3" />}
-            </>
-          )}
-        </span>
+      {historyLabel}
+      {loading ? (
+        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+      ) : !showHistoryGap && (loadEarlier || showAll) ? (
+        <ChevronUp className="size-3.5" aria-hidden="true" />
       ) : (
-        <>
-          {historyLabel}
-          <ChevronDown
-            className={`size-3.5 ${loadEarlier || showAll ? 'rotate-180' : ''}`}
-            aria-hidden="true"
-          />
-        </>
+        <ChevronDown className="size-3.5" aria-hidden="true" />
       )}
     </Button>
   )
 
-  return (
+  const messageActions = (
+    <div className="flex shrink-0 items-center gap-2">
+      {hiddenSelectedCount > 0 && (
+        <span role="status" className="text-xs text-text-secondary">
+          {t('taskIssueShare.hiddenSelected', { count: hiddenSelectedCount })}
+        </span>
+      )}
+      <Button
+        variant="unstyled"
+        showTooltip={false}
+        type="button"
+        data-testid="task-issue-share-select-all"
+        aria-label={t('taskIssueShare.selectVisibleMessages')}
+        title={t('taskIssueShare.selectVisibleMessages')}
+        aria-pressed={allSelected}
+        disabled={loading || displayed.length === 0}
+        onClick={() => {
+          const visible = new Set(displayed.map(excerpt => excerpt.id))
+          onSelect(
+            allSelected
+              ? selected.filter(id => !visible.has(id))
+              : [...new Set([...selected, ...visible])]
+          )
+        }}
+        className="min-h-11 whitespace-nowrap rounded-md px-2 text-xs text-text-secondary hover:bg-muted aria-pressed:bg-muted aria-pressed:text-text-primary md:min-h-7"
+      >
+        {t('taskIssueShare.selectAll')}
+      </Button>
+    </div>
+  )
+  const messages = (
     <section
       data-testid="task-issue-share-excerpts"
       aria-label={t('taskIssueShare.excerpts')}
       className="min-w-0"
     >
-      <div className="flex flex-wrap gap-x-2">
-        <Button
-          variant="unstyled"
-          showTooltip={false}
-          type="button"
-          data-testid="task-issue-share-select-all"
-          aria-pressed={allSelected}
-          disabled={loading || displayed.length === 0}
-          onClick={() => {
-            const visible = new Set(displayed.map(excerpt => excerpt.id))
-            if (selection && visible.has(selection.excerpt.id)) onShareWholeMessage?.(!allSelected)
-            onSelect(
-              allSelected
-                ? selected.filter(id => !visible.has(id))
-                : [...new Set([...selected, ...visible])]
-            )
-          }}
-          className="min-h-10 rounded px-2 text-xs text-text-secondary hover:bg-muted md:min-h-7"
-        >
-          {t('taskIssueShare.selectAll')}
-        </Button>
-        {excerpts.length > 1 &&
-          (firstAvailable ? (['first', 'last'] as const) : (['last'] as const)).map(position => {
-            const excerpt = excerpts[position === 'first' ? 0 : excerpts.length - 1]
-            return (
-              <Button
-                variant="unstyled"
-                showTooltip={false}
-                key={position}
-                type="button"
-                data-testid={`task-issue-share-select-${position}`}
-                aria-pressed={selected.includes(excerpt.id)}
-                onClick={() => {
-                  toggle(excerpt.id)
-                }}
-                className="min-h-10 rounded px-2 text-xs text-text-secondary hover:bg-muted md:min-h-7"
-              >
-                {t(`taskIssueShare.select_${position}`)}
-              </Button>
-            )
-          })}
-      </div>
       <div
         ref={excerptsRef}
         data-testid="task-issue-share-message-list"
-        className="grid max-h-48 gap-1.5 overflow-y-auto py-1"
+        className={`grid content-start gap-1.5 overflow-y-auto py-1 ${showAll ? 'min-h-48 max-h-80' : 'min-h-40 max-h-64'}`}
       >
+        {showEarlierAtStart && historyAction}
         {displayed.map((excerpt, index) => {
           const checked = selected.includes(excerpt.id)
           const fromUser = excerpt.role === 'user'
           const isSelection = selection?.excerpt.id === excerpt.id
           const partiallyChecked = checked && partial(excerpt.id)
-          const fade = !isSelection && !showAll && index === displayed.length - 1 && index > 0
           return (
             <Fragment key={excerpt.id}>
               <div
@@ -224,7 +192,7 @@ export function TaskIssueShareExcerpts({
                   <span className="sr-only">{t(`taskIssueShare.${excerpt.role}`)}</span>
                   <span
                     data-testid={`task-issue-share-excerpt-content-${index}`}
-                    className={`min-w-0 whitespace-pre-wrap break-words text-text-primary ${showAll || isSelection ? '' : 'line-clamp-2'} ${fade ? '[mask-image:linear-gradient(to_bottom,black_45%,transparent)]' : ''}`}
+                    className={`min-w-0 whitespace-pre-wrap break-words text-text-primary ${showAll || isSelection ? '' : 'line-clamp-4'} ${!showAll && !isSelection && index === displayed.length - 1 ? '[mask-image:linear-gradient(to_bottom,black_3lh,transparent_4lh)]' : ''}`}
                   >
                     {isSelection && shareWholeMessage ? (
                       <mark
@@ -245,7 +213,12 @@ export function TaskIssueShareExcerpts({
                         {excerpt.content.slice(selection.end)}
                       </>
                     ) : (
-                      excerpt.content
+                      <ReactMarkdown
+                        allowedElements={['strong', 'em', 'code', 'del', 'br']}
+                        unwrapDisallowed
+                      >
+                        {preprocessCjkEmphasis(excerpt.content)}
+                      </ReactMarkdown>
                     )}
                   </span>
                 </Button>
@@ -286,7 +259,7 @@ export function TaskIssueShareExcerpts({
           )
         })}
       </div>
-      {!showHistoryGap && historyAction}
+      {!showHistoryGap && !showEarlierAtStart && historyAction}
       {showAll && loadEarlier && (
         <Button
           variant="unstyled"
@@ -308,4 +281,5 @@ export function TaskIssueShareExcerpts({
       )}
     </section>
   )
+  return renderShareContent ? renderShareContent(messages, messageActions) : messages
 }
