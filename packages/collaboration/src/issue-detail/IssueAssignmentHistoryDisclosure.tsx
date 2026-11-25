@@ -1,7 +1,10 @@
 import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
-import {} from 'lucide-react'
 import { useId } from 'react'
-import { IssueAssignmentHistoryList, type IssueAssignmentHistoryEntry } from './IssueHistoryLists'
+import {
+  assignmentHistoryLabels,
+  IssueAssignmentHistoryList,
+  type IssueAssignmentHistoryEntry,
+} from './IssueHistoryLists'
 import { IssuePropertyRow } from './IssuePropertyRow'
 import './IssueAssignmentHistoryDisclosure.css'
 
@@ -43,18 +46,7 @@ export function IssueAssignmentHistoryDisclosure({
           <IssueAssignmentHistoryList
             entries={entries}
             memberName={memberName}
-            labels={{
-              system: t('todo.status_history_system', '系统/机器人'),
-              team: t('todo.assignment_chain_team', 'Wegent 智能体'),
-              agent: t('todo.assignment_chain_agent', '机器人'),
-              group: t('todo.assignment_chain_group', '协作小组'),
-              unassigned: t('todo.assignment_chain_unassigned', '未指派'),
-              actions: {
-                assign: t('todo.assignment_action_assign', '指派'),
-                reassign: t('todo.assignment_action_reassign', '转派'),
-                unassign: t('todo.assignment_action_unassign', '取消指派'),
-              },
-            }}
+            labels={assignmentHistoryLabels(t)}
           />
         </div>
       </CollapsiblePanel>

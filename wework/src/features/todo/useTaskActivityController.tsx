@@ -2,8 +2,6 @@ import { useDialogRequests } from '@/components/common/useDialogRequests'
 import { type IssueReplyContextKind } from './issueReplyCopy'
 
 import { issueAssignmentRevision, sameIssueAssignment } from './issueAssignmentReceiptScope'
-import { issueActivityTimeline } from './issueActivityTimeline'
-import { collapsedIssueActivity } from './collapsedIssueActivity'
 import { useIssueActivityHistory } from './useIssueActivityHistory'
 import { isPublicStandInMessage } from './issueActivityRole'
 import { useActivityExecutionBinding } from './useActivityExecutionStatus'
@@ -28,6 +26,8 @@ import { issueTaskSummaryForMessage, useIssueMentionCandidates } from '@wegent/c
 import {
   groupIssueActivityThreads,
   groupIssueTimelineThreads,
+  issueActivityTimeline,
+  collapsedIssueActivity,
   createCollaborationTranslator,
   humanDispatchAssignment,
   type IssueActivityThreadModel,
@@ -532,11 +532,7 @@ export function useTaskActivityController({
         activityEntries,
         expandedActivityScope === activityScope ||
           Boolean(notificationCommentId ?? focusedCommentId) ||
-          Boolean(replyTarget),
-        activity =>
-          activity.kind === 'comment'
-            ? [activity.card.root, ...activity.card.replies].map(message => message.sequenceNumber)
-            : []
+          Boolean(replyTarget)
       ),
     [
       activityEntries,

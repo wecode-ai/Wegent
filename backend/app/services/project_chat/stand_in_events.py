@@ -23,8 +23,9 @@ def enqueue_issue_wakeup(db: Session, *, user_id: int, payload: dict) -> None:
     ).hexdigest()
     # All writers lock the owning Issue before recipient inboxes.
     # Provider-owned Issues may have no local index row at all.
-    if db.get(LoopNode, payload["itemId"]) is not None:
-        db.query(LoopNode).filter_by(id=payload["itemId"]).with_for_update().one()
+    issue_id = payload.get("itemId") or payload["personalIssueId"]
+    if db.get(LoopNode, issue_id) is not None:
+        db.query(LoopNode).filter_by(id=issue_id).with_for_update().one()
     lock_device_owner(db, user_id)
     inbox_id = f"stand-in-inbox:{user_id}"
     _insert_once(
@@ -63,7 +64,7 @@ def enqueue_issue_wakeup(db: Session, *, user_id: int, payload: dict) -> None:
         user_id,
         event_id,
         payload.get("projectId"),
-        payload.get("itemId"),
+        issue_id,
         payload.get("assignmentId"),
         payload.get("commentId"),
         sequence,

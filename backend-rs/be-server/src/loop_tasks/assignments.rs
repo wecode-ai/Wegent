@@ -5,22 +5,11 @@
 //! `GET /api/v1/loop-items/{item_id}/assignments` — the active assignments of
 //! one loop item.
 //!
-//! Mirrors `app.api.endpoints.deliveries.list_issue_assignments` and its
-//! complete call graph:
-//!
-//! 1. `external_loop_item_provider.is_external_item` (`_find_project`); for an
-//!    external item `ensure_shadow` runs before anything else.
-//! 2. `issue_assignment_service.project_for_issue` — `db.get(LoopItem,
-//!    issue_id)`, `db.get(CloudProject, item.cloud_project_id)` and
-//!    `require_cloud_project_role(Viewer)`.
-//! 3. `issue_assignment_service.list` — a second
-//!    `require_cloud_project_role(Viewer)`, then either the external
-//!    provider `get` (whose result the source discards) or `can_view_item`,
-//!    followed by `_active_events`.
-//! 4. `response_values` per active event, resolving `created_by_user_name`
-//!    through the session's identity map (`db.get(User, id)`).
+//! Resolve the current Issue scope and access before projecting active
+//! assignment events and their receipts. External Issues keep the provider's
+//! detail permission check.
 use brz_http_server::StatusCode;
-use brz_mysql::MysqlService;
+use brz_mysql::{MysqlService, MysqlTransaction};
 use serde::Serialize;
 
 use crate::board_snapshot::repository::{ProjectAccess, ProjectRow};
@@ -31,6 +20,8 @@ use crate::state::AppState;
 
 use super::assignment_repository::{self, LoopItemGetRow};
 use super::auth::FlexibleUser;
+use super::http_error::HttpError;
+use super::item_access::IssueReadScope;
 use super::loop_repository::{LoopItemRepository, has_permission};
 use wegent_project_coordination::loop_tasks::assignment_events::ActiveEvent;
 #[cfg(test)]
@@ -88,7 +79,7 @@ pub(super) async fn list_assignments(
     item_id: &str,
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentListResponse, FastApiError> {
-    require_issue_read(state, item_id, current_user).await?;
+    require_issue_read_for_user(state, item_id, current_user.id).await?;
     let mut result = list_assignment_items(&state.mysql, item_id, current_user).await?;
     for item in &mut result.items {
         if let Some(receipt) = item.dispatch_receipt.as_mut() {
@@ -116,40 +107,19 @@ pub(super) async fn list_assignment_items(
     Ok(IssueAssignmentListResponse { items })
 }
 
-pub(super) async fn require_issue_read(
-    state: &AppState,
-    item_id: &str,
-    current_user: &FlexibleUser,
-) -> Result<(), FastApiError> {
-    require_issue_read_for_user(state, item_id, current_user.id).await
-}
-
 pub(crate) async fn require_issue_read_for_user(
     state: &AppState,
     item_id: &str,
     user_id: i32,
-) -> Result<(), FastApiError> {
-    let repository = LoopItemRepository::new(&state.mysql);
-
-    // `is_external_item(db, item_id)`.
-    let external = repository
-        .find_external_project(item_id)
-        .await
-        .map_err(internal)?;
-    if external.is_some() {
-        ensure_shadow(state, item_id, user_id).await?;
-    }
-
-    // `project_for_issue(db, issue_id=item_id, user_id=current_user.id)`.
-    let item = state
-        .mysql
-        .with_transaction(async |transaction| {
-            assignment_repository::loop_item_access_on(&mut &mut *transaction, item_id).await
-        })
-        .await
-        .map_err(internal)?
+) -> Result<IssueReadScope, FastApiError> {
+    let item = load_issue_scope(state, item_id, user_id)
+        .await?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Issue not found"))?;
-    let project = assignment_repository::project(&state.mysql, &item.cloud_project_id)
+    let Some(project_id) = item.project_id.as_deref() else {
+        item.require(&state.mysql, item_id, user_id).await?;
+        return Ok(item);
+    };
+    let project = assignment_repository::project(&state.mysql, project_id)
         .await
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
@@ -162,7 +132,7 @@ pub(crate) async fn require_issue_read_for_user(
                     .await
                     .map_err(internal)?
             {
-                return Ok(());
+                return Ok(item);
             }
             return Err(error);
         }
@@ -171,14 +141,16 @@ pub(crate) async fn require_issue_read_for_user(
     // map, so it issues no statement.
     if is_external_provider(&access.project) {
         provider_get(state, item_id, user_id).await?;
-    } else if !can_view_item(state, &access, &item, user_id).await? {
+    } else if !can_view_item_with_level(state, &access, item_id, item.security_level(), user_id)
+        .await?
+    {
         return Err(FastApiError::detail(
             StatusCode::NOT_FOUND,
             "Issue not found",
         ));
     }
 
-    Ok(())
+    Ok(item)
 }
 
 /// `can_view_item(db, access, item, user_id)`.
@@ -188,64 +160,94 @@ pub(crate) async fn can_view_item(
     item: &LoopItemGetRow,
     user_id: i32,
 ) -> Result<bool, FastApiError> {
-    if has_permission(&access.role, "Maintainer") {
-        return Ok(true);
-    }
-    if item_security(item, &access.project) == "open" {
-        return Ok(true);
-    }
-    LoopItemRepository::new(&state.mysql)
-        .is_related_item(&item.id, user_id)
-        .await
-        .map_err(internal)
-}
-
-/// `item_security(item, project)`: the item's `security_level` when it is one
-/// of the two literals, otherwise the project default.
-fn item_security(item: &LoopItemGetRow, project: &ProjectRow) -> &'static str {
     let level = item
         .metadata
         .as_ref()
         .and_then(|json| json.0.value.as_ref())
         .and_then(|metadata| metadata.security_level.as_ref())
         .and_then(|value| value.as_str());
-    match level {
-        Some("open") => "open",
-        Some("related") => "related",
-        _ if project.default_issue_security() == "related" => "related",
-        _ => "open",
-    }
+    can_view_item_with_level(state, access, &item.id, level, user_id).await
 }
 
-/// `ensure_shadow(db, item_id, user_id)` for an external item. Shared with the
-/// task-binding read, which runs the same guard before listing bindings.
+async fn can_view_item_with_level(
+    state: &AppState,
+    access: &ProjectAccess,
+    item_id: &str,
+    level: Option<&str>,
+    user_id: i32,
+) -> Result<bool, FastApiError> {
+    let security = match level {
+        Some("open") => "open",
+        Some("related") => "related",
+        _ => access.project.default_issue_security(),
+    };
+    if has_permission(&access.role, "Maintainer") || security == "open" {
+        return Ok(true);
+    }
+    LoopItemRepository::new(&state.mysql)
+        .is_related_item(item_id, user_id)
+        .await
+        .map_err(internal)
+}
+
+pub(super) async fn load_issue_scope(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<Option<IssueReadScope>, FastApiError> {
+    let scope = IssueReadScope::load(&state.mysql, item_id)
+        .await
+        .map_err(HttpError::internal)?;
+    if scope.is_some() || !ensure_known_issue(state, item_id, user_id).await? {
+        return Ok(scope);
+    }
+    IssueReadScope::load(&state.mysql, item_id)
+        .await
+        .map_err(|error| HttpError::internal(error).into_fastapi())
+}
+
 pub(crate) async fn ensure_shadow(
     state: &AppState,
     item_id: &str,
     user_id: i32,
 ) -> Result<(), FastApiError> {
-    let repository = LoopItemRepository::new(&state.mysql);
-    // `if not self.is_external_item(db, item_id): ...` — the guard re-runs
-    // `_find_project`, so the statement is issued a second time.
-    let project = repository
-        .find_external_project(item_id)
-        .await
-        .map_err(internal)?;
-    // `existing = db.get(LoopItem, item_id)`; an existing shadow row is
-    // reused without contacting the provider.
+    if ensure_known_issue(state, item_id, user_id).await? {
+        Ok(())
+    } else {
+        Err(todo_not_found())
+    }
+}
+
+async fn ensure_known_issue(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<bool, FastApiError> {
+    // Any stored task, including a deleted shadow, owns its identifier.
     if state
         .mysql
-        .with_transaction(async |transaction| {
-            assignment_repository::loop_item(&mut &mut *transaction, item_id).await
+        .with_transaction(async |tx| {
+            tx.fetch_optional::<_, _, (String,)>(
+                "SELECT id FROM loop_items WHERE id=? AND resource_type='task'",
+                (item_id,),
+            )
+            .await
         })
         .await
         .map_err(internal)?
         .is_some()
     {
-        return Ok(());
+        return Ok(true);
     }
-    let project = project.ok_or_else(todo_not_found)?;
-    super::external_shadow::create(state, &project.id, item_id, user_id).await
+    let Some(project) = LoopItemRepository::new(&state.mysql)
+        .find_external_project(item_id)
+        .await
+        .map_err(internal)?
+    else {
+        return Ok(false);
+    };
+    super::external_shadow::create(state, &project.id, item_id, user_id).await?;
+    Ok(true)
 }
 
 /// `is_external_provider(project)`: `task_provider in {"github", "gitlab"}`.

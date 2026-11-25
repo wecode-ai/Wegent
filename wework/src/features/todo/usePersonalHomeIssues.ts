@@ -1,5 +1,4 @@
 import { usePersonalHomeIssues as useSharedPersonalHomeIssues } from '@wegent/collaboration/platform'
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import {
   subscribePersonalIssueChanges,
   type PersonalHomeCreationNotice,
@@ -9,7 +8,7 @@ import {
 export type { PersonalHomeIssueOrder } from './personalHomeIssuesSource'
 
 export function usePersonalHomeIssues(
-  sources: SharedWorkspaceApi[],
+  sources: Parameters<typeof useSharedPersonalHomeIssues>[0],
   active: boolean,
   assignedOnly: boolean,
   includeCompleted: boolean,

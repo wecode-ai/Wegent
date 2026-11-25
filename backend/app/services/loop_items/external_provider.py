@@ -768,6 +768,10 @@ class ExternalLoopItemProvider:
                 issue_creator_user_id=self._creator_id(self._labels(current)),
                 user_id=user_id,
             )
+        if "archived" in values.model_fields_set:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Use project archive actions"
+            )
         payload: dict[str, object] = {}
         dumped = values.model_dump(exclude_unset=True)
         if "title" in dumped:

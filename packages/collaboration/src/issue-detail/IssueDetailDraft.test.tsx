@@ -222,4 +222,8 @@ it("starts a fresh creation draft after leaving an existing issue", () => {
   expect(current.draft.title).toBe(initial.title);
   expect(current.draft.description).toBe(initial.description);
   expect(current.dirty).toBe(false);
+  act(() => current.setField("title", "Draft to protect before closing"));
+  expect(current.dirty).toBe(true);
+  act(() => current.setField("title", initial.title));
+  expect(current.dirty).toBe(false);
 });
