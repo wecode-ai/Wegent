@@ -39,6 +39,15 @@ test('attributes a main-thread long task to the matching native turn update', as
 
   const listeners = window.__WEWORK_E2E_RUNTIME_EVENT_LISTENERS__
   const probe = window.__weworkProfileTurnUpdates
+  const subscriber = {
+    event: 'runtime.turn.updated',
+    sequence: 8,
+    startedAt: 24,
+    durationMs: 125,
+    sources: ['runtime-events.js:12:34'],
+  }
+  window.__weworkProfileExecutorSubscriber(subscriber)
+  window.__weworkProfileExecutorSubscriber({ ...subscriber, sequence: 9, startedAt: 410 })
   function emit(taskId, status, at) {
     now = at
     for (const listener of listeners) {
@@ -54,8 +63,14 @@ test('attributes a main-thread long task to the matching native turn update', as
   expect(await settled).toBe(true)
 
   expect(probe.stop('measured')).toEqual([
-    { status: 'started', observedAt: 25, longTaskMs: 180 },
+    {
+      status: 'started',
+      observedAt: 25,
+      longTaskMs: 180,
+      executorSubscribers: [subscriber],
+    },
     { status: 'settled', observedAt: 500, longTaskMs: 0 },
   ])
   expect(listeners.size).toBe(0)
+  expect(window.__weworkProfileExecutorSubscriber).toBeUndefined()
 })

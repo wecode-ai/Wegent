@@ -72,6 +72,8 @@ const limits = {
 export function installTurnUpdateProbe() {
   const listeners = (window.__WEWORK_E2E_RUNTIME_EVENT_LISTENERS__ ??= new Set())
   const updates = []
+  const subscriberTimings = []
+  window.__weworkProfileExecutorSubscriber = timing => subscriberTimings.push(timing)
   // Observe the whole browser task, including React work in its microtasks.
   const longTasks = []
   const observer = new PerformanceObserver(list => longTasks.push(...list.getEntries()))
@@ -113,6 +115,7 @@ export function installTurnUpdateProbe() {
     },
     stop(taskId) {
       listeners.delete(listener)
+      delete window.__weworkProfileExecutorSubscriber
       longTasks.push(...observer.takeRecords())
       observer.disconnect()
       if (frameObserver) {
@@ -131,13 +134,21 @@ export function installTurnUpdateProbe() {
             index++
           }
           const task = longTasks[index]
+          const containsUpdate = task && task.startTime <= observedAt
           const frame = longFrames.find(
             entry => entry.startTime <= observedAt && observedAt < entry.startTime + entry.duration
           )
           return {
             status,
             observedAt,
-            longTaskMs: task && task.startTime <= observedAt ? task.duration : 0,
+            longTaskMs: containsUpdate ? task.duration : 0,
+            ...(containsUpdate && {
+              executorSubscribers: subscriberTimings.filter(
+                timing =>
+                  timing.startedAt >= task.startTime &&
+                  timing.startedAt < task.startTime + task.duration
+              ),
+            }),
             ...(frame && {
               frame: {
                 durationMs: frame.duration,
