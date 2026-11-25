@@ -50,6 +50,8 @@ export function QuickLaunchPanel({
   const source = useSearchParams()?.get('source') ?? null
   const { toast } = useToast()
   const { t } = useTranslation('common')
+  const recommendedTeamId = recommendedTeam?.id
+  const previousRecommendedTeamId = useRef(recommendedTeamId)
   const selectionSequence = useRef(0)
   const pendingTeams = useRef(new Map<number, Promise<Team>>())
   const [selectedLauncher, setSelectedLauncher] = useState<(QuickLauncher & { team: Team }) | null>(
@@ -81,6 +83,18 @@ export function QuickLaunchPanel({
 
   useEffect(() => clearExitTimer, [clearExitTimer])
 
+  useLayoutEffect(() => {
+    if (previousRecommendedTeamId.current === recommendedTeamId) return
+    previousRecommendedTeamId.current = recommendedTeamId
+    if (recommendedTeamId === undefined || selectedLauncher?.team.id === recommendedTeamId) return
+
+    // A newly resolved link supersedes presets for an unrelated agent.
+    clearExitTimer()
+    setSelectedLauncher(null)
+    setSelectedLauncherKey(null)
+    setIsPhraseListExiting(false)
+  }, [clearExitTimer, recommendedTeamId, selectedLauncher])
+
   const showPhraseList = useCallback(
     (launcher: QuickLauncher & { team: Team }) => {
       clearExitTimer()
@@ -110,11 +124,11 @@ export function QuickLaunchPanel({
       router.push(
         buildQuickLaunchHref(launcher, {
           showPresets: launcher.inputPresets.length > 0,
-          recommendation: launcher.team.id === recommendedTeam?.id ? { source } : undefined,
+          recommendation: launcher.team.id === recommendedTeamId ? { source } : undefined,
         })
       )
     },
-    [recommendedTeam?.id, router, source]
+    [recommendedTeamId, router, source]
   )
 
   const activateLauncher = useCallback(
@@ -158,7 +172,7 @@ export function QuickLaunchPanel({
     return () => {
       selectionSequence.current += 1
     }
-  }, [currentMode, selectedTeam?.id])
+  }, [currentMode, recommendedTeamId, selectedTeam?.id])
 
   useEffect(() => {
     if (!launchIntent?.launcherKey) return

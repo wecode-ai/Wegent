@@ -277,6 +277,49 @@ describe('QuickAccessCards', () => {
     expect(cards[1]).toHaveTextContent(general.title)
   })
 
+  test.each([false, true])(
+    'keeps open presets only for the newly recommended agent (same agent: %s)',
+    async sameAgent => {
+      const presetTeam = makeTeam({ id: 2, name: 'Presentation agent' })
+      const linkedTeam = sameAgent ? presetTeam : makeTeam({ id: 65, name: 'Linked agent' })
+      mockGetQuickLaunch.mockResolvedValueOnce({
+        system_functions: [
+          {
+            type: 'system_function',
+            id: 'create_ppt',
+            title: 'Create PPT',
+            team_id: presetTeam.id,
+            name: presetTeam.name,
+            enabled: true,
+            order: 0,
+            input_presets: [makeInputPreset('Create a presentation')],
+          },
+        ],
+        favorite_agents: [],
+      })
+      const props = {
+        teams: [presetTeam, linkedTeam],
+        onTeamSelect: jest.fn(),
+        currentMode: 'chat' as const,
+      }
+      const { rerender } = render(<QuickAccessCards {...props} selectedTeam={presetTeam} />)
+      fireEvent.click(await screen.findByText('Create PPT'))
+      expect(screen.getByTestId('quick-phrase-list')).toBeInTheDocument()
+
+      rerender(
+        <QuickAccessCards {...props} selectedTeam={linkedTeam} recommendedTeam={linkedTeam} />
+      )
+
+      if (sameAgent) {
+        expect(screen.getByTestId('quick-phrase-list')).toBeInTheDocument()
+      } else {
+        expect(screen.queryByTestId('quick-phrase-list')).not.toBeInTheDocument()
+        const cards = screen.getAllByTestId(/^quick-launcher-system_function-/)
+        expect(cards[0]).toHaveTextContent('Linked agent')
+      }
+    }
+  )
+
   test('renders system functions and favorite agents in separate rows', async () => {
     mockGetQuickLaunch.mockResolvedValueOnce({
       system_functions: [
