@@ -80,6 +80,10 @@ class _TaskLifecycleLease:
     renew_task: Optional[asyncio.Task[None]] = None
 
 
+class SandboxTerminationError(RuntimeError):
+    """The sandbox could not be fully terminated and cleanup can be retried."""
+
+
 class SandboxManager(metaclass=SingletonMeta):
     """Manager for sandbox lifecycle and execution management.
 
@@ -756,56 +760,19 @@ class SandboxManager(metaclass=SingletonMeta):
             logger.error(f"[SandboxManager] Error cleaning up dead sandbox: {e}")
 
     async def terminate_sandbox(self, sandbox_id: str) -> Tuple[bool, str]:
-        """Terminate a sandbox.
-
-        Args:
-            sandbox_id: Sandbox ID (which is task_id as string)
-
-        Returns:
-            Tuple of (success, message)
-        """
+        """Terminate a sandbox and revoke its credentials after runtime removal."""
         sandbox = self._repository.load_sandbox(sandbox_id)
         if sandbox is None:
             return False, f"Sandbox {sandbox_id} not found"
-
-        if sandbox.status in [SandboxStatus.TERMINATED, SandboxStatus.TERMINATING]:
+        if sandbox.status == SandboxStatus.TERMINATED:
             return True, f"Sandbox {sandbox_id} already terminated"
 
-        logger.info(f"[SandboxManager] Terminating sandbox: {sandbox_id}")
-
-        # Mark as terminating
-        sandbox.set_terminating()
-        self._repository.save_sandbox(sandbox)
-
-        # Delete container
-        try:
-            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-            result = executor.delete_executor(sandbox.container_name)
-
-            # Fallback: if pod not found by name, try to delete by task_id label
-            if result.get("status") == "not_found":
-                logger.info(
-                    f"[SandboxManager] Pod not found by name '{sandbox.container_name}', "
-                    f"trying to delete by task_id: {sandbox_id}"
-                )
-                result = executor.delete_executor_by_task_id(
-                    sandbox_id, sandbox_only=True
-                )
-
-            if result.get("status") not in ("success", "not_found"):
-                logger.warning(
-                    f"[SandboxManager] Failed to delete container: {result.get('error_msg')}"
-                )
-        except Exception as e:
-            logger.warning(f"[SandboxManager] Error deleting container: {e}")
-
-        # Mark as terminated
-        sandbox.set_terminated()
-
-        # Clean up Redis storage via repository
-        self._repository.delete_sandbox(sandbox_id)
-
-        logger.info(f"[SandboxManager] Sandbox terminated: {sandbox_id}")
+        cleanup = await self._cleanup_selected_sandbox(sandbox_id, sandbox)
+        if not cleanup["redis_cleared"]:
+            raise SandboxTerminationError(
+                f"Sandbox {sandbox_id} termination failed: {cleanup['reason']}"
+            )
+        logger.info("[SandboxManager] Sandbox terminated: %s", sandbox_id)
         return True, f"Sandbox {sandbox_id} terminated successfully"
 
     async def cleanup_stale_sandboxes(
@@ -937,7 +904,10 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
                 return {**result, "skipped": True, "reason": "archive_failed"}
 
-        return await self._cleanup_selected_sandbox(sandbox_id, sandbox, result=result)
+        # This admin path reports metadata cleanup separately for direct cluster GC.
+        return await self._cleanup_selected_sandbox(
+            sandbox_id, sandbox, result=result, allow_metadata_cleanup_on_failure=True
+        )
 
     async def _cleanup_selected_sandbox(
         self,
@@ -946,6 +916,7 @@ class SandboxManager(metaclass=SingletonMeta):
         *,
         result: Optional[Dict[str, Any]] = None,
         idle_before: Optional[float] = None,
+        allow_metadata_cleanup_on_failure: bool = False,
     ) -> Dict[str, Any]:
         """Revalidate the archived runtime under the task lifecycle lease."""
         if result is None:
@@ -970,7 +941,13 @@ class SandboxManager(metaclass=SingletonMeta):
             ):
                 return {**result, "skipped": True, "reason": "not_stale"}
             cleanup = asyncio.create_task(
-                self._delete_sandbox_runtime(sandbox_id, current, result, lease)
+                self._delete_sandbox_runtime(
+                    sandbox_id,
+                    current,
+                    result,
+                    lease,
+                    allow_metadata_cleanup_on_failure=allow_metadata_cleanup_on_failure,
+                )
             )
             try:
                 return await asyncio.shield(cleanup)
@@ -987,6 +964,8 @@ class SandboxManager(metaclass=SingletonMeta):
         sandbox: Optional[Sandbox],
         result: Dict[str, Any],
         lease: _TaskLifecycleLease,
+        *,
+        allow_metadata_cleanup_on_failure: bool,
     ) -> Dict[str, Any]:
         """Remove the selected runtime while holding its task lifecycle lease."""
         try:
@@ -1030,6 +1009,13 @@ class SandboxManager(metaclass=SingletonMeta):
                 "skipped": not result["deleted"],
                 "reason": "sandbox_lifecycle_lease_lost",
             }
+
+        runtime_status = (result.get("delete_result") or {}).get("status")
+        if (
+            runtime_status not in {"success", "not_found"}
+            and not allow_metadata_cleanup_on_failure
+        ):
+            return {**result, "skipped": False, "reason": "delete_failed"}
 
         result["redis_cleared"] = self._repository.delete_sandbox(sandbox_id)
         if result["deleted"]:

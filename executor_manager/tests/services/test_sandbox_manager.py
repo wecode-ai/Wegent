@@ -1268,6 +1268,44 @@ class TestSandboxManager:
         mock_redis_client.delete.assert_called()
 
     @pytest.mark.asyncio
+    async def test_terminate_sandbox_retries_without_clearing_live_credentials(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox_redis_data,
+        mocker,
+    ):
+        from executor_manager.services.sandbox import SandboxTerminationError
+
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        executor = mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor"
+        ).return_value
+        executor.delete_executor.side_effect = [
+            {"status": "failed", "error_msg": "runtime temporarily unavailable"},
+            {"status": "success"},
+        ]
+        executor.delete_executor_by_task_id.return_value = {
+            "status": "failed",
+            "error_msg": "runtime temporarily unavailable",
+        }
+        revoke = mocker.spy(manager._repository, "delete_executor_binding")
+
+        with pytest.raises(SandboxTerminationError, match="delete_failed"):
+            await manager.terminate_sandbox("12345")
+
+        revoke.assert_not_called()
+        mock_redis_client.delete.assert_not_called()
+        assert manager._repository.load_sandbox("12345").status.value == "running"
+
+        success, _ = await manager.terminate_sandbox("12345")
+        assert success is True
+        revoke.assert_called_once_with(
+            12345, expected_executor_name="wegent-task-testuser-12345", sandbox=True
+        )
+
+    @pytest.mark.asyncio
     async def test_cleanup_sandbox_by_task_id_deletes_by_label_when_saved_name_is_stale(
         self,
         sandbox_manager_with_mock_redis,

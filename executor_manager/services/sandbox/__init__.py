@@ -26,6 +26,7 @@ from executor_manager.services.sandbox.health_checker import (
 )
 from executor_manager.services.sandbox.manager import (
     SandboxManager,
+    SandboxTerminationError,
     get_sandbox_manager,
 )
 from executor_manager.services.sandbox.repository import (
@@ -36,6 +37,7 @@ from executor_manager.services.sandbox.scheduler import SandboxScheduler
 
 __all__ = [
     "SandboxManager",
+    "SandboxTerminationError",
     "get_sandbox_manager",
     "SandboxScheduler",
     "ContainerHealthChecker",
