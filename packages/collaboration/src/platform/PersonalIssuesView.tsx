@@ -8,6 +8,7 @@ import type {
 import { Checkbox } from '../controls/Checkbox'
 import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
 import { normalizeSelectValue } from '../controls/selectValue'
+import { CompositedSpinner } from '../issue-detail/CompositedSpinner'
 import { Button as ControlButton } from '../markdown/Button'
 import type { ComponentProps, ReactNode } from 'react'
 import { useState } from 'react'
@@ -132,7 +133,7 @@ export function PersonalIssuesView({
   return (
     <div className="issue-drawer-workspace relative flex h-full min-h-0 min-w-0 flex-1">
       <main
-        className={`min-h-0 min-w-0 flex-1 overflow-auto p-4 lg:p-5 ${independentId || selected ? 'max-md:hidden' : ''}`}
+        className={`min-h-0 min-w-0 flex-1 overflow-auto p-4 [scrollbar-gutter:stable] lg:p-5 ${independentId || selected ? 'max-md:hidden' : ''}`}
         data-testid={`personal-issues-${scope}`}
       >
         <div className="mx-auto w-full max-w-6xl">
@@ -166,6 +167,12 @@ export function PersonalIssuesView({
                 {t('independentIssues.showArchived')}
               </label>
             ) : null}
+            <CompositedSpinner
+              role="img"
+              aria-label={t('personalHome.loading')}
+              aria-hidden={!state.loading}
+              className={`size-3 text-text-secondary ${state.loading ? '' : 'invisible'}`}
+            />
             <SelectRoot
               value={normalizeSelectValue(order)}
               onValueChange={selectedValue => {

@@ -1353,6 +1353,8 @@ impl AppIpcServer {
                             None,
                         );
                         let timeout_seconds = app_ipc_request_timeout_seconds(method.as_deref());
+                        let git_read = method.as_deref() == Some("runtime.connections.git.read");
+                        let mut admitted_ms = None;
                         let outcome = tokio::select! {
                             biased;
                             _ = wait_for_cancellation(&mut cancellation) => {
@@ -1388,9 +1390,28 @@ impl AppIpcServer {
                                         return Some(error_message(request_id.as_deref(), &error));
                                     }
                                 }
-                                server.handle_line(&request_line).await
+                                admitted_ms = Some(started_at.elapsed().as_millis());
+                                if let Some(id) = request_id.as_ref().filter(|_| git_read) {
+                                    crate::runtime_work::git_connections::GIT_READ_REQUEST_ID
+                                        .scope(id.clone(), server.handle_line(&request_line))
+                                        .await
+                                } else {
+                                    server.handle_line(&request_line).await
+                                }
                             } => response,
                         };
+                        if let Some(id) = request_id.as_ref().filter(|_| git_read) {
+                            let queue_ms =
+                                admitted_ms.unwrap_or_else(|| started_at.elapsed().as_millis());
+                            crate::logging::log_executor_event(
+                                "Git read admission",
+                                &[
+                                    ("request_id", id.clone()),
+                                    ("queue_ms", queue_ms.to_string()),
+                                    ("admitted", admitted_ms.is_some().to_string()),
+                                ],
+                            );
+                        }
 
                         if let Some(response) = outcome {
                             let ok = response.get("ok").and_then(Value::as_bool);

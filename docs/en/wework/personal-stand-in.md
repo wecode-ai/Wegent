@@ -305,6 +305,8 @@ All four combinations are supported, including immediate separate conversations 
 
 Direct handling does not require responsibilities or preferences to be filled in. When exactly one role is eligible, an earlier background-coordinator failure or pending question does not block direct dispatch. Existing questions and failures remain visible; this does not automatically answer approvals or replay commands with uncertain outcomes. Coordinator retries recover from actual native sessions and execution receipts, not merely the existence of a task record.
 
+Routine progress and successful role-task completion leave background coordination idle. Failures, cancellations, pending questions or approvals, and scheduled follow-ups can still trigger coordination. The coordinator runs silently and shares important findings through the assistant conversation.
+
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
 
 Background processing handles failures per event. If a cloud Issue cannot be read, its event is canceled or left pending for retry as appropriate. Other authorized source events continue to dispatch.
