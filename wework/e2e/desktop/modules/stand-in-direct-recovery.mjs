@@ -34,6 +34,7 @@ const COORDINATOR = `stand-in-coordinator-${USER}`
 const PRIMARY = `stand-in-chat-${USER}-primary`
 const MARKER = 'DIRECT_RECOVERY'
 const BATCH_RESULT = `${MARKER}_BATCH_DONE`
+const RETRY_GROUP = 'direct-recovery-silent-group'
 
 /** Protocol integration: real Electron, Executor, Codex, storage and native tool calls. */
 export function createDirectRecoveryVerification(options) {
@@ -55,7 +56,7 @@ export function createDirectRecoveryVerification(options) {
     name: `${MARKER}-${kind}`,
     policy: { automatic: true, askBeforeAct: true, immediate: true },
   })
-  async function publish(phase, batch = false) {
+  async function publish(phase, batch = false, kinds = batch ? ['direct'] : ['direct', 'group']) {
     await writeFile(
       join(root, 'messages.json'),
       JSON.stringify({
@@ -63,9 +64,14 @@ export function createDirectRecoveryVerification(options) {
         result: {
           hasMore: false,
           nextCursor: '0',
-          conversationMessagesList: (batch ? ['direct'] : ['direct', 'group']).map(kind => ({
+          conversationMessagesList: kinds.map(kind => ({
             singleChat: kind === 'direct',
-            openConversationId: kind === 'direct' ? 'self-chat' : 'direct-recovery-group',
+            openConversationId:
+              kind === 'direct'
+                ? 'self-chat'
+                : kind === 'retry'
+                  ? RETRY_GROUP
+                  : 'direct-recovery-group',
             messages: (batch ? ['a', 'b'] : ['']).map(suffix => ({
               openMessageId: `${MARKER}-${kind}-${phase}${suffix}`,
               senderOpenDingTalkId: kind === 'direct' ? 'fixture-user' : 'other',
@@ -256,6 +262,12 @@ export function createDirectRecoveryVerification(options) {
         },
         roles: [],
       }
+      settings.primary.connections.push({
+        ...source('group'),
+        id: RETRY_GROUP,
+        name: `${MARKER}-silent-group`,
+        policy: { automatic: true, askBeforeAct: true, immediate: false },
+      })
       await rpc(control, 'runtime.stand_in.personal.save', { userId: USER, settings })
       const database = new DatabaseSync(join(options.executorHome, 'data/tasks.sqlite'))
       database.exec('PRAGMA busy_timeout = 10000')
@@ -305,6 +317,27 @@ export function createDirectRecoveryVerification(options) {
           status.error.code,
           'missing_runtime_session',
           'Independent dispatch must not conceal the old assessment failure'
+        )
+        const discovery = await rpc(control, 'runtime.coordination.contexts', {})
+        const personal = discovery.contexts.find(context => context.id === `personal:${USER}`)
+        assert.equal(
+          personal?.needsProcessing,
+          false,
+          'Normal source completion must leave coordination idle'
+        )
+        assert.equal(
+          status.pendingCount,
+          0,
+          'Normal source completion must not enter coordinator intake'
+        )
+
+        // Recovery needs real assessment input because successful work no longer creates it.
+        await publish('retry', false, ['retry'])
+        await storyUntil(
+          () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
+          value => value.pendingCount > 0 && value.error?.code === 'missing_runtime_session',
+          options.modelResponseTimeoutMs,
+          'The silent source must supply pending intake while the previous assessment remains failed'
         )
         await rpc(control, 'runtime.stand_in.processing.check', { userId: USER })
         await storyUntil(
