@@ -22,6 +22,14 @@ Stand-in replies on an Issue show the owning user followed by the role in parent
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
 
+<a id="stand-in-message-center"></a>
+
+## Message center
+
+After initial setup, open **Left sidebar → My assistants → Message center** to review DingTalk results. On desktop clients that support DingTalk delegation, the workspace opens this view on first entry. Select **Default assistant** in the header to return to its conversation.
+
+When the local executor verifies the DingTalk identity, review **Replied**, **Needs your attention**, **Not handled automatically**, and **Exceptions**. Only confirmed deliveries count as replies. The header shows **Pause delegation** or **Resume delegation** when the action is available. Select **Delegation settings** to open the default assistant's connection settings. Closing settings returns to the message center. If desktop notifications are turned off, select **Open notification settings** in the center to turn them on again.
+
 <a id="stand-in-chat-and-desktop-notifications"></a>
 
 ## Stand-in chat and desktop notifications
