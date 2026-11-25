@@ -1,0 +1,8 @@
+{
+  "order": 43730,
+  "scenario": "./scenarios/stand-in-sharing.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "cloud": { "order": 43530, "shard": 4, "position": 8210 }
+  }
+}

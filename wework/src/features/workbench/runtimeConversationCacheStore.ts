@@ -43,6 +43,33 @@ interface TranscriptAuthority {
   turns: Map<string, string>
 }
 const transcriptAuthorityByConversation = new Map<string, TranscriptAuthority>()
+const pendingTerminalTranscripts = new Map<string, { turnId: string; scope?: string }>()
+
+export function pendingTerminalTranscriptTurn(
+  address: RuntimeTaskAddress,
+  scope?: string
+): string | null {
+  const pending = pendingTerminalTranscripts.get(runtimeConversationKey(address))
+  return pending && pending.scope === scope ? pending.turnId : null
+}
+
+export function beginTerminalTranscriptRead(
+  address: RuntimeTaskAddress,
+  turnId: string,
+  scope?: string
+): () => void {
+  const pending = { turnId, scope }
+  const key = runtimeConversationKey(address)
+  pendingTerminalTranscripts.set(key, pending)
+  notifyRuntimeConversation(key)
+  return () => {
+    const currentKey = runtimeConversationKey(address)
+    if (pendingTerminalTranscripts.get(currentKey) !== pending) return
+    pendingTerminalTranscripts.delete(currentKey)
+    scheduleTerminalConversationEviction(currentKey)
+    notifyRuntimeConversation(currentKey)
+  }
+}
 
 /** Record only an accepted native hydration, never a live stream projection. */
 export function recordRuntimeTranscriptAuthority(
@@ -163,6 +190,7 @@ function conversationMaps(): Map<string, unknown>[] {
   return [
     turnsByConversation,
     transcriptAuthorityByConversation,
+    pendingTerminalTranscripts,
     threadIdsByConversation,
     supersededTurnIdsByConversation,
     projectedMessagesByConversation,
@@ -191,11 +219,13 @@ function migrateRuntimeConversation(previousKey: string, nextKey: string): void 
   if (replacedThread) {
     turnsByConversation.delete(previousKey)
     transcriptAuthorityByConversation.delete(previousKey)
+    pendingTerminalTranscripts.delete(previousKey)
     hydrationByConversation.delete(previousKey)
     supersededTurnIdsByConversation.delete(previousKey)
     evictConversationViewport(previousKey)
   }
   moveEntry(threadIdsByConversation, previousKey, nextKey, (_, current) => current)
+  moveEntry(pendingTerminalTranscripts, previousKey, nextKey, (_, current) => current)
   moveEntry(transcriptAuthorityByConversation, previousKey, nextKey, (previous, current) => ({
     ...current,
     turns:
@@ -412,6 +442,7 @@ export function evictRuntimeConversationKey(key: string): void {
   cancelTerminalConversationEviction(key)
   turnsByConversation.delete(key)
   transcriptAuthorityByConversation.delete(key)
+  pendingTerminalTranscripts.delete(key)
   projectedMessagesByConversation.delete(key)
   metadataByConversation.delete(key)
   goalSnapshotVersionsByConversation.delete(key)
@@ -492,6 +523,7 @@ function canEvictTerminalConversation(key: string): boolean {
     turns &&
     !retainingListenersByConversation.has(key) &&
     !hydrationByConversation.has(key) &&
+    !pendingTerminalTranscripts.has(key) &&
     (queuedMessagesByConversation.get(key)?.length ?? 0) === 0 &&
     !turns.some(turn => turn.status === 'pending' || turn.status === 'streaming')
   )

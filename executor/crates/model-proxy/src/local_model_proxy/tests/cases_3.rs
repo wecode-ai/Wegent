@@ -349,7 +349,7 @@ async fn keeps_foreign_encrypted_history_sanitized_after_the_switch_request() {
             proxy_url: None,
             model_id: None,
             routing_model_id: Some("gpt-6.1-sol".to_owned()),
-            codex_request_mode: CodexRequestMode::Passthrough,
+            codex_request_mode: CodexRequestMode::OfficialSubscription,
             max_output_tokens: None,
             model_context_window: None,
         },
@@ -425,7 +425,7 @@ async fn keeps_foreign_encrypted_history_sanitized_after_the_switch_request() {
 }
 
 #[tokio::test]
-async fn forwards_native_chatgpt_http_and_repairs_mismatched_history_ids() {
+async fn forwards_native_chatgpt_http_and_preserves_upstream_validation_errors() {
     const BODY: &str = r#"{ "model": "gpt-6.2-sol", "input": [{"type":"message","role":"user","id":"msg_native","content":[]}], "tools":[{"type":"custom","name":"exec","description":"native contract"}] }"#;
     const LEGACY_BODY: &str = r#"{"input":[{"type":"custom_tool_call","id":"fc_old","call_id":"call_old","name":"exec","input":"text(42)"},{"type":"custom_tool_call_output","call_id":"call_old","output":"42"}]}"#;
     const SSE: &str =
@@ -449,13 +449,7 @@ async fn forwards_native_chatgpt_http_and_repairs_mismatched_history_ids() {
                             r#"{"error":{"message":"Invalid 'input[0].id': 'fc_old'. Expected an ID that begins with 'ctc'.","type":"invalid_request_error","param":"input[0].id","code":"invalid_value"}}"#,
                         );
                     }
-                    if first["type"] == "custom_tool_call" {
-                        let mut expected: Value = serde_json::from_str(LEGACY_BODY).unwrap();
-                        expected["input"][0].as_object_mut().unwrap().remove("id");
-                        assert_eq!(request, expected);
-                    } else {
-                        assert_eq!(body.as_ref(), BODY.as_bytes());
-                    }
+                    assert_eq!(body.as_ref(), BODY.as_bytes());
                     (StatusCode::OK, [(header::CONTENT_TYPE, "text/event-stream")], SSE)
                 }),
             ),
@@ -479,8 +473,13 @@ async fn forwards_native_chatgpt_http_and_repairs_mismatched_history_ids() {
         .unwrap();
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-        assert_eq!(body, SSE.as_bytes());
+        if request == LEGACY_BODY {
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert!(String::from_utf8_lossy(&body).contains("fc_old"));
+        } else {
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body, SSE.as_bytes());
+        }
     }
     unregister(&token);
     server.abort();
@@ -531,7 +530,7 @@ async fn restores_foreign_history_boundary_after_route_restart() {
         proxy_url: None,
         model_id: None,
         routing_model_id: Some("gpt-6.1-sol".to_owned()),
-        codex_request_mode: CodexRequestMode::Passthrough,
+        codex_request_mode: CodexRequestMode::OfficialSubscription,
         max_output_tokens: None,
         model_context_window: None,
     };

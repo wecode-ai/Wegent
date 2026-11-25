@@ -60,7 +60,8 @@ function fixture() {
   return { calls, state, ctx }
 }
 
-test('all-message intake searches only the selected group with the existing window and cursor', async () => {
+test('all-message intake searches only the selected group with the existing window and cursor', async t => {
+  const log = t.mock.method(console, 'info', () => {})
   const { calls, state, ctx } = fixture()
   const provider = createProvider()
   const checkpoint = { after: source.enabledAfter, until: '2026-11-13T00:02:00Z', cursor: '0' }
@@ -81,13 +82,42 @@ test('all-message intake searches only the selected group with the existing wind
     },
   })
   assert.deepEqual(first.nextCheckpoint, { ...checkpoint, cursor: 'next' })
+  const diagnostic = JSON.parse(log.mock.calls[1].arguments[1])
+  assert.equal(diagnostic.groupId, source.id)
+  assert.equal(diagnostic.start, checkpoint.after)
+  assert.equal(diagnostic.end, checkpoint.until)
+  assert.equal(diagnostic.firstPage, true)
+  assert.deepEqual(diagnostic.returned[0].messageIds, [
+    'question',
+    'manual',
+    'automated',
+    'notification',
+    'other-ai',
+  ])
+  assert.deepEqual(diagnostic.acceptedMessageIds, ['question', 'manual'])
+  assert.deepEqual(
+    diagnostic.filtered.map(entry => entry.reason),
+    [
+      'ai_generated_message',
+      'robot_message',
+      'ai_generated_message',
+      'group_mismatch',
+      'conversation_kind_mismatch',
+    ]
+  )
+  assert.ok(!JSON.stringify(diagnostic).includes('A question without a mention'))
   state.hasMore = false
   const last = await provider.collect(ctx, { source, checkpoint: first.nextCheckpoint })
+  assert.equal(JSON.parse(log.mock.calls.at(-1).arguments[1]).firstPage, false)
   assert.equal(calls.at(-1).arguments.cursor, 'next')
   assert.equal(calls.at(-1).arguments.end, checkpoint.until)
   assert.deepEqual(last.nextCheckpoint, { after: checkpoint.until, cursor: '0' })
   state.failure = Object.assign(new Error('Read failed'), { code: 'forbidden' })
   await assert.rejects(provider.collect(ctx, { source, checkpoint }), state.failure)
+  const failed = JSON.parse(log.mock.calls.at(-1).arguments[1])
+  assert.equal(failed.outcome, 'request_failed')
+  assert.equal(failed.start, checkpoint.after)
+  assert.equal(failed.end, checkpoint.until)
   assert.equal(checkpoint.cursor, '0')
 })
 

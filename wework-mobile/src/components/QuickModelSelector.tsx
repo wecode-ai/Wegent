@@ -1,13 +1,24 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { useRef, useState } from 'react'
-import { type GestureResponderEvent, Pressable, StyleSheet, View } from 'react-native'
+import { BlurView } from 'expo-blur'
+import * as Haptics from 'expo-haptics'
+import { useEffect, useRef, useState } from 'react'
+import { Platform, Pressable, StyleSheet, View, type GestureResponderEvent } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
+import Animated, {
+  FadeInDown,
+  FadeOut,
+  interpolate,
+  interpolateColor,
+  useAnimatedStyle,
+  useDerivedValue,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated'
 
 import { reasoningLabel } from '@/domain/modelSelection'
 import { ModelControlSurface } from './ModelControlSurface'
 
 interface QuickModelSelectorProps {
-  bottomInset?: number
   effort: string | undefined
   efforts: string[]
   label: string
@@ -20,20 +31,48 @@ interface QuickModelDismissLayerProps {
   onDismiss: () => void
 }
 
+const trackHeight = 64
+const thumbSize = 44
+const trackInset = 32
+const fillInset = 8
+const dotSize = 10
+const springConfig = { damping: 20, stiffness: 240, mass: 0.8 }
+
 export function QuickModelDismissLayer({ onDismiss }: QuickModelDismissLayerProps) {
+  const theme = useTheme()
   return (
-    <Pressable
-      accessibilityLabel="关闭模型选择"
-      accessibilityRole="button"
-      onPress={onDismiss}
+    <Animated.View
+      entering={FadeInDown.duration(160)}
+      exiting={FadeOut.duration(120)}
       style={styles.dismissLayer}
-      testID="quick-model-backdrop"
-    />
+    >
+      <BlurView
+        intensity={26}
+        tint={theme.dark ? 'dark' : 'light'}
+        {...(Platform.OS === 'android'
+          ? { experimentalBlurMethod: 'dimezisBlurView' as const }
+          : {})}
+        style={StyleSheet.absoluteFill}
+      />
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          { backgroundColor: theme.dark ? 'rgba(0,0,0,0.24)' : 'rgba(0,0,0,0.06)' },
+        ]}
+      />
+      <Pressable
+        accessibilityLabel="关闭模型选择"
+        accessibilityRole="button"
+        onPress={onDismiss}
+        style={StyleSheet.absoluteFill}
+        testID="quick-model-backdrop"
+      />
+    </Animated.View>
   )
 }
 
 export function QuickModelSelector({
-  bottomInset = 0,
   effort,
   efforts,
   label,
@@ -49,10 +88,26 @@ export function QuickModelSelector({
   const displayedEffort = efforts[selectedIndex] ?? effort
   const selectedIndexRef = useRef(selectedIndex)
   selectedIndexRef.current = selectedIndex
-  const progress = efforts.length > 1 ? selectedIndex / (efforts.length - 1) : 0
-  const thumbCenter = width
-    ? stylesConfig.trackInset + progress * Math.max(0, width - stylesConfig.trackInset * 2)
-    : stylesConfig.trackInset
+  const effortsKey = efforts.join('|')
+  const visualSteps = efforts.length
+  const progress = useSharedValue(efforts.length > 1 ? selectedIndex / (efforts.length - 1) : 0)
+  const trackWidth = useSharedValue(0)
+  const thumbX = useDerivedValue(
+    () => trackInset + progress.value * Math.max(0, trackWidth.value - trackInset * 2)
+  )
+  const fillWidth = useDerivedValue(() =>
+    progress.value <= 0.001 ? 0 : Math.max(0, thumbX.value + thumbSize / 2 - fillInset)
+  )
+  const thumbStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: thumbX.value - thumbSize / 2 }],
+  }))
+  const fillStyle = useAnimatedStyle(() => ({ width: fillWidth.value }))
+
+  useEffect(() => {
+    if (dragIndex !== null) return
+    const index = Math.max(0, efforts.indexOf(effort ?? ''))
+    progress.value = withSpring(efforts.length > 1 ? index / (efforts.length - 1) : 0, springConfig)
+  }, [dragIndex, effort, effortsKey, progress])
 
   const selectIndex = (index: number, dragging = false) => {
     const boundedIndex = Math.max(0, Math.min(efforts.length - 1, index))
@@ -62,40 +117,74 @@ export function QuickModelSelector({
     if (boundedIndex === selectedIndexRef.current) return
     selectedIndexRef.current = boundedIndex
     onSelectEffort(next)
+    void Haptics.selectionAsync().catch(() => undefined)
+    if (!dragging) {
+      progress.value = withSpring(
+        efforts.length > 1 ? boundedIndex / (efforts.length - 1) : 0,
+        springConfig
+      )
+    }
   }
-  const selectAt = (locationX: number) => {
-    if (!efforts.length || width <= stylesConfig.trackInset * 2) return
-    const ratio = Math.max(
-      0,
-      Math.min(1, (locationX - stylesConfig.trackInset) / (width - stylesConfig.trackInset * 2))
-    )
-    selectIndex(Math.round(ratio * (efforts.length - 1)), true)
+
+  const selectAt = (locationX: number, dragging = true) => {
+    if (!efforts.length || width <= trackInset * 2) return
+    const ratio = Math.max(0, Math.min(1, (locationX - trackInset) / (width - trackInset * 2)))
+    progress.value = dragging ? ratio : withSpring(ratio, springConfig)
+    selectIndex(Math.round(ratio * (efforts.length - 1)), dragging)
   }
+
   const startDrag = (event: GestureResponderEvent) => {
     dragOriginX.current = event.nativeEvent.pageX - event.nativeEvent.locationX
-    selectAt(event.nativeEvent.locationX)
+    setDragIndex(selectedIndexRef.current)
+    selectAt(event.nativeEvent.locationX, true)
+  }
+
+  const moveDrag = (event: GestureResponderEvent) => {
+    selectAt(event.nativeEvent.pageX - dragOriginX.current, true)
+  }
+
+  const endDrag = () => {
+    const boundedIndex = Math.max(
+      0,
+      Math.min(efforts.length - 1, Math.round(progress.value * (efforts.length - 1)))
+    )
+    selectIndex(boundedIndex, false)
+    progress.value = withSpring(
+      efforts.length > 1 ? boundedIndex / (efforts.length - 1) : 0,
+      springConfig
+    )
+    setDragIndex(null)
   }
 
   return (
-    <View
-      style={[styles.surface, { paddingBottom: bottomInset + 6 }]}
+    <Animated.View
+      entering={FadeInDown.duration(180)}
+      exiting={FadeOut.duration(120)}
+      style={styles.container}
       testID="quick-model-selector"
     >
       <Pressable
         accessibilityLabel={`高级模型设置，当前 ${sourceLabel} ${label} ${reasoningLabel(displayedEffort)}`}
         accessibilityRole="button"
         onPress={onOpenAdvanced}
-        style={({ pressed }) => [styles.summary, pressed && styles.pressed]}
+        style={({ pressed }) => [styles.summaryButton, pressed && styles.pressed]}
         testID="quick-model-advanced"
       >
-        <Text numberOfLines={1} style={styles.label} variant="titleLarge">
+        <Text
+          numberOfLines={1}
+          style={[styles.modelLabel, { color: theme.colors.onSurface }]}
+          testID="quick-model-name"
+          variant="titleLarge"
+        >
           {label}
         </Text>
-        {displayedEffort ? (
-          <Text style={{ color: theme.colors.onSurfaceVariant }} variant="titleLarge">
-            {reasoningLabel(displayedEffort)}
-          </Text>
-        ) : null}
+        <Text
+          style={[styles.effortLabel, { color: theme.colors.onSurfaceVariant }]}
+          testID="quick-model-effort"
+          variant="titleLarge"
+        >
+          {reasoningLabel(displayedEffort)}
+        </Text>
         <Ionicons color={theme.colors.onSurfaceVariant} name="chevron-forward" size={20} />
       </Pressable>
       <ModelControlSurface style={styles.track} testID="quick-model-track">
@@ -117,57 +206,36 @@ export function QuickModelSelector({
             onAccessibilityAction={event =>
               selectIndex(selectedIndex + (event.nativeEvent.actionName === 'increment' ? 1 : -1))
             }
-            onLayout={event => setWidth(event.nativeEvent.layout.width)}
+            onLayout={event => {
+              const nextWidth = event.nativeEvent.layout.width
+              setWidth(nextWidth)
+              trackWidth.value = nextWidth
+            }}
             onMoveShouldSetResponder={() => true}
             onResponderGrant={startDrag}
-            onResponderMove={event => selectAt(event.nativeEvent.pageX - dragOriginX.current)}
-            onResponderRelease={() => setDragIndex(null)}
-            onResponderTerminate={() => setDragIndex(null)}
+            onResponderMove={moveDrag}
+            onResponderRelease={endDrag}
+            onResponderTerminate={endDrag}
             onResponderTerminationRequest={() => false}
             onStartShouldSetResponder={() => true}
             pointerEvents="box-only"
             style={styles.trackContent}
             testID="quick-reasoning-slider"
           >
-            {width ? (
-              <View
-                style={[
-                  styles.fill,
-                  {
-                    width: Math.max(
-                      stylesConfig.thumbSize,
-                      thumbCenter + stylesConfig.thumbSize / 2 - stylesConfig.fillInset
-                    ),
-                  },
-                ]}
-              />
-            ) : null}
+            <Animated.View style={[styles.fill, fillStyle]} />
             <View style={styles.dots}>
-              {efforts.map((value, index) => (
-                <View
-                  key={value}
-                  style={[
-                    styles.dot,
-                    {
-                      backgroundColor:
-                        index <= selectedIndex
-                          ? 'rgba(255,255,255,0.22)'
-                          : theme.colors.onSurfaceVariant,
-                    },
-                  ]}
+              {Array.from({ length: visualSteps }, (_, index) => (
+                <SliderDot
+                  activeColor="rgba(255,255,255,0.42)"
+                  count={visualSteps}
+                  inactiveColor={theme.dark ? '#8e8e93' : '#b0b0b5'}
+                  index={index}
+                  key={index}
+                  progress={progress}
                 />
               ))}
             </View>
-            {width ? (
-              <View
-                style={[
-                  styles.thumb,
-                  {
-                    left: thumbCenter - stylesConfig.thumbSize / 2,
-                  },
-                ]}
-              />
-            ) : null}
+            {width ? <Animated.View style={[styles.thumb, thumbStyle]} /> : null}
           </View>
         ) : (
           <View
@@ -182,38 +250,69 @@ export function QuickModelSelector({
           </View>
         )}
       </ModelControlSurface>
-    </View>
+    </Animated.View>
   )
 }
 
-const stylesConfig = {
-  fillInset: 12,
-  thumbSize: 40,
-  trackInset: 36,
-} as const
+function SliderDot({
+  activeColor,
+  count,
+  inactiveColor,
+  index,
+  progress,
+}: {
+  activeColor: string
+  count: number
+  inactiveColor: string
+  index: number
+  progress: { value: number }
+}) {
+  const dotStyle = useAnimatedStyle(() => {
+    const position = progress.value * Math.max(0, count - 1)
+    const active = Math.max(0, Math.min(1, position - index + 0.5))
+    return {
+      backgroundColor: interpolateColor(active, [0, 1], [inactiveColor, activeColor]),
+      opacity: interpolate(active, [0, 1], [0.9, 1]),
+      transform: [{ scale: interpolate(active, [0, 1], [1, 1.08]) }],
+    }
+  })
+  return <Animated.View style={[styles.dot, dotStyle]} testID={`quick-visual-dot-${index}`} />
+}
 
 const styles = StyleSheet.create({
   dismissLayer: { position: 'absolute', inset: 0 },
-  surface: {
-    paddingHorizontal: 28,
-  },
-  summary: {
-    minHeight: 52,
+  container: { paddingHorizontal: 24, paddingBottom: 24 },
+  summaryButton: {
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    maxWidth: '100%',
+    minHeight: 44,
+    marginBottom: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
-  label: { flexShrink: 1, fontWeight: '500' },
+  modelLabel: {
+    flexShrink: 1,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  effortLabel: { flexShrink: 0 },
+  pressed: { opacity: 0.55, transform: [{ scale: 0.98 }] },
   track: {
-    height: 72,
-    borderRadius: 36,
+    height: trackHeight,
+    borderRadius: trackHeight / 2,
+    borderWidth: 1,
+    borderColor: 'rgba(60,60,67,0.12)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
     overflow: 'hidden',
   },
-  trackContent: {
-    flex: 1,
-    justifyContent: 'center',
-  },
+  trackContent: { flex: 1, justifyContent: 'center' },
   unavailableTrack: {
     flex: 1,
     alignItems: 'center',
@@ -222,30 +321,31 @@ const styles = StyleSheet.create({
   },
   fill: {
     position: 'absolute',
-    left: stylesConfig.fillInset,
-    top: stylesConfig.fillInset,
-    bottom: stylesConfig.fillInset,
-    borderRadius: 28,
+    left: fillInset,
+    top: fillInset,
+    bottom: fillInset,
+    borderRadius: (trackHeight - fillInset * 2) / 2,
     backgroundColor: '#008cff',
   },
   dots: {
-    paddingHorizontal: 30,
+    paddingHorizontal: trackInset - dotSize / 2,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  dot: { width: 12, height: 12, borderRadius: 6, opacity: 0.72 },
+  dot: { width: dotSize, height: dotSize, borderRadius: dotSize / 2 },
   thumb: {
     position: 'absolute',
-    top: 16,
-    width: stylesConfig.thumbSize,
-    height: stylesConfig.thumbSize,
-    borderRadius: stylesConfig.thumbSize / 2,
+    top: (trackHeight - thumbSize) / 2,
+    width: thumbSize,
+    height: thumbSize,
+    borderRadius: thumbSize / 2,
+    borderWidth: 3,
+    borderColor: '#008cff',
     backgroundColor: '#ffffff',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
   },
-  pressed: { opacity: 0.55 },
 })

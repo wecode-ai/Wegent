@@ -12,8 +12,19 @@ const persisted =
   'app IPC request finished request_id=write method=runtime.codex.catalog.overrides.write ok=true\n'
 const restarted = [
   'app IPC request started request_id=restart method=runtime.codex.app_server.restart',
-  'codex shared app-server process starting pid=123',
+  'codex shared app-server process starting process_id=123',
   'codex router model catalog served models=1',
+  'app IPC request finished request_id=restart method=runtime.codex.app_server.restart ok=true',
+  '',
+].join('\n')
+const restartedAfterDiscovery = [
+  'codex router model catalog prepared model_count=64 catalog_bytes=5126073',
+  'app IPC request started request_id=restart method=runtime.codex.app_server.restart',
+  'codex shared app-server process starting process_id=123',
+  'codex shared app-server process initialized process_id=123',
+  'codex router model catalog prepared model_count=64 catalog_bytes=5126073',
+  'codex shared app-server process starting process_id=456',
+  'codex shared app-server process initialized process_id=456',
   'app IPC request finished request_id=restart method=runtime.codex.app_server.restart ok=true',
   '',
 ].join('\n')
@@ -22,9 +33,13 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-test.each([false, true])(
-  'waits for the native restart before editor closure (busy=%s)',
-  async busy => {
+test.each([
+  ['served', false, restarted],
+  ['confirmed', true, restarted],
+  ['discovered concurrently', false, restartedAfterDiscovery],
+])(
+  'waits for the native restart before editor closure (catalog %s)',
+  async (_label, busy, restartEvidence) => {
     const root = await mkdtemp(join(tmpdir(), 'wework-catalog-restart-'))
     roots.push(root)
     const log = join(root, 'executor.log')
@@ -45,12 +60,12 @@ test.each([false, true])(
           await appendFile(log, persisted)
           confirmation = busy
           if (!busy) {
-            await appendFile(log, restarted)
+            await appendFile(log, restartEvidence)
             applied = true
           }
         } else if (selector === '[data-testid="local-model-catalog-restart-now-button"]') {
           expect(confirmation).toBe(true)
-          await appendFile(log, restarted)
+          await appendFile(log, restartEvidence)
           applied = true
           confirmation = false
         } else {
@@ -69,7 +84,7 @@ test.each([false, true])(
     expect(calls[0].selector).toBe('[data-testid="codex-catalog-editor-save"]')
     expect(calls.at(-1).selector).toBe('[data-testid="codex-catalog-editor-dialog"]')
     expect(calls.filter(call => call.selector.includes('restart-now'))).toHaveLength(busy ? 1 : 0)
-    expect(await readFile(log, 'utf8')).toContain(restarted)
+    expect(await readFile(log, 'utf8')).toContain(restartEvidence)
   }
 )
 

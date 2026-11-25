@@ -207,7 +207,7 @@ def notify_direct_human_assignment(
         task_title=resolved_title,
         instructions=resolved_instructions or resolved_title,
         workflow_stage_id=None,
-        body="这个 Issue 已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
+        body="这个事项已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
         action="open_issue",
         notification_target=notification_target,
     )

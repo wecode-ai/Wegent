@@ -93,7 +93,7 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
     showPluginPicker = true,
     pluginPickerIconOnly = false,
     onListLocalApps,
-    projectPhrases = [],
+    projectPhrases,
     onQuickPhraseSelect,
     workspaceTarget,
   } = props

@@ -260,6 +260,7 @@ fn lazy_skill(app: &ConnectorApp) -> Value {
     let slug = &app.slug;
     json!({
         "name": format!("wegent-connector-{slug}"),
+        "sandbox_deploy": false,
         "displayName": name,
         "description": format!("Use the administrator-managed {name} connector app. {}", app.description),
         "prompt": format!(

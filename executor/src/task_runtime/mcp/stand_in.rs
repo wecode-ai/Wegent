@@ -255,13 +255,15 @@ pub(crate) fn stand_in_mcp_client_config(
         active_delivery(request).or_else(|| DeliveryContext::from_request(request));
     context.stand_in = Some(identity);
     let origin = &request.extra["origin"];
-    context.stand_in_role_delegation = (origin["type"] == "stand_in_identity"
-        && origin["conversationScope"].is_null()
-        && !request
-            .extra
-            .get("source")
-            .is_some_and(|source| source["source"] == "im"))
-        || (origin["type"] == "stand_in_task" && origin["roleDelegation"].is_object());
+    context.stand_in_role_delegation =
+        (crate::task_runtime::personal_stand_in::supports_role_delegation(origin)
+            && !request
+                .extra
+                .get("source")
+                .is_some_and(|source| source["source"] == "im"))
+            || (origin["type"] == "stand_in_task"
+                && origin["roleDelegation"].is_object()
+                && origin["roleDelegation"]["team"] != true);
     let registered = super::super::mcp_http::register_space_mcp_context(context)?;
     if let Some(signature) = batch_signature {
         crate::logging::write_executor_log_line(&crate::logging::format_executor_log(
