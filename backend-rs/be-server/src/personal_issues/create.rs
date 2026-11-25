@@ -11,6 +11,8 @@ use serde_json::{Map, Value};
 use super::{CreateLoopIssue, FastApiError, SessionUser, create_loop_issue, invalid};
 use crate::{auth, state::AppState};
 
+const PROJECT_ISSUE_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[brz_http_server::post("/api/v1/loop-items", access = public)]
 async fn create(
     #[inject(state)] state: &AppState,
@@ -60,17 +62,7 @@ async fn create_board_issue(
     trace_id: Option<&str>,
 ) -> Result<Response, FastApiError> {
     static CLIENT: OnceLock<Result<brz_http::Client, brz_http::reqwest::Error>> = OnceLock::new();
-    let client = CLIENT.get_or_init(|| {
-        brz_http::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .configure(|builder| {
-                builder
-                    .no_proxy()
-                    .redirect(brz_http::reqwest::redirect::Policy::none())
-                    .retry(brz_http::reqwest::retry::never())
-            })
-            .build()
-    });
+    let client = CLIENT.get_or_init(board_issue_client);
     let client = client.as_ref().map_err(|_| upstream_error())?;
     let upstream = std::env::var("WEGENT_PYTHON_UPSTREAM_URL")
         .unwrap_or_else(|_| wegent_backend_config::DEFAULT_PYTHON_UPSTREAM.to_owned());
@@ -86,13 +78,19 @@ async fn create_board_issue(
             request = request.header(name, value);
         }
     }
-    let response = request.send().await.map_err(|_| upstream_error())?;
+    let response = request.send().await.map_err(|error| {
+        tracing::warn!(project_id, trace_id, error = %error.without_url(), "Project Issue request failed");
+        upstream_error()
+    })?;
     let status = response.status();
     let bearer_challenge = response
         .headers()
         .get("www-authenticate")
         .is_some_and(|header| header == "Bearer");
-    let body = response.bytes().await.map_err(|_| upstream_error())?;
+    let body = response.bytes().await.map_err(|error| {
+        tracing::warn!(project_id, trace_id, error = %error.without_url(), "Project Issue response body failed");
+        upstream_error()
+    })?;
     let mut response = Response::owned_bytes(status, body).content_type("application/json");
     if bearer_challenge {
         response = response.www_authenticate("Bearer");
@@ -100,9 +98,64 @@ async fn create_board_issue(
     Ok(response)
 }
 
+fn board_issue_client() -> Result<brz_http::Client, brz_http::reqwest::Error> {
+    brz_http::Client::builder()
+        .timeout(PROJECT_ISSUE_TIMEOUT)
+        .read_timeout(PROJECT_ISSUE_TIMEOUT)
+        .configure(|builder| {
+            builder
+                .no_proxy()
+                .redirect(brz_http::reqwest::redirect::Policy::none())
+                .retry(brz_http::reqwest::retry::never())
+        })
+        .build()
+}
+
 fn upstream_error() -> FastApiError {
     FastApiError::detail(
         StatusCode::BAD_GATEWAY,
         "Unable to reach the project Issue provider",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn board_issue_client_accepts_a_response_after_the_default_read_timeout() {
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", upstream.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = upstream.accept().await.unwrap();
+            let mut request = BufReader::new(&mut stream);
+            loop {
+                let mut header = String::new();
+                assert!(request.read_line(&mut header).await.unwrap() > 0);
+                if header == "\r\n" {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(550)).await;
+            stream
+                .write_all(
+                    b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                )
+                .await
+                .unwrap();
+        });
+
+        let response = board_issue_client()
+            .unwrap()
+            .as_reqwest()
+            .post(url)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.text().await.unwrap(), "{}");
+        server.await.unwrap();
+    }
 }
