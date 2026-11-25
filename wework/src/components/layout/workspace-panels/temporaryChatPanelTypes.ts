@@ -50,7 +50,6 @@ export interface TemporaryChatPanelProps {
   showExecutionTools?: boolean
   showModelSelector?: boolean
   hideProcessing?: boolean
-  assistantMessageStyle?: 'plain' | 'bubble'
   markReadWhenActive?: boolean
   nativeConversation?: boolean
   allowMessagesDuringApproval?: boolean

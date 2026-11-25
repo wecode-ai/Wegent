@@ -361,19 +361,28 @@ impl LocalTaskStore {
         device: &str,
         root: &str,
     ) -> Result<Vec<(String, Value)>, TaskRuntimeError> {
+        self.remote_stand_in_role_requests_for_roots(user, device, &[root])
+    }
+
+    pub fn remote_stand_in_role_requests_for_roots(
+        &self,
+        user: i64,
+        device: &str,
+        roots: &[&str],
+    ) -> Result<Vec<(String, Value)>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT id,metadata FROM loop_items WHERE resource_type='stand_in_role_request'
              AND json_extract(metadata,'$.userId')=?1
              AND json_extract(metadata,'$.intent.sourceDevice')=?2
-             AND json_extract(metadata,'$.root')=?3
+             AND json_extract(metadata,'$.root') IN (SELECT value FROM json_each(?3) WHERE type='text')
              AND (json_extract(metadata,'$.intent.sourceRoute') IS NOT NULL
                   OR (json_array_length(metadata,'$.intent.dependsOn')>0
                       AND json_extract(metadata,'$.taskAddress') IS NULL
                       AND coalesce(json_extract(metadata,'$.cancelRequested'),0)=0))
              ORDER BY created_at,id",
         )?;
-        let rows = statement.query_map(params![user, device, root], |row| {
+        let rows = statement.query_map(params![user, device, json!(roots).to_string()], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         rows.map(|row| {
@@ -705,6 +714,17 @@ mod tests {
         let branches = store
             .remote_stand_in_role_requests(7, "desktop", "root")
             .unwrap();
+        let mut batch = store
+            .remote_stand_in_role_requests_for_roots(7, "desktop", &["root", "other", "root"])
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        batch.sort();
+        assert_eq!(
+            batch,
+            ["announcement", "database", "engineering", "new-request"]
+        );
         assert!(branches.iter().any(|(id, row)| id == "engineering"
             && row["cancelRequested"] == true
             && row["taskAddress"]["deviceId"] == "cloud"));

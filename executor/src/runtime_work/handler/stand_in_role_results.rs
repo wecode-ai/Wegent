@@ -5,7 +5,109 @@ use super::stand_in_role_delegation::{
 use super::stand_in_task_results::completion_generation;
 use super::*;
 use crate::runtime_work::reader::RuntimeReader;
+use crate::task_runtime::TaskRuntimeError;
 use sha2::{Digest, Sha256};
+
+type ReceiptsByParent = HashMap<String, Vec<Value>>;
+type ReceiptsByRoot = HashMap<String, ReceiptsByParent>;
+
+/// One lazy read of each source covering all relevant roots.
+pub(super) struct RoleChildrenIndex<'a> {
+    handler: &'a RuntimeWorkRpcHandler,
+    user: i64,
+    local: Option<ReceiptsByRoot>,
+    remote: Option<Result<ReceiptsByRoot, TaskRuntimeError>>,
+}
+
+impl<'a> RoleChildrenIndex<'a> {
+    pub(super) fn new(handler: &'a RuntimeWorkRpcHandler, user: i64) -> Self {
+        Self {
+            handler,
+            user,
+            local: None,
+            remote: None,
+        }
+    }
+
+    pub(super) fn has_unprocessed_children(
+        &mut self,
+        task: &RuntimeTaskLink,
+        read_remote: impl FnOnce(&str) -> Result<Vec<(String, Value)>, TaskRuntimeError>,
+    ) -> bool {
+        let Some(root) = task.runtime_handle["origin"]["roleDelegation"]["root"].as_str() else {
+            return false;
+        };
+        let consumed = task.runtime_handle["standInRoleConsumedResults"].as_array();
+        let has_unprocessed_receipts = |receipts: Option<&Vec<Value>>| {
+            receipts.is_some_and(|receipts| {
+                receipts.iter().any(|receipt| {
+                    !receipt.is_string()
+                        || !consumed.is_some_and(|commands| commands.contains(receipt))
+                })
+            })
+        };
+        let local = self.local.get_or_insert_with(|| {
+            let mut index = ReceiptsByRoot::new();
+            let receipts = self.handler.store.list_filtered_task_values(
+                false,
+                |link| {
+                    owned_role_task(link, self.user, &self.handler.device_id)
+                        && link.runtime_handle["origin"]["roleDelegation"].is_object()
+                },
+                |link| {
+                    let origin = &link.runtime_handle["origin"];
+                    Some((
+                        origin["roleDelegation"]["root"].as_str()?.to_owned(),
+                        origin["sourceTaskId"].as_str()?.to_owned(),
+                        link.runtime_handle["standInResultReceipt"].clone(),
+                    ))
+                },
+            );
+            for (root, parent, receipt) in receipts.into_iter().flatten() {
+                index
+                    .entry(root)
+                    .or_default()
+                    .entry(parent)
+                    .or_default()
+                    .push(receipt);
+            }
+            index
+        });
+        if has_unprocessed_receipts(
+            local
+                .get(root)
+                .and_then(|parents| parents.get(&task.local_task_id)),
+        ) {
+            return true;
+        }
+        let remote = self.remote.get_or_insert_with(|| {
+            read_remote(root).map(|requests| {
+                let mut index = ReceiptsByRoot::new();
+                for (_, request) in requests {
+                    if let (Some(root), Some(parent)) = (
+                        request["root"].as_str(),
+                        request["intent"]["sourceTaskId"].as_str(),
+                    ) {
+                        index
+                            .entry(root.to_owned())
+                            .or_default()
+                            .entry(parent.to_owned())
+                            .or_default()
+                            .push(request["resultReceipt"].clone());
+                    }
+                }
+                index
+            })
+        });
+        remote.as_ref().map_or(true, |roots| {
+            has_unprocessed_receipts(
+                roots
+                    .get(root)
+                    .and_then(|parents| parents.get(&task.local_task_id)),
+            )
+        })
+    }
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn role_task_has_unprocessed_children(
@@ -13,30 +115,10 @@ impl RuntimeWorkRpcHandler {
         task: &RuntimeTaskLink,
         user: i64,
     ) -> bool {
-        let Some(root) = task.runtime_handle["origin"]["roleDelegation"]["root"].as_str() else {
-            return false;
-        };
-        let consumed = task.runtime_handle["standInRoleConsumedResults"].as_array();
-        let receipt_was_processed = |receipt: &Value| {
-            receipt.is_string() && consumed.is_some_and(|commands| commands.contains(receipt))
-        };
-        if self.local_task_links(false).iter().any(|link| {
-            let nested = &link.runtime_handle["origin"];
-            owned_role_task(link, user, &self.device_id)
-                && nested["sourceTaskId"] == task.local_task_id
-                && nested["roleDelegation"]["root"] == root
-                && !receipt_was_processed(&link.runtime_handle["standInResultReceipt"])
-        }) {
-            return true;
-        }
-        LocalTaskStore::open(self.task_store_path.as_ref())
-            .and_then(|store| store.remote_stand_in_role_requests(user, &self.device_id, root))
-            .map_or(true, |requests| {
-                requests.iter().any(|(_, request)| {
-                    request["intent"]["sourceTaskId"] == task.local_task_id
-                        && !receipt_was_processed(&request["resultReceipt"])
-                })
-            })
+        RoleChildrenIndex::new(self, user).has_unprocessed_children(task, |root| {
+            LocalTaskStore::open(self.task_store_path.as_ref())
+                .and_then(|store| store.remote_stand_in_role_requests(user, &self.device_id, root))
+        })
     }
 
     pub(super) async fn remote_role_task_status(
@@ -81,25 +163,69 @@ impl RuntimeWorkRpcHandler {
         self.role_completion(&link, user).await
     }
 
+    pub(super) fn role_completion_status<'a>(
+        &self,
+        link: &'a RuntimeTaskLink,
+        allow_legacy_completion: bool,
+        has_unprocessed_children: impl FnOnce() -> bool,
+    ) -> &'a str {
+        if link.interaction_status.is_some() {
+            return "waiting_for_user";
+        }
+        let recorded = &link.runtime_handle["standInResult"];
+        if self.is_busy_local_task(&link.local_task_id) {
+            return "running";
+        }
+        let status = match recorded["status"].as_str() {
+            Some(status)
+                if recorded["generation"] == completion_generation(&link.runtime_handle) =>
+            {
+                status
+            }
+            // Older local results used the settled task link before recording an outbox result.
+            None if allow_legacy_completion
+                && recorded.is_null()
+                && link.completed_at.is_some() =>
+            {
+                if link.status == "archived" {
+                    match link.turn_status.as_deref() {
+                        Some("failed" | "error") => "failed",
+                        Some("cancelled" | "canceled" | "interrupted") => "cancelled",
+                        _ => "done",
+                    }
+                } else {
+                    link.status.as_str()
+                }
+            }
+            _ => return "running",
+        };
+        if !matches!(status, "done" | "failed" | "cancelled") {
+            return "running";
+        }
+        if has_unprocessed_children() {
+            return "waiting_for_children";
+        }
+        status
+    }
+
     pub(super) async fn role_completion(
         &self,
         link: &RuntimeTaskLink,
         user: i64,
     ) -> Result<Value, AppIpcError> {
         let id = &link.local_task_id;
-        if link.interaction_status.is_some() {
-            return Ok(json!({"taskId":id,"status":"waiting_for_user"}));
+        let status = self.role_completion_status(link, false, || {
+            self.role_task_has_unprocessed_children(link, user)
+        });
+        if !matches!(status, "done" | "failed" | "cancelled") {
+            let status = if status == "waiting_for_children" {
+                "running"
+            } else {
+                status
+            };
+            return Ok(json!({"taskId":id,"status":status}));
         }
         let recorded = &link.runtime_handle["standInResult"];
-        if self.is_busy_local_task(id)
-            || recorded["generation"] != completion_generation(&link.runtime_handle)
-            || self.role_task_has_unprocessed_children(link, user)
-        {
-            return Ok(json!({"taskId":id,"status":"running"}));
-        }
-        let Some(status @ ("done" | "failed" | "cancelled")) = recorded["status"].as_str() else {
-            return Ok(json!({"taskId":id,"status":"running"}));
-        };
         let mut conclusion = String::new();
         if let Some(turn) = recorded["turnId"].as_str() {
             let transcript = self.transcript(json!({"taskId":id,"limit":24})).await?;

@@ -115,7 +115,6 @@ export function TemporaryChatPanel({
   showExecutionTools = true,
   showModelSelector = true,
   hideProcessing = false,
-  assistantMessageStyle,
   markReadWhenActive = false,
   nativeConversation = false,
   allowMessagesDuringApproval = false,
@@ -539,6 +538,13 @@ export function TemporaryChatPanel({
   const showComposerWhilePending =
     allowMessagesDuringApproval &&
     (pendingRequest?.interactionKind ?? pendingRequest?.interaction_kind) === 'approval'
+  const isWaitingForAssistant = hideProcessing
+    ? !pendingRequest &&
+      !taskLifecycle?.interactionStatus &&
+      (sending || paneStatus.isWaitingForAssistantIndicator || paneStatus.isResponseActive)
+    : nativeConversation
+      ? sending
+      : busy
   const canSendWithCurrentModel = () => {
     if (nativeConversation && taskLifecycle?.interactionStatus && !showComposerWhilePending) {
       setError(t('standIn.native_input_pending'))
@@ -1068,7 +1074,6 @@ export function TemporaryChatPanel({
       }
     >
       <ScrollableMessageArea
-        assistantMessageStyle={assistantMessageStyle}
         showProcessingStatus={!hideProcessing}
         onFillSelectionToAnswer={onFillSelectionToAnswer}
         messageTarget={messageTarget}
@@ -1081,7 +1086,7 @@ export function TemporaryChatPanel({
         onLoadMoreBefore={historySource ? undefined : loadMoreHistory}
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
-        isWaitingForAssistant={nativeConversation ? sending : busy}
+        isWaitingForAssistant={isWaitingForAssistant}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
         className="min-h-0 flex-1"

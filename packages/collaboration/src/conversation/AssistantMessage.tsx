@@ -54,7 +54,6 @@ import { getAssistantReferences } from './codexReferences'
 export function AssistantMessage({
   imageServices,
   renderVisualization,
-  assistantMessageStyle = 'plain',
   showProcessingStatus = true,
   message,
   runtimeTurn,
@@ -79,7 +78,6 @@ export function AssistantMessage({
   onFork,
 }: {
   imageServices: AttachmentImageServices<Attachment>
-  assistantMessageStyle?: 'plain' | 'bubble'
   showProcessingStatus?: boolean
   renderVisualization?: (
     part: { file: string; mode?: 'wide'; title?: string },
@@ -260,11 +258,6 @@ export function AssistantMessage({
               data-runtime-item-id={segment.id}
               data-message-selectable-text
               data-testid="assistant-message-content"
-              className={
-                assistantMessageStyle === 'bubble'
-                  ? 'w-fit max-w-full rounded-3xl bg-muted px-4 py-3'
-                  : undefined
-              }
               data-search-region-id={segment.id}
             >
               <AssistantMarkdown
@@ -426,11 +419,6 @@ export function AssistantMessage({
               }
               data-message-selectable-text
               data-testid="assistant-message-content"
-              className={
-                assistantMessageStyle === 'bubble'
-                  ? 'w-fit max-w-full rounded-3xl bg-muted px-4 py-3'
-                  : undefined
-              }
               data-search-region-id={renderProjection.finalRegion.id}
             >
               <AssistantMarkdown

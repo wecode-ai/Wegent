@@ -22,7 +22,6 @@ import {
   activeStandInAncestors,
   standInBranchStatus,
   activeStatuses,
-  cancellingStatuses,
   type Branch,
 } from './standInDelegatedBranches'
 
@@ -73,6 +72,7 @@ export function StandInDelegatedWork({
         'running',
         'waitingForDevice',
         'waitingForParent',
+        'waitingChildren',
         'blockedByDependency',
         'waitingForDependencies',
         'cancelling',
@@ -106,8 +106,7 @@ export function StandInDelegatedWork({
     }
   }
   addBranch(taskId)
-  const canCancel = (branch: Branch) =>
-    actionableStatuses.includes(branch.status) || statusFor(branch) === 'waitingChildren'
+  const canCancel = (branch: Branch) => actionableStatuses.includes(statusFor(branch))
   const requestCancel = (branch?: Branch) => {
     setCancelFailed(false)
     setCancellation({ root: current[0].root, branch })
@@ -282,7 +281,7 @@ export function StandInDelegatedWork({
                 {error && status === 'failed' && (
                   <p className="px-2 text-xs text-text-secondary">{error}</p>
                 )}
-                {question && !cancellingStatuses.includes(status) && status !== 'cancelled' && (
+                {question && actionableStatuses.includes(statusFor(row)) && (
                   <div className="space-y-2 px-2 pb-2">
                     <p className="text-sm">{question.question}</p>
                     {replyId === question.id ? (
