@@ -410,12 +410,31 @@ export function createDesktopScenario({
           0,
           'Direct assignment must not require an extra model assessment'
         )
-        const discovery = await rpc(control, 'runtime.coordination.contexts', {})
-        assert.equal(
-          discovery.contexts.find(context => context.id === `personal:${USER}`)?.needsProcessing,
-          false,
-          'Successful role work must leave coordination idle'
+        // The earlier receipt-only assignment can still be retiring after this work settles.
+        await waitFor(
+          () => rpc(control, 'runtime.coordination.contexts', {}),
+          discovery =>
+            discovery.contexts.find(context => context.id === `personal:${USER}`)
+              ?.needsProcessing === false,
+          uiTimeoutMs
         )
+        const completionDatabase = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'), {
+          readOnly: true,
+        })
+        try {
+          completionDatabase.exec('PRAGMA busy_timeout = 10000')
+          const completionEvents = completionDatabase.prepare(
+            "SELECT COUNT(*) AS count FROM loop_items WHERE resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.taskId')=? AND json_extract(metadata,'$.kind')='work_state'"
+          )
+          assert.equal(
+            completionEvents.get(USER, taskId).count,
+            0,
+            'Successful role work must not create a coordination state event'
+          )
+        } finally {
+          completionDatabase.close()
+        }
+        assert.equal(coordinatorCalls, 0, 'Successful role work must not start assessment')
         assert.equal(
           await control.command('getElementCount', '[data-testid="stand-in-processing-notice"]'),
           '0',
