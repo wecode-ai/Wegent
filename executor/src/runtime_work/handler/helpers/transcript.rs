@@ -1000,33 +1000,6 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
         .collect()
 }
 
-fn guidance_image_inputs(value: Option<&Value>) -> Vec<Value> {
-    value
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|attachment| {
-            let mime_type = string_field(attachment, "mime_type")
-                .or_else(|| string_field(attachment, "mimeType"))?;
-            if !mime_type.starts_with("image/") {
-                return None;
-            }
-            let path = string_field(attachment, "local_path")
-                .or_else(|| string_field(attachment, "localPath"))?;
-            Some(json!({ "type": "localImage", "path": path }))
-        })
-        .collect()
-}
-
-fn guidance_input_items(message: &str, attachments: Option<&Value>) -> Vec<Value> {
-    let mut inputs = Vec::new();
-    if !message.trim().is_empty() {
-        inputs.push(json!({ "type": "text", "text": message }));
-    }
-    inputs.extend(guidance_image_inputs(attachments));
-    inputs
-}
-
 fn codex_guidance_failure_code(error: &str) -> &'static str {
     let normalized = error.to_ascii_lowercase();
     if normalized.contains("no active turn to steer")

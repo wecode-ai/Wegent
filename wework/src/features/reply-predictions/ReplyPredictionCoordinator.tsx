@@ -31,12 +31,10 @@ export function ReplyPredictionCoordinator({
       return null
     }
   }, [api, store])
-  const value = useSyncExternalStore(
-    source?.subscribe ?? noSubscription,
-    source?.getSnapshot ?? noSnapshot
-  )
+  // Keep background predictions active without republishing the feed through context.
+  useSyncExternalStore(source?.subscribe ?? noSubscription, noSnapshot, noSnapshot)
   return (
-    <ReplyPredictionFeedContext.Provider value={value}>
+    <ReplyPredictionFeedContext.Provider value={source}>
       {children}
     </ReplyPredictionFeedContext.Provider>
   )
