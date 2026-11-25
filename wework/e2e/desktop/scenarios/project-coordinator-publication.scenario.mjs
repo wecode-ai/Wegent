@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
@@ -119,6 +120,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await control.command('click', '[data-testid="project-coordinator-publish"]')
       const target = '[data-testid="project-coordinator-publication-target"]'
       const targetOptions = '[data-testid="project-coordinator-publication-target-options"]'
+      await verifyProjectFieldFocus(control, 'project-coordinator-publication-content')
       await control.command('clickWhenEnabled', target)
       await control.command('waitFor', targetOptions, { text: issue.title })
       assert.equal(

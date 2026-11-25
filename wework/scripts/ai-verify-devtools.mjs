@@ -3,8 +3,6 @@ import { join, dirname, resolve, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SourceMap } from 'node:module'
 
-const repositoryDirectory = fileURLToPath(new URL('../../', import.meta.url))
-
 export async function createDesktopControlClient(directory, endpoint, timeoutMs = 30_000) {
   const registry = join(directory, 'desktop-control')
   const files = (await readdir(registry)).filter(name => name.endsWith('.json'))
@@ -43,7 +41,10 @@ export async function writeDiagnosticFile(path, value) {
   await chmod(path, 0o600)
 }
 
-export async function readLocalSourceMap(url, root = repositoryDirectory) {
+export async function readLocalSourceMap(
+  url,
+  root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+) {
   const path = await realpath(fileURLToPath(url))
   const within = relative(await realpath(root), path)
   if (within.startsWith('..') || isAbsolute(within) || !path.endsWith('.map')) {

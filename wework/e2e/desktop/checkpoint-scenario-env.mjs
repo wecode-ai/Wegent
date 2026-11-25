@@ -48,11 +48,18 @@ export function checkpointScenarioEnv(env, checkpoint) {
   }
   if (
     checkpoint === 'native-window-chrome' ||
+    checkpoint === 'embedded-browser' ||
+    checkpoint === 'task-board-association' ||
+    checkpoint === 'project-create-people' ||
+    checkpoint === 'project-coordinator-publication' ||
+    checkpoint === 'collaboration-local-agent-dispatch' ||
     checkpoint === 'window-lifecycle' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'task-completion-notifications' ||
     checkpoint === 'project-assignment-notification' ||
+    checkpoint === 'collaboration-milestones' ||
     checkpoint === 'collaboration-personal-issues' ||
+    checkpoint === 'stand-in-connections' ||
     checkpoint === 'stand-in-profile-settings' ||
     checkpoint === 'stand-in-git' ||
     checkpoint.startsWith('human-interactions')
