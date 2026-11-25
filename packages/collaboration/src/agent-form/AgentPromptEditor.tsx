@@ -46,7 +46,6 @@ export function AgentPromptEditor({
         placeholder={field.placeholder ?? ''}
         rows={5}
         sendKey="cmd_enter"
-        skillMenuClassName="bottom-full left-0 mb-2 w-full"
         testId={field.testId}
         textareaRef={editorRef}
         translate={translate}
