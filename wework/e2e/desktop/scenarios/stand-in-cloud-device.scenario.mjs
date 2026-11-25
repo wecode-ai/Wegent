@@ -420,10 +420,10 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'personal-assistant-05-execution-choices.png')
-      await control.command('select', executionDevice, {
-        value: localDevice,
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'clickWhenEnabled',
+        `[role="listbox"] [role="option"][data-value=${JSON.stringify(localDevice)}]`
+      )
       await control.command('waitFor', executionDevice, {
         text: '当前设备',
         timeoutMs: uiTimeoutMs,
@@ -451,10 +451,19 @@ export function createDesktopScenario({
         localDevice
       )
       await openStandInDetails(control)
-      await control.command('select', executionDevice, {
-        value: firstUse.target.deviceId,
+      await control.command('clickWhenEnabled', executionDevice)
+      await control.command(
+        'clickWhenEnabled',
+        `[role="listbox"] [role="option"][data-value=${JSON.stringify(firstUse.target.deviceId)}]`
+      )
+      await control.command('waitFor', `${executionDevice}:not(:disabled)`, {
         timeoutMs: uiTimeoutMs,
       })
+      assert.equal(
+        (await readInitialAssistant()).assistant.definitions[0].bot.spec.execution_policy
+          .environment_id,
+        firstUse.target.deviceId
+      )
       await stop(control)
       if (firstUse.target.deviceId !== CLOUD_DEVICE_ID) {
         await bind(control, USER, CLOUD_DEVICE_ID)
