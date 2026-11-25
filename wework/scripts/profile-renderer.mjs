@@ -707,6 +707,7 @@ export function createDesktopScenario({
       )
       assert.equal(provider, 'wework-e2e', 'The selected model must use the isolated model service')
       await waitForClosedStartupSplash(control, uiTimeoutMs)
+      if (process.env.CI === 'true') await control.command('focusMainWindow', 'body')
       pids = await rendererPids(control)
       const inventory = await requestExecutor(control, 'runtime.tasks.list', {}, uiTimeoutMs)
       const savedTaskCount = inventory.workspaces
@@ -1024,7 +1025,8 @@ async function main() {
       WEWORK_E2E_APP_BIN: app,
       WEWORK_E2E_EXECUTOR_BIN: executor,
       WEWORK_E2E_DESKTOP_SCENARIO_ONLY: 'true',
-      WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      // Hosted CI can own the desktop; measure its real foreground scheduling.
+      WEWORK_E2E_BACKGROUND_WINDOW: process.env.CI === 'true' ? '0' : '1',
       WEWORK_E2E_DESKTOP_SCENARIO_MODULE: import.meta.url,
       WEWORK_RENDERER_PROFILE_CAPTURE: String(args.includes('--capture')),
       WEWORK_RENDERER_PROFILE_CHECK: String(args.includes('--check')),
