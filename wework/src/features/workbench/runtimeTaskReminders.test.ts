@@ -76,6 +76,80 @@ describe('runtime task reminders', () => {
     expect(result.current).toBe(rows)
   })
 
+  test('reuses unchanged listed reminder rows when one task starts a turn', () => {
+    const first = new RuntimeTaskMachine(reminderItem('first-listed').address)
+    const second = new RuntimeTaskMachine(reminderItem('second-listed').address)
+    const firstSnapshot = first.getSnapshot()
+    const secondSnapshot = second.getSnapshot()
+    const items = [
+      { ...reminderItem('first-listed'), key: firstSnapshot.key },
+      { ...reminderItem('second-listed'), key: secondSnapshot.key },
+    ]
+    const initial = new RuntimeTaskLifecycleStore('listed-reminder-update-test').getSnapshot()
+    const { result, rerender } = renderHook(snapshot => useUnlistedStandInTasks(items, snapshot), {
+      initialProps: {
+        ...initial,
+        tasks: new Map([
+          [firstSnapshot.key, firstSnapshot],
+          [secondSnapshot.key, secondSnapshot],
+        ]),
+      },
+    })
+    const [firstRow, secondRow] = result.current
+    expect(firstRow.lifecycle).toBe(firstSnapshot)
+    expect(secondRow.lifecycle).toBe(secondSnapshot)
+
+    first.dispatch({ type: 'turn_started', turnId: 'turn-1' })
+    const updated = first.getSnapshot()
+    rerender({
+      ...initial,
+      version: 1,
+      tasks: new Map([
+        [updated.key, updated],
+        [secondSnapshot.key, secondSnapshot],
+      ]),
+    })
+
+    expect(result.current[0]).not.toBe(firstRow)
+    expect(result.current[0].lifecycle).toBe(updated)
+    expect(result.current[1]).toBe(secondRow)
+  })
+
+  test('keeps the mark-read action stable across lifecycle updates for one store', async () => {
+    const item = reminderItem('running-reminder')
+    const runtimeWork = {
+      projects: [],
+      chats: [{ ...item.workspace, tasks: [item.task] }],
+      totalTasks: 1,
+    }
+    const firstStore = new RuntimeTaskLifecycleStore('stable-reminder-action-test')
+    firstStore.syncRuntimeWork(runtimeWork)
+    const { result, rerender } = renderHook(
+      ({ store }: { store: RuntimeTaskLifecycleStore }) =>
+        useRuntimeTaskReminders({
+          runtimeWork,
+          lifecycleStore: store,
+          lifecycleSnapshot: store.getSnapshot(),
+        }),
+      { initialProps: { store: firstStore } }
+    )
+    const initialAction = result.current.markRuntimeTaskRead
+
+    await act(async () => {
+      firstStore.turnStarted(item.address, 'turn-1')
+      rerender({ store: firstStore })
+    })
+    expect(result.current.items[0].lifecycle?.turn.id).toBe('turn-1')
+    expect(result.current.markRuntimeTaskRead).toBe(initialAction)
+
+    const nextStore = new RuntimeTaskLifecycleStore('new-reminder-action-test')
+    const markRead = vi.spyOn(nextStore, 'markRead')
+    await act(async () => rerender({ store: nextStore }))
+    expect(result.current.markRuntimeTaskRead).not.toBe(initialAction)
+    await act(async () => result.current.markRuntimeTaskRead(item.address))
+    expect(markRead).toHaveBeenCalledWith(item.address)
+  })
+
   test('discovers hidden stand-in work from task metadata without loading its transcript', async () => {
     const hidden = reminderItem('hidden-stand-in')
     const ordinary = reminderItem('hidden-ordinary')

@@ -2,7 +2,24 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { createUnlistedStandInTasksSource } from './unlistedStandInTasksSource'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
-import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import type {
+  RuntimeTaskLifecycleSnapshot,
+  RuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
+
+const rowsWithLifecycle = new WeakMap<RuntimeTaskReminderItem, RuntimeTaskReminderItem>()
+
+function withLifecycle(
+  item: RuntimeTaskReminderItem,
+  lifecycle: RuntimeTaskLifecycleSnapshot | undefined
+): RuntimeTaskReminderItem {
+  if (item.lifecycle === lifecycle) return item
+  const cached = rowsWithLifecycle.get(item)
+  if (cached && cached.lifecycle === lifecycle) return cached
+  const row = { ...item, lifecycle }
+  rowsWithLifecycle.set(item, row)
+  return row
+}
 
 /** Sidebar project filters must not hide executions from collaboration notifications. */
 export function useUnlistedStandInTasks(
@@ -38,17 +55,17 @@ export function useUnlistedStandInTasks(
   return useMemo(() => {
     let next: RuntimeTaskReminderItem[] | undefined
     for (const [index, item] of items.entries()) {
-      const lifecycle = snapshot.tasks.get(item.key)
-      if (lifecycle === item.lifecycle) continue
+      const row = withLifecycle(item, snapshot.tasks.get(item.key))
+      if (row === item) continue
       next ??= items.slice()
-      next[index] = { ...item, lifecycle }
+      next[index] = row
     }
     for (const item of loaded.values()) {
       if (visible.has(item.key)) continue
       const lifecycle = snapshot.tasks.get(item.key)
       if (!lifecycle) continue
       next ??= items.slice()
-      next.push({ ...item, lifecycle })
+      next.push(withLifecycle(item, lifecycle))
     }
     return next ?? items
   }, [items, loaded, snapshot.tasks, visible])
