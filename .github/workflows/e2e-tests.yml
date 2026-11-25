@@ -2170,6 +2170,7 @@ jobs:
         run: uv run --no-sync python -m tests.e2e.responses_device_cancel
 
       - name: Run cloud model gateway Goal recovery E2E
+        if: ${{ !matrix.suite || matrix.suite == 'device' }}
         working-directory: ./backend
         env:
           E2E_API_URL: http://127.0.0.1:8000
