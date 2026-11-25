@@ -363,13 +363,30 @@ function connectDshExecutorEventStream(
     delivery.port2.postMessage(null)
   }
   delivery.port1.onmessage = () => {
-    const deadline = performance.now() + EVENT_DELIVERY_SLICE_MS
+    const startedAt = performance.now()
+    const deadline = startedAt + EVENT_DELIVERY_SLICE_MS
+    let delivered = 0
+    let lastEvent: DshExecutorEventEnvelope | undefined
     while (head) {
       const { event, throughSubscriber, next } = head
       head = next
       if (!head) tail = undefined
       listener(event, throughSubscriber)
+      delivered += 1
+      lastEvent = event
       if (performance.now() >= deadline) break
+    }
+    if (import.meta.env.VITE_WEWORK_E2E === 'true' && lastEvent) {
+      const durationMs = performance.now() - startedAt
+      if (durationMs >= 50) {
+        logRuntimeTaskCreateStage('executor-slow-delivery-slice', {
+          durationMs,
+          delivered,
+          event: lastEvent.event,
+          sequence: lastEvent.sequence,
+          subscriberCount: executorEventSubscribers.size,
+        })
+      }
     }
     deliveryScheduled = false
     if (head) scheduleDelivery()
