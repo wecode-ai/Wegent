@@ -12,7 +12,6 @@ export function StandInReviewDialog({
   testId,
   busy = false,
   compact = false,
-  suspended = false,
   onClose,
   finalFocus,
   children,
@@ -22,7 +21,6 @@ export function StandInReviewDialog({
   testId: string
   busy?: boolean
   compact?: boolean
-  suspended?: boolean
   onClose(): void
   finalFocus?: DialogFinalFocus
   children: ReactNode
@@ -30,7 +28,7 @@ export function StandInReviewDialog({
   const { t } = useTranslation('common')
   const titleId = useId()
   const close = () => {
-    if (!busy && !suspended) onClose()
+    if (!busy) onClose()
   }
   const ref = useRef<HTMLDivElement>(null)
   if (!open) return null
@@ -44,7 +42,6 @@ export function StandInReviewDialog({
       <DialogSurface
         onClose={close}
         active={open}
-        suspended={suspended}
         initialFocus={'[data-dialog-close]'}
         finalFocus={finalFocus}
         render={

@@ -85,27 +85,6 @@ impl RuntimeReader {
             .await
     }
 
-    pub(super) async fn assistant_share_definition(
-        &self,
-        device: &str,
-        user: i64,
-        id: &str,
-    ) -> Result<wegent_protocol::assistant_share::AssistantShareDefinition, AppIpcError> {
-        let value = self
-            .relay(
-                device,
-                wegent_protocol::assistant_share::ASSISTANT_SHARE_DEFINITION_METHOD,
-                json!({"userId": user, "kind": "assistant", "id": id}),
-            )
-            .await?;
-        let definition: wegent_protocol::assistant_share::AssistantShareDefinition =
-            serde_json::from_value(value).map_err(|_| invalid_response())?;
-        if definition.key() != ("assistant", id) {
-            return Err(invalid_response());
-        }
-        Ok(definition)
-    }
-
     pub(super) async fn verify_role_task(
         &self,
         device: &str,

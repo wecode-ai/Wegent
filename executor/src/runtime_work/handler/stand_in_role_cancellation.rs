@@ -30,7 +30,8 @@ impl RuntimeWorkRpcHandler {
             self.local_task_link(conversation).is_some_and(|link| {
                 let origin = &link.runtime_handle["origin"];
                 owned_role_task(&link, user, &self.device_id)
-                    && crate::task_runtime::personal_stand_in::supports_role_delegation(origin)
+                    && origin["type"] == "stand_in_identity"
+                    && origin["conversationScope"].is_null()
             })
         };
         if !authorized {

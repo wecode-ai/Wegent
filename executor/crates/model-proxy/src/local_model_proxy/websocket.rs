@@ -766,8 +766,7 @@ mod tests {
         }))
         .unwrap()
         .unwrap();
-        let token = register("websocket-switch-delta", upstream);
-        let connected_upstream = registry().lock().unwrap().routes[&token].upstream.clone();
+        let token = register("websocket-switch-delta", upstream.clone());
         bind_thread(&token, "ws-switch-thread").unwrap();
         mark_model_switch(&token);
         let mut thread = None;
@@ -775,7 +774,7 @@ mod tests {
         request["previous_response_id"] = json!("resp_foreign");
         let Err(error) = prepare_create(
             &token,
-            &connected_upstream,
+            &upstream,
             &HeaderMap::new(),
             &mut thread,
             &request.to_string(),
