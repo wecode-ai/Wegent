@@ -318,25 +318,25 @@ class SandboxRepository(metaclass=SingletonMeta):
 
         try:
             task_id = int(sandbox_id)
+            hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
 
-            # Load sandbox first to get e2b_sandbox_id for index cleanup
-            sandbox = self.load_sandbox(sandbox_id)
-            if sandbox:
-                e2b_sandbox_id = sandbox.metadata.get("e2b_sandbox_id")
+            # Keep the session available for retry if lookup or revocation fails.
+            record = self.redis_client.hget(hash_key, SANDBOX_FIELD_NAME)
+            if record is not None:
+                sandbox = json.loads(record)
+                container_name = sandbox.get("container_name")
+                if container_name and not self.delete_executor_binding(
+                    task_id, expected_executor_name=container_name, sandbox=True
+                ):
+                    return False
+                e2b_sandbox_id = (sandbox.get("metadata") or {}).get("e2b_sandbox_id")
                 if e2b_sandbox_id:
                     self._delete_e2b_index(e2b_sandbox_id)
-                if sandbox.container_name:
-                    self.delete_executor_binding(
-                        task_id,
-                        expected_executor_name=sandbox.container_name,
-                        sandbox=True,
-                    )
 
             # Remove from both the scoped index and any legacy membership.
             self._remove_sandbox_from_active_indexes(str(task_id))
 
             # Delete entire session Hash
-            hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
             self.redis_client.delete(hash_key)
 
             logger.debug(

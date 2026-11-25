@@ -177,7 +177,7 @@ class TestSandboxManager:
             manager,
             "_delete_sandbox_runtime",
             new_callable=AsyncMock,
-            return_value={"deleted": True},
+            return_value={"deleted": True, "redis_cleared": True},
         )
 
         mocker.patch.object(
@@ -213,7 +213,7 @@ class TestSandboxManager:
             manager,
             "_delete_sandbox_runtime",
             new_callable=AsyncMock,
-            return_value={"deleted": True},
+            return_value={"deleted": True, "redis_cleared": True},
         )
 
         result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
@@ -1242,12 +1242,14 @@ class TestSandboxManager:
         assert "not found" in message
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("revoke_succeeds", [False, True])
     async def test_terminate_sandbox_cleans_redis(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
         mocker,
+        revoke_succeeds,
     ):
         """Test Redis cleanup after termination."""
         manager = sandbox_manager_with_mock_redis
@@ -1261,6 +1263,20 @@ class TestSandboxManager:
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
             return_value=mock_executor,
         )
+
+        if not revoke_succeeds:
+            from executor_manager.services.sandbox import SandboxTerminationError
+
+            mocker.patch.object(
+                manager._repository, "delete_executor_binding", return_value=False
+            )
+            with pytest.raises(
+                SandboxTerminationError, match="sandbox_metadata_cleanup_failed"
+            ):
+                await manager.terminate_sandbox("12345")
+            mock_redis_client.zrem.assert_not_called()
+            mock_redis_client.delete.assert_not_called()
+            return
 
         await manager.terminate_sandbox("12345")
 

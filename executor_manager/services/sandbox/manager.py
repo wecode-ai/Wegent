@@ -834,7 +834,7 @@ class SandboxManager(metaclass=SingletonMeta):
             runtime_absent = (cleanup.get("delete_result") or {}).get(
                 "status"
             ) == "not_found"
-            if cleanup["deleted"] or (runtime_absent and cleanup["redis_cleared"]):
+            if cleanup["redis_cleared"] and (cleanup["deleted"] or runtime_absent):
                 result["deleted"].append(
                     {
                         "sandbox_id": sandbox.sandbox_id,
@@ -1018,16 +1018,18 @@ class SandboxManager(metaclass=SingletonMeta):
             return {**result, "skipped": False, "reason": "delete_failed"}
 
         result["redis_cleared"] = self._repository.delete_sandbox(sandbox_id)
-        if result["deleted"]:
-            result["skipped"] = False
-            result["reason"] = "sandbox_deleted"
-        elif result["redis_cleared"]:
-            result["skipped"] = False
-            result["reason"] = "sandbox_metadata_cleared"
-        else:
-            result["skipped"] = True
-            result["reason"] = "delete_failed"
+        if not result["redis_cleared"]:
+            return {
+                **result,
+                "skipped": False,
+                "reason": "sandbox_metadata_cleanup_failed",
+            }
 
+        if result["deleted"]:
+            result["reason"] = "sandbox_deleted"
+        else:
+            result["reason"] = "sandbox_metadata_cleared"
+        result["skipped"] = False
         return result
 
     async def _archive_sandbox_before_cleanup(self, sandbox: Sandbox) -> bool:
