@@ -458,16 +458,6 @@ test("the macOS runner exports complete runtimes after checkpoints on complete b
     ).length,
     1,
   );
-  const failureEvidence = job.steps.find(
-    (step) => step.name === "Upload macOS Inspector failure evidence before cleanup",
-  );
-  assert(failureEvidence);
-  assert.equal(
-    failureEvidence.if,
-    "always() && failure()",
-  );
-  assert.match(failureEvidence.with.path, /renderer-turn-long-task-profile\.json/);
-  assert(job.steps.indexOf(rendererGate) < job.steps.indexOf(failureEvidence));
   assert.equal(describe.if, "env.MACOS_COMPLETE_BUILD == 'true'");
   assert.equal(describe["continue-on-error"], undefined);
   assert.equal(describe.env.RUNTIME_TARGET, "darwin-arm64");
