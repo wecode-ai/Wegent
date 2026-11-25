@@ -105,6 +105,7 @@ mod tests {
             "base_url": backend_url,
             "request_url": request_url,
             "api_key": "short-lived-session",
+            "proxy_url": "http://127.0.0.1:1",
         }))
         .unwrap()
         .unwrap();
