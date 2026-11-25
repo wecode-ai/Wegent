@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer'
+
 import {
   assertDesktopComposerDocked,
   countTextOccurrences,
@@ -800,6 +802,8 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
+  await verifyAttachmentOnlyGuidance({ composerSelector, control })
+
   if (returnTaskRowTestId) {
     await ensureTaskRowVisible(control, returnTaskRowTestId)
     await control.command('clickWhenEnabled', `[data-testid="${returnTaskRowTestId}"]`, {
@@ -810,6 +814,55 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
+}
+
+async function verifyAttachmentOnlyGuidance({ composerSelector, control }) {
+  const scenario = 'guidance_attachment'
+  const filename = 'guidance-file.txt'
+  const fileContent = 'WEWORK_DESKTOP_E2E_GUIDANCE_FILE_CONTENT'
+  control.setScenario(scenario)
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await sendPrompt(control, composerSelector, GUIDANCE_SCROLL_ACTIVE_PROMPT)
+  await control.awaitScenarioRequestCount(scenario, 1)
+  control.releaseGuidanceScrollToolExecution()
+  await control.awaitScenarioRequestCount(scenario, 2)
+
+  await control.command('dropFile', composerSelector, {
+    filename,
+    mimeType: 'text/plain',
+    value: Buffer.from(fileContent).toString('base64'),
+  })
+  await control.command('waitFor', '[data-testid="attachment-badge"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getValue', composerSelector), '')
+  await control.command('click', '[data-testid="send-mode-menu-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="guide-current-turn-option"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const guidedRequest = await control.awaitScenarioRequestCount(scenario, 3)
+  assert.ok(
+    JSON.stringify(guidedRequest.body).includes(fileContent),
+    'Attachment-only guidance did not deliver the file contents to the running turn'
+  )
+  control.releaseGuidanceScrollCompletion()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('message-text-attachment') &&
+      (snapshot.text.includes(filename) || snapshot.text.includes(fileContent)),
+    'The running conversation did not show the submitted file',
+    DEFAULT_STEP_TIMEOUT_MS,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
 }
 
 async function verifyTurnNavigationTracksVisibleTurnMessages(
