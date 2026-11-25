@@ -106,7 +106,7 @@ test('the Cloud workflow command accepts populated and empty classifier matrices
   }
 })
 
-test('Linux balancing reuses the history runner without changing coverage, runners or exclusive benchmarks', () => {
+test('Linux balancing isolates history without changing coverage, runners or exclusive benchmarks', () => {
   const original = JSON.parse(matrices.wework_desktop_core_e2e_matrix)
   const snapshot = JSON.stringify(original)
   const balanced = balanceLinuxCoreMatrix(original)
@@ -136,12 +136,7 @@ test('Linux balancing reuses the history runner without changing coverage, runne
   const historyShard = balanced.include
     .find((entry) => entry.id === 'core-6')
     .segments.split(',')
-  assert.equal(historyShard[0], LINUX_CORE_HISTORY_CHECKPOINT)
-  assert(historyShard.length > 1)
-  for (const checkpoint of historyShard.slice(1)) {
-    assert(!isResourceExclusiveCheckpoint(checkpoint, true))
-    assert(measurements.scopes.core[checkpoint] > 0)
-  }
+  assert.deepEqual(historyShard, [LINUX_CORE_HISTORY_CHECKPOINT])
   for (const [id, checkpoint] of [
     ['core-9', 'human-interactions-hidden'],
     ['core-10', 'collaboration-shared-core'],
@@ -210,7 +205,7 @@ function completionSeconds(checkpoints, seconds) {
   return exclusiveSeconds + Math.max(...workers)
 }
 
-test('reuses the existing history runner after its isolated checkpoint', async () => {
+test('assigns parallel work to other runners when history already takes most of the budget', async () => {
   const checkpoints = [
     'codex-native-catalog',
     'collaboration-personal-issues',
@@ -241,17 +236,13 @@ test('reuses the existing history runner after its isolated checkpoint', async (
     ],
   }
   const seconds = Object.fromEntries(
-    [...checkpoints, history].map((checkpoint) => [checkpoint, 100]),
+    [...checkpoints, history].map((checkpoint) => [checkpoint, checkpoint === history ? 475 : 100]),
   )
   const balanced = balanceLinuxCoreMatrix(matrix, seconds)
   const tail = balanced.include
     .find((entry) => entry.id === 'core-6')
     .segments.split(',')
-  assert.equal(tail[0], history)
-  assert(
-    tail.length > 1,
-    'the history runner should execute work after history',
-  )
+  assert.deepEqual(tail, [history])
   const peak = (value) =>
     Math.max(
       ...value.include
@@ -263,7 +254,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
           ),
         ),
     )
-  assert(peak(balanced) < peak(matrix))
+  assert.equal(peak(balanced), seconds[history])
   for (const id of ['core-9', 'core-10'])
     assert.deepEqual(
       balanced.include.find((entry) => entry.id === id),
@@ -273,7 +264,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
   const events = []
   await runWithCheckpointResources({
     // Prove isolation even when the CLI order is not already history-first.
-    checkpoints: [...tail.slice(1), history],
+    checkpoints: [checkpoints[0], history],
     workerCount: 4,
     resourceFor: () => [],
     exclusiveFor: (checkpoint) =>
@@ -288,7 +279,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
     ['start', history],
     ['end', history],
   ])
-  assert.equal(events.length, 2 * tail.length)
+  assert.equal(events.length, 4)
   assert(!isResourceExclusiveCheckpoint(history))
   for (const checkpoint of RESOURCE_EXCLUSIVE_CHECKPOINTS) {
     assert(isResourceExclusiveCheckpoint(checkpoint))

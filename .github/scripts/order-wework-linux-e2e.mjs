@@ -35,16 +35,20 @@ export function balanceLinuxCoreMatrix(
   const checkpoints = (entry) =>
     expandDesktopCheckpoints(entry.segments.split(','))
   const before = include.flatMap(checkpoints).sort()
-  const pinned = (entry) =>
-    scope === 'core' && ['core-9', 'core-10'].includes(entry.id)
+  const pinnedCheckpoint = (entry) => {
+    if (scope !== 'core') return undefined
+    if (entry === history) return LINUX_CORE_HISTORY_CHECKPOINT
+    if (['core-9', 'core-10'].includes(entry.id)) return checkpoints(entry)[0]
+    return undefined
+  }
   const taskCount = include.reduce(
-    (total, entry) => total + (pinned(entry) ? 1 : checkpoints(entry).length),
+    (total, entry) => total + (pinnedCheckpoint(entry) ? 1 : checkpoints(entry).length),
     0,
   )
   include.push(...coreRunnerSlots(include, taskCount, runnerScale, scope))
   // Keep the latency benchmarks on their original runners. Redistribute their tails.
-  const receivers = include.filter((entry) => !pinned(entry))
-  if (!receivers.some((entry) => entry !== history))
+  const receivers = include.filter((entry) => !pinnedCheckpoint(entry))
+  if (!receivers.length)
     return { ...matrix, include }
   if (new Set(before).size !== before.length)
     throw new Error('Overlapping Linux Core checkpoints')
@@ -52,26 +56,21 @@ export function balanceLinuxCoreMatrix(
     .filter((entry) => entry.segments.length)
     .flatMap((entry) => {
       const selected = checkpoints(entry)
-      if (!pinned(entry)) return selected
-      entry.segments = selected[0]
-      return selected.slice(1)
+      const pinned = pinnedCheckpoint(entry)
+      if (!pinned) return selected
+      entry.segments = pinned
+      return selected.filter((checkpoint) => checkpoint !== pinned)
     })
-    .filter((checkpoint) => checkpoint !== LINUX_CORE_HISTORY_CHECKPOINT)
     .sort((a, b) => a.localeCompare(b))
   const exclusiveFor = (checkpoint) => isResourceExclusiveCheckpoint(checkpoint, scope === 'core')
   // Place isolated prefixes before allocating any work to the parallel workers.
   const ordered = orderLinuxCheckpoints(pending, scope, seconds).sort(
     (a, b) => Number(exclusiveFor(b)) - Number(exclusiveFor(a)),
   )
-  const historySeconds = seconds[LINUX_CORE_HISTORY_CHECKPOINT]
-  // History reserves every worker until it exits. Its remaining runner time
-  // can serve measured ordinary checkpoints without sharing its runtime.
   const assignments = receivers.map((entry) => ({
     entry,
-    checkpoints: entry === history ? [LINUX_CORE_HISTORY_CHECKPOINT] : [],
-    workers: Array(measurements.workers).fill(
-      entry === history ? (historySeconds ?? 180) : 0,
-    ),
+    checkpoints: [],
+    workers: Array(measurements.workers).fill(0),
   }))
   // Exclusive checkpoints precede the worker queue and occupy the whole runner.
   // Add their duration to every worker, retaining the same runtime isolation.
@@ -83,19 +82,11 @@ export function balanceLinuxCoreMatrix(
       exclusive
         ? Math.max(...assignment.workers)
         : Math.min(...assignment.workers)
-    // Do not put another exclusive prefix or an unmeasured case on history's runner.
-    const candidates = assignments.filter(
-      ({ entry }) =>
-        entry !== history ||
-        (!exclusive &&
-          historySeconds !== undefined &&
-          seconds[checkpoint] !== undefined),
-    )
     const conflicts = (assignment) => {
       const occupied = new Set(assignment.checkpoints.flatMap(resources))
       return Number(resources(checkpoint).some((resource) => occupied.has(resource)))
     }
-    candidates.sort(
+    assignments.sort(
       (a, b) =>
         conflicts(a) - conflicts(b) ||
         load(a) - load(b) ||
@@ -103,7 +94,7 @@ export function balanceLinuxCoreMatrix(
           b.workers.reduce((sum, value) => sum + value, 0) ||
         a.entry.id.localeCompare(b.entry.id),
     )
-    const target = candidates[0]
+    const target = assignments[0]
     const worker = target.workers.indexOf(Math.min(...target.workers))
     const duration = seconds[checkpoint] ?? 180
     if (exclusive)

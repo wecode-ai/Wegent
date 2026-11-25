@@ -14,6 +14,7 @@ const independent = new Set([
   'tasks/executor-workspace-recovery.spec.ts',
   'tasks/pipeline-session-archive.spec.ts',
   'tasks/claude-background-lifecycle.spec.ts',
+  'tasks/device-artifact-declaration.spec.ts',
   'tasks/device-ide.spec.ts',
   'tasks/provider-native-claudecode.spec.ts',
   'tasks/shell-reference-cancel.spec.ts',

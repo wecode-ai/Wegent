@@ -45,7 +45,8 @@ COPY shared/assets/codex-models /source/shared/assets/codex-models
 COPY shared/data/builtin-connector-apps.json /source/shared/data/builtin-connector-apps.json
 RUN rsync -rlp --checksum --delete --exclude=/target/ /source/backend-rs/ ./ \
     && rsync -rlp --checksum --delete /source/shared/ /workspace/shared/ \
-    && cargo build --release --locked --bin wegent-backend-rs \
+    && cargo build --release --locked --config 'profile.release.package.wegent-backend-rs.opt-level=0' \
+      --bin wegent-backend-rs \
       --example attachment_s3_e2e --example attachment_hosting_e2e
 
 FROM scratch AS runtime

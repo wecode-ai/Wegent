@@ -212,7 +212,7 @@ jobs:
         uses: ./.github/actions/setup-rust-cache
         with:
           manifest-path: backend-rs/Cargo.toml
-          components: rustfmt, clippy
+          components: rustfmt
 
       - name: Check Rust backend formatting
         working-directory: backend-rs
@@ -225,7 +225,6 @@ jobs:
         run: |
           cargo fmt --manifest-path shared/rust/Cargo.toml --all --check
           cargo test --manifest-path shared/rust/Cargo.toml --locked
-          cargo clippy --manifest-path shared/rust/Cargo.toml --all-targets --locked -- -D warnings
 
       - name: Run Rust backend tests
         working-directory: backend-rs
@@ -462,6 +461,9 @@ jobs:
       - name: Check Rust backend lints
         working-directory: backend-rs
         run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Check shared Rust library lints
+        run: cargo clippy --manifest-path shared/rust/Cargo.toml --all-targets --locked -- -D warnings
 
   test-plugin-auth-mysql:
     name: Test Backend MySQL Regressions

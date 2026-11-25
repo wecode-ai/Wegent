@@ -355,9 +355,11 @@ compiled dependencies when its toolchain, lockfile, and dependency build steps
 match. The build synchronizes workspace sources by content, removes deleted
 files, and preserves unchanged timestamps so Cargo can rebuild affected crates.
 Without a prebuilt dependency image, it compiles the real targets directly.
-Only dependency prewarming compiles placeholder targets. The two Linux Core
-latency benchmarks keep their dedicated shards, while the scheduler distributes
-the remaining checkpoints across the existing shards.
+Only dependency prewarming compiles placeholder targets. Functional E2E builds
+the gateway package at optimization level 0 and reuses the compiled dependencies.
+The two Linux Core latency benchmarks and running-conversation history keep
+dedicated shards. The scheduler distributes the remaining checkpoints across
+the existing shards.
 
 Windows desktop builds share the `build-wework-windows-e2e` action between PRs
 and main-branch cache warmup. Only `main` writes shared caches. Complete packages
