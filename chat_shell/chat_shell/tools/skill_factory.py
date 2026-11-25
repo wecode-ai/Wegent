@@ -125,10 +125,16 @@ def prepare_load_skill_tool(
 
     # Build skill metadata from skill_configs
     skill_metadata = {}
+    chat_only_skills = set()
+    deployable_skills = set()
     if skill_configs:
         for config in skill_configs:
             name = config.get("name")
             if name:
+                if config.get("sandbox_deploy") is False:
+                    chat_only_skills.add(name)
+                else:
+                    deployable_skills.add(name)
                 skill_metadata[name] = {
                     "description": config.get("description", ""),
                     "prompt": config.get("prompt", ""),
@@ -143,6 +149,8 @@ def prepare_load_skill_tool(
         user_id=user_id,
         skill_names=skill_names,
         skill_metadata=skill_metadata,
+        # A real Skill takes precedence if a generated Connector shares its name.
+        chat_only_skills=chat_only_skills - deployable_skills,
     )
 
     logger.info(

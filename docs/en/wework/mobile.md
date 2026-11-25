@@ -81,6 +81,12 @@ The workspace-owning device checks worktree capabilities, the repository, and wr
 
 Tap the composer to expand its toolbar, enter a message, and tap the up arrow to send. Use **Follow up (跟进)** to continue an existing conversation. While it runs, the square stop button cancels the current response. The top-left back button returns to the list; the compose icon at the top right of a conversation starts another conversation.
 
+## Voice input
+
+Tap the microphone in the composer to start local voice input. While recognizing, the composer becomes a voice bar with live volume, cancel, stop, and send actions. Stop writes the final text into the composer for review before sending; send stops recognition and submits the recognized text; cancel discards the result. Starting voice input while the keyboard is closed does not reopen it.
+
+iOS uses the system's on-device speech recognition and does not require a separate recognition model download inside the app. The first use requires microphone and speech-recognition permission and depends on a supported system language pack. Android uses the system on-device recognizer and requires Android 13 or later. When the Chinese offline language pack is missing, the app starts the system download flow. Missing local recognition support or denied permission produces a retryable error in the composer.
+
 ## Answer questions
 
 When a question card appears, tap **Answer question (回答问题)**, select an option or enter a custom answer, and tap **Send (发送)**. Answers to blocking questions are delivered to the waiting question in the original task. Asynchronous questions let the task keep running: an answer submitted while it runs is delivered as guidance; an answer submitted after it stops continues the original conversation.
@@ -91,7 +97,7 @@ The card shows **Answered (已回答)** or **Skipped (已跳过)** only after th
 
 ## Models, permissions, and attachments
 
-- **Models:** Expand the composer and tap the blue gauge icon. Use the slider to change reasoning effort when the model supports it. Tap the model name to open **Advanced (高级)**, then tap **Model (模型)**, **Intelligence (智能)**, or **Speed (速度)** to choose from a pop-up menu. Intelligence lists only the current model's supported reasoning levels. Models that support speed settings offer **Standard (标准)** and **Fast (快速)**. Selecting an option closes the menu and displays the current value. These settings apply to new conversations and subsequent messages; switching models adjusts the options to the new model's capabilities. If the model catalog fails to load, use the refresh button in this panel.
+- **Models:** Expand the composer and tap the blue model icon. The panel title shows the complete model name, current reasoning level, and an advanced-settings arrow. Models with reasoning controls use a slider with one segment per supported level, so a three-level model shows three segments and a five-level model shows five. Dragging the slider does not trigger the conversation back gesture. Tap the title to open **Advanced (高级)**, then tap **Model (模型)**, **Intelligence (智能)**, or **Speed (速度)** to choose from a pop-up menu. Intelligence lists only the current model's supported reasoning levels. Models that support speed settings offer **Standard (标准)** and **Fast (快速)**. Selecting an option closes the menu and displays the current value. These settings apply to new conversations and subsequent messages; switching models adjusts the options to the new model's capabilities. If the model catalog fails to load, use the refresh button in this panel.
 - **Permissions:** Expand the composer and tap the permission icon to select **Read only (只读)**, **Workspace (工作区)**, or **Full access (完整访问)**. These modes control what the task may do on its execution device.
 - **Attachments and modes:** Tap **+** on the left of the composer to add photos or files, or choose available device Skills, planning, or goal mode.
 
