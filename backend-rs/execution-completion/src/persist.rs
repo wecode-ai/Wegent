@@ -644,8 +644,8 @@ pub async fn commit_subtask_running<M: Mysql>(
             {
                 return Ok(None);
             }
-            // The subtask column has second precision. Binding fractions can
-            // round RUNNING forward past the first stream activity.
+            // subtasks.updated_at is DATETIME(0). Sending fractions lets MySQL
+            // round RUNNING into the future, past legitimate stream activity.
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
             match subtask_column::<String>(&row, "status").as_deref() {
                 Some("RUNNING") => {}

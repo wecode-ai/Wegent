@@ -15,6 +15,7 @@ import {
   getRuntimeConversationTurns,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
+import { pendingTerminalTranscriptTurn } from '@/features/workbench/runtimeConversationCacheStore'
 import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtimeGuidanceMessages'
 import { deriveRuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
 import {
@@ -71,6 +72,7 @@ interface TemporaryChatSessionSnapshot {
   historyError: string | null
   historyBeforeCursor: string | null
   historyLoadingMoreBefore: boolean
+  pendingTerminalTurnId: string | null
   hiddenRequestUserInputIds: ReadonlySet<string>
   queuedMessages: RuntimePaneQueuedMessage[]
 }
@@ -106,6 +108,7 @@ export function createTemporaryChatSession() {
     historyError: null,
     historyBeforeCursor: null,
     historyLoadingMoreBefore: false,
+    pendingTerminalTurnId: null,
     hiddenRequestUserInputIds: new Set(),
     queuedMessages: [],
   }
@@ -208,13 +211,19 @@ export function createTemporaryChatSession() {
     if (!options?.address || !observed()) return
     const messages = getRuntimeConversationMessages(options.address)
     const turns = getRuntimeConversationTurns(options.address)
+    const pendingTerminalTurnId = pendingTerminalTranscriptTurn(
+      options.address,
+      options.lifecycleStore.notificationScope
+    )
     const acceptedMessages = messages.length ? messages : state.messages
-    if (acceptedMessages !== state.messages || turns !== state.turns)
+    const transcriptChanged = acceptedMessages !== state.messages || turns !== state.turns
+    if (transcriptChanged || pendingTerminalTurnId !== state.pendingTerminalTurnId)
       publish({
         ...state,
         messages: acceptedMessages,
         turns,
-        error: messages.length ? null : state.error,
+        pendingTerminalTurnId,
+        error: transcriptChanged && messages.length ? null : state.error,
       })
   }
   async function loadHistory(force = false) {
@@ -486,6 +495,7 @@ export function createTemporaryChatSession() {
                         historyBeforeCursor: null,
                         historyError: null,
                         historyLoadingMoreBefore: false,
+                        pendingTerminalTurnId: null,
                         error: null,
                         sending: false,
                         acceptedSourceMessageIds: [],

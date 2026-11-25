@@ -25,7 +25,7 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
-import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { useWorkbenchSidebarReminders } from '@/features/workbench/runtimeTaskReminders'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
 import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
@@ -132,7 +132,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
   const openPluginCenterAction = actions.find(action => action.id === 'plugin-center.open') ?? null
   const activeItem = 'chat'
-  const taskReminders = useWorkbench().runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const taskReminders = useWorkbenchSidebarReminders()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const pendingModelRetryRef = useRef<WorkbenchMessage | null>(null)

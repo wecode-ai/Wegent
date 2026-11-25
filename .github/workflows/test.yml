@@ -232,6 +232,7 @@ jobs:
           set -o pipefail
           mkdir -p ../.ci-artifacts/backend-rs-tests
           git rev-parse HEAD > ../.ci-artifacts/backend-rs-tests/sha.txt
+          cargo test --locked --no-run --message-format=json-render-diagnostics > "$RUNNER_TEMP/backend-rs-test-artifacts.jsonl"
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
 
@@ -270,7 +271,7 @@ jobs:
           GIT_INBOX_TEST_REDIS_ENDPOINT: 127.0.0.1:6379
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-git-inbox --lib store::redis_tests -- --ignored --test-threads=1 \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-git-inbox store::redis_tests --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/git-inbox-redis.log
 
       - name: Verify native MySQL schema lifecycle and initialization
@@ -327,14 +328,14 @@ jobs:
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-plugin-runtime --lib plugins_installed::auto_update::auto_update_mysql_tests -- --ignored --nocapture --test-threads=1 \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-plugin-runtime plugins_installed::auto_update::auto_update_mysql_tests --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-write-replica-mysql.log
 
       - name: Verify plugin batch reads with MySQL
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-plugin-runtime --lib plugins_installed::handler::mysql_tests -- --ignored --nocapture --test-threads=1 \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-plugin-runtime plugins_installed::handler::mysql_tests --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-installed-list-mysql.log
           cargo test --locked --lib batch_mysql_tests -- --ignored --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-batch-reads-mysql.log
@@ -343,14 +344,14 @@ jobs:
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-attachments --lib attachments_task_all::auth::mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-attachments attachments_task_all::auth::mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/attachment-auth-mysql.log
 
       - name: Verify handoff title search with MySQL
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-tasks --lib tasks_search::mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-tasks tasks_search::mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/tasks-search-mysql.log
 
       - name: Verify assignment index schema compatibility with MySQL
@@ -359,16 +360,16 @@ jobs:
           set -o pipefail
           cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
-          cargo test --locked -p wegent-project-participation --lib human_requests::mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-project-participation human_requests::mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/human-requests-mysql.log
 
       - name: Verify batched project roster permission compatibility with MySQL
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-project-coordination --lib cloud_projects::members::roster_mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-project-coordination cloud_projects::members::roster_mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
-          cargo test --locked -p wegent-project-coordination --lib cloud_projects::agent_deletion_mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-project-coordination cloud_projects::agent_deletion_mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-agent-deletion-mysql.log
           cargo test --locked --lib cloud_projects::collaboration_metrics::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/collaboration-metrics-mysql.log
@@ -427,7 +428,7 @@ jobs:
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-connector-apps --lib apps_installed::refresh_mysql_tests -- --ignored --test-threads=1 \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-connector-apps apps_installed::refresh_mysql_tests --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/connector-refresh-mysql.log
 
       - name: Upload Rust backend test evidence
@@ -930,7 +931,10 @@ jobs:
           sudo -n gdb --version
           sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
           sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
-          dbus-run-session -- sh wework/e2e/desktop/run-with-xvfb.sh node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs wework/e2e/desktop/modules/startup-gdb-probe.test.mjs wework/e2e/desktop/modules/startup-gpu-probe.test.mjs wework/scripts/startup-gpu-evidence.test.mjs
+          # The windowless HTTP transport probe needs X11 for GTK but never uses GLX.
+          # Disabling the extension avoids loading Mesa in Electron's GTK startup.
+          WEWORK_E2E_XVFB_DISABLE_GLX=1 dbus-run-session -- sh wework/e2e/desktop/run-with-xvfb.sh node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
+          dbus-run-session -- sh wework/e2e/desktop/run-with-xvfb.sh node --test wework/e2e/desktop/modules/startup-gdb-probe.test.mjs wework/e2e/desktop/modules/startup-gpu-probe.test.mjs wework/scripts/startup-gpu-evidence.test.mjs
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1

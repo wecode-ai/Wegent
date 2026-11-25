@@ -50,12 +50,7 @@ import {
 import { findModelForSelection, modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { runtimeConversationKey } from './runtimeConversationCache'
 import { defaultNewChatModelSelection } from './runtimeModelSelection'
-import {
-  RuntimeTaskLifecycleStore,
-  useRuntimeTaskLifecycleStoreSnapshot,
-  useRuntimeTaskSummaryResolver,
-} from './runtimeTaskLifecycle'
-import { useRuntimeTaskReminders } from './runtimeTaskReminders'
+import { RuntimeTaskLifecycleStore, useRuntimeTaskSummaryResolver } from './runtimeTaskLifecycle'
 import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import {
@@ -211,9 +206,6 @@ export function OwnedWorkbenchProvider({
     get harnessAppLaunch() {
       return harnessAppLaunchInput
     },
-    get notificationTaskReminders() {
-      return runtimeTaskReminders
-    },
     t,
     executorClient,
     isWorkspaceTabActive,
@@ -262,8 +254,6 @@ export function OwnedWorkbenchProvider({
   })
   useDOMEvent('window', WORKBENCH_NEW_CHAT_REQUEST_EVENT, session.startRequestedChat)
   useDOMEvent('window', LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, session.invalidatePluginCatalog)
-  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
-
   const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(
     state.runtimeWork,
     sharedLifecycleStore
@@ -277,13 +267,6 @@ export function OwnedWorkbenchProvider({
 
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
 
-  const runtimeTaskReminders = useRuntimeTaskReminders({
-    runtimeWork: state.runtimeWork,
-    lifecycleStore,
-    lifecycleSnapshot,
-    standInApi: resolvedServices.standInApi,
-    runtimeApi: resolvedServices.runtimeWorkApi,
-  })
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined
@@ -589,8 +572,12 @@ export function OwnedWorkbenchProvider({
     debugSnapshotEnabled && publishDebugSnapshots
       ? {
           state,
-          lifecycle: lifecycleSnapshot,
-          taskReminders: runtimeTaskReminders,
+          get lifecycle() {
+            return sharedLifecycleStore.getSnapshot()
+          },
+          get taskReminders() {
+            return session.getTaskReminders()
+          },
           cloudWorkStatus,
           composer: {
             scopeKey: projectChatScopeKey,
@@ -920,7 +907,6 @@ export function OwnedWorkbenchProvider({
   const value = useWorkbenchContextValue(paneValue, {
     state,
     cloudWorkStatus,
-    runtimeTaskReminders,
     projectChat: projectChatValue,
     updateUserPreferences,
   })
@@ -996,6 +982,7 @@ export function OwnedWorkbenchProvider({
     <WorkbenchContextProviders
       value={value}
       retainOwner={observation.retain}
+      publishTaskReminders={session.publishTaskReminders}
       paneValue={paneValue}
       sharedLifecycleStore={sharedLifecycleStore}
       lifecycleStore={lifecycleStore}

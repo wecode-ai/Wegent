@@ -468,6 +468,26 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   height: 54px;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .sidebar-connection-event-status[data-state='waiting'] > svg {
+    animation: sidebar-connection-event-pulse 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes sidebar-connection-event-pulse {
+  0%,
+  65%,
+  100% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+
+  30% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
 @keyframes runtime-task-title-sheen {
   0% {
     opacity: 0;

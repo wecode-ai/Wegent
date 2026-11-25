@@ -2109,6 +2109,34 @@ export function createHybridWorkbenchServices(
           deviceId
         )
       },
+      sharing: {
+        async list(userId, deviceId) {
+          return (await standInApiForDevice(deviceId)).sharing.list(userId, deviceId)
+        },
+        async searchUsers(userId, deviceId, query) {
+          return (await standInApiForDevice(deviceId)).sharing.searchUsers(userId, deviceId, query)
+        },
+        async definition(userId, deviceId, kind, id) {
+          return (await standInApiForDevice(deviceId)).sharing.definition(
+            userId,
+            deviceId,
+            kind,
+            id
+          )
+        },
+        async publish(userId, deviceId, share) {
+          return (await standInApiForDevice(deviceId)).sharing.publish(userId, deviceId, share)
+        },
+        async direct(userId, deviceId, share) {
+          return (await standInApiForDevice(deviceId)).sharing.direct(userId, deviceId, share)
+        },
+        async revoke(userId, deviceId, share) {
+          return (await standInApiForDevice(deviceId)).sharing.revoke(userId, deviceId, share)
+        },
+        async copy(userId, deviceId, share, update) {
+          return (await standInApiForDevice(deviceId)).sharing.copy(userId, deviceId, share, update)
+        },
+      },
       async deviceIdentity(deviceId) {
         const api = await standInApiForDevice(deviceId)
         if (api === localServices.standInApi) return api.deviceIdentity(deviceId)

@@ -18,12 +18,9 @@ import type { RuntimeGuidanceRequest } from '@/types/api'
 import type { RuntimePaneGuidanceResult } from '@/features/workbench/workbenchContextTypes'
 import GitTaskStatus from './task-status'
 
-vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
-  useAppPreferencesState: () => null,
-}))
-vi.mock('@/features/workbench/changeRequestMonitor', () => ({
-  runtimeTaskChangeRequestTarget: () => null,
-  useTaskChangeRequest: () => ({
+const { listeners, monitor } = vi.hoisted(() => {
+  const listeners = new Set<() => void>()
+  const snapshot = {
     changeRequest: {
       provider: 'github',
       number: 48,
@@ -32,39 +29,73 @@ vi.mock('@/features/workbench/changeRequestMonitor', () => ({
       state: 'open',
       checks: 'failure',
     },
-  }),
+  }
+  return {
+    listeners,
+    monitor: {
+      subscribe(listener: () => void) {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      register: () => () => undefined,
+      getSnapshot: () => snapshot,
+    },
+  }
+})
+
+vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
+  useAppPreferencesState: () => null,
+}))
+vi.mock('@/features/workbench/changeRequestMonitor', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/workbench/changeRequestMonitor')>()),
+  getChangeRequestMonitor: () => monitor,
 }))
 
 const address = { deviceId: 'device', taskId: 'task' }
 const repairButton = 'runtime-local-task-change-request-task-repair'
 
-function fixture(running: boolean) {
+function fixture(running: boolean, taskOverrides: Partial<RuntimeTaskSummary> = {}) {
   const task: RuntimeTaskSummary = {
     taskId: address.taskId,
     title: 'Fix CI',
     runtime: 'codex',
     running,
     continuable: true,
+    gitInfo: { branch: 'fix-ci' },
+    ...taskOverrides,
   }
   const store = new RuntimeTaskLifecycleStore('pr-repair-test')
   const workbench = {
+    services: { deviceApi: {} },
     sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
     sendRuntimePaneGuidance: vi
       .fn<(request: RuntimeGuidanceRequest) => Promise<RuntimePaneGuidanceResult>>()
       .mockResolvedValue({ sent: true, turnId: 'active-turn' }),
     setWorkbenchError: vi.fn(),
   }
-  render(
+  const tree = (current: RuntimeTaskSummary) => (
     <RuntimeTaskLifecycleProvider store={store}>
       <WorkbenchContext.Provider value={workbench as unknown as WorkbenchContextValue}>
         <GitTaskStatus
-          task={task}
-          workspace={{ ...address, workspacePath: '/repo', available: true, tasks: [task] }}
+          task={current}
+          workspace={{
+            ...address,
+            workspacePath: '/repo',
+            repoUrl: 'https://github.com/wecode-ai/Wegent.git',
+            available: true,
+            tasks: [current],
+          }}
         />
       </WorkbenchContext.Provider>
     </RuntimeTaskLifecycleProvider>
   )
-  return { store, task, ...workbench }
+  const view = render(tree(task))
+  return {
+    store,
+    task,
+    ...workbench,
+    rerenderTask: (current: RuntimeTaskSummary) => view.rerender(tree(current)),
+  }
 }
 
 async function repair() {
@@ -74,6 +105,21 @@ async function repair() {
 
 describe('sidebar PR repair', () => {
   afterEach(clearRuntimeConversationCacheForTests)
+
+  test('does not mount PR monitoring until a Git target is available', () => {
+    const { task, rerenderTask } = fixture(false, { gitInfo: undefined })
+
+    expect(listeners.size).toBe(0)
+    expect(screen.queryByTestId('runtime-local-task-change-request-task')).not.toBeInTheDocument()
+
+    rerenderTask({ ...task, gitInfo: { branch: 'fix-ci' } })
+    expect(listeners.size).toBe(1)
+    expect(screen.getByTestId('runtime-local-task-change-request-task')).toBeInTheDocument()
+
+    rerenderTask({ ...task, gitInfo: undefined })
+    expect(listeners.size).toBe(0)
+    expect(screen.queryByTestId('runtime-local-task-change-request-task')).not.toBeInTheDocument()
+  })
 
   test('guides the running turn and displays the repair inside that turn', async () => {
     const { sendRuntimePaneMessage, sendRuntimePaneGuidance } = fixture(true)

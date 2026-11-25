@@ -361,6 +361,10 @@ The two Linux Core latency benchmarks and running-conversation history keep
 dedicated shards. The scheduler distributes the remaining checkpoints across
 the existing shards.
 
+The Backend Rust module check reuses workspace test binaries for package-specific
+MySQL and Redis regressions, retaining each step's service configuration and logs.
+A filter that matches no tests fails the check.
+
 Windows desktop builds share the `build-wework-windows-e2e` action between PRs
 and main-branch cache warmup. Only `main` writes shared caches. Complete packages
 require an exact match of source inputs, Node, Rust, and runner image versions;

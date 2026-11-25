@@ -43,6 +43,9 @@ const PYTHON_RUNTIME_STARTUP_PEERS = [
   'stand-in-cli',
   'quota-recovery',
   'permission-modes',
+  'model-routing',
+  'human-interactions',
+  'runtime-task-queue',
 ]
 
 export function linuxCoreCheckpointResources(checkpoint) {

@@ -7,7 +7,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.cache import cache_manager
 from app.services.chat.storage.session import session_manager
@@ -37,7 +37,13 @@ def _has_stream_activity(
         or last_activity_at < started_at
     ):
         return None
-    return last_activity_at > started_at and last_activity_at >= since
+    if last_activity_at <= started_at:
+        return False
+    if since.microsecond == 0 and last_activity_at < since:
+        # MySQL rounds the RUNNING timestamp stored in a DATETIME(0) column.
+        # Only compare at that precision after proving activity followed START.
+        return since - last_activity_at <= timedelta(microseconds=500_000)
+    return last_activity_at >= since
 
 
 async def _probe(task_id: int, subtask_id: int, *, since: datetime) -> bool | None:

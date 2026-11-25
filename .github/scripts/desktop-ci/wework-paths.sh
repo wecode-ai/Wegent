@@ -75,6 +75,7 @@ classify_wework_path() {
   case "$path" in
     wework/e2e/desktop/scenarios/python-runtime.scenario.mjs | \
       wework/e2e/desktop/modules/managed-python.mjs | \
+      wework/e2e/desktop/modules/plugin-python-mcp.mjs | \
       wework/electron/src/runtime/python-runtime* | \
       wework/src/desktop/executionEnvironments* | \
       wework/src/components/settings/ExecutionEnvironmentsSettingsPage*)
