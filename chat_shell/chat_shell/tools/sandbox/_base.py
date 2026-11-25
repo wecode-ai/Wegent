@@ -361,7 +361,7 @@ class SandboxManager:
 
             if self.load_skill_tool is not None:
                 required_skills = sorted(
-                    self.load_skill_tool.get_loaded_sandbox_skills() - {"sandbox"}
+                    self.load_skill_tool.iter_loaded_sandbox_skills()
                 )
                 if required_skills:
                     metadata["required_skills"] = json.dumps(

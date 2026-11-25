@@ -141,4 +141,4 @@ def test_generated_connector_cannot_hide_same_named_deployable_skill() -> None:
 
     load_skill_tool.preload_skill_prompt(name, stored_skill)
 
-    assert load_skill_tool.get_loaded_sandbox_skills() == {name}
+    assert set(load_skill_tool.iter_loaded_sandbox_skills()) == {name}
