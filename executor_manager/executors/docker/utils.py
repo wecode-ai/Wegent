@@ -527,8 +527,7 @@ def _inspect_docker_callback_bindings(
 ) -> list[tuple[int, str, str, bool]]:
     template = (
         '{{.State.Running}} {{.Name}} {{index .Config.Labels "owner"}} '
-        '{{index .Config.Labels "task_id"}} '
-        '{{json (index .Config.Labels "aigc.weibo.com/task-type")}} {{json .Config.Env}}'
+        '{{index .Config.Labels "task_id"}} {{json .Config.Env}}'
     )
     try:
         result = subprocess.run(
@@ -546,16 +545,21 @@ def _inspect_docker_callback_bindings(
 
     bindings = []
     for line in result.stdout.splitlines():
-        fields = line.split(maxsplit=5)
-        if len(fields) != 6:
+        fields = line.split(maxsplit=4)
+        if len(fields) != 5:
             continue
-        running, name, owner, task_id, task_type, environment = fields
+        running, name, owner, task_id, environment = fields
         if running != "true" or owner != CONTAINER_OWNER or not task_id.isdecimal():
             continue
         try:
             entries = json.loads(environment) or []
         except json.JSONDecodeError:
             continue
+        # The heartbeat type identifies sandboxes created before the scope marker.
+        sandbox = "EXECUTOR_CALLBACK_SCOPE=sandbox" in entries or (
+            "EXECUTOR_CALLBACK_SCOPE=task" not in entries
+            and "HEARTBEAT_TYPE=sandbox" in entries
+        )
         for entry in entries:
             key, _, token = entry.partition("=")
             if key == "EXECUTOR_CALLBACK_TOKEN" and re.fullmatch(
@@ -566,7 +570,7 @@ def _inspect_docker_callback_bindings(
                         int(task_id),
                         name.removeprefix("/"),
                         token,
-                        task_type == '"sandbox"',
+                        sandbox,
                     )
                 )
                 break

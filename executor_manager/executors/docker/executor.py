@@ -1144,7 +1144,17 @@ class DockerExecutor(Executor):
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
         callback_token = get_metadata_field(task, CALLBACK_TOKEN)
         if callback_token:
-            cmd.extend(["-e", f"EXECUTOR_CALLBACK_TOKEN={callback_token}"])
+            scope = (
+                "sandbox" if get_metadata_field(task, "type") == "sandbox" else "task"
+            )
+            cmd.extend(
+                [
+                    "-e",
+                    f"EXECUTOR_CALLBACK_TOKEN={callback_token}",
+                    "-e",
+                    f"EXECUTOR_CALLBACK_SCOPE={scope}",
+                ]
+            )
 
     def _add_heartbeat_env_vars(self, cmd: List[str], task: Dict[str, Any]) -> None:
         """Add environment variables for heartbeat service.

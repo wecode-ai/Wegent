@@ -185,6 +185,7 @@ class TestDockerExecutor:
 
         assert "CALLBACK_URL=http://callback.url" in cmd
         assert "EXECUTOR_CALLBACK_TOKEN=callback-token" in cmd
+        assert "EXECUTOR_CALLBACK_SCOPE=task" in cmd
 
     @patch.dict(os.environ, {"TASK_API_DOMAIN": "http://backend:8000"}, clear=False)
     @patch.object(docker_executor_module, "build_callback_url")
@@ -286,6 +287,7 @@ class TestDockerExecutor:
             "type": "sandbox",
             "auth_token": "token-123",
             "skill_identity_token": "skill-jwt",
+            "executor_callback_token": "callback-token",
         }
 
         task_info = executor._extract_task_info(sandbox_task)
@@ -294,6 +296,7 @@ class TestDockerExecutor:
         )
 
         assert "AUTH_TOKEN=token-123" in cmd
+        assert "EXECUTOR_CALLBACK_SCOPE=sandbox" in cmd
         assert "TASK_ID=123" in cmd
         assert "EXECUTOR_MODE=docker" in cmd
         assert "WEGENT_SKILL_USER_NAME=test_user" in cmd
