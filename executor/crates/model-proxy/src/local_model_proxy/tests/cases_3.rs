@@ -349,7 +349,7 @@ async fn keeps_foreign_encrypted_history_sanitized_after_the_switch_request() {
             proxy_url: None,
             model_id: None,
             routing_model_id: Some("gpt-6.1-sol".to_owned()),
-            codex_request_mode: CodexRequestMode::Auto,
+            codex_request_mode: CodexRequestMode::OfficialSubscription,
             max_output_tokens: None,
             model_context_window: None,
         },
@@ -530,7 +530,7 @@ async fn restores_foreign_history_boundary_after_route_restart() {
         proxy_url: None,
         model_id: None,
         routing_model_id: Some("gpt-6.1-sol".to_owned()),
-        codex_request_mode: CodexRequestMode::Auto,
+        codex_request_mode: CodexRequestMode::OfficialSubscription,
         max_output_tokens: None,
         model_context_window: None,
     };

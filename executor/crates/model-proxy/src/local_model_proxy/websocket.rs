@@ -24,7 +24,10 @@ const UPSTREAM_TIMING_EVENT: &str = "responsesapi.websocket_timing";
 
 fn supports_websocket(upstream: &LocalModelProxyUpstream) -> bool {
     upstream.uses_native_chatgpt_auth()
-        && upstream.codex_request_mode == CodexRequestMode::Passthrough
+        && matches!(
+            upstream.codex_request_mode,
+            CodexRequestMode::Passthrough | CodexRequestMode::OfficialSubscription
+        )
 }
 
 pub(super) async fn handle_upgrade(

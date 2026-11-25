@@ -205,6 +205,16 @@ fn merge_tool_outputs(items: &mut Vec<Value>) {
     let mut removed = false;
     for index in 0..items.len() {
         let item = &items[index];
+        if matches!(
+            item["type"].as_str(),
+            Some("function_call" | "custom_tool_call")
+        ) {
+            // Forked history can contain an earlier invocation with the same provider ID.
+            if let Some(id) = item["call_id"].as_str() {
+                first_by_call.remove(id);
+            }
+            continue;
+        }
         if !matches!(
             item["type"].as_str(),
             Some("function_call_output" | "custom_tool_call_output")

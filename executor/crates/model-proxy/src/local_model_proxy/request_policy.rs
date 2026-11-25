@@ -24,6 +24,8 @@ pub enum CodexRequestMode {
     Auto,
     Standard,
     Passthrough,
+    #[serde(skip)]
+    OfficialSubscription,
 }
 
 impl CodexRequestMode {
@@ -39,6 +41,7 @@ impl CodexRequestMode {
             Self::Auto => "auto",
             Self::Standard => "standard",
             Self::Passthrough => "passthrough",
+            Self::OfficialSubscription => "official_subscription",
         }
     }
 }
@@ -142,26 +145,31 @@ pub(super) async fn prepare(
         Some(model_id) => rewrite_request_model(body, model_id)?,
         None => body.to_vec(),
     };
-    if upstream.codex_request_mode == CodexRequestMode::Passthrough {
+    let (body, normalized_reasoning_items, foreign_history_keys) = if upstream
+        .is_official_chatgpt_codex()
+        && upstream.codex_request_mode != CodexRequestMode::Passthrough
+    {
+        super::openai_reasoning::normalize_official_reasoning_history(
+            body,
+            known_foreign_history_keys,
+            model_switched,
+        )?
+    } else {
+        (body, 0, HashSet::new())
+    };
+    if matches!(
+        upstream.codex_request_mode,
+        CodexRequestMode::Passthrough | CodexRequestMode::OfficialSubscription
+    ) {
         return Ok(PreparedRequest {
             body,
             conversion: None,
             expanded_browser_tools: HashSet::new(),
             stripped_encrypted_content: 0,
-            normalized_reasoning_items: 0,
-            foreign_history_keys: HashSet::new(),
+            normalized_reasoning_items,
+            foreign_history_keys,
         });
     }
-    let (body, normalized_reasoning_items, foreign_history_keys) =
-        if upstream.is_official_chatgpt_codex() {
-            super::openai_reasoning::normalize_official_reasoning_history(
-                body,
-                known_foreign_history_keys,
-                model_switched,
-            )?
-        } else {
-            (body, 0, HashSet::new())
-        };
     let body = if upstream.is_official_chatgpt_codex() {
         body
     } else {

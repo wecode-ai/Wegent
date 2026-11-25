@@ -57,7 +57,7 @@ fn official_openai_proxy_upstream(
         native_namespace_tools: true,
         // Official Responses requests keep their native shape. The proxy
         // only sanitizes non-portable history and the first switch request.
-        codex_request_mode: local_model_proxy::CodexRequestMode::Passthrough,
+        codex_request_mode: local_model_proxy::CodexRequestMode::OfficialSubscription,
         api_key: String::new(),
         default_headers: Vec::new(),
         proxy_url: runtime_proxy_url(&request.model_config).map(str::to_owned),
@@ -201,7 +201,7 @@ experimental_bearer_token="must-not-select"
         assert_eq!(upstream.base_url, "http://127.0.0.1:4567/backend-api/codex");
         assert_eq!(
             upstream.codex_request_mode,
-            local_model_proxy::CodexRequestMode::Passthrough
+            local_model_proxy::CodexRequestMode::OfficialSubscription
         );
         let mut launch = CodexLaunchConfig::default();
         configure_codex_router(

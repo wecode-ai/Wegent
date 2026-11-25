@@ -60,7 +60,7 @@ OpenAI Responses upstreams in `auto` and `standard` receive Codex subagent items
 
 Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
 
-The local router and cloud gateway map the top-level `model` before forwarding. Explicit passthrough preserves the remaining JSON bytes, including tool descriptions, history IDs, numeric representations and whitespace. The official ChatGPT route follows the same rule.
+The local router and cloud gateway map the top-level `model` before forwarding. Explicit passthrough preserves the remaining JSON bytes, including tool descriptions, history IDs, numeric representations and whitespace. The built-in ChatGPT subscription separately normalizes foreign reasoning history so conversations can continue after switching providers.
 
 For example, configure Kimi Responses with:
 

@@ -620,7 +620,10 @@ pub(super) async fn handle_for_token(
             )))
         }
         None if upstream.uses_native_chatgpt_auth()
-            && upstream.codex_request_mode == CodexRequestMode::Passthrough =>
+            && matches!(
+                upstream.codex_request_mode,
+                CodexRequestMode::Passthrough | CodexRequestMode::OfficialSubscription
+            ) =>
         {
             Response::new(Body::from_stream(response_stream))
         }

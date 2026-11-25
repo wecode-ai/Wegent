@@ -58,7 +58,7 @@ OpenAI Responses 上游在 `auto` 和 `standard` 模式下会收到 `type: "mess
 
 透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
 
-本机路由和云端网关在转发前映射顶层 `model`。显式透传保留其余 JSON 字节，包括工具说明、历史 ID、数字格式和空白。官方 ChatGPT 路由遵循同一规则。
+本机路由和云端网关在转发前映射顶层 `model`。显式透传保留其余 JSON 字节，包括工具说明、历史 ID、数字格式和空白。内置 ChatGPT 订阅会单独转换其他供应商的推理历史，使切换模型后仍可继续会话。
 
 例如，Kimi Responses 可配置为：
 

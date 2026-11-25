@@ -623,7 +623,9 @@ fn responses_merges_exec_result_and_notify_for_one_call() {
     let body = json!({"model":"test-model","input":[
         {"type":"function_call","call_id":"call_a","name":"exec","arguments":"{}"},
         {"type":"function_call_output","call_id":"call_a","output":"cell running"},
-        {"type":"function_call_output","call_id":"call_a","name":"exec","output":"queued"}
+        {"type":"function_call_output","call_id":"call_a","name":"exec","output":"queued"},
+        {"type":"function_call","call_id":"call_a","name":"exec","arguments":"{}"},
+        {"type":"function_call_output","call_id":"call_a","output":"next invocation"}
     ]});
     let (prepared, _, _) = prepare_request(
         "openai-responses",
@@ -634,7 +636,8 @@ fn responses_merges_exec_result_and_notify_for_one_call() {
     .unwrap();
     let prepared: Value = serde_json::from_slice(&prepared).unwrap();
     let items = prepared["input"].as_array().unwrap();
-    assert_eq!(items.len(), 2);
+    assert_eq!(items.len(), 4);
+    assert_eq!(items[3]["output"], "next invocation");
     assert_eq!(items[1]["output"], "cell running\nqueued");
 }
 
