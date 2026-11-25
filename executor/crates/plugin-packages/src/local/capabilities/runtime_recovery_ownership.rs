@@ -4,6 +4,50 @@
 use super::*;
 
 impl GlobalCapabilityStore {
+    pub(super) fn plugin_paths_current(
+        &self,
+        old: &Value,
+        next: &Value,
+        spec: &PluginSyncSpec,
+    ) -> Result<bool, CapabilitySyncError> {
+        // An unchanged private installation does not need a shared publication.
+        // Its next online installation can publish the archive through the normal flow.
+        let store_current = old.get("store_path") == next.get("store_path")
+            || self.current_recorded_store_path(old)?.is_some();
+        if old.get("runtime") != next.get("runtime")
+            || !store_current
+            || old.get("previous") != next.get("previous")
+        {
+            return Ok(false);
+        }
+        let source = spec
+            .checksum
+            .as_ref()
+            .and(next["store_path"].as_str())
+            .map(Path::new)
+            // Never-projected caches retain their existing offline startup behavior.
+            .filter(|path| path.is_dir() || old["runtime"]["managed_mcp_python"].is_string());
+        for (path, _) in self.plugin_runtime_targets(spec) {
+            if !path.is_dir()
+                || path.is_symlink()
+                || !path.join(CODEX_PLUGIN_MANIFEST_PATH).is_file()
+                || !path.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file()
+            {
+                return Ok(false);
+            }
+            if let Some(source) = source {
+                if !self.managed_python_configs_current(
+                    source,
+                    &path,
+                    old["runtime"]["managed_mcp_python"].is_string(),
+                )? {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
     pub(in crate::local::capabilities) fn validate_marketplace_occupancy(
         &self,
         spec: &PluginSyncSpec,

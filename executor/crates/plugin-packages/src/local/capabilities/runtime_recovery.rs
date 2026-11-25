@@ -330,35 +330,6 @@ impl GlobalCapabilityStore {
         Ok(self.shared_root()?.join("shared/plugins").join(digest))
     }
 
-    fn plugin_paths_current(
-        &self,
-        old: &Value,
-        next: &Value,
-        spec: &PluginSyncSpec,
-    ) -> Result<bool, CapabilitySyncError> {
-        // An unchanged private installation does not need a shared publication.
-        // Its next online installation can publish the archive through the normal flow.
-        let store_current = old.get("store_path") == next.get("store_path")
-            || self.current_recorded_store_path(old)?.is_some();
-        let source = spec
-            .checksum
-            .as_ref()
-            .and(next["store_path"].as_str())
-            .map(Path::new);
-        Ok(old.get("runtime") == next.get("runtime")
-            && store_current
-            && old.get("previous") == next.get("previous")
-            && self.plugin_runtime_targets(spec).iter().all(|(path, _)| {
-                path.is_dir()
-                    && !path.is_symlink()
-                    && path.join(CODEX_PLUGIN_MANIFEST_PATH).is_file()
-                    && path.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file()
-                    && source.map_or(true, |source| {
-                        self.managed_python_configs_current(source, path)
-                    })
-            }))
-    }
-
     fn rebase_plugin_entry(
         &self,
         entry: &mut Value,
@@ -561,8 +532,9 @@ impl GlobalCapabilityStore {
                 self.clone()
                     .with_managed_mcp_python(Some(python.to_owned()))
             })
-            .map(|old| old.managed_python_configs(&template, &template));
-        let current = self.managed_python_configs(&template, &template);
+            .map(|old| old.managed_python_configs(&template, &template))
+            .transpose()?;
+        let current = self.managed_python_configs(&template, &template)?;
         for configs in std::iter::once(current).chain(historical) {
             if configs.is_empty() {
                 continue;
@@ -745,7 +717,7 @@ impl GlobalCapabilityStore {
             runtime.extend(fields["runtime"].as_object().unwrap().clone());
             runtime.remove("managed_mcp_python");
             if !self
-                .managed_python_configs(store_path, store_path)
+                .managed_python_configs(store_path, store_path)?
                 .is_empty()
             {
                 runtime.insert(

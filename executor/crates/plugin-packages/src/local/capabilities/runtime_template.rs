@@ -42,7 +42,7 @@ impl RuntimeTemplate {
             );
             modes.insert(relative, mode);
         }
-        manifests.extend(store.managed_python_configs(source, stage.path()));
+        manifests.extend(store.managed_python_configs(source, stage.path())?);
         Ok(Self {
             source: source.to_owned(),
             modes,

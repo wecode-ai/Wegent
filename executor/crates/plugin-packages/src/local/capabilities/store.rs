@@ -307,9 +307,18 @@ impl GlobalCapabilityStore {
             }
             let spec = PluginSyncSpec::from_manifest_entry(&key, &plugin);
             let runtime_path = self.plugin_runtime_link(&spec);
+            let python_current = self.managed_python_configs_current(
+                &store_path,
+                &runtime_path,
+                plugin["runtime"]["managed_mcp_python"].is_string(),
+            )?;
             let missing_native_manifest = !runtime_path.join(".codex-plugin/plugin.json").is_file()
                 || !runtime_path.join(".claude-plugin/plugin.json").is_file();
-            if !runtime_path.is_dir() || runtime_path.is_symlink() || missing_native_manifest {
+            if !runtime_path.is_dir()
+                || runtime_path.is_symlink()
+                || missing_native_manifest
+                || !python_current
+            {
                 copy_dir_atomic(&store_path, &runtime_path)?;
                 self.prepare_runtime_copy(&runtime_path)?;
                 restored.push(key.clone());

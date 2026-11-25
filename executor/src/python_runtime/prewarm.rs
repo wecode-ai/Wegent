@@ -64,17 +64,14 @@ fn managed_plugins_need_python(manifest: &Path, shared: &Path) -> bool {
         .flat_map(|plugins| plugins.values())
         .filter(|plugin| plugin["enabled"] != false)
         .any(|plugin| {
-            let Ok(root) =
-                crate::local::plugin_catalog::managed_plugin_root(parent, shared, plugin)
-            else {
-                return false;
-            };
             // Publication records this path only for a projected Python MCP.
             let projected_mcp = plugin["managed"] == true
                 && plugin["runtime"]["managed_mcp_python"]
                     .as_str()
                     .is_some_and(|path| Path::new(path).is_absolute());
-            projected_mcp || package_needs_python(&root)
+            projected_mcp
+                || crate::local::plugin_catalog::managed_plugin_root(parent, shared, plugin)
+                    .is_ok_and(|root| package_needs_python(&root))
         })
 }
 
@@ -287,19 +284,33 @@ mod tests {
         let shared = home.path().join("shared/plugins");
         let interpreter = home.path().join("managed-runtimes/python/bin/python3");
         assert!(!interpreter.exists());
-        for enabled in [true, false] {
+        for (available, enabled, managed, absolute, expected) in [
+            (true, true, true, true, true),
+            (false, true, true, true, true),
+            (false, false, true, true, false),
+            (false, true, false, true, false),
+            (false, true, true, false, false),
+        ] {
+            if !available && package.exists() {
+                fs::remove_dir_all(&package).unwrap();
+            }
+            let marker = if absolute {
+                interpreter.clone()
+            } else {
+                PathBuf::from("python3")
+            };
             fs::write(
                 &manifest,
                 serde_json::to_vec(&serde_json::json!({
                     "plugins":{"python":{
-                        "managed":true,"enabled":enabled,"store_path":"store/plugins/python",
-                        "runtime":{"managed_mcp_python":interpreter}
+                        "managed":managed,"enabled":enabled,"store_path":"store/plugins/python",
+                        "runtime":{"managed_mcp_python":marker}
                     }}
                 }))
                 .unwrap(),
             )
             .unwrap();
-            assert_eq!(managed_plugins_need_python(&manifest, &shared), enabled);
+            assert_eq!(managed_plugins_need_python(&manifest, &shared), expected);
         }
     }
 }
