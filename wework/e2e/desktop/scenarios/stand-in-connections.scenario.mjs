@@ -122,7 +122,7 @@ export function createDesktopScenario(options) {
         await openStandInSettings(control)
         await verifyProjectFieldFocus(control, 'stand-in-preferences', {
           includeParent: true,
-          nextButtonPattern: /^stand-in-self-learning-toggle$/,
+          nextButtonPattern: /^stand-in-primary-connections-open$/,
         })
         await control.command(
           'clickWhenEnabled',
