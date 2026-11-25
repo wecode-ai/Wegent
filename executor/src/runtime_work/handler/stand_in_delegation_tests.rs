@@ -243,6 +243,35 @@ fn standard_process_can_use_separate_messages_in_the_confirmed_step_order() {
 }
 
 #[test]
+fn repeated_process_step_text_from_different_messages_is_preserved() {
+    let snapshot = conversation(
+        "按之前约定，清洁流程怎么走？",
+        &[
+            ("first-rinse", "冲洗"),
+            ("detergent", "加清洁剂"),
+            ("last-rinse", "冲洗"),
+        ],
+    );
+    let proposed = decision(
+        "process",
+        &[
+            ("first-rinse", "冲洗"),
+            ("detergent", "加清洁剂"),
+            ("last-rinse", "冲洗"),
+        ],
+        None,
+    );
+
+    assert_reply(
+        &snapshot,
+        &proposed,
+        "process",
+        &["first-rinse", "detergent", "last-rinse"],
+        "冲洗\n加清洁剂\n冲洗",
+    );
+}
+
+#[test]
 fn multiple_fragments_from_one_message_retain_one_evidence_id() {
     let snapshot = conversation(
         "培训几点开始，在哪儿？",
@@ -263,6 +292,24 @@ fn multiple_fragments_from_one_message_retain_one_evidence_id() {
         "schedule",
         &["booking"],
         "下午 3 点开始\n302 会议室",
+    );
+}
+
+#[test]
+fn an_identical_citation_is_emitted_once() {
+    let snapshot = conversation("培训几点开始？", &[("booking", "培训下午 3 点开始。")]);
+    let proposed = decision(
+        "schedule",
+        &[("booking", "下午 3 点开始"), ("booking", "下午 3 点开始")],
+        None,
+    );
+
+    assert_reply(
+        &snapshot,
+        &proposed,
+        "schedule",
+        &["booking"],
+        "下午 3 点开始",
     );
 }
 

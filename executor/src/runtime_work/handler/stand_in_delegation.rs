@@ -99,24 +99,8 @@ impl RuntimeWorkRpcHandler {
         }
         let mut message = message.clone();
         message["delegationVersion"] = role["delegation"]["version"].clone();
-        let linked = if let Some(id) = message["quotedMessageId"].as_str() {
-            store
-                .known_stand_in_message(user, "@primary", source, id)
-                .map_err(settings_error)?
-                .filter(|previous| previous["conversationId"] == message["conversationId"])
-        } else {
-            None
-        };
         store
-            .ingest_stand_in_message(
-                user,
-                "@primary",
-                source,
-                &message,
-                linked
-                    .as_ref()
-                    .and_then(|previous| previous["workId"].as_str()),
-            )
+            .ingest_stand_in_message(user, "@primary", source, &message, None)
             .map_err(settings_error)?;
         Ok(())
     }
@@ -602,6 +586,7 @@ fn supported_reply<'a>(snapshot: &Value, decision: &'a Value) -> Option<Supporte
     let messages = snapshot["messages"].as_array()?;
     let mut evidence_ids = Vec::new();
     let mut quotes = Vec::new();
+    let mut citations = Vec::new();
     let mut verified_link = None;
     for citation in decision["evidence"].as_array()? {
         let message_id = citation["messageId"].as_str().filter(|id| !id.is_empty())?;
@@ -630,7 +615,8 @@ fn supported_reply<'a>(snapshot: &Value, decision: &'a Value) -> Option<Supporte
             if exact_web_link(quote, link) && exact_web_link(original, link) {
                 verified_link = Some(link);
             }
-        } else if !quotes.contains(&quote) {
+        } else if !citations.contains(&(message_id, quote)) {
+            citations.push((message_id, quote));
             quotes.push(quote);
         }
         if !evidence_ids.contains(&message_id) {

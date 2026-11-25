@@ -37,6 +37,7 @@ function fixture() {
   const state = {
     currentProfile: profile,
     userId: 'owner',
+    selfId: 'self',
     orgId: 'organization',
     tokenOrganization: 'organization',
     mentions: searchResult(conversation('group', [message('ask')])),
@@ -62,8 +63,8 @@ function fixture() {
             user_id: state.userId,
             corp_id: state.tokenOrganization,
           }
-        if (input.tool === 'listProfiles')
-          return {
+        if (input.tool === 'listProfiles') {
+          const response = {
             currentProfile: state.currentProfile,
             profiles: [
               {
@@ -76,8 +77,11 @@ function fixture() {
               },
             ],
           }
+          state.afterProfileRead?.()
+          return response
+        }
         if (input.tool === 'searchUsers')
-          return { result: [{ userId: state.userId, openDingTalkId: 'self', name: 'Owner' }] }
+          return { result: [{ userId: state.userId, openDingTalkId: state.selfId, name: 'Owner' }] }
         if (input.tool === 'listDirectConversation')
           return {
             contractVersion: 'im.message-list.v1',
@@ -211,6 +215,65 @@ test('delegated collection rejects a broader group or changed account before rea
       calls.map(row => row.tool),
       ['listProfiles']
     )
+  } finally {
+    dispose()
+  }
+})
+
+test('delegated collection accepts a page containing an image without text', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    state.mentions = searchResult(
+      conversation('group', [
+        message('image', at, { messageType: 'image', content: {} }),
+        message('ask'),
+      ])
+    )
+    const result = await registry.call(providerId, 'collect', { source })
+    assert.deepEqual(
+      result.events.map(event => [event.id, event.textMessage]),
+      [
+        ['image', false],
+        ['ask', true],
+      ]
+    )
+    assert.deepEqual(result.nextCheckpoint, {
+      after: new Date(Date.parse(clock)).toISOString(),
+      cursor: '0',
+    })
+  } finally {
+    dispose()
+  }
+})
+
+test('switching accounts during owner lookup does not change owner recognition on return', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    state.search.result.conversationMessagesList[0].messages.push(
+      message('owner-reply', '2026-11-24T00:10:30Z', {
+        senderOpenDingTalkId: 'self',
+        quotedMessage: { openMessageId: 'ask' },
+      })
+    )
+    state.afterProfileRead = () => {
+      state.afterProfileRead = undefined
+      state.userId = 'different-user'
+      state.selfId = 'different-self'
+    }
+    const query = {
+      delegatedMessage: { id: 'ask', at, conversationId: 'group' },
+    }
+    await assert.rejects(registry.call(providerId, 'readSource', { source, query }), {
+      code: 'dingtalk_account_changed',
+    })
+    state.userId = 'owner'
+    state.selfId = 'self'
+    const snapshot = await registry.call(providerId, 'readSource', { source, query })
+    assert.equal(snapshot.ownerIntervened, true)
   } finally {
     dispose()
   }

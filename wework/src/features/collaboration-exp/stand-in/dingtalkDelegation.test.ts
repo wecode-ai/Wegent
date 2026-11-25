@@ -37,6 +37,21 @@ describe('DingTalk delegation settings', () => {
     })
   })
 
+  it('saves removal of legacy scopes without authorizing new scopes or policies', () => {
+    const legacy = { ...chat, id: '*', scope: 'all' as const }
+    const retained = { ...chat, id: 'existing', collectionKey: 'all-messages' }
+    const previous = { ...saved, connections: [legacy, retained] }
+    const draft = {
+      ...previous,
+      connections: [{ ...retained, policy: { automatic: true, askBeforeAct: false } }, chat],
+    }
+
+    expect(dingTalkDelegationModel(previous, draft, account).submission()).toMatchObject({
+      connections: [retained],
+      delegation: undefined,
+    })
+  })
+
   it.each(delegationTemplates)(
     'keeps a paused delegation while editing sources and disabling only %s',
     category => {

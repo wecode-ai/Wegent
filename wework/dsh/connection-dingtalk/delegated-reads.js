@@ -8,10 +8,14 @@ function nonEmptyString(value) {
   return typeof value === 'string' && value.trim() ? value : undefined
 }
 
-export function activeAccountIdentity(response) {
+function activeProfile(response) {
   const profile = nonEmptyString(response.currentProfile)
   if (!profile) throw authenticationRequired()
-  const account = response.profiles?.find(row => row.profile === profile)
+  return { profile, account: response.profiles?.find(row => row.profile === profile) }
+}
+
+export function activeAccountIdentity(response) {
+  const { profile, account } = activeProfile(response)
   return accountIdentity(account, profile)
 }
 
@@ -111,7 +115,8 @@ export async function boundAccount(ctx, source, readTool) {
       throw accountChanged()
     return identity
   }
-  const active = activeAccountIdentity(await readTool(ctx, 'listProfiles'))
+  const { profile, account } = activeProfile(await readTool(ctx, 'listProfiles'))
+  const active = accountIdentity(account, profile)
   if (
     active.profile !== source.profile ||
     (active.accountId && active.accountId !== source.accountId)

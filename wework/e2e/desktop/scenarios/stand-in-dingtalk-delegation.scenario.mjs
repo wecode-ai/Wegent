@@ -25,6 +25,7 @@ import { verifyDingTalkDelivery } from '../modules/stand-in-dingtalk-delivery.mj
 import { STORY_USER, storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 
 const PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
+const COLLECTION_PROBE_ROLE = 'dingtalk-account-switch-probe'
 const REPLY_LIMIT_MS = 120_000
 // The positive batch queues 18 model decisions and can span multiple collection ticks.
 const BATCH_DELIVERY_TIMEOUT_MS = 90_000
@@ -192,7 +193,8 @@ export function createDesktopScenario(options) {
           )
           .all(type, STORY_USER)
           .map(row => JSON.parse(row.metadata))
-      const sourceState = kind => rows('stand_in_source').find(row => row.source.kind === kind)
+      const sourceState = (kind, id = kind === 'direct' ? ids.peer : ids.group) =>
+        rows('stand_in_source').find(row => row.source.kind === kind && row.source.id === id)
       const records = () => new Map(rows('stand_in_message').map(row => [row.id, row]))
       const awaitOutcomes = (ids, expected, label, timeoutMs = timeout) =>
         storyUntil(
@@ -341,7 +343,7 @@ export function createDesktopScenario(options) {
         assert.equal(enabled.primary.delegation.accountId, accountId)
         assert.equal(enabled.primary.delegation.organizationId, ids.org)
         await storyUntil(
-          () => ['direct', 'group'].map(sourceState),
+          () => ['direct', 'group'].map(kind => sourceState(kind)),
           states => states.every(state => state?.checkpoint?.after && !state.error),
           timeout,
           'Both selected sources must have a first real checkpoint'
@@ -475,7 +477,7 @@ export function createDesktopScenario(options) {
         )
         await mailbox.setOffline(false)
         await storyUntil(
-          () => ['direct', 'group'].map(sourceState),
+          () => ['direct', 'group'].map(kind => sourceState(kind)),
           states =>
             states.every(
               state =>
@@ -634,10 +636,66 @@ export function createDesktopScenario(options) {
         assert.equal(revoked.primary.delegation.paused, true)
         assert.ok(revoked.primary.delegation.version > before.primary.delegation.version)
         assert.ok(!revoked.primary.connections.some(row => row.providerId === PROVIDER))
+        // Keep the same collector active through a separate, non-delegated source.
+        const { items: groups } = await request('runtime.connections.resources', {
+          providerId: PROVIDER,
+          kind: 'group',
+          query: 'Dots excluded group',
+        })
+        const probe = groups.find(row => row.id === ids.otherGroup)
+        assert.ok(probe?.accountId, 'Find the control group under the switched account')
+        assert.notEqual(probe.accountId, before.primary.delegation.accountId)
+        await request('runtime.stand_in.personal.save', {
+          userId: STORY_USER,
+          settings: {
+            ...revoked,
+            roles: [
+              ...revoked.roles,
+              {
+                id: COLLECTION_PROBE_ROLE,
+                name: 'Account switch collection probe',
+                enabled: true,
+                prompt: '',
+                tags: [],
+                executionDeviceId: revoked.executionDeviceId,
+                version: 0,
+                collaboration: {
+                  enabled: false,
+                  allProjects: false,
+                  projects: [],
+                  excludedProjects: [],
+                  tags: [],
+                },
+                connections: [{ ...probe, policy: { automatic: false, askBeforeAct: true } }],
+              },
+            ],
+          },
+        })
         const afterChange = replyCase('prior-account', 'group', 'process', Date.now() + 500)
         await publishCases([afterChange])
+        const probeCheckpointAfter = (at, label) =>
+          storyUntil(
+            () => sourceState('group', ids.otherGroup),
+            state => !state?.error && Date.parse(state?.checkpoint?.after) > Date.parse(at),
+            COLLECTION_RECOVERY_WAIT_MS,
+            label
+          )
+        const probePoll = await probeCheckpointAfter(
+          afterChange.question.at,
+          'The switched account must collect after the old-account message was published'
+        )
+        // Assistant sweeps never overlap. A second probe poll proves the first sweep finished.
+        const completedPoll = await probeCheckpointAfter(
+          probePoll.checkpoint.after,
+          'The preceding post-switch collection sweep must finish before checking silence'
+        )
         assert.equal((await settings()).primary.delegation.authorized, false)
         await assertSilent([afterChange], { uncollected: true })
+        const readsAfterSwitch = (await mailbox.reads()).filter(
+          row => Date.parse(row.end) >= Date.parse(afterChange.question.at)
+        )
+        assert.ok(readsAfterSwitch.some(row => row.conversationId === ids.otherGroup))
+        assert.ok(!readsAfterSwitch.some(row => row.conversationId === ids.group))
 
         await writeFile(
           join(options.resultDir, 'dingtalk-delegation-evidence.json'),
@@ -671,6 +729,11 @@ export function createDesktopScenario(options) {
                 linkedFollowup: followupResult.action,
                 gaps: ['duration', 'volume'],
                 accountInvalidated: true,
+                accountSwitchCollection: {
+                  publishedAt: afterChange.question.at,
+                  firstCheckpoint: probePoll.checkpoint.after,
+                  nextCheckpoint: completedPoll.checkpoint.after,
+                },
               },
             },
             null,

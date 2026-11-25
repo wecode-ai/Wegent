@@ -41,7 +41,14 @@ export function isDingTalkDelegationSource(source: SourceIdentity) {
 }
 
 function sourceKey(source: SourceIdentity) {
-  return JSON.stringify([source.profile, source.accountId, source.kind, source.id])
+  return JSON.stringify([
+    source.profile,
+    source.accountId,
+    source.kind,
+    source.id,
+    source.scope,
+    source.collectionKey,
+  ])
 }
 
 export function matchesDingTalkAccount(
@@ -97,11 +104,17 @@ export function dingTalkDelegationModel(
         delegationTemplates.some(key => !original.templates[key] && delegation.templates[key])),
     submission(enable = false): StandInIdentity {
       if (!enable && (!savedGrant || accountChanged)) {
-        // Generic settings saves must not activate or replace legacy DingTalk scopes.
+        // Keep the saved policy for any retained legacy scope until explicit enablement.
+        const draftScopes = new Set(sources.filter(isDingTalkSource).map(sourceKey))
         return {
           ...draft,
           delegation: saved.delegation,
-          connections: [...otherSources, ...savedSources.filter(isDingTalkSource)],
+          connections: [
+            ...otherSources,
+            ...savedSources.filter(
+              row => isDingTalkSource(row) && (savedGrant || draftScopes.has(sourceKey(row)))
+            ),
+          ],
         }
       }
       const authorizedSources = enable

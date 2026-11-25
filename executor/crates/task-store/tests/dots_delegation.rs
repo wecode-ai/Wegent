@@ -1,5 +1,7 @@
 use chrono::{DateTime, TimeDelta, Utc};
+use rusqlite::Connection;
 use serde_json::{json, Value};
+use std::path::Path;
 use wegent_local_task_store::personal_stand_in::{
     active_delegated_source, permits_delegated_message, permits_delegated_reply,
     requires_dingtalk_delegation, source_namespace, stand_in_identities, DINGTALK_PROVIDER,
@@ -43,6 +45,21 @@ fn primary(settings: &Value) -> Value {
 fn instant_after(boundary: &Value) -> Value {
     let time = DateTime::parse_from_rfc3339(boundary.as_str().unwrap()).unwrap();
     json!((time.with_timezone(&Utc) + TimeDelta::nanoseconds(1)).to_rfc3339())
+}
+
+fn reply_claims(path: &Path) -> Vec<Value> {
+    let connection = Connection::open(path).unwrap();
+    let mut statement = connection
+        .prepare(
+            "SELECT metadata FROM loop_items
+             WHERE resource_type='stand_in_delegation_reply_claim'",
+        )
+        .unwrap();
+    statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .map(|row| serde_json::from_str(&row.unwrap()).unwrap())
+        .collect()
 }
 
 #[test]
@@ -402,6 +419,42 @@ fn an_existing_explicit_delegation_without_version_migrates_to_one() {
 }
 
 #[test]
+fn omitting_primary_cannot_erase_the_saved_delegation() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let mut settings = saved(&store, settings);
+    settings["primary"]["delegation"]["action"] = json!("pause");
+    let settings = saved(&store, settings);
+    let mut role_only = settings.clone();
+    role_only.as_object_mut().unwrap().remove("primary");
+
+    let proposal = store
+        .propose_stand_in_settings(
+            7,
+            "desktop",
+            None,
+            "Update other settings",
+            role_only.clone(),
+        )
+        .unwrap();
+    let reviewed = store
+        .resolve_stand_in_proposal(7, "desktop", proposal["id"].as_str().unwrap(), true, None)
+        .unwrap();
+    assert_eq!(reviewed["primary"], settings["primary"]);
+
+    role_only["version"] = reviewed["version"].clone();
+    let mut saved_settings = saved(&store, role_only);
+    assert_eq!(saved_settings["primary"], settings["primary"]);
+    saved_settings["primary"]["delegation"]["action"] = json!("resume");
+    assert_eq!(
+        saved(&store, saved_settings)["primary"]["delegation"]["version"],
+        3
+    );
+}
+
+#[test]
 fn connector_account_change_revokes_the_current_selection_without_reusing_its_version() {
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
@@ -644,7 +697,7 @@ fn unknown_submission_survives_restart_and_blocks_linked_followup_but_not_indepe
     assert_eq!(replayed["delegationResult"]["status"], "unknown");
     let followup = json!({"id":"followup","quotedMessageId":"original","text":"Any update?","at":"2099-01-01T00:01:00Z"});
     let linked = store
-        .ingest_stand_in_message(7, "@primary", source, &followup, Some(work))
+        .ingest_stand_in_message(7, "@primary", source, &followup, None)
         .unwrap();
     assert_eq!(linked["id"], work);
     let linked_message = store
@@ -653,35 +706,89 @@ fn unknown_submission_survives_restart_and_blocks_linked_followup_but_not_indepe
         .unwrap();
     let linked_record = linked_message["recordId"].as_str().unwrap();
     assert_ne!(linked_record, record);
+    let split = store
+        .adjust_stand_in_message(7, work, linked_record, None)
+        .unwrap();
+    let split_work = split["id"].as_str().unwrap();
+    assert_ne!(split_work, work);
+    assert!(store
+        .record_delegation_decision(7, "desktop", split_work, linked_record, decision.clone())
+        .unwrap()
+        .is_none());
+    let messages = store.stand_in_messages(7, work).unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["id"], "original");
+    assert_eq!(messages[0]["delegationResult"]["status"], "unknown");
+    let split_messages = store.stand_in_messages(7, split_work).unwrap();
+    assert_eq!(split_messages.len(), 1);
+    assert_eq!(split_messages[0]["id"], "followup");
+    assert_eq!(split_messages[0]["delegationResult"]["action"], "skip");
+
+    let further = json!({"id":"further","quotedMessageId":"followup","text":"Still waiting","at":"2099-01-01T00:02:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &further, None)
+        .unwrap();
+    assert_eq!(item["id"], split_work);
+    let further = store
+        .known_stand_in_message(7, "@primary", source, "further")
+        .unwrap()
+        .unwrap();
+    assert!(store
+        .record_delegation_decision(
+            7,
+            "desktop",
+            split_work,
+            further["recordId"].as_str().unwrap(),
+            decision.clone(),
+        )
+        .unwrap()
+        .is_none());
+
+    let independent = json!({"id":"independent", "text":"Where is the release checklist?", "at":"2099-01-01T00:03:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &independent, None)
+        .unwrap();
+    let independent_work = item["id"].as_str().unwrap();
+    let independent_record = item["latestMessage"]["recordId"].as_str().unwrap();
+    assert_ne!(independent_work, work);
+    let merged = store
+        .adjust_stand_in_message(7, independent_work, independent_record, Some(work))
+        .unwrap();
+    assert_eq!(merged["id"], work);
     assert!(store
         .record_delegation_decision(
             7,
             "desktop",
             work,
-            linked_record,
-            reply_decision(&settings, "document", "attempt-followup"),
+            independent_record,
+            reply_decision(&settings, "document", "attempt-merged-independent"),
         )
         .unwrap()
-        .is_none());
-    let messages = store.stand_in_messages(7, work).unwrap();
-    assert_eq!(messages.len(), 2);
-    let original = messages
-        .iter()
-        .find(|message| message["id"] == "original")
+        .is_some());
+    store
+        .finish_delegated_submission(
+            7,
+            work,
+            independent_record,
+            &json!({"status":"sent","attemptId":"attempt-merged-independent","receiptId":"channel-receipt"}),
+        )
         .unwrap();
-    let followup = messages
-        .iter()
-        .find(|message| message["id"] == "followup")
+    let independent = store
+        .known_stand_in_message(7, "@primary", source, "independent")
+        .unwrap()
         .unwrap();
-    assert_eq!(original["delegationResult"]["status"], "unknown");
-    assert_eq!(followup["delegationResult"]["action"], "skip");
+    assert_eq!(independent["delegationResult"]["status"], "sent");
+    assert_eq!(
+        independent["delegationResult"]["receiptId"],
+        "channel-receipt"
+    );
 
     for (id, status, receipt) in [
-        ("independent", "sent", Some("channel-receipt")),
-        ("rejected", "failed", None),
+        ("sent-independent", "sent", Some("channel-receipt")),
+        ("rejected-independent", "failed", None),
     ] {
         let independent =
-            json!({"id":id, "text":"Where is the release checklist?", "at":"2099-01-01T00:02:00Z"});
+            json!({"id":id, "text":"Where is the release checklist?", "at":"2099-01-01T00:04:00Z"});
         let item = store
             .ingest_stand_in_message(7, "@primary", source, &independent, None)
             .unwrap();
@@ -711,6 +818,88 @@ fn unknown_submission_survives_restart_and_blocks_linked_followup_but_not_indepe
         assert_eq!(result["delegationResult"]["status"], status);
         assert_eq!(result["delegationResult"]["receiptId"], json!(receipt));
     }
+}
+
+#[test]
+fn reply_chain_claim_uses_the_existing_primary_key_without_a_schema_index() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let indexed: bool = Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index'
+             AND name='ix_stand_in_delegated_reply_chain')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!indexed, "Reply claims must not require a schema index");
+
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let settings = saved(&store, settings);
+    let source = &settings["primary"]["connections"][0];
+    let original =
+        json!({"id":"claim-original", "text":"Where is the guide?", "at":"2099-01-01T00:00:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &original, None)
+        .unwrap();
+    let work = item["id"].as_str().unwrap();
+    let record = item["latestMessage"]["recordId"].as_str().unwrap();
+    let decision = reply_decision(&settings, "document", "attempt-claim");
+    assert!(store
+        .record_delegation_decision(7, "desktop", work, record, decision.clone())
+        .unwrap()
+        .is_some());
+    assert_eq!(reply_claims(&path).len(), 1);
+
+    store
+        .finish_delegated_submission(
+            7,
+            work,
+            record,
+            &json!({"status":"sent","attemptId":"attempt-claim","receiptId":"channel-receipt"}),
+        )
+        .unwrap();
+    let claims = reply_claims(&path);
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0]["status"], "sent");
+    assert_eq!(claims[0]["receiptId"], "channel-receipt");
+
+    let followup = json!({"id":"claim-followup","quotedMessageId":"claim-original","text":"Any update?","at":"2099-01-01T00:01:00Z"});
+    let linked = store
+        .ingest_stand_in_message(7, "@primary", source, &followup, None)
+        .unwrap();
+    let linked_record = linked["latestMessage"]["recordId"].as_str().unwrap();
+    let split = store
+        .adjust_stand_in_message(7, work, linked_record, None)
+        .unwrap();
+    assert!(store
+        .record_delegation_decision(
+            7,
+            "desktop",
+            split["id"].as_str().unwrap(),
+            linked_record,
+            decision.clone(),
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(reply_claims(&path).len(), 1);
+
+    drop(store);
+    let store = LocalTaskStore::open(&path).unwrap();
+    assert!(store
+        .record_delegation_decision(
+            7,
+            "desktop",
+            split["id"].as_str().unwrap(),
+            linked_record,
+            decision,
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(reply_claims(&path).len(), 1);
 }
 
 #[test]

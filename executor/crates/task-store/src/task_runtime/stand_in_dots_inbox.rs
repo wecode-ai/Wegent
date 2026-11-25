@@ -76,6 +76,20 @@ enum SubmissionUpdate {
     Reconcile,
 }
 
+const REPLY_CLAIM_KIND: &str = "stand_in_delegation_reply_claim";
+
+fn reply_claim_key(user: i64, chain: &Value) -> String {
+    stand_in_record_key("stand-in-delegation-reply-claim", &json!([user, chain]))
+}
+
+pub(super) fn delegated_reply_chain(message: &Value) -> &Value {
+    // Older messages retain their initial grouping when they are moved.
+    message
+        .get("delegationChainId")
+        .or_else(|| message.get("originalWorkId"))
+        .unwrap_or(&message["workId"])
+}
+
 impl LocalTaskStore {
     /// Read an exact source event from an owned delegated work item.
     pub fn delegated_work_message(
@@ -170,14 +184,30 @@ impl LocalTaskStore {
             if !permits_delegated_reply(identity, &message["source"], template, &message["at"]) {
                 return Ok(None);
             }
-            let replied = connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='stand_in_message'
-                 AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2
-                 AND json_extract(metadata,'$.delegationResult.action')='reply')",
-                params![user, work_id],
-                |row| row.get::<_, bool>(0),
+            let chain = delegated_reply_chain(&message);
+            let claim_id = reply_claim_key(user, chain);
+            let claimed_at = now();
+            let inserted = connection.execute(
+                "INSERT INTO loop_items(id,resource_type,metadata,created_at,updated_at)
+                 VALUES (?1,?2,?3,?4,?4) ON CONFLICT(id) DO NOTHING",
+                params![
+                    claim_id,
+                    REPLY_CLAIM_KIND,
+                    json!({
+                        "userId":user,
+                        "chainId":chain,
+                        "messageId":record_id,
+                        "workId":work_id,
+                        "template":template,
+                        "policyVersion":identity["delegation"]["version"],
+                        "status":"submitting",
+                        "createdAt":claimed_at.clone(),
+                    })
+                    .to_string(),
+                    claimed_at,
+                ],
             )?;
-            if replied {
+            if inserted == 0 {
                 result = json!({"action":"skip","status":"complete","reason":"This reply chain already has a reply attempt."});
                 None
             } else {
@@ -275,6 +305,8 @@ impl LocalTaskStore {
                 ))
             }
         };
+        let claim_id = reply_claim_key(user, delegated_reply_chain(&message));
+        let finished_at = now();
         let result = &mut message["delegationResult"];
         result["status"] = json!(status);
         result["recordId"] = json!(record_id);
@@ -284,9 +316,15 @@ impl LocalTaskStore {
         }
         result["deliveryReason"] = json!(outcome["reason"].as_str());
         result["deliveryReasonCode"] = json!(nonempty_id(&outcome["reasonCode"]));
-        result["finishedAt"] = json!(now());
+        result["finishedAt"] = json!(finished_at.clone());
         message["dispatchStatus"] = json!("sent");
         write_record(&connection, record_id, "stand_in_message", &message)?;
+        if let Some(mut claim) = read_record(&connection, &claim_id, REPLY_CLAIM_KIND)? {
+            claim["status"] = json!(status);
+            claim["receiptId"] = json!(receipt);
+            claim["finishedAt"] = json!(finished_at);
+            write_record(&connection, &claim_id, REPLY_CLAIM_KIND, &claim)?;
+        }
         refresh_work(&connection, &mut work)?;
         connection.commit()?;
         Ok(())

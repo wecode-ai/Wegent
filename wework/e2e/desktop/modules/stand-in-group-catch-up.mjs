@@ -5,7 +5,6 @@ import { storyUntil } from './stand-in-source-story-evidence.mjs'
 
 export async function verifyStandInGroupCatchUp({ database, rpc, root, userId, providerId }) {
   const groupId = 'group-catch-up'
-  const roleId = 'group-catch-up-recovery'
   const writeMessages = messages =>
     writeFile(
       join(root, 'group-catch-up-message.json'),
@@ -20,34 +19,15 @@ export async function verifyStandInGroupCatchUp({ database, rpc, root, userId, p
     )
   await writeMessages([])
   const settings = await rpc('runtime.stand_in.personal.get', { userId })
-  const role = {
-    ...settings.primary,
-    id: roleId,
-    name: 'Group catch-up recovery',
-    enabled: true,
-    executionDeviceId: settings.executionDeviceId,
-    collaboration: {
-      enabled: false,
-      allProjects: false,
-      projects: [],
-      excludedProjects: [],
-      tags: [],
-      policy: { automatic: true, askBeforeAct: true, immediate: true },
-    },
-    connections: [
-      {
-        providerId,
-        id: groupId,
-        name: groupId,
-        profile: 'connection-test-account',
-        kind: 'group',
-        collectionKey: 'all-messages',
-        policy: { automatic: false, askBeforeAct: true },
-      },
-    ],
-  }
-  delete role.delegation
-  settings.roles = [...(settings.roles ?? []).filter(existing => existing.id !== roleId), role]
+  settings.primary.connections.push({
+    providerId,
+    id: groupId,
+    name: groupId,
+    profile: 'connection-test-account',
+    kind: 'group',
+    collectionKey: 'all-messages',
+    policy: { automatic: false, askBeforeAct: true },
+  })
   await rpc('runtime.stand_in.personal.save', { userId, settings })
   const query = database.prepare(
     "SELECT id, metadata FROM loop_items WHERE resource_type='stand_in_source' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.source.id')=?"
