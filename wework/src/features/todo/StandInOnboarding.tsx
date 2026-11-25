@@ -235,7 +235,7 @@ function StandInOnboardingContent({
                               onGuideClose?.()
                               onExampleSelect?.(t(`standIn.onboarding.examples.${id}.prompt`))
                             }}
-                            className="flex min-w-0 items-start justify-start gap-3 whitespace-normal rounded-xl border border-border/50 bg-muted/40 p-3 text-left hover:border-text-muted hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-45"
+                            className="flex min-w-0 items-start justify-start gap-3 whitespace-normal rounded-xl border border-border/50 bg-muted/40 p-3 text-left hover:border-text-muted hover:bg-muted disabled:opacity-45"
                           >
                             <Icon
                               aria-hidden="true"

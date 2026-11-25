@@ -94,6 +94,12 @@ Run only the embedded-browser Agent operation regression:
 pnpm --filter wework e2e:desktop:embedded-browser
 ```
 
+Run the address history, downloads list, and file state checks on macOS or Linux:
+
+```bash
+WEWORK_E2E_DOWNLOAD_HISTORY_ONLY=true pnpm --filter wework e2e:desktop:embedded-browser
+```
+
 Run the desktop memory regression on macOS, including streaming growth and the whole-process check with 10 concurrent tasks:
 
 ```bash

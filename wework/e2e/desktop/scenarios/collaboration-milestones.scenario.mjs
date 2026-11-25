@@ -5,6 +5,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
@@ -160,8 +161,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     const filterShell = `${CONTENT} .milestone-picker-filter`
     assert.equal(await style(control, filterShell, 'outline-style'), 'solid')
     assert.ok(parseFloat(await style(control, filterShell, 'outline-width')) >= 2)
+    assert.equal(await style(control, filterShell, 'box-shadow'), 'none')
   }
   const assertFormStates = async control => {
+    await verifyProjectFieldFocus(control, 'milestone-title', { scope: CONTENT })
     await control.command('focus', scoped('milestone-title'))
     assert.equal(await style(control, scoped('milestone-title'), 'border-top-style'), 'solid')
     assert.ok(parseFloat(await style(control, scoped('milestone-title'), 'border-top-width')) >= 1)
