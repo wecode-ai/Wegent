@@ -453,11 +453,14 @@ test("the macOS runner exports complete runtimes after checkpoints on complete b
   assert.equal(rendererGate["continue-on-error"], undefined);
   assert(job.steps.indexOf(build) < job.steps.indexOf(rendererGate));
   assert.equal(
-    job.steps.filter((step) =>
-      step.run?.includes("wework/scripts/profile-renderer.mjs"),
-    ).length,
+    job.steps.filter((step) => step.run?.includes("profile-renderer.mjs")).length,
     1,
   );
+  const diagnostics = job.steps.find(
+    (step) => step.name === "Upload macOS Inspector failure evidence before cleanup",
+  );
+  assert.equal(diagnostics.if, "always() && failure()");
+  assert.match(diagnostics.with.path, /renderer-threshold-measurements\.json/);
   assert.equal(describe.if, "env.MACOS_COMPLETE_BUILD == 'true'");
   assert.equal(describe["continue-on-error"], undefined);
   assert.equal(describe.env.RUNTIME_TARGET, "darwin-arm64");
@@ -748,15 +751,36 @@ test("platform sharding uses eight runners and preserves every provider shard", 
   assert.equal(report.with["if-no-files-found"], "error");
   assert.equal(oauth["timeout-minutes"], 10);
   assert.equal(oauth.id, "dingtalk_oauth_e2e");
+  const executionNotifications = steps.find((step) =>
+    step.name === "Run subscription execution notification directives E2E"
+  );
+  const executionNotificationsReport = steps.find((step) =>
+    step.name === "Upload subscription execution notification directives E2E report"
+  );
+  const claudeSteps = ["Restore", "Install", "Verify"].map((phase) =>
+    steps.find((step) => step.name === `${phase} Claude Code CLI`)
+  );
+  assert.equal(matrix.include.filter((row) => row.subscriptionExecutionNotifications).length, 1);
   for (const row of matrix.include) {
     const enabled = (expression, outcome = "success") =>
       Boolean(
-        runInNewContext(expression, {
+        runInNewContext(expression.replace(
+          "steps.claude-code-cli-cache.outputs.cache-hit",
+          "steps.claudeCodeCliCacheHit"
+        ), {
           matrix: row,
-          steps: { dingtalk_oauth_e2e: { outcome } },
+          steps: {
+            dingtalk_oauth_e2e: { outcome },
+            claudeCodeCliCacheHit: "false",
+          },
           always: () => true,
         }),
       );
+    assert.equal(enabled(executionNotifications.if), Boolean(row.subscriptionExecutionNotifications));
+    assert.equal(enabled(executionNotificationsReport.if), Boolean(row.subscriptionExecutionNotifications));
+    for (const step of claudeSteps) {
+      assert.equal(enabled(step.if), row.shardIndex === 1 || Boolean(row.subscriptionExecutionNotifications));
+    }
     for (const step of [preparation, oauth])
       assert.equal(enabled(step.if), row.dingtalkOAuth);
     for (const outcome of ["success", "failure", "cancelled", "skipped", ""]) {
