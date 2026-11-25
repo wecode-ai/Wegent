@@ -199,6 +199,16 @@ test('Linux scheduling runs desktop smoke coverage and MinIO setup retains full 
     '.github/actions/setup-minio-e2e/action.yml',
     '.github/actions/build-minio-e2e/action.yml',
   ]) assert.deepEqual(classifiedMatrices([path]), matrices, path)
+  const helper = classifiedMatrices(['wework/e2e/desktop/modules/shared.mjs'])
+  const core = JSON.parse(helper.wework_desktop_core_e2e_matrix).include
+  assert.deepEqual(
+    core.flatMap(({ segments }) => segments.split(',')).sort(),
+    ['device-artifact-declaration', 'embedded-browser', 'native-lifecycle'],
+  )
+  assert.deepEqual(
+    JSON.parse(helper.wework_desktop_cloud_e2e_matrix).include.map(({ segments }) => segments),
+    ['plugin-runtime-route-refresh'],
+  )
 })
 
 function completionSeconds(checkpoints, seconds) {

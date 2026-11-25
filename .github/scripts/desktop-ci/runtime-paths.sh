@@ -508,6 +508,12 @@ classify_path() {
       backend/tests/api/test_deliveries_api.py)
       select_target "core:collaboration-issue-comment-attachments"
       ;;
+    wework/e2e/desktop/modules/shared.mjs)
+      select_target "core:native-lifecycle"
+      select_target "core:device-artifact-declaration"
+      select_target "core:embedded-browser"
+      select_target "cloud:plugin-runtime-route-refresh"
+      ;;
     shared/rust/* | backend-rs/* | backend-rs/** | \
       wework/e2e/desktop/modules/cloud-environment.mjs | \
       wework/e2e/desktop/modules/task-flow-main.mjs | \

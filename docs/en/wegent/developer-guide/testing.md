@@ -368,6 +368,10 @@ Changes to CI scheduling, path classification, or Rust E2E build orchestration
 run desktop smoke checks for packaged startup, native lifecycle, and plugin
 routing. Product paths retain their scenario selection. Scheduled, manual, and
 `ci:all` runs execute the full desktop suites.
+PR changes to the shared desktop test helper run native lifecycle, device
+artifact delivery, embedded browser, and plugin routing checks. These cover
+project creation, file operations, and window interactions. The full suites
+exercise the helper's other callers.
 
 The Backend Rust module check reuses workspace test binaries for package-specific
 MySQL and Redis regressions, retaining each step's service configuration and logs.
