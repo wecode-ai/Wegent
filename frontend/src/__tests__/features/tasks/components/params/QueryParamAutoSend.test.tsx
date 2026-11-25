@@ -168,20 +168,27 @@ it.each(['projectId', 'conversationGroupId'])(
   }
 )
 
-it('keeps a new project link when the previous project send fails', async () => {
-  const onSendMessage = jest
-    .fn<ReturnType<AutoSendProps['onSendMessage']>, Parameters<AutoSendProps['onSendMessage']>>()
-    .mockResolvedValue(undefined)
-  const initial = props({ onSendMessage })
-  const view = render(<QueryParamAutoSend {...initial} />)
-  const onFailure = onSendMessage.mock.calls[0][1]
+it.each(['projectId=4', 'conversationGroupId=3'])(
+  'keeps the replacement target %s when the previous project send fails',
+  async target => {
+    const onSendMessage = jest
+      .fn<ReturnType<AutoSendProps['onSendMessage']>, Parameters<AutoSendProps['onSendMessage']>>()
+      .mockResolvedValue(undefined)
+    const initial = props({ onSendMessage })
+    const view = render(<QueryParamAutoSend {...initial} />)
+    const onFailure = onSendMessage.mock.calls[0][1]
 
-  setQuery('q=hello&autoSend=true&projectId=4')
-  await act(async () => onFailure())
-  expect(mockReplace).not.toHaveBeenCalled()
-  view.rerender(<QueryParamAutoSend {...initial} />)
-  expect(onSendMessage).toHaveBeenCalledTimes(2)
-})
+    setQuery(`q=hello&autoSend=true&${target}`)
+    await act(async () => onFailure())
+    expect(mockReplace).not.toHaveBeenCalled()
+    view.rerender(<QueryParamAutoSend {...initial} />)
+    expect(onSendMessage).toHaveBeenCalledTimes(2)
+
+    setQuery('q=hello&autoSend=true&projectId=3')
+    view.rerender(<QueryParamAutoSend {...initial} />)
+    expect(onSendMessage).toHaveBeenCalledTimes(2)
+  }
+)
 
 it('leaves a replacement link intact when the earlier send rejects', async () => {
   let rejectFirst!: (error: Error) => void
