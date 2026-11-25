@@ -174,7 +174,6 @@ export function createWorkbenchRuntimeOperations({
           if (delayMs > 0) {
             await new Promise(resolve => globalThis.setTimeout(resolve, delayMs))
           }
-          if (!runtimeTaskSettleSyncActiveRef.current) return
           if (
             !runtimeTaskSettleSyncActiveRef.current ||
             runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation
@@ -185,6 +184,16 @@ export function createWorkbenchRuntimeOperations({
           if (expectedLifecycle?.turn.phase === 'streaming') return
 
           try {
+            if (delayMs === 0) {
+              // Capture the completion before yielding so transcript recovery sees the
+              // same lifecycle as the terminal event, even if cached state arrives first.
+              await new Promise(resolve => globalThis.setTimeout(resolve, 0))
+              if (
+                !runtimeTaskSettleSyncActiveRef.current ||
+                runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation
+              )
+                return
+            }
             const task = await refreshRuntimeTask(address)
             if (
               !runtimeTaskSettleSyncActiveRef.current ||
